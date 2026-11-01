@@ -1,6 +1,3 @@
-//! Child processes Speakeasy owns: hidden from the desktop, killed with their owner, and reaped
-//! before anything replaces them.
-
 use std::{ffi::OsStr, process::Stdio};
 
 use tokio::process::{Child, Command};
@@ -8,9 +5,6 @@ use tokio::process::{Child, Command};
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-/// A command without a console window or standard streams, killed if its `Child` drops. Engines
-/// may print dictated text, so diagnostics report only exit statuses; a caller that parses output
-/// pipes stdout.
 pub(crate) fn hidden_command(program: impl AsRef<OsStr>) -> Command {
     let mut command = Command::new(program);
     command
@@ -23,7 +17,6 @@ pub(crate) fn hidden_command(program: impl AsRef<OsStr>) -> Command {
     command
 }
 
-/// Kills `child` and waits, without a time limit, until it is reaped.
 #[expect(
     clippy::let_underscore_must_use,
     reason = "Killing an exited child fails harmlessly, and waiting reaps it either way"

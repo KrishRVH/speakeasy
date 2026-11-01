@@ -23,8 +23,6 @@ impl Converter {
         input: &IMFMediaType,
         output: &IMFMediaType,
     ) -> anyhow::Result<(Self, IMFMediaType)> {
-        // SAFETY: the recording owner has entered COM and Media Foundation. These owned types
-        // describe bounded progressive frames; this transform stays on that same native thread.
         unsafe {
             let native: IMFTransform =
                 CoCreateInstance(&CLSID_VideoProcessorMFT, None, CLSCTX_INPROC_SERVER)?;
@@ -54,8 +52,6 @@ impl Converter {
     }
 
     pub(super) fn frame(&self, input: &IMFSample) -> anyhow::Result<IMFSample> {
-        // SAFETY: the native owner serializes complete progressive frames. FRC is disabled,
-        // and each accepted input must produce exactly one sample with the same clock.
         unsafe { self.0.ProcessInput(0, input, 0)? };
         let sample = self
             .output()?
@@ -64,7 +60,7 @@ impl Converter {
             self.output()?.is_none(),
             "Video conversion duplicated its frame"
         );
-        // SAFETY: both samples stay owned throughout these metadata queries.
+
         unsafe {
             ensure!(
                 sample.GetSampleTime()? == input.GetSampleTime()?
@@ -76,7 +72,6 @@ impl Converter {
     }
 
     pub(super) fn finish(&self) -> anyhow::Result<()> {
-        // SAFETY: all inputs have produced their single output before the owner finishes.
         unsafe {
             self.0.ProcessMessage(MFT_MESSAGE_NOTIFY_END_OF_STREAM, 0)?;
             self.0.ProcessMessage(MFT_MESSAGE_COMMAND_DRAIN, 0)?;
@@ -89,8 +84,6 @@ impl Converter {
     }
 
     fn output(&self) -> anyhow::Result<Option<IMFSample>> {
-        // SAFETY: one owner serializes input and output. The result guard releases every native
-        // sample/event reference, including partial output on failure. No borrowed pixels escape.
         unsafe {
             let info = self.0.GetOutputStreamInfo(0)?;
             let native_allocation = (MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0
@@ -142,8 +135,6 @@ impl Converter {
 
 impl Drop for Output {
     fn drop(&mut self) {
-        // SAFETY: this guard owns the output structure and releases each optional COM reference
-        // exactly once. A returned sample has already been taken, leaving None in its slot.
         unsafe {
             ManuallyDrop::drop(&mut self.0.pSample);
             ManuallyDrop::drop(&mut self.0.pEvents);
@@ -158,7 +149,6 @@ impl Drop for Converter {
                 clippy::let_underscore_must_use,
                 reason = "Teardown releases pending conversion buffers even after a failed native call; the recording owner already reports that failure"
             )]
-            // SAFETY: the native owner has stopped submitting frames and still owns the MFT.
             let _ = unsafe { self.0.ProcessMessage(message, 0) };
         }
     }

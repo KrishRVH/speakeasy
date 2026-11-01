@@ -1,6 +1,3 @@
-//! A process-local pasteboard lease serializes insertion and explicit copies. `AppKit` supplies no
-//! `OpenClipboard`-style exclusive lease; input can be stopped while a saved Show is still copied.
-
 use std::sync::{Mutex, MutexGuard};
 
 use anyhow::{anyhow, ensure};
@@ -64,14 +61,13 @@ fn item(
         "Cannot mark the clipboard copy private"
     );
     if let Some(image) = image {
-        // SAFETY: AppKit's exported pasteboard type is an immutable constant.
         let png = unsafe { NSPasteboardTypePNG };
         ensure!(
             item.setData_forType(&NSData::with_bytes(&image.png), png),
             "Cannot prepare the clipboard image"
         );
     }
-    // SAFETY: AppKit's exported pasteboard type is an immutable constant.
+
     let string = unsafe { NSPasteboardTypeString };
     ensure!(
         item.setString_forType(&NSString::from_str(text), string),

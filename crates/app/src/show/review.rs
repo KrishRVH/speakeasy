@@ -1,6 +1,3 @@
-//! A native Show library with explicit retention controls. Selection owns its reads and one decoded
-//! frame; private content stays out of the global asset cache, CLI output, and owner's last Show.
-
 const DISCARD_AUDIO: &str = "This permanently removes the kept audio and its recovery checkpoint. \
                             Your saved Show stays.";
 const DISCARD_SHOW: &str = "This permanently removes the interrupted Show's recovery data, \
@@ -60,7 +57,6 @@ enum ImageState {
     Failed(String),
 }
 
-/// Inputs come from the shell; the review view never reaches into its global Services owner.
 pub(crate) struct Review {
     focus: FocusHandle,
     source: Source,
@@ -89,7 +85,6 @@ pub(crate) struct Review {
     visibility: Option<Task<()>>,
     _updates: Task<()>,
     _activation: Subscription,
-    // Immutable leases keep the synthetic folder alive during accepted writes.
     fixture: Option<Arc<tempfile::TempDir>>,
 }
 
@@ -443,7 +438,7 @@ impl Review {
         else {
             return;
         };
-        // A read begun before this write must not restore the previous retention afterward.
+
         self.checking = None;
         let directory = key.directory.clone();
         let work = match (self.actions.edit)(
@@ -499,7 +494,7 @@ impl Review {
             self.library
                 .update_retention(directory, Some(*retention == retention::Retention::Kept));
         }
-        // A completed action's notice belongs only to the Show it targeted.
+
         if !self.library.is_selected(directory) {
             return;
         }

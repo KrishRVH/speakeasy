@@ -118,7 +118,7 @@ fn pending_images_and_quiet_output_keep_capture_and_presentation_distinct() -> a
         .unwrap();
         assert_eq!(decoded.at.as_nanos(), if stop { 0 } else { 33_333_300 });
         let expected: u8 = if stop { 40 } else { 120 };
-        // H.264 is lossy; the synthetic image identities are at least 40 gray levels apart.
+
         assert!(
             decoded.bgra[0].abs_diff(expected) <= 8,
             "An unpresented or superseded image reached the video"
@@ -145,7 +145,6 @@ fn pending_images_and_quiet_output_keep_capture_and_presentation_distinct() -> a
     let interrupted = directory.path().join("before-finalize.mp4");
     let deadline = Instant::now().checked_add(Duration::from_secs(5)).unwrap();
     loop {
-        // WriteSample queues work; a complete fragment must arrive without Finalize or more input.
         std::fs::copy(&path, &interrupted)?;
         if encoder::sample_times(&interrupted).is_ok_and(|samples| samples.len() >= 30) {
             break;

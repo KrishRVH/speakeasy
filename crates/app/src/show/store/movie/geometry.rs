@@ -1,5 +1,3 @@
-//! Durable sample-indexed content rectangles and crops within the actual presented surface.
-
 use std::{fs::File, io::Write as _, path::Path};
 
 use anyhow::Context as _;
@@ -29,7 +27,6 @@ pub(crate) struct Change {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct Geometry {
-    /// Exclusive sample index through which the content rectangles are established.
     pub through: u32,
     pub changes: Vec<Change>,
 }

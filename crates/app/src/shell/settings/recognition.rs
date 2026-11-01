@@ -1,5 +1,3 @@
-//! Recognition hints edit their own vocabulary; they never become phrase replacement rules.
-
 use gpui::{
     App, AppContext as _, Context, Entity, Focusable as _, IntoElement, div, prelude::*, px, rgb,
 };

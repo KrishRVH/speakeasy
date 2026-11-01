@@ -1,5 +1,3 @@
-//! Show-only handoff on the drain thread. Capture callbacks never touch files or this queue.
-
 use std::time::Duration;
 
 use async_channel::{Receiver, Sender};
@@ -19,7 +17,6 @@ pub(super) struct Keep {
 pub(super) struct Keeping<'a> {
     incoming: &'a Receiver<Keep>,
     log: Option<AudioLog>,
-    // Cue history stays in memory until promotion so its earlier samples replay the same gate.
     cues: Vec<(usize, usize)>,
     classified: usize,
     overflowed: bool,
@@ -73,8 +70,6 @@ impl<'a> Keeping<'a> {
     }
 
     pub(super) fn finish(&mut self, pcm: &[u8], rate: u32) -> bool {
-        // Close before the final receive: every accepted handoff is now queued, so none can
-        // arrive after the last offer and leave a producer waiting through device teardown.
         self.incoming.close();
         let offered = self.offer(pcm, rate);
         let finished = self
@@ -96,8 +91,6 @@ impl<'a> Keeping<'a> {
     }
 }
 
-/// Replays cue exclusions before sealing through the same speech gate and trimming as capture.
-/// A torn log can produce only its valid prefix; no missing samples or word times are invented.
 pub(crate) fn seal_kept(audio: KeptAudio) -> anyhow::Result<(Option<Sealed>, Duration, Box<str>)> {
     let KeptAudio {
         rate,
@@ -112,7 +105,7 @@ pub(crate) fn seal_kept(audio: KeptAudio) -> anyhow::Result<(Option<Sealed>, Dur
     for (before, at) in cues {
         if let (Some(previous), Some(prefix)) = (pcm.audio().get(..before), pcm.audio().get(..at)) {
             speech.extend(previous);
-            // During capture the cue masks the just-drained tail before that tail is classified.
+
             speech.expect_cue(prefix);
             speech.extend(prefix);
         }

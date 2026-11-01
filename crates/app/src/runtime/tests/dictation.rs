@@ -1,7 +1,3 @@
-//! Dictation scenarios: capture, gestures and deadlines, shutdown ordering, inference, insertion,
-//! configuration, snapshot epochs, warmup, failure reports, and the reply-to-insertion latency
-//! profile.
-
 use super::*;
 use crate::{
     config::Engine,
@@ -459,7 +455,7 @@ async fn levels_after_a_capture_ends_never_reach_the_meter() -> anyhow::Result<(
         .send(CaptureEvent::Finished(old_id, Ok(None)))
         .await?;
     h.phase(Phase::Empty).await?;
-    // The capture lane is ordered, so each phase below is published after the level before it.
+
     old_events.send(CaptureEvent::Level(old_id, 0.5)).await?;
     let (new_id, events) = h.start().await?;
     events.send(CaptureEvent::Level(old_id, 0.75)).await?;
@@ -805,7 +801,7 @@ async fn a_report_during_a_held_recording_is_dropped_and_the_text_still_pastes()
     h.phase(Phase::Recording).await?;
     let (id, events) = receive(&h.captures).await?;
     h.report(Report::Failed(REPORT.into()))?;
-    // The report lane outranks capture, so the level arrives only after the report is handled.
+
     events.send(CaptureEvent::Level(id, 0.25)).await?;
     h.observe_level(0.25).await?;
     assert_eq!(h.snapshot().message, "", "The recording showed the report");

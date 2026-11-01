@@ -1,6 +1,3 @@
-//! Explicit local phrase corrections. Matching is whole-token, longest-first, and never chained;
-//! replacements preserve edge punctuation and the full timing span of the words they replace.
-
 use std::{collections::HashSet, fmt};
 
 use anyhow::ensure;
@@ -60,7 +57,6 @@ pub(crate) fn validate(rules: &[Correction]) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Compiled only for a transcription request, never retained alongside engine text or logs.
 pub(crate) struct Vocabulary<'a> {
     rules: Vec<(Vec<String>, &'a str)>,
 }

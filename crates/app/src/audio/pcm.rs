@@ -1,6 +1,3 @@
-//! The recording's PCM16 buffer and its WAV encoding: sealing trims a finished recording to its
-//! speech and writes the header in place. The sample arithmetic capture shares lives here too.
-
 use std::{mem, ops::Range, time::Duration};
 
 use anyhow::bail;
@@ -16,12 +13,8 @@ const MINIMUM_RECORDING: Duration = Duration::from_millis(200);
 const RECLAIM_SLACK_BYTES: usize = 8 * 1024 * 1024;
 const INCOMPLETE_HEADER: &str = "Recording header is incomplete. Try recording again.";
 
-/// Mono PCM16 behind a reserved WAV header, so encoding never copies the audio. A recording that is
-/// not encoded is zeroed on drop, best effort: audio trimmed from an encoded one, and copies in the
-/// ring, allocator, HTTP client, or engine, remain.
 pub(super) struct Pcm16 {
     bytes: Vec<u8>,
-    /// The most samples the recording may hold.
     limit: usize,
 }
 
@@ -62,13 +55,10 @@ impl Pcm16 {
         self.audio().len() / SAMPLE_BYTES
     }
 
-    /// Samples the recording can take before it reaches its limit.
     pub(super) fn room(&self) -> usize {
         self.limit.saturating_sub(self.samples())
     }
 
-    /// Appends a sample, doubling capacity when full but never past the limit, so a recording at
-    /// the limit cannot hold twice its size. Growth happens here, never in the audio callback.
     pub(super) fn push(&mut self, sample: i16) {
         if self.bytes.len().saturating_add(SAMPLE_BYTES) > self.bytes.capacity() {
             let full = WAV_HEADER_BYTES.saturating_add(bytes_in(self.limit));
@@ -79,9 +69,6 @@ impl Pcm16 {
         self.bytes.extend_from_slice(&sample.to_le_bytes());
     }
 
-    /// Seals a completed recording with its accumulated speech windows. Short recordings and
-    /// insufficient speech produce no WAV; the rest keeps the span [`Audibility::retained`] gives
-    /// and is encoded in place.
     pub(super) fn seal(
         mut self,
         mut speech: Audibility,
@@ -105,7 +92,6 @@ impl Pcm16 {
         }))
     }
 
-    /// Encodes one offered piece; the original buffer remains available for Shows and fallback.
     pub(super) fn excerpt(&self, range: Range<usize>, rate: u32) -> anyhow::Result<Sealed> {
         let audio = self
             .audio()
@@ -118,7 +104,6 @@ impl Pcm16 {
         })
     }
 
-    /// Drops the audio and keeps the header and allocation, so a profile can reuse the buffer.
     #[cfg(test)]
     pub(super) fn clear(&mut self) {
         self.bytes.truncate(WAV_HEADER_BYTES);
@@ -131,8 +116,6 @@ impl Pcm16 {
             .drain(WAV_HEADER_BYTES..WAV_HEADER_BYTES.saturating_add(audio.start));
     }
 
-    /// Ordinary utterances stay allocation-free; only a large reservation that the remaining audio
-    /// fills to at most a quarter is reallocated.
     fn release_excess_capacity(&mut self) {
         let capacity = self.bytes.capacity();
         if capacity.saturating_sub(self.bytes.len()) >= RECLAIM_SLACK_BYTES
@@ -170,7 +153,6 @@ fn encode(audio: &[u8], rate: u32) -> anyhow::Result<Vec<u8>> {
     Ok(wav)
 }
 
-/// Copies a tail of a canonical capture WAV, with a header describing only that tail.
 pub(crate) fn wav_tail(wav: &[u8], range: Range<usize>) -> anyhow::Result<Vec<u8>> {
     let audio = wav
         .get(WAV_HEADER_BYTES..)
@@ -180,9 +162,7 @@ pub(crate) fn wav_tail(wav: &[u8], range: Range<usize>) -> anyhow::Result<Vec<u8
     encode(audio, wav_sample_rate(wav)?)
 }
 
-/// The canonical header for `data_bytes` of mono PCM16, if they can be described.
 fn wav_header(data_bytes: usize, rate: u32) -> Option<[u8; WAV_HEADER_BYTES]> {
-    // A RIFF chunk's size excludes its own four-byte ID and four-byte size.
     const CHUNK_HEADER_BYTES: usize = 8;
     const FORMAT_CHUNK_BYTES: u32 = 16;
     const PCM: u16 = 1;
@@ -216,7 +196,6 @@ fn wav_header(data_bytes: usize, rate: u32) -> Option<[u8; WAV_HEADER_BYTES]> {
     Some(header)
 }
 
-/// The sample rate field of a header written by this module.
 pub(crate) fn wav_sample_rate(wav: &[u8]) -> anyhow::Result<u32> {
     let Some(field) = wav.get(SAMPLE_RATE_OFFSET..).and_then(<[u8]>::first_chunk) else {
         bail!(INCOMPLETE_HEADER);
@@ -237,7 +216,6 @@ pub(super) fn bytes_in(samples: usize) -> usize {
     samples.saturating_mul(SAMPLE_BYTES)
 }
 
-/// How long `bytes` of audio at `rate` last.
 fn duration_of(bytes: usize, rate: u32) -> Duration {
     let samples = bytes / SAMPLE_BYTES;
     Duration::from_secs_f64(samples as f64 / f64::from(rate.max(1)))
@@ -335,7 +313,7 @@ mod tests {
         let sealed = pcm.seal(Audibility::new(rate), rate).unwrap().unwrap();
         assert_eq!(&sealed.wav[WAV_HEADER_BYTES..], expected);
         assert_eq!(wav_sample_rate(&sealed.wav).unwrap(), rate);
-        // Two quiet seconds lead the speech; half a second of padding is kept before it.
+
         assert_eq!(sealed.trimmed, Duration::from_millis(1_500));
 
         assert!(click.seal(Audibility::new(rate), rate).unwrap().is_none());
@@ -418,7 +396,7 @@ mod tests {
                 limit: usize::MAX,
             };
             let mut speech = Audibility::new(rate);
-            // Classification runs on the consumer during recording, outside the stop span.
+
             for length in (480 * SAMPLE_BYTES..pcm.audio().len()).step_by(480 * SAMPLE_BYTES) {
                 speech.extend(black_box(&pcm.audio()[..length]));
             }

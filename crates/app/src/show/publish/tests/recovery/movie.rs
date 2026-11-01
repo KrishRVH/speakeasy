@@ -1,5 +1,3 @@
-//! Recovery keeps video coverage distinct from the shorter annotation journal.
-
 use super::*;
 
 #[tokio::test]
@@ -53,7 +51,9 @@ async fn movie_startup_failure_saves_stills_with_an_explicit_video_loss() -> any
         }
         let (_input, permit) = permit();
         let Published::Recovered {
-            show, movie_lost, ..
+            show,
+            preservation: Preservation { movie_lost, .. },
+            ..
         } = recover_with(interrupted.clone(), &permit, || {
             Ok(parent.path().to_owned())
         })?

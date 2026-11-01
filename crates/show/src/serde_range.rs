@@ -1,5 +1,3 @@
-//! Index ranges stored as `[start, end]`, like the manifest's other pairs.
-
 use std::ops::Range;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};

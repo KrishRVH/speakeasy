@@ -1,5 +1,3 @@
-//! Corrections defend exact phrase boundaries, punctuation, timing, and private diagnostics.
-
 use speakeasy_show::{Moment, Span};
 
 use super::*;

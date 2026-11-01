@@ -1,13 +1,3 @@
-//! Generated sequences of input bursts, clock jumps, audio, footage, transcripts, and settings
-//! changes drive the production owner through gate-free fakes whose devices and workers take
-//! generated time to release, and whose workers fail to load or answer a probe when generated
-//! faults say so. After every step the owner still runs, never reopens a device before its
-//! release, never loads a worker before the previous one has stopped or drops one unstopped,
-//! inserts a session's text only while that session is the latest, and has retired every device
-//! once no session is active; a final drain must bring every session to rest with every device
-//! released, and shutdown must stop the last worker. Gated windows stay with the scripted
-//! scenarios.
-
 use std::collections::{HashMap, VecDeque};
 
 use proptest::prelude::*;
@@ -15,57 +5,37 @@ use proptest::prelude::*;
 use super::*;
 use crate::recognition_terms::Terms;
 
-/// One clock jump past the five-minute limit, so every capturing gesture finishes.
 const PAST_THE_LIMIT: Duration = Duration::from_secs(301);
-/// Drain rounds before the owner counts as stuck; each round answers everything outstanding.
+
 const DRAIN_ROUNDS: usize = 16;
 
-/// Which of the owner's two recording devices an entry concerns.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Source {
     Microphone,
     Screen,
 }
 
-/// What the model ports did, in order, on one unbounded lane.
 enum Log {
     MicrophoneOpened(SessionId, Sender<CaptureEvent>),
     ScreenOpened(SessionId, Sender<ShowEvent>),
     Finished(Source, SessionId),
-    /// The owner asked for the device's release, which takes its generated time.
     Retiring(Source, SessionId),
     Retired(Source, SessionId),
     Pinned(SessionId),
-    /// Text was inserted under a permit that still held authority, while `latest` was the latest
-    /// session.
-    Inserted {
-        text: String,
-        latest: u64,
-    },
-    /// A speech worker started.
+    Inserted { text: String, latest: u64 },
     Loaded,
-    /// A speech worker finished stopping.
     Stopped,
-    /// A speech worker was dropped without being stopped.
     Abandoned,
 }
 
-/// Ports with no gates: devices log and report nothing on their own beyond the microphone's
-/// `Ready`, a worker logs its start and stop and is ready at once unless the next fault fails it,
-/// and transcription waits for the test's answer.
 struct ModelPorts {
     log: Sender<Log>,
     jobs: Sender<Job>,
-    /// Whether each load or probe in turn fails; the rest succeed.
     faults: Receiver<bool>,
-    /// What the owner presents, which names the latest session.
     presented: watch::Receiver<Snapshot>,
-    /// How long each device or worker takes to release once retired or stopped, on the paused
-    /// clock.
     releases: Releases,
 }
 
-/// How long the microphone, the screen recorder, and a speech worker take to release.
 #[derive(Clone, Copy, Debug)]
 struct Releases {
     microphone: Duration,
@@ -140,16 +110,16 @@ impl Ports for ModelPorts {
     ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static {
         let ending = publication.footage.recording.ending;
         let lost = publication.footage.recording.narration_lost;
-        // Commits once the task runs, as publishing does, so a cancel can still come first.
+
         async move {
             Ok(if permit.commit() {
                 Published::Saved {
                     show: SavedShow::assume("shows/model"),
                     ending,
-                    lost,
-                    source_lost: false,
-                    movie_lost: false,
-                    audio_kept: false,
+                    preservation: Preservation {
+                        narration_lost: lost,
+                        ..Preservation::default()
+                    },
                     copied: Ok(()),
                 }
             } else {
@@ -165,7 +135,7 @@ impl Ports for ModelPorts {
     ) -> impl Future<Output = anyhow::Result<ModelSpeech>> + Send + 'static {
         let (jobs, log, faults) = (self.jobs.clone(), self.log.clone(), self.faults.clone());
         let release = self.releases.worker;
-        // Starts once polled, as the port promises.
+
         async move {
             ensure!(faults.try_recv() != Ok(true), "Model engine failed to load");
             log.try_send(Log::Loaded)?;
@@ -250,7 +220,6 @@ struct ModelSpeech {
     jobs: Sender<Job>,
     log: Sender<Log>,
     faults: Receiver<bool>,
-    /// How long stopping takes; a successor that loads meanwhile overlaps this worker.
     release: Duration,
     stopped: bool,
 }
@@ -327,7 +296,6 @@ enum Key {
     Cancel,
     Interrupt,
     Show,
-    /// A Show the tray starts.
     StartShow,
     Pin,
 }
@@ -349,10 +317,8 @@ impl Key {
     }
 }
 
-/// A Show starts with S during a hold; the shortcut is then let go while the Show records.
 const SHOW_GESTURE: [Key; 3] = [Key::Press, Key::Show, Key::Release];
 
-/// How the latest microphone's capture ends.
 #[derive(Clone, Copy, Debug)]
 enum Heard {
     Speech,
@@ -360,7 +326,6 @@ enum Heard {
     Failure,
 }
 
-/// How the oldest outstanding transcription is answered.
 #[derive(Clone, Copy, Debug)]
 enum Said {
     Words,
@@ -368,36 +333,25 @@ enum Said {
     Failure,
 }
 
-/// How the latest screen's recording ends.
 #[derive(Clone, Copy, Debug)]
 enum Seen {
     Complete,
     Failure,
-    /// Its scope found nothing to record, as a W over no window or an A without an area does.
     Unchosen,
 }
 
-/// Which setting a change flips.
 #[derive(Clone, Copy, Debug)]
 enum Setting {
-    /// Read per session, so a session in progress ends and a cancelled transcription's worker is
-    /// probed or replaced.
     Fillers,
-    /// Read by the engine, so the worker reloads; flipping it also switches recovery between
-    /// probing and replacing.
     Gpu,
 }
 
 #[derive(Clone, Debug)]
 enum Step {
-    /// Delivered back to back, so the owner takes them all before any release that lands meanwhile.
     Inputs(Vec<Key>),
     Advance(Duration),
-    /// The latest microphone's capture ends, whether or not it was asked to finish.
     Audio(Heard),
     Piece,
-    /// The latest screen's recording ends: complete once asked to finish, failed or with nothing
-    /// to record at any time.
     Footage(Seen),
     Answer(Said),
     Configure(Setting),
@@ -459,10 +413,8 @@ fn releases() -> impl Strategy<Value = Releases> {
     })
 }
 
-/// A transcription request: the WAV, which names the session that spoke it, and its answer.
 type Job = (Vec<u8>, Reply);
 
-/// Speech whose WAV names the session that spoke it, so its transcript can.
 fn spoken_by(id: SessionId, pieces: u32) -> Sealed {
     Sealed {
         wav: u64::from(id).to_le_bytes().to_vec(),
@@ -471,12 +423,10 @@ fn spoken_by(id: SessionId, pieces: u32) -> Sealed {
     }
 }
 
-/// The transcript of speech `spoken_by` a session: its number.
 fn transcript_of(wav: &[u8]) -> anyhow::Result<String> {
     Ok(u64::from_le_bytes(wav.try_into()?).to_string())
 }
 
-/// Answers a transcription request that the owner may already have abandoned.
 #[expect(
     clippy::let_underscore_must_use,
     reason = "An abandoned request has nobody left to answer"
@@ -485,40 +435,32 @@ fn answer_unless_abandoned(reply: Reply, result: anyhow::Result<String>) {
     let _ = reply.send(result);
 }
 
-/// Resolves once every task has parked: on the paused clock, the sleep ends only when nothing else
-/// can run.
 async fn settle() {
     tokio::time::sleep(Duration::from_micros(1)).await;
 }
 
-/// A device between its opening and its release.
 #[derive(Debug)]
 struct Open {
     id: SessionId,
     retiring: bool,
 }
 
-/// A device the owner asked to finish, or whose outcome the test sent first.
 struct Ending {
     device: (Source, SessionId),
-    /// Whether the test has sent what the device recorded.
     answered: bool,
 }
 
-/// The owner under test, and what the model ports reported so far.
 struct Model {
     runtime: Runtime<OwnedTask>,
     updates: watch::Receiver<Snapshot>,
     log: Receiver<Log>,
     jobs: Receiver<Job>,
-    /// Transcription requests not yet answered, oldest first, with the transcript of their speech.
     replies: VecDeque<(String, Reply)>,
     microphone: Option<(SessionId, Sender<CaptureEvent>)>,
     pieces: u32,
     screen: Option<(SessionId, Sender<ShowEvent>)>,
     open: HashMap<Source, Open>,
     finished: Vec<Ending>,
-    /// Whether a speech worker has started and not yet stopped.
     worker: bool,
 }
 
@@ -622,8 +564,6 @@ impl Model {
         self.check()
     }
 
-    /// Answers everything outstanding and jumps past the limit until nothing changes, then requires
-    /// every session to have ended with its devices released.
     async fn drain(&mut self) -> anyhow::Result<()> {
         for _ in 0..DRAIN_ROUNDS {
             let mut acted = false;
@@ -633,8 +573,7 @@ impl Model {
             }
             for (source, id) in self.unanswered() {
                 self.complete(source, id)?;
-                // Answers to ended sessions still occupy the owner's four-event Show lane, so the
-                // owner takes each one before the next.
+
                 settle().await;
                 acted = true;
             }
@@ -652,7 +591,6 @@ impl Model {
         bail!("The owner kept working through {DRAIN_ROUNDS} drain rounds")
     }
 
-    /// Sends what `source` recorded for `id` as a complete recording.
     fn complete(&mut self, source: Source, id: SessionId) -> anyhow::Result<()> {
         match (source, &self.microphone, &self.screen) {
             (Source::Microphone, Some((_, events)), _) => {
@@ -670,9 +608,6 @@ impl Model {
         Ok(())
     }
 
-    /// Stops the owner at rest and joins it, surfacing any panic, a release of a device that was
-    /// not open, or a worker left running. The scripted scenarios cover what shutdown releases from
-    /// a live session.
     async fn close(mut self) -> anyhow::Result<()> {
         self.runtime.close().await?;
         self.absorb()?;
@@ -680,10 +615,6 @@ impl Model {
         Ok(())
     }
 
-    /// Takes in what the ports logged, checking that a device opens only once its previous session
-    /// released it and releases only after the owner retired it, that text is inserted only while
-    /// the session that spoke it is the latest, and that a worker starts only once the previous one
-    /// stopped and is never dropped unstopped; returns whether anything arrived.
     fn absorb(&mut self) -> anyhow::Result<bool> {
         let mut arrived = false;
         while let Ok(entry) = self.log.try_recv() {
@@ -765,7 +696,6 @@ impl Model {
         Ok(())
     }
 
-    /// The owner still runs, and once no session is active it has retired every device.
     fn check(&self) -> anyhow::Result<()> {
         ensure!(
             !self.runtime.host.task.is_finished(),
@@ -797,7 +727,6 @@ impl Model {
             .collect()
     }
 
-    /// Records that the test sent `source`'s outcome for `id`, finished or not.
     fn answered(&mut self, source: Source, id: SessionId) {
         let device = (source, id);
         match self
@@ -846,7 +775,6 @@ proptest! {
     }
 }
 
-/// Concrete failure sequences stay stable when strategy changes alter what saved seeds generate.
 #[test]
 fn concrete_failures_release_devices_and_come_to_rest() -> anyhow::Result<()> {
     let show = || Step::Inputs(SHOW_GESTURE.to_vec());

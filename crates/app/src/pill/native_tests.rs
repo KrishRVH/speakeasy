@@ -1,7 +1,3 @@
-//! Opt-in native checks on the X11 display in `DISPLAY`, which `check-rendering-linux.sh` starts
-//! under Xvfb: the idle pill's window hints, input shape, and native visibility, and GPUI's
-//! queued-event patch presenting a window opened after launch while the pill is open.
-
 use std::collections::HashSet;
 
 use anyhow::{anyhow, bail, ensure};
@@ -156,7 +152,6 @@ impl Render for LateColors {
     reason = "Native acceptance creates and observes GPUI windows on their owning UI thread"
 )]
 async fn check_late_window(cx: &AsyncApp) -> anyhow::Result<()> {
-    // Opening during launch would let startup event draining present the window.
     Timer::after(Duration::from_millis(100)).await;
     let id = cx.update(|cx| {
         let (_publisher, updates) = watch::channel(Snapshot::default());

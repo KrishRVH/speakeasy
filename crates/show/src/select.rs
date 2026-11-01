@@ -1,5 +1,3 @@
-//! Choosing the frames that tell a Show's story.
-
 mod frames;
 mod groups;
 
@@ -23,84 +21,52 @@ use crate::{
     signature::Sample,
 };
 
-/// Frames are sampled this often: fast enough to catch what a click changed, slow enough that a
-/// still screen costs nothing and a busy one stays cheap.
-///
-/// How long a click's result settles and how far apart keyframes keep are tuned against it.
 pub const SAMPLE_INTERVAL: Duration = Duration::from_millis(200);
-/// Keyframes other than marks keep at least this far apart, measured between their frames, so a
-/// click's counts from where its result settled; and from a mark's keyframe unless the screen has
-/// changed since it. Two clicks' keyframes need only show different frames, and different screens
-/// when the clicks were released this close. The recording's last screen, added after the rest,
-/// may come closer.
+
 const FRAME_GAP: Duration = Duration::from_millis(750);
-/// Clicks this close in time and place are one click.
+
 const DOUBLE_CLICK: Duration = Duration::from_millis(650);
 const DOUBLE_CLICK_DISTANCE: f32 = 0.03;
-/// The most keyframes any Show holds: six full contact sheets. Each keyframe costs a reading
-/// model about a thousand tokens.
+
 pub(crate) const MOST_KEYFRAMES: usize = 36;
 
-/// Why a frame became a keyframe.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Reason {
-    /// Ink was drawn on it.
     Mark,
-    /// It shows the result of a click or drag.
     Click,
-    /// The screen settled after changing.
     SceneChange,
-    /// A word such as "look" or "now" pointed at it.
     Cue,
-    /// Nothing else stood out, so it shows the screen midway through.
     Middle,
-    /// Narration began over it, before the screen first changed.
     Opening,
 }
 
-/// A frame chosen to show, with what happened on it and what was said.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Keyframe {
-    /// The keyframe's number, from one, as badged on the image and named in the bundle.
     pub index: usize,
-    /// When the frame was on screen.
     pub at: Moment,
-    /// Why it was chosen.
     pub reason: Reason,
-    /// What happened, for a reader.
     pub event: String,
-    /// The narration that belongs to it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub said: Option<String>,
-    /// The marks drawn on it; empty unless the reason is [`Reason::Mark`].
     #[serde(with = "crate::serde_range")]
     pub marks: Range<usize>,
-    /// The click or drag it reports. A click's keyframe shows that action's result. A mark's
-    /// keyframe reports the last action without a keyframe of its own whose result came while its
-    /// ink was drawn, or close to its frame, even if that result is another screen; an action two
-    /// marks qualify for goes to the nearer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub action: Option<Action>,
 }
 
 impl Keyframe {
-    /// The numbered marks and click or drag shown on this frame, in the summary's notation.
-    /// This label contains only recorded gestures, never narration or a spoken cue.
     #[must_use]
     pub fn marker(&self, marks: &[Mark]) -> String {
         crate::describe::Marker(self, self.marks_in(marks)).to_string()
     }
 
-    /// The marks drawn on the keyframe, among the selection's `marks`.
     pub(crate) fn marks_in<'a>(&self, marks: &'a [Mark]) -> &'a [Mark] {
         marks.get(self.marks.clone()).unwrap_or_default()
     }
 }
 
-/// Leaves out what was said, which is the user's speech, and the event, which can quote a spoken
-/// cue.
 impl fmt::Debug for Keyframe {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self {
@@ -122,40 +88,17 @@ impl fmt::Debug for Keyframe {
     }
 }
 
-/// The marks a Show's ink forms and the keyframes chosen to show it.
-///
-/// Only [`select`] makes one, so it holds at least one keyframe, numbered from one in time order,
-/// and its keyframes refer only to its own marks.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Selection {
     pub(crate) marks: Vec<Mark>,
     pub(crate) keyframes: Vec<Keyframe>,
 }
 
-/// Chooses the keyframes that tell `recording`'s story from `samples`, which may arrive in any
-/// order, each at its own moment.
-///
-/// Marks come first: every group of ink drawn on one screen gets a keyframe. Clicks, scene
-/// changes, and spoken cues such as "look here" add keyframes anywhere in the recording, and its
-/// last screen gets one unless the latest keyframe already shows it. So does the screen before
-/// the first keyframe when it differs and whole clauses were said over it. A click's or cue's
-/// keyframe waits for the change it started or pointed at to settle, unless the screen is still
-/// changing two seconds on. While ink is drawn and just after, another keyframe is chosen only
-/// where the screen differs from the mark's, and the nearest mark's keyframe reports the last
-/// click or drag then without a keyframe of its own. A cue never repeats a screen already chosen,
-/// so talking over a still screen yields one frame.
-///
-/// A Show holds at most 36 keyframes. Past that, the most alike neighboring marks merge until
-/// they fit, the last screen keeps its keyframe while marks leave it room, and the other keyframes
-/// that stay each split the longest stretch without one, so they spread across the recording.
-///
-/// `None` only when there are no samples to choose from.
 #[must_use]
 pub fn select(recording: &Recording, samples: &[Sample]) -> Option<Selection> {
     select_within(recording, samples, MOST_KEYFRAMES)
 }
 
-/// [`select`] with at most `most` keyframes; `None` also when `most` is zero.
 fn select_within(recording: &Recording, samples: &[Sample], most: usize) -> Option<Selection> {
     if most == 0 {
         return None;
@@ -170,8 +113,7 @@ fn select_within(recording: &Recording, samples: &[Sample], most: usize) -> Opti
         .into_iter()
         .filter_map(|group| frames.mark_candidate(&marks, group))
         .collect();
-    // An action ranks at least as high as the transition it started and is listed first, which
-    // wins a tie, so the frame they share reports the action.
+
     candidates.extend(
         responses
             .iter()
@@ -231,29 +173,23 @@ fn select_within(recording: &Recording, samples: &[Sample], most: usize) -> Opti
 
 struct Candidate {
     frame: usize,
-    /// When what the frame shows was under way: its ink, action, screen change, or cue.
     span: Span,
     score: f32,
     basis: Basis,
 }
 
-/// What a candidate frame shows, which decides how it ranks and what its keyframe says.
 pub(crate) enum Basis {
-    /// The selection's marks in this range, and the click or drag [`fold_actions_into_marks`]
-    /// gives them once keyframes are chosen.
     Mark {
         group: Range<usize>,
         during: Option<Action>,
     },
-    /// The result of a click or drag.
     Click(Action),
-    /// The view the screen settled on after changing.
     SceneChange,
-    /// A spoken cue, and whether it found the transition it pointed at.
-    Cue { word: &'static str, snapped: bool },
-    /// The screen midway through, when nothing else stood out.
+    Cue {
+        word: &'static str,
+        snapped: bool,
+    },
     Middle,
-    /// The screen before the first keyframe's, which narration began over.
     Opening,
 }
 
@@ -301,7 +237,6 @@ impl Basis {
     }
 }
 
-/// Where a candidate ranks before its score: marks first, cues that found no transition last.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Tier {
     Mark,
@@ -310,7 +245,6 @@ enum Tier {
 }
 
 impl Candidate {
-    /// Orders candidates for choosing: by tier, then the higher score, then the earlier frame.
     fn cmp_rank(&self, other: &Self, frames: &Frames<'_>) -> Ordering {
         self.basis
             .tier()
@@ -319,17 +253,10 @@ impl Candidate {
             .then(frames.at(self.frame).cmp(&frames.at(other.frame)))
     }
 
-    /// Where the keyframe's story begins: the start of its span, or its frame if that is earlier.
     fn anchor(&self, frames: &Frames<'_>) -> Moment {
         self.span.start().min(frames.at(self.frame))
     }
 
-    /// Whether this chosen keyframe already stands for `candidate`. Another keyframe too close in
-    /// time does. A mark does while its ink was being drawn or close to its frame, unless the
-    /// screen has changed since, so the screen a click opens right after a drawing still gets a
-    /// keyframe. A click does for another click on its frame, or on the same screen when the
-    /// clicks themselves came that close, so waiting for one click's result never crowds out the
-    /// next.
     fn covers(&self, frames: &Frames<'_>, candidate: &Self) -> bool {
         let same_screen = || !frames.novel(self.frame, candidate.frame);
         match (&self.basis, &candidate.basis) {
@@ -349,20 +276,15 @@ impl Candidate {
         }
     }
 
-    /// Whether `frame` is within [`FRAME_GAP`] of this keyframe's frame.
     fn near(&self, frames: &Frames<'_>, frame: usize) -> bool {
         frames.at(self.frame).distance(frames.at(frame)) < FRAME_GAP
     }
 
-    /// Whether `frame` came while this keyframe's ink or action was under way, or close to its
-    /// frame.
     fn during(&self, frames: &Frames<'_>, frame: usize) -> bool {
         self.near(frames, frame) || self.span.contains(frames.at(frame))
     }
 }
 
-/// The `candidates`, taken in rank order, that each add something those taken before them do not
-/// show, less any spoken cue whose screen another kind of keyframe already shows.
 fn choose(mut candidates: Vec<Candidate>, frames: &Frames<'_>) -> Vec<Candidate> {
     candidates.sort_by(|one, other| one.cmp_rank(other, frames));
     let mut chosen: Vec<Candidate> = Vec::new();
@@ -385,9 +307,6 @@ fn choose(mut candidates: Vec<Candidate>, frames: &Frames<'_>) -> Vec<Candidate>
     chosen
 }
 
-/// Whether `candidate` adds something `chosen` does not already show. A mark always does. Nothing
-/// else does where a chosen keyframe already covers it, so a crowded click a mark covers is
-/// reported on that mark's keyframe instead; a scene change or cue must also show a new screen.
 fn admits(chosen: &[Candidate], candidate: &Candidate, frames: &Frames<'_>) -> bool {
     let covered = || chosen.iter().any(|other| other.covers(frames, candidate));
     let novel = || {
@@ -402,12 +321,6 @@ fn admits(chosen: &[Candidate], candidate: &Candidate, frames: &Frames<'_>) -> b
     }
 }
 
-/// Keeps at most `most` of `chosen`, which is in time order, spread across the recording.
-///
-/// Marks stay, since [`group_marks`] has already fit them, and so, while there is room, does the
-/// last keyframe, which shows the recording's last screen. Each other keyframe kept in turn splits
-/// the longest stretch still without one, preferring a new screen to a repeat of the screen before
-/// it, then the stretch's middle.
 fn thin(chosen: &mut Vec<Candidate>, frames: &Frames<'_>, most: usize) {
     if chosen.len() <= most {
         return;
@@ -443,16 +356,12 @@ fn thin(chosen: &mut Vec<Candidate>, frames: &Frames<'_>, most: usize) {
     chosen.retain(|_| kept.next().unwrap_or(false));
 }
 
-/// A chosen keyframe as [`thin`] weighs it.
 struct Slot {
     at: Moment,
-    /// Whether it shows a different screen from the keyframe chosen before it.
     new_screen: bool,
     kept: bool,
 }
 
-/// The slot not yet kept that best splits the longest stretch between kept slots, the
-/// recording's start, and `end`: a new screen before a repeated one, then the nearest the middle.
 fn widest(slots: &[Slot], end: Moment) -> Option<usize> {
     let kept: Vec<Moment> = slots
         .iter()
@@ -473,9 +382,6 @@ fn widest(slots: &[Slot], end: Moment) -> Option<usize> {
         .map(|(index, _)| index)
 }
 
-/// Gives each chosen mark the last click or drag without a keyframe of its own whose result came
-/// while its ink was drawn or close to its frame; an action two marks qualify for goes to the
-/// nearer.
 fn fold_actions_into_marks(chosen: &mut [Candidate], responses: &[Response], frames: &Frames<'_>) {
     for &Response { action, frame, .. } in responses {
         let shown = chosen
@@ -496,7 +402,6 @@ fn fold_actions_into_marks(chosen: &mut [Candidate], responses: &[Response], fra
     }
 }
 
-/// Actions in time order with double clicks merged into their last click.
 fn merge_double_clicks(actions: &[Action]) -> Vec<Action> {
     let mut sorted = actions.to_vec();
     sorted.sort_by_key(|action| action.span().start());
@@ -513,7 +418,6 @@ fn merge_double_clicks(actions: &[Action]) -> Vec<Action> {
     merged
 }
 
-/// Whether `later` is the second click of a double click that `earlier` began.
 fn is_double_click(earlier: Action, later: Action) -> bool {
     matches!(
         (earlier, later),

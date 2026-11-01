@@ -29,7 +29,8 @@ project's profile; dependency licenses are checked only where packaging must cit
   pure Show composition, no I/O; `crates/platform` (`speakeasy-platform`) native adapters, including
   screen capture and the overlay window; `crates/app` (`speakeasy`) GPUI, the session owner, audio
   capture, the local worker, and Show recording and publishing. Only platform may use unsafe code.
-- Explain every unsafe FFI site in a `SAFETY` comment; vendored code follows its upstream policy.
+- Project-owned Rust contains no source comments. Keep native safety and thread-lifetime contracts
+  in [native contracts](docs/native-contracts.md); vendored code follows its upstream policy.
 - Give session state one owner. Move cross-thread work over channels; callbacks cannot stop a newer
   recording, overwrite its state, or paste stale text.
 - Locks, cells, atomics, and shared ownership need a per-site reason explaining why the value cannot
@@ -44,8 +45,8 @@ project's profile; dependency licenses are checked only where packaging must cit
   together; a test module over about 250 lines lives in a child file. Add abstractions for actual
   duplication or a useful side-effect seam; remove forwarding wrappers and obsolete re-exports.
 - Carry invariants in types, use enums for meaningful alternatives, and make always-present values
-  non-optional. Keep internals private and document public contracts, failure modes, and required
-  native-thread ownership.
+  non-optional. Keep internals private; record cross-module contracts and failure modes in the
+  architecture map and native-thread ownership in the native contracts.
 - Handle external failures with explicit errors or events. Use iterators or checked access and
   choose checked, saturating, or wrapping arithmetic according to the domain. Never let a panic
   cross FFI or include private content in errors.
@@ -102,10 +103,9 @@ same push. A new version on `main` publishes with those notes; no other push rel
 ## Current repository
 
 Keep current contracts in code, tests, and docs; Git holds history. Replace rather than accumulate:
-remove obsolete code, settings, tests, and docs with the change. Comments earn their place like
-tests: they explain invariants, non-obvious platform behavior, and trust seams that names, types,
-and tests cannot carry, never narration or history. Update the owning page when a contract changes
-and state each policy once.
+remove obsolete code, settings, tests, and docs with the change. Names, types, and tests carry local
+meaning; the owning documentation page preserves invariants, platform behavior, and trust seams they
+cannot express. Update that page when a contract changes and state each policy once.
 
 Keep task notes in ignored `.scratch/` and run output in `artifacts/`. Do not commit plans,
 handoffs, research, reports, or dated audits. Prefer native toolchain guarantees over duplicate

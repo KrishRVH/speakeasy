@@ -1,5 +1,3 @@
-//! The native delegate cannot bypass the file budget or retain a file after owner teardown.
-
 use std::{
     fs::{File, OpenOptions},
     io::Write as _,
@@ -31,15 +29,12 @@ pub(super) struct State {
 }
 
 define_class!(
-    // SAFETY: all mutable ivars are synchronized, and every callback catches Rust panics.
     #[unsafe(super = NSObject)]
     #[ivars = State]
     pub(super) struct Output;
 
-    // SAFETY: NSObjectProtocol adds no requirements.
     unsafe impl NSObjectProtocol for Output {}
 
-    // SAFETY: the callback uses the documented signature and retains no borrowed segment bytes.
     unsafe impl AVAssetWriterDelegate for Output {
         #[unsafe(method(assetWriter:didOutputSegmentData:segmentType:))]
         fn segment(&self, _: &AVAssetWriter, data: &NSData, kind: AVAssetSegmentType) {
@@ -78,7 +73,7 @@ impl Output {
                 failed: false,
             }),
         });
-        // SAFETY: allocation initialized every Rust ivar before NSObject initialization.
+
         Ok(unsafe { msg_send![super(this), init] })
     }
 
@@ -149,8 +144,7 @@ impl Sink {
             .filter(|end| *end <= self.limit)
             .context("The movie reached its storage limit")?;
         let file = self.file.as_mut().context("Movie output has closed")?;
-        // SAFETY: AVAssetWriter lends immutable NSData for this synchronous callback. The slice
-        // never escapes and its complete length has been admitted against the file budget.
+
         file.write_all(unsafe { data.as_bytes_unchecked() })?;
         file.sync_data()?;
         self.bytes = end;

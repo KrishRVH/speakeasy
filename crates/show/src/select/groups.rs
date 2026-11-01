@@ -1,22 +1,14 @@
-//! Gathering marks drawn on one screen into groups that share a keyframe.
-
 use std::{cmp::Ordering, ops::Range, time::Duration};
 
 use super::frames::Frames;
 use crate::{Moment, Rect, marks::Mark};
 
-/// Marks share a keyframe while the screen around their ink, grown by [`INK_CONTEXT`] of the
-/// frame, changed less than this.
 const SAME_SCREEN: f32 = 0.05;
 const INK_CONTEXT: f32 = 0.08;
-/// A group of marks closes past this span or this much ink, keeping one frame legible.
+
 const GROUP_SPAN: Duration = Duration::from_secs(20);
 const GROUP_STROKES: usize = 12;
 
-/// Groups marks drawn on one screen with no click or drag between them, then merges neighboring
-/// groups until at most `most` remain: same-screen pairs carrying the least ink first, else the
-/// most alike screens. `action_starts` holds the start of each action's span, in time order: a
-/// click's release or a drag's press.
 pub(super) fn group_marks(
     frames: &Frames<'_>,
     marks: &[Mark],
@@ -34,7 +26,6 @@ pub(super) fn group_marks(
     grouping.merge(grouping.group(action_starts), most)
 }
 
-/// The marks to group, and the frame each is shown on.
 struct Grouping<'a> {
     frames: &'a Frames<'a>,
     marks: &'a [Mark],
@@ -42,9 +33,6 @@ struct Grouping<'a> {
 }
 
 impl Grouping<'_> {
-    /// Groups marks in drawing order. A mark joins the group before it while the group, with it,
-    /// stays within [`GROUP_SPAN`] and [`GROUP_STROKES`], no start in `action_starts` falls between
-    /// the group's last mark and it, and the screen around their ink stays the same.
     fn group(&self, action_starts: &[Moment]) -> Vec<Range<usize>> {
         let acted_between = |after: Moment, before: Moment| {
             action_starts.partition_point(|at| *at <= after)
@@ -73,7 +61,6 @@ impl Grouping<'_> {
         groups
     }
 
-    /// Merges neighboring `groups`, cheapest first, until at most `most` remain.
     fn merge(&self, mut groups: Vec<Range<usize>>, most: usize) -> Vec<Range<usize>> {
         if groups.len() <= most {
             return groups;
@@ -108,7 +95,6 @@ impl Grouping<'_> {
         groups
     }
 
-    /// What merging group `k` of `groups` into the one before it costs; `None` for the first.
     fn merge_cost(&self, groups: &[Range<usize>], k: usize) -> Option<Merge> {
         let merged = groups.get(k.checked_sub(1)?)?.start..groups.get(k)?.end;
         let spread = self.spread(merged.clone());
@@ -121,7 +107,6 @@ impl Grouping<'_> {
         })
     }
 
-    /// The strokes `group`'s marks carry.
     fn ink(&self, group: &Range<usize>) -> usize {
         self.marks
             .get(group.clone())
@@ -131,8 +116,6 @@ impl Grouping<'_> {
             .sum()
     }
 
-    /// How far the screen around the ink of `group`'s marks, as each was drawn, is from the screen
-    /// the last of them is shown on.
     fn spread(&self, group: Range<usize>) -> f32 {
         let (Some(around), Some(&shown)) = (
             self.marks
@@ -151,13 +134,9 @@ impl Grouping<'_> {
     }
 }
 
-/// What merging a group into the one before it costs: any merge onto one screen is cheaper than
-/// any across screens.
 #[derive(Clone, Copy)]
 enum Merge {
-    /// Onto one screen, by the strokes the merged group carries.
     SameScreen { ink: usize },
-    /// Across screens, by how far apart they are.
     AcrossScreens { spread: f32 },
 }
 

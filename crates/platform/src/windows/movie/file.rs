@@ -1,6 +1,3 @@
-//! A byte-capped native movie stream. Media Foundation's asynchronous writes and seeks share one
-//! cursor; the cap is enforced at every actual write, including writes deferred by the encoder.
-
 use std::{
     convert::Infallible,
     ffi::c_void,
@@ -26,10 +23,7 @@ use windows_core::{Error, HRESULT, Ref, Result};
 
 pub(super) struct Stream {
     pub native: IMFByteStream,
-    // Finalize closes IMFByteStream. This owned duplicate can still sync its last fragment, and
-    // drops before the closure receipt, so no movie file handle survives the checkpoint lease.
     pub sync: File,
-    // Released after the native stream: an asynchronous callback may still own its IStream.
     _closed: Closed,
 }
 
@@ -39,7 +33,6 @@ impl Drop for Stream {
             clippy::let_underscore_must_use,
             reason = "Finalize may already close the stream; failed initialization/finalization still explicitly cancels outstanding I/O before waiting for actual file closure"
         )]
-        // SAFETY: this stream is still owned; all writer submissions have stopped before teardown.
         let _ = unsafe { self.native.Close() };
     }
 }
@@ -55,7 +48,6 @@ impl Drop for ReadStream {
             clippy::let_underscore_must_use,
             reason = "Reader teardown must cancel asynchronous I/O before waiting for the last callback to release its file"
         )]
-        // SAFETY: the reader is gone; this owner retains the stream until all callbacks release.
         let _ = unsafe { self.native.Close() };
     }
 }
@@ -82,7 +74,6 @@ pub(super) fn read(mut file: File) -> anyhow::Result<ReadStream> {
     }
     .into();
     Ok(ReadStream {
-        // SAFETY: the wrapper retains the owned file and serializes native I/O callbacks.
         native: unsafe { MFCreateMFByteStreamOnStream(&stream) }?,
         _closed: Closed(closed),
     })
@@ -115,10 +106,8 @@ pub(super) fn create(path: &Path, limit: u64) -> anyhow::Result<Stream> {
         _released: released,
     }
     .into();
-    // SAFETY: the COM stream owns its file and serializes every native callback. The returned
-    // wrapper retains its own reference until all asynchronous I/O has finished.
+
     Ok(Stream {
-        // SAFETY: the wrapper retains this owned COM stream through all asynchronous callbacks.
         native: unsafe { MFCreateMFByteStreamOnStream(&stream) }?,
         sync,
         _closed: Closed(closed),
@@ -140,8 +129,6 @@ mod com {
 
     #[implement(IStream)]
     pub(super) struct CappedFile {
-        // Native I/O callbacks share an atomic seek, cap check and write; the capture owner cannot
-        // order work performed inside Media Foundation's asynchronous codec/stream calls.
         #[expect(
             clippy::disallowed_types,
             reason = "Native callbacks need one cursor and cap check held across each file operation"
@@ -149,7 +136,6 @@ mod com {
         pub(super) file: Mutex<File>,
         pub(super) limit: u64,
         pub(super) access: Access,
-        // Field order closes the actual file before acknowledging asynchronous COM teardown.
         pub(super) _released: async_channel::Sender<Infallible>,
     }
 }
@@ -172,7 +158,6 @@ impl ISequentialStream_Impl for CappedFile_Impl {
     fn Read(&self, destination: *mut c_void, count: u32, read: *mut u32) -> HRESULT {
         let result = (|| {
             if !read.is_null() {
-                // SAFETY: ISequentialStream permits a null count; a non-null pointer is writable.
                 unsafe { read.write(0) };
             }
             if count == 0 {
@@ -183,14 +168,13 @@ impl ISequentialStream_Impl for CappedFile_Impl {
             }
             let count = usize::try_from(count)
                 .map_err(|_invalid_count| Error::from_hresult(STG_E_READFAULT))?;
-            // SAFETY: the native caller supplies a writable buffer of count bytes for this call.
+
             let bytes = unsafe { std::slice::from_raw_parts_mut(destination.cast(), count) };
             let read_bytes = self
                 .file()?
                 .read(bytes)
                 .map_err(io_error(STG_E_READFAULT))?;
             if !read.is_null() {
-                // SAFETY: same caller-owned output pointer; the read is no larger than count.
                 unsafe {
                     read.write(
                         u32::try_from(read_bytes)
@@ -206,7 +190,6 @@ impl ISequentialStream_Impl for CappedFile_Impl {
     fn Write(&self, source: *const c_void, count: u32, written: *mut u32) -> HRESULT {
         let result = (|| {
             if !written.is_null() {
-                // SAFETY: ISequentialStream permits a null count; a non-null pointer is writable.
                 unsafe { written.write(0) };
             }
             if self.access == Access::Read {
@@ -228,12 +211,11 @@ impl ISequentialStream_Impl for CappedFile_Impl {
             }
             let length = usize::try_from(count)
                 .map_err(|_invalid_count| Error::from_hresult(STG_E_WRITEFAULT))?;
-            // SAFETY: the native caller supplies count readable bytes; the slice never escapes.
+
             let bytes = unsafe { std::slice::from_raw_parts(source.cast(), length) };
             file.write_all(bytes).map_err(io_error(STG_E_WRITEFAULT))?;
             drop(file);
             if !written.is_null() {
-                // SAFETY: caller-owned output pointer is valid for this synchronous call.
                 unsafe { written.write(count) };
             }
             Ok(())
@@ -259,7 +241,6 @@ impl IStream_Impl for CappedFile_Impl {
             .map_err(io_error(STG_E_WRITEFAULT))?;
         drop(file);
         if !position.is_null() {
-            // SAFETY: IStream's optional position output is writable when supplied.
             unsafe { position.write(next) };
         }
         Ok(())
@@ -293,7 +274,7 @@ impl IStream_Impl for CappedFile_Impl {
             .metadata()
             .map_err(io_error(STG_E_READFAULT))?
             .len();
-        // SAFETY: IStream's caller owns this writable output; no allocated name needs releasing.
+
         unsafe {
             output.write(STATSTG {
                 r#type: STGTY_STREAM.0.cast_unsigned(),
@@ -352,7 +333,7 @@ mod tests {
         .into();
         let mut bytes = [0_u8; 4];
         let mut count = 0;
-        // SAFETY: every buffer and output is owned and valid for these synchronous COM calls.
+
         unsafe {
             assert_eq!(
                 stream.Write(bytes.as_ptr().cast(), 4, Some(&raw mut count)),
@@ -393,7 +374,7 @@ mod tests {
         let held = stream.clone();
         let data = [42_u8; 12];
         let mut written = 0;
-        // SAFETY: this test owns the COM stream and every supplied buffer/output for each call.
+
         unsafe {
             stream
                 .Write(data.as_ptr().cast(), 12, Some(&raw mut written))

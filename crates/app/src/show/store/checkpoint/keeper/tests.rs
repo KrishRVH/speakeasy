@@ -1,5 +1,3 @@
-//! The keeper owns real private files; producers use synthetic frames and PCM without devices.
-
 use speakeasy_show::{Ending, Image, Moment, Take};
 
 use super::*;
@@ -127,7 +125,7 @@ async fn failed_frame_and_closed_audio_lanes_cannot_unlock_a_native_movie() -> a
     } = begin(root.path())?;
     record_frame(&mut frames)?;
     let target = frames.movie(Instant::now()).await.unwrap();
-    // A duplicate stream header is a real write failure after the native lease was acquired.
+
     assert!(frames.begin(1_000, surface()));
     assert!(!frames.close().await);
     drop(audio);

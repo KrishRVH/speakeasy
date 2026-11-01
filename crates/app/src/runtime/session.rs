@@ -1,7 +1,3 @@
-//! Authority and stage for one recording: what each stage holds and how one stage becomes the
-//! next, while the owner decides when. Retired native work belongs to the owner, so abandoning a
-//! session never waits or opens its replacement.
-
 use std::{
     future::pending,
     mem,
@@ -28,17 +24,14 @@ use crate::show::{
 pub(super) struct Session {
     pub id: SessionId,
     pub permit: InsertPermit,
-    /// When the session began; a Show's timeline counts from here.
     pub started: Instant,
     pub destination: Destination,
     stage: Stage,
     recognition: Recognition,
-    /// The screen side of a Show; `None` while the session is plain dictation.
     show: Option<Show>,
     receipt: Option<async_channel::Sender<Result<SavedShow, String>>>,
 }
 
-/// Fixed at admission, so changing or closing a practice view cannot redirect its recording.
 pub(super) enum Destination {
     Focused,
     Practice(mpsc::Sender<PracticeEvent>),
@@ -50,14 +43,17 @@ struct Show {
     frames: Option<FrameLog>,
     checkpoint: Option<Checkpointing>,
     finished: bool,
-    /// An unchosen or failed screen target discards its checkpoint, even after finishing.
     forfeited: bool,
     origin: Origin,
-    /// Recovery retained only an audio prefix, so its narration must remain marked incomplete.
     incomplete: bool,
 }
 
 impl Show {
+    fn close_producers(&mut self) {
+        self.audio = None;
+        self.frames = None;
+    }
+
     const fn new(screen: Screen) -> Self {
         Self {
             screen,
@@ -72,46 +68,43 @@ impl Show {
     }
 }
 
-/// A Show's screen recorder, which opens only after the previous one has retired.
 enum Screen {
-    /// Waits to record what the scope names.
     Queued(Scope),
     Recording,
-    /// Boxed, since footage is far larger than the other states.
     Recorded(Box<Footage>),
-    /// The footage has moved into the publication.
     Spent,
 }
 
-/// Each offset places audio on the session's timeline, so a Show's narration lands where it was
-/// spoken.
+impl Screen {
+    fn take_footage(&mut self) -> Option<Box<Footage>> {
+        match mem::replace(self, Self::Spent) {
+            Self::Recorded(footage) => Some(footage),
+            other => {
+                *self = other;
+                None
+            },
+        }
+    }
+}
+
 enum Stage {
-    /// Waits until any previous capture has released the microphone.
     Queued,
     Opening,
     Reopening(JoinHandle<Delivered>),
-    /// `audio` is where the first samples fall.
     Recording {
         audio: Duration,
     },
-    /// The gesture has finished; waits for the capture's audio.
     Stopping {
         audio: Duration,
     },
-    /// Capture sealed; recognition owns its pieces, fallback audio, and request tickets.
     Recognizing,
-    /// A Show's narration, placed on its timeline, waits for its screen recording to finish; `lost`
-    /// says why it holds nothing the user said, when audio capture or transcription failed.
     AwaitingFootage {
         narration: Narration,
         lost: Option<NarrationLoss>,
     },
-    /// Dictated text is being inserted, or a Show composed, written, and copied.
     Delivering(JoinHandle<Delivered>),
 }
 
-/// What a session's last task returns: how its dictated text was inserted, or its Show
-/// published.
 pub(super) enum Delivered {
     Inserted(anyhow::Result<Inserted>),
     Published(anyhow::Result<Published>),
@@ -227,7 +220,6 @@ impl Session {
         }
     }
 
-    /// Whether the session became a Show, recording the screen as well as the microphone.
     pub(super) const fn is_show(&self) -> bool {
         self.show.is_some()
     }
@@ -236,7 +228,6 @@ impl Session {
         matches!(self.destination, Destination::Practice(_))
     }
 
-    /// Whether the session's microphone waits for the previous one to retire.
     pub(super) const fn is_queued(&self) -> bool {
         matches!(self.stage, Stage::Queued)
     }
@@ -264,7 +255,6 @@ impl Session {
         matches!(self.stage, Stage::Recognizing)
     }
 
-    /// What the Show's screen recorder, queued behind the previous one, is to record.
     pub(super) const fn queued_screen(&self) -> Option<Scope> {
         match &self.show {
             Some(Show {
@@ -275,15 +265,12 @@ impl Session {
         }
     }
 
-    /// The microphone opened; the session waits for its first samples.
     pub(super) fn opened(&mut self) {
         if self.is_queued() {
             self.stage = Stage::Opening;
         }
     }
 
-    /// Notes where the first samples fall and starts recording, or stops at once when the gesture
-    /// already finished.
     pub(super) fn audio_ready(&mut self, gesture: State, at: Instant) {
         if gesture == State::Processing
             && let Some(show) = &mut self.show
@@ -309,10 +296,6 @@ impl Session {
         }
     }
 
-    /// Ends capture with what it sealed, returning whether anything is left to deliver. Speech
-    /// goes on to transcription. A silent Show goes on to its footage, since its ink and clicks
-    /// still tell; silent dictation has nothing. Audio sealed by a capture that never reported its
-    /// first samples has no place on the timeline, so it counts as silence.
     pub(super) fn captured(&mut self, sealed: Option<Sealed>) -> bool {
         self.stage = match (&self.stage, sealed) {
             (Stage::Recording { audio } | Stage::Stopping { audio }, Some(sealed)) => {
@@ -346,7 +329,6 @@ impl Session {
         }
     }
 
-    /// A ready worker may pull a piece during capture, or final audio after capture seals.
     pub(super) fn request(&mut self) -> Option<Request> {
         if self.is_capturing() || self.is_recognizing() {
             self.recognition.request()
@@ -384,8 +366,6 @@ impl Session {
         !self.accepts(ticket) || self.recognition.failed(ticket)
     }
 
-    /// Places a transcribed Show's narration, timed from the start of its WAV, onto the Show's
-    /// timeline, then waits for the footage. Any other stage ignores it.
     pub(super) fn narrate(&mut self, narration: Narration) {
         if self.is_recognizing()
             && let Some(start) = self.recognition.start()
@@ -402,10 +382,6 @@ impl Session {
         }
     }
 
-    /// Sends a Show whose audio capture stopped after it began listening on to its footage without
-    /// narration; returns whether it did. A microphone that fails while opening has recorded
-    /// nothing worth keeping, so that Show fails with the microphone's remedy, as dictation always
-    /// does.
     pub(super) fn audio_stopped(&mut self) -> bool {
         let listened = self.is_show()
             && matches!(self.stage, Stage::Recording { .. } | Stage::Stopping { .. });
@@ -415,9 +391,6 @@ impl Session {
         listened
     }
 
-    /// Sends a Show whose sealed speech could not be transcribed, still waiting for a worker or
-    /// failed again on its one retry, on to its footage without narration, dropping the speech;
-    /// returns whether it did.
     pub(super) fn not_transcribed(&mut self) -> bool {
         let given_up =
             self.is_show() && self.is_recognizing() && self.recognition.may_lose_narration();
@@ -435,7 +408,6 @@ impl Session {
         };
     }
 
-    /// Delivers transcribed dictation through `insert`, which receives the session's permit.
     pub(super) fn insert<F>(&mut self, insert: impl FnOnce(InsertPermit) -> F)
     where
         F: Future<Output = anyhow::Result<Inserted>> + Send + 'static,
@@ -445,13 +417,6 @@ impl Session {
         self.deliver(async move { Delivered::Inserted(insertion.await) });
     }
 
-    /// Turns a session whose audio is still to come, its microphone queued or capturing, into a
-    /// Show of what `scope` names; returns whether it did.
-    ///
-    /// A Show pastes nothing, and the owner decides which cancels discard it, so its permit is
-    /// shielded from the cancels that desktop callbacks revoke on their way to the owner. A permit
-    /// already revoked keeps the session dictation, which the revoking cancel or settings change
-    /// then discards.
     pub(super) fn turn_into_show(&mut self, scope: Scope) -> bool {
         if self.is_practice() || self.is_show() || !(self.is_queued() || self.is_capturing()) {
             return false;
@@ -464,7 +429,6 @@ impl Session {
         true
     }
 
-    /// The Show's queued screen recorder opened.
     pub(super) fn screen_opened(&mut self) {
         if let Some(Show {
             screen: screen @ Screen::Queued(_),
@@ -475,15 +439,12 @@ impl Session {
         }
     }
 
-    /// Keeps a Show's footage until its narration is in.
     pub(super) fn screen_recorded(&mut self, footage: Box<Footage>) {
         if let Some(show) = &mut self.show {
             show.screen = Screen::Recorded(footage);
         }
     }
 
-    /// Publishes a Show through `publish` once its narration, or why it was lost, and its footage
-    /// are both in; its screen is then spent.
     pub(super) fn publish<F>(&mut self, publish: impl FnOnce(Publication, InsertPermit) -> F)
     where
         F: Future<Output = anyhow::Result<Published>> + Send + 'static,
@@ -493,18 +454,13 @@ impl Session {
         else {
             return;
         };
-        if !matches!(show.screen, Screen::Recorded(_)) {
-            return;
-        }
-        let Screen::Recorded(mut footage) = mem::replace(&mut show.screen, Screen::Spent) else {
+        let Some(mut footage) = show.screen.take_footage() else {
             return;
         };
         footage.recording.narration = mem::take(narration);
         footage.recording.narration_lost = *lost;
-        // A capture may seal before its Ready event reaches the owner. Unhanded producers must
-        // close before publication waits for the writer.
-        show.audio = None;
-        show.frames = None;
+
+        show.close_producers();
         let publication = publish(
             Publication {
                 footage: *footage,
@@ -540,8 +496,6 @@ impl Session {
         self.stage = Stage::Delivering(tokio::spawn(delivery));
     }
 
-    /// Resolves once the session's insertion or publication finishes, and pends otherwise.
-    /// Cancel-safe: dropped early, it leaves the task running.
     pub(super) async fn delivered(&mut self) -> Result<Delivered, JoinError> {
         match &mut self.stage {
             Stage::Delivering(task) | Stage::Reopening(task) => task.await,
@@ -549,13 +503,11 @@ impl Session {
         }
     }
 
-    /// The insertion or publication still under way, which an abandoned session leaves to finish
-    /// its own cleanup.
     pub(super) fn into_cleanup(self) -> Option<JoinHandle<Delivered>> {
         if let Stage::Delivering(task) | Stage::Reopening(task) = self.stage {
             return Some(task);
         }
-        let show = self.show?;
+        let mut show = self.show?;
         let keep = !show.forfeited
             && (show.finished
                 || !matches!(
@@ -572,8 +524,7 @@ impl Session {
             } => Some((narration, lost.is_some())),
             _ => None,
         };
-        drop(show.audio);
-        drop(show.frames);
+        show.close_producers();
         let checkpoint = show.checkpoint?;
         Some(tokio::spawn(async move {
             Delivered::Abandoned(checkpoint.release(keep, narration).await)
@@ -587,6 +538,48 @@ mod tests {
     use speakeasy_show::{Moment, Span, Word};
 
     use super::*;
+
+    #[tokio::test]
+    async fn publication_closes_producers_before_waiting_for_checkpoint() -> anyhow::Result<()> {
+        let root = tempfile::tempdir()?;
+        let directory = root.path().to_owned();
+        let kept = crate::show::Keeper::start(move || Ok(directory), std::time::SystemTime::now())?;
+        let (sender, _inputs) = async_channel::bounded(1);
+        let permit = InputSender::new(sender).begin().unwrap();
+        let mut session = Session::new(SessionId::FIRST, permit, Instant::now());
+        assert!(session.turn_into_show(Scope::Screen));
+        session.keep(kept);
+        session.screen_recorded(Box::new(Footage {
+            recording: speakeasy_show::Recording::default(),
+            journal: speakeasy_show::Journal::new(),
+        }));
+        session.stage = Stage::AwaitingFootage {
+            narration: Narration::default(),
+            lost: None,
+        };
+        session.publish(|publication, _permit| async move {
+            publication.checkpoint.unwrap().close().await?;
+            Ok(Published::Cancelled)
+        });
+        let completed = tokio::time::timeout(crate::testing::PATIENCE, session.delivered()).await;
+        let finished = completed.is_ok();
+        if let Some(show) = &mut session.show {
+            show.audio = None;
+            show.frames = None;
+        }
+        if !finished {
+            tokio::time::timeout(crate::testing::PATIENCE, session.delivered()).await??;
+        }
+        assert!(
+            finished,
+            "Publication waited on producers retained by its own session"
+        );
+        assert!(matches!(
+            completed??,
+            Delivered::Published(Ok(Published::Cancelled))
+        ));
+        Ok(())
+    }
 
     #[test]
     fn narration_lands_where_it_was_spoken_on_the_show_timeline() {

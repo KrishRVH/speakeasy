@@ -1,13 +1,7 @@
-//! Points and stretches on a Show's timeline.
-
 use std::{fmt, time::Duration};
 
 use serde::{Deserialize, Serialize};
 
-/// A point on a Show's timeline, in whole milliseconds since recording began.
-///
-/// `Moment` is to a Show what [`std::time::Instant`] is to the process clock: points are moments
-/// and the distances between them are [`Duration`]s. Arithmetic saturates at the timeline's ends.
 #[derive(
     Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
 )]
@@ -15,34 +9,28 @@ use serde::{Deserialize, Serialize};
 pub struct Moment(u64);
 
 impl Moment {
-    /// The moment recording began.
     pub const START: Self = Self(0);
 
-    /// The moment `millis` milliseconds after recording began.
     #[must_use]
     pub const fn from_millis(millis: u64) -> Self {
         Self(millis)
     }
 
-    /// Milliseconds since recording began.
     #[must_use]
     pub const fn as_millis(self) -> u64 {
         self.0
     }
 
-    /// Time elapsed from `earlier` to `self`, or zero when `earlier` is the later moment.
     #[must_use]
     pub const fn since(self, earlier: Self) -> Duration {
         Duration::from_millis(self.0.saturating_sub(earlier.0))
     }
 
-    /// Time between two moments in either order.
     #[must_use]
     pub const fn distance(self, other: Self) -> Duration {
         Duration::from_millis(self.0.abs_diff(other.0))
     }
 
-    /// The moment `duration` later.
     #[must_use]
     pub fn saturating_add(self, duration: Duration) -> Self {
         Self(self.0.saturating_add(millis(duration)))
@@ -59,14 +47,12 @@ impl From<Duration> for Moment {
     }
 }
 
-/// Formats as `M:SS`.
 impl fmt::Display for Moment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}:{:02}", self.0 / 60_000, self.0 / 1_000 % 60)
     }
 }
 
-/// A stretch of the timeline whose start never follows its end.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(from = "[Moment; 2]", into = "[Moment; 2]")]
 pub struct Span {
@@ -75,7 +61,6 @@ pub struct Span {
 }
 
 impl Span {
-    /// The stretch between two moments, in either order.
     #[must_use]
     pub fn new(one: Moment, other: Moment) -> Self {
         Self {
@@ -84,7 +69,6 @@ impl Span {
         }
     }
 
-    /// A stretch holding only `moment`.
     #[must_use]
     pub const fn at(moment: Moment) -> Self {
         Self {
@@ -93,25 +77,21 @@ impl Span {
         }
     }
 
-    /// Where the stretch begins.
     #[must_use]
     pub const fn start(self) -> Moment {
         self.start
     }
 
-    /// Where the stretch ends.
     #[must_use]
     pub const fn end(self) -> Moment {
         self.end
     }
 
-    /// Whether `moment` lies within the stretch, ends included.
     #[must_use]
     pub fn contains(self, moment: Moment) -> bool {
         self.start <= moment && moment <= self.end
     }
 
-    /// The same stretch, `by` later.
     #[must_use]
     pub fn delayed(self, by: Duration) -> Self {
         Self {
@@ -120,7 +100,6 @@ impl Span {
         }
     }
 
-    /// The smallest stretch covering both.
     #[must_use]
     pub fn union(self, other: Self) -> Self {
         Self {

@@ -1,5 +1,3 @@
-//! Pause-aligned, abutting pieces. Cutting never changes the full PCM or its final speech gate.
-
 use std::{ops::Range, time::Duration};
 
 use super::{
@@ -33,7 +31,6 @@ impl Cuts {
         self.pieces
     }
 
-    /// Only an accepted event advances the cut. Backpressure merges this range into the next.
     pub(super) fn sent(&mut self, end: usize) {
         self.end = Some(end);
         self.pieces = self.pieces.saturating_add(1);

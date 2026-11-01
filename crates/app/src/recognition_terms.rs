@@ -1,6 +1,3 @@
-//! Private recognition hints, distinct from deterministic phrase corrections. Decoder limits keep
-//! a large vocabulary from overwhelming ordinary speech; diagnostics never include its contents.
-
 use std::{collections::HashSet, fmt};
 
 use anyhow::ensure;

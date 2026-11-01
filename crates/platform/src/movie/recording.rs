@@ -1,5 +1,3 @@
-//! The checkpoint lease outlives native teardown, including failed finalization.
-
 #[cfg(test)]
 mod tests;
 
@@ -22,7 +20,7 @@ type Encoder = Timeline<Codec>;
 use crate::{Frame, MovieTarget};
 
 pub(crate) const INTERVAL: Duration = Duration::from_nanos(33_333_334);
-/// Bounds the native encoder's disk use independently of retained still frames.
+
 const FILE_LIMIT: u64 = 384 << 20;
 
 pub(crate) enum Movie {
@@ -37,7 +35,6 @@ pub(crate) struct Recording {
     received_at: Option<Instant>,
     ending: Option<Instant>,
     failed: bool,
-    // Last to drop: a receiver observing closure may immediately unlock or delete the checkpoint.
     target: MovieTarget,
 }
 
@@ -70,8 +67,6 @@ impl Movie {
         !matches!(self, Self::Stopped)
     }
 
-    /// Advances held frames and observes cancellation even on a quiet desktop. False reports
-    /// a codec/storage failure once, while the caller continues retaining still frames.
     pub(crate) fn poll(
         &mut self,
         now: Instant,
@@ -108,7 +103,6 @@ impl Movie {
         *self = Self::Stopped;
     }
 
-    /// False reports a codec/storage failure once. The caller can keep recording keyframes.
     pub(crate) fn frame(
         &mut self,
         frame: &Frame,

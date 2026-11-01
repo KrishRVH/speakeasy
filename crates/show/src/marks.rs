@@ -1,5 +1,3 @@
-//! Strokes drawn together and pins dropped, numbered in one sequence, and what they look like.
-
 mod stroke;
 
 use std::{ops::Range, time::Duration};
@@ -11,76 +9,41 @@ use crate::{
     recording::{Pin, Size, Stroke},
 };
 
-/// A pause longer than this between strokes starts a new mark.
 pub(crate) const MARK_GAP: Duration = Duration::from_millis(1_200);
-/// The most strokes one mark holds.
+
 const MARK_STROKES: usize = 6;
-/// An arrowhead's strokes cluster within this share of the shaft's length from its tip.
+
 const ARROWHEAD_REACH: f32 = 0.35;
-/// How far a number sits from what it labels, in its disc's radii: diagonally out from a pinned
-/// point or a corner of the ink, and straight out past an underline's end or a line's tail.
+
 const PIN_REACH: f32 = 0.9;
 const CORNER_REACH: f32 = 0.5;
 const END_REACH: f32 = 1.6;
 
-/// What a mark looks like, which tells a reader what the user meant by it.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "shape", rename_all = "camelCase")]
 pub enum Shape {
-    /// A dab too small to be a line.
     Tap,
-    /// A closed loop around something.
     Circle,
-    /// A straight horizontal stroke under something.
     Underline,
-    /// A straight stroke.
-    Line {
-        /// Where the pen went down.
-        from: Point,
-        /// Where it lifted.
-        to: Point,
-    },
-    /// A straight stroke with a short head at one end, drawn in one go or with a stroke or two
-    /// more.
-    Arrow {
-        /// The tail.
-        from: Point,
-        /// The head.
-        to: Point,
-    },
-    /// Any other scribble.
+    Line { from: Point, to: Point },
+    Arrow { from: Point, to: Point },
     Scribble,
-    /// A pin dropped without ink.
-    Pin {
-        /// Where it was dropped.
-        point: Point,
-    },
+    Pin { point: Point },
 }
 
-/// Strokes drawn in quick succession and read as one gesture, or a pin.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Mark {
-    /// The mark's place in the Show's sequence of marks, from one, as its label shows it.
     pub number: usize,
-    /// What the strokes look like together.
     #[serde(flatten)]
     pub shape: Shape,
-    /// The recording's strokes that make up the mark; a pin's range is empty, placed after the
-    /// strokes begun before it.
     #[serde(with = "crate::serde_range")]
     pub strokes: Range<usize>,
-    /// From the first stroke's start to the last stroke's end, or the moment of a pin.
     pub span: Span,
-    /// The smallest normalized rectangle holding what the ink marks, or a pin's point. A rounded
-    /// loop drawn once, after a lead-in or before a tail, marks only that loop.
     pub bounds: Rect,
 }
 
 impl Mark {
-    /// Where the center of the mark's number goes on a surface `width × height` pixels, in its
-    /// pixels, for a disc `radius` pixels in radius: beside the mark rather than over what it
-    /// points at, and on the surface wherever the disc fits.
     #[must_use]
     pub fn label_center(&self, width: f32, height: f32, radius: f32) -> Point {
         let pixels = |point: Point| point.scaled(width, height);
@@ -116,11 +79,6 @@ impl Mark {
     }
 }
 
-/// The marks `strokes` and `pins` make, in the order they began, numbered from one.
-///
-/// Strokes drawn within [`MARK_GAP`] of each other with no pin between form one mark, up to
-/// [`MARK_STROKES`] apiece, whose shape is read in the pixels of `surface`; each pin is a mark of its
-/// own. Strokes and pins arrive in time order, so a later one never renumbers an earlier mark.
 pub(crate) fn group(strokes: &[Stroke], pins: &[Pin], surface: Size) -> Vec<Mark> {
     let joined = |one: &Stroke, next: &Stroke| {
         let (end, start) = (one.span().end(), next.span().start());
@@ -151,7 +109,7 @@ pub(crate) fn group(strokes: &[Stroke], pins: &[Pin], surface: Size) -> Vec<Mark
         }
     });
     let mut marks: Vec<Mark> = ink.chain(pinned).collect();
-    // Stable, so ink begun at a pin's moment keeps its place before the pin.
+
     marks.sort_by_key(|mark| mark.span.start());
     for (position, mark) in marks.iter_mut().enumerate() {
         mark.number = position.saturating_add(1);
@@ -159,19 +117,14 @@ pub(crate) fn group(strokes: &[Stroke], pins: &[Pin], surface: Size) -> Vec<Mark
     marks
 }
 
-/// One stroke of a mark, with the shape it makes in pixels.
 struct Measured<'a> {
     stroke: &'a Stroke,
     shape: Shape,
-    /// Normalized, like the stroke's points.
     bounds: Rect,
-    /// The part of `bounds` the stroke marks.
     region: Rect,
-    /// Width plus height in pixels; the largest stroke is the mark's main one.
     size: f32,
 }
 
-/// What `strokes` look like together in the pixels of `surface`, and the region they mark.
 fn read(strokes: &[Stroke], surface: Size) -> Option<(Shape, Rect)> {
     let mut measured: Vec<Measured<'_>> = strokes
         .iter()
@@ -199,8 +152,6 @@ fn read(strokes: &[Stroke], surface: Size) -> Option<(Shape, Rect)> {
     Some((shape, region))
 }
 
-/// A straight main stroke with one or two short strokes clustered at one end is an arrow
-/// pointing at that end, whichever direction it was drawn.
 fn arrow(main: &Measured<'_>, rest: &[Measured<'_>], surface: Size) -> Option<Shape> {
     if !matches!(main.shape, Shape::Line { .. } | Shape::Underline)
         || !(1..=2).contains(&rest.len())

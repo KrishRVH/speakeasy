@@ -1,5 +1,3 @@
-//! Explicit sRGB transfer and BT.709 primaries/matrix describe the encoded pictures.
-
 use anyhow::Context as _;
 use objc2::{rc::Retained, runtime::AnyObject};
 use objc2_av_foundation::{
@@ -22,8 +20,7 @@ pub(super) fn video(
     let bitrate = NSNumber::new_u32(8_000_000);
     let rate = NSNumber::new_u32(30);
     let reorder = NSNumber::new_bool(false);
-    // SAFETY: immutable documented video-setting keys and correctly typed values are retained by
-    // each dictionary; no borrowed Rust storage is passed to the encoder.
+
     unsafe {
         let color = NSDictionary::from_slices(
             &[

@@ -1,5 +1,3 @@
-//! Late promotion and replay use synthetic PCM and real private storage, never a device.
-
 use std::time::SystemTime;
 
 use super::*;
@@ -20,8 +18,6 @@ async fn promotion_keeps_buffered_audio_and_cues_and_replays_the_live_speech_gat
         let mut speech = Audibility::new(48_000);
         let mut pcm = Vec::new();
         if spoken {
-            // This speech predates the cue. Replaying the cue over all prior audio would wrongly
-            // erase the high-frequency voice in this synthetic test.
             pcm.extend(
                 (0..24_000)
                     .flat_map(|i| if i % 12 < 6 { 4_000_i16 } else { -4_000_i16 }.to_le_bytes()),

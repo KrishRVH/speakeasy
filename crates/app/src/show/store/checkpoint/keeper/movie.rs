@@ -1,5 +1,3 @@
-//! A native writer's independent lease survives failed frame/audio lanes and keeper unwinding.
-
 use std::{path::Path, time::Instant};
 
 use anyhow::Context as _;
@@ -62,8 +60,7 @@ impl Writing {
                         )
                         .is_ok()
                 });
-                // A rejected receipt reports persistence failure on the capture thread. Cancelling
-                // first would race that refusal and turn it into an ordinary, silent stop.
+
                 if accepted.try_send(saved).is_err() {
                     self.stop();
                 }
@@ -88,8 +85,6 @@ impl Writing {
 
 impl Drop for Writing {
     fn drop(&mut self) {
-        // This owner lives only on the checkpoint thread. Even unwinding must acknowledge the
-        // native encoder's file closure before the outer Checkpoint releases its process lock.
         self.control.close_blocking();
     }
 }

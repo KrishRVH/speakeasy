@@ -1,5 +1,3 @@
-//! Clipboard paste and direct text input on Windows.
-
 use std::{
     num::NonZeroU32,
     thread,
@@ -15,8 +13,6 @@ use windows_sys::Win32::UI::{
 use super::{modifiers, press, release, send_input, type_unit, window_process};
 use crate::{ClipboardContent, Inserted, clipboard, insertion::NativeInsert};
 
-/// Registered clipboard formats whose zero `DWORD` keeps Speakeasy's clipboard text out of Windows
-/// clipboard history and cloud sync. Apps still paste it, and it stays on the clipboard.
 const PRIVATE_FORMATS: [&str; 2] = ["CanIncludeInClipboardHistory", "CanUploadToCloudClipboard"];
 
 pub(crate) fn copy_text(text: &str) -> anyhow::Result<()> {
@@ -75,29 +71,22 @@ fn write_clipboard(
     result
 }
 
-/// The native steps of one Windows insertion, as [`NativeInsert`] defines them.
 pub(crate) struct Insert;
 
-/// Keyboard input built in full, submitted only after the recording commits.
 pub(crate) enum Keys {
-    /// Ctrl+V.
     Paste([INPUT; 4]),
-    /// A press and release for each UTF-16 unit of the text.
     Text(Vec<INPUT>),
 }
 
 impl NativeInsert for Insert {
     type Keys = Keys;
     type Lease = clipboard_win::Clipboard;
-    /// The clipboard sequence number, which every change advances.
     type Mark = Option<NonZeroU32>;
 
     fn acquire(&mut self) -> anyhow::Result<clipboard_win::Clipboard> {
         open_clipboard()
     }
 
-    /// Marks the clipboard private before the text arrives, so no failure leaves the text
-    /// unmarked.
     fn write(&mut self, lease: clipboard_win::Clipboard, text: &str) -> anyhow::Result<()> {
         write_clipboard(lease, text, None)
     }
@@ -108,7 +97,7 @@ impl NativeInsert for Insert {
 
     fn holds(&mut self, text: &str, mark: &Option<NonZeroU32>) -> anyhow::Result<bool> {
         let _clipboard = open_clipboard()?;
-        // An image or files another app copied hold no text to read; that is a change, not a fault.
+
         if *mark != clipboard_win::raw::seq_num()
             || !clipboard_win::raw::is_format_avail(clipboard_win::formats::CF_UNICODETEXT)
         {
@@ -138,7 +127,6 @@ impl NativeInsert for Insert {
     }
 
     fn external_focus(&mut self) -> bool {
-        // SAFETY: takes no arguments; a null answer names no window, which has no process.
         let focused = unsafe { GetForegroundWindow() };
         window_process(focused).is_some_and(|process| process != std::process::id())
     }
@@ -182,8 +170,6 @@ fn windows_line_endings(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\n', "\r\n")
 }
 
-/// Opens the clipboard, retrying for a short wall-clock budget because clipboard listeners can hold
-/// it right after a change. The retries block, so callers stay off the UI thread.
 fn open_clipboard() -> anyhow::Result<clipboard_win::Clipboard> {
     let started = Instant::now();
     let until = started
@@ -213,8 +199,6 @@ mod tests {
     use super::*;
     use crate::windows::{ok_or_last_error, to_wide};
 
-    /// Set only in the child that [`copied_text_stays_private_and_a_copied_image_is_a_change`]
-    /// starts.
     const PRIVATE_STATION: &str = "SPEAKEASY_PRIVATE_WINDOW_STATION";
     const TEXT: &str = "fixture\ntext";
 
@@ -237,8 +221,7 @@ mod tests {
             child.status.success() && report.contains("test result: ok. 1 passed"),
             "The private window station check failed:\n{report}"
         );
-        // The helper's last write is the image, so the desktop's clipboard would hold it had the
-        // helper written there.
+
         let _clipboard = open_clipboard()?;
         ensure!(
             !clipboard_win::raw::is_format_avail(image_format()?.get()),
@@ -271,7 +254,7 @@ mod tests {
             !insert.holds(TEXT, &mark)?,
             "A copy with no text must read as a change"
         );
-        // The copy may also land between the write and the mark.
+
         let mark = insert.mark();
         assert!(
             !insert.holds(TEXT, &mark)?,
@@ -313,8 +296,7 @@ mod tests {
                 "The native clipboard lost a visual representation"
             );
         }
-        // Ask Windows to synthesize the legacy bitmap format, as a native image consumer does.
-        // This checks that our DIB header is usable, beyond reading our own bytes back unchanged.
+
         let mut bitmap = Vec::new();
         clipboard_win::raw::get_bitmap(&mut bitmap)?;
         let word = |at: usize| {
@@ -337,8 +319,6 @@ mod tests {
         Ok(())
     }
 
-    /// Asserts that the clipboard holds [`TEXT`] with Windows line endings, kept out of history and
-    /// cloud sync; `source` names the write that put it there.
     fn assert_private_text(source: &str) -> anyhow::Result<()> {
         let _clipboard = open_clipboard()?;
         let mut text = Vec::new();
@@ -358,23 +338,17 @@ mod tests {
         Ok(())
     }
 
-    /// Moves this helper process onto a window station and desktop apart from the user's. Its
-    /// clipboard belongs to that station, which interactive apps never use; the process keeps both
-    /// until it exits.
     fn enter_private_station() -> anyhow::Result<()> {
-        // SAFETY: a null name, which only administrators may replace, asks for the station named
-        // after this logon session; null attributes take the default security.
         let station = unsafe { CreateWindowStationW(null(), 0, GENERIC_ALL, null()) };
         ensure!(
             !station.is_null(),
             "Cannot create a window station: {}",
             std::io::Error::last_os_error()
         );
-        // SAFETY: the station handle is live; only this helper process changes stations.
+
         ok_or_last_error(unsafe { SetProcessWindowStation(station) })?;
         let name = to_wide("speakeasy-test");
-        // SAFETY: the NUL-terminated name outlives the call; null device, mode, and attributes take
-        // the defaults. The desktop opens in the station just entered.
+
         let desktop =
             unsafe { CreateDesktopW(name.as_ptr(), null(), null(), 0, GENERIC_ALL, null()) };
         ensure!(
@@ -382,13 +356,11 @@ mod tests {
             "Cannot create a desktop: {}",
             std::io::Error::last_os_error()
         );
-        // SAFETY: the desktop handle is live, and this test thread has made no window calls yet,
-        // which a desktop change requires.
+
         ok_or_last_error(unsafe { SetThreadDesktop(desktop) })?;
         Ok(())
     }
 
-    /// Copies data in a format of its own, as an app copying an image or files would.
     fn copy_without_text() -> anyhow::Result<()> {
         let format = image_format()?;
         let _clipboard = open_clipboard()?;

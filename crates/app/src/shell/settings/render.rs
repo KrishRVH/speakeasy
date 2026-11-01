@@ -1,6 +1,3 @@
-//! The Settings element tree. Settings renders its draft configuration, so edits show here before
-//! they are saved.
-
 use std::path::Path;
 
 use gpui::{
@@ -22,13 +19,12 @@ use crate::{
     theme::{Palette, alpha, mix},
 };
 
-/// The space between stacked rows and between the controls in a row.
 const ROW_GAP: Pixels = px(8.0);
-/// A control's vertical padding. A plain label pads the same, so a row keeps one height.
+
 const CONTROL_PAD_Y: Pixels = px(8.0);
-/// The size of control, detail and status text.
+
 const TEXT: Pixels = px(12.0);
-/// The margin between the window's sides and its content.
+
 const EDGE: Pixels = px(32.0);
 
 impl Render for Settings {
@@ -68,8 +64,7 @@ impl Render for Settings {
             })
             .child(self.page(&ui))
             .child(footer(palette, cx));
-        // The commands and the status stay in view however far the body scrolls, since the status
-        // line is where every failure and unsaved change is told once the pill has faded.
+
         let bar = div()
             .flex_none()
             .px(EDGE)
@@ -95,7 +90,6 @@ impl Render for Settings {
     }
 }
 
-/// What every control draws with: the draft's palette, and the view its actions reach.
 struct Ui<'a> {
     palette: &'static Palette,
     cx: &'a Context<'a, Settings>,
@@ -316,7 +310,6 @@ impl Settings {
         rows
     }
 
-    /// Setup chooses the engine, so manual engine controls wait until it ends.
     const fn is_setting_up(&self) -> bool {
         self.setup.is_some()
     }
@@ -438,7 +431,7 @@ impl Settings {
         let shortcut = &self.presentation.shortcut;
         let cancel_shortcut = &self.presentation.cancel_shortcut;
         let linux = &self.config.linux;
-        // Only Linux shows this section; elsewhere it still compiles.
+
         #[cfg(target_os = "linux")]
         let command = &self.desktop_command;
         #[cfg(not(target_os = "linux"))]
@@ -517,7 +510,6 @@ impl Settings {
             )
     }
 
-    /// The sign-in launch, with the remedy beside it while Windows' Startup apps page holds it off.
     fn start_at_login(&self, ui: &Ui<'_>) -> impl IntoElement {
         row()
             .items_center()
@@ -533,7 +525,6 @@ impl Settings {
             })
     }
 
-    /// A button that toggles `setting`, labeled with its draft state.
     fn switch(&self, ui: &Ui<'_>, label: &str, setting: Setting) -> impl IntoElement {
         let state = if setting.is_on(&self.config) {
             "On"
@@ -549,9 +540,6 @@ impl Settings {
             })
     }
 
-    /// How dictated text reaches the editor. Windows and macOS offer paste or typing as a switch;
-    /// Linux adds its terminal paste keys and copying without keyboard control, and its labels keep
-    /// the names that platform remedies tell users to choose.
     fn delivery_control(&self, ui: &Ui<'_>) -> impl IntoElement {
         let label = match self.config.text_delivery() {
             #[cfg(not(target_os = "linux"))]
@@ -592,7 +580,7 @@ impl Settings {
             .flex_col()
             .gap(ROW_GAP)
             .child(
-                // The activating key release must not also select through the group.
+
                 ui.button(label, Action::Language)
                     .track_focus(&self.language.button)
                     .on_click(|_, _, cx| cx.stop_propagation()),
@@ -662,8 +650,6 @@ impl Settings {
             .child(ui.button("Quit", Action::Quit))
     }
 
-    /// The session's status, then any local notice, each in the attention color only when it is a
-    /// problem to act on, then whether the draft has edits to save.
     fn status_line(&self, palette: &'static Palette, unsaved: bool) -> impl IntoElement {
         let tone = |problem| rgb(if problem { palette.warn } else { palette.muted });
         div()
@@ -746,7 +732,6 @@ impl Ui<'_> {
             .child(text)
     }
 
-    /// A titled stack of rows.
     fn section(&self, title: &'static str) -> Div {
         div()
             .flex()
@@ -756,13 +741,10 @@ impl Ui<'_> {
     }
 }
 
-/// Controls side by side.
 fn row() -> Div {
     div().flex().gap(ROW_GAP)
 }
 
-/// The primary command and its label, if any. Failure remedies tell users to "Resume dictation", so
-/// that label keeps their wording.
 fn primary_command(
     demo: bool,
     service: ServiceState,
@@ -778,7 +760,7 @@ fn primary_command(
             Some(("Save and resume", Action::Save))
         },
         ServiceState::Paused => Some(("Resume dictation", Action::Resume)),
-        // As in the tray, nothing resumes until pausing ends.
+
         ServiceState::Pausing | ServiceState::Quitting => None,
     }
 }
@@ -878,7 +860,6 @@ fn jewel(color: u32, size: f32) -> impl IntoElement {
         .flex_none()
 }
 
-/// The capitals laid out as separate glyphs, since GPUI text has no letter spacing.
 fn wordmark(palette: &'static Palette) -> impl IntoElement {
     div()
         .flex()

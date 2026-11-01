@@ -1,5 +1,3 @@
-//! Interrupted Shows use private synthetic logs; locking, torn tails, expiry, and discard are real.
-
 use speakeasy_show::{Image, Moment, Size, TakeEvent};
 
 use super::*;
@@ -149,7 +147,7 @@ async fn failed_log_deletion_preserves_the_lock_and_discard_marker_for_retry() -
     let path = checkpoint.directory.clone();
     let held = root.path().join("held-log");
     fs::rename(path.join(LOG), &held)?;
-    // A non-file at the log path makes deletion fail on every host, without changing permissions.
+
     fs::create_dir(path.join(LOG))?;
     assert!(checkpoint.discard().is_err());
     assert!(path.join(LOCK).is_file());
@@ -192,7 +190,7 @@ async fn ownership_release_unlocks_even_if_an_inherited_descriptor_remains_open(
 -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let checkpoint = capture(root.path(), SystemTime::now()).await?;
-    // A duplicated descriptor shares the OS open-file description, as a concurrent fork does.
+
     let inherited = checkpoint.lock.0.try_clone()?;
     let interrupted = checkpoint.interrupted()?;
     let reacquired = interrupted.lock()?;

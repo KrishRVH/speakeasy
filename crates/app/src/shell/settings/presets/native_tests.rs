@@ -1,5 +1,3 @@
-//! Owned Settings preset actions; no microphone, global input, or clipboard access.
-
 use anyhow::ensure;
 use gpui::{AsyncApp, Task, Timer, WindowHandle};
 

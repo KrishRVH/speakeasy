@@ -1,9 +1,3 @@
-//! All application-owned Quit routes drain native work and requested saves while the foreground
-//! executor continues rendering. Cleanup has no timeout: audio driver teardown, a microphone scan,
-//! process reaping, insertion, setup, update checks, and saves must acknowledge. A stuck native
-//! owner keeps Quitting visible and the UI responsive; forced native termination retains
-//! synchronous Drop as the emergency fallback.
-
 use std::time::Duration;
 
 use gpui::{App, AsyncApp, Timer, WindowHandle};
@@ -57,7 +51,7 @@ fn begin_quit(
         if let Some(shows) = shows {
             shows.update_if_open(cx, |_, window, _| window.remove_window());
         }
-        // The action that requested Quit may still hold the view; touch it only from here.
+
         if let Some(settings) = settings {
             settings.update_if_open(cx, |view, _, _| view.cancel_background_work());
         }
@@ -78,7 +72,6 @@ fn begin_quit(
     cx.global_mut::<Services>().quit = Some(task);
 }
 
-/// Settings drains accepted saves and acknowledges setup and update-check cancellation.
 fn drained(settings: Option<WindowHandle<Settings>>, cx: &mut AsyncApp) -> bool {
     settings.is_none_or(|settings| {
         settings

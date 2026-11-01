@@ -1,7 +1,3 @@
-//! What Settings and the tray show for a runtime snapshot and the service state. `PAUSING`,
-//! `PAUSED`, and `QUITTING` are also the snapshot messages Services announces, so the status line
-//! and the message say the same words.
-
 use std::borrow::Cow;
 
 use crate::{
@@ -13,18 +9,12 @@ pub(crate) const PAUSING: &str = "Pausing dictation…";
 pub(crate) const PAUSED: &str = "Dictation paused";
 pub(crate) const QUITTING: &str = "Quitting Speakeasy…";
 
-/// Whether dictation runs, as the tray and Settings present it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ServiceState {
-    /// Dictation resources are live.
     Running,
-    /// Dictation resources are being released.
     Pausing,
-    /// Quit has begun; resources are released and nothing restarts them.
     Quitting,
-    /// Dictation is off.
     Paused,
-    /// Dictation is off because no speech engine is set up yet.
     NotSetUp,
 }
 
@@ -37,7 +27,6 @@ pub(crate) enum Indicator {
     Attention,
 }
 
-/// Readiness describes observed resources, not permission grants or successful external delivery.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Readiness {
     pub model: &'static str,
@@ -71,7 +60,6 @@ impl Readiness {
     }
 }
 
-/// What Settings and the tray show for a snapshot: one indicator and the text that explains it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Status {
     pub indicator: Indicator,

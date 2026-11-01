@@ -1,6 +1,3 @@
-//! Bounded PCM checkpoints. Complete checksummed records survive a torn tail; speech and cue
-//! offsets stay private and are interpreted only by the audio module during recovery.
-
 use std::{
     fs::File,
     io::{self, BufReader},

@@ -1,5 +1,3 @@
-//! The timestamp in a Show's name, and the whole-second cutoff used by retention.
-
 use std::time::{Duration, SystemTime};
 
 use super::{KEPT_FOR, stamp};
@@ -47,7 +45,6 @@ pub(crate) fn recorded_at(name: &str) -> Option<SystemTime> {
 }
 
 pub(crate) fn expires_at(name: &str) -> Option<SystemTime> {
-    // The sweep compares whole-second names strictly before its cutoff, not at the cutoff.
     recorded_at(name)?
         .checked_add(KEPT_FOR)?
         .checked_add(Duration::from_secs(1))

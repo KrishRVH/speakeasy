@@ -1,5 +1,3 @@
-//! A blocked native read remains owned after view cancellation, before replacement and during quit.
-
 use std::time::Duration;
 
 use super::*;

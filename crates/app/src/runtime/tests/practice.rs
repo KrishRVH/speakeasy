@@ -1,5 +1,3 @@
-//! Practice uses the real owner and fake devices, defending its private destination and lifetime.
-
 use super::*;
 
 async fn arm<Host: Sync>(
@@ -60,7 +58,7 @@ async fn cancellation_wins_over_a_ready_practice_transcript() -> anyhow::Result<
     h.start().await?;
     let reply = h.finish().await?;
     answer(reply, "Must not arrive")?;
-    // Native cancellation revokes authority before its event reaches the owner.
+
     h.runtime.input.cancel();
     h.phase(Phase::Cancelled).await?;
     assert!(receipt.try_recv().is_err());

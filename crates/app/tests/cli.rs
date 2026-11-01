@@ -1,6 +1,3 @@
-//! Process-boundary checks for the console entry. Only synthetic Shows and temporary paths are
-//! used; no app, model, microphone, global input, or clipboard is opened.
-
 #![forbid(unsafe_code)]
 
 use std::{fs, path::Path, process::Command};
@@ -39,7 +36,6 @@ fn console_entry_waits_and_preserves_output_arguments_and_working_directory() {
     assert!(inspected.status.success());
     assert!(serde_json::from_slice::<serde_json::Value>(&inspected.stdout).is_ok());
 
-    // Direct process invocation avoids PowerShell 5.1's own embedded-quote argument rewriting.
     let odd = "missing ü & %OS% \"quoted\" trailing\\";
     let refused = Command::new(CLI)
         .current_dir(root.path())

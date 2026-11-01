@@ -1,6 +1,3 @@
-//! One session's ordered recognition requests. Pieces are disposable optimization; full audio
-//! remains authoritative until one complete transcript is accepted.
-
 use std::{mem, ops::Range, time::Duration};
 
 use speakeasy_show::Narration;
@@ -120,8 +117,6 @@ impl Recognition {
         self.pieces.push(Piece::Queued(audio));
     }
 
-    /// Discards optimization work after promotion, backpressure, missing pieces, or failure.
-    /// An already sent job drains on its worker; its ticket is no longer accepted here.
     pub(super) fn whole(&mut self) {
         self.segmented = false;
         self.pieces.clear();
@@ -167,7 +162,6 @@ impl Recognition {
         });
     }
 
-    /// Called only when the worker is ready, so moving queued audio into a request cannot lose it.
     pub(super) fn request(&mut self) -> Option<Request> {
         if let Some(stream) = &mut self.stream {
             if !matches!(stream, Stream::Queued(_)) {
@@ -290,8 +284,6 @@ impl Recognition {
         }
     }
 
-    /// A stop exactly after a cut has no tail request. Its complete text still waits for every
-    /// sent piece and for capture to seal, so it can never insert while recording.
     pub(super) fn complete(&mut self) -> Option<String> {
         let final_part = self
             .final_part
@@ -324,8 +316,6 @@ impl Recognition {
         text
     }
 
-    /// Matching piece failures defer whole-recording fallback until capture ends. A final request
-    /// gets one retry, on the original full audio. Returns false only after that retry is spent.
     pub(super) fn failed(&mut self, ticket: Ticket) -> bool {
         if !self.accepts(ticket) {
             return true;

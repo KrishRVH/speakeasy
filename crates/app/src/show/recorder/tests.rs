@@ -1,6 +1,3 @@
-//! Drives the area choice, a take on paused time with synthetic frames, pointer samples, and
-//! pins, and the thread's ending, without a screen, a pointer, or an overlay window.
-
 use anyhow::Context as _;
 use speakeasy_show::{Action, Pin};
 
@@ -8,16 +5,13 @@ use super::*;
 
 mod geometry;
 
-/// How long the fake capture and pointer monitor take to stop.
 const TEARDOWN: Duration = Duration::from_millis(400);
 
-/// What a test feeds a take, as the owner, the screen capture, and the pointer monitor would.
 struct Feed {
     finish: Sender<()>,
     pins: Sender<Taps>,
     frames: Sender<ScreenEvent>,
     samples: Sender<PointerSample>,
-    /// When the take's timeline began, on tokio's paused clock.
     started: Instant,
 }
 
@@ -28,12 +22,10 @@ impl Feed {
             .unwrap()
     }
 
-    /// A small frame of the whole display, on screen `millis` into the take.
     async fn frame(&self, millis: u64) {
         self.frame_showing(millis, Part::WHOLE).await;
     }
 
-    /// A small frame of the `part` of the display, on screen `millis` into the take.
     async fn frame_showing(&self, millis: u64, part: Part) {
         let frame = Frame {
             at: self.at(millis),
@@ -45,8 +37,6 @@ impl Feed {
         self.frames.send(ScreenEvent::Frame(frame)).await.unwrap();
     }
 
-    /// The pointer at `x`, `y` on the display `millis` into the take, drawing when `drawing` and
-    /// with the button down when `pressed`.
     async fn pointer(&self, millis: u64, x: f32, y: f32, drawing: bool, pressed: bool) {
         let sample = PointerSample::Observed {
             at: self.at(millis),
@@ -58,7 +48,6 @@ impl Feed {
         self.samples.send(sample).await.unwrap();
     }
 
-    /// Two taps of Shift from `pressed` to `released` milliseconds into the take.
     async fn taps(&self, pressed: u64, released: u64) {
         let taps = Taps {
             pressed: self.at(pressed),
@@ -72,8 +61,6 @@ impl Feed {
     }
 }
 
-/// Records all of a 1000 × 500 display as `drive` feeds it from sources that take [`TEARDOWN`] to
-/// stop. Returns what the take returned and how long it ran on tokio's paused clock.
 async fn record(drive: impl AsyncFnOnce(&Feed)) -> (anyhow::Result<Option<Footage>>, Duration) {
     record_with(|_| {}, drive).await
 }
@@ -108,8 +95,6 @@ async fn record_with(
     tokio::join!(run, drive(&feed)).0
 }
 
-/// The lanes a recording reads, publishing to `canvas`, and the owner's ends of them: finishing,
-/// then pins.
 fn lanes(canvas: &watch::Sender<Canvas>) -> (Sender<()>, Sender<Taps>, Lanes<'_>) {
     let (finish, finishing) = async_channel::bounded(1);
     let (pins, pinned) = async_channel::bounded(PIN_LANE);
@@ -121,7 +106,6 @@ fn lanes(canvas: &watch::Sender<Canvas>) -> (Sender<()>, Sender<Taps>, Lanes<'_>
     (finish, pins, lanes)
 }
 
-/// What a recording that failed says.
 fn failure<T>(recorded: anyhow::Result<T>) -> Option<String> {
     recorded.err().map(|error| error.to_string())
 }

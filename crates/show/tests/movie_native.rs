@@ -1,5 +1,3 @@
-//! Opt-in container recovery against the platform's synthetic native codec fixtures.
-
 #![forbid(unsafe_code)]
 
 use std::{

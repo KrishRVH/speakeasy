@@ -1,6 +1,3 @@
-//! Opt-in public PCM replay through the production callbacks, ring, drain, cutter, and sealing.
-//! The producer owns only fixture samples and a thread; it never opens an input device.
-
 use std::num::NonZeroUsize;
 
 use serde::Serialize;
@@ -50,8 +47,6 @@ impl Drop for Profile {
     }
 }
 
-/// Replays a canonical mono PCM16 WAV at `speed` times real time. Its completion lane timestamps
-/// the last callback, before finishing capture; the drain statistics arrive independently.
 pub(crate) fn replay(
     id: SessionId,
     wav: &[u8],

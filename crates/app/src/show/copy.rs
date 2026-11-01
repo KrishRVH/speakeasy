@@ -1,6 +1,3 @@
-//! Explicit Show copies own their preparation and native write until cleanup acknowledges. A
-//! dropped receipt, lifecycle change, or newer recording cancels before clipboard replacement.
-
 use std::{convert::Infallible, path::PathBuf, pin::Pin, sync::Arc};
 
 use anyhow::Context as _;
@@ -73,8 +70,6 @@ impl Copies {
             .is_some_and(|pending| !pending.thread.is_finished())
     }
 
-    /// `input` observes a running owner's idle generation. With input stopped, the shell cancels
-    /// this copy before starting an owner. The receiver's lifetime is the requesting view's intent.
     pub(crate) fn submit(
         &mut self,
         request: Request,
@@ -148,8 +143,6 @@ async fn completed(
     result: Receiver<Result<Outcome, String>>,
     exited: impl Future<Output = ()>,
 ) -> Result<Outcome, String> {
-    // The native result can arrive just before its thread exits. Availability must not be
-    // announced until the owner may safely accept the next request.
     exited.await;
     result
         .recv()

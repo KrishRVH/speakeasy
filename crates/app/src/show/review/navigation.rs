@@ -1,6 +1,3 @@
-//! Exact request/sample relationships and content-free evidence references. A sampled frame says
-//! nothing about the screen between samples, even when a narration clause leads the reader there.
-
 use std::{fmt, path::Path, time::Duration};
 
 use speakeasy_show::Moment;
@@ -96,8 +93,6 @@ impl Request {
     }
 }
 
-/// References the displayed frame and, if present, the explicit request that selected it. It
-/// never accepts narration or summary text, so copying a moment cannot rewrite either.
 pub(super) fn pointer(
     directory: &Path,
     frame: &Frame,
@@ -161,7 +156,6 @@ fn path(path: &Path) -> String {
     let text = path.display().to_string();
     let longest = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
     let fence = "`".repeat(longest.saturating_add(1));
-    // Padding is stripped by CommonMark and protects paths whose first or last character is a
-    // backtick or a space. The span names a file; it is never advertised as shell quoting.
+
     format!("{fence} {text} {fence}")
 }

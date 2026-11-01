@@ -49,7 +49,7 @@ fn a_movie_survives_still_backpressure_and_closes_at_the_session_deadline() -> a
             ]
         );
         scene.check_owned(area)?;
-        // This synthetic receipt stands in for the app keeper's separately tested durable header.
+
         let receipt = std::fs::File::create_new(directory.path().join("origin-receipt"))?;
         receipt.sync_all()?;
         accepted.send(true).await?;

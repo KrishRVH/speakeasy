@@ -1,5 +1,3 @@
-//! Explicit video exports keep their decoded timestamps and annotation coverage distinct.
-
 use std::path::Path;
 
 use speakeasy_show::{Annotations, Span};

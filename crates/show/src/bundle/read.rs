@@ -1,5 +1,3 @@
-//! Reading the manifest without trusting its indexes or exposing narration in errors.
-
 use std::fmt;
 
 use serde::Deserialize;
@@ -7,19 +5,10 @@ use serde::Deserialize;
 use super::{Bundle, Manifest, sheet_file};
 use crate::{Keyframe, Mark, Reason, Recording, select::MOST_KEYFRAMES, sheet};
 
-/// Why a manifest cannot be inspected. No variant or error source contains its private text.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Unreadable {
-    /// This reader does not understand the declared format version.
     Unsupported(u32),
-    /// JSON or a field's type is invalid at this one-based position.
-    Malformed {
-        /// Line containing the failure.
-        line: usize,
-        /// Column containing the failure.
-        column: usize,
-    },
-    /// The manifest's references or ordering violate this fixed, content-free rule.
+    Malformed { line: usize, column: usize },
     Inconsistent(&'static str),
 }
 
@@ -40,8 +29,6 @@ impl fmt::Display for Unreadable {
 
 impl std::error::Error for Unreadable {}
 
-/// Only the decoder can create unchecked fields; `Manifest` exposes them read-only after
-/// validation. Unknown fields remain compatible with additive changes to the format.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Decoded {
@@ -60,12 +47,6 @@ fn malformed(error: serde_json::Error) -> Unreadable {
 }
 
 impl Manifest {
-    /// Parses format 2 and validates frame numbers, times, and mark and stroke references.
-    /// Unknown fields are ignored. No file is read and no image is decoded.
-    ///
-    /// # Errors
-    /// Returns [`Unreadable`] for an unsupported version, invalid JSON, or inconsistent
-    /// references. Errors never retain the JSON or a decoder message that could quote it.
     pub fn parse(bytes: &[u8]) -> Result<Self, Unreadable> {
         #[derive(Deserialize)]
         struct Version {
@@ -91,33 +72,27 @@ impl Manifest {
         Ok(manifest)
     }
 
-    /// Narration, actions, capture dimensions, and how the recording ended.
     #[must_use]
     pub const fn recording(&self) -> &Recording {
         &self.recording
     }
 
-    /// Saved keyframes, numbered consecutively from one and in timeline order.
     #[must_use]
     pub fn keyframes(&self) -> &[Keyframe] {
         &self.keyframes
     }
 
-    /// Marks numbered consecutively from one. A mark need not have a saved keyframe.
     #[must_use]
     pub fn marks(&self) -> &[Mark] {
         &self.marks
     }
 
-    /// Each contact sheet's relative filename and the keyframes it shows, in reading order.
     pub fn sheets(&self) -> impl Iterator<Item = (String, &[Keyframe])> {
         sheet::pages(&self.keyframes)
             .enumerate()
             .map(|(index, frames)| (sheet_file(index), frames))
     }
 
-    /// Every expected relative filename. Names derive from the format and validated numbers,
-    /// never from paths supplied by the manifest.
     pub fn files(&self) -> impl Iterator<Item = String> {
         [Self::FILE.to_owned(), Bundle::SUMMARY.to_owned()]
             .into_iter()

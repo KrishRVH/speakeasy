@@ -1,5 +1,3 @@
-//! One presentation grid admits geometry before publishing native samples.
-
 use std::{ops::ControlFlow, path::Path, time::Duration};
 
 use anyhow::ensure;
@@ -31,8 +29,6 @@ pub(crate) enum End {
 pub(crate) trait Observer {
     fn cancelled(&mut self) -> bool;
 
-    /// Acknowledge durable geometry before this sample may be submitted. False means cancelled;
-    /// an error means persistence failed and the caller must report incomplete video.
     fn geometry(
         &mut self,
         sample: u32,
@@ -93,8 +89,7 @@ impl<C: Codec> Encoder<C> {
                     .map_or_else(|| at.is_zero(), |previous| at >= previous),
             "Movie capture time is invalid"
         );
-        // Contiguous input prevents native frame-rate conversion from filling gaps with a
-        // future image. Painting is safe only after every earlier grid point has been submitted.
+
         if self.advance(End::Before(at), observer)?.is_break() || observer.cancelled() {
             return Ok(ControlFlow::Break(()));
         }

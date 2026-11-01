@@ -1,5 +1,3 @@
-//! One app-owned preview read drains before its replacement; the view owns only its cancellable receipt.
-
 mod frame;
 
 use std::{convert::Infallible, path::PathBuf, pin::Pin, sync::Arc, time::Duration};

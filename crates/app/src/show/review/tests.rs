@@ -1,5 +1,3 @@
-//! Navigation, private-content boundaries, and reads against synthetic saved Shows.
-
 use std::fs;
 
 use super::{

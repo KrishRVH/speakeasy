@@ -1,6 +1,3 @@
-//! The X11 clipboard both insertion paths copy through, and the worker thread that serves it, with
-//! focus checks, to the Wayland portal path.
-
 use anyhow::Context as _;
 use async_channel::{Receiver, Sender};
 use x11rb::{
@@ -15,10 +12,6 @@ use crate::{
     linux::HostSession,
 };
 
-/// Clipboard and focus calls can wait on Xwayland or another client, so they run on one owned
-/// thread behind a bounded queue, away from the desktop service's input loop. Dropping it revokes
-/// the current permit and closes the queue before joining the thread, so a request still queued is
-/// answered without X calls.
 pub(in crate::linux) struct ClipboardWorker {
     _thread: OwnedThread,
     input: InputSender,
@@ -39,8 +32,7 @@ impl ClipboardWorker {
         let (opened, ready) = Reply::channel();
         let thread = OwnedThread::spawn("x11-clipboard", {
             let input = input.clone();
-            // `opened` drops only after a failure is reported, so that report precedes the desktop
-            // loop's generic setup failure.
+
             move || match open() {
                 Ok(clipboard) => {
                     opened.send(());
@@ -190,8 +182,6 @@ pub(super) trait ClipboardAccess {
 
 pub(super) struct Clipboard {
     pub(super) connection: XCBConnection,
-    /// Opened on the first copy, so a worker that only checks focus never touches clipboard
-    /// contents.
     native: Option<arboard::Clipboard>,
     selection: Atom,
 }
@@ -231,14 +221,11 @@ impl ClipboardAccess for Clipboard {
     fn set_text(&mut self, text: &str) -> anyhow::Result<Option<Window>> {
         let native = self.native()?;
         native.set_text(text)?;
-        // arboard claims the selection on its own connection without waiting for the server.
-        // Reading back through it waits for that claim, so the owner this connection queries next
-        // is current rather than the one the copy replaced.
+
         if !holds_text(native.get_text(), text)? {
             return Ok(None);
         }
-        // Another client can take the selection as soon as the copy returns, so paste needs both
-        // the payload and an owner that stays put.
+
         let owner = self.owner()?;
         let settled = owner != x11rb::NONE
             && holds_text(self.native()?.get_text(), text)?

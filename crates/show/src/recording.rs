@@ -1,5 +1,3 @@
-//! What a Show captured besides its frames: ink, pins, pointer actions, and narration.
-
 use std::{fmt, time::Duration};
 
 use serde::{Deserialize, Serialize};
@@ -9,38 +7,24 @@ use crate::{Moment, Point, Span};
 pub(crate) mod spaces;
 pub use spaces::Spaces;
 
-/// Everything a Show captured except its frames.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Recording {
-    /// How long the Show ran.
     pub duration: Moment,
-    /// How the screen recording ended. `show.json` leaves it out when the Show ran until it was
-    /// finished, and bundles written before it existed leave it out whatever happened.
     #[serde(default, skip_serializing_if = "Ending::is_finished")]
     pub ending: Ending,
-    /// The captured surface's size in logical pixels, which ink is measured against.
     pub surface: Size,
-    /// Coordinate provenance for the points retained in strokes and pins.
     #[serde(default, skip_serializing_if = "Spaces::is_empty")]
     pub spaces: Spaces,
-    /// Ink in the order it was drawn.
     pub strokes: Vec<Stroke>,
-    /// Numbered pins in the order they were dropped.
     pub pins: Vec<Pin>,
-    /// Clicks and drags that passed through to the apps underneath.
     pub actions: Vec<Action>,
-    /// What was said while the Show ran.
     pub narration: Narration,
-    /// Why the narration holds nothing the user said, when it was lost rather than unspoken.
-    /// `show.json` leaves it out otherwise, as bundles written before it existed do.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub narration_lost: Option<NarrationLoss>,
 }
 
 impl Recording {
-    /// The display rectangle shared by every point in this mark, or none when observations are
-    /// missing, mixed, interrupted, or legacy. The mark must belong to this recording.
     #[must_use]
     pub fn mark_part(&self, mark: &crate::Mark) -> Option<crate::Rect> {
         self.spaces
@@ -55,21 +39,13 @@ impl Recording {
     }
 }
 
-/// How a Show's screen recording ended. Every way but [`Finished`](Self::Finished) stopped it at
-/// [`Recording::duration`], before the Show was finished, so any later steps are missing.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Ending {
-    /// The Show ran until it was finished: by the user, by the recording limit, or where its audio
-    /// capture stopped, as [`NarrationLoss::AudioStopped`] says.
     #[default]
     Finished,
-    /// Screen capture stopped on its own.
     ScreenStopped,
-    /// The recorded window closed.
     WindowClosed,
-    /// The recorded window was minimized or hidden, moved to another desktop, or moved off the
-    /// recorded display.
     WindowOffScreen,
 }
 
@@ -83,35 +59,24 @@ impl Ending {
     }
 }
 
-/// Why a Show's narration is missing or incomplete. Recovery can create a separate narrated copy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum NarrationLoss {
-    /// Recovery transcribed only the valid prefix of an interrupted audio checkpoint.
     Incomplete,
-    /// Audio capture stopped. Unless the screen recording stopped early as well, as the [`Ending`]
-    /// says, the Show ended there, at [`Recording::duration`], so any later steps are missing too.
     AudioStopped,
-    /// The speech recorded could not be transcribed.
     NotTranscribed,
 }
 
-/// A size in logical pixels.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Size {
-    /// Horizontal extent.
     pub width: f32,
-    /// Vertical extent.
     pub height: f32,
 }
 
-/// A sampled position of the pen.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(from = "(f32, f32, Moment)", into = "(f32, f32, Moment)")]
 pub struct InkPoint {
-    /// Where the pen was, normalized to the surface.
     pub point: Point,
-    /// When it was there.
     pub at: Moment,
 }
 
@@ -130,18 +95,15 @@ impl From<InkPoint> for (f32, f32, Moment) {
     }
 }
 
-/// One continuous line of ink: at least one point, in the order it was drawn.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "Vec<InkPoint>", into = "Vec<InkPoint>")]
 pub struct Stroke {
     points: Vec<InkPoint>,
-    /// The ends of `points`, which is never empty, so reading them cannot fail.
     first: InkPoint,
     last: InkPoint,
 }
 
 impl Stroke {
-    /// The stroke through `points`, ordered by time; `None` without points.
     #[must_use]
     pub fn new(mut points: Vec<InkPoint>) -> Option<Self> {
         points.sort_by_key(|ink| ink.at);
@@ -152,36 +114,30 @@ impl Stroke {
         })
     }
 
-    /// The sampled pen positions, in time order.
     #[must_use]
     pub fn points(&self) -> &[InkPoint] {
         &self.points
     }
 
-    /// When the pen went down and when it lifted.
     #[must_use]
     pub fn span(&self) -> Span {
         Span::new(self.first.at, self.last.at)
     }
 
-    /// Where the pen went down.
     #[must_use]
     pub const fn first(&self) -> InkPoint {
         self.first
     }
 
-    /// Where the pen lifted.
     #[must_use]
     pub const fn last(&self) -> InkPoint {
         self.last
     }
 
-    /// Every position the pen passed through, in time order.
     pub fn path(&self) -> impl Iterator<Item = Point> {
         self.points.iter().map(|ink| ink.point)
     }
 
-    /// The positions the pen passed through by `moment`.
     pub(crate) fn path_until(&self, moment: Moment) -> impl Iterator<Item = Point> {
         self.points
             .iter()
@@ -190,7 +146,6 @@ impl Stroke {
     }
 }
 
-/// A stroke needs at least one point.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EmptyStroke;
 
@@ -216,39 +171,20 @@ impl From<Stroke> for Vec<InkPoint> {
     }
 }
 
-/// A pin dropped where the pointer was, numbered in sequence with the marks ink makes.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Pin {
-    /// When it was dropped.
     pub at: Moment,
-    /// Where, normalized to the surface.
     pub point: Point,
 }
 
-/// A pointer action that passed through to the app underneath.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Action {
-    /// A press and release in about the same place.
-    Click {
-        /// When the button was released.
-        at: Moment,
-        /// Where, normalized to the surface.
-        point: Point,
-    },
-    /// A press that moved before its release.
-    Drag {
-        /// From press to release.
-        span: Span,
-        /// Where the press happened.
-        from: Point,
-        /// Where the release happened.
-        to: Point,
-    },
+    Click { at: Moment, point: Point },
+    Drag { span: Span, from: Point, to: Point },
 }
 
 impl Action {
-    /// When the action happened: a click's release, or a drag from press to release.
     #[must_use]
     pub const fn span(self) -> Span {
         match self {
@@ -257,7 +193,6 @@ impl Action {
         }
     }
 
-    /// Where the action lands: a click's point, or where a drag was released.
     #[must_use]
     pub const fn point(self) -> Point {
         match self {
@@ -266,13 +201,10 @@ impl Action {
     }
 }
 
-/// The narration, as the recognizer reported it.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Narration {
-    /// Words with the moments they were spoken, in order; empty when nothing was said.
     Words(Vec<Word>),
-    /// Text without timings, which can only be attached to the first keyframe.
     Text(String),
 }
 
@@ -282,7 +214,6 @@ impl Default for Narration {
     }
 }
 
-/// Leaves out untimed text, which is the user's speech; timed words redact their own.
 impl fmt::Debug for Narration {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -293,8 +224,6 @@ impl fmt::Debug for Narration {
 }
 
 impl Narration {
-    /// The same narration, every word `by` later, such as from the start of the audio to the
-    /// start of the Show.
     #[must_use]
     pub fn delayed(self, by: Duration) -> Self {
         match self {
@@ -311,7 +240,6 @@ impl Narration {
         }
     }
 
-    /// The timed words, or none when the recognizer gave no timings.
     pub(crate) fn words(&self) -> &[Word] {
         match self {
             Self::Words(words) => words,
@@ -320,16 +248,12 @@ impl Narration {
     }
 }
 
-/// A recognized word and when it was spoken.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Word {
-    /// When the word was spoken.
     pub span: Span,
-    /// The word as recognized, with any attached punctuation.
     pub text: String,
 }
 
-/// Leaves out the word, which is the user's speech.
 impl fmt::Debug for Word {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self { span, text: _ } = self;
@@ -340,7 +264,6 @@ impl fmt::Debug for Word {
 }
 
 impl Word {
-    /// Whether the word holds a letter or digit, rather than only punctuation.
     pub(crate) fn is_spoken(&self) -> bool {
         self.text.chars().any(char::is_alphanumeric)
     }
@@ -350,7 +273,6 @@ impl Word {
 pub(crate) mod tests {
     use super::*;
 
-    /// Narration of each `(start, text)` word, each spoken for 200 ms.
     pub(crate) fn words(spoken: &[(u64, &str)]) -> Narration {
         Narration::Words(
             spoken

@@ -1,5 +1,3 @@
-//! Displayed evidence, edited summary, and original narration in one bounded copy.
-
 use anyhow::Context as _;
 use speakeasy_platform::ClipboardContent;
 use speakeasy_show::NarrationLoss;

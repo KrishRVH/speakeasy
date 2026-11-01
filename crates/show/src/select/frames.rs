@@ -1,6 +1,3 @@
-//! The samples in time order, where the screen changed across them, and the candidate
-//! keyframes they offer.
-
 use std::{ops::Range, time::Duration};
 
 use super::{Basis, Candidate};
@@ -11,28 +8,20 @@ use crate::{
     signature::{SCENE, Sample, Signature},
 };
 
-/// A click that started no transition shows the screen this long after release, once the app
-/// has responded.
 const SETTLE: Duration = Duration::from_millis(250);
-/// Scene changes and spoken cues must differ at least this much from every chosen keyframe, and
-/// any keyframe during or near a mark, or a click close to another, from that keyframe.
+
 const NOVELTY: f32 = 0.03;
-/// A transition that a click started or a spoken cue points at starts at most this long before
-/// it, since a transition starts on the last frame captured before the screen changed.
+
 const LEAD: Duration = Duration::from_millis(300);
-/// A change starting within this long of a click's or drag's release counts as its answer. A later
-/// one is taken for input a Show does not record, such as a scroll or a key press, so the click
-/// shows the screen [`SETTLE`] after its release.
+
 const CLICK_REACH: Duration = Duration::from_millis(500);
-/// A spoken cue points at a transition starting up to this long after the word.
+
 const CUE_REACH: Duration = Duration::from_millis(1_200);
-/// A screen still changing this long after a click or cue is playing, as a video or a long scroll
-/// does, so where it settles shows something later than what was pointed at.
+
 const SETTLE_LIMIT: Duration = Duration::from_secs(2);
-/// Without a transition, a cue shows the screen as the word was said.
+
 const CUE_LOOK: Duration = Duration::from_millis(150);
 
-/// The samples in time order. Every frame index this view hands out is in bounds.
 pub(super) struct Frames<'a> {
     samples: Vec<&'a Sample>,
     first: &'a Sample,
@@ -65,12 +54,10 @@ impl<'a> Frames<'a> {
         self.samples.len().saturating_sub(1)
     }
 
-    /// Whether frame `other` differs from frame `one` by at least [`NOVELTY`].
     pub(super) fn novel(&self, one: usize, other: usize) -> bool {
         self.signature(one).transition(self.signature(other)) >= NOVELTY
     }
 
-    /// The frame on screen closest to `moment`, the earlier on a tie.
     pub(super) fn nearest(&self, moment: Moment) -> usize {
         let (before, after) = (self.last_before(moment), self.first_from(moment));
         if self.at(after).distance(moment) < self.at(before).distance(moment) {
@@ -80,21 +67,18 @@ impl<'a> Frames<'a> {
         }
     }
 
-    /// The last frame captured before `moment`, or the first frame.
     fn last_before(&self, moment: Moment) -> usize {
         self.samples
             .partition_point(|sample| sample.at < moment)
             .saturating_sub(1)
     }
 
-    /// The first frame captured at or after `moment`, or the last frame.
     fn first_from(&self, moment: Moment) -> usize {
         self.samples
             .partition_point(|sample| sample.at < moment)
             .min(self.last())
     }
 
-    /// Runs of consecutive frames that changed past [`SCENE`], each ending on its settled view.
     pub(super) fn transitions(&self) -> Vec<Transition> {
         let mut found = Vec::new();
         let mut open: Option<Transition> = None;
@@ -131,12 +115,6 @@ impl<'a> Frames<'a> {
         })
     }
 
-    /// What each of `actions`, in time order, led to.
-    ///
-    /// An action's result is where the first transition it could have started settled: one that
-    /// starts from [`LEAD`] before the action to [`CLICK_REACH`] after its release, and settles
-    /// after the release, within [`SETTLE_LIMIT`] of it, and before the next action begins.
-    /// Without one, it is the screen [`SETTLE`] after the release.
     pub(super) fn responses(
         &self,
         actions: &[Action],
@@ -177,8 +155,6 @@ impl<'a> Frames<'a> {
             .collect()
     }
 
-    /// The candidate showing `response`'s result, scored at least as high as the transition the
-    /// action started.
     pub(super) fn action_candidate(&self, response: Response) -> Candidate {
         let span = response.action.span();
         let before = self.last_before(span.start());
@@ -230,8 +206,6 @@ impl<'a> Frames<'a> {
         })
     }
 
-    /// The screen before `moment`, anchored at the recording's start so that it takes what was
-    /// said before anything else.
     pub(super) fn opening_candidate(&self, moment: Moment) -> Candidate {
         Candidate {
             frame: self.last_before(moment),
@@ -241,7 +215,6 @@ impl<'a> Frames<'a> {
         }
     }
 
-    /// The recording's last screen, shown as a scene change.
     pub(super) fn last_candidate(&self) -> Candidate {
         let frame = self.last();
         Candidate {
@@ -263,16 +236,13 @@ impl<'a> Frames<'a> {
     }
 }
 
-/// A click or drag and the frame that shows its result.
 #[derive(Clone, Copy)]
 pub(super) struct Response {
     pub(super) action: Action,
     pub(super) frame: usize,
-    /// The transition the action started, which `frame` shows settled.
     started: Option<Transition>,
 }
 
-/// Consecutive frames that changed, ending on the frame where the screen settled.
 #[derive(Clone, Copy)]
 pub(super) struct Transition {
     frame: usize,
@@ -295,8 +265,6 @@ impl Transition {
     }
 }
 
-/// A word that points at the screen. Deliberate cues ("now", "look") outrank ordinary scene
-/// changes; the rest are as often filler ("I see why", "that's odd"), so they mostly break ties.
 struct Cue {
     word: &'static str,
     score: f32,

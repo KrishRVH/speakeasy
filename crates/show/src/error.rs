@@ -1,9 +1,5 @@
-//! The crate's failure type.
-
 use std::fmt;
 
-/// A failure to build or encode an image or manifest, to choose keyframes without frames, or to
-/// load the badge typeface.
 #[derive(Debug)]
 pub struct Error(Kind);
 

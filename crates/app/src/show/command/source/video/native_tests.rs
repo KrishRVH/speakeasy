@@ -1,5 +1,3 @@
-//! Native command acceptance uses a synthetic movie prefix without recording the desktop.
-
 use std::{fs, os::windows::fs::OpenOptionsExt as _};
 
 use super::*;

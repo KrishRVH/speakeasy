@@ -1,60 +1,45 @@
-//! Plane geometry shared by ink, marks, and drawing.
-
 use std::ops::{Add, Mul, Sub};
 
 use serde::{Deserialize, Serialize};
 
-/// A point or vector in the plane.
-///
-/// Recordings store points normalized to the captured surface, so `0.0..=1.0` spans it on both
-/// axes; drawing scales them to pixels.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(from = "[f32; 2]", into = "[f32; 2]")]
 pub struct Point {
-    /// Distance from the left edge.
     pub x: f32,
-    /// Distance from the top edge.
     pub y: f32,
 }
 
 impl Point {
-    /// The point at `(x, y)`.
     #[must_use]
     pub const fn new(x: f32, y: f32) -> Self {
         Self { x, y }
     }
 
-    /// Euclidean length of the vector.
     #[must_use]
     pub(crate) fn length(self) -> f32 {
         self.x.hypot(self.y)
     }
 
-    /// Euclidean distance to `other`.
     #[must_use]
     pub(crate) fn distance(self, other: Self) -> f32 {
         (self - other).length()
     }
 
-    /// The point `t` of the way from `self` to `other`.
     #[must_use]
     pub(crate) fn lerp(self, other: Self, t: f32) -> Self {
         self + (other - self) * t
     }
 
-    /// The dot product of two vectors.
     #[must_use]
     pub(crate) fn dot(self, other: Self) -> f32 {
         self.x * other.x + self.y * other.y
     }
 
-    /// The vector turned a quarter counterclockwise on screen.
     #[must_use]
     pub(crate) const fn perpendicular(self) -> Self {
         Self::new(self.y, -self.x)
     }
 
-    /// The point turned `angle` radians about `center`; a positive angle turns clockwise on screen.
     #[must_use]
     pub(crate) fn rotated(self, center: Self, angle: f32) -> Self {
         let (sin, cos) = angle.sin_cos();
@@ -66,13 +51,11 @@ impl Point {
             )
     }
 
-    /// Scales each axis separately, such as from normalized coordinates to pixels.
     #[must_use]
     pub fn scaled(self, x: f32, y: f32) -> Self {
         Self::new(self.x * x, self.y * y)
     }
 
-    /// Whether both coordinates are finite.
     #[must_use]
     pub(crate) const fn is_finite(self) -> bool {
         self.x.is_finite() && self.y.is_finite()
@@ -115,22 +98,16 @@ impl From<Point> for [f32; 2] {
     }
 }
 
-/// An axis-aligned rectangle, stored by its edges.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(from = "[f32; 4]", into = "[f32; 4]")]
 pub struct Rect {
-    /// The left edge.
     pub left: f32,
-    /// The top edge.
     pub top: f32,
-    /// The right edge.
     pub right: f32,
-    /// The bottom edge.
     pub bottom: f32,
 }
 
 impl Rect {
-    /// The whole normalized surface.
     pub(crate) const UNIT: Self = Self {
         left: 0.0,
         top: 0.0,
@@ -138,7 +115,6 @@ impl Rect {
         bottom: 1.0,
     };
 
-    /// The rectangle with its top-left corner at `origin`.
     #[must_use]
     pub(crate) fn from_origin(origin: Point, width: f32, height: f32) -> Self {
         Self {
@@ -149,7 +125,6 @@ impl Rect {
         }
     }
 
-    /// The empty rectangle at `point`.
     #[must_use]
     pub(crate) const fn at(point: Point) -> Self {
         Self {
@@ -160,25 +135,21 @@ impl Rect {
         }
     }
 
-    /// The smallest rectangle holding every point, or `None` without points.
     #[must_use]
     pub(crate) fn bounding(points: impl IntoIterator<Item = Point>) -> Option<Self> {
         points.into_iter().map(Self::at).reduce(Self::union)
     }
 
-    /// The horizontal extent.
     #[must_use]
     pub(crate) fn width(self) -> f32 {
         self.right - self.left
     }
 
-    /// The vertical extent.
     #[must_use]
     pub(crate) fn height(self) -> f32 {
         self.bottom - self.top
     }
 
-    /// The middle of the rectangle.
     #[must_use]
     pub(crate) fn center(self) -> Point {
         Point::new(
@@ -187,7 +158,6 @@ impl Rect {
         )
     }
 
-    /// The smallest rectangle holding both.
     #[must_use]
     pub(crate) fn union(self, other: Self) -> Self {
         Self {
@@ -198,7 +168,6 @@ impl Rect {
         }
     }
 
-    /// The rectangle grown by `margin` on every side, kept within `bounds`.
     #[must_use]
     pub(crate) fn expanded_within(self, margin: f32, bounds: Self) -> Self {
         Self {

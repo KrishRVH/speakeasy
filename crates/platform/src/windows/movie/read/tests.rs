@@ -1,5 +1,3 @@
-//! Opt-in decoding checks use only the synthetic encoder fixtures, including recovered prefixes.
-
 use std::{
     fs::OpenOptions,
     io::{Read as _, Seek as _},
@@ -13,7 +11,7 @@ use super::*;
 fn video_media_types_may_omit_the_default_stride() -> anyhow::Result<()> {
     let _foundation = Foundation::start()?;
     let [width, height] = [320_u32, 240_u32];
-    // SAFETY: this test owns an empty media type and supplies only synthetic format attributes.
+
     let format = unsafe {
         let format = MFCreateMediaType()?;
         format.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_RGB32)?;

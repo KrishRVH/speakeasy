@@ -1,5 +1,3 @@
-//! The Show library's native element tree. Private summary text is plain, inert text.
-
 use std::time::SystemTime;
 
 use gpui::{

@@ -1,8 +1,3 @@
-//! Keeping Speakeasy's own windows out of screen capture.
-//!
-//! A capture leaves out every window of this process while it runs and shows them to capture again
-//! when it ends, except the overlay, which `configure_overlay` leaves out for good.
-
 use anyhow::Context as _;
 use windows_sys::{
     Win32::{
@@ -22,27 +17,20 @@ use windows_sys::{
 use super::Failure;
 use crate::windows::{is_own_window, ok_or_last_error};
 
-/// Marks a window `configure_overlay` left out of all screen capture, so that a capture ending
-/// never shows it to capture again.
 const ALWAYS_EXCLUDED: PCWSTR = w!("SpeakeasyAlwaysExcluded");
 
-/// The Speakeasy windows one capture has left out, shown to capture again when it ends.
 #[derive(Default)]
 pub(super) struct Exclusions {
     left_out: Vec<HWND>,
 }
 
 impl Exclusions {
-    /// Leaves out every window of this process that capture would still show, hidden ones too so
-    /// they stay out once shown. Reports whether any was newly left out: even one hidden now may
-    /// have been shown in frames composed since the last check.
     pub(super) fn refresh(&mut self) -> Result<bool, Failure> {
         let before = self.left_out.len();
         let capturable = top_level_windows()?
             .into_iter()
             .filter(|&window| is_own_window(window) && affinity(window) == Some(WDA_NONE));
         for window in capturable {
-            // SAFETY: both calls take a window of this process by value.
             let (excluded, visible) = unsafe {
                 (
                     SetWindowDisplayAffinity(window, WDA_EXCLUDEFROMCAPTURE) != FALSE,
@@ -65,22 +53,18 @@ impl Drop for Exclusions {
             !excluded_for_good(window) && affinity(window) == Some(WDA_EXCLUDEFROMCAPTURE)
         });
         for window in restorable {
-            // SAFETY: takes values only; a window since destroyed, or reused by another process,
-            // fails the call.
             unsafe { SetWindowDisplayAffinity(window, WDA_NONE) };
         }
     }
 }
 
-/// Every top-level window on the desktop, front to back.
 pub(super) fn top_level_windows() -> windows::core::Result<Vec<HWND>> {
     unsafe extern "system" fn collect(window: HWND, found: LPARAM) -> BOOL {
-        // SAFETY: `top_level_windows` passes its live vector for the length of the enumeration.
         unsafe { (*(found as *mut Vec<HWND>)).push(window) };
         TRUE
     }
     let mut found = Vec::new();
-    // SAFETY: the callback only pushes into the vector, which outlives the enumeration.
+
     let enumerated = unsafe { EnumWindows(Some(collect), (&raw mut found) as LPARAM) };
     if enumerated == FALSE {
         return Err(windows::core::Error::from_thread());
@@ -90,16 +74,11 @@ pub(super) fn top_level_windows() -> windows::core::Result<Vec<HWND>> {
 
 pub(super) fn affinity(window: HWND) -> Option<u32> {
     let mut affinity = 0;
-    // SAFETY: writes only the live local.
+
     (unsafe { GetWindowDisplayAffinity(window, &raw mut affinity) } != FALSE).then_some(affinity)
 }
 
-/// Leaves `hwnd` out of all screen capture for good, marked so no capture ending restores it.
 pub(super) fn exclude_always(hwnd: HWND) -> anyhow::Result<()> {
-    // SAFETY: each call takes the handle by value and fails for one that names no window. Installing
-    // the subclass, which carries no reference data, also fails for a window another thread owns,
-    // so the mark is set only once the subclass is in place to remove it before the window is
-    // destroyed, as properties require.
     unsafe {
         ok_or_last_error(SetWindowSubclass(hwnd, Some(always_excluded), 1, 0))?;
         ok_or_last_error(SetPropW(hwnd, ALWAYS_EXCLUDED, hwnd.cast()))?;
@@ -108,9 +87,7 @@ pub(super) fn exclude_always(hwnd: HWND) -> anyhow::Result<()> {
     }
 }
 
-/// Whether `exclude_always` left `window` out of capture for good.
 pub(super) fn excluded_for_good(window: HWND) -> bool {
-    // SAFETY: reads a property by handle; a destroyed window has none.
     !unsafe { GetPropW(window, ALWAYS_EXCLUDED) }.is_null()
 }
 
@@ -122,8 +99,6 @@ unsafe extern "system" fn always_excluded(
     id: usize,
     _: usize,
 ) -> LRESULT {
-    // SAFETY: this window-owned subclass runs on the window's thread and is removed, with the
-    // mark, at destruction.
     unsafe {
         if message == WM_NCDESTROY {
             RemovePropW(hwnd, ALWAYS_EXCLUDED);
@@ -141,8 +116,6 @@ mod tests {
     #[test]
     #[ignore = "Creates an owned native window; no microphone, hook, clipboard, or injected input"]
     fn an_exclusion_without_its_subclass_leaves_no_mark() -> anyhow::Result<()> {
-        // Subclasses work only on the thread that owns the window, so exclusion from another
-        // thread fails to install one.
         let exclude = |hwnd| {
             let refused = exclude_always(hwnd).is_err();
             let marked = excluded_for_good(hwnd);

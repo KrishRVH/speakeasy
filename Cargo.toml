@@ -88,10 +88,8 @@ zip = { version = "9.1.3", default-features = false }
 future_incompatible = { level = "deny", priority = -1 }
 # Borrows stay visible in paths (`Formatter<'_>`), and inferable outlives bounds go.
 rust_2018_idioms = { level = "deny", priority = -1 }
-# Public interfaces must be documented and reachable, and implement `Debug` so failures can show
-# them.
+# Public interfaces stay reachable and implement `Debug` without exposing private content.
 missing_debug_implementations = "deny"
-missing_docs = "deny"
 unexpected_cfgs = "deny"
 unreachable_pub = "deny"
 # Native FFI lives in platform; every other crate root forbids unsafe locally, as `mise run hygiene`
@@ -101,6 +99,8 @@ unfulfilled_lint_expectations = "deny"
 
 [workspace.lints.rustdoc]
 all = { level = "deny", priority = -1 }
+# Crate and native contracts live in docs/; rustdoc still checks the generated interface index.
+missing_crate_level_docs = "allow"
 
 [workspace.lints.clippy]
 # Named lints override these groups. Nursery warns locally and fails the
@@ -114,8 +114,11 @@ pedantic = { level = "deny", priority = -1 }
 allow_attributes = "forbid"
 allow_attributes_without_reason = "forbid"
 
-# Every unsafe block states why it is sound.
-undocumented_unsafe_blocks = "deny"
+# Rust source is comment-free. Architecture and native contracts document interfaces and FFI;
+# these lints can only recognize inline documentation.
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+missing_safety_doc = "allow"
 
 # Production code handles failure explicitly. Tests may assert established
 # invariants through the four clippy.toml `allow-*-in-tests` settings.

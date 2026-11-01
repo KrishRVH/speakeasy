@@ -1,7 +1,3 @@
-//! Linux desktop input and insertion live on an owned thread, and owned windows present through
-//! X11. Rendering may use Xwayland, so input follows the host session rather than the presence of
-//! DISPLAY.
-
 mod ei;
 mod portal;
 mod token;
@@ -29,24 +25,19 @@ use super::{
     insertion::{Insertion, abandon_queued},
 };
 
-/// Desktop launcher and portal registration identity.
 pub const APPLICATION_ID: &str = "io.github.krvh.speakeasy";
-/// The failure of each Show call Linux cannot serve, since it records no Shows yet.
+
 pub(crate) const SHOWS_UNSUPPORTED: &str = "Shows are not available on Linux yet";
 
-/// The keyboard layout that paste types through has no paste shortcut keys: the active layout
-/// through libei, or on X11 the first layout, the only one XTEST paste drives.
 const NO_PASTE_BINDING: Inserted = Inserted::Copied(
     "Text copied. This keyboard layout has no automatic paste binding; paste manually.",
 );
-/// The user chose to paste themselves, so insertion only copies.
+
 const COPIED_FOR_MANUAL_PASTE: Inserted = Inserted::Copied("Text copied. Paste into your editor.");
-/// The X11 clipboard lost the copied text before paste.
+
 const CLIPBOARD_CHANGED: Inserted =
     Inserted::Unavailable("The clipboard changed before pasting. Dictate again.");
 
-/// The keys of the paste shortcut: Control and V, with Shift only for terminal paste, so a layout
-/// without Shift still pastes everywhere else. X11 and libei resolve it the same way.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PasteChord<K> {
     control: K,
@@ -55,8 +46,6 @@ struct PasteChord<K> {
 }
 
 impl<K: Copy> PasteChord<K> {
-    /// Resolves the chord through `key`, which finds the key that types a symbol in the layout paste
-    /// types through; none when that layout lacks a key the chord needs.
     fn resolve(terminal: bool, mut key: impl FnMut(Keysym) -> Option<K>) -> Option<Self> {
         Some(Self {
             control: key(Keysym::Control_L)?,
@@ -69,7 +58,6 @@ impl<K: Copy> PasteChord<K> {
         })
     }
 
-    /// The keys in press order; releases run in reverse.
     fn presses(self) -> impl DoubleEndedIterator<Item = K> {
         [Some(self.control), self.shift, Some(self.v)]
             .into_iter()
@@ -77,13 +65,9 @@ impl<K: Copy> PasteChord<K> {
     }
 }
 
-/// Why desktop access ended when the desktop thread panicked; never the panic payload, which could
-/// quote dictated text.
 const DESKTOP_STOPPED: &str =
     "Linux desktop access stopped unexpectedly. Resume dictation to reconnect.";
 
-/// A desktop-access failure whose message already says what to do, so it reaches the user as is
-/// rather than beside the general remedy for a failed desktop connection.
 #[derive(Debug)]
 struct Actionable(&'static str);
 
@@ -95,10 +79,7 @@ impl fmt::Display for Actionable {
 
 impl std::error::Error for Actionable {}
 
-/// What `InputMonitor` holds beside the desktop thread: the lane that asks it to stop. Insertion
-/// runs on that thread or on X11 workers it owns and joins before it exits, so nothing outlives it.
 pub(crate) struct Monitor {
-    /// Never sends; closing it asks the desktop thread to stop.
     stop: Sender<Infallible>,
 }
 
@@ -116,7 +97,6 @@ impl Monitor {
     }
 }
 
-/// The session that owns input, whichever display server GPUI renders through.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum HostSession {
     Wayland,
@@ -134,7 +114,6 @@ impl HostSession {
     }
 }
 
-/// How Settings shows the dictation and cancel shortcuts once the desktop is ready.
 #[derive(Clone)]
 struct ShortcutLabels {
     shortcut: String,
@@ -171,9 +150,6 @@ pub(crate) fn start(
     spawn(input, options, serve_desktop)
 }
 
-/// Runs `serve` on the desktop thread. Once it returns or panics, the thread reports why and then
-/// abandons every insertion still queued, since nothing reads the lane after that; the report comes
-/// first, so the owner learns why before those requests fail.
 fn spawn(
     input: InputSender,
     options: DesktopOptions,
@@ -231,7 +207,6 @@ fn serve_desktop(
     })
 }
 
-/// Resolves once the owner requests a stop or input closes.
 async fn stop_requested(stopping: &Receiver<Infallible>, input: &InputSender) {
     tokio::select! {
         biased;
@@ -240,14 +215,12 @@ async fn stop_requested(stopping: &Receiver<Infallible>, input: &InputSender) {
     }
 }
 
-/// Watches a duplicate of `fd` for readability on the current Tokio runtime.
 fn watch_readable(fd: BorrowedFd<'_>) -> anyhow::Result<AsyncFd<OwnedFd>> {
     let duplicate = fd.try_clone_to_owned()?;
-    // SAFETY: the `AsyncFd` owns the duplicate, which stays open and unchanged until it drops.
+
     Ok(unsafe { AsyncFd::register_with_interest(duplicate, Interest::READABLE) }?)
 }
 
-/// Matches the bus announcing that `name` gained, lost, or changed its owner.
 fn owner_changes(name: &'static str) -> zbus::Result<MatchRule<'static>> {
     Ok(MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
@@ -258,7 +231,6 @@ fn owner_changes(name: &'static str) -> zbus::Result<MatchRule<'static>> {
         .build())
 }
 
-/// An X11 or Xwayland window; each call opens its own connection to the server.
 pub(crate) struct Window {
     id: u32,
 }
@@ -275,20 +247,14 @@ impl Window {
 }
 
 impl NativeWindow {
-    /// Configures the pill for nonactivating, click-through presentation.
-    ///
-    /// # Errors
-    /// Fails when the X11 server cannot be reached or refuses a change to the window.
     pub fn configure_pill(&self) -> anyhow::Result<()> {
         x11::configure_pill(self.native.id)
     }
 
-    /// Shows or hides the pill without activating it.
     pub fn set_pill_visible(&self, visible: bool) {
         x11::set_visible(self.native.id, visible);
     }
 
-    /// Shows or hides an ordinary app window.
     pub fn set_window_visible(&self, visible: bool) {
         x11::set_visible(self.native.id, visible);
     }
@@ -337,7 +303,7 @@ mod tests {
         let input = InputSender::new(events);
         let (taken, holding) = async_channel::bounded(1);
         let (release, released) = mpsc::channel();
-        // Holds one request, as the portal does while it prepares a paste, until another queues.
+
         let serve = move |_: &_, _: &_, requests: Receiver<Insertion>, _: &_| {
             let _in_hand = requests.recv_blocking()?;
             taken.try_send(())?;
@@ -366,7 +332,7 @@ mod tests {
     async fn a_panicking_desktop_thread_reports_why_and_closes_the_lane() -> anyhow::Result<()> {
         let (events, received) = async_channel::bounded(4);
         let input = InputSender::new(events);
-        // Unwinds without the panic hook, so the payload never reaches test output.
+
         let serve = |_: &_, _: &_, _, _: &_| panic::resume_unwind(Box::new("private payload"));
         let (thread, _monitor, _inserter) = spawn(input.clone(), DesktopOptions::default(), serve)?;
         tokio::time::timeout(PATIENCE, thread.exited()).await?;

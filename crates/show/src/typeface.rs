@@ -1,24 +1,14 @@
-//! Text drawn as vector paths from a TrueType face, for badges and the demo.
-
 use tiny_skia::{Path, PathBuilder};
 use ttf_parser::{Face, GlyphId, OutlineBuilder};
 
 use crate::{Error, Point};
 
-/// A parsed TrueType or OpenType face that draws text without a system font service.
-///
-/// The face borrows a font embedded in the executable. Glyphs advance without kerning, which the
-/// short labels it draws do not need.
 #[derive(Clone, Debug)]
 pub struct Typeface {
     face: Face<'static>,
 }
 
 impl Typeface {
-    /// Reads the first face in `data`.
-    ///
-    /// # Errors
-    /// Fails when `data` is not a TrueType or OpenType font.
     pub fn parse(data: &'static [u8]) -> Result<Self, Error> {
         Face::parse(data, 0)
             .map(|face| Self { face })
@@ -29,8 +19,6 @@ impl Typeface {
         size / f32::from(self.face.units_per_em())
     }
 
-    /// The glyphs `text` sets, each with its advance in font units; characters the face lacks are
-    /// skipped.
     fn glyphs(&self, text: &str) -> impl Iterator<Item = (GlyphId, f32)> {
         text.chars().filter_map(|character| {
             let glyph = self.face.glyph_index(character)?;
@@ -39,12 +27,10 @@ impl Typeface {
         })
     }
 
-    /// How far `text` advances at `size` pixels per em.
     pub(crate) fn width(&self, text: &str, size: f32) -> f32 {
         self.glyphs(text).map(|(_, advance)| advance).sum::<f32>() * self.scale(size)
     }
 
-    /// The height of capital letters and figures at `size`, for centering them optically.
     pub(crate) fn cap_height(&self, size: f32) -> f32 {
         let units = self
             .face
@@ -53,7 +39,6 @@ impl Typeface {
         f32::from(units) * self.scale(size)
     }
 
-    /// The outlines of `text` at `size`, its baseline starting at `origin`.
     pub(crate) fn path(&self, text: &str, size: f32, origin: Point) -> Option<Path> {
         let mut pen = Pen {
             builder: PathBuilder::new(),
@@ -61,7 +46,6 @@ impl Typeface {
             origin,
         };
         for (glyph, advance) in self.glyphs(text) {
-            // A glyph without an outline, such as a space, still advances the pen.
             self.face.outline_glyph(glyph, &mut pen);
             pen.origin.x += advance * pen.scale;
         }
@@ -69,7 +53,6 @@ impl Typeface {
     }
 }
 
-/// Converts font units, which rise upward from the baseline, to pixels that fall downward.
 struct Pen {
     builder: PathBuilder,
     scale: f32,
@@ -115,7 +98,6 @@ impl OutlineBuilder for Pen {
 pub(crate) mod tests {
     use super::*;
 
-    /// Speakeasy's wordmark face, which also draws badges.
     pub(crate) fn typeface() -> Typeface {
         Typeface::parse(include_bytes!("../../app/assets/JosefinSans-SemiBold.ttf")).unwrap()
     }

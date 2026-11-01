@@ -1,6 +1,3 @@
-//! Private Show checkpoints. A value owns the cross-process lock; drop only unlocks, leaving an
-//! interrupted take. Explicit discard is durable before deletion and runs off the session owner.
-
 mod audio;
 mod keeper;
 
@@ -29,7 +26,7 @@ const NARRATION_LIMIT: u64 = 4 << 20;
 const GONE: &str = "This interrupted Show expired, was discarded, or was already recovered. \
                    Refresh Shows.";
 const NO_FRAMES: &str = "No complete frame survived. Discard this interrupted Show.";
-/// Counts all bytes, including metadata and obsolete versions that thinning no longer retains.
+
 const FILE_LIMIT: u64 = 1 << 30;
 const EVENT_LIMIT: usize = 200_000;
 
@@ -38,8 +35,6 @@ pub(crate) struct Checkpoint {
     lock: OwnerLock,
 }
 
-/// Closing our descriptor alone can leave an inherited descriptor holding the same OS lock while
-/// another thread spawns a process. Explicit unlock makes checkpoint ownership end with this value.
 struct OwnerLock(File);
 
 impl Drop for OwnerLock {
@@ -156,7 +151,6 @@ impl Checkpoint {
             .context("Checkpoint recording date is invalid")
     }
 
-    /// Releases ownership and describes the interrupted take without reading its private log.
     pub(crate) fn interrupted(self) -> anyhow::Result<Interrupted> {
         Ok(Interrupted {
             recorded: self.recorded()?,
@@ -165,8 +159,6 @@ impl Checkpoint {
         })
     }
 
-    /// A publication's two markers bind its final folder to this checkpoint. A crash between the
-    /// markers and rename can be retried; a coincidental folder name never proves publication.
     pub(in crate::show) fn commit(&self, staged: &Staged) -> anyhow::Result<()> {
         let id = self
             .directory
@@ -198,8 +190,6 @@ impl Checkpoint {
         staged.retain_movie(&self.directory, annotations)
     }
 
-    /// Stores recognized narration before erasing its audio. A crash between these steps retries
-    /// deletion after reading the durable narration; it never needs a second transcription.
     pub(crate) fn narrate(&self, narration: &Narration, incomplete: bool) -> anyhow::Result<()> {
         let bytes = zeroize::Zeroizing::new(
             serde_json::to_vec(&StoredNarration {
@@ -220,9 +210,7 @@ impl Checkpoint {
             .persist(self.directory.join(NARRATION))
             .map_err(|error| error.error)?;
         sync_directory(&self.directory)?;
-        // An older frame-only bundle cannot prove that it contains this new narration.
-        // Retire its publication marker before erasing audio, so a crash or failed copy remains
-        // recoverable from narration.json until a new bundle commits.
+
         remove(&self.directory.join(PUBLISHED))?;
         sync_directory(&self.directory)?;
         remove(&self.directory.join(audio::FILE))?;
@@ -326,8 +314,6 @@ impl Checkpoint {
         Ok(take)
     }
 
-    /// Marker creation precedes unlock and deletion. If deletion fails, cleanup retries it without
-    /// offering the cancelled Show for recovery. No destructor performs this I/O.
     pub(crate) fn discard(self) -> anyhow::Result<()> {
         match File::create_new(self.directory.join(DISCARDED)) {
             Ok(file) => file.sync_all()?,
@@ -341,7 +327,7 @@ impl Checkpoint {
             Err(error) => return Err(error.into()),
         }
         sync_directory(&self.directory)?;
-        // Private content goes before the lock, so a blocked deletion remains retryable.
+
         for name in [
             audio::FILE,
             NARRATION,
@@ -365,8 +351,6 @@ impl Checkpoint {
     }
 }
 
-/// Listing does not change files, permissions, or expiry. Active and retired checkpoints are
-/// omitted; the retention sweep owns their deletion.
 pub(crate) struct Listing {
     pub shows: Vec<Interrupted>,
     pub problems: Vec<Problem>,
@@ -389,7 +373,6 @@ pub(crate) fn list(parent: &Path, now: SystemTime) -> Listing {
     Listing { shows, problems }
 }
 
-/// Only explicit interrupted IDs or exact managed paths select checkpoints; saved IDs never alias.
 pub(crate) fn resolve(parent: &Path, target: &Path) -> anyhow::Result<Interrupted> {
     let path = std::path::absolute(target)?;
     list(parent, SystemTime::now())
@@ -417,8 +400,6 @@ pub(super) fn sweep(parent: &Path, now: SystemTime) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// One damaged entry cannot prevent discovery or cleanup of its siblings. Root errors are also
-/// returned as findings, so callers can still inspect and expire saved bundles.
 fn visit(
     parent: &Path,
     now: SystemTime,
@@ -560,7 +541,6 @@ fn remove(path: &Path) -> io::Result<()> {
     }
 }
 
-/// The session owns a live writer until both capture producers finish, then owns its files.
 pub(crate) enum Checkpointing {
     Writing(Keeper),
     Held(Checkpoint),

@@ -1,5 +1,3 @@
-//! Label bindings resolve pin identity once and require observed, completed, compatible geometry.
-
 use std::{collections::BTreeMap, time::Duration};
 
 use super::RECENT_INK;

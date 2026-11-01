@@ -1,6 +1,3 @@
-//! Narration navigation preserves words and real onsets without exposing alignment's inferred
-//! silence intervals as speech timing.
-
 use proptest::prelude::*;
 
 use crate::{Moment, Narration, Span, Word, recording::tests::words, timed_clauses};

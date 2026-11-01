@@ -1,6 +1,3 @@
-//! Console entry for Show tools. Inherited handles and an awaited child make the GUI executable's
-//! output and exit status usable from Windows shells without changing desktop launch behavior.
-
 #![forbid(unsafe_code)]
 
 use std::{
@@ -27,8 +24,7 @@ fn main() -> ExitCode {
         Ok(exe) => exe.with_file_name(format!("speakeasy{}", env::consts::EXE_SUFFIX)),
         Err(error) => return fail(format!("Cannot locate Speakeasy: {error}"), 1),
     };
-    // status inherits the caller's streams, environment and working directory. No shell rewrites
-    // paths or phrase arguments, and the console parent waits for the GUI child to finish.
+
     match Command::new(&sibling)
         .args(first.into_iter().chain(args))
         .status()

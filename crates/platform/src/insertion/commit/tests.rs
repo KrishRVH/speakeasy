@@ -1,6 +1,3 @@
-//! Drives the paste and direct commit protocol through a recording fake adapter, plus the
-//! insertion thread's stop and panic answers; no test touches the clipboard or sends input.
-
 use std::panic;
 
 use anyhow::Context as _;
@@ -14,7 +11,6 @@ use crate::{
     },
 };
 
-/// A native step of one insertion, as [`Fake`] records it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Step {
     Acquire,
@@ -25,12 +21,9 @@ enum Step {
     TextKeys,
     ExternalFocus,
     ShortcutReleased,
-    /// Submitted the keys built for this delivery.
     Send(Delivery),
 }
 
-/// Records the steps [`insert`] takes, and revokes the recording or changes the clipboard when
-/// it reaches a chosen one.
 struct Fake {
     steps: Vec<Step>,
     clipboard: u8,
@@ -276,7 +269,6 @@ async fn a_panic_answers_a_fixed_message_and_the_next_request_is_served() -> any
     let (events, _receiver) = async_channel::bounded(1);
     let (_worker, inserter) = Worker::spawn(InputSender::new(events), |request| {
         if request.text == "panics" {
-            // Unwinds without the panic hook, so the payload never reaches test output.
             panic::resume_unwind(Box::new("private payload"));
         }
         Ok(Inserted::Sent)

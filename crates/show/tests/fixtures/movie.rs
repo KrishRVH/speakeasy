@@ -1,6 +1,3 @@
-// Hand-built container metadata and synthetic payloads. These exercise the bounded container
-// parser, not AVC decoding; native acceptance supplies actual compressed images separately.
-
 pub(super) struct MovieFixture {
     pub bytes: Vec<u8>,
     pub initialized: usize,
@@ -71,7 +68,7 @@ pub(super) fn movie() -> MovieFixture {
     let mut ends = Vec::new();
     for sequence in 1..=2 {
         let fragment_header = atom(*b"tfhd", words(&[0x0002_0000, 1]));
-        // 16 mfhd + 8 fragment_track + 16 fragment_header + 36 run + 8 fragment + 8 mdat = 92 bytes to payload.
+
         let run = atom(*b"trun", words(&[0x0100_0F01, 1, 92, 1_000, 6, 0, 0]));
         let mut fragment_track = fragment_header;
         fragment_track.extend(run);
@@ -139,4 +136,3 @@ pub(super) fn padded(
     bytes[run + 12..run + 16].fill(0);
     (bytes, header + 7)
 }
-

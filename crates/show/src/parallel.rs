@@ -1,15 +1,10 @@
-//! Spreading independent per-image work over the machine's cores.
-
 use std::num::NonZero;
 
-/// Maps `items` through `work` on up to one thread per core, keeping their order. A panic in
-/// `work` resumes on the caller's thread.
 pub(crate) fn map<T: Sync, R: Send>(items: &[T], work: impl Fn(&T) -> R + Sync) -> Vec<R> {
     let threads = std::thread::available_parallelism().map_or(1, NonZero::get);
     let per_thread = items.len().div_ceil(threads).max(1);
     let work = &work;
     std::thread::scope(|scope| {
-        // Every worker starts before the first join; joining as they spawn would run serially.
         let workers: Vec<_> = items
             .chunks(per_thread)
             .map(|chunk| scope.spawn(move || chunk.iter().map(work).collect::<Vec<R>>()))

@@ -1,5 +1,3 @@
-//! Successful inference remains recoverable until a narrated bundle commits.
-
 use super::*;
 
 #[tokio::test]
@@ -24,7 +22,10 @@ async fn failed_or_cancelled_narrated_copy_keeps_new_narration_recoverable() -> 
                 |_| Ok(())
             )?,
             Published::Saved {
-                audio_kept: true,
+                preservation: Preservation {
+                    audio_kept: true,
+                    ..
+                },
                 ..
             }
         ));
@@ -90,7 +91,10 @@ async fn a_saved_narrated_bundle_retires_audio_even_if_checkpoint_narration_cann
             |_| Ok(())
         )?,
         Published::Saved {
-            audio_kept: false,
+            preservation: Preservation {
+                audio_kept: false,
+                ..
+            },
             ..
         }
     ));

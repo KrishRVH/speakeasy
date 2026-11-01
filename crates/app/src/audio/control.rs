@@ -1,11 +1,8 @@
-//! Capture-local synchronization for callbacks that cannot wait on the owner.
-
 use std::{
     sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
     thread,
 };
 
-/// Modes only advance in declaration order, so a late finish cannot undo a cancel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub(super) enum Mode {
@@ -38,7 +35,6 @@ pub(super) struct Control {
     publishing: AtomicUsize,
 }
 
-/// One in-flight callback. Dropping the guard acknowledges its samples and errors.
 #[must_use = "a callback counts as publishing only while its guard lives"]
 pub(super) struct Publishing<'a>(&'a Control);
 
@@ -48,8 +44,6 @@ impl Drop for Publishing<'_> {
     }
 }
 
-// Mode and publication share a sequentially consistent order: callbacks count themselves before
-// reading the mode, and the consumer finishes before waiting for their count to reach zero.
 impl Control {
     pub(super) fn mode(&self) -> Mode {
         const RECORDING: u8 = Mode::Recording as u8;
@@ -69,13 +63,11 @@ impl Control {
         self.mode.fetch_max(Mode::Cancelled as u8, Ordering::SeqCst);
     }
 
-    /// Counts a callback before it checks whether recording has stopped.
     pub(super) fn publishing(&self) -> Publishing<'_> {
         self.publishing.fetch_add(1, Ordering::SeqCst);
         Publishing(self)
     }
 
-    /// After finishing, waits for callbacks that may still publish their last packet.
     pub(super) fn quiesce(&self) {
         while self.publishing.load(Ordering::SeqCst) != 0 {
             thread::yield_now();
@@ -130,7 +122,7 @@ mod tests {
             quiesced.send(()).unwrap();
         });
         let premature = done.recv_timeout(Duration::from_millis(50)).is_ok();
-        // Release the callback and join even when the assertion under test fails.
+
         close.send(()).unwrap();
         callback.join().unwrap();
         consumer.join().unwrap();

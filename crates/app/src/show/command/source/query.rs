@@ -1,5 +1,3 @@
-//! Private query inputs and content-free location results shared by source commands.
-
 use anyhow::Context as _;
 use serde::Serialize;
 use speakeasy_show::{Manifest, Moment, Span, locate::Focus};

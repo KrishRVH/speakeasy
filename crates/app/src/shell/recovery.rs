@@ -1,6 +1,3 @@
-//! Copy last Show and Open last Show in Speakeasy's menu. Each acts on exactly the Show the latest
-//! snapshot names, and once that one has gone it says so, forgets it, and never looks for another.
-
 use std::path::Path;
 
 use anyhow::anyhow;
@@ -9,12 +6,9 @@ use gpui::{App, BorrowAppContext as _};
 use super::Services;
 use crate::{gpui_ext::AppUpdate as _, runtime::Report};
 
-/// What the menu does with the last Show.
 #[derive(Clone, Copy)]
 pub(crate) enum LastShow {
-    /// Copies its summary as its folder holds it now, and says so; it never pastes.
     Copy,
-    /// Opens its folder in the file manager.
     Open,
 }
 
@@ -27,8 +21,6 @@ impl LastShow {
     }
 }
 
-/// Copy preparation and publication share one owned worker and the idle generation observed when
-/// the user asks. A late disk read cannot acquire fresh authority after a newer recording ends.
 fn copy(cx: &mut App) {
     let services = cx.global_mut::<Services>();
     let Some(show) = services.recallable_show(&services.output.borrow()).cloned() else {

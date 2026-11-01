@@ -1,6 +1,3 @@
-//! The insertion lane every platform shares, delivery choices and their outcomes, and the checks
-//! every native adapter runs before it touches the target.
-
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
 mod commit;
 
@@ -16,38 +13,26 @@ use async_channel::{Receiver, Sender};
 pub(crate) use self::commit::{NativeInsert, Worker};
 use crate::InsertPermit;
 
-/// How long insertion waits for the user to let go of shortcut modifiers.
 pub(crate) const MODIFIER_WAIT: Duration = Duration::from_millis(800);
-/// How often insertion rechecks held modifiers while it waits.
+
 const MODIFIER_POLL: Duration = Duration::from_millis(2);
-/// The answer to a request whose insertion ended without an outcome; never the panic payload,
-/// which could quote the text.
+
 const INSERTION_STOPPED: &str = "Text insertion stopped unexpectedly";
-/// Shortcut keys stayed held, so the text waits on the clipboard for the user to paste.
+
 pub(crate) const PASTE_AFTER_RELEASE: Inserted =
     Inserted::Copied("Text copied. Release your shortcut keys and paste into your editor.");
 
-/// Sends insertion requests to the thread that owns native clipboard and input access.
-///
-/// That thread performs one insertion at a time, and each keeps its turn through its native work
-/// even if the caller stops waiting, so a cancelled request never races a newer clipboard write.
 #[derive(Clone, Debug)]
 pub struct Inserter {
     requests: Sender<Insertion>,
 }
 
 impl Inserter {
-    /// An inserter and the end its requests arrive on.
     pub(crate) fn lane() -> (Self, Receiver<Insertion>) {
         let (requests, incoming) = async_channel::bounded(1);
         (Self { requests }, incoming)
     }
 
-    /// Submits text under the recording permit through the chosen delivery.
-    ///
-    /// # Errors
-    /// Fails when native insertion fails, or with a fixed message once the request lane has closed
-    /// or its thread ended without answering.
     pub async fn insert(
         &self,
         text: String,
@@ -74,7 +59,6 @@ impl Inserter {
     }
 }
 
-/// One request on an [`Inserter`]'s lane.
 pub(crate) struct Insertion {
     pub(crate) text: String,
     pub(crate) permit: InsertPermit,
@@ -82,10 +66,6 @@ pub(crate) struct Insertion {
     pub(crate) reply: Reply<anyhow::Result<Inserted>>,
 }
 
-/// Closes an [`Inserter`]'s lane and drops each request still queued on it, which answers its
-/// caller with [`INSERTION_STOPPED`]. Losing every reader only closes a lane: its queued requests
-/// live on with the caller's `Inserter` clones, so a thread that stops reading calls this or leaves
-/// their callers waiting forever.
 #[cfg(target_os = "linux")]
 pub(crate) fn abandon_queued(requests: &Receiver<Insertion>) {
     requests.close();
@@ -94,7 +74,6 @@ pub(crate) fn abandon_queued(requests: &Receiver<Insertion>) {
     }
 }
 
-/// The single answer to one request.
 pub(crate) struct Reply<T>(Sender<T>);
 
 impl<T> Reply<T> {
@@ -112,17 +91,13 @@ impl<T> Reply<T> {
     }
 }
 
-/// How dictated text reaches the focused editor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Delivery {
-    /// Places the text on the clipboard and sends the paste shortcut.
     Paste,
-    /// Synthesizes the text as key input, leaving the clipboard untouched.
     Direct,
 }
 
 impl Delivery {
-    /// Returns the outcome that stops insertion while Speakeasy itself has focus.
     pub(crate) fn check_focus(self, external_focus: bool) -> Option<Inserted> {
         if external_focus {
             return None;
@@ -137,11 +112,6 @@ impl Delivery {
         })
     }
 
-    /// Returns the outcome that stops insertion before it touches the target: Speakeasy has focus,
-    /// or shortcut keys are still held. Focus takes precedence.
-    ///
-    /// Each adapter runs it after its last slow preparation step, so the focus and keys it judges
-    /// are current.
     pub(crate) fn preflight(
         self,
         external_focus: bool,
@@ -164,21 +134,14 @@ impl Delivery {
     }
 }
 
-/// Submission outcome; native input cannot prove that the target accepted text.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Inserted {
-    /// Native input was submitted once.
     Sent,
-    /// Text remains on the clipboard with a manual-paste remedy.
     Copied(&'static str),
-    /// Insertion authority was revoked before submission.
     Cancelled,
-    /// Insertion is unavailable or incomplete; the message explains how to recover.
     Unavailable(&'static str),
 }
 
-/// Gives the user up to [`MODIFIER_WAIT`] to let go of the shortcut, unless the recording is
-/// revoked first; returns whether `held` still reported shortcut keys down.
 pub(crate) fn wait_for_released_modifiers(
     permit: &InsertPermit,
     mut held: impl FnMut() -> anyhow::Result<bool>,
@@ -193,8 +156,6 @@ pub(crate) fn wait_for_released_modifiers(
     }
 }
 
-/// Whether an arboard clipboard read found `text`. An image or files another app copied hold no
-/// text to read; that is a change, not a fault.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn holds_text(read: Result<String, arboard::Error>, text: &str) -> anyhow::Result<bool> {
     match read {
@@ -204,8 +165,6 @@ pub(crate) fn holds_text(read: Result<String, arboard::Error>, text: &str) -> an
     }
 }
 
-/// Splits `text` into runs of whole characters, closing each run once it holds at least `units`
-/// UTF-16 code units, so a surrogate pair never straddles two runs.
 #[cfg(any(target_os = "macos", test))]
 pub(crate) fn utf16_chunks(text: &str, units: usize) -> impl Iterator<Item = &str> {
     let mut rest = text;

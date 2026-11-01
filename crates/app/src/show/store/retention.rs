@@ -1,5 +1,3 @@
-//! Explicit retention changes and the cross-process lock shared with expiry.
-
 use std::{
     fs::{self, File, OpenOptions},
     io,
@@ -9,7 +7,6 @@ use std::{
 
 use super::{PIN, age, pinned};
 
-/// A saved Show's retention, independent of whether its manifest is readable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Retention {
     Kept,
@@ -76,8 +73,6 @@ pub(crate) fn interval(duration: Duration) -> String {
     format!("{count} {unit}{}", if count == 1 { "" } else { "s" })
 }
 
-/// Locks only existing storage. App cleanup and headless commands are separate processes, so
-/// their pin-check/rename and keep operations cannot be serialized by the session owner.
 pub(super) fn lock(parent: &Path) -> io::Result<File> {
     let path = parent.join(".retention.lock");
     match fs::symlink_metadata(&path) {
@@ -102,8 +97,6 @@ pub(super) fn lock(parent: &Path) -> io::Result<File> {
     Ok(file)
 }
 
-/// Changes only the pin of an existing, directly managed Show. A successful keep is ordered
-/// against expiry; it cannot recreate a folder cleanup already removed. Never touches edits.
 pub(crate) fn set_kept(parent: &Path, directory: &Path, kept: bool) -> io::Result<Retention> {
     let _lock = lock(parent)?;
     super::address::managed_id(parent, directory)?.ok_or_else(|| {

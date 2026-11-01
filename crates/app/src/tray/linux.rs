@@ -1,6 +1,3 @@
-//! The Linux tray, a `StatusNotifierItem` served by the platform crate. Losing the tray host
-//! reveals Settings, which is then the only way back into the app.
-
 use gpui::{App, Global, Task};
 use speakeasy_platform::{NativeTray, TrayAction, TrayPresentation};
 
@@ -11,7 +8,6 @@ use super::{
 use crate::shell;
 
 pub(crate) struct Tray {
-    /// Whether a tray host shows the icon; without one, closing Settings quits.
     pub available: bool,
     _events: Task<()>,
     _updates: Task<()>,

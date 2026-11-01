@@ -1,7 +1,3 @@
-//! The tray mirrors service state into a native icon and menu and routes menu commands to the
-//! shell. The dictation entries' labels and enable rules are decided here once; both backends show
-//! them as given and present only states that differ from the last one shown.
-
 mod icon;
 #[cfg(target_os = "linux")]
 mod linux;
@@ -25,14 +21,11 @@ use crate::{
     theme::Theme,
 };
 
-/// What the tray shows for one snapshot.
 #[derive(PartialEq, Eq)]
 struct TrayState {
     status: Status,
     theme: Theme,
     menu: TrayMenu,
-    /// Whether Copy last Show and Open last Show act, as [`Services::recallable_show`] decides;
-    /// Linux records no Shows, so has neither.
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     last_show: bool,
     #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -58,9 +51,6 @@ impl TrayState {
     }
 }
 
-/// The dictation entries, each enabled only while its command can act; a demo is not
-/// `interactive`, so it shows them all disabled. The Show entries act whenever Start dictation
-/// would.
 fn dictation_menu(
     service: ServiceState,
     activity: Activity,
@@ -68,7 +58,7 @@ fn dictation_menu(
     interactive: bool,
 ) -> TrayMenu {
     let running = service == ServiceState::Running;
-    // The owner ignores Toggle and the tray's Shows until desktop input is ready.
+
     let startable = interactive && running && desktop_ready;
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     let show = |label| TrayItem {
@@ -83,7 +73,7 @@ fn dictation_menu(
                 ServiceState::Quitting => "Quitting…",
                 ServiceState::Paused | ServiceState::NotSetUp => "Resume dictation",
             },
-            // Resuming before setup would only fail validation; Settings offers setup instead.
+
             enabled: interactive && matches!(service, ServiceState::Running | ServiceState::Paused),
         },
         toggle: TrayItem {
@@ -103,7 +93,7 @@ fn dictation_menu(
                 Activity::Showing | Activity::Saving => "Cancel Show",
                 Activity::Idle | Activity::Dictating | Activity::Finishing => "Cancel dictation",
             },
-            // The owner keeps a Show being saved, whatever cancels it.
+
             enabled: interactive
                 && running
                 && matches!(
@@ -118,8 +108,6 @@ fn dictation_menu(
     }
 }
 
-/// The tray state of the current snapshot and each later one, skipping any equal to the last one
-/// yielded.
 struct TrayChanges {
     snapshots: watch::Receiver<Snapshot>,
     last: Option<TrayState>,
@@ -135,7 +123,6 @@ impl TrayChanges {
         }
     }
 
-    /// Resolves to `None` once the app or the snapshot publisher is gone.
     #[expect(
         clippy::future_not_send,
         reason = "Tray states read Services through GPUI's thread-affine async context"
@@ -187,18 +174,12 @@ impl TrayCommand {
     }
 }
 
-/// What dictation is doing, as the tray presents it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Activity {
-    /// No recording is in progress.
     Idle,
-    /// Capture is starting or recording.
     Dictating,
-    /// A Show is starting or recording.
     Showing,
-    /// Capture is ending or speech is being transcribed.
     Finishing,
-    /// A finished Show is being saved.
     Saving,
 }
 
@@ -206,7 +187,7 @@ fn activity(snapshot: &Snapshot) -> Activity {
     match (snapshot.phase, snapshot.show) {
         (Phase::Starting | Phase::Recording, false) => Activity::Dictating,
         (Phase::Stopping | Phase::Processing, false) => Activity::Finishing,
-        // A Show records hands-free until it finishes, which can come before its microphone opens.
+
         (Phase::Starting | Phase::Recording, true) if snapshot.hands_free => Activity::Showing,
         (Phase::Starting | Phase::Recording | Phase::Stopping | Phase::Processing, true) => {
             Activity::Saving
@@ -233,7 +214,7 @@ mod tests {
     fn dictation_entries_are_enabled_only_while_their_command_can_act() {
         use Activity::{Dictating, Finishing, Idle, Saving, Showing};
         use ServiceState::{NotSetUp, Paused, Pausing, Quitting, Running};
-        // Service, activity, desktop ready, interactive: whether Pause, Toggle, and Cancel act.
+
         let table = [
             (Running, Idle, true, true, [true, true, false]),
             (Running, Idle, false, true, [true, false, false]),
@@ -300,8 +281,7 @@ mod tests {
         let showing = [("Finish Show", true), ("Cancel Show", true)];
         let saving = [("Start dictation", false), ("Cancel Show", false)];
         let idle = [("Start dictation", true), ("Cancel dictation", false)];
-        // Phase, whether the latest session is a Show, whether it records hands-free: the Toggle
-        // and Cancel entries' labels and whether each acts.
+
         let table = [
             (Recording, false, false, dictating),
             (Processing, false, false, finishing),

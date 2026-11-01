@@ -1,72 +1,45 @@
-//! Ink as the overlay and a bundle both draw it: its color, its pen, the outline of a freehand
-//! stroke, as a pen of varying pressure would leave it, and the disc that numbers each mark.
-//!
-//! The outline is adapted from perfect-freehand 1.2.2 under the MIT License; see `NOTICE.md`.
-
 use std::f32::consts::{PI, TAU};
 
 use crate::Point;
 
-/// How much speed narrows the line: at one half, a fast stroke is about half as wide.
 const THINNING: f32 = 0.5;
-/// Outline points closer than this share of the pen size are skipped.
+
 const SMOOTHING: f32 = 0.5;
-/// How far each sample is pulled toward the previous one, damping hand jitter.
+
 const STREAMLINE: f32 = 0.5;
-/// How quickly simulated pressure follows the pen's speed.
+
 const PRESSURE_RATE: f32 = 0.275;
-/// Nodes other than the last within this distance of the end, measured along the line, are
-/// lift-off jitter and skipped.
+
 const END_JITTER: f32 = 3.0;
-/// Steps in each round cap and corner.
+
 const ARC_STEPS: u8 = 13;
 
-/// The red of ink on the overlay and in a bundle's frames.
 pub const COLOR: [u8; 4] = [255, 59, 48, 255];
 
-/// The width of a label's white ring, in the label's radii; a pin's dot has one too.
 pub const LABEL_RING: f32 = 0.14;
-/// The radius of the dot at a pin's point, in its label's radii.
+
 pub const PIN_DOT: f32 = 0.32;
-/// The size a label's digits are set at, in the label's radii, unless they would run wider than
-/// [`LABEL_DIGITS`].
+
 pub const LABEL_TYPE: f32 = 1.3;
-/// The widest a label's digits run, in the label's radii.
+
 pub const LABEL_DIGITS: f32 = 1.4;
 
-/// The pen width for ink on a surface `width × height` pixels, alike on the overlay and in a
-/// bundle's frames.
-///
-/// It is 6 pixels on a 1080p display: thin enough to leave the text a mark points at readable, and
-/// thick enough that a fast stroke, which narrows to half, still shows on a contact sheet that
-/// scales frames down threefold.
 #[must_use]
 pub fn pen(width: f32, height: f32) -> f32 {
     (width.min(height) * 0.0043).clamp(2.8, 4.0) * detail(width, height)
 }
 
-/// The radius of the disc that numbers a mark on a surface `width × height` pixels, alike on the
-/// overlay and in a bundle's frames.
-///
-/// It is 18 pixels on a 1080p display: its digits read at a glance beside the ink without covering
-/// much of what the ink points at.
 #[must_use]
 pub fn label_radius(width: f32, height: f32) -> f32 {
     12.0 * detail(width, height)
 }
 
-/// How much a surface `width × height` pixels scales marks up from a laptop screen's, so they keep
-/// their weight on large displays.
 pub(crate) fn detail(width: f32, height: f32) -> f32 {
     (width.min(height) / 800.0)
         .max(width.max(height) / 1280.0)
         .clamp(1.0, 2.0)
 }
 
-/// The closed outline, in the coordinates of `points`, of a stroke drawn through them with a pen
-/// `size` wide, narrowing where it moved fast and rounded at its ends and sharp turns.
-///
-/// Returns no points for an empty path or a size that is not positive and finite.
 #[must_use]
 pub fn outline(points: &[Point], size: f32) -> Vec<Point> {
     if !size.is_finite() || size <= 0.0 {
@@ -92,7 +65,6 @@ pub fn outline(points: &[Point], size: f32) -> Vec<Point> {
     };
     let length = last.run;
 
-    // Pressure follows speed: slow movement presses harder and draws wider.
     let simulate = |pressure: f32, step: f32| {
         let speed = (step / size).min(1.0);
         (pressure + (1.0 - speed - pressure) * speed * PRESSURE_RATE).min(1.0)
@@ -155,7 +127,6 @@ pub fn outline(points: &[Point], size: f32) -> Vec<Point> {
         previous_direction = node.direction;
     }
 
-    // Round caps join the two sides at each end.
     let cap = last.point - last.direction.perpendicular() * end_radius;
     left.extend(
         arc(1..=ARC_STEPS, ARC_STEPS.saturating_add(1)).map(|angle| cap.rotated(last.point, angle)),
@@ -170,19 +141,13 @@ pub fn outline(points: &[Point], size: f32) -> Vec<Point> {
     left
 }
 
-/// One accepted sample along the stroke's center line.
 struct Node {
     point: Point,
-    /// The unit vector back toward the previous node.
     direction: Point,
-    /// Distance from the previous node.
     step: f32,
-    /// Distance along the line from the first node.
     run: f32,
 }
 
-/// The streamlined center line: each point pulled toward the last, and the first pen-width of
-/// travel skipped except for its last point, so the stroke's start does not wobble.
 fn nodes(input: &[Point], size: f32) -> Vec<Node> {
     let pull = 0.15 + (1.0 - STREAMLINE) * 0.85;
     let Some((&start, rest)) = input.split_first() else {
@@ -230,12 +195,10 @@ fn nodes(input: &[Point], size: f32) -> Vec<Node> {
     nodes
 }
 
-/// Angles from zero to π in `of` equal steps, at the step numbers `steps` yields.
 fn arc(steps: impl Iterator<Item = u8>, of: u8) -> impl Iterator<Item = f32> {
     steps.map(move |step| PI * f32::from(step) / f32::from(of))
 }
 
-/// A closed circle of `radius` around `center`.
 fn dot(center: Point, radius: f32) -> Vec<Point> {
     (0..32_u8)
         .chain([0])

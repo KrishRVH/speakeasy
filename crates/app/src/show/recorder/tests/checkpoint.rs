@@ -1,4 +1,3 @@
-//! Durable frame handoff uses synthetic capture; the session owns checkpoint disposition.
 use std::time::SystemTime;
 
 use super::*;

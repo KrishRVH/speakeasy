@@ -4,10 +4,9 @@ use super::*;
 
 #[test]
 fn only_a_native_already_stopped_error_acknowledges_stop() {
-    // SAFETY: the domain is an immutable exported string.
     let domain = unsafe { objc2_screen_capture_kit::SCStreamErrorDomain };
     let code = objc2_screen_capture_kit::SCStreamErrorCode::AttemptToStopStreamState.0;
-    // SAFETY: these owned synthetic errors have immutable domain strings and no user-info dictionary.
+
     let (stopped, unrelated, refused) = unsafe {
         (
             NSError::errorWithDomain_code_userInfo(domain, code, None),

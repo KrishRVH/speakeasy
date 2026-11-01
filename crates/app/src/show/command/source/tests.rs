@@ -1,5 +1,3 @@
-//! Source commands require explicit times and new destinations and report the actual served time.
-
 use std::fs;
 
 use speakeasy_show::{Image, Journal};
@@ -70,7 +68,7 @@ fn source_commands_report_samples_preserve_files_and_handle_closed_pipes() -> an
         Moment::from_millis(100),
         Image::from_bgra(2, 2, [123, 123, 123, 255].repeat(4))?,
     );
-    // The app's staging writer is deliberately private; encode a public synthetic source fixture.
+
     let mut encoded = Vec::new();
     journal.write_source::<speakeasy_show::SourceError>(Moment::from_millis(1_000), |bytes| {
         encoded.extend_from_slice(bytes);

@@ -1,5 +1,3 @@
-//! An update response may choose a version, but never a host, executable, or arbitrary URL.
-
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
@@ -62,7 +60,7 @@ async fn redirects_and_oversized_responses_are_not_followed_or_accepted() -> any
             let (mut stream, _) = listener.accept().await?;
             let mut request = [0; 2048];
             assert!(stream.read(&mut request).await? > 0);
-            // The bounded client may close early, so a broken pipe is expected for a large body.
+
             match stream.write_all(response.as_bytes()).await {
                 Ok(()) => Ok(()),
                 Err(error)

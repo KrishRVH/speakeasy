@@ -1,6 +1,3 @@
-//! Settings pages share one unsaved draft. Leaving dictation revokes private practice and closes
-//! its language popup; navigation keeps keyboard focus outside the controls it removes.
-
 use gpui::{Context, FocusHandle, ScrollHandle, Window, point, px};
 
 use super::Settings;

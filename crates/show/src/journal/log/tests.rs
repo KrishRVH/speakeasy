@@ -1,5 +1,3 @@
-//! Live/replay equivalence, valid prefixes after tears, and corrupt count/geometry trust boundaries.
-
 use proptest::prelude::*;
 
 use super::*;

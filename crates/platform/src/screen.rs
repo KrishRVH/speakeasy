@@ -1,10 +1,3 @@
-//! The display a Show records, whole or in part: its frames, the pointer over it, and the overlay
-//! drawn on it.
-//!
-//! Frames leave out Speakeasy's own windows, and pointer samples are normalized to the same
-//! display; each frame says which part of the display it shows, so ink drawn on the overlay lines
-//! up with the frames it annotates.
-
 #[cfg(any(target_os = "macos", target_os = "windows", test))]
 pub(crate) mod geometry;
 
@@ -23,35 +16,24 @@ use crate::macos::screen as native;
 use crate::windows::screen as native;
 use crate::{NativeWindow, StoppableThread};
 
-/// How often the pointer is sampled.
 const POINTER_INTERVAL: Duration = Duration::from_millis(8);
 
-/// What the user asks a Show to record, before it is resolved into a [`Target`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scope {
-    /// The display under the pointer.
     Screen,
-    /// The window under the pointer, following it as it moves.
     Window,
-    /// An area of the display under the pointer, dragged out once the Show starts.
     Area,
 }
 
-/// A part of a display, by its edges normalized to the display from its top-left corner.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Part {
-    /// The left edge.
     pub left: f32,
-    /// The top edge.
     pub top: f32,
-    /// The right edge.
     pub right: f32,
-    /// The bottom edge.
     pub bottom: f32,
 }
 
 impl Part {
-    /// The whole display.
     pub const WHOLE: Self = Self {
         left: 0.0,
         top: 0.0,
@@ -59,8 +41,6 @@ impl Part {
         bottom: 1.0,
     };
 
-    /// The part with corners at two points normalized to the display, in either order, clipped to
-    /// the display.
     #[must_use]
     pub fn between([x, y]: [f32; 2], [other_x, other_y]: [f32; 2]) -> Self {
         let clip = |value: f32| value.clamp(0.0, 1.0);
@@ -72,20 +52,16 @@ impl Part {
         }
     }
 
-    /// The part's width, normalized to the display's.
     #[must_use]
     pub fn width(self) -> f32 {
         self.right - self.left
     }
 
-    /// The part's height, normalized to the display's.
     #[must_use]
     pub fn height(self) -> f32 {
         self.bottom - self.top
     }
 
-    /// Where a point normalized to the display lies, normalized to this part; points outside the
-    /// part fall outside `0.0..=1.0`, and an empty part leaves the point as it was.
     #[must_use]
     pub fn within(self, [x, y]: [f32; 2]) -> [f32; 2] {
         let normalized = |value: f32, start: f32, extent: f32| {
@@ -102,8 +78,6 @@ impl Part {
     }
 }
 
-/// What a Show records: a display, all of it, the part a window covers as the window moves, or a
-/// fixed area of it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Target {
     pub(crate) display: Display,
@@ -113,16 +87,11 @@ pub struct Target {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Region {
     Whole,
-    /// A window, and the part of the display it covered when chosen.
     Window(native::Window, Part),
     Area(Part),
 }
 
 impl Target {
-    /// All of the display under the pointer.
-    ///
-    /// # Errors
-    /// Fails when the platform cannot record its screen or no display is under the pointer.
     pub fn screen_under_pointer() -> anyhow::Result<Self> {
         Ok(Self {
             display: Display::under_pointer()?,
@@ -130,13 +99,6 @@ impl Target {
         })
     }
 
-    /// The top app window under the pointer, on the display under the pointer; `None` when no app
-    /// window shows there, such as over the desktop or the taskbar, or when the top one is
-    /// Speakeasy's. A Show never records the display in its place.
-    ///
-    /// # Errors
-    /// Fails as [`screen_under_pointer`](Self::screen_under_pointer) does, or when the window under
-    /// the pointer cannot be listed or measured, so no failure reads as no window.
     pub fn window_under_pointer() -> anyhow::Result<Option<Self>> {
         let display = Display::under_pointer()?;
         Ok(
@@ -147,7 +109,6 @@ impl Target {
         )
     }
 
-    /// The `part` of `display`.
     #[must_use]
     pub const fn area(display: Display, part: Part) -> Self {
         Self {
@@ -156,14 +117,11 @@ impl Target {
         }
     }
 
-    /// The display recorded.
     #[must_use]
     pub const fn display(&self) -> Display {
         self.display
     }
 
-    /// The part of the display recorded from the start; a window's moves with it, as each
-    /// [`Frame`] reports.
     #[must_use]
     pub const fn part(&self) -> Part {
         match self.region {
@@ -173,21 +131,14 @@ impl Target {
     }
 }
 
-/// One image of the display, or of the part being recorded.
 pub struct Frame {
-    /// When the image was on screen.
     pub at: Instant,
-    /// Width in pixels.
     pub width: u32,
-    /// Height in pixels.
     pub height: u32,
-    /// Rows of BGRA or BGRX pixels, `width × 4` bytes each with no padding.
     pub bgra: Vec<u8>,
-    /// The part of the display the image shows.
     pub part: Part,
 }
 
-/// Leaves out the pixels, which show the user's screen.
 impl fmt::Debug for Frame {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self {
@@ -206,27 +157,17 @@ impl fmt::Debug for Frame {
     }
 }
 
-/// What a running capture reports.
 #[derive(Debug)]
 pub enum ScreenEvent {
-    /// A new image of the display.
     Frame(Frame),
-    /// The recorded window can no longer be followed, so capture stopped; no frame shows what
-    /// took its place.
     WindowGone(WindowGone),
-    /// Capture stopped and cannot resume; the message explains what the user can do.
     Failed(String),
-    /// Full-motion video stopped; retained still frames can continue. No native error text is
-    /// exposed because codec diagnostics can contain private paths or image metadata.
     MovieStopped,
 }
 
-/// Why a recorded window can no longer be followed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowGone {
-    /// It closed, or can no longer be found.
     Closed,
-    /// It was minimized or hidden, moved to another desktop, or moved wholly off the display.
     OffScreen,
 }
 
@@ -239,47 +180,31 @@ impl fmt::Display for WindowGone {
     }
 }
 
-/// A display that a Show records and its overlay covers.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Display {
     pub(crate) native: native::Display,
-    /// Width and height in logical pixels, which ink is measured against.
     pub size: [f32; 2],
 }
 
 impl Display {
-    /// The display under the pointer now.
-    ///
-    /// # Errors
-    /// Fails when the platform cannot record its screen or no display is under the pointer.
     pub fn under_pointer() -> anyhow::Result<Self> {
         native::display_under_pointer()
     }
 }
 
-/// Where the pointer was and what it was doing.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PointerSample {
-    /// Pointer and target geometry observed together.
     Observed {
-        /// When it was sampled.
         at: Instant,
-        /// Position normalized to the display; a pointer beyond an edge falls outside `0..=1`.
         position: [f32; 2],
-        /// The recorded target's part of the display at this sample.
         part: Part,
-        /// Shift was held, alone or beside the held talk shortcut, which draws ink.
         drawing: bool,
-        /// The primary button was down.
         pressed: bool,
     },
-    /// Pointer or target geometry became unavailable. End pending gestures without inventing
-    /// button releases or joining ink across the gap.
     Gap(Instant),
 }
 
 impl PointerSample {
-    /// When this observation or gap began.
     #[must_use]
     pub const fn at(self) -> Instant {
         match self {
@@ -314,28 +239,12 @@ impl PointerSample {
     }
 }
 
-/// Captures a [`Target`] on an owned thread until stopped.
 #[derive(Debug)]
 pub struct ScreenCapture {
     thread: StoppableThread,
 }
 
 impl ScreenCapture {
-    /// Starts capturing `target`.
-    ///
-    /// Frames reach `events` at most once per `interval`, each halved in size until its long edge
-    /// fits `longest_edge`. A window's frames follow it as it moves or resizes; once it closes or
-    /// goes off screen, capture stops with [`ScreenEvent::WindowGone`] rather than show whatever
-    /// took its place. No frame waits behind a full lane: Windows holds back its newest frame
-    /// until there is room or a newer one replaces it, and macOS drops it. No frame shows a
-    /// Speakeasy window, including one opened while capturing; they still appear in the user's own
-    /// screen sharing before and after. On Windows and for fixed Mac regions, an optional movie
-    /// lease records silent video from admitted pixels. Its event lane closes only after native
-    /// cleanup. Mac window capture and Linux release the unused lease without creating a movie.
-    ///
-    /// # Errors
-    /// Fails when the thread cannot start. Failures after starting arrive as
-    /// [`ScreenEvent::Failed`].
     pub fn start(
         target: Target,
         interval: Duration,
@@ -355,33 +264,21 @@ impl ScreenCapture {
         Ok(Self { thread })
     }
 
-    /// Asks the capture to stop; it releases the display before [`stopped`](Self::stopped)
-    /// resolves.
     pub fn request_stop(&self) {
         self.thread.request_stop();
     }
 
-    /// Resolves once the capture has released the display.
     pub fn stopped(&self) -> impl Future<Output = ()> + Send + use<> {
         self.thread.stopped()
     }
 }
 
-/// Samples the pointer over a display on an owned thread until stopped.
 #[derive(Debug)]
 pub struct PointerMonitor {
     thread: StoppableThread,
 }
 
 impl PointerMonitor {
-    /// Samples the pointer over `target` often enough to catch a deliberate click, sending a
-    /// sample whenever its position, target geometry, drawing state, or primary button changes. Polling needs no
-    /// input hook or permission, and never delays the pointer.
-    /// The caller provides a bounded lane with at least two slots and no other producer. One
-    /// slot stays available for a gap when changed observations cannot be retained.
-    ///
-    /// # Errors
-    /// Fails when the thread cannot start or the lane has fewer than two bounded slots.
     pub fn start(
         target: Target,
         samples: Sender<PointerSample>,
@@ -404,12 +301,10 @@ impl PointerMonitor {
         Ok(Self { thread })
     }
 
-    /// Asks the monitor to stop.
     pub fn request_stop(&self) {
         self.thread.request_stop();
     }
 
-    /// Resolves once the monitor has stopped.
     pub fn stopped(&self) -> impl Future<Output = ()> + Send + use<> {
         self.thread.stopped()
     }
@@ -426,8 +321,7 @@ impl Samples {
         if self.last.is_some_and(|last| !last.differs(&sample)) {
             return;
         }
-        // This is the only producer. The consumer can free slots during the check, never fill
-        // them, so the reserved slot retains a gap without waiting or losing it on shutdown.
+
         if matches!(sample, PointerSample::Observed { .. })
             && self
                 .outgoing
@@ -445,29 +339,19 @@ impl Samples {
 }
 
 impl NativeWindow {
-    /// Makes this window an overlay over `display` that never takes input or focus, stays above
-    /// other windows, and is left out of screen capture.
-    ///
-    /// # Errors
-    /// Fails when the platform cannot keep the window out of screen capture or place it.
     pub fn configure_overlay(&self, display: Display) -> anyhow::Result<()> {
         native::configure_overlay(self, display.native)
     }
 
-    /// Shows or hides the overlay without activating it.
     pub fn set_overlay_visible(&self, visible: bool) {
         native::set_overlay_visible(self, visible);
     }
 
-    /// Lets the overlay take pointer input, for dragging out an area to record, or passes every
-    /// click through to the apps underneath again. It never takes focus either way.
     pub fn set_overlay_input(&self, takes_input: bool) {
         native::set_overlay_input(self, takes_input);
     }
 }
 
-/// Linux records no Shows: finding a display and configuring an overlay fail, and the other
-/// entry points do nothing.
 #[cfg(target_os = "linux")]
 mod unsupported {
     use std::{convert::Infallible, time::Duration};

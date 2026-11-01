@@ -17,8 +17,7 @@ pub(super) fn acquire(root: &Path) -> anyhow::Result<File> {
         .create(true)
         .truncate(false)
         .open(root.join(".lock"))?;
-    // Independent configuration instances share this cache; an in-process owner cannot prevent
-    // another process from cleaning a download or an installer that is ready for handoff.
+
     lock.try_lock().context(
         "Another Speakeasy copy is preparing an update. Finish or cancel its update first.",
     )?;

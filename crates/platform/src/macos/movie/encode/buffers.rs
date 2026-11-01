@@ -1,5 +1,3 @@
-//! A thresholded native pool gives every submitted frame independent, owned BGRA storage.
-
 use std::{
     ptr::{self, NonNull},
     slice,
@@ -35,8 +33,7 @@ impl Buffers {
         let height = CFNumber::new_i64(i64::from(size[1]));
         let format = CFNumber::new_i64(i64::from(kCVPixelFormatType_32BGRA));
         let mut pool = ptr::null_mut();
-        // SAFETY: documented Core Video keys hold correctly typed CFNumbers. The out pointer
-        // belongs to this stack and the create-rule result is adopted exactly once.
+
         let pool = unsafe {
             let attributes = CFDictionary::from_slices(
                 &[
@@ -58,7 +55,7 @@ impl Buffers {
             CFRetained::from_raw(NonNull::new(pool).context("Native video pool is missing")?)
         };
         let mut buffer = ptr::null_mut();
-        // SAFETY: the first independently owned buffer establishes the pool's actual storage size.
+
         let buffer = unsafe {
             ensure!(
                 CVPixelBufferPool::create_pixel_buffer(None, &pool, NonNull::from(&mut buffer))
@@ -77,7 +74,7 @@ impl Buffers {
                 .checked_div(bytes)
                 .context("Native video buffer is empty")?,
         )?);
-        // SAFETY: this documented auxiliary key limits the number of allocated pool buffers.
+
         let threshold = unsafe {
             CFDictionary::from_slices(&[kCVPixelBufferPoolAllocationThresholdKey], &[&*count])
         };
@@ -103,8 +100,7 @@ impl Buffers {
             "Video canvas bytes changed"
         );
         let mut buffer = ptr::null_mut();
-        // SAFETY: the bounded pool and correctly typed threshold dictionary stay alive throughout
-        // allocation; this adopts only its create-rule result.
+
         let buffer = unsafe {
             ensure!(
                 CVPixelBufferPool::create_pixel_buffer_with_aux_attributes(
@@ -139,8 +135,7 @@ impl Buffers {
         }
         let mut format = ptr::null();
         let mut sample = ptr::null_mut();
-        // SAFETY: the pixel buffer now contains immutable sRGB pixels. The format and sample
-        // retain their dependencies, and both create-rule results are adopted exactly once.
+
         unsafe {
             for (key, value) in [
                 (
@@ -195,7 +190,6 @@ struct Locked<'a>(&'a CVPixelBuffer);
 
 impl<'a> Locked<'a> {
     fn new(buffer: &'a CVPixelBuffer) -> anyhow::Result<Self> {
-        // SAFETY: the exclusively owned buffer remains alive until the matching unlock.
         let status = unsafe { CVPixelBufferLockBaseAddress(buffer, CVPixelBufferLockFlags(0)) };
         ensure!(
             status == kCVReturnSuccess,
@@ -211,15 +205,13 @@ impl<'a> Locked<'a> {
     fn bytes(&mut self, length: usize) -> anyhow::Result<&mut [u8]> {
         let base = NonNull::new(CVPixelBufferGetBaseAddress(self.0).cast::<u8>())
             .context("Native video pixels are missing")?;
-        // SAFETY: the caller bounded the packed rows by the native allocation size; the mutable
-        // slice is exclusive and cannot outlive this buffer's write lock.
+
         Ok(unsafe { slice::from_raw_parts_mut(base.as_ptr(), length) })
     }
 }
 
 impl Drop for Locked<'_> {
     fn drop(&mut self) {
-        // SAFETY: this releases the write lock taken with identical flags.
         unsafe {
             CVPixelBufferUnlockBaseAddress(self.0, CVPixelBufferLockFlags(0));
         }

@@ -1,5 +1,3 @@
-//! Opt-in owned-window review acceptance. Actions are invoked on the view, never through OS input.
-
 use std::{
     fs,
     time::{Duration, Instant},
@@ -125,11 +123,11 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     pixels(window, cx).await?;
     export_selected(window, cx).await?;
     copy_selected(window, cx).await?;
-    // Focus starts on the root: Refresh, three Show rows, then Next (Previous is disabled).
+
     for _ in 0..5 {
         key(window, "tab", cx)?;
     }
-    // GPUI activates clicks on key-up. App handlers must not also activate on key-down.
+
     for stroke in ["enter", "space"] {
         key(window, stroke, cx)?;
         let frame = window.read_with(cx, |view, _| {
@@ -654,7 +652,7 @@ async fn copy_selected(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyho
             narration,
             received: false,
         });
-        // Only the injected action can run. No real clipboard operation is reachable.
+
         view.source = Source::Saved;
         view.actions.can_copy = |_| true;
         view.actions.copy = |request, cx| {
@@ -754,8 +752,7 @@ async fn pixels(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyhow::Resu
                 u32::MAX,
             )?
             .reply()?;
-        // The public fixture's light Settings panel covers far more area than any text in the
-        // dark review window. Read only this owned window, never the root or another app's pixels.
+
         let light = image
             .data
             .as_chunks::<4>()

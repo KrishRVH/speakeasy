@@ -1,6 +1,3 @@
-//! One local speech engine process behind a loopback HTTP API. The process is contained and reaped
-//! on every exit path, and its output never reaches diagnostics.
-
 mod streaming;
 
 #[cfg(unix)]
@@ -31,14 +28,13 @@ const LOOPBACK: &str = "127.0.0.1";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const HEALTH_TIMEOUT: Duration = Duration::from_millis(200);
 const HEALTH_POLL: Duration = Duration::from_millis(25);
-/// Bounds each startup stage on its own: serving, then any warm-up.
+
 pub(crate) const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
-// CPU inference of a five-minute recording can take minutes; Escape and bounded recovery end real
-// waits long before this.
+
 const INFERENCE_TIMEOUT: Duration = Duration::from_mins(30);
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const STOPPED: &str = "Transcription stopped. Check the selected model and engine, then try again.";
-/// How long an engine's exit status may take to become reapable once its connections close.
+
 const EXIT_GRACE: Duration = Duration::from_millis(500);
 const SIGILL: i32 = 4;
 const USAGE_ERROR: i32 = 2;
@@ -50,15 +46,11 @@ const STATUS_INVALID_IMAGE_FORMAT: u32 = 0xC000_007B;
 pub(crate) struct LocalSpeech {
     engine: Engine,
     nemotron: bool,
-    /// Declared before `child`, so dropping terminates the group before its leader can be reaped.
     group: ProcessGroup,
     child: Child,
     port: u16,
-    /// Parakeet's API key, passed only through its environment, and Whisper's route, which is on
-    /// its argv and so visible to other local users.
     secret: String,
     client: Client,
-    /// Whisper serves this empty directory instead of its bundled web UI.
     _directory: tempfile::TempDir,
 }
 
@@ -74,7 +66,7 @@ impl LocalSpeech {
         let secret = random_token()?;
         let mut command = server_command(&config, port, &secret, directory.path());
         let client = engine_client()?;
-        // Release the reserved port just before the engine binds it.
+
         drop(listener);
         let mut child = command.spawn().context(
             "Cannot start the speech engine. Check the selected engine executable and its native dependencies.",
@@ -140,12 +132,6 @@ impl LocalSpeech {
                 .await
                 && response.status().is_success()
             {
-                // The reserved port is released before the engine binds it, so another program can
-                // take it and answer. That program must never receive audio or choose the text to
-                // insert. Whisper's probe carries its route secret, which opens nothing on an
-                // engine that lost the port. macOS has no ownership lookup, so it trusts the answer
-                // and each request checks that the engine, which exits once its port is lost,
-                // still runs.
                 #[cfg(not(target_os = "macos"))]
                 ensure!(
                     self.group
@@ -173,8 +159,6 @@ impl LocalSpeech {
     }
 
     async fn verify_listener(&mut self) -> anyhow::Result<()> {
-        // The engine may have exited and lost its port since readiness. Each request connects
-        // afresh, leaving only the moment between these checks and that connection.
         if !matches!(self.child.try_wait(), Ok(None)) {
             return Err(self.kill_and_reap_with_cause().await);
         }
@@ -234,12 +218,6 @@ impl LocalSpeech {
         }
     }
 
-    /// Kills the engine's group, reaps its leader within `EXIT_GRACE`, and says why the engine
-    /// stopped: [`Incompatible`] when its exit status proves it cannot run on this machine.
-    ///
-    /// On Unix the group can be signaled only while its leader is unreaped, so the kill comes
-    /// first. That loses no cause: a crash fixes its exit status before its connections close, and
-    /// a later kill cannot change it.
     async fn kill_and_reap_with_cause(&mut self) -> anyhow::Error {
         self.group.terminate();
         if let Ok(Ok(status)) = timeout(EXIT_GRACE, self.child.wait()).await
@@ -258,14 +236,10 @@ impl Speech for LocalSpeech {
         language: &str,
         terms: &Terms,
     ) -> anyhow::Result<Option<String>> {
-        // Continuous recognition is optional. A healthy engine can recognize the sealed audio
-        // after a transport failure; the probe still rejects a dead or replaced listener.
         let text = streaming::transcribe(self, audio, language, terms)
             .await
             .unwrap_or(None);
         if text.is_none() {
-            // Closing a stream cancels its engine-side job. A bounded probe acknowledges cleanup
-            // before the owner reuses this worker for a Show or another recording.
             timeout(CONNECT_TIMEOUT, self.probe_with_silence()).await??;
         }
         Ok(text)
@@ -311,8 +285,6 @@ impl Speech for LocalSpeech {
     }
 }
 
-/// Loading weights neither initializes every GPU kernel nor proves that a Linux build can run its
-/// CPU kernels, so these configurations transcribe silence before reporting ready.
 struct Warmup {
     timed_out: &'static str,
     failed: &'static str,
@@ -335,8 +307,6 @@ impl Warmup {
         }
     }
 
-    /// The failed warmup's message, unless an exit status proving that the engine cannot run here
-    /// names a more exact remedy.
     fn failure(&self, error: anyhow::Error) -> anyhow::Error {
         if error.is::<Incompatible>() {
             error
@@ -346,20 +316,16 @@ impl Warmup {
     }
 }
 
-/// Parses an engine reply. Serde quotes strings it did not expect, and those can be transcript
-/// text, so its error is never kept as a source.
 fn reply<T: DeserializeOwned>(body: &[u8]) -> anyhow::Result<T> {
     serde_json::from_slice(body)
         .ok()
         .context("The speech engine sent a reply Speakeasy cannot read. Check the selected model and engine, then try again.")
 }
 
-/// An engine reply Speakeasy reads, and the `response_format` that asks for it.
 trait Reply: DeserializeOwned {
     const FORMAT: &'static str;
 }
 
-/// The part of either engine's JSON reply that Speakeasy reads.
 #[derive(Deserialize)]
 struct Plain {
     text: Option<String>,
@@ -369,8 +335,6 @@ impl Reply for Plain {
     const FORMAT: &'static str = "json";
 }
 
-/// The part of either engine's timed reply that Speakeasy reads. Parakeet lists whole words;
-/// whisper.cpp lists tokens within segments.
 #[derive(Deserialize)]
 struct Timed {
     #[serde(default)]
@@ -391,8 +355,6 @@ struct TimedSegment {
     words: Vec<Token>,
 }
 
-/// A word or word piece, timed in seconds from the start of the audio. A time the engine could not
-/// compute can be absent, or `null`, which is how JSON writers print NaN.
 #[derive(Deserialize)]
 struct Token {
     word: String,
@@ -400,16 +362,12 @@ struct Token {
     end: Option<f64>,
 }
 
-/// A word of a reply, and where it lies in the audio when its times say.
 struct Heard {
     text: String,
     span: Option<Span>,
 }
 
 impl Timed {
-    /// The reply's words at their times. When any time is missing, negative, out of range, or
-    /// reversed, the narration is only text, the reply's or else its words'. Untimed text visibly
-    /// goes to the first keyframe, while a guessed time would silently misplace a word.
     fn into_narration(self) -> Narration {
         let heard: Vec<Heard> = if self.words.is_empty() {
             joined(self.segments.into_iter().flat_map(|segment| segment.words))
@@ -448,8 +406,6 @@ impl Token {
         }
     }
 
-    /// Where the token lies in the audio, unless a time is missing, negative, out of range, or
-    /// reversed.
     fn span(&self) -> Option<Span> {
         let time =
             |seconds: Option<f64>| Duration::try_from_secs_f64(seconds?).ok().map(Moment::from);
@@ -458,8 +414,6 @@ impl Token {
     }
 }
 
-/// whisper.cpp splits words into tokens; a token that starts with a space starts a word. Its
-/// bracketed control tokens are not speech.
 fn joined(tokens: impl Iterator<Item = Token>) -> Vec<Heard> {
     let mut words: Vec<Heard> = Vec::new();
     for token in tokens {
@@ -480,9 +434,6 @@ fn joined(tokens: impl Iterator<Item = Token>) -> Vec<Heard> {
     words
 }
 
-/// The empty directory Whisper serves in place of its bundled web UI. tempfile's error already
-/// names the folder it tried, escaped, so the message rebuilds the bare OS reason and names the
-/// folder once.
 fn served_directory() -> anyhow::Result<tempfile::TempDir> {
     tempfile::Builder::new()
         .prefix("speakeasy-")
@@ -500,8 +451,6 @@ fn served_directory() -> anyhow::Result<tempfile::TempDir> {
         })
 }
 
-/// 128 bits from the operating system's generator as 32 hex digits. A shared temporary directory
-/// lists its entries' names to every local user, so no name can be the secret.
 fn random_token() -> anyhow::Result<String> {
     let mut bytes = [0_u8; 16];
     getrandom::fill(&mut bytes)?;
@@ -532,8 +481,6 @@ fn server_command(config: &Config, port: u16, secret: &str, served: &Path) -> Co
                 .env("NEMO_SPEECH_HTTP_API_KEY", secret);
         },
         Engine::Whisper => {
-            // Keep default timestamp decoding: disabling it can skip speech when a window ends
-            // early, and the JSON text stays plain either way.
             command
                 .arg("--model")
                 .arg(&config.model)
@@ -563,9 +510,6 @@ fn server_command(config: &Config, port: u16, secret: &str, served: &Path) -> Co
     command
 }
 
-/// A client that reaches only the engine: never through a proxy, never after a redirect, and
-/// never over an idle pooled connection, which could outlive the listener check that precedes
-/// each request.
 fn engine_client() -> anyhow::Result<Client> {
     Ok(client_builder(Trust::Nobody)?
         .no_proxy()
@@ -607,7 +551,6 @@ fn recording_form(wav: Vec<u8>, format: &'static str) -> reqwest::Result<multipa
         .text("response_format", format))
 }
 
-/// Sends `request` and reads the engine's whole reply.
 async fn exchange(request: RequestBuilder) -> Result<Vec<u8>, Unanswered> {
     let mut response = request.timeout(INFERENCE_TIMEOUT).send().await?;
     let status = response.status();
@@ -629,15 +572,11 @@ async fn exchange(request: RequestBuilder) -> Result<Vec<u8>, Unanswered> {
     Ok(body)
 }
 
-/// Why the engine sent no complete reply.
 enum Unanswered {
-    /// The connection failed or broke before the reply was complete, as a crashed engine's does.
     Disconnected,
-    /// What went wrong, as a fixed message.
     Failed(anyhow::Error),
 }
 
-/// The request URL carries the private route, so a transport error never reaches users.
 impl From<reqwest::Error> for Unanswered {
     fn from(error: reqwest::Error) -> Self {
         if error.is_timeout() {
@@ -651,7 +590,6 @@ impl From<reqwest::Error> for Unanswered {
 }
 
 fn startup_exit(status: ExitStatus) -> String {
-    // Only startup reads Speakeasy's arguments.
     let remedy = if status.code() == Some(USAGE_ERROR) {
         "The selected engine does not accept Speakeasy's server arguments. Switch Engine to match it, or choose a supported engine executable in Settings."
     } else {
@@ -662,8 +600,6 @@ fn startup_exit(status: ExitStatus) -> String {
     format!("The speech engine exited before it was ready ({status}). {remedy}")
 }
 
-/// An engine that exited with a status proving it cannot run on this machine, and what to do
-/// instead.
 #[derive(Debug)]
 struct Incompatible {
     status: ExitStatus,
@@ -679,8 +615,6 @@ impl fmt::Display for Incompatible {
 
 impl std::error::Error for Incompatible {}
 
-/// The remedy for an exit status that proves the engine cannot run on this machine, at any stage;
-/// `None` for any other status.
 fn exit_remedy(status: ExitStatus) -> Option<&'static str> {
     #[cfg(unix)]
     let signal = status.signal();

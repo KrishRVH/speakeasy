@@ -1,6 +1,3 @@
-//! Continuous inference consumes bounded PCM chunks from the drain thread. A full lane leaves its
-//! cursor for the next drain; completion hands over the unqueued tail without blocking capture.
-
 use tokio::sync::{mpsc, oneshot};
 use zeroize::Zeroizing;
 

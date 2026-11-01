@@ -1,5 +1,3 @@
-//! Content-free navigation and projections of saved Shows. Late reads never change a newer choice.
-
 use std::{
     io,
     path::{Path, PathBuf},
@@ -159,7 +157,6 @@ impl Frame {
     }
 }
 
-/// Only the selected Show's summary and bounded recorded clauses remain in memory. No Debug.
 pub(super) struct Detail {
     pub frames: Vec<Frame>,
     pub marks: Vec<(usize, Moment)>,
@@ -366,7 +363,6 @@ impl Detail {
     }
 }
 
-/// A read's exact selection, including revisiting the same Show or frame.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Key {
     revision: u64,
@@ -408,7 +404,6 @@ impl Library {
     }
 
     pub(super) fn select(&mut self, directory: PathBuf, frame: usize) -> Key {
-        // A revision identifies work, not a count; wrapping cannot meet a live read 2^64 choices old.
         self.revision = self.revision.wrapping_add(1);
         let key = Key {
             revision: self.revision,

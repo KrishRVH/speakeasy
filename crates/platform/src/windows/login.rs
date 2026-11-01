@@ -1,6 +1,3 @@
-//! Starting Speakeasy when the user signs in: the per-user Run value Windows launches, and the
-//! `StartupApproved` value through which Windows' Startup apps page turns that launch off.
-
 use std::{env, io, iter, os::windows::ffi::OsStrExt as _, path::Path, ptr::null_mut};
 
 use anyhow::anyhow;
@@ -14,21 +11,12 @@ use windows_sys::Win32::{
 
 use super::to_wide;
 
-/// The per-user key whose values Windows runs at sign-in, each a command line.
 const RUN: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
-/// Where Windows' Startup apps page records which values of [`RUN`] it lets start.
+
 const APPROVED: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
-/// The value Speakeasy owns in both keys.
+
 const VALUE: &str = "Speakeasy";
 
-/// Makes Windows start this executable when the user signs in, or stop doing so.
-///
-/// Turning it on writes the running executable's path, so the entry follows a moved or updated
-/// copy; turning it off deletes the entry if there is one.
-///
-/// # Errors
-/// Fails, with a remedy, when this executable's path is unavailable or the registry refuses the
-/// change, as a security policy may.
 pub fn start_at_login(on: bool) -> anyhow::Result<()> {
     if on {
         env::current_exe()
@@ -47,33 +35,22 @@ pub fn start_at_login(on: bool) -> anyhow::Result<()> {
     }
 }
 
-/// Whether Windows' Startup apps page lets the sign-in launch start. An entry the page never
-/// toggled has no approval value, which counts as allowed, and so does one Speakeasy cannot read.
 #[must_use]
 pub fn startup_approved() -> bool {
     approved(APPROVED)
 }
 
-/// Whether the `StartupApproved` value under `key` lets the Run value start, as [`approves`]
-/// decodes it. A value longer than Explorer writes, or of another type, cannot be read, so it
-/// counts as allowed.
 fn approved(key: &str) -> bool {
     let mut data = [0; 12];
     approves(read(key, RRF_RT_REG_BINARY, &mut data).ok().flatten())
 }
 
-/// Whether a `StartupApproved` `value` lets its Run value start. Explorer writes 12 bytes: a
-/// little-endian DWORD of flags, 2 or 6 while the entry is on and 3 once the user turns it off,
-/// then the FILETIME at which they did, zero while it is on. Bit 0 marks it off; no value means
-/// the page never toggled it, so it is on.
 fn approves(value: Option<&[u8]>) -> bool {
     value
         .and_then(<[u8]>::first)
         .is_none_or(|flags| flags & 1 == 0)
 }
 
-/// The `REG_SZ` data that starts `exe`, as NUL-terminated UTF-16: its path in quotes, so a path
-/// with spaces names one program. Windows paths cannot contain quotes, so none needs escaping.
 fn command(exe: &Path) -> Vec<u8> {
     let quote = u16::from(b'"');
     iter::once(quote)
@@ -83,12 +60,10 @@ fn command(exe: &Path) -> Vec<u8> {
         .collect()
 }
 
-/// Writes `data` as [`VALUE`] of type `kind` under `key`, creating the key if it is missing.
 fn write(key: &str, kind: REG_VALUE_TYPE, data: &[u8]) -> io::Result<()> {
     let size = u32::try_from(data.len()).map_err(io::Error::other)?;
     let (key, value) = (to_wide(key), to_wide(VALUE));
-    // SAFETY: both names are NUL-terminated, and `size` bytes of `data` are readable; all outlive
-    // the call.
+
     checked(unsafe {
         RegSetKeyValueW(
             HKEY_CURRENT_USER,
@@ -101,26 +76,21 @@ fn write(key: &str, kind: REG_VALUE_TYPE, data: &[u8]) -> io::Result<()> {
     })
 }
 
-/// Deletes [`VALUE`] under `key`; a value or key that is already gone counts as deleted. It looks
-/// first, since deleting opens the key for writing, which security software guarding the Run key
-/// may refuse or question even when there is nothing to delete.
 fn delete(key: &str) -> io::Result<()> {
     if !present(key)? {
         return Ok(());
     }
     let (key, value) = (to_wide(key), to_wide(VALUE));
-    // SAFETY: both names are NUL-terminated and outlive the call.
+
     match unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, key.as_ptr(), value.as_ptr()) } {
         ERROR_FILE_NOT_FOUND => Ok(()),
         status => checked(status),
     }
 }
 
-/// Whether [`VALUE`] exists under `key`, of any type.
 fn present(key: &str) -> io::Result<bool> {
     let (key, value) = (to_wide(key), to_wide(VALUE));
-    // SAFETY: both names are NUL-terminated and outlive the call; null type, data, and size
-    // pointers ask only whether the value exists.
+
     let status = unsafe {
         RegGetValueW(
             HKEY_CURRENT_USER,
@@ -138,8 +108,6 @@ fn present(key: &str) -> io::Result<bool> {
     }
 }
 
-/// Reads [`VALUE`] under `key` into `data` if it has a type `types` allows and fits, returning
-/// the bytes read, or `None` when the key or value is absent.
 fn read<'a>(
     key: &str,
     types: REG_ROUTINE_FLAGS,
@@ -147,8 +115,7 @@ fn read<'a>(
 ) -> io::Result<Option<&'a [u8]>> {
     let mut size = u32::try_from(data.len()).map_err(io::Error::other)?;
     let (key, value) = (to_wide(key), to_wide(VALUE));
-    // SAFETY: both names are NUL-terminated, `size` is the length of the writable `data`, and a
-    // null type pointer skips the type; all outlive the call.
+
     let status = unsafe {
         RegGetValueW(
             HKEY_CURRENT_USER,
@@ -187,7 +154,6 @@ mod tests {
 
     use super::*;
 
-    /// Holds every scratch key, so a test never names a key Windows reads.
     const PARENT: &str = r"Software\Speakeasy-tests";
 
     fn utf16(text: &str) -> Vec<u8> {
@@ -204,7 +170,6 @@ mod tests {
 
     #[test]
     fn only_the_off_flag_turns_the_sign_in_launch_off() {
-        // 2026-10-29 12:00 UTC as a FILETIME.
         let disabled_at = [0x00, 0xA0, 0x0C, 0x06, 0x9D, 0x67, 0xDD, 0x01];
         let value = |flags: u8, time: [u8; 8]| [&[flags, 0, 0, 0][..], &time].concat();
         assert!(approves(None), "No value read as off");
@@ -214,8 +179,6 @@ mod tests {
         assert!(approves(Some(&[])), "An empty value read as off");
     }
 
-    /// A uniquely named key under [`PARENT`], deleted with everything in it, and the parent once
-    /// empty, on drop.
     struct Scratch(String);
 
     impl Scratch {
@@ -229,9 +192,7 @@ mod tests {
     impl Drop for Scratch {
         fn drop(&mut self) {
             let (key, parent) = (to_wide(&self.0), to_wide(PARENT));
-            // SAFETY: both names are NUL-terminated and outlive the calls. Given a subkey name,
-            // RegDeleteTreeW deletes that key and its contents; RegDeleteKeyW deletes the parent
-            // only once no other run's key remains in it.
+
             unsafe {
                 RegDeleteTreeW(HKEY_CURRENT_USER, key.as_ptr());
                 RegDeleteKeyW(HKEY_CURRENT_USER, parent.as_ptr());

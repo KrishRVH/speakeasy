@@ -1,5 +1,3 @@
-//! Imported narration states, sampling gaps, and deliberate evidence handoff.
-
 use speakeasy_show::{Moment, Narration as Recorded, NarrationLoss, Recording, Span, Word};
 
 use super::super::{

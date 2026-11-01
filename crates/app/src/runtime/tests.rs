@@ -1,7 +1,3 @@
-//! Drives the production owner through fake ports on the test's paused clock, where deadlines are
-//! exact and a pending check proves quiescence. One smoke test and the latency profile host the
-//! owner on its own thread instead, as production does, where a pending check only samples.
-
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, ensure};
@@ -10,7 +6,7 @@ use speakeasy_show::{Image, Journal, Moment, Narration, NarrationLoss, Recording
 use tokio::{sync::oneshot, task::JoinHandle, time::timeout};
 
 use super::{
-    ports::{Capturing, Footage, Listening, Pinning, Sealed, Speech, Unchosen},
+    ports::{Capturing, Footage, Listening, Pinning, Preservation, Sealed, Speech, Unchosen},
     *,
 };
 use crate::{
@@ -23,8 +19,6 @@ type TranscriptionJob = (String, Reply);
 type OpenedCapture = (SessionId, Sender<CaptureEvent>);
 type OpenedShow = (SessionId, Scope, Sender<ShowEvent>);
 
-/// A cue the owner played, a microphone it told to expect one, or the cue output held open or
-/// released, in the order they happened.
 #[derive(Debug, PartialEq, Eq)]
 enum Sound {
     Played(Cue),
@@ -32,7 +26,6 @@ enum Sound {
     Held(bool),
 }
 
-/// Where a fake pauses for the test: it reports entry, then waits for release.
 #[derive(Clone)]
 struct Gate<T> {
     entered: Sender<T>,
@@ -56,7 +49,6 @@ impl<T: Send + Sync + 'static> Gate<T> {
     }
 }
 
-/// The test's side of a [`Gate`].
 struct GateControl<T> {
     entered: Receiver<T>,
     release: Sender<()>,
@@ -72,8 +64,6 @@ impl<T> GateControl<T> {
     }
 }
 
-/// Fake devices, speech, insertion, and publishing. Each optional gate or result lane pauses or
-/// steers one side effect.
 struct FakePorts {
     desktop_pending: bool,
     microphone_error: Option<&'static str>,
@@ -85,11 +75,8 @@ struct FakePorts {
     retirement: Option<Gate<()>>,
     stop: Option<Gate<()>>,
     insertion: Option<Gate<InsertPermit>>,
-    /// Each insertion takes the next queued result once it commits, or reports `Sent`.
     insert_results: Option<Receiver<Inserted>>,
     screen_error: Option<&'static str>,
-    /// What the screen reports in place of footage when finished, as an area Show finished before
-    /// its area was chosen does.
     screen_unchosen: Option<Unchosen>,
     screen_retirement: Option<Gate<()>>,
     publication: Option<Gate<()>>,
@@ -97,7 +84,6 @@ struct FakePorts {
     checkpoint_root: Option<std::path::PathBuf>,
     publish_error: Option<&'static str>,
     publish_panics: bool,
-    /// Holds a publication once its Show is saved, before it reports.
     saved: Option<Gate<()>>,
     copy_error: Option<&'static str>,
     captures: Sender<OpenedCapture>,
@@ -110,7 +96,6 @@ struct FakePorts {
     sounds: Sender<Sound>,
 }
 
-/// What the fakes report back to the test.
 struct Reports {
     captures: Receiver<OpenedCapture>,
     shows: Receiver<OpenedShow>,
@@ -296,10 +281,10 @@ impl Ports for FakePorts {
                 return Ok(if permit.commit() {
                     Published::Recovered {
                         show: saved_show(&narration),
-                        source_lost: false,
-                        movie_lost: false,
-                        lost,
-                        audio_kept: false,
+                        preservation: Preservation {
+                            narration_lost: lost,
+                            ..Preservation::default()
+                        },
                         narrated_copy: false,
                     }
                 } else {
@@ -325,10 +310,10 @@ impl Ports for FakePorts {
             Ok(Published::Saved {
                 show,
                 ending,
-                lost,
-                source_lost: false,
-                movie_lost: false,
-                audio_kept: false,
+                preservation: Preservation {
+                    narration_lost: lost,
+                    ..Preservation::default()
+                },
                 copied: copy_error.map_or(Ok(()), |error| Err(anyhow!(error))),
             })
         }
@@ -438,8 +423,6 @@ impl Listening for FakeMicrophone {
     }
 }
 
-/// Reports one gray frame as its footage when finished, or that nothing was chosen when
-/// `unchosen` says so, and each pin it takes.
 struct FakeScreen {
     id: SessionId,
     events: Sender<ShowEvent>,
@@ -502,8 +485,6 @@ fn footage() -> Box<Footage> {
     })
 }
 
-/// The folder a fake publication saves a Show in, named for what it said so a test can tell Shows
-/// apart; nothing is written there.
 fn saved_show(narration: &Narration) -> SavedShow {
     SavedShow::assume(match narration {
         Narration::Text(text) => format!("shows/{text}"),
@@ -571,8 +552,6 @@ impl Speech for FakeSpeech {
     }
 }
 
-/// Fake cleanup gates closed when a harness is dropped, so a failed assertion cannot leave owned
-/// teardown waiting for a release that never comes.
 struct CleanupGates(Vec<Receiver<()>>);
 
 impl Drop for CleanupGates {
@@ -583,11 +562,7 @@ impl Drop for CleanupGates {
     }
 }
 
-/// The owner as a task on the test's executor. Its exit lane closes once the loop returns or unwinds,
-/// as `OwnedThread`'s does, so a shutdown check can poll it any number of times; only `close` polls
-/// the task itself.
 struct OwnedTask {
-    /// Never sends; it closes once the owner's loop has finished.
     exit: Sender<Infallible>,
     task: JoinHandle<()>,
 }
@@ -604,7 +579,6 @@ impl OwnedTask {
 }
 
 impl Runtime<OwnedTask> {
-    /// Hosts the owner on this test's executor, so `tokio::time::advance` drives its deadlines.
     fn on_task<P: Ports>(
         config: Config,
         snapshots: watch::Sender<Snapshot>,
@@ -617,8 +591,6 @@ impl Runtime<OwnedTask> {
         })
     }
 
-    /// Stops the owner and joins it, surfacing its panic; a shutdown still running when the paused
-    /// clock reaches `PATIENCE` fails.
     async fn close(&mut self) -> anyhow::Result<()> {
         self.request_stop();
         timeout(PATIENCE, &mut self.host.task).await??;
@@ -626,8 +598,6 @@ impl Runtime<OwnedTask> {
     }
 }
 
-/// The production controls and owner, plus the test's view of the fakes. Fields drop in declaration
-/// order, so a harness dropped without `close` closes the fakes' gates before stopping the owner.
 struct Harness<Host = OwnedTask> {
     _cleanup: CleanupGates,
     runtime: Runtime<Host>,
@@ -653,8 +623,6 @@ impl Harness {
         Self::host(config, None, customize, Runtime::on_task)
     }
 
-    /// Starts the owner as one starts after a pause, from a snapshot that presents `show` as the
-    /// last Show.
     fn remembering(
         show: SavedShow,
         customize: impl FnOnce(&mut FakePorts),
@@ -662,21 +630,17 @@ impl Harness {
         Self::host(Config::default(), Some(show), customize, Runtime::on_task)
     }
 
-    /// Resolves once the owner has finished its cleanup and exited.
     fn exited(&self) -> impl Future<Output = ()> + use<> {
         let exit = self.runtime.host.exit.clone();
         async move { exit.closed().await }
     }
 
-    /// Stops the owner and joins it before the fakes' gates close, so a shutdown stuck on a held
-    /// gate fails at `PATIENCE`.
     async fn close(mut self) -> anyhow::Result<()> {
         self.runtime.close().await
     }
 }
 
 impl Harness<OwnedThread> {
-    /// Hosts the owner on its own thread through `Runtime::start_with`, as production does.
     fn on_own_thread(
         config: Config,
         customize: impl FnOnce(&mut FakePorts),
@@ -685,7 +649,6 @@ impl Harness<OwnedThread> {
     }
 }
 
-// Sync keeps the futures of the `&self` helpers Send (clippy::future_not_send).
 impl<Host: Sync> Harness<Host> {
     fn host(
         config: Config,
@@ -701,7 +664,7 @@ impl<Host: Sync> Harness<Host> {
         let (mut ports, reports) = FakePorts::new();
         customize(&mut ports);
         let cleanup = ports.cleanup_gates();
-        // A restarted shell's epoch, so a level tagged with the default epoch fails `observe_level`.
+
         let (output, updates) = watch::channel(Snapshot {
             epoch: SnapshotEpoch::default().next(),
             last_show,
@@ -743,9 +706,6 @@ impl<Host: Sync> Harness<Host> {
         Ok(())
     }
 
-    /// Waits until the meter shows exactly `level`, which proves the owner handled every input
-    /// that outranked the level report, then checks that the level names the epoch and session
-    /// the pill matches it against.
     async fn observe_level(&mut self, level: f32) -> anyhow::Result<()> {
         let meter = *timeout(
             PATIENCE,
@@ -770,7 +730,6 @@ impl<Host: Sync> Harness<Host> {
         self.updates.borrow().clone()
     }
 
-    /// Every sound the fakes reported since the last call, in order.
     fn take_sounds(&self) -> Vec<Sound> {
         std::iter::from_fn(|| self.sounds.try_recv().ok()).collect()
     }
@@ -781,8 +740,6 @@ impl<Host: Sync> Harness<Host> {
         receive(&self.captures).await
     }
 
-    /// Finishes the capture and returns the transcription request, which carries the configured
-    /// language.
     async fn finish(&self) -> anyhow::Result<Reply> {
         self.input(Input::Toggle);
         let (language, reply) = receive(&self.jobs).await?;
@@ -811,7 +768,6 @@ fn gate<T>(capacity: usize) -> (Gate<T>, GateControl<T>) {
     (gate, control)
 }
 
-/// Two taps of Shift that began now.
 fn double_tap() -> Taps {
     let pressed = Instant::now();
     Taps {
@@ -834,7 +790,6 @@ fn answer(reply: Reply, text: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Holds the shortcut and presses S, returning the screen recorder's lane.
 async fn start_show(h: &mut Harness) -> anyhow::Result<OpenedShow> {
     h.input(Input::Press);
     h.phase(Phase::Recording).await?;
@@ -845,14 +800,12 @@ async fn start_show(h: &mut Harness) -> anyhow::Result<OpenedShow> {
     receive(&h.shows).await
 }
 
-/// Lets go of the shortcut that started the Show, then presses and releases it to finish.
 fn finish_show(h: &Harness) {
     for input in [Input::Release, Input::Press, Input::Release] {
         h.input(input);
     }
 }
 
-/// Applies settings that end any session under way, even a Show being saved.
 fn change_settings(h: &Harness) {
     let config = Config {
         remove_fillers: !h.runtime.configuration.borrow().remove_fillers,

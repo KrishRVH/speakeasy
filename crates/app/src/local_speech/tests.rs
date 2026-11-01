@@ -1,7 +1,3 @@
-//! Parses both engines' replies and pins their arguments, drives startup and requests against
-//! fake engine scripts and programs that take the engine's port, and recognizes a public
-//! recording with a real engine in an opt-in run.
-
 use std::{path::PathBuf, time::Instant};
 
 use super::*;
@@ -24,7 +20,6 @@ fn timed(words: &[(u64, u64, &str)]) -> Narration {
 
 #[test]
 fn parakeet_words_keep_their_times_and_punctuation() -> anyhow::Result<()> {
-    // Trimmed from a NeMo-Speech.cpp reply to whisper.cpp's public `jfk.wav`.
     let reply = r#"{"duration":11,"language":"","task":"transcribe","text":"And so, my",
         "words":[{"confidence":1,"end":0.56000000000000005,"start":0.23999999999999999,"word":"And"},
                  {"confidence":1,"end":1.04,"start":0.56000000000000005,"word":"so,"},
@@ -60,8 +55,7 @@ fn replies_without_usable_timings_keep_only_their_text() -> anyhow::Result<()> {
         narration(r#"{"text":"","words":[]}"#)?,
         Narration::Words(Vec::new())
     );
-    // One unusable time, beside good ones, leaves the whole reply untimed: its text, or the words'
-    // own text when it has none.
+
     for timings in [
         r#""words":[{"word":"Kept","start":0.1,"end":0.3},{"word":"text.","start":2.0,"end":1.0}]"#,
         r#""words":[{"word":"Kept","start":-1.0,"end":0.3},{"word":"text.","start":0.3,"end":0.6}]"#,
@@ -100,8 +94,6 @@ fn exits_name_the_remedies_their_status_proves_and_only_startup_blames_arguments
     #[cfg(windows)]
     use std::os::windows::process::ExitStatusExt as _;
 
-    // Each status's remedy whenever the engine exits, then before it is ready. Raw Unix statuses
-    // carry an exit code in their second byte, or the ending signal alone.
     #[cfg(unix)]
     let exits = [
         (SIGILL, Some("CPU instructions"), "CPU instructions"),
@@ -233,7 +225,7 @@ async fn a_truncated_reply_is_a_broken_connection() -> anyhow::Result<()> {
         while stream.read_line(&mut line).await? > 0 && !line.trim().is_empty() {
             line.clear();
         }
-        // Promises more of the reply than it sends, then hangs up.
+
         stream
             .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 64\r\n\r\n{\"text\":")
             .await?;
@@ -446,10 +438,6 @@ async fn a_warmup_the_engine_crashes_during_names_its_remedy() -> anyhow::Result
     Ok(())
 }
 
-/// A `shell_engine` that runs `script`, then crashes by an illegal instruction during its first
-/// transcription, and a future that plays its network side. That future answers health checks,
-/// then crashes the engine once a transcription arrives, and hangs up only once the crash has
-/// fixed the engine's exit status, as a real crash's connections close.
 #[cfg(target_os = "linux")]
 async fn crashing_engine(
     script: &str,
@@ -495,8 +483,6 @@ async fn crashing_engine(
     Ok((directory, speech, network))
 }
 
-/// A ready engine running `script` in `sh`, without core dumps, in a fresh working directory. It
-/// reads standard input and holds `listener` as its standard output.
 #[cfg(target_os = "linux")]
 async fn shell_engine(
     script: &str,
@@ -514,8 +500,6 @@ async fn shell_engine(
     Ok((directory, engine_from(command, port).await?))
 }
 
-/// The state letter `/proc` reports for `pid`, such as `Z` for exited but unreaped; `None` once no
-/// such process exists.
 #[cfg(target_os = "linux")]
 fn process_state(pid: u32) -> Option<char> {
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
@@ -529,7 +513,6 @@ async fn until(mut condition: impl FnMut() -> bool) {
     }
 }
 
-/// A ready engine, idle in `sleep`, that has since lost `port` to another program.
 #[cfg(unix)]
 async fn sleeping_engine(port: u16) -> anyhow::Result<LocalSpeech> {
     let mut command = hidden_command("sleep");
@@ -661,7 +644,6 @@ async fn streaming_authenticates_and_sends_per_request_language_and_hints() -> a
     Ok(())
 }
 
-/// A ready engine serving `port` from the process `command` spawns.
 #[cfg(unix)]
 async fn engine_from(mut command: Command, port: u16) -> anyhow::Result<LocalSpeech> {
     let mut child = command.process_group(0).spawn()?;
@@ -677,7 +659,6 @@ async fn engine_from(mut command: Command, port: u16) -> anyhow::Result<LocalSpe
     })
 }
 
-/// Asks `speech` to transcribe while `squatter` impersonates the engine on its port.
 #[cfg(unix)]
 async fn transcribe_beside(
     speech: &mut LocalSpeech,
@@ -694,8 +675,6 @@ async fn transcribe_beside(
     }
 }
 
-/// Answers every request on `listener` with an empty transcript, as a program that took the
-/// engine's port could; returns only on failure.
 #[cfg(unix)]
 async fn impersonate_engine(listener: &tokio::net::TcpListener) -> anyhow::Result<()> {
     loop {
@@ -762,7 +741,7 @@ async fn local_worker_recognizes_fixture_and_stops() -> anyhow::Result<()> {
         "Engine startup: {startup:?}; inference: {:?}",
         started.elapsed()
     );
-    // Failure output must never include the recognized text.
+
     assert!(
         result.to_lowercase().contains("ask not what your country"),
         "Fixture recognition did not contain the expected phrase"
@@ -815,8 +794,7 @@ async fn abandoned_and_failed_streams_probe_the_owned_engine_before_reuse() -> a
                 socket.next().await,
                 None | Some(Err(_) | Ok(Message::Close(_)))
             ));
-            // No response can arrive until the client closes its stream and asks the same owned
-            // process to acknowledge readiness with a complete silent request.
+
             answer_silence(listener.accept().await?.0).await
         };
         let terms = Terms::default();

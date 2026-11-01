@@ -1,5 +1,3 @@
-//! Locating spoken phrases and marks without inventing times or returning private text.
-
 mod evidence;
 
 use std::{fmt, time::Duration};
@@ -8,14 +6,10 @@ pub use evidence::{Cell, Evidence, PixelRect, crop_image};
 
 use crate::{Manifest, Moment, Narration, Span};
 
-/// An explicit location to investigate in one Show. Phrase contents never appear in diagnostics.
 #[derive(Clone, Copy)]
 pub enum Focus<'a> {
-    /// A point on the recording's clock.
     At(Moment),
-    /// A numbered ink gesture or pin.
     Mark(usize),
-    /// Contiguous spoken words, ignoring case and punctuation.
     Phrase(&'a str),
 }
 
@@ -29,7 +23,6 @@ impl fmt::Debug for Focus<'_> {
     }
 }
 
-/// A content-free explanation of why a location cannot be established.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Unlocated(&'static str);
 
@@ -42,12 +35,6 @@ impl fmt::Display for Unlocated {
 impl std::error::Error for Unlocated {}
 
 impl Manifest {
-    /// Finds every matching span, in narration order. No match is an empty vector. Matching
-    /// searches recorded narration, including phrase corrections, rather than summary edits.
-    ///
-    /// # Errors
-    /// Rejects missing marks, out-of-range times, empty or oversized phrases, unavailable word
-    /// timing, and invalid narration timing. Errors never contain narration or the query.
     pub fn locate(&self, focus: Focus<'_>) -> Result<Vec<Span>, Unlocated> {
         let duration = self.recording().duration;
         let spans = match focus {
@@ -119,7 +106,6 @@ fn tokens(text: &str) -> impl Iterator<Item = String> + '_ {
         .map(str::to_lowercase)
 }
 
-/// Widens a location equally on both sides, clamped to the recording's clock.
 #[must_use]
 pub fn window(span: Span, around: Duration, duration: Moment) -> Span {
     let before = u64::try_from(around.as_millis()).unwrap_or(u64::MAX);
@@ -129,23 +115,13 @@ pub fn window(span: Span, around: Duration, duration: Moment) -> Span {
     )
 }
 
-/// Retained samples near a location. Gaps describe the full source sampling, before thinning.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Samples {
-    /// Distinct actual sample times in recording order.
     pub times: Vec<Moment>,
-    /// The held sample carried in when none falls exactly at the window start. It may be older
-    /// than the window's whole width.
     pub carried_in: Option<Moment>,
-    /// Largest unsampled interval inside the window, including its edges.
     pub longest_gap: Duration,
 }
 
-/// Selects at most `most` samples from ordered, distinct retained `moments`.
-///
-/// Prefers the sample
-/// at or before `anchor`, then the carried-in sample and the last sample, and spreads the rest
-/// evenly. A window before capture began has no samples; it never borrows a future frame.
 #[must_use]
 pub fn pick(moments: &[Moment], window: Span, anchor: Moment, most: usize) -> Samples {
     let start = moments.partition_point(|at| *at < window.start());
@@ -191,7 +167,7 @@ pub fn pick(moments: &[Moment], window: Span, anchor: Moment, most: usize) -> Sa
                 chosen.push(index);
             }
         }
-        // Bisect the largest remaining interval, avoiding a bias toward early samples.
+
         while chosen.len() < limit {
             chosen.sort_unstable();
             let next = chosen

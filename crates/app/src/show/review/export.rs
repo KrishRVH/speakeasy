@@ -1,6 +1,3 @@
-//! An explicit save dialog chooses the archive destination. Accepted exports belong to the app's
-//! write owner, so closing or navigating the review window cannot abandon a half-written archive.
-
 use std::path::PathBuf;
 
 use gpui::Context;

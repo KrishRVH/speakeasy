@@ -1,5 +1,3 @@
-//! Named dictation choices load into the existing draft; they never own a session or global options.
-
 use std::{collections::HashSet, fmt, path::PathBuf};
 
 use anyhow::{Context as _, ensure};

@@ -1,37 +1,20 @@
-//! The desktop facade every platform shares, declared and documented once over each OS's native
-//! module: input observation, system services, and the `NativeWindow` handle. The handle's
-//! presentation methods live beside the native code behind them: in each OS's module, and in
-//! `screen` for the Show overlay.
-
 use std::{fmt, marker::PhantomData};
 
 use raw_window_handle::WindowHandle;
 
 use crate::{InputSender, Inserter, OwnedThread, native};
 
-/// Owns desktop observation, and on Windows and macOS the insertion thread, until an explicit stop
-/// and acknowledged cleanup.
-///
-/// Create, stop, and drop it on the UI thread. Dropping it requests a stop and then joins its
-/// threads; await [`stopped`](Self::stopped) first so the join does not block.
 pub struct InputMonitor {
-    /// The observation thread. Declared first, so dropping joins it before `native` releases the
-    /// rest: macOS removes its lifecycle observers only once the event tap's thread has ended.
     thread: OwnedThread,
     native: native::Monitor,
-    /// Not `Send` even where the native monitor would be, so code checked on one host keeps the
-    /// rule macOS needs: its lifecycle observers are not `Send`.
     _ui_thread: PhantomData<*const ()>,
 }
 
 impl InputMonitor {
-    /// Requests that observation and insertion stop, without joining their threads.
     pub fn request_stop(&self) {
         self.native.request_stop();
     }
 
-    /// Resolves once every thread has retired its native resources; await it before replacing or
-    /// dropping the monitor.
     pub fn stopped(&self) -> impl Future<Output = ()> + use<> {
         let observation = self.thread.exited();
         let native = self.native.stopped();
@@ -54,14 +37,6 @@ impl Drop for InputMonitor {
     }
 }
 
-/// Starts desktop observation and the insertion that serves the returned [`Inserter`].
-///
-/// Readiness arrives on `input` as [`Input::DesktopReady`](crate::Input::DesktopReady), and a later
-/// loss of desktop access, such as a missing permission, as
-/// [`Input::Unavailable`](crate::Input::Unavailable).
-///
-/// # Errors
-/// Fails when a thread cannot start or native desktop initialization fails.
 pub fn prepare(
     input: InputSender,
     options: DesktopOptions,
@@ -75,36 +50,25 @@ pub fn prepare(
     Ok((monitor, inserter))
 }
 
-/// Native shortcut choices and Linux insertion preferences.
 #[derive(Clone, Debug)]
 pub struct DesktopOptions {
-    /// The macOS modifier used to hold or toggle dictation. Other platforms ignore it.
     pub mac_shortcut: MacShortcut,
-    /// Reserved Linux dictation chord in portal syntax.
     pub shortcut: String,
-    /// Reserved Linux cancellation chord in portal syntax.
     pub cancel: String,
-    /// How clipboard submission finishes.
     pub paste: LinuxPaste,
-    /// Whether desktop command bindings replace observing a native shortcut.
     pub external_shortcut: bool,
 }
 
-/// Modifier-only macOS shortcuts. The left Option and Command keys retain their ordinary uses.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MacShortcut {
-    /// The Fn or Globe key.
     #[default]
     Function,
-    /// Right Option, useful on keyboards without Fn.
     RightOption,
-    /// Right Command, useful when Option is needed for text entry.
     RightCommand,
 }
 
 impl MacShortcut {
-    /// The native name shown in Settings and the active shortcut status.
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
@@ -114,7 +78,6 @@ impl MacShortcut {
         }
     }
 
-    /// The next finite preset offered by Settings.
     #[must_use]
     pub const fn next(self) -> Self {
         match self {
@@ -125,14 +88,10 @@ impl MacShortcut {
     }
 }
 
-/// How a Linux clipboard submission ends once the text is on the clipboard.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LinuxPaste {
-    /// Sends Ctrl+V.
     Standard,
-    /// Sends Ctrl+Shift+V, which terminals expect.
     Terminal,
-    /// Sends nothing: the user pastes, so Speakeasy needs no keyboard control.
     Manual,
 }
 
@@ -148,26 +107,12 @@ impl Default for DesktopOptions {
     }
 }
 
-/// A live window of this process, for the native presentation GPUI does not offer.
-///
-/// Build it from the handle GPUI lends for an open window and use it before that window closes.
-/// It is not `Send` on any platform, so it stays on the UI thread that owns the window: Windows
-/// refuses a window another thread owns, and macOS requires the main thread. Showing, hiding, and
-/// resizing can call back into GPUI synchronously, so call those methods with GPUI's borrows
-/// released.
 pub struct NativeWindow {
     pub(crate) native: native::Window,
-    /// Not `Send` even where the native window would be, so code checked on one host keeps the
-    /// thread rule every platform needs.
     _ui_thread: PhantomData<*const ()>,
 }
 
 impl NativeWindow {
-    /// The window behind `handle`, a window of this process.
-    ///
-    /// # Errors
-    /// Fails for a handle of another windowing system, or one this thread may not use: on Windows a
-    /// window another thread owns, on macOS any thread but the main one.
     pub fn new(handle: WindowHandle<'_>) -> anyhow::Result<Self> {
         Ok(Self {
             native: native::Window::new(handle)?,
@@ -182,46 +127,21 @@ impl fmt::Debug for NativeWindow {
     }
 }
 
-/// A file type a file dialog offers before all files.
 #[derive(Clone, Copy, Debug)]
 pub struct FileFilter<'a> {
-    /// What the dialog calls the type, such as "Programs".
     pub name: &'a str,
-    /// The wildcard pattern the type matches, such as "*.exe".
     pub pattern: &'a str,
 }
 
-/// Whether the system asks apps to reduce motion; any thread may ask.
-///
-/// Linux reads no desktop preference and answers `false`, leaving the choice to the app setting.
 #[must_use]
 pub fn reduced_motion() -> bool {
     native::reduced_motion()
 }
 
-/// Places `text` on the clipboard as a dictation paste does: marked to stay out of clipboard history
-/// and other devices, with CRLF line endings on Windows.
-///
-/// Call it off the UI thread: Windows retries for up to 50 ms while another app holds the clipboard.
-///
-/// # Errors
-/// Fails when another app holds the clipboard or refuses the text, and always on Linux, which
-/// records no Shows.
 pub fn copy_text(text: &str) -> anyhow::Result<()> {
     native::copy_text(text)
 }
 
-/// Gives a run the standard streams of whatever launched it, and reports whether its standard
-/// error reaches anyone.
-///
-/// A launch from the desktop, as from Explorer, Finder, or a shortcut, reaches no one, so this
-/// returns false. Call it only for a command or a run about to end. Windows gives a windowed
-/// executable no console handles, not even ones its launcher passed, so this attaches the parent's
-/// console for standard output or error when either is missing; an app sharing that console would
-/// also receive its Ctrl+C. macOS starts a desktop launch as a child of launchd with standard error
-/// closed or on `/dev/null`; a terminal or agent that sends standard error there chose to discard
-/// it, so this still returns true. Linux, which reports startup errors on standard error, always
-/// returns true.
 #[expect(
     clippy::must_use_candidate,
     reason = "Attaching is the point; only a caller with a dialog to fall back on needs the answer"
@@ -230,14 +150,6 @@ pub fn attach_stdio() -> bool {
     native::attach_stdio()
 }
 
-/// Presents an error that prevents or ends a launch: a dialog that blocks until dismissed on
-/// Windows and macOS, a line on stderr on Linux.
-///
-/// Call it on the main thread, where macOS presents its alert; elsewhere macOS shows nothing.
-/// Never call it while GPUI holds the app, as inside `Application::run`'s callback or an update:
-/// the dialog's modal loop runs the app's queued tasks, and one that borrows the app then panics.
-/// A running app calls it from a task of its own, outside any update. The app reports runtime
-/// failures in its own windows instead. Callers never include audio, transcripts, or credentials.
 pub fn show_startup_error(message: &str) {
     native::show_startup_error(message);
 }

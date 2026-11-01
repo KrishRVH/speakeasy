@@ -1,7 +1,3 @@
-//! The Settings view. It edits a draft that reaches Services only through a durable save; a demo,
-//! which never saves, previews its theme and motion directly. The view owns the setup, file picker,
-//! and saves it starts, and waits on the microphone scan that Services holds.
-
 mod language;
 mod navigation;
 mod permissions;
@@ -61,13 +57,9 @@ pub(super) struct Settings {
     practice: practice::Practice,
     update: Update,
     _updates: Task<()>,
-    /// Whether Windows' Startup apps page has turned off the sign-in launch, as last read when
-    /// Settings came to the front; only a live Windows launch of the default settings reads it.
     startup_apps_off: bool,
-    /// What a desktop shortcut runs to reach this instance, without `--toggle` or `--cancel`.
     #[cfg(target_os = "linux")]
     desktop_command: SharedString,
-    /// Keeps the Windows minimize-to-tray hook alive while Settings is open.
     #[cfg(target_os = "windows")]
     pub(super) minimize_to_tray: Option<Task<()>>,
 }
@@ -119,8 +111,6 @@ impl Settings {
         view
     }
 
-    /// Reads whether Windows' Startup apps page has turned off the sign-in launch now and whenever
-    /// Settings comes to the front, as on the way back from that page.
     #[cfg(target_os = "windows")]
     pub(super) fn follow_startup_apps(&mut self, window: &mut Window, cx: &Context<'_, Self>) {
         self.startup_apps_off = !speakeasy_platform::startup_approved();
@@ -241,13 +231,11 @@ impl Settings {
         ));
     }
 
-    /// An edit supersedes the last notice; whether edits remain to save shows from the draft.
     fn edited(&mut self) {
         self.practice.stop();
         self.notice = None;
     }
 
-    /// Whether the draft has edits the file does not hold. A demo never saves, so it has none.
     fn unsaved(&self, cx: &App) -> bool {
         !is_demo(cx)
             && (self.saves.needs_save(&self.config)
@@ -287,8 +275,6 @@ impl Settings {
     }
 
     fn refresh_microphones(&mut self, cx: &mut Context<'_, Self>) {
-        // The demo is simulated and never touches audio devices, and Quit waits only for a scan
-        // that started before it.
         let services = cx.global::<Services>();
         if services.mode.is_demo() || services.is_quitting() || self.microphone_listing.is_some() {
             return;
@@ -472,7 +458,7 @@ impl Settings {
                     ));
                 }
             },
-            // The outermost message says what failed and what to do; transport detail stays out.
+
             Some(Err(error)) => self.notice = Some(Notice::Problem(error.to_string().into())),
             None => {
                 self.notice = Some(Notice::Problem(
@@ -504,7 +490,7 @@ impl Settings {
             return;
         }
         let services = cx.global::<Services>();
-        // A demo is simulated yet keeps the real settings path, so it must never write there.
+
         if services.is_quitting() || services.mode.is_demo() {
             return;
         }
@@ -579,7 +565,6 @@ impl Settings {
         self.update.cancel();
     }
 
-    /// Releases finished threads; returns whether setup, saves, and the update check have drained.
     pub(super) fn drain_finished(&mut self) -> bool {
         let update_drained = self.update.drained();
         self.setup = self
@@ -601,17 +586,13 @@ impl Drop for Settings {
     fn drop(&mut self) {
         self.update.cancel();
         self.request_setup_stops();
-        // Quit may release this view before its save task sees a completion, so finish the writes
-        // here, in order, before the setup fields join their threads.
+
         self.saves.flush();
     }
 }
 
-/// A message Settings shows under the session's status.
 enum Notice {
-    /// Progress or a reminder.
     Note(SharedString),
-    /// A failure the user must act on.
     Problem(SharedString),
 }
 
@@ -642,8 +623,6 @@ impl Notice {
     }
 }
 
-/// What Settings shows from the latest snapshot; a new snapshot redraws the view only when this
-/// changes.
 #[derive(PartialEq, Eq)]
 struct Presentation {
     indicator: Indicator,
@@ -706,8 +685,6 @@ enum Action {
 }
 
 impl Action {
-    /// A stable element id, so a button keeps keyboard focus when its label changes. Saving and
-    /// resuming share the primary button, which keeps focus as it turns from one to the other.
     const fn element_id(self) -> &'static str {
         match self {
             Self::Page(navigation::Page::Dictation) => "page-dictation",
@@ -797,9 +774,6 @@ impl Setting {
     }
 }
 
-/// The command a desktop shortcut runs to reach this instance: `speakeasy` on PATH, naming the
-/// settings file unless it is the default, because a launch finds its instance through that file's
-/// folder. Desktop shortcut fields split commands like a POSIX shell, so the path is single-quoted.
 #[cfg(any(target_os = "linux", test))]
 fn desktop_command(path: &std::path::Path, default: bool) -> String {
     if default {
@@ -813,7 +787,6 @@ fn is_demo(cx: &App) -> bool {
     cx.global::<Services>().mode.is_demo()
 }
 
-/// Cycles through the listed microphones, then back to the system default (`None`).
 fn next_microphone(microphones: &[InputDevice], current: Option<&str>) -> Option<String> {
     let next = match current {
         None => microphones.first(),
@@ -825,7 +798,6 @@ fn next_microphone(microphones: &[InputDevice], current: Option<&str>) -> Option
     next.map(|device| device.id.clone())
 }
 
-/// Shows Services' theme on the pill and the tray.
 fn show_theme(cx: &mut App) {
     let services = cx.global::<Services>();
     let (pill, theme) = (services.pill, services.config.theme);
@@ -833,7 +805,7 @@ fn show_theme(cx: &mut App) {
     if let Some(shows) = cx.global::<Services>().shows {
         shows.update_if_open(cx, |view, _, cx| view.set_theme(theme, cx));
     }
-    // Republishing the current snapshot makes the tray redraw its icon.
+
     cx.global::<Services>().output.send_modify(|_| ());
 }
 

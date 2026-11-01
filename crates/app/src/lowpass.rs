@@ -1,11 +1,5 @@
-//! An eighth-order Butterworth low-pass filter: flat below its cutoff, then falling 48 dB an
-//! octave. Cues pass through it before resampling to a slower output, and the speech gate hears a
-//! voice beneath Speakeasy's cues through it.
-
 use std::f64::consts::TAU;
 
-/// The quality of each second-order section, `1 / (2 cos((2k - 1)π / 16))` for `k` in 1–4, which
-/// places the sections' poles on the Butterworth circle.
 const QUALITIES: [f64; 4] = [
     0.509_795_579_104_159_2,
     0.601_344_886_935_045_3,
@@ -16,14 +10,11 @@ const QUALITIES: [f64; 4] = [
 pub(crate) struct Lowpass([Biquad; 4]);
 
 impl Lowpass {
-    /// Passes what lies below `cutoff` hertz in audio sampled at `rate` hertz, or `None` unless the
-    /// cutoff lies strictly between zero and half the rate.
     pub(crate) fn new(cutoff: f64, rate: f64) -> Option<Self> {
         (cutoff > 0.0 && cutoff < rate / 2.0)
             .then(|| Self(QUALITIES.map(|quality| Biquad::new(TAU * cutoff / rate, quality))))
     }
 
-    /// Filters the next sample.
     pub(crate) fn filter(&mut self, sample: f64) -> f64 {
         self.0
             .iter_mut()
@@ -31,8 +22,6 @@ impl Lowpass {
     }
 }
 
-/// One second-order low-pass section in transposed direct form II, from the bilinear transform
-/// prewarped at the cutoff.
 struct Biquad {
     b0: f64,
     b1: f64,
@@ -43,11 +32,9 @@ struct Biquad {
 }
 
 impl Biquad {
-    /// A section for the cutoff at `omega` radians a sample.
     fn new(omega: f64, quality: f64) -> Self {
         let alpha = omega.sin() / (2.0 * quality);
-        // The half-angle form of `1 - cos ω` avoids the cancellation that would cost precision
-        // where the cutoff is a tiny fraction of the rate.
+
         let one_minus_cos = 2.0 * (omega / 2.0).sin().powi(2);
         let a0 = 1.0 + alpha;
         Self {
@@ -61,7 +48,6 @@ impl Biquad {
     }
 
     fn filter(&mut self, sample: f64) -> f64 {
-        // A low-pass section's `b2` equals its `b0`.
         let filtered = self.b0 * sample + self.s1;
         self.s1 = self.b1 * sample - self.a1 * filtered + self.s2;
         self.s2 = self.b0 * sample - self.a2 * filtered;
@@ -73,7 +59,6 @@ impl Biquad {
 mod tests {
     use super::*;
 
-    /// The steady amplitude of a unit sine at `hz` after the filter, sampled at 48 kHz.
     fn gain(cutoff: f64, hz: f64) -> f64 {
         let rate = 48_000.0;
         let mut filter = Lowpass::new(cutoff, rate).unwrap();

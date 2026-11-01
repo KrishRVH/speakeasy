@@ -1,5 +1,3 @@
-//! Color themes for Settings, the pill, and the tray, and the blending they share.
-
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,7 +44,7 @@ impl Theme {
             },
             Self::Emerald => &Palette {
                 room: 0x07_12_0F,
-                // Not 0x0C_1A_16: clippy reads a trailing `_16` as a mistyped suffix.
+
                 door: 0x000C_1A16,
                 panel: 0x0F_1F_1A,
                 raise: 0x18_30_28,
@@ -82,36 +80,24 @@ impl Theme {
     }
 }
 
-/// A theme's `0xRRGGBB` colors, by role.
 pub(crate) struct Palette {
-    /// The Settings window background.
     pub room: u32,
-    /// The pill's capsule.
     pub door: u32,
-    /// Settings panels.
     pub panel: u32,
-    /// Raised controls such as buttons.
     pub raise: u32,
-    /// Primary text and strokes.
     pub ink: u32,
-    /// Secondary text and symbols.
     pub muted: u32,
-    /// The brand accent; it never signals recording.
     pub lamp: u32,
-    /// Red, reserved for open capture.
     pub live: u32,
-    /// Attention: errors, problems to act on, and the countdown to the recording limit.
     pub warn: u32,
 }
 
 impl Palette {
-    /// `muted` faded toward `room`, for the quietest text and idle marks.
     pub(crate) fn faint(&self) -> u32 {
         mix(self.room, self.muted, 0.6)
     }
 }
 
-/// Linear blend of two `0xRRGGBB` colors; `weight` in `0.0..=1.0` moves from `from` to `to`.
 pub(crate) fn mix(from: u32, to: u32, weight: f32) -> u32 {
     let mut mixed = from.to_be_bytes();
     for (channel, end) in mixed.iter_mut().zip(to.to_be_bytes()) {
@@ -121,7 +107,6 @@ pub(crate) fn mix(from: u32, to: u32, weight: f32) -> u32 {
     u32::from_be_bytes(mixed)
 }
 
-/// Rounds a color channel or opacity in `0.0..=255.0` to eight bits.
 #[expect(
     clippy::cast_possible_truncation,
     reason = "Channels deliberately round to eight bits; out-of-range values saturate"
@@ -134,7 +119,6 @@ pub(crate) fn quantize(value: f32) -> u8 {
     value.round() as u8
 }
 
-/// A `0xRRGGBB` color with an opacity, for GPUI fills and borders.
 pub(crate) fn alpha(color: u32, opacity: f32) -> gpui::Rgba {
     gpui::Rgba {
         a: opacity,

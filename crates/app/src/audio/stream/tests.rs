@@ -1,12 +1,7 @@
-//! Drives format validation, the real-time callbacks, and stream-error classification over fresh
-//! rings, with no device or driver, and times the callback-to-consumer path in an opt-in release
-//! profile.
-
 use rtrb::{Consumer, RingBuffer};
 
 use super::*;
 
-/// A callback state over a fresh ring, with the ends a capture thread would keep.
 fn callback_fixture(
     channels: usize,
     capacity: usize,
@@ -82,7 +77,7 @@ fn callback_overflow_is_fatal_but_recording_limit_and_cancellation_do_not_overfl
     let (mut data, _) = capture_callbacks::<f32>(state);
     data(&[0.25]);
     control.cancel();
-    // More than the ring's one free slot: a live callback would queue one sample and overflow.
+
     data(&[0.5, 0.75]);
     assert!(capture_failure(&control, &errors).is_ok());
     assert_eq!(ring.pop()?, 0.25);
@@ -181,7 +176,7 @@ fn device_loss_and_backend_failures_abort_recording() -> anyhow::Result<()> {
             .context("Fatal driver error must abort recording")?
             .to_string();
         assert!(!error.contains(&format!("{kind:?}")), "{error}");
-        // A failure with its own sentence leaves the driver's words out; the rest keep them.
+
         let explained = matches!(
             kind,
             cpal::ErrorKind::DeviceNotAvailable | cpal::ErrorKind::PermissionDenied

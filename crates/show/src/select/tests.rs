@@ -1,5 +1,3 @@
-//! Selection cases end to end through `select`, on signatures of flat gray frames.
-
 use proptest::prelude::*;
 
 use super::*;
@@ -16,7 +14,6 @@ fn sample(at: u64, level: u8) -> Sample {
     }
 }
 
-/// Samples every `step` milliseconds through `end`, gray at the level `level_at` gives.
 fn samples(step: usize, end: u64, level_at: impl Fn(u64) -> u8) -> Vec<Sample> {
     (0..=end)
         .step_by(step)
@@ -24,12 +21,10 @@ fn samples(step: usize, end: u64, level_at: impl Fn(u64) -> u8) -> Vec<Sample> {
         .collect()
 }
 
-/// `count` moments `step` milliseconds apart from `first`.
 fn every(first: u64, step: usize, count: usize) -> impl Iterator<Item = u64> {
     (first..).step_by(step).take(count)
 }
 
-/// A dab of ink lifted at `at`.
 fn dab(at: u64) -> Stroke {
     Stroke::new(
         [at.saturating_sub(100), at]
@@ -123,12 +118,10 @@ fn later_actions_survive_a_full_first_sheet() {
 
 #[test]
 fn changed_endings_survive_without_repeating_an_unchanged_ending() {
-    // Each small step is below the scene-change threshold, but the ending is a different view.
     let gradual = samples(1_000, 50_000, |at| u8::try_from(at / 1_000).unwrap() * 4);
     let shown = select(&Recording::default(), &gradual).unwrap();
     assert_eq!(times(&shown), [25_000, 50_000]);
 
-    // Returning to an earlier screen must still show where the recording ends.
     let returned = samples(250, 51_000, |at| {
         if (20_000..30_000).contains(&at) {
             255
@@ -147,8 +140,6 @@ fn changed_endings_survive_without_repeating_an_unchanged_ending() {
 
 #[test]
 fn a_crowded_show_keeps_its_most_keyframes_spread_out() {
-    // Five minutes of clicking once a second, on a screen that never changes and on one that
-    // changes with every click for a minute and then never again.
     let end = 300_000;
     let clicks = every(1_000, 1_000, 299).map(click).collect();
     let crowded = Recording {
@@ -170,7 +161,7 @@ fn a_crowded_show_keeps_its_most_keyframes_spread_out() {
                 .chain(at.iter().copied())
                 .chain([end])
                 .collect();
-            // Splitting the longest stretch each time leaves none over twice an even share.
+
             let even = end / (most as u64 + 1);
             assert_eq!(at.len(), most, "{at:?}");
             assert!(
@@ -185,7 +176,6 @@ fn a_crowded_show_keeps_its_most_keyframes_spread_out() {
 
 #[test]
 fn thinning_spares_new_screens_before_repeated_ones() {
-    // Two clicks ten seconds apart on one screen, then two new screens two seconds apart.
     let level = |at: u64| match at {
         ..22_000 => 40,
         22_000..24_000 => 120,
@@ -240,7 +230,6 @@ fn marks_group_only_while_they_share_a_screen() {
     assert_eq!(marked(&shown), [0..1, 1..2, 2..3, 3..4, 4..6, 6..7, 7..8]);
     assert_eq!(shown.keyframes[4].at.as_millis(), 11_000);
 
-    // On one unchanged screen, marks group until they span more than twenty seconds.
     let still = samples(1_000, 50_000, |_| 128);
     let strokes = [2_000, 9_000, 20_000, 33_000, 40_000].map(dab).to_vec();
     let shown = select(
@@ -267,7 +256,6 @@ fn a_scene_change_shows_the_settled_view() {
 
 #[test]
 fn a_click_shows_the_screen_once_its_change_settles() {
-    // The pane a click opens fades in over two samples.
     let fading = samples(200, 3_000, |at| match at {
         ..1_200 => 40,
         1_200 => 120,
@@ -278,8 +266,6 @@ fn a_click_shows_the_screen_once_its_change_settles() {
     assert_eq!(times(&shown), [1_400]);
     assert_eq!(reported(&shown), [Some(click(1_000))]);
 
-    // A dialog lighting a corner of a dark screen is a stronger scene change than the click
-    // alone scores, and its keyframe still reports the click.
     let dialog: Vec<Sample> = (0..=3_000)
         .step_by(200)
         .map(|at| Sample {
@@ -299,7 +285,6 @@ fn a_click_shows_the_screen_once_its_change_settles() {
 
 #[test]
 fn a_click_waits_only_for_a_change_it_could_have_started() {
-    // A click that changes nothing, then one that opens a pane: the first keeps its own screen.
     let opening = samples(200, 4_000, |at| match at {
         ..2_200 => 40,
         2_200 => 120,
@@ -314,8 +299,6 @@ fn a_click_waits_only_for_a_change_it_could_have_started() {
     assert_eq!(times(&shown), [1_200, 2_400]);
     assert_eq!(reported(&shown), [Some(click(1_000)), Some(click(2_000))]);
 
-    // A change a second after a click is something a Show does not record, such as a scroll,
-    // whether the click changed nothing or only a little, as ticking a checkbox does.
     let clicked = recording(Vec::new(), vec![click(1_000)], Narration::default());
     for answer in [signature(40), with_patch(640, 360, [0.0, 0.0, 240.0, 60.0])] {
         let scrolled: Vec<Sample> = (0..=4_000)
@@ -334,7 +317,6 @@ fn a_click_waits_only_for_a_change_it_could_have_started() {
         assert_eq!(reported(&shown), [Some(click(1_000)), None]);
     }
 
-    // A click as a video starts shows the screen just after it, not where the video stops.
     let playing = samples(200, 10_000, |at| match at {
         1_200..8_000 if at / 200 % 2 == 1 => 200,
         ..8_000 => 40,
@@ -344,7 +326,6 @@ fn a_click_waits_only_for_a_change_it_could_have_started() {
     assert_eq!(times(&shown), [1_200, 8_000]);
     assert_eq!(reported(&shown), [Some(click(1_000)), None]);
 
-    // A change already under way before the click is not its result; the pane it opens next is.
     let animated = samples(200, 4_000, |at| match at {
         ..1_200 if at / 200 % 2 == 1 => 200,
         ..1_200 => 40,
@@ -358,7 +339,6 @@ fn a_click_waits_only_for_a_change_it_could_have_started() {
 
 #[test]
 fn a_click_soon_after_another_keeps_its_keyframe() {
-    // A click opens a pane that fades in, and another 600 ms later opens a second pane.
     let panes = samples(200, 3_000, |at| match at {
         ..1_200 => 40,
         1_200 => 120,
@@ -374,7 +354,6 @@ fn a_click_soon_after_another_keeps_its_keyframe() {
     assert_eq!(times(&shown), [1_400, 1_800]);
     assert_eq!(reported(&shown), [Some(click(1_000)), Some(second)]);
 
-    // A click opens a menu that fades in, and another 800 ms later changes nothing.
     let menu = samples(200, 3_000, |at| match at {
         ..1_200 => 40,
         1_200 => 120,
@@ -398,7 +377,6 @@ fn double_clicks_merge_and_keyframes_keep_apart() {
     assert_eq!(times(&shown), [1_250, 2_500]);
     assert_eq!(shown.keyframes[0].event, "clicked (x 0.50, y 0.50)");
 
-    // Clicks between two frames of a thinned recording share the one frame that shows them.
     let sparse = samples(2_000, 4_000, |_| 128);
     let actions = vec![click(1_000), click(1_800)];
     let shown = select(
@@ -447,7 +425,6 @@ fn spoken_cues_never_repeat_an_unchanged_screen() {
     assert_eq!(shown.keyframes[0].reason, Reason::Cue);
     assert_eq!(said(&shown), [Some("Look at this. Now it's stuck.")]);
 
-    // A cue over a screen a scene change already settled on adds nothing.
     let changed = samples(250, 5_000, |at| if at < 1_000 { 40 } else { 90 });
     let narration = words(&[(3_500, "Look"), (3_700, "here.")]);
     let shown = select(&recording(Vec::new(), Vec::new(), narration), &changed).unwrap();
@@ -481,8 +458,6 @@ fn a_spoken_cue_finds_the_change_it_points_at() {
 
 #[test]
 fn a_spoken_cue_never_waits_for_a_screen_that_keeps_changing() {
-    // "Look" as a ten-second animation starts: the cue shows the screen as it was said, and the
-    // animation's end gets a keyframe of its own.
     let animating = samples(250, 20_000, |at| match at {
         ..2_000 => 40,
         2_000..12_000 if at / 250 % 2 == 0 => 120,
@@ -498,7 +473,6 @@ fn a_spoken_cue_never_waits_for_a_screen_that_keeps_changing() {
 
 #[test]
 fn narration_before_the_first_change_keeps_the_screen_it_describes() {
-    // "Here's the list." over one screen, then a click opens another.
     let opened = samples(250, 6_000, |at| if at < 3_250 { 40 } else { 220 });
     let introduced = words(&[
         (200, "Here's"),
@@ -522,8 +496,6 @@ fn narration_before_the_first_change_keeps_the_screen_it_describes() {
         [Some("Here's the list."), Some("When I open it.")]
     );
 
-    // Not when the first keyframe shows that screen still, nor when nothing timed was said
-    // before it.
     let still = samples(250, 6_000, |_| 40);
     assert_eq!(
         times(&select(&clicked(introduced), &still).unwrap()),
@@ -536,7 +508,6 @@ fn narration_before_the_first_change_keeps_the_screen_it_describes() {
         assert_eq!(times(&select(&clicked(untold), &opened).unwrap()), [3_250]);
     }
 
-    // Nor when what was said before it belongs to a clause still under way, which stays whole.
     let ongoing = words(&[(0, "So"), (300, "I"), (600, "open"), (900, "it.")]);
     let changed = samples(250, 6_000, |at| if at < 750 { 40 } else { 220 });
     let early = recording(Vec::new(), vec![click(600)], ongoing);
@@ -563,7 +534,6 @@ fn groups_close_at_a_click_or_too_much_ink() {
         "{groups:?}"
     );
 
-    // Five strokes a mark: two marks fit a group, a third would carry too much ink.
     let heavy = |at: u64| every(at.saturating_sub(400), 100, 5).map(dab);
     let strokes = heavy(2_000)
         .chain(heavy(4_000))
@@ -599,8 +569,6 @@ fn only_a_different_screen_cuts_into_a_drawing() {
     assert_eq!(shown.keyframes.len(), 1);
     assert_eq!(shown.keyframes[0].reason, Reason::Mark);
 
-    // Nor does a click between the strokes of one mark, far from the frame that shows it: the
-    // mark's keyframe reports it.
     let strokes = || vec![dab(2_000), dab(3_100), dab(4_200)];
     let clicked = recording(strokes(), vec![click(2_500)], Narration::default());
     let shown = select(&clicked, &still).unwrap();
@@ -614,7 +582,7 @@ fn only_a_different_screen_cuts_into_a_drawing() {
         "{}",
         shown.keyframes[0].event
     );
-    // Of two such clicks, it reports the later.
+
     let twice = recording(
         strokes(),
         vec![click(2_500), click(3_500)],
@@ -623,28 +591,27 @@ fn only_a_different_screen_cuts_into_a_drawing() {
     let shown = select(&twice, &still).unwrap();
     assert_eq!(times(&shown), [4_250]);
     assert_eq!(shown.keyframes[0].action, Some(click(3_500)));
-    // So does a click made just before the drawing whose result shows while it is drawn.
+
     let before = recording(strokes(), vec![click(1_800)], Narration::default());
     let shown = select(&before, &still).unwrap();
     assert_eq!(times(&shown), [4_250]);
     assert_eq!(shown.keyframes[0].action, Some(click(1_800)));
-    // And so does a click right after it, too close to the mark's frame for one of its own.
+
     let after = recording(strokes(), vec![click(4_300)], Narration::default());
     let shown = select(&after, &still).unwrap();
     assert_eq!(times(&shown), [4_250]);
     assert_eq!(shown.keyframes[0].action, Some(click(4_300)));
-    // Unless that click opens a different screen, which then gets a keyframe of its own.
+
     let opened = samples(250, 10_000, |at| if at >= 4_500 { 255 } else { 128 });
     let shown = select(&after, &opened).unwrap();
     assert_eq!(times(&shown), [4_250, 4_500]);
     assert_eq!(shown.keyframes[0].action, None);
     assert_eq!(shown.keyframes[1].action, Some(click(4_300)));
-    // With no room for that keyframe, the mark's keyframe still reports the click.
+
     let shown = select_within(&after, &opened, 1).unwrap();
     assert_eq!(times(&shown), [4_250]);
     assert_eq!(shown.keyframes[0].action, Some(click(4_300)));
 
-    // A click whose result the mark's frame no longer shows keeps a keyframe of its own.
     let flash = samples(250, 10_000, |at| {
         if (2_600..3_400).contains(&at) {
             255
@@ -655,7 +622,7 @@ fn only_a_different_screen_cuts_into_a_drawing() {
     let shown = select(&clicked, &flash).unwrap();
     assert_eq!(times(&shown), [2_750, 4_250]);
     assert_eq!(shown.keyframes[1].action, None);
-    // With no room for it, the mark reports that click although its result was another screen.
+
     let shown = select_within(&clicked, &flash, 1).unwrap();
     assert_eq!(times(&shown), [4_250]);
     assert_eq!(shown.keyframes[0].action, Some(click(2_500)));
@@ -676,7 +643,6 @@ fn a_click_between_two_marks_is_reported_by_the_nearer() {
     assert_eq!(times(&shown), [2_000, 3_300]);
     assert_eq!(reported(&shown), [Some(click(2_400)), None]);
 
-    // Both marks cover this click's result too, but the later one is nearer.
     let shown = select(
         &recording(
             vec![dab(2_000), dab(3_350)],
@@ -691,8 +657,6 @@ fn a_click_between_two_marks_is_reported_by_the_nearer() {
 
 #[test]
 fn long_talk_over_a_changing_screen_gets_more_than_one_frame() {
-    // Two minutes of steady talk. Small changes at 0:30 and 1:00, then bigger ones near the
-    // end that outrank them: all settled views still get represented.
     let level = |at: u64| match at {
         0..30_000 => 20,
         30_000..60_000 => 50,
@@ -722,7 +686,6 @@ fn long_talk_over_a_changing_screen_gets_more_than_one_frame() {
         .max();
     assert!(most <= Some(120), "{most:?}");
 
-    // The same talk over an unchanged screen stays one frame.
     let still = samples(500, 120_000, |_| 90);
     let shown = select(&recording(Vec::new(), Vec::new(), words(&talk)), &still).unwrap();
     assert_eq!(shown.keyframes.len(), 1);

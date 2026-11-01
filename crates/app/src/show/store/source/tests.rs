@@ -1,5 +1,3 @@
-//! Sidecar trust boundaries and explicit exports use synthetic frames and temporary directories.
-
 use speakeasy_show::Image;
 
 use super::*;

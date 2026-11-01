@@ -1,6 +1,3 @@
-//! Where Speakeasy keeps its files: roaming settings and the machine-local data root, both inside
-//! the user's own folders, and what to do when a file operation fails.
-
 use std::{
     ffi::OsString,
     io::{self, ErrorKind},
@@ -9,18 +6,14 @@ use std::{
 
 use anyhow::Context as _;
 
-/// The settings file, which roams with the user's profile on Windows.
 pub(crate) fn settings_file() -> anyhow::Result<PathBuf> {
     Ok(user_folder(UserFolder::Settings, std::env::var_os)?.join("settings.json"))
 }
 
-/// Engines, models, and Shows are machine-local, so they stay out of roaming settings.
 pub(crate) fn data_root() -> anyhow::Result<PathBuf> {
     user_folder(UserFolder::Data, std::env::var_os)
 }
 
-/// A durable local entry for headless commands, if available. Resolve off the UI thread: checking
-/// the installed file can block. Temporary application mounts never go into saved handoffs.
 pub(crate) fn command() -> Option<PathBuf> {
     command_at(
         std::env::current_exe().ok()?,
@@ -39,11 +32,7 @@ fn command_at(
     let path = if cfg!(target_os = "windows") {
         exe.with_file_name("speakeasy-cli.exe")
     } else if cfg!(target_os = "linux") {
-        // AppImage variables are inherited by unrelated programs started beneath it. Only name
-        // that image when this executable actually belongs to its mounted or extracted directory.
         if appdir.is_some_and(|dir| dir.is_absolute() && exe.starts_with(dir)) {
-            // An extracted AppImage also disappears after exit; a missing original has no
-            // durable fallback to its internal executable.
             appimage?
         } else {
             exe
@@ -51,8 +40,7 @@ fn command_at(
     } else {
         exe
     };
-    // Missing or mismatched AppImage environment can still leave a temporary executable, as can
-    // macOS App Translocation. Neither belongs in a saved handoff.
+
     let temporary = path.components().any(|part| {
         part.as_os_str().to_str().is_some_and(|part| {
             part == "AppTranslocation"
@@ -63,8 +51,6 @@ fn command_at(
     (path.is_absolute() && path.to_str().is_some() && !temporary && is_file(&path)).then_some(path)
 }
 
-/// What to do when a file operation fails, for a message that names its path: free space on a
-/// full disk; otherwise close what holds the files and check that the user can write to that path.
 pub(crate) fn remedy(error: &io::Error) -> &'static str {
     match error.kind() {
         ErrorKind::StorageFull | ErrorKind::QuotaExceeded => "Free up disk space, then try again.",
@@ -80,9 +66,6 @@ enum UserFolder {
     Data,
 }
 
-/// Speakeasy's folder of this kind under the user's base folder, which `var` looks up. A base that
-/// is unset or relative is refused rather than resolved against the working directory, where other
-/// users may read Shows and settings.
 fn user_folder(
     folder: UserFolder,
     var: impl Fn(&'static str) -> Option<OsString>,

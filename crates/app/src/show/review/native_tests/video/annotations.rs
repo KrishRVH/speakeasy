@@ -1,5 +1,3 @@
-//! Owned-window checks compare completed preview, copy payload, and explicit video export pixels.
-
 use super::*;
 
 #[derive(Default)]

@@ -1,5 +1,3 @@
-//! Command acceptance and metadata output on synthetic Shows, without native devices.
-
 use std::fs;
 
 use serde_json::Value;
@@ -252,7 +250,6 @@ fn the_embedded_skill_is_emitted_verbatim_and_its_commands_are_accepted() -> any
     let mut commands = 0;
     for span in skill.split('`').skip(1).step_by(2) {
         if let Some(args) = span.strip_prefix("speakeasy show ") {
-            // Examples use double quotes for paths and phrases, without shell expansions.
             let args: Vec<_> = args
                 .split('"')
                 .enumerate()
@@ -312,7 +309,7 @@ async fn interrupted_listing_has_distinct_identity_and_original_expiry_without_r
     assert!(writer.close().await);
     let checkpoint = checkpoint.close().await?;
     let interrupted = checkpoint.interrupted()?;
-    // A header alone cannot be recovered, but metadata discovery must not read frames.
+
     let mut bytes = Vec::new();
     output::list(std::iter::empty(), Some(root.path()), true, &mut bytes)?;
     let listing: serde_json::Value = serde_json::from_slice(&bytes)?;
@@ -332,7 +329,7 @@ async fn interrupted_listing_has_distinct_identity_and_original_expiry_without_r
             json: true
         }
     );
-    // Metadata discovery must identify published audio without reading its private contents.
+
     let saved = store::fresh_directory(root.path(), now)?;
     fs::create_dir(&saved)?;
     let checkpoint_id = interrupted

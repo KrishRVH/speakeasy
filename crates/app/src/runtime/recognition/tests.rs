@@ -1,5 +1,3 @@
-//! Whole PCM remains available after a tail failure, missing piece, or overloaded request lane.
-
 use super::*;
 use crate::{audio::silent_wav, runtime::ports::Partition};
 

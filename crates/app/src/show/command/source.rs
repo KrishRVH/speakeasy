@@ -1,5 +1,3 @@
-//! Explicit source queries and PNG exports. Reports contain provenance, never private text.
-
 mod query;
 mod video;
 

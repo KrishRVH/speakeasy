@@ -1,5 +1,3 @@
-//! Recovery shares session authority and the local speech worker, without capture or clipboard access.
-
 use super::*;
 
 async fn interrupted() -> anyhow::Result<(tempfile::TempDir, crate::show::Interrupted)> {
@@ -104,7 +102,6 @@ async fn quit_revokes_recovery_and_awaits_its_owned_cleanup() -> anyhow::Result<
     Ok(())
 }
 
-// This keeper uses an OS thread; virtual time can expire while its real file I/O is pending.
 #[tokio::test]
 async fn session_owns_checkpoint_cleanup_even_when_finish_reports_are_stale() -> anyhow::Result<()>
 {

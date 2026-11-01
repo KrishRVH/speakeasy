@@ -1,6 +1,3 @@
-//! Native objects stay on the capture thread. Field order releases the writer, shuts down its
-//! sink, closes its stream, and only then leaves Media Foundation and the COM apartment.
-
 use std::{path::Path, time::Duration};
 
 use anyhow::{Context as _, ensure};
@@ -45,7 +42,6 @@ impl Drop for Sink {
             clippy::let_underscore_must_use,
             reason = "Shutdown still runs after failed finalization; recovery inspects the surviving file instead of assuming it is complete"
         )]
-        // SAFETY: this guard owns a live sink on the initializing thread; its writer is gone.
         let _ = unsafe { self.0.Shutdown() };
     }
 }
@@ -57,8 +53,7 @@ impl encode::Codec for Codec {
         let foundation = Foundation::start()?;
         let stream = file::create(path, limit)?;
         let output = media(&MFVideoFormat_H264, size)?;
-        // SAFETY: the attributes and media types are owned, initialized COM objects. Values are
-        // documented native encodings; none borrows Rust memory beyond these calls.
+
         let (sink, writer, converter) = unsafe {
             output.SetUINT32(&MF_MT_AVG_BITRATE, 8_000_000)?;
             output.SetUINT32(&MF_MT_MPEG2_PROFILE, 100)?;
@@ -77,8 +72,7 @@ impl encode::Codec for Codec {
             let mut attributes = None;
             MFCreateAttributes(&raw mut attributes, 3)?;
             let attributes = attributes.context("Video writer attributes are unavailable")?;
-            // CPU-backed NV12 frames use the system software path. Hardware transform discovery
-            // delays the first frame; a GPU encoder needs a D3D surface input and device manager.
+
             attributes.SetUINT32(&MF_LOW_LATENCY, 1)?;
             attributes.SetUINT32(&MF_READWRITE_DISABLE_CONVERTERS, 1)?;
             attributes.SetUINT32(&MF_SINK_WRITER_DISABLE_THROTTLING, 1)?;
@@ -134,7 +128,6 @@ impl encode::Codec for Codec {
 
     fn checkpoint(&mut self, at: Duration) -> anyhow::Result<()> {
         if at.saturating_sub(self.synced) >= Duration::from_secs(1) {
-            // SAFETY: the byte stream stays open until finalization; Flush syncs its file.
             unsafe { self.stream.native.Flush()? };
             self.synced = at;
         }
@@ -143,8 +136,7 @@ impl encode::Codec for Codec {
 
     fn finish(self) -> anyhow::Result<()> {
         self.converter.finish()?;
-        // SAFETY: all input submissions ended. Finalize closes the stream; no later Flush may
-        // touch it. Field teardown still shuts the sink down when Finalize fails.
+
         unsafe { self.writer.Finalize()? };
         self.stream.sync.sync_data()?;
         Ok(())
@@ -162,7 +154,7 @@ fn submit(
         cb: u32::try_from(size_of::<MF_SINK_WRITER_STATISTICS>())?,
         ..MF_SINK_WRITER_STATISTICS::default()
     };
-    // SAFETY: the output is initialized, sized, and writable for this synchronous query.
+
     unsafe { writer.GetStatistics(0, &raw mut statistics)? };
     let bytes = u32::try_from(pixels.len())?;
     ensure!(
@@ -170,14 +162,12 @@ fn submit(
         "Video encoding cannot keep up; retained frames remain available"
     );
     let sample = converter.frame(&sample(pixels, at, duration)?)?;
-    // SAFETY: the sample owns its buffer. WriteSample retains it for deferred encoding; the actual
-    // stream enforces its byte cap even during later writes. Held tail samples use this same gate.
+
     unsafe { writer.WriteSample(0, &sample)? };
     Ok(())
 }
 
 fn media(kind: &GUID, [width, height]: [u32; 2]) -> anyhow::Result<IMFMediaType> {
-    // SAFETY: every attribute is set on this new owned media type, using bounded canvas values.
     unsafe {
         let media = MFCreateMediaType()?;
         media.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
@@ -212,15 +202,13 @@ impl Drop for Locked<'_> {
             clippy::let_underscore_must_use,
             reason = "Unlock is mandatory on every partial sample construction path; an unsuccessful sample is never submitted"
         )]
-        // SAFETY: this guard owns exactly one successful Lock on the live buffer.
         let _ = unsafe { self.0.Unlock() };
     }
 }
 
 fn sample(pixels: &[u8], at: Duration, duration: Duration) -> anyhow::Result<IMFSample> {
     let bytes = u32::try_from(pixels.len())?;
-    // SAFETY: the allocation is bounded by Canvas. The lock guard releases the borrowed native
-    // buffer on every path, and only its reported writable length is copied.
+
     unsafe {
         let buffer = MFCreateMemoryBuffer(bytes)?;
         {
@@ -253,8 +241,7 @@ pub(super) fn sample_times(path: &Path) -> anyhow::Result<Vec<(i64, i64)>> {
         core::HSTRING,
     };
     let _foundation = Foundation::start()?;
-    // SAFETY: this opt-in test reads only its own newly encoded synthetic file. The reader is
-    // released before the Foundation guard; every output is owned and valid for the native call.
+
     unsafe {
         let reader = MFCreateSourceReaderFromURL(&HSTRING::from(path.as_os_str()), None)?;
         let mut times = Vec::new();

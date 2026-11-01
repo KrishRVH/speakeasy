@@ -1,7 +1,3 @@
-//! Drives setup cancellation, the directory lock and the owned child through a test-binary
-//! fixture process, checks what its file failures tell the user, and installs and recognizes a
-//! public recording in an opt-in run.
-
 use std::{
     process::Stdio,
     sync::mpsc::{self, RecvTimeoutError},
@@ -54,15 +50,13 @@ fn model_installation_preserves_language_gpu_preference_and_unrelated_edits() {
     assert!(!config.use_gpu);
 }
 
-/// A setup whose body, once cancelled, reports on `cleaning` and holds its cleanup open until
-/// `release` sends.
 fn setup_held_in_cleanup() -> anyhow::Result<(Setup, mpsc::Receiver<()>, mpsc::Sender<()>)> {
     let (entered, cleaning) = mpsc::channel();
     let (release, released) = mpsc::channel();
     let setup = Setup::spawn(move |_, cancelled| {
         let Err(_closed) = cancelled.recv_blocking();
         entered.send(()).unwrap();
-        // A timeout, so a failing test cannot strand this owned thread.
+
         released.recv_timeout(PATIENCE).unwrap();
         None
     })?;
@@ -175,7 +169,7 @@ fn setup_child_fixture() -> anyhow::Result<()> {
 
 fn fixture_child(root: &Path) -> anyhow::Result<Command> {
     let mut command = Command::new(std::env::current_exe()?);
-    // No `kill_on_drop`: only the owner's explicit cleanup may stop this child.
+
     command
         .args(["--exact", "setup::tests::setup_child_fixture", "--ignored"])
         .env("SPEAKEASY_SETUP_TEST_ROOT", root)
@@ -319,7 +313,7 @@ async fn install_chooses_an_engine_that_recognizes_fixture_speech() -> anyhow::R
         .transcribe(wav, "en", &crate::recognition_terms::Terms::default())
         .await;
     worker.stop().await;
-    // Never include the recognized text in failure output.
+
     assert!(
         result?.to_lowercase().contains("ask not what your country"),
         "Fixture recognition did not contain the expected phrase"

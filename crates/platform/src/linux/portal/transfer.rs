@@ -1,6 +1,3 @@
-//! Portal clipboard transfers: the text a selection serves, and bounded writes of it to the pipe
-//! each pasting editor opens.
-
 use std::{
     convert::Infallible,
     fs::File,
@@ -21,8 +18,6 @@ const TRANSFER_TIMEOUT: Duration = Duration::from_secs(1);
 
 pub(super) type Transfers<'a> = FuturesUnordered<LocalBoxFuture<'a, ()>>;
 
-/// The text a portal clipboard selection serves until it is replaced or this session loses the
-/// selection.
 pub(super) struct Selection {
     text: Arc<str>,
     permit: InsertPermit,
@@ -48,7 +43,6 @@ impl Selection {
         }
     }
 
-    /// Whether this selection holds the text of `permit`'s recording.
     pub(super) fn serves(&self, permit: &InsertPermit) -> bool {
         self.permit.same_recording(permit)
     }
@@ -60,24 +54,16 @@ impl Drop for Selection {
     }
 }
 
-/// One transfer's share of a selection's text, withdrawn once the selection drops.
 pub(super) struct TransferPayload {
     text: Arc<str>,
     invalidated: Receiver<Infallible>,
 }
 
-/// Answers one `SelectionTransfer`: writes `payload` to the descriptor `write` yields unless its
-/// selection drops first, then reports through `done` whether the whole payload reached the pipe.
-/// A missing payload reports failure. Each step is bounded by [`TRANSFER_TIMEOUT`].
-///
-/// Every failure, including a refused or stalled report, fails only this transfer: the editor reads
-/// nothing. A lost portal or bus connection ends serving through the session monitor instead.
 pub(super) async fn transfer(
     write: impl Future<Output = anyhow::Result<OwnedFd>>,
     done: impl AsyncFnOnce(bool) -> anyhow::Result<()>,
     payload: Option<TransferPayload>,
 ) {
-    // Editors may request the payload after paste commits, so only selection loss ends serving.
     let success = match payload {
         Some(payload) => tokio::select! {
             biased;
@@ -99,8 +85,7 @@ async fn write_payload(
 ) -> anyhow::Result<()> {
     let fd = tokio::time::timeout(TRANSFER_TIMEOUT, write).await??;
     set_nonblocking(fd.as_fd())?;
-    // SAFETY: the `File` owns the pipe's descriptor and keeps it open and unchanged until the
-    // `AsyncFd` drops it.
+
     let pipe = unsafe { AsyncFd::register(File::from(fd)) }?;
     tokio::time::timeout(TRANSFER_TIMEOUT, write_to_pipe(&pipe, text.as_bytes())).await?
 }
@@ -120,8 +105,7 @@ async fn write_to_pipe(pipe: &AsyncFd<File>, mut bytes: &[u8]) -> anyhow::Result
 
 fn set_nonblocking(fd: BorrowedFd<'_>) -> anyhow::Result<()> {
     let fd = fd.as_raw_fd();
-    // SAFETY: the borrowed descriptor stays open; F_GETFL and F_SETFL only read and change its
-    // status flags.
+
     let updated = unsafe {
         let flags = libc::fcntl(fd, libc::F_GETFL);
         flags >= 0 && libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) >= 0

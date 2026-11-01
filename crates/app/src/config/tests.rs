@@ -1,5 +1,3 @@
-//! Checks the settings file contract, defaults, validation, and saves against temporary files.
-
 use anyhow::bail;
 
 use super::*;
@@ -26,7 +24,6 @@ fn saved(path: &Path) -> anyhow::Result<Value> {
     Ok(serde_json::from_slice(&fs::read(path)?)?)
 }
 
-/// Saves `draft` over a file that holds `held`, as though validation left `draft` unchanged.
 fn save(held: &Config, draft: &Config, path: &Path) -> anyhow::Result<()> {
     Config::save_changes(&[held], draft, &ValidConfig::assume(draft.clone()), path)
 }
@@ -62,7 +59,7 @@ fn a_save_keeps_unknown_keys_hand_edits_and_path_spellings() -> anyhow::Result<(
     let (base, Startup::Configured(_)) = Config::load(&path) else {
         bail!("The settings did not validate");
     };
-    // Edited by hand while Speakeasy runs, beside a key another release wrote.
+
     fs::write(
         &path,
         r#"{"engine_executable":"engine","model":"model.gguf","threads":8,"retired":1}"#,
@@ -329,7 +326,7 @@ fn a_save_writes_through_a_linked_settings_file() -> anyhow::Result<()> {
     let real = dotfiles.join("settings.json");
     let path = directory.path().join("settings.json");
     let linked = directory.path().join("linked.json");
-    // A relative link to an absolute one, made before the file they name exists.
+
     std::os::unix::fs::symlink(&real, &linked)?;
     std::os::unix::fs::symlink("linked.json", &path)?;
     let defaults = Config::default();
@@ -353,7 +350,7 @@ fn a_first_launch_saves_its_engine_into_a_file_that_appears_later() -> anyhow::R
     let path = directory.path().join("settings.json");
     let draft = Config::first_launch();
     let held = Config::held_by(&path, &draft);
-    // A file without an engine key, as a restored backup might be, appears while Settings is open.
+
     fs::write(&path, br#"{"theme":"iris"}"#)?;
     save(&held, &draft, &path)?;
     let file = saved(&path)?;
@@ -372,7 +369,7 @@ fn a_first_launch_saves_its_engine_into_a_file_that_appears_later() -> anyhow::R
 fn save_refuses_to_replace_a_file_that_needs_repair() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
-    // A type error, not an unknown key, so the case holds whatever unknown keys are allowed.
+
     let broken = br#"{"threads":"four"}"#;
     fs::write(&path, broken)?;
     let draft = Config {
@@ -383,7 +380,7 @@ fn save_refuses_to_replace_a_file_that_needs_repair() -> anyhow::Result<()> {
         .err()
         .context("A file that needs repair was replaced")?;
     assert_eq!(fs::read(&path)?, broken);
-    // The notice names the file as the user knows it, not a resolved Windows \\?\ path.
+
     let notice = format!("Invalid settings in {}:", path.display());
     assert!(format!("{error:#}").starts_with(&notice));
     Ok(())
@@ -392,7 +389,6 @@ fn save_refuses_to_replace_a_file_that_needs_repair() -> anyhow::Result<()> {
 #[test]
 fn a_repair_notice_names_the_key_before_serdes_account() -> anyhow::Result<()> {
     for (contents, reason) in [
-        // A fault in a value names its key, an unknown key's included.
         (
             r#"{"theme":"Jet"}"#,
             "theme: unknown variant `Jet`, expected one of `jet`, `emerald`, `iris`, `chrome` at line 1 column 14",
@@ -409,7 +405,6 @@ fn a_repair_notice_names_the_key_before_serdes_account() -> anyhow::Result<()> {
             r#"{"retired":1e400}"#,
             "retired: number out of range at line 1 column 16",
         ),
-        // A fault between a block's keys names the block.
         (
             r#"{"linux":{"cancel":"a","cancel":"b"}}"#,
             "linux: duplicate field `cancel` at line 1 column 31",
@@ -418,7 +413,6 @@ fn a_repair_notice_names_the_key_before_serdes_account() -> anyhow::Result<()> {
             r#"{"linux":{"cancel":"a",}}"#,
             "linux: trailing comma at line 1 column 24",
         ),
-        // A fault outside every key names none.
         (
             r#"{"theme":"jet","theme":"iris"}"#,
             "duplicate field `theme` at line 1 column 22",

@@ -1,5 +1,3 @@
-//! Static owned-window fixture for the Windows UI Automation acceptance script.
-
 use std::time::Duration;
 
 use anyhow::Context as _;

@@ -1,6 +1,3 @@
-//! Alignment cases on hand-timed narration and on stretches of real narration: Scrawl's public
-//! recordings, trimmed to the words and marks beside this file in `show.json`'s shape.
-
 use serde::Deserialize;
 
 use super::*;
@@ -12,7 +9,6 @@ fn at(anchors: &[u64]) -> Vec<Moment> {
     anchors.iter().copied().map(Moment::from_millis).collect()
 }
 
-/// Each keyframe's text, empty where nothing was said.
 fn texts(anchors: &[u64], narration: &Narration) -> Vec<String> {
     align(&at(anchors), narration)
         .into_iter()
@@ -20,8 +16,6 @@ fn texts(anchors: &[u64], narration: &Narration) -> Vec<String> {
         .collect()
 }
 
-/// The narration of a real recording, word by word as its recognizer timed it, and the marks
-/// drawn meanwhile.
 #[derive(Deserialize)]
 struct Recorded {
     narration: Narration,
@@ -33,8 +27,6 @@ impl Recorded {
         serde_json::from_str(json).unwrap()
     }
 
-    /// Each mark's text when every mark has a keyframe of its own, anchored where its ink began,
-    /// as the recording gave each of these marks a frame of its own.
     fn said_per_mark(&self) -> Vec<String> {
         let anchors: Vec<u64> = self
             .marks
@@ -83,7 +75,7 @@ fn punctuation_split_from_its_word_closes_that_words_text() {
         (5_200, "Yeah"),
     ]);
     assert_eq!(texts(&[1_000, 5_000], &said), ["Lots of glitches.", "Yeah"]);
-    // A spoken word that opens with an apostrophe is a word of its own, not punctuation.
+
     assert_eq!(
         texts(&[0], &words(&[(0, "I"), (200, "said"), (400, "'cause")])),
         ["I said 'cause"]
@@ -127,7 +119,6 @@ fn a_short_comma_lead_in_stays_with_its_clause() {
 
 #[test]
 fn a_long_pause_starts_a_new_thought_even_without_punctuation() {
-    // Recognizers stretch a word's end across the pause after it, so only starts count.
     let said = Narration::Words(vec![
         Word {
             span: Span::new(Moment::from_millis(0), Moment::from_millis(2_900)),
@@ -143,8 +134,6 @@ fn a_long_pause_starts_a_new_thought_even_without_punctuation() {
 
 #[test]
 fn an_action_after_a_finished_sentence_does_not_reopen_it() {
-    // The recognizer stretched "header." across the pause after it; an action during that
-    // pause belongs to what comes next.
     let mut said = words(HEADER_THEN_TAP).words().to_vec();
     said[2].span = Span::new(Moment::from_millis(500), Moment::from_millis(1_950));
     assert_eq!(
@@ -155,8 +144,6 @@ fn an_action_after_a_finished_sentence_does_not_reopen_it() {
 
 #[test]
 fn ink_drawn_in_a_pause_mid_sentence_takes_the_sentence() {
-    // The recognizer folded each pause into the word before it: "There's" lasts 2.6 s and the
-    // second "and" 2 s, and the ink began before the next word.
     assert_eq!(
         Recorded::parse(include_str!("hex-motion.json")).said_per_mark(),
         [
@@ -175,7 +162,6 @@ fn ink_drawn_in_a_pause_mid_sentence_takes_the_sentence() {
 
 #[test]
 fn ink_begun_as_speech_resumes_takes_the_sentence_it_carries_on() {
-    // "some" resumes "Um, There's" at 11.7 s; the ink began a moment later.
     let recorded = Recorded::parse(include_str!("hex-motion.json"));
     assert_eq!(
         texts(&[5_964, 11_800], &recorded.narration),
@@ -184,8 +170,7 @@ fn ink_begun_as_speech_resumes_takes_the_sentence_it_carries_on() {
             "Um, There's some jumps, though, in the animation."
         ]
     );
-    // After hesitating twice, ink begun with "big" or a moment later takes the whole sentence, or
-    // all of it that ink drawn in the first hesitation leaves.
+
     let said = words(&[
         (0, "Done."),
         (1_000, "So"),
@@ -208,8 +193,6 @@ fn ink_begun_as_speech_resumes_takes_the_sentence_it_carries_on() {
 
 #[test]
 fn a_sentence_left_hanging_as_the_narration_ends_stays_open_as_long_as_any() {
-    // Ink 1.1 s after "one" begins takes the unfinished sentence, as it would if speech went on
-    // later; ink past the bound does not.
     let said = words(&[
         (0, "Make"),
         (200, "this"),
@@ -230,9 +213,6 @@ fn a_sentence_left_hanging_as_the_narration_ends_stays_open_as_long_as_any() {
 
 #[test]
 fn ink_drawn_just_before_speaking_takes_what_is_said_next() {
-    // The underline was drawn during "Um,". Speakeasy removes fillers by default, which leaves
-    // the underline in the silence before the clause the filler opened, and the next mark inside
-    // that clause.
     let mut recorded = Recorded::parse(include_str!("server-onboarding.json"));
     let before =
         "Also, this thing shouldn't be floating on the bottom. It covers up too much space.";
@@ -260,7 +240,7 @@ fn ink_drawn_just_before_speaking_takes_what_is_said_next() {
 fn ink_drawn_long_before_speaking_leaves_the_words_to_ink_drawn_while_saying_them() {
     let said = words(&[(3_000, "This"), (3_200, "one"), (3_400, "flickers.")]);
     assert_eq!(texts(&[0, 3_300], &said), ["", "This one flickers."]);
-    // Ink drawn 3 s before a long sentence, and ink drawn 3.5 s into it.
+
     let mut spoken = vec![(3_000, "This")];
     spoken.extend((3_200..8_000).step_by(200).map(|at| (at, "one")));
     spoken.push((8_000, "flickers."));
@@ -274,8 +254,6 @@ fn ink_drawn_long_before_speaking_leaves_the_words_to_ink_drawn_while_saying_the
 
 #[test]
 fn a_click_just_before_speaking_leaves_the_words_to_ink_drawn_nearer_their_start() {
-    // A click 0.8 s before speech and ink 0.3 s into it; then a click 0.2 s before and ink 0.35 s
-    // in.
     let said = words(&[
         (2_000, "This"),
         (2_200, "dialog"),
@@ -288,9 +266,6 @@ fn a_click_just_before_speaking_leaves_the_words_to_ink_drawn_nearer_their_start
 
 #[test]
 fn a_sentence_left_hanging_is_over_once_the_silence_runs_long() {
-    // The recognizer stretched "the" across the silence, so the bound counts from its start. Ink
-    // in the silence within the bound takes "So the"; ink past the bound, or in the words that end
-    // the silence, leaves it behind.
     let mut said = words(&[
         (0, "That's"),
         (200, "done."),

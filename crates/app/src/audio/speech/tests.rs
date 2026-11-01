@@ -1,6 +1,3 @@
-//! Checks what the speech gate keeps of synthetic recordings: one span however packets split them,
-//! padding and quiet edges, the final partial window, and cues heard only by their voice band.
-
 use std::{f64::consts::TAU, iter};
 
 use proptest::prelude::*;
@@ -11,8 +8,6 @@ use crate::{audio::stream::MAX_SAMPLE_RATE, sounds::Cue};
 const RATE: u32 = 16_000;
 const SECOND: usize = 32_000;
 
-/// A sine at `hz` on the test rate, peaking at `amplitude` between 5 ms fades, which keep a
-/// struck note's sudden edges out of the voice band the way a cue's recording does.
 #[expect(
     clippy::cast_possible_truncation,
     reason = "Each sample stays within the i16 range the amplitude names"
@@ -48,7 +43,6 @@ fn encode(samples: impl IntoIterator<Item = i16>) -> Vec<u8> {
     samples.into_iter().flat_map(i16::to_le_bytes).collect()
 }
 
-/// Quiet edges at and around the padding and the trimming threshold.
 fn edge_millis() -> impl Strategy<Value = u64> {
     prop_oneof![
         Just(0_u64),
@@ -145,7 +139,6 @@ fn each_quiet_edge_must_reach_one_second_before_trimming() {
 
 #[test]
 fn final_partial_window_counts_towards_the_speech_gate() {
-    // At this rate the gate's 1604 samples end inside the sixth 320-sample window.
     let rate = 16_040;
     let millis = |millis| bytes_in(samples_in(Duration::from_millis(millis), rate));
     let mut speech = Audibility::new(rate);
@@ -164,7 +157,6 @@ fn final_partial_window_counts_towards_the_speech_gate() {
     assert_eq!(speech.scanned, recording.len());
 }
 
-/// A full-scale 1 kHz tone lasting `bytes`, then two quiet seconds.
 fn tone_then_quiet(bytes: usize) -> Vec<u8> {
     [tone(bytes, 1_000.0, 32_767.0), audio(&[(SECOND * 2, 0)])].concat()
 }
@@ -244,7 +236,7 @@ fn a_cue_during_a_recording_counts_only_by_its_voice_band_from_where_it_was_aske
     speech.extend(&recording[..SECOND * 2]);
     speech.expect_cue(&recording[..SECOND * 2]);
     speech.complete(&recording);
-    // The trailing edge follows the speech, so the cue goes with the quiet after it.
+
     assert_eq!(speech.retained(recording.len()), Some(0..SECOND * 3 / 2));
 }
 

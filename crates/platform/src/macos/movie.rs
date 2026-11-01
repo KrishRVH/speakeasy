@@ -1,5 +1,3 @@
-//! Exact native frame requests retain their verified input through completion and teardown.
-
 mod file;
 
 pub(crate) mod encode;
@@ -45,8 +43,7 @@ pub(crate) fn frame(
         loop {
             if !stopping && cancelled() {
                 stopping = true;
-                // SAFETY: only this owner controls generation. Cancellation still waits for the
-                // one promised completion before the generator and input lease are released.
+
                 unsafe {
                     request.native.cancelAllCGImageGeneration();
                 }
@@ -78,13 +75,10 @@ struct Request {
 
 impl Request {
     fn start(asset: &AVAsset, size: [u32; 2], sample: (u64, u32)) -> anyhow::Result<Self> {
-        // SAFETY: validation bounds the nonnegative ticks and strictly positive timescale.
         let time = unsafe { CMTime::new(i64::try_from(sample.0)?, i32::try_from(sample.1)?) };
         let (sender, reply) = mpsc::sync_channel(1);
         let handler = RcBlock::new(
             move |image: *mut CGImage, at: CMTime, error: *mut NSError| {
-                // SAFETY: completion lends both optional objects until it returns. Only copied
-                // pixels and checked timing leave this callback.
                 let (image, error) = unsafe { (image.as_ref(), error.as_ref()) };
                 let result = catch_unwind(AssertUnwindSafe(|| {
                     autoreleasepool(|_| decoded(image, at, error, size, sample))
@@ -97,8 +91,7 @@ impl Request {
                 let _ = sender.send(result);
             },
         );
-        // SAFETY: the callback captures only Send Rust values. The asset is retained by the
-        // generator, and the caller retains its verified-file lease until this request drains.
+
         let native = unsafe {
             let native = AVAssetImageGenerator::assetImageGeneratorWithAsset(asset);
             native.setAppliesPreferredTrackTransform(false);
@@ -126,7 +119,7 @@ fn decoded(
 ) -> anyhow::Result<MovieFrame> {
     let image = image.ok_or_else(|| {
         let code = error.map(NSError::code);
-        // SAFETY: Foundation's immutable dictionary key is available on every supported macOS.
+
         let key = unsafe { objc2_foundation::NSUnderlyingErrorKey };
         let underlying = error.and_then(|error| error.userInfo().objectForKey(key));
         let detail = underlying
@@ -145,7 +138,6 @@ fn decoded(
 impl Drop for Request {
     fn drop(&mut self) {
         if self.pending {
-            // SAFETY: the request owns this generator and must wait even while its caller unwinds.
             unsafe {
                 self.native.cancelAllCGImageGeneration();
             }
@@ -194,13 +186,11 @@ fn pixels(image: &CGImage, size: [u32; 2]) -> anyhow::Result<Vec<u8>> {
             .checked_mul(height)
             .context("Video canvas overflowed")?
     ];
-    // SAFETY: the permanent sRGB name selects the same color space as saved Show stills. The
-    // context borrows the bounded pixel allocation and is destroyed before that allocation moves.
+
     {
-        // SAFETY: the color-space name is an immutable process-wide native constant.
         let space = CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB }))
             .context("Cannot create the video color space")?;
-        // SAFETY: the context borrows this live bounded allocation and is released before it moves.
+
         let context = unsafe {
             CGBitmapContextCreate(
                 pixels.as_mut_ptr().cast(),
@@ -213,7 +203,7 @@ fn pixels(image: &CGImage, size: [u32; 2]) -> anyhow::Result<Vec<u8>> {
             )
         }
         .context("Cannot create the video pixel buffer")?;
-        // Bitmap drawing preserves raster row order; a view-coordinate flip would invert it.
+
         CGContext::draw_image(
             Some(&context),
             CGRect::new(

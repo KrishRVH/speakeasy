@@ -1,7 +1,3 @@
-//! Drives the save queue through writes to temporary settings files: the latest queued draft lands,
-//! a failure keeps the last durable save, dropping or flushing waits for the running write, and a
-//! draft has nothing to save only while the file holds it.
-
 use std::{sync::mpsc, time::Duration};
 
 use anyhow::{Context as _, bail};
@@ -17,7 +13,6 @@ fn durable(config: Config) -> SavedConfig {
     }
 }
 
-/// Waits for the result of the write `progress` started, for `SaveQueue::finish`.
 async fn write_result(progress: SaveProgress) -> anyhow::Result<anyhow::Result<SavedConfig>> {
     let SaveProgress::Writing(result) = progress else {
         bail!("No write started");
@@ -146,7 +141,7 @@ async fn a_save_queued_behind_a_write_keeps_the_path_spellings_it_did_not_change
         &path,
         r#"{"engine_executable":"engine","model":"model.gguf"}"#,
     )?;
-    // The draft keeps relative paths, as after a launch whose settings did not validate.
+
     let opened = Config::read(&path)?;
     let draft = |theme| Config {
         theme,
@@ -203,7 +198,7 @@ async fn a_draft_needs_saving_until_the_file_holds_it_or_a_write_is_making_it() 
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
     valid_config(directory.path())?;
-    // A first launch opens on Parakeet before the file exists, and validation resolves the paths.
+
     let opened = Config {
         engine_executable: "engine".into(),
         model: "model.gguf".into(),

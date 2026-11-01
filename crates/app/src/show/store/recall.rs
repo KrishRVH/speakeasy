@@ -1,6 +1,3 @@
-//! Reading and discovering saved Shows without changing them. Inspection checks their structure
-//! and expected files; the menu reads the user's current summary verbatim.
-
 use std::{
     fmt, fs,
     io::{self, ErrorKind, Read as _},
@@ -14,18 +11,12 @@ use speakeasy_show::{Bundle, Manifest, Unreadable};
 use super::SavedShow;
 use super::{PIN, pinned, stamp};
 
-/// The most of a summary read back; a real one, naming at most 36 keyframes and the words said
-/// over them, is a few kilobytes.
 pub(super) const SUMMARY_LIMIT: u64 = 1 << 20;
 
-/// Five minutes at 125 pointer samples per second fits comfortably even as pretty-printed JSON.
-/// Inspection reads at most one byte beyond this cap and never decodes screen pixels.
 pub(super) const MANIFEST_LIMIT: u64 = 16 << 20;
 
-/// Bounded compressed image input shared by review and portable export.
 pub(crate) const IMAGE_LIMIT: u64 = 32 << 20;
 
-/// A manifest plus its file inventory. A missing image does not hide the other frames.
 #[derive(Debug)]
 pub(crate) struct ReadShow {
     pub manifest: Manifest,
@@ -34,14 +25,12 @@ pub(crate) struct ReadShow {
     pub movie: Option<super::movie::Metadata>,
 }
 
-/// A fixed file name and a content-free explanation of why it cannot be read.
 #[derive(Debug)]
 pub(crate) struct FileProblem {
     pub name: String,
     pub reason: String,
 }
 
-/// An unsupported or damaged manifest prevents navigation, but remains visible in the listing.
 #[derive(Debug)]
 pub(crate) enum ReadError {
     Manifest(Unreadable),
@@ -59,14 +48,12 @@ impl fmt::Display for ReadError {
 
 impl std::error::Error for ReadError {}
 
-/// One explicit Show path and its inspection, including a Show too damaged to navigate.
 #[derive(Debug)]
 pub(crate) struct Entry {
     pub directory: PathBuf,
     pub show: Result<ReadShow, ReadError>,
 }
 
-/// Structural health shared by the command line and the review window; pixels are not decoded.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Health {
@@ -84,8 +71,6 @@ impl Entry {
         }
     }
 
-    /// Opens an explicitly named Show. Its absolute directory anchors every returned path;
-    /// paths in an edited summary never control what inspection opens.
     pub(crate) fn open(directory: &Path) -> io::Result<Self> {
         let directory = std::path::absolute(directory)?;
         if !fs::metadata(&directory)?.is_dir() {
@@ -95,22 +80,15 @@ impl Entry {
         Ok(Self { directory, show })
     }
 
-    /// Resolves a format-generated relative filename using the host's path separators.
     pub(crate) fn file(&self, name: &str) -> PathBuf {
         self.directory.join(name.split('/').collect::<PathBuf>())
     }
 }
 
-/// Lists stamp-named directories newest first, including damaged Shows, without creating the
-/// parent or following directory links. Missing parents are empty and expired entries disappear.
-/// Manifests load only as the iterator advances, so callers can discard private text after
-/// projecting each entry's metadata instead of retaining every recording's narration at once.
 pub(crate) fn list(parent: &Path) -> io::Result<impl Iterator<Item = io::Result<Entry>>> {
     let paths = discover(parent)?;
     Ok(paths.into_iter().filter_map(|path| {
         let inspected = Entry::open(&path).and_then(|entry| {
-            // Expiry may remove the folder after its manifest was opened. A missing manifest
-            // in a folder that remains is damage and must still appear.
             fs::metadata(&entry.directory)?;
             Ok(entry)
         });
@@ -197,8 +175,6 @@ fn read(directory: &Path) -> Result<ReadShow, ReadError> {
     })
 }
 
-/// All names come from the format. Check intermediate directories too, so a linked `frames`
-/// directory cannot direct an agent outside the Show. Files replaced concurrently may disappear.
 pub(super) fn regular_file(directory: &Path, name: &str, limit: u64) -> io::Result<()> {
     let mut path = directory.to_owned();
     let mut parts = name.split('/').peekable();
@@ -225,8 +201,6 @@ pub(super) fn regular_file(directory: &Path, name: &str, limit: u64) -> io::Resu
     Err(io::Error::other("missing file name"))
 }
 
-/// Reads a format-generated relative name with a byte cap, refusing linked files or parents.
-/// Callers choose limits before opening private content; decoder failures must not quote it.
 pub(crate) fn read_file(directory: &Path, name: &str, limit: u64) -> io::Result<Vec<u8>> {
     regular_file(directory, name, limit)?;
     let mut bytes = Vec::new();
@@ -239,7 +213,6 @@ pub(crate) fn read_file(directory: &Path, name: &str, limit: u64) -> io::Result<
     Ok(bytes)
 }
 
-/// Reads the current summary as plain text without retaining UTF-8 decoder errors or contents.
 pub(crate) fn summary(directory: &Path) -> io::Result<String> {
     let bytes = read_file(directory, Bundle::SUMMARY, SUMMARY_LIMIT)?;
     String::from_utf8(bytes)
@@ -248,7 +221,6 @@ pub(crate) fn summary(directory: &Path) -> io::Result<String> {
 
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
 impl SavedShow {
-    /// The Show's folder while it still exists, or `None` once it has expired or been deleted.
     pub(crate) fn folder(&self) -> anyhow::Result<Option<&Path>> {
         match fs::metadata(&self.0) {
             Ok(metadata) => Ok(metadata.is_dir().then_some(&*self.0)),
@@ -257,9 +229,6 @@ impl SavedShow {
         }
     }
 
-    /// The summary as the Show's folder holds it now, so the user's edits survive, or `None` once
-    /// it has expired or been deleted. At most [`SUMMARY_LIMIT`] bytes are read, whatever has taken
-    /// the file's place.
     pub(crate) fn summary(&self) -> anyhow::Result<Option<String>> {
         let path = self.0.join(Bundle::SUMMARY);
         let file = match fs::File::open(&path) {
@@ -279,7 +248,6 @@ impl SavedShow {
     }
 }
 
-/// Explains a failed read of a saved Show's `path`, with the system's reason.
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
 fn cannot_read(path: &Path) -> impl FnOnce(io::Error) -> anyhow::Error {
     move |error| anyhow::anyhow!("Cannot read {}: {error}.", path.display())

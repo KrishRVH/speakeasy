@@ -1,6 +1,3 @@
-//! Bounded inspection of silent fragmented AVC movies. Only complete, contiguous fragment/data
-//! pairs survive recovery. Container durations and final indexes cannot establish surviving frames.
-
 mod atoms;
 mod compatibility;
 mod initialization;
@@ -15,12 +12,9 @@ const HEADER_LIMIT: u64 = 1 << 20;
 const SAMPLE_LIMIT: u32 = 10_801;
 const DURATION_LIMIT: u64 = 360;
 
-/// A content-free failure to inspect a retained movie's container.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MovieError {
-    /// Metadata is malformed or outside the supported format.
     Invalid(&'static str),
-    /// Initialization is readable, but no complete first media fragment survives.
     NoFragment,
 }
 
@@ -35,61 +29,37 @@ impl fmt::Display for MovieError {
 
 impl std::error::Error for MovieError {}
 
-/// A structurally complete movie prefix, with timing derived from the surviving sample tables.
-///
-/// This validates container ranges, track configuration and fragment ordering, not AVC image
-/// decoding. A native decoder can still reject damaged compressed image bytes.
 #[derive(Clone, Debug)]
 pub struct MoviePrefix {
-    /// Copy this many bytes from zero, applying `compatibility()`, to recover surviving fragments.
     pub bytes: u64,
-    /// Encoded width and height, before any player scaling.
     pub size: [u32; 2],
-    /// Surviving presentation duration, relative to the movie's first frame at zero.
     pub duration: Duration,
-    /// Number of samples in complete fragments, including held images produced by the codec.
     pub frames: u32,
-    /// Ticks per second in the validated video track.
     pub timescale: u32,
     samples: Vec<MovieSample>,
     compatibility: MovieCompatibility,
-    /// A malformed or incomplete fragment follows the surviving prefix.
     pub truncated: bool,
 }
 
-/// One validated presentation time, retaining the exact native value beside its display clock.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MovieSample {
-    /// Presentation time rounded down to nanoseconds for navigation and display.
     pub at: Duration,
-    /// Exact presentation ticks in the containing prefix's timescale.
     pub ticks: u64,
 }
 
 impl MoviePrefix {
-    /// Maximum accepted container size. Capture adapters may impose smaller writing budgets.
     pub const FILE_LIMIT: u64 = 1 << 30;
 
-    /// Presentation times of complete surviving samples, relative to the movie's zero origin.
     #[must_use]
     pub fn samples(&self) -> &[MovieSample] {
         &self.samples
     }
 
-    /// Offset-preserving header corrections proved safe by this container inspection.
     #[must_use]
     pub const fn compatibility(&self) -> &MovieCompatibility {
         &self.compatibility
     }
 
-    /// Reads bounded metadata ranges from a silent, single-track fragmented AVC MP4. `read` must
-    /// return exactly the requested bytes. The returned prefix excludes optional final indexes;
-    /// compatibility corrections preserve byte offsets and sample tables. Picture decoding
-    /// remains the player's responsibility. Reordered presentation timestamps are unsupported.
-    ///
-    /// # Errors
-    /// Fails when initialization is damaged/unsupported, no complete fragment survives, the
-    /// format limits are exceeded, or `read` fails. Format errors never contain private bytes.
     pub fn read<E: From<MovieError>>(
         length: u64,
         read: impl FnMut(Range<u64>) -> Result<Vec<u8>, E>,
@@ -229,7 +199,6 @@ impl<E: From<MovieError>, F: FnMut(Range<u64>) -> Result<Vec<u8>, E>> Input<F> {
         Ok(bytes)
     }
 
-    /// Incomplete top-level boxes stop recovery without erasing an earlier complete fragment.
     fn atom(&mut self, start: u64, has_prefix: bool) -> Result<Option<Atom>, E> {
         if self.length.saturating_sub(start) < 8 {
             return Ok(None);
@@ -371,7 +340,7 @@ fn fragment(
     } else {
         track.flags
     };
-    // Media Foundation appends a reserved zero word to tfhd even when no flag names it.
+
     require(
         header.rest().iter().all(|byte| *byte == 0) && header.rest().len() <= 4,
         "Movie fragment header has trailing data",

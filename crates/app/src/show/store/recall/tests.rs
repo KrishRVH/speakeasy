@@ -1,5 +1,3 @@
-//! Inspection uses temporary bundles and leaves their files and retention untouched.
-
 use serde_json::json;
 
 use super::*;
@@ -177,7 +175,7 @@ fn manifest_and_frame_links_are_not_followed() -> anyhow::Result<()> {
 #[test]
 fn five_minutes_of_dense_ink_has_room_in_the_read_limit() {
     let mut value = manifest();
-    // The native pointer sampler runs every 8 ms; retain every sample for the full five minutes.
+
     let points: Vec<_> = (0..37_500_u64)
         .map(|sample| json!([0.123_456_78, 0.876_543_21, sample * 8]))
         .collect();

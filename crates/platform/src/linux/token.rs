@@ -1,6 +1,3 @@
-//! The remote desktop portal's restore token: a one-use credential kept apart from preferences, in
-//! a private file under the user's XDG state directory.
-
 use std::{
     ffi::OsString,
     fs,
@@ -12,8 +9,7 @@ use std::{
 use anyhow::ensure;
 
 const MAX_TOKEN_LEN: usize = 4096;
-/// One byte past the limit, so a file that grew after its size check fails validation instead of
-/// being silently truncated.
+
 const READ_LIMIT: u64 = MAX_TOKEN_LEN as u64 + 1;
 const GROUP_OR_OTHER_ACCESS: u32 = 0o077;
 
@@ -22,8 +18,6 @@ pub(super) struct TokenStore {
 }
 
 impl TokenStore {
-    /// Opens the per-user token store, or `None` when it is unusable; without one, the portal asks
-    /// for consent again on each launch.
     pub(super) fn open() -> Option<Self> {
         Self::at(&state_folder(std::env::var_os)?).ok()
     }
@@ -65,7 +59,7 @@ impl TokenStore {
         let mut token = String::new();
         file.take(READ_LIMIT).read_to_string(&mut token)?;
         ensure!(is_well_formed(&token), "Invalid portal token");
-        // Delete before presenting it: the portal may spend the token even on a cancelled restore.
+
         fs::remove_file(path)?;
         Ok((!token.is_empty()).then_some(token))
     }
@@ -83,8 +77,6 @@ impl TokenStore {
     }
 }
 
-/// Speakeasy's folder under the user's XDG state directory, which `var` looks up. A base that is
-/// unset or relative is refused rather than resolved against the working directory.
 fn state_folder(var: impl Fn(&'static str) -> Option<OsString>) -> Option<PathBuf> {
     let absolute = |name| {
         var(name)

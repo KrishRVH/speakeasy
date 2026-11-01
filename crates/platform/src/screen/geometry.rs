@@ -1,21 +1,12 @@
-//! Display rectangles, frame sizes, and pixel rows: the arithmetic native adapters share, free of
-//! native calls so every host tests it.
-
 use super::Part;
 
-/// A rectangle in the platform's global display space: points on macOS, physical pixels on
-/// Windows.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Bounds {
-    /// The corner with the smallest coordinates.
     pub(crate) origin: [f64; 2],
-    /// Width and height.
     pub(crate) size: [f64; 2],
 }
 
 impl Bounds {
-    /// Where a point lies within these bounds, normalized on each axis: `0.0..=1.0` spans them, and
-    /// a point beyond an edge falls outside that range. `None` when the bounds are empty.
     pub(crate) fn normalize(self, [x, y]: [f64; 2]) -> Option<[f32; 2]> {
         let [left, top] = self.origin;
         let [width, height] = self.size;
@@ -23,8 +14,6 @@ impl Bounds {
         Some([normalized(x - left, width)?, normalized(y - top, height)?])
     }
 
-    /// Whether `point` lies within these bounds, counting the edges through `origin` but not the
-    /// opposite ones, so a point on an edge two adjoining bounds share lies in exactly one of them.
     #[cfg(any(target_os = "macos", test))]
     pub(crate) fn contains(self, [x, y]: [f64; 2]) -> bool {
         let [left, top] = self.origin;
@@ -32,8 +21,6 @@ impl Bounds {
         (left..left + width).contains(&x) && (top..top + height).contains(&y)
     }
 
-    /// The part of these bounds that `other` covers, clipped to them; `None` when the two do not
-    /// overlap or these bounds are empty.
     pub(crate) fn part_covered_by(self, other: Self) -> Option<Part> {
         let [left, top] = other.origin;
         let [width, height] = other.size;
@@ -44,8 +31,6 @@ impl Bounds {
         (part.width() > 0.0 && part.height() > 0.0).then_some(part)
     }
 
-    /// The same rectangle measured from the opposite edge of a space `extent` tall, turning
-    /// top-left coordinates into bottom-left ones and back.
     #[cfg(any(target_os = "macos", test))]
     pub(crate) fn flipped(self, extent: f64) -> Self {
         let [x, y] = self.origin;
@@ -57,17 +42,12 @@ impl Bounds {
     }
 }
 
-/// `points` at `scale` pixels per point, rounded to whole pixels; `None` unless each axis comes to
-/// at least one pixel within `u32` range.
 #[cfg(any(target_os = "macos", test))]
 pub(crate) fn pixels(points: [f64; 2], scale: f64) -> Option<[u32; 2]> {
     let [width, height] = points.map(|extent| whole(extent * scale));
     Some([width?, height?])
 }
 
-/// The pixels of a `[width, height]` image that `part` covers, as its left, top, right, and
-/// bottom edges, rounded to whole pixels: at least one each way, unless the image is empty, and
-/// none outside it.
 #[cfg(any(target_os = "windows", test))]
 pub(crate) fn pixel_box(part: Part, [width, height]: [u32; 2]) -> [u32; 4] {
     let (left, right) = pixel_span(part.left, part.right, width);
@@ -75,7 +55,6 @@ pub(crate) fn pixel_box(part: Part, [width, height]: [u32; 2]) -> [u32; 4] {
     [left, top, right, bottom]
 }
 
-/// The pixels of an `extent`-pixel axis between the normalized edges `start` and `end`.
 #[cfg(any(target_os = "windows", test))]
 fn pixel_span(start: f32, end: f32, extent: u32) -> (u32, u32) {
     let edge = |normalized: f32| whole_within(f64::from(normalized) * f64::from(extent), extent);
@@ -83,8 +62,6 @@ fn pixel_span(start: f32, end: f32, extent: u32) -> (u32, u32) {
     (first, edge(end).max(first.saturating_add(1)).min(extent))
 }
 
-/// The part of a `[width, height]` image that `[left, top, right, bottom]`, a box of its pixels,
-/// shows.
 #[cfg(any(target_os = "windows", test))]
 pub(crate) fn part_of_box([left, top, right, bottom]: [u32; 4], [width, height]: [u32; 2]) -> Part {
     let normalized = |pixels: u32, extent: u32| {
@@ -102,7 +79,6 @@ pub(crate) fn part_of_box([left, top, right, bottom]: [u32; 4], [width, height]:
     }
 }
 
-/// `size` halved until its long edge fits `longest_edge`, stopping before an axis would vanish.
 pub(crate) fn fit(size: [u32; 2], longest_edge: u32) -> [u32; 2] {
     let [mut width, mut height] = size;
     while width.max(height) > longest_edge && width.min(height) > 1 {
@@ -112,10 +88,6 @@ pub(crate) fn fit(size: [u32; 2], longest_edge: u32) -> [u32; 2] {
     [width, height]
 }
 
-/// Copies `height` rows of `width` four-byte pixels out of `rows`, where each row starts `stride`
-/// bytes after the last, into one buffer without padding.
-///
-/// `None` when the image is empty, rows would overlap, or `rows` ends early.
 pub(crate) fn pack_rows(
     rows: &[u8],
     stride: usize,
@@ -134,7 +106,6 @@ pub(crate) fn pack_rows(
     (packed.len() == size).then_some(packed)
 }
 
-/// Narrows a display coordinate to the `f32` the portable types carry.
 #[expect(
     clippy::cast_possible_truncation,
     reason = "Display coordinates need far less precision than f32 holds"
@@ -143,7 +114,6 @@ pub(crate) fn narrow(value: f64) -> f32 {
     value as f32
 }
 
-/// Rounds a pixel measure to a count of at least one.
 #[cfg(any(target_os = "macos", test))]
 #[expect(
     clippy::cast_possible_truncation,
@@ -160,7 +130,6 @@ fn whole(value: f64) -> Option<u32> {
         .then_some(value as u32)
 }
 
-/// Rounds a pixel measure to the nearest count from zero to `most`.
 #[cfg(any(target_os = "windows", test))]
 #[expect(
     clippy::cast_possible_truncation,
@@ -178,7 +147,6 @@ fn whole_within(value: f64, most: u32) -> u32 {
 mod tests {
     use super::*;
 
-    /// A 1440 × 900 main display at the origin of Core Graphics' global space.
     const MAIN: Bounds = Bounds {
         origin: [0.0, 0.0],
         size: [1440.0, 900.0],

@@ -1,5 +1,3 @@
-//! Assets embedded in the binary and served to GPUI.
-
 use std::borrow::Cow;
 
 use gpui::{AssetSource, SharedString};

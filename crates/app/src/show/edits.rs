@@ -1,6 +1,3 @@
-//! Accepted library writes belong to the app, independently of the window showing their results.
-//! One short-lived thread serializes writes; closing a window drops only its result receiver.
-
 use std::{path::PathBuf, sync::Arc};
 
 use async_channel::Receiver;
@@ -58,7 +55,6 @@ impl Edits {
         fixture: Option<Arc<tempfile::TempDir>>,
     ) -> anyhow::Result<Receipt> {
         self.start(move || {
-            // The immutable lease keeps a demo's private folder alive until its write finishes.
             let _fixture = fixture;
             match edit {
                 Edit::Keep {
@@ -98,7 +94,6 @@ impl Edits {
         Ok(result)
     }
 
-    /// Quit awaits the body while retaining this owner; Drop joins even during forced teardown.
     pub(crate) fn drained(&self) -> impl Future<Output = ()> + use<> {
         let writing = self.writing.as_ref().map(OwnedThread::exited);
         async move {

@@ -1,6 +1,3 @@
-//! The Windows and macOS tray through `tray-icon`. Native callbacks only queue commands; the UI
-//! thread runs them and presents each tray state.
-
 use gpui::{App, Global, Task};
 use speakeasy_platform::{Scope, TrayItem, TrayMenu};
 use tray_icon::{
@@ -32,7 +29,6 @@ pub(crate) struct Tray {
 
 impl Global for Tray {}
 
-/// Owns the native icon and the stateful menu items, and writes each tray state into them.
 struct Presenter {
     icon: TrayIcon,
     status: MenuItem,
@@ -189,7 +185,6 @@ fn draw_icon(indicator: Indicator, theme: Theme) -> Result<Icon, BadIcon> {
     )
 }
 
-/// Installs the native click handlers, which run outside GPUI and can only queue commands.
 fn queue_commands<const N: usize>(
     items: [(MenuId, TrayCommand); N],
 ) -> async_channel::Receiver<TrayCommand> {

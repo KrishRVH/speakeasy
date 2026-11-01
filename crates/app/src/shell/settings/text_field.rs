@@ -1,7 +1,3 @@
-//! A private single-line GPUI field with selection, IME composition, and explicit clipboard edits.
-//! Input-handler and shaping integration follows GPUI's Apache-2.0 input example; editing ranges
-//! are bounded here, and neither content nor shaping failures enter diagnostics.
-
 mod edit;
 mod viewport;
 

@@ -1,6 +1,3 @@
-//! Opt-in profiling of the real owner and local speech with public audio and fake
-//! capture/insertion. It never installs a hook or touches an input device.
-
 use std::{path::PathBuf, time::Duration};
 
 use anyhow::Context as _;
@@ -20,7 +17,6 @@ mod corpus;
 
 use corpus::{Clip, Score};
 
-/// Outlasts both of the worker's startup bounds, one to serve and one to warm up.
 const STARTUP_TIMEOUT: Duration = local_speech::STARTUP_TIMEOUT
     .saturating_mul(2)
     .saturating_add(Duration::from_secs(5));
@@ -149,8 +145,6 @@ impl Ports for Fixture {
     fn hold_cues(&self, _: bool) {}
 }
 
-/// Replays the fixture audio when finished; a repeated finish reaches a session that is no longer
-/// capturing and is ignored.
 struct FixtureDevice {
     capture: Option<crate::audio::Capture>,
     id: SessionId,
@@ -202,7 +196,6 @@ impl Listening for FixtureDevice {
     }
 }
 
-/// No fixture device records a Show, so none takes a pin.
 impl Pinning for FixtureDevice {
     fn pin(&self, _: Taps) {}
 }
@@ -448,8 +441,7 @@ async fn recording(
     };
     let started = Instant::now();
     let runtime = Runtime::start_with(config, output, meter, fixture)?;
-    // Every case starts and warms its own worker. A failed case must also acknowledge teardown
-    // before the caller returns; otherwise a later measurement could inherit competing work.
+
     let result = async {
         wait_for_signal(&ready, &mut updates, STARTUP_TIMEOUT).await?;
         let startup_ms = started.elapsed().as_secs_f64() * 1000.0;

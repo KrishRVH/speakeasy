@@ -1,5 +1,3 @@
-//! The CLI's metadata-only projections. Never serialize the manifest or a keyframe's free text.
-
 use std::{
     io,
     path::{Path, PathBuf},
@@ -99,8 +97,7 @@ impl Overview {
             },
         };
         let show = entry.show.as_ref().ok();
-        // Identity is omitted unless membership can be established. An unavailable storage root
-        // must not prevent inspecting a readable moved bundle or advertise a misleading ID.
+
         let id =
             parent.and_then(|parent| address::managed_id(parent, &entry.directory).ok().flatten());
         let retention = id

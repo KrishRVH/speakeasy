@@ -1,5 +1,3 @@
-//! Ink, numbered labels, click ripples, and badges drawn onto keyframes.
-
 pub(crate) mod video;
 
 use std::time::Duration;
@@ -13,49 +11,34 @@ use crate::{
 };
 
 const WHITE: [u8; 4] = [255, 255, 255, 255];
-/// Ink lifted this recently before a keyframe without marks of its own still shows on it, as do
-/// pins dropped this recently.
+
 const RECENT_INK: Duration = Duration::from_millis(1_200);
-// A mark joins strokes at most `MARK_GAP` apart, so while recent ink spans that pause, a mark is
-// recent exactly when one of its strokes is, as `annotate` relies on.
+
 const _: () = assert!(
     RECENT_INK.as_nanos() >= MARK_GAP.as_nanos(),
     "recent ink spans at least the pause that joins strokes into one mark"
 );
-/// A keyframe without a click or drag of its own ripples at a click this close to its moment.
+
 const RIPPLE_REACH: Duration = Duration::from_millis(600);
-/// A click's ring radius and line width, its dot's radius, and the width of the white edge
-/// outside each, in pixels at [`ink::detail`] 1. The edge is about a pixel's diagonal wide, so
-/// even where it runs diagonally it covers whole pixels instead of fading into the screen under
-/// antialiasing.
+
 const CLICK_RING: f32 = 10.0;
 const CLICK_LINE: f32 = 1.6;
 const CLICK_DOT: f32 = 1.6;
 const CLICK_EDGE: f32 = 1.4;
 const CLICK_BLUE: [u8; 4] = [0, 96, 214, 230];
 const CLICK_WHITE: [u8; 4] = [255, 255, 255, 230];
-/// The top band where a badge sits, and the share of the width at each side that decides which
-/// corner it takes.
+
 const BADGE_BAND: f32 = 0.18;
 const BADGE_SIDE: f32 = 0.30;
-/// How far a cubic Bézier's handles reach along its tangents, in radii, to trace a quarter circle.
+
 const QUARTER_CIRCLE_HANDLE: f32 = 0.552_284_8;
 
-/// The top corner a keyframe's badge sits in.
 #[derive(Clone, Copy)]
 pub(crate) enum Corner {
     Left,
     Right,
 }
 
-/// Draws a keyframe's ink, numbered labels, and click ripple onto its frame, returning the corner
-/// its badge should take so it does not cover what the keyframe is about.
-///
-/// A keyframe made for marks shows all their ink and pins. Any other keyframe shows the ink drawn
-/// up to its moment from strokes still in progress or lifted within [`RECENT_INK`], and pins
-/// dropped within it, as the screen looked then. Each of the selection's `marks` whose ink or pin
-/// it shows is labeled with its number. The ripple marks the keyframe's own click or drag, which a
-/// mark's keyframe can carry too, else the click nearest its moment within [`RIPPLE_REACH`].
 pub(crate) fn annotate(
     image: &mut Image,
     keyframe: &Keyframe,
@@ -129,12 +112,6 @@ fn nearest_click(actions: &[Action], moment: Moment) -> Option<Point> {
         .map(|(_, point)| point)
 }
 
-/// Marks where the pointer acted: a blue ring around a blue dot, each edged in white just outside.
-///
-/// The blue stands out on white and light gray screens and the white on accent blues and dark ones,
-/// so the mark shows on an accent-blue button as on a page. On a pale blue between the two, such
-/// as a sky-blue selection, neither stands out fully. The ring is unfilled and each stroke lets
-/// about a tenth of the screen through, so what was clicked stays legible.
 fn ripple(canvas: &mut PixmapMut<'_>, center: Point, scale: f32) {
     let edge_outside = |boundary: f32| (boundary + CLICK_EDGE / 2.0, CLICK_EDGE, CLICK_WHITE);
     for (radius, width, color) in [
@@ -157,8 +134,6 @@ fn ripple(canvas: &mut PixmapMut<'_>, center: Point, scale: f32) {
     );
 }
 
-/// Draws `mark`'s number in white on a red disc ringed in white, centered at `center` in pixels,
-/// with a dot at the point a pin marks.
 fn label(canvas: &mut PixmapMut<'_>, mark: &Mark, center: Point, radius: f32, typeface: &Typeface) {
     if let Shape::Pin { point } = mark.shape {
         let dot = ink::PIN_DOT * radius;
@@ -176,7 +151,6 @@ fn label(canvas: &mut PixmapMut<'_>, mark: &Mark, center: Point, radius: f32, ty
     fill(canvas, typeface.path(&digits, size, origin), WHITE);
 }
 
-/// A red disc of radius `inner` on a white one of `radius`, centered at `center` in pixels.
 fn disc(canvas: &mut PixmapMut<'_>, center: Point, radius: f32, inner: f32) {
     fill(
         canvas,
@@ -190,10 +164,6 @@ fn disc(canvas: &mut PixmapMut<'_>, center: Point, radius: f32, inner: f32) {
     );
 }
 
-/// Draws a badge such as `#3  0:42` in the top corner of `cell`, a rectangle in pixels.
-///
-/// The number sits on a light keycap so a reader can refer to the keyframe; the time beside it
-/// says when it happened. `scale` sizes the badge for the cell it labels.
 pub(crate) fn badge(
     canvas: &mut PixmapMut<'_>,
     cell: Rect,
@@ -271,7 +241,6 @@ pub(crate) fn badge(
     );
 }
 
-/// Draws `keyframe`'s badge in the top `corner` of its full-size frame, sized for the frame.
 pub(crate) fn badge_frame(
     image: &mut Image,
     keyframe: &Keyframe,
@@ -310,7 +279,6 @@ fn fill(canvas: &mut PixmapMut<'_>, path: Option<Path>, color: [u8; 4]) {
     }
 }
 
-/// A rectangle with circular corners of `radius`, clamped to fit.
 pub(crate) fn rounded(rect: Rect, radius: f32) -> Option<Path> {
     let radius = radius
         .max(0.0)
@@ -365,8 +333,6 @@ pub(crate) fn rounded(rect: Rect, radius: f32) -> Option<Path> {
     builder.finish()
 }
 
-/// A closed path through `points`, curving through the midpoints of its edges so an outline
-/// computed as a polygon draws without facets.
 fn closed_curve(points: &[Point]) -> Option<Path> {
     let (&first, &last) = (points.first()?, points.last()?);
     let start = last.lerp(first, 0.5);
@@ -430,8 +396,6 @@ mod tests {
         assert_eq!(inked(3_000, 0..0), [false, false], "Long after");
     }
 
-    /// A frame filled with `screen` and marked with a click at its center, returned with each
-    /// pixel's offset from the click.
     fn clicked(screen: [u8; 3]) -> Vec<(Point, [u8; 4])> {
         let (width, height) = (160_u32, 100_u32);
         let point = Point::new(0.5, 0.5);
@@ -471,8 +435,6 @@ mod tests {
             .collect()
     }
 
-    /// WCAG's contrast ratio between two colors, from 1 for the same luminance to 21 for black on
-    /// white.
     fn contrast(one: [u8; 3], other: [u8; 3]) -> f32 {
         let luminance = |color: [u8; 3]| {
             let [red, green, blue] = color.map(|channel| {
@@ -491,7 +453,6 @@ mod tests {
 
     #[test]
     fn a_click_mark_leaves_what_was_clicked_legible() {
-        // A pixel the mark hides comes out the same over a black screen and a white one.
         let mut painted = 0;
         for ((offset, dark), (_, light)) in clicked([0; 3]).into_iter().zip(clicked([255; 3])) {
             let touched = dark[..3] != [0; 3] || light[..3] != [255; 3];
@@ -508,8 +469,7 @@ mod tests {
     #[test]
     fn a_click_mark_stands_out_on_blue_light_dark_and_gray_screens() {
         use std::f32::consts::TAU;
-        // macOS's accent blue in dark mode, as the demo uses, and in light mode; Windows 10's
-        // default accent; white, black, and mid-gray.
+
         for screen in [
             [10, 132, 255],
             [0, 122, 255],
@@ -518,8 +478,6 @@ mod tests {
             [0; 3],
             [128; 3],
         ] {
-            // The angles at which the ring, beyond the dot, has the 3:1 contrast WCAG asks of
-            // graphics that carry meaning; no gap between them may span a twenty-fourth of a turn.
             let mut standing_out: Vec<f32> = clicked(screen)
                 .into_iter()
                 .filter(|&(offset, [red, green, blue, _])| {

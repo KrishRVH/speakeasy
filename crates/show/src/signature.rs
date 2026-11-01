@@ -1,5 +1,3 @@
-//! Compact fingerprints of captured frames, compared to find where the screen changed.
-
 use std::{fmt, ops::Range};
 
 use crate::{Image, Moment, Rect, convert};
@@ -7,39 +5,31 @@ use crate::{Image, Moment, Rect, convert};
 const COLUMNS: usize = 128;
 const ROWS: usize = 72;
 const CELLS: usize = COLUMNS * ROWS;
-/// Transitions compare an 8 × 6 grid of blocks, each 16 × 12 cells.
+
 const BLOCK_COLUMNS: usize = 8;
 const BLOCK_ROWS: usize = 6;
 const BLOCK_WIDTH: usize = COLUMNS / BLOCK_COLUMNS;
 const BLOCK_HEIGHT: usize = ROWS / BLOCK_ROWS;
-/// A change that fills a few blocks counts nearly as much as one spread over the whole frame.
+
 const LOCAL_BOOST: f32 = 1.4;
-/// A [`transition`](Signature::transition) stronger than this is a scene change.
+
 pub(crate) const SCENE: f32 = 0.08;
-/// A cell changed when its luma moved by more than this share of the full range.
+
 const CELL_CHANGE: f32 = 0.04;
-/// Cells average at most this many samples a side, so cost does not grow with resolution.
+
 const SAMPLES_PER_CELL_SIDE: usize = 4;
 
-/// A captured frame and the moment it was on screen, reduced to its [`Signature`].
 #[derive(Clone, Debug)]
 pub struct Sample {
-    /// When the frame was on screen.
     pub at: Moment,
-    /// The frame's fingerprint.
     pub signature: Signature,
 }
 
-/// The mean luma of a 128 × 72 grid of cells laid over a frame of any size.
-///
-/// A signature costs about 9 KB, so a Show can keep one for every frame it samples without
-/// keeping the frames, and every comparison keyframe selection needs runs on signatures alone.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Signature {
     cells: Box<[u8; CELLS]>,
 }
 
-/// Leaves out the cells, a thumbnail of the user's screen.
 impl fmt::Debug for Signature {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Signature").finish_non_exhaustive()
@@ -57,7 +47,6 @@ impl Signature {
         })
     }
 
-    /// Fingerprints `image`; cost is bounded by the grid, not by the image's resolution.
     #[must_use]
     pub(crate) fn of(image: &Image) -> Self {
         let pixels: Vec<&[[u8; 4]]> = image.rows().map(|row| row.as_chunks::<4>().0).collect();
@@ -76,19 +65,11 @@ impl Signature {
         Self { cells }
     }
 
-    /// The mean luma difference over the whole frame, from `0.0` for identical frames to `1.0`
-    /// for black against white.
     pub(crate) fn change(&self, other: &Self) -> f32 {
         let total: f32 = self.differences(other).sum();
         total / CELLS as f32
     }
 
-    /// How strongly the screen changed between two frames.
-    ///
-    /// The larger of the whole-frame change and the fourth-strongest block change, boosted: a
-    /// panel, dialog, or page that changes four or more blocks registers even when the rest of the
-    /// frame holds still, while changes confined to a few blocks, such as a caret or a clock, do
-    /// not.
     pub(crate) fn transition(&self, other: &Self) -> f32 {
         let differences: Vec<f32> = self.differences(other).collect();
         let mut blocks = [[0.0_f32; BLOCK_COLUMNS]; BLOCK_ROWS];
@@ -107,8 +88,6 @@ impl Signature {
         self.change(other).max((fourth * LOCAL_BOOST).min(1.0))
     }
 
-    /// The share of the cells under `region`, a rectangle in coordinates normalized to the frame,
-    /// whose luma changed.
     pub(crate) fn region_change(&self, other: &Self, region: Rect) -> f32 {
         let rows = cell_range(region.top, region.bottom, ROWS);
         let columns = cell_range(region.left, region.right, COLUMNS);
@@ -143,8 +122,6 @@ impl Signature {
     }
 }
 
-/// Splits `length` pixels into `parts` consecutive spans of at least one pixel each, so a frame
-/// smaller than the grid repeats its pixels across cells instead of leaving cells empty.
 fn spans(length: usize, parts: usize) -> Vec<Range<usize>> {
     let scale = length as f32 / parts as f32;
     (0..parts)
@@ -157,7 +134,6 @@ fn spans(length: usize, parts: usize) -> Vec<Range<usize>> {
         .collect()
 }
 
-/// The cells a normalized interval covers, at least one.
 fn cell_range(low: f32, high: f32, cells: usize) -> Range<usize> {
     let last = cells.saturating_sub(1);
     let start = convert::count_floor(low.clamp(0.0, 1.0) * cells as f32).min(last);
@@ -166,13 +142,10 @@ fn cell_range(low: f32, high: f32, cells: usize) -> Range<usize> {
     start..end
 }
 
-/// How far apart two cells' luma lies, from `0.0` when equal to `1.0` for black against white.
 fn difference(one: u8, another: u8) -> f32 {
     f32::from(one.abs_diff(another)) / 255.0
 }
 
-/// Rec. 709 luma averaged over a grid of up to [`SAMPLES_PER_CELL_SIDE`]² of the `pixels` in
-/// `rows` and `columns`.
 fn mean_luma(pixels: &[&[[u8; 4]]], rows: Range<usize>, columns: Range<usize>) -> u8 {
     let step = |range: &Range<usize>| range.len().div_ceil(SAMPLES_PER_CELL_SIDE).max(1);
     let (row_step, column_step) = (step(&rows), step(&columns));
@@ -200,7 +173,6 @@ fn mean_luma(pixels: &[&[[u8; 4]]], rows: Range<usize>, columns: Range<usize>) -
 pub(crate) mod tests {
     use super::*;
 
-    /// A uniformly gray frame.
     fn gray(level: u8, width: u32, height: u32) -> Image {
         Image::filled(width, height, [level; 3]).unwrap()
     }
@@ -227,7 +199,6 @@ pub(crate) mod tests {
         );
     }
 
-    /// The signature of a frame at gray level 40 with one white rectangle, given in pixels.
     pub(crate) fn with_patch(width: u32, height: u32, patch: [f32; 4]) -> Signature {
         let mut image = gray(40, width, height);
         let [left, top, right, bottom] = patch;
@@ -245,14 +216,14 @@ pub(crate) mod tests {
     #[test]
     fn a_cursor_sized_change_is_not_a_transition() {
         let base = Signature::of(&gray(40, 640, 360));
-        // A cursor-sized square straddling a block corner.
+
         let cursor = with_patch(640, 360, [314.0, 174.0, 326.0, 186.0]);
         assert!(
             base.transition(&cursor) < SCENE,
             "{}",
             base.transition(&cursor)
         );
-        // A panel opening over a sixth of the frame is.
+
         let opened = with_patch(640, 360, [0.0, 0.0, 320.0, 120.0]);
         assert!(
             base.transition(&opened) > SCENE,

@@ -1,5 +1,3 @@
-//! Bounded preview decoding keeps private pixels out of GPUI's persistent asset cache.
-
 use std::sync::Arc;
 
 use gpui::RenderImage;
@@ -20,16 +18,31 @@ pub(super) fn read(request: Request, cancelled: &dyn Fn() -> bool) -> Result<Dec
     if cancelled() {
         return Err("Preview cancelled".into());
     }
-    let bytes = match content {
+    let pixels = match content {
         Content::Png(name) => {
             let bytes = recall::read_file(&directory, &name, recall::IMAGE_LIMIT)
                 .map_err(|error| format!("Cannot open {name}: {error}"))?;
             check_header(&bytes).map_err(str::to_owned)?;
-            bytes
+            if cancelled() {
+                return Err("Preview cancelled".into());
+            }
+            let mut pixels = image::load_from_memory_with_format(&bytes, image::ImageFormat::Png)
+                .map_err(|_private_error| {
+                    "This frame could not be decoded as a PNG image.".to_owned()
+                })?
+                .into_rgba8();
+            for [red, _, blue, _] in pixels.as_flat_samples_mut().samples.as_chunks_mut::<4>().0 {
+                std::mem::swap(red, blue);
+            }
+            pixels
         },
-        Content::Source { index, at } => source::frame(&directory, &index, at)
-            .and_then(|frame| frame.image.encode_png().map_err(anyhow::Error::from))
-            .map_err(|error| format!("Cannot read source frame: {error:#}"))?,
+        Content::Source { index, at } => {
+            let image = source::frame(&directory, &index, at)
+                .map_err(|error| format!("Cannot read source frame: {error:#}"))?
+                .image;
+            image::RgbaImage::from_raw(image.width(), image.height(), image.into_bgra())
+                .ok_or_else(|| "Source frame dimensions are invalid".to_owned())?
+        },
         Content::Video {
             span,
             annotations,
@@ -61,7 +74,7 @@ pub(super) fn read(request: Request, cancelled: &dyn Fn() -> bool) -> Result<Dec
                 }
                 let pixels = image::RgbaImage::from_raw(size[0], size[1], pixels)
                     .context("Video frame dimensions are invalid")?;
-                // GPUI's RenderImage stores BGRA in image::Frame's byte buffer.
+
                 let image = Arc::new(RenderImage::new([image::Frame::new(pixels)]));
                 Ok(Decoded {
                     image,
@@ -75,12 +88,6 @@ pub(super) fn read(request: Request, cancelled: &dyn Fn() -> bool) -> Result<Dec
     if cancelled() {
         return Err("Preview cancelled".into());
     }
-    let mut pixels = image::load_from_memory_with_format(&bytes, image::ImageFormat::Png)
-        .map_err(|_private_error| "This frame could not be decoded as a PNG image.".to_owned())?
-        .into_rgba8();
-    for [red, _, blue, _] in pixels.as_flat_samples_mut().samples.as_chunks_mut::<4>().0 {
-        std::mem::swap(red, blue);
-    }
     let image = Arc::new(RenderImage::new([image::Frame::new(pixels)]));
     Ok(Decoded {
         image,
@@ -90,8 +97,6 @@ pub(super) fn read(request: Request, cancelled: &dyn Fn() -> bool) -> Result<Dec
 }
 
 fn check_header(bytes: &[u8]) -> Result<(), &'static str> {
-    // PNG requires a 13-byte IHDR first. Bound its dimensions before the decoder can allocate
-    // pixels; the decoder still verifies the complete file, including the header's CRC.
     if bytes.get(..16) != Some(&b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR"[..]) || bytes.len() < 33 {
         return Err("This frame has an invalid or truncated PNG header.");
     }
@@ -114,6 +119,49 @@ fn check_header(bytes: &[u8]) -> Result<(), &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_and_png_previews_preserve_bgra_pixels_and_selected_time() -> anyhow::Result<()> {
+        use speakeasy_show::{Image, Journal, Moment};
+
+        let directory = tempfile::tempdir()?;
+        let bgra = [7, 20, 190, 255].repeat(70 * 65);
+        let image = Image::from_bgra(70, 65, bgra.clone())?;
+        std::fs::write(directory.path().join("frame.png"), image.encode_png()?)?;
+        let mut journal = Journal::new();
+        journal
+            .admit()
+            .unwrap()
+            .record(Moment::from_millis(200), image);
+        let mut source_bytes = Vec::new();
+        journal.write_source(Moment::from_millis(1_000), |bytes| {
+            source_bytes.extend_from_slice(bytes);
+            Ok::<_, anyhow::Error>(())
+        })?;
+        std::fs::write(directory.path().join(source::FILE), source_bytes)?;
+        let index = Arc::new(source::inspect(directory.path())?);
+        let at = Moment::from_millis(200);
+        for content in [
+            Content::Source { index, at },
+            Content::Png("frame.png".into()),
+        ] {
+            let decoded = read(
+                Request {
+                    directory: directory.path().to_owned(),
+                    content,
+                    at,
+                    annotated: false,
+                    fixture: None,
+                },
+                &|| false,
+            )
+            .map_err(anyhow::Error::msg)?;
+            assert_eq!(decoded.image.as_bytes(0), Some(bgra.as_slice()));
+            assert_eq!(decoded.at, std::time::Duration::from_millis(200));
+            assert_eq!(decoded.annotations, movie::AnnotationState::Off);
+        }
+        Ok(())
+    }
 
     #[test]
     fn invalid_and_oversized_png_headers_fail_before_decoding() {

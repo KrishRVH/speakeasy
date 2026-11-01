@@ -1,6 +1,3 @@
-//! Engine archives: the system tar unpacks each build into a staging directory, which is lifted
-//! into one layout and renamed over the installed build.
-
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -22,7 +19,6 @@ pub(super) const EXECUTABLE: &str = r"bin\nemo-speech.exe";
 #[cfg(not(target_os = "windows"))]
 pub(super) const EXECUTABLE: &str = "bin/nemo-speech";
 
-/// Downloads and extracts an engine archive into its own directory.
 pub(super) async fn unpack(
     client: &Client,
     archive: &Download<'_>,
@@ -52,7 +48,7 @@ pub(super) async fn unpack(
     let staging = engines.join(format!("{stem}.part"));
     remove_engine_directory(&staging)?;
     fs::create_dir_all(&staging).map_err(file_error(&engines))?;
-    // The system tar reads this platform's archives; a tar earlier in PATH may not.
+
     let tar = if cfg!(target_os = "windows") {
         system32().join("tar.exe")
     } else {
@@ -88,8 +84,6 @@ fn remove_engine_directory(path: &Path) -> anyhow::Result<()> {
     }
 }
 
-/// Lifts the engine out of the one directory an archive may wrap it in, so every build lays out
-/// alike.
 fn normalize_archive(staging: &Path) -> anyhow::Result<()> {
     if staging.join(EXECUTABLE).is_file() {
         return Ok(());
@@ -195,7 +189,6 @@ mod tests {
         Ok(())
     }
 
-    /// An uncompressed ustar archive holding one file, a format every system tar reads.
     fn ustar(name: &str, contents: &[u8]) -> Vec<u8> {
         const BLOCK: usize = 512;
         const END_OF_ARCHIVE: [u8; 2 * BLOCK] = [0; 2 * BLOCK];
@@ -207,7 +200,6 @@ mod tests {
             (116, b"0000000\0"),
             (124, size.as_bytes()),
             (136, b"00000000000\0"),
-            // The checksum counts its own field as spaces.
             (148, b"        "),
             (156, b"0"),
             (257, b"ustar\0"),

@@ -1,8 +1,3 @@
-//! Pins `show.json`, notes a recording that stopped early and narration that was lost in both
-//! files, keeps file contents out of debug output, checks that the summary says how to read the
-//! Show with every path whole and set apart, and that contact sheets show every keyframe once and
-//! stop loading at a failed frame.
-
 use serde_json::json;
 
 use super::*;
@@ -260,7 +255,6 @@ fn a_code_span_holds_any_path_whole() {
     assert_eq!(span(" a"), "`  a `");
 }
 
-/// The summary and parsed `show.json` of a one-frame Show of `recording`.
 fn summary_and_manifest(recording: Recording) -> (String, serde_json::Value) {
     let samples = [Sample {
         at: Moment::START,
@@ -282,7 +276,6 @@ fn summary_and_manifest(recording: Recording) -> (String, serde_json::Value) {
     (summary, serde_json::from_slice(&manifest.contents).unwrap())
 }
 
-/// A 42-second recording of an 800 × 600 surface that ended as `ending`.
 fn ended(ending: Ending) -> Recording {
     Recording {
         duration: Moment::from_millis(42_000),
@@ -295,7 +288,6 @@ fn ended(ending: Ending) -> Recording {
     }
 }
 
-/// The line a 42-second Show whose screen stopped adds after the header.
 const SCREEN_STOPPED: &str = "The screen stopped recording at 0:42, before the user finished the \
                               Show; later steps are missing.";
 
@@ -402,7 +394,6 @@ fn a_failed_frame_stops_loading_before_the_next_sheet() {
         Recording::default(),
         selection,
         |moment| {
-            // Thirteen keyframes share three sheets as #1–#5, #6–#9, and #10–#13.
             assert!(
                 moment.as_millis() <= 9,
                 "Loaded the sheet after a failed sheet"

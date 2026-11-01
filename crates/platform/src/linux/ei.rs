@@ -1,6 +1,3 @@
-//! The dynamically loaded libei sender that types the paste shortcut and direct text on Wayland.
-//! Modifiers stay unknown until libei reports them, never assumed released.
-
 use std::{
     ffi::c_void,
     fs::File,
@@ -18,7 +15,6 @@ use xkbcommon::xkb::{self, Keysym};
 
 use super::PasteChord;
 
-// Values from libei.h; they are ABI and must not be renumbered.
 const EVENT_DISCONNECT: i32 = 2;
 const EVENT_SEAT_ADDED: i32 = 3;
 const EVENT_DEVICE_ADDED: i32 = 5;
@@ -31,9 +27,9 @@ const CAPABILITY_TEXT: i32 = 1 << 6;
 const KEYMAP_XKB: i32 = 1;
 
 const MAX_KEYMAP_SIZE: usize = 16 * 1024 * 1024;
-/// libei's limit on UTF-8 bytes in one text frame.
+
 const MAX_TEXT_FRAME: usize = 254;
-/// XKB keycodes are evdev keycodes offset by eight.
+
 const XKB_KEYCODE_OFFSET: u32 = 8;
 
 #[repr(C)]
@@ -52,17 +48,17 @@ type TextInput = unsafe extern "C" fn(*mut EiDevice, *const u8, usize);
 
 macro_rules! api {
     ($($name:ident: $kind:ty),+ $(,)?) => {
-        /// libei's entry points; `text_utf8` is newer than libei 1.5, so it alone is optional.
+
         pub(super) struct Api { $($name: $kind,)+ text_utf8: Option<TextInput> }
         impl Api {
-            /// Loads libei, which keyboard input needs before the user is asked to allow it.
-            ///
-            /// # Errors
-            /// Fails when libei or one of its required entry points is missing.
+
+
+
+
             pub(super) fn load() -> anyhow::Result<Self> {
-                // SAFETY: each type is the symbol's C signature in libei's public ABI. RTLD_NODELETE
-                // keeps libei mapped for the life of the process, so the copied function pointers
-                // stay valid after the handle drops here.
+
+
+
                 unsafe {
                     let library = Library::open(
                         Some("libei.so.1"),
@@ -117,21 +113,18 @@ pub(super) struct Sender {
     text: Option<Device>,
     context: EiContext,
     api: Api,
-    /// Whether paste presses Ctrl+Shift+V, so a layout needs Shift to paste.
     terminal: bool,
     sequence: u32,
     readiness: AsyncFd<OwnedFd>,
 }
 
 impl Sender {
-    /// Connects to the EIS descriptor for keyboard input that pastes with Ctrl+Shift+V when
-    /// `terminal`, or Ctrl+V otherwise.
     pub(super) fn connect(api: Api, fd: OwnedFd, terminal: bool) -> anyhow::Result<Self> {
         let context = EiContext::new_sender(&api)?;
-        // SAFETY: libei takes ownership of the descriptor, including its teardown.
+
         let status = unsafe { (api.ei_setup_backend_fd)(context.as_ptr(), fd.into_raw_fd()) };
         ensure!(status == 0, "Cannot connect the Wayland input sender");
-        // SAFETY: the live context keeps its descriptor open while it is duplicated.
+
         let readiness = unsafe { register_readiness((api.ei_get_fd)(context.as_ptr())) }?;
         Ok(Self {
             keyboard: None,
@@ -148,23 +141,16 @@ impl Sender {
         &self.readiness
     }
 
-    /// Treats modifiers as unknown until libei reports them again.
     pub(super) fn forget_modifiers(&mut self) {
         if let Some(keyboard) = &mut self.keyboard {
             keyboard.forget_modifiers();
         }
     }
 
-    /// Whether automatic paste can run right now.
     pub(super) fn can_paste(&self) -> bool {
         self.paste_target().is_ok()
     }
 
-    /// Prepares a paste through the resumed keyboard once libei has reported every paste-blocking
-    /// modifier released.
-    ///
-    /// # Errors
-    /// Fails with what stops automatic paste.
     pub(super) fn ready_paste(&mut self) -> Result<ReadyPaste<'_>, PasteBlocked> {
         let (keyboard, chord) = self.paste_target()?;
         Ok(ReadyPaste {
@@ -183,10 +169,6 @@ impl Sender {
         Ok((keyboard.device.as_ptr(), chord))
     }
 
-    /// Prepares `text` for the resumed text device.
-    ///
-    /// # Errors
-    /// Fails with what stops direct text input.
     pub(super) fn ready_text<'t>(
         &mut self,
         text: &'t str,
@@ -209,13 +191,7 @@ impl Sender {
         })
     }
 
-    /// Applies queued libei events to the sender's devices.
-    ///
-    /// # Errors
-    /// Fails when libei reports a disconnect. That is libei's last event, so later calls succeed:
-    /// the caller must treat the error as the end of desktop access.
     pub(super) fn dispatch(&mut self) -> anyhow::Result<()> {
-        // SAFETY: the context is live and dispatched only on its owning thread.
         unsafe { (self.api.ei_dispatch)(self.context.as_ptr()) };
         while let Some(event) = self.next_event() {
             match event.kind {
@@ -233,7 +209,6 @@ impl Sender {
     }
 
     fn next_event(&self) -> Option<Event> {
-        // SAFETY: the context is live; a returned event stays live until its guard drops.
         unsafe {
             let raw = NonNull::new((self.api.ei_get_event)(self.context.as_ptr()))?;
             Some(Event {
@@ -246,8 +221,6 @@ impl Sender {
     }
 
     fn bind_seat(&self, event: &Event) {
-        // SAFETY: the live event keeps its seat alive. libei reads each variadic argument as a
-        // capability enum until one is not positive, so each list ends with an int 0.
         unsafe {
             let seat = (self.api.ei_event_get_seat)(event.raw.as_ptr());
             if seat.is_null() || !(self.api.ei_seat_has_capability)(seat, CAPABILITY_KEYBOARD) {
@@ -272,8 +245,7 @@ impl Sender {
         let Some(device) = event.device else {
             return;
         };
-        // SAFETY: the live event keeps its device alive while it is queried, referenced, and its
-        // keymap read.
+
         unsafe {
             if (self.api.ei_device_has_capability)(device.as_ptr(), CAPABILITY_KEYBOARD) {
                 self.keyboard = Some(Keyboard {
@@ -293,8 +265,6 @@ impl Sender {
         }
     }
 
-    /// Releases the sender's references to a removed `device`; the removal event still holds its own
-    /// until it drops.
     fn remove_device(&mut self, device: Option<NonNull<EiDevice>>) {
         drop(self.keyboard.take_if(|keyboard| keyboard.device.is(device)));
         drop(self.text.take_if(|text| text.is(device)));
@@ -324,7 +294,7 @@ impl Sender {
             return;
         };
         let raw = event.raw.as_ptr();
-        // SAFETY: the live event reports keyboard modifiers.
+
         let (group, active_mask) = unsafe {
             (
                 (self.api.ei_event_keyboard_get_xkb_group)(raw),
@@ -343,7 +313,6 @@ impl Sender {
         };
     }
 
-    /// Numbers the next emulation sequence.
     fn next_sequence(&mut self) -> u32 {
         self.sequence = self.sequence.wrapping_add(1);
         self.sequence
@@ -351,30 +320,20 @@ impl Sender {
 }
 
 impl Drop for Sender {
-    /// Releases device references before the context, whatever the field order: destroying a
-    /// device unregisters it from the context it reaches through its seat, and a seat holds no
-    /// context reference of its own.
     fn drop(&mut self) {
         self.keyboard = None;
         self.text = None;
     }
 }
 
-/// Why automatic paste cannot run. Each blocker has its own remedy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PasteBlocked {
-    /// libei has added no keyboard, or has paused it.
     NoKeyboard,
-    /// The keyboard's keymap could not be read, so its modifiers can never be judged.
     NoKeyboardState,
-    /// A shortcut modifier is held, or libei has not reported modifiers since they could have
-    /// changed.
     ShortcutKeys,
-    /// The active layout cannot type the paste shortcut.
     NoPasteKeys,
 }
 
-/// Checks the paste blockers in a fixed order, so the root one is reported.
 fn paste_readiness(
     resumed: bool,
     state: Option<PasteState>,
@@ -389,8 +348,6 @@ fn paste_readiness(
     }
 }
 
-/// A paste every readiness check allowed. It borrows the sender exclusively, so no libei event can
-/// pause or remove the keyboard before [`send`](Self::send).
 #[must_use]
 pub(super) struct ReadyPaste<'a> {
     sender: &'a mut Sender,
@@ -399,7 +356,6 @@ pub(super) struct ReadyPaste<'a> {
 }
 
 impl ReadyPaste<'_> {
-    /// Presses and releases the paste shortcut.
     pub(super) fn send(self) {
         let Self {
             sender,
@@ -409,9 +365,7 @@ impl ReadyPaste<'_> {
         let sequence = sender.next_sequence();
         let api = &sender.api;
         let context = sender.context.as_ptr();
-        // SAFETY: keyboard is the sender's referenced keyboard-capable device, and the exclusive
-        // borrow has kept it resumed since the readiness check. The complete sequence releases
-        // every injected key before stopping.
+
         unsafe {
             (api.ei_device_start_emulating)(keyboard, sequence);
             for key in chord.presses() {
@@ -427,19 +381,13 @@ impl ReadyPaste<'_> {
     }
 }
 
-/// Why direct text input cannot run.
 #[derive(Clone, Copy)]
 pub(super) enum TextBlocked {
-    /// libei or the desktop offers no text device.
     Unsupported,
-    /// libei has paused the text device.
     Paused,
-    /// EI text cannot carry a null character.
     NullCharacter,
 }
 
-/// Text every readiness check allowed. It borrows the sender exclusively, so no libei event can
-/// pause or remove the text device before [`send`](Self::send).
 #[must_use]
 pub(super) struct ReadyText<'a, 't> {
     sender: &'a mut Sender,
@@ -449,7 +397,6 @@ pub(super) struct ReadyText<'a, 't> {
 }
 
 impl ReadyText<'_, '_> {
-    /// Types the text in frames within the EI text limit.
     pub(super) fn send(self) {
         let Self {
             sender,
@@ -460,9 +407,7 @@ impl ReadyText<'_, '_> {
         let sequence = sender.next_sequence();
         let api = &sender.api;
         let context = sender.context.as_ptr();
-        // SAFETY: device is the sender's referenced text-capable device, and the exclusive borrow
-        // has kept it resumed since the readiness check. Each chunk stays alive for its C call and
-        // holds no null character, and each frame respects the EI UTF-8 frame limit.
+
         unsafe {
             (api.ei_device_start_emulating)(device, sequence);
             for chunk in utf8_chunks(text) {
@@ -474,11 +419,8 @@ impl ReadyText<'_, '_> {
     }
 }
 
-/// The sender's keyboard device and what paste needs to know about it. Adding a keyboard replaces
-/// the whole value, so nothing learned about an earlier device survives.
 struct Keyboard {
     device: Device,
-    /// `None` when the device's keymap could not be read, so its modifiers can never be judged.
     paste: Option<KeymapPaste>,
 }
 
@@ -490,27 +432,19 @@ impl Keyboard {
     }
 }
 
-/// The paste layouts of a readable keymap, with the modifier state libei last reported.
 struct KeymapPaste {
     layouts: PasteLayouts,
     state: PasteState,
 }
 
-/// Whether libei last reported every paste-blocking modifier released, with the active layout's
-/// paste chord.
 #[derive(Clone, Copy)]
 enum PasteState {
-    /// Not reported since the device arrived, paused, or resumed, or since the shortcut was
-    /// pressed.
     Unknown,
-    /// A paste-blocking modifier is held.
     Blocked,
-    /// Modifiers are released, but the active layout cannot type the paste shortcut.
     NoKeys,
     Ready(PasteChord<u32>),
 }
 
-/// The sender's owning reference to its libei context.
 struct EiContext {
     raw: NonNull<Ei>,
     unref: Unref<Ei>,
@@ -518,7 +452,6 @@ struct EiContext {
 
 impl EiContext {
     fn new_sender(api: &Api) -> anyhow::Result<Self> {
-        // SAFETY: a sender context is created without callback userdata.
         let raw = unsafe { (api.ei_new_sender)(ptr::null_mut()) };
         Ok(Self {
             raw: NonNull::new(raw).context("Cannot create the Wayland input sender")?,
@@ -533,28 +466,18 @@ impl EiContext {
 
 impl Drop for EiContext {
     fn drop(&mut self) {
-        // SAFETY: this is the context's only owning reference, and no device reference outlives
-        // it: only `Sender` acquires devices, and `Sender::drop` releases them before this field
-        // drops. Dropping it closes the EIS descriptor.
         unsafe { (self.unref)(self.raw.as_ptr()) };
     }
 }
 
-/// A device reference the sender holds, released when dropped.
 struct Device {
     raw: NonNull<EiDevice>,
-    /// Whether libei has resumed the device, so it accepts emulated input.
     resumed: bool,
     unref: Unref<EiDevice>,
 }
 
 impl Device {
-    /// References `device`, which stays paused until libei resumes it.
-    ///
-    /// # Safety
-    /// `device` must be a live libei device.
     unsafe fn acquire(api: &Api, device: NonNull<EiDevice>) -> Self {
-        // SAFETY: the caller keeps the device live while this reference is taken.
         unsafe { (api.ei_device_ref)(device.as_ptr()) };
         Self {
             raw: device,
@@ -574,13 +497,10 @@ impl Device {
 
 impl Drop for Device {
     fn drop(&mut self) {
-        // SAFETY: the guard holds this reference, and `Sender::drop` releases devices before their
-        // context.
         unsafe { (self.unref)(self.raw.as_ptr()) };
     }
 }
 
-/// One queued libei event, released when dropped.
 struct Event {
     raw: NonNull<EiEvent>,
     kind: i32,
@@ -590,25 +510,17 @@ struct Event {
 
 impl Drop for Event {
     fn drop(&mut self) {
-        // SAFETY: the guard holds the event's only reference.
         unsafe { (self.unref)(self.raw.as_ptr()) };
     }
 }
 
-/// What paste needs from a keyboard's keymap, read once when libei advertises it.
 struct PasteLayouts {
-    /// The modifier mask that changes what the paste shortcut means.
     blockers: u32,
-    /// Each layout's paste chord as evdev codes, indexed by XKB group.
     chords: Vec<Option<PasteChord<u32>>>,
 }
 
 impl PasteLayouts {
-    /// Reads `keymap` for a paste that presses Ctrl+Shift+V when `terminal`, or Ctrl+V otherwise.
     fn new(keymap: &xkb::Keymap, terminal: bool) -> anyhow::Result<Self> {
-        // Locked modifiers count as active, yet neither lock changes Ctrl+V: Caps Lock is always
-        // Lock, and Num Lock is whatever the keymap's Num Lock key locks. Blocking on either would
-        // disable paste while it is on.
         let blockers = ["Shift", "Control", "Mod1", "Mod2", "Mod3", "Mod4", "Mod5"]
             .into_iter()
             .filter_map(|name| 1_u32.checked_shl(keymap.mod_get_index(name)))
@@ -629,15 +541,11 @@ impl PasteLayouts {
         })
     }
 
-    /// The paste chord of layout `group`; none for a group past the last layout, which never
-    /// wraps to another layout's chord.
     fn chord(&self, group: u32) -> Option<PasteChord<u32>> {
         *self.chords.get(usize::try_from(group).ok()?)?
     }
 }
 
-/// The first key whose base level types `symbol` in layout `group`. A key with fewer layouts than
-/// the keymap wraps the group, as XKB does.
 fn layout_key(keymap: &xkb::Keymap, group: u32, symbol: Keysym) -> Option<xkb::Keycode> {
     (keymap.min_keycode().raw()..=keymap.max_keycode().raw())
         .map(xkb::Keycode::new)
@@ -652,8 +560,6 @@ fn layout_key(keymap: &xkb::Keymap, group: u32, symbol: Keysym) -> Option<xkb::K
         })
 }
 
-/// The modifiers the keymap's Num Lock key locks, in the masks libei reports; none without that
-/// key.
 fn num_lock_modifiers(keymap: &xkb::Keymap) -> u32 {
     let Some(key) = layout_key(keymap, 0, Keysym::Num_Lock) else {
         return 0;
@@ -664,22 +570,13 @@ fn num_lock_modifiers(keymap: &xkb::Keymap) -> u32 {
     state.serialize_mods(xkb::STATE_MODS_LOCKED)
 }
 
-/// Watches a duplicate of libei's descriptor for readability.
-///
-/// # Safety
-/// A non-negative `fd` must stay open until this returns.
 unsafe fn register_readiness(fd: RawFd) -> anyhow::Result<AsyncFd<OwnedFd>> {
     ensure!(fd >= 0, "Desktop connection has no valid file descriptor");
-    // SAFETY: the caller keeps fd open while it is duplicated; only the duplicate is owned.
+
     super::watch_readable(unsafe { BorrowedFd::borrow_raw(fd) })
 }
 
-/// Compiles the XKB keymap libei advertises for `device`.
-///
-/// # Safety
-/// `device` must be a live keyboard-capable libei device.
 unsafe fn device_keymap(api: &Api, device: *mut EiDevice) -> anyhow::Result<xkb::Keymap> {
-    // SAFETY: the caller keeps the device live, so its borrowed keymap and descriptor are too.
     let (fd, size) = unsafe {
         let keymap = (api.ei_device_keyboard_get_keymap)(device);
         ensure!(
@@ -695,7 +592,7 @@ unsafe fn device_keymap(api: &Api, device: *mut EiDevice) -> anyhow::Result<xkb:
         fd >= 0 && size > 0 && size <= MAX_KEYMAP_SIZE,
         "Invalid XKB keymap size"
     );
-    // SAFETY: fd is borrowed from the live keymap; only its duplicate is owned.
+
     let file = File::from(unsafe { BorrowedFd::borrow_raw(fd) }.try_clone_to_owned()?);
     let mut bytes = vec![0; size];
     file.read_exact_at(&mut bytes, 0)?;
@@ -859,7 +756,6 @@ mod tests {
 
     #[test]
     fn invalid_native_descriptor_is_reported_before_borrowing_it() {
-        // SAFETY: a negative descriptor is rejected before it is borrowed.
         assert!(unsafe { register_readiness(-1) }.is_err());
     }
 }

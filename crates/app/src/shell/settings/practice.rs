@@ -1,6 +1,3 @@
-//! Explicit private practice, revoked when Settings hides, loses focus, or changes configuration.
-//! The receipt owns the scope; rendered copies are transient but cannot be promised zeroized.
-
 use gpui::{Context, Task, Window};
 use zeroize::Zeroizing;
 

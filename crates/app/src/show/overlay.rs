@@ -1,8 +1,3 @@
-//! The overlay: a window over the display a Show records, where ink and the numbers of marks
-//! appear as they are made and fade soon after the pen lifts, and where an area Show's area is
-//! dragged out. It never takes focus, takes input only while an area is being chosen, and is left
-//! out of every frame, so the bundle redraws the same ink cleanly.
-
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -26,8 +21,6 @@ use crate::{
     runtime::{Phase, Snapshot},
 };
 
-/// Ink holds this long after the pen last lifts, then fades over [`FADE`], so a circle and the
-/// arrow drawn right after it stay and leave together.
 const HOLD: Duration = Duration::from_millis(650);
 const FADE: Duration = Duration::from_millis(650);
 const INK: Rgba = {
@@ -39,38 +32,35 @@ const INK: Rgba = {
         a: 1.0,
     }
 };
-/// About how wide a digit of the brand face runs, in ems, so a label's digits fit its disc as the
-/// bundle fits them.
+
 const DIGIT_EM: f32 = 0.6;
-/// The line just outside a window or area being recorded: the width `border_2` draws.
+
 const FRAME: Pixels = px(2.0);
-/// Shades the display while an area is chosen, leaving the area clear.
+
 const SHADE: Rgba = Rgba {
     r: 0.0,
     g: 0.0,
     b: 0.0,
     a: 0.4,
 };
-/// The smallest area a drag chooses, in logical pixels each way; a shorter drag is a click.
+
 const SMALLEST_AREA: f32 = 24.0;
 
-/// What the overlay shows, published by a Show's recorder or the demo's.
 #[derive(Clone, Debug, Default)]
 pub(crate) enum Canvas {
-    /// Nothing: the overlay hides.
     #[default]
     Hidden,
-    /// `display`, shaded while the user drags out the part to record, which goes to `chosen`.
     Picking {
         display: Display,
         chosen: Sender<Part>,
     },
-    /// Ink and the numbers of marks over the part of `display` being recorded.
-    Covering { display: Display, sheet: Sheet },
+    Covering {
+        display: Display,
+        sheet: Sheet,
+    },
 }
 
 impl Canvas {
-    /// A clean sheet over `display`, for ink on its `part`.
     pub(crate) fn covering(display: Display, part: Part) -> Self {
         Self::Covering {
             display,
@@ -78,7 +68,6 @@ impl Canvas {
         }
     }
 
-    /// The display to cover; `None` hides the overlay.
     pub(crate) const fn display(&self) -> Option<Display> {
         match self {
             Self::Hidden => None,
@@ -86,7 +75,6 @@ impl Canvas {
         }
     }
 
-    /// The ink of a canvas covering a display; nothing else takes ink.
     pub(crate) fn sheet_mut(&mut self) -> Option<&mut Sheet> {
         match self {
             Self::Covering { sheet, .. } => Some(sheet),
@@ -94,7 +82,6 @@ impl Canvas {
         }
     }
 
-    /// Where the overlay sits; `None` hides it.
     fn cover(&self) -> Option<Cover> {
         match self {
             Self::Hidden => None,
@@ -109,7 +96,6 @@ impl Canvas {
         }
     }
 
-    /// Where an area being chosen goes.
     fn chosen(&self) -> Option<&Sender<Part>> {
         match self {
             Self::Picking { chosen, .. } => Some(chosen),
@@ -118,32 +104,20 @@ impl Canvas {
     }
 }
 
-/// Where the overlay sits, and whether it takes clicks there to choose an area.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Cover {
     display: Display,
     picking: bool,
 }
 
-/// Ink and the numbers of marks, normalized to the part of the display recorded.
 #[derive(Clone, Debug)]
 pub(crate) struct Sheet {
-    /// The part of the display recorded, which ink and marks are normalized to.
     part: Part,
-    /// Finished strokes. Each is an immutable snapshot, so a render's copy of the sheet copies
-    /// only the stroke being drawn.
     strokes: Vec<Arc<[Point]>>,
-    /// How many finished strokes were cleared before those in `strokes`: the first of them is the
-    /// recording's stroke of this index.
     cleared: usize,
-    /// The stroke being drawn.
     drawing: Vec<Point>,
-    /// Every mark so far, numbered from one.
     marks: Arc<[Mark]>,
-    /// The number of the first mark to show: the first made since the ink last faded, or the
-    /// faded mark the ink on screen joined; it and later ones show.
     first: usize,
-    /// When the pen last lifted, or a pin last dropped.
     lifted: Option<Instant>,
 }
 
@@ -160,20 +134,12 @@ impl Sheet {
         }
     }
 
-    /// Moves the ink and marks with the part recorded, as its window moves. Returns whether it
-    /// moved.
     pub(crate) fn track(&mut self, part: Part) -> bool {
         let moved = part != self.part;
         self.part = part;
         moved
     }
 
-    /// Keeps the `finished` strokes, shows `drawing` as the stroke in progress, both normalized to
-    /// the part recorded, and takes `marks` when they changed, at `now`. Every stroke the
-    /// recording finishes arrives once, in order, and `marks` number them as the bundle does. Ink
-    /// or a pin arriving after earlier ink has faded starts a clean sheet, and ink no longer being
-    /// drawn or a pin starts the hold and fade; a stroke cut for length while the pen keeps
-    /// drawing does neither. Returns whether anything visible changed.
     pub(crate) fn update(
         &mut self,
         finished: impl IntoIterator<Item = Arc<[Point]>>,
@@ -184,7 +150,7 @@ impl Sheet {
         let finished: Vec<Arc<[Point]>> = finished.into_iter().collect();
         let drawing: Vec<Point> = drawing.into_iter().collect();
         let was_drawing = !self.drawing.is_empty();
-        // A new mark is a finished stroke's or a pin's, which has no ink of its own.
+
         let marked = marks
             .as_ref()
             .is_some_and(|marks| marks.len() > self.marks.len());
@@ -201,9 +167,6 @@ impl Sheet {
         self.strokes.extend(finished);
         self.drawing = drawing;
         if let Some(marks) = marks {
-            // Marks group strokes by when the pen went down, which can come before the ink faded
-            // even when the pen drew nothing until after: the stroke then shows the number of the
-            // faded mark it joined.
             if let Some(joined) = marks
                 .iter()
                 .find(|mark| mark.strokes.contains(&self.cleared))
@@ -215,19 +178,16 @@ impl Sheet {
         changed
     }
 
-    /// The marks made since the ink last faded, whose numbers show.
     fn shown(&self) -> impl Iterator<Item = &Mark> {
         self.marks.iter().filter(|mark| mark.number >= self.first)
     }
 
-    /// How long ago the pen lifted, while no stroke is being drawn.
     fn since_lift(&self, now: Instant) -> Option<Duration> {
         self.lifted
             .filter(|_| self.drawing.is_empty())
             .map(|lifted| now.saturating_duration_since(lifted))
     }
 
-    /// How opaque the ink is at `now`: whole while drawing and through [`HOLD`], then easing out.
     fn opacity(&self, now: Instant) -> f32 {
         self.since_lift(now).map_or(1.0, |since| {
             let fading = since.saturating_sub(HOLD).div_duration_f32(FADE).min(1.0);
@@ -235,12 +195,10 @@ impl Sheet {
         })
     }
 
-    /// Whether every stroke has faded away.
     fn faded(&self, now: Instant) -> bool {
         self.opacity(now) <= 0.0
     }
 
-    /// When the overlay next needs a frame at `now`, if the sheet does not change first.
     fn next_frame(&self, now: Instant) -> Redraw {
         match self.since_lift(now) {
             Some(since) if since < HOLD => Redraw::After(HOLD.saturating_sub(since)),
@@ -250,14 +208,10 @@ impl Sheet {
     }
 }
 
-/// When the overlay draws again, beyond the frame every canvas change brings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Redraw {
-    /// Only on a change: the pen is drawing, has not lifted, or its ink has faded.
     OnChange,
-    /// Once, after this long, when the hold ends and the fade begins.
     After(Duration),
-    /// Every frame while the ink fades.
     Animate,
 }
 
@@ -265,13 +219,9 @@ struct Overlay {
     canvas: watch::Receiver<Canvas>,
     window: AnyWindowHandle,
     cover: Option<Cover>,
-    /// Takes the first reason the overlay could not cover its display, for its Show to report.
     misplaced: Sender<anyhow::Error>,
-    /// Where a drag choosing an area began and where it is now, in window pixels.
     drag: Option<[gpui::Point<Pixels>; 2]>,
-    /// Runs [`place`] for the latest cover; replacing it cancels a placement not yet run.
     placement: Option<Task<()>>,
-    /// Redraws once the hold ends, so held ink costs no frames.
     wake: Option<Task<()>>,
     _updates: Task<()>,
 }
@@ -295,8 +245,6 @@ impl Overlay {
         }
     }
 
-    /// Moves onto the display and shows, taking input while an area is chosen, or hides when there
-    /// is no display, then redraws. A display it cannot cover leaves an area unchosen.
     fn cover(&mut self, cover: Option<Cover>, cx: &mut Context<'_, Self>) {
         if cover != self.cover {
             self.cover = cover;
@@ -327,8 +275,6 @@ impl Overlay {
         cx.notify();
     }
 
-    /// Ends a drag at `to` on an overlay `size` across, answering the recorder as [`answer`] does.
-    /// A chosen area stays clear until recording takes over.
     fn pick(&mut self, to: gpui::Point<Pixels>, size: Size<Pixels>, cx: &mut Context<'_, Self>) {
         let Some([from, _]) = self.drag else {
             return;
@@ -342,7 +288,6 @@ impl Overlay {
         cx.notify();
     }
 
-    /// The display shaded around the area being dragged out, with a hint until the drag begins.
     fn picker(&self, size: Size<Pixels>, cx: &Context<'_, Self>) -> Div {
         let hole = self
             .drag
@@ -395,8 +340,6 @@ impl Overlay {
                 }
             }))
             .on_mouse_up(MouseButton::Left, release())
-            // The overlay covers one display, so a drag can end on another; the area then stops
-            // at this display's edge.
             .on_mouse_up_out(MouseButton::Left, release())
             .children(shades)
             .children(hole.map(frame))
@@ -404,9 +347,6 @@ impl Overlay {
     }
 }
 
-/// Covers the display of `cover` and shows the overlay, taking clicks only while an area is
-/// chosen there, or hides it. An overlay that cannot cover its display stays hidden rather than
-/// misplaced, and says why.
 fn place(native: &NativeWindow, cover: Option<Cover>) -> anyhow::Result<()> {
     let placed = cover.map(|cover| native.configure_overlay(cover.display));
     let covered = matches!(placed, Some(Ok(())));
@@ -434,7 +374,7 @@ impl Render for Overlay {
         let opacity = sheet.opacity(now);
         self.wake = match sheet.next_frame(now) {
             Redraw::OnChange => None,
-            // A wake that fires early renders once and schedules the rest of the hold.
+
             Redraw::After(delay) => Some(cx.spawn(async move |this, cx| {
                 Timer::after(delay).await;
                 this.update_if_alive(cx, |_, cx| cx.notify());
@@ -457,8 +397,6 @@ impl Render for Overlay {
                 canvas(
                     |_, _, _| {},
                     move |bounds, (), window, _| {
-                        // The first frame after the fade paints no path, which lets the renderer
-                        // free its full-window path targets.
                         if opacity > 0.0 {
                             paint(&sheet, bounds, opacity, window);
                         }
@@ -478,7 +416,6 @@ impl Render for Overlay {
     }
 }
 
-/// Where `part` of the display lies on an overlay `size` across.
 fn on_overlay(part: Part, size: Size<Pixels>) -> Bounds<Pixels> {
     Bounds::new(
         point(size.width * part.left, size.height * part.top),
@@ -486,9 +423,6 @@ fn on_overlay(part: Part, size: Size<Pixels>) -> Bounds<Pixels> {
     )
 }
 
-/// Answers the recorder waiting on `chosen` for a drag from `from` to `to` on an overlay `size`
-/// across: with the area it covers, or, for a click, by closing the lane, which ends the Show with
-/// no area chosen. Returns whether an area went.
 fn answer(
     chosen: &Sender<Part>,
     from: gpui::Point<Pixels>,
@@ -503,8 +437,6 @@ fn answer(
     }
 }
 
-/// The part of the display a drag from `from` to `to` covers on an overlay `size` across, or
-/// `None` for a drag too short to mean an area.
 fn dragged(from: gpui::Point<Pixels>, to: gpui::Point<Pixels>, size: Size<Pixels>) -> Option<Part> {
     let normalized = |point: gpui::Point<Pixels>| [point.x / size.width, point.y / size.height];
     let part = Part::between(normalized(from), normalized(to));
@@ -513,7 +445,6 @@ fn dragged(from: gpui::Point<Pixels>, to: gpui::Point<Pixels>, size: Size<Pixels
         .then_some(part)
 }
 
-/// A thin red line just outside `area`, the window or area being recorded or dragged out.
 fn frame(area: Bounds<Pixels>) -> Div {
     div()
         .absolute()
@@ -545,8 +476,6 @@ fn hint() -> Div {
         )
 }
 
-/// `mark`'s number in white on a red disc ringed in white beside what it numbers, with a dot at
-/// the point a pin marks, as the bundle draws them; `area` is the part recorded.
 fn label(mark: &Mark, area: Bounds<Pixels>) -> Div {
     let (width, height) = (f32::from(area.size.width), f32::from(area.size.height));
     let radius = ink::label_radius(width, height);
@@ -587,8 +516,6 @@ fn label(mark: &Mark, area: Bounds<Pixels>) -> Div {
         .child(number)
 }
 
-/// A white disc of `radius` centered at `center`, in pixels from the corner of what it labels,
-/// holding a red one of radius `inner` around `content`.
 fn disc(center: Point, radius: f32, inner: f32, content: Option<Div>) -> Div {
     div()
         .absolute()
@@ -612,7 +539,6 @@ fn disc(center: Point, radius: f32, inner: f32, content: Option<Div>) -> Div {
         )
 }
 
-/// Paints every stroke as the pen outline the bundle draws, at a width that reads on screen.
 fn paint(sheet: &Sheet, bounds: Bounds<Pixels>, opacity: f32, window: &mut Window) {
     let area = on_overlay(sheet.part, bounds.size);
     let origin = point(
@@ -633,7 +559,7 @@ fn paint(sheet: &Sheet, bounds: Bounds<Pixels>, opacity: f32, window: &mut Windo
             .map(|point| point.scaled(width, height))
             .collect();
         let outline = ink::outline(&pixels, pen);
-        // Winding, as the bundle fills it: where a stroke crosses itself the ink stays solid.
+
         let mut path = PathBuilder::fill().with_style(PathStyle::Fill(
             FillOptions::default().with_fill_rule(FillRule::NonZero),
         ));
@@ -654,14 +580,6 @@ fn paint(sheet: &Sheet, bounds: Bounds<Pixels>, opacity: f32, window: &mut Windo
     }
 }
 
-/// Opens the overlay whenever a Show needs it and closes it once the Show ends: a full-screen
-/// window holds GPU memory the size of its display, which an idle app has no use for. A platform
-/// that records no Shows never opens one.
-///
-/// The first overlay that cannot open or cover its display goes to `report` once its Show is
-/// copied, which the failure would otherwise leave looking complete, or cancelled for want of an
-/// area, which only the failure explains. A Show that fails or that the user cancels says so
-/// itself, so a later Show reports instead.
 pub(crate) fn attend(
     mut canvas: watch::Receiver<Canvas>,
     mut snapshots: watch::Receiver<Snapshot>,
@@ -686,7 +604,6 @@ pub(crate) fn attend(
             if opened.is_err()
                 && let Some(chosen) = canvas.borrow().chosen()
             {
-                // No area can be dragged out without the overlay, so none is chosen.
                 chosen.close();
             }
             let released = canvas
@@ -709,9 +626,7 @@ pub(crate) fn attend(
             let Some(error) = failure else {
                 continue;
             };
-            // The next session cannot start until this one leaves the active phases, so waiting
-            // here never delays the next Show's overlay. Another session means pause, quit or a
-            // newer session took the snapshot first.
+
             let Ok(failure) = snapshots
                 .wait_for(|snapshot| snapshot.session != show || !snapshot.phase.is_active())
                 .await
@@ -737,9 +652,6 @@ pub(crate) fn attend(
     .detach();
 }
 
-/// What a Show whose overlay failed with `error` reports once it has ended as `snapshot` presents:
-/// a copied Show keeps saying what it lost, if anything, ahead of its missing ink, and one
-/// cancelled for want of its area shade says so. Any other ending reports nothing.
 fn failure_after(snapshot: &Snapshot, error: &anyhow::Error) -> Option<anyhow::Error> {
     match snapshot.phase {
         Phase::Copied
@@ -794,14 +706,12 @@ mod tests {
 
     use super::*;
 
-    /// A distinct stroke of `points` points across the display.
     fn stroke(points: u8) -> Vec<Point> {
         (0..points)
             .map(|point| Point::new(f32::from(point) / 100.0, 0.5))
             .collect()
     }
 
-    /// A clock reading `millis` after a moment fixed per test.
     fn clock() -> impl Fn(u64) -> Instant {
         let start = Instant::now();
         move |millis| start.checked_add(Duration::from_millis(millis)).unwrap()
@@ -914,7 +824,6 @@ mod tests {
         assert!(!Sheet::new(Part::WHOLE).update([], [], None, at(0)));
     }
 
-    /// Mark `number`, made of the recording's `strokes`.
     fn mark(number: usize, strokes: Range<usize>) -> Mark {
         Mark {
             number,
@@ -930,13 +839,10 @@ mod tests {
         }
     }
 
-    /// The first `count` marks, numbered from one.
     fn marks(count: usize) -> Arc<[Mark]> {
         (1..=count).map(|number| mark(number, 0..0)).collect()
     }
 
-    /// Marks numbered from one, each made of the recording's strokes from where the mark before
-    /// it ended up to one of `ends`.
     fn grouped(ends: &[usize]) -> Arc<[Mark]> {
         let starts = std::iter::once(0).chain(ends.iter().copied());
         (1..)

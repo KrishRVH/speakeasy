@@ -1,8 +1,3 @@
-//! The configuration-directory lock and a loopback listener through which later launches send fixed
-//! reveal, toggle, and cancel requests. Windows file locks also deny reads, so the listener's port
-//! and a per-launch secret are published in a separate owner-only file, and the listener answers
-//! only callers that present the secret.
-
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read, Write as _},
@@ -18,23 +13,19 @@ use speakeasy_platform::OwnedThread;
 
 const LOCK_FILE: &str = "instance.lock";
 const PORT_FILE: &str = "instance.port";
-/// Bounds the read of a damaged port file; a port and its secret need at most 38 bytes.
+
 const MAX_PORT_FILE_BYTES: u64 = 64;
-/// The listener's reply to a caller that presented the secret.
+
 const ACKNOWLEDGED: u8 = 0x06;
 const NOT_RUNNING: &str = "Speakeasy is not running. Start it before using a desktop shortcut";
-/// A port file this version cannot parse comes from an older version or is damaged; a restart
-/// rewrites it.
+
 const OUTDATED: &str = "Restart Speakeasy to use desktop shortcuts";
 const IO_TIMEOUT: Duration = Duration::from_millis(100);
 const REVEAL_ATTEMPTS: u32 = 25;
 const REVEAL_RETRY: Duration = Duration::from_millis(20);
-/// The pause after a failed accept: well within the `IO_TIMEOUT` a caller waits for its
-/// acknowledgement, yet long enough that a lasting failure, such as running out of file
-/// descriptors, cannot spin a core.
+
 const ACCEPT_RETRY: Duration = Duration::from_millis(10);
 
-/// A fixed command a later launch sends to the running instance; never text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub(crate) enum Request {
@@ -54,20 +45,15 @@ impl Request {
     }
 }
 
-/// Owns the configuration-directory lock and a loopback server sleeping in accept. Dropping it
-/// wakes and joins the server, then removes the port file, and only then releases the lock.
 pub(crate) struct Instance {
     requests: Sender<Request>,
     address: SocketAddr,
-    // Declaration order is release order: a relaunch that took the lock first would have its new
-    // port file deleted by this one's `PortFile`.
     _server: OwnedThread,
     _port_file: PortFile,
     _lock: File,
 }
 
 impl Instance {
-    /// Takes the single-instance lock, or returns `None` after asking its holder to show Settings.
     pub(crate) fn acquire(path: &Path) -> anyhow::Result<Option<(Self, Receiver<Request>)>> {
         let directory = path.parent().context("Settings path has no directory")?;
         fs::create_dir_all(directory)
@@ -83,7 +69,7 @@ impl Instance {
         match lock.try_lock() {
             Ok(()) => {},
             Err(fs::TryLockError::WouldBlock) => return reveal_running(path).map(|()| None),
-            // The I/O error itself, since `TryLockError` neither displays nor sources it.
+
             Err(fs::TryLockError::Error(error)) => {
                 return Err(error).with_context(|| format!("Cannot lock {}", lock_file.display()));
             },
@@ -107,7 +93,6 @@ impl Instance {
         Ok(Some((instance, received)))
     }
 
-    /// Sends `request` to the running instance once it has acknowledged the secret.
     pub(crate) fn send(path: &Path, request: Request) -> anyhow::Result<()> {
         let mut stream = connect(&path.with_file_name(PORT_FILE))?;
         stream.write_all(&[request as u8])?;
@@ -126,17 +111,12 @@ impl Drop for Instance {
     }
 }
 
-/// Where the running instance listens, and the per-launch secret a caller presents to prove it can
-/// read the owner-only port file.
 struct Endpoint {
     port: u16,
     nonce: u128,
 }
 
 impl Endpoint {
-    /// Mints a secret for `port` and publishes both in `directory`. The file is created owner-only
-    /// on Unix and inherits the per-user profile's ACL on Windows, then atomically replaces any
-    /// older one.
     fn publish(port: u16, directory: &Path) -> anyhow::Result<(Self, PortFile)> {
         let mut bytes = [0_u8; 16];
         getrandom::fill(&mut bytes)?;
@@ -148,7 +128,6 @@ impl Endpoint {
         Ok((Self { port, nonce }, PortFile(path)))
     }
 
-    /// Reads a published endpoint. Errors never quote the file.
     fn read(port_file: &Path) -> anyhow::Result<Self> {
         let mut text = String::new();
         File::open(port_file)
@@ -168,7 +147,6 @@ impl Endpoint {
     }
 }
 
-/// The published endpoint, removed on drop.
 struct PortFile(PathBuf);
 
 impl Drop for PortFile {
@@ -181,7 +159,6 @@ impl Drop for PortFile {
     }
 }
 
-/// The running owner may still be publishing its port, so a reveal is retried briefly.
 fn reveal_running(path: &Path) -> anyhow::Result<()> {
     for _ in 0..REVEAL_ATTEMPTS {
         if Instance::send(path, Request::Reveal).is_ok() {
@@ -197,8 +174,6 @@ fn reveal_running(path: &Path) -> anyhow::Result<()> {
     bail!("Speakeasy is already running. Open Settings from its {icon} icon.");
 }
 
-/// Answers callers until the owner closes `requests`. A failed accept is retried after a pause; the
-/// lane is checked after every accept, so shutdown still ends a server whose accepts keep failing.
 fn serve(
     mut accept: impl FnMut() -> io::Result<TcpStream>,
     nonce: u128,
@@ -216,16 +191,13 @@ fn serve(
         let Ok(Some(request)) = handshake(&mut stream, nonce) else {
             continue;
         };
-        // Blocking keeps Toggle and Cancel from coalescing while the UI is busy; closing the lane
-        // at shutdown also wakes this send.
+
         if requests.send_blocking(request).is_err() {
             break;
         }
     }
 }
 
-/// Says nothing until the caller presents `nonce`, then acknowledges and reads one request. A caller
-/// that gives up before the acknowledgement has written no request, so nothing is delivered.
 fn handshake(stream: &mut TcpStream, nonce: u128) -> io::Result<Option<Request>> {
     stream.set_write_timeout(Some(IO_TIMEOUT))?;
     let mut caller = Caller {
@@ -244,8 +216,6 @@ fn handshake(stream: &mut TcpStream, nonce: u128) -> io::Result<Option<Request>>
     Ok(Request::from_byte(byte))
 }
 
-/// A connection whose reads share one `IO_TIMEOUT`. A read timeout alone restarts with every byte,
-/// so a caller that trickles bytes could hold the serial accept loop once per byte.
 struct Caller<'stream> {
     stream: &'stream mut TcpStream,
     accepted: Instant,
@@ -299,8 +269,6 @@ mod tests {
         }
     }
 
-    /// Queues Toggle and then Cancel while the UI drains nothing: Cancel's send must keep the
-    /// server occupied, so a further caller presenting the secret is not acknowledged.
     fn occupy_server_with_pending_requests(instance: &Instance, path: &Path) -> anyhow::Result<()> {
         Instance::send(path, Request::Toggle)?;
         Instance::send(path, Request::Cancel)?;
@@ -356,10 +324,10 @@ mod tests {
         let (instance, _requests) = Instance::acquire(&path)?.context("First owner missing")?;
         let endpoint = Endpoint::read(&path.with_file_name(PORT_FILE))?;
         let mut slow = TcpStream::connect_timeout(&instance.address, PATIENCE)?;
-        // Set before the server's timeout: macOS refuses socket options once the peer has closed.
+
         slow.set_nodelay(true)?;
         slow.set_read_timeout(Some(PATIENCE))?;
-        // Each byte arrives well within IO_TIMEOUT of the last; the whole secret does not.
+
         for byte in endpoint.nonce.to_le_bytes() {
             if slow.write_all(&[byte]).is_err() {
                 break;
@@ -422,9 +390,6 @@ mod tests {
         Ok(())
     }
 
-    /// Accepts fail on both sides of one that reaches the listener: the server must answer the
-    /// caller in between, retry a lasting failure at most once per pause, and still end once its
-    /// lane closes while accepts keep failing.
     #[test]
     fn failed_accepts_are_retried_until_shutdown() -> anyhow::Result<()> {
         let directory = tempfile::tempdir()?;
@@ -447,8 +412,7 @@ mod tests {
             let requests = requests.clone();
             move || serve(accept, nonce, &requests)
         })?;
-        // Outcomes are collected before asserting: an early return would join a server never told
-        // to stop.
+
         let delivered =
             Instance::send(&path, Request::Toggle).and_then(|()| next_request(&received));
         thread::sleep(ACCEPT_RETRY * 5);
@@ -462,8 +426,7 @@ mod tests {
         let elapsed = started.elapsed();
         assert_eq!(delivered?, Request::Toggle);
         stopped.context("A server whose accepts kept failing outlived shutdown")?;
-        // A full pause follows every failure but the one that meets the closed lane; one more
-        // absorbs timer granularity.
+
         let most = elapsed.as_millis() / ACCEPT_RETRY.as_millis() + 2;
         let retried = failures.try_iter().count();
         assert!(

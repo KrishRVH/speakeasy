@@ -1,6 +1,3 @@
-//! The `StatusNotifierItem` tray icon and its dbusmenu, served on an owned D-Bus thread. Menu
-//! clicks reach the UI only for enabled entries, and tray failure leaves the app usable.
-
 use std::{collections::HashMap, convert::Infallible, fmt, time::Duration};
 
 use anyhow::Context as _;
@@ -20,40 +17,28 @@ const WATCHER_PATH: &str = "/StatusNotifierWatcher";
 const ITEM_PATH: &str = "/StatusNotifierItem";
 const MENU_PATH: &str = "/MenuBar";
 const ICON_SIZE: i32 = 32;
-/// dbusmenu ID of the root menu; entries must not use it.
+
 const ROOT_ID: i32 = 0;
 const REGISTRATION_TIMEOUT: Duration = Duration::from_millis(500);
 const ACTION_BACKLOG: usize = 16;
 const SIGNAL_BACKLOG: usize = 16;
 
-/// Tray host observations and commands routed to the UI owner.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TrayAction {
-    /// Whether a compatible tray host is present.
     Available(bool),
-    /// Open Settings.
     Settings,
-    /// Pause or resume dictation.
     Pause,
-    /// Start or finish hands-free capture.
     Toggle,
-    /// Cancel the active recording or recognition.
     Cancel,
-    /// Request orderly application shutdown.
     Quit,
 }
 
-/// Immutable icon and menu snapshot sent to the native tray owner.
 pub struct TrayPresentation {
-    /// 32-by-32 straight-alpha icon pixels in RGBA order.
     pub rgba: Vec<u8>,
-    /// Accessible description of the current dictation phase.
     pub description: String,
-    /// The dictation entries, shown between the status line and Settings.
     pub menu: TrayMenu,
 }
 
-/// Leaves out the icon's 4 KiB of pixels.
 impl fmt::Debug for TrayPresentation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self {
@@ -68,8 +53,6 @@ impl fmt::Debug for TrayPresentation {
     }
 }
 
-/// Owns the D-Bus tray thread, which is asked to stop before it joins; its update lane closes once
-/// the thread ends.
 #[derive(Debug)]
 pub struct NativeTray {
     _thread: StoppableThread,
@@ -77,10 +60,6 @@ pub struct NativeTray {
 }
 
 impl NativeTray {
-    /// Starts tray registration without microphone, hook, or clipboard access.
-    ///
-    /// # Errors
-    /// Fails when the thread cannot start; absent tray hosts arrive as availability events.
     pub fn start() -> anyhow::Result<(Self, Receiver<TrayAction>)> {
         let (updates, incoming) = async_channel::bounded(1);
         let (actions, received) = async_channel::bounded(ACTION_BACKLOG);
@@ -106,7 +85,6 @@ impl NativeTray {
         ))
     }
 
-    /// The snapshot lane; a full lane coalesces updates at the caller.
     #[must_use]
     pub fn updater(&self) -> Sender<TrayPresentation> {
         self.updates.clone()
@@ -189,7 +167,6 @@ impl Item {
     }
 
     fn activate(&self, x: i32, y: i32) {
-        // D-Bus introspection publishes argument names, so unused ones are discarded, not renamed.
         let _ = (x, y);
         offer(&self.events, TrayAction::Settings);
     }
@@ -216,8 +193,6 @@ impl Item {
     async fn new_tool_tip(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
 }
 
-/// Menu entries; each discriminant is the entry's dbusmenu item ID, which must differ from
-/// `ROOT_ID`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
 enum MenuEntry {
@@ -427,7 +402,6 @@ fn menu_items(presentation: TrayPresentation) -> Vec<MenuItem> {
     ]
 }
 
-/// Reorders RGBA pixels into the ARGB32 network byte order `StatusNotifierItem` pixmaps use.
 fn argb(rgba: &[u8]) -> Vec<u8> {
     rgba.as_chunks::<4>()
         .0
@@ -436,7 +410,6 @@ fn argb(rgba: &[u8]) -> Vec<u8> {
         .collect()
 }
 
-/// Queues `action` for the UI without ever blocking a D-Bus callback.
 fn offer(events: &Sender<TrayAction>, action: TrayAction) {
     #[expect(
         clippy::let_underscore_must_use,
@@ -506,8 +479,6 @@ async fn host_changes(
     ))
 }
 
-/// Whether `signal` reports a tray host or the watcher coming or going, not an item registration.
-/// The match rules already limit each stream to the watcher interface or its owner changes.
 fn is_host_change(signal: &Message) -> bool {
     signal.header().member().is_some_and(|member| {
         matches!(
@@ -517,7 +488,6 @@ fn is_host_change(signal: &Message) -> bool {
     })
 }
 
-/// Registers the item with the watcher; returns whether a tray host can show it.
 async fn register(connection: &Connection) -> bool {
     let Some(name) = connection.unique_name() else {
         return false;

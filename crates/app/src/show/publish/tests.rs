@@ -1,7 +1,3 @@
-//! Publishes a rehearsed Show into a temporary folder and checks every file, a refused copy, and
-//! the cancel path; the opt-in `profile_show_pipeline` times recording and publishing at
-//! 2560 × 1440.
-
 use std::{fs, io, path::Path, time::Instant};
 
 use anyhow::bail;
@@ -19,16 +15,11 @@ fn permit() -> (InputSender, InsertPermit) {
     (input, permit)
 }
 
-/// A desktop of text-like glyphs `width × height` pixels, its lines scrolled up by `scroll`
-/// pixels, with `typed` extra glyphs at the end of the first line and, when `dialog`, a
-/// panel over its middle.
 fn desktop(width: u32, height: u32, scroll: u32, typed: u32, dialog: bool) -> Image {
     let pixels = desktop_pixels(width, height, scroll, typed, dialog);
     Image::from_bgra(width, height, pixels).unwrap()
 }
 
-/// A still desktop whose middle 1280 × 720 pixels play noise drawn from `seed`, as a video
-/// does: every frame changes every tile it covers, and none compresses.
 #[expect(
     clippy::arithmetic_side_effects,
     reason = "Pixel geometry of frames up to 2560 × 1440; debug overflow checks fail the test"
@@ -51,7 +42,6 @@ fn video(width: u32, height: u32, seed: u32) -> Image {
     Image::from_bgra(width, height, pixels).unwrap()
 }
 
-/// The BGRA pixels of [`desktop`].
 #[expect(
     clippy::arithmetic_side_effects,
     reason = "Pixel geometry of frames up to 2560 × 1440; debug overflow checks fail the test"
@@ -101,7 +91,6 @@ fn words(spoken: &[(u64, &str)]) -> Narration {
     )
 }
 
-/// Records frames every 200 ms through the journal and the tracker as the recorder does.
 struct Rehearsal {
     journal: Journal,
     tracker: Tracker,
@@ -137,8 +126,6 @@ impl Rehearsal {
     }
 }
 
-/// Ten seconds: a click opens a dialog, then a circle of ink is drawn around it while it is
-/// named.
 fn rehearse(width: u32, height: u32) -> (Footage, Narration) {
     let mut show = Rehearsal::new(width, height);
     for at in (0..10_000).step_by(200) {
@@ -168,7 +155,6 @@ fn rehearse(width: u32, height: u32) -> (Footage, Narration) {
     (show.finish(10_000), narration)
 }
 
-/// The width and height a PNG's header declares.
 fn png_size(bytes: &[u8]) -> (u32, u32) {
     assert_eq!(bytes.get(..8), Some(&b"\x89PNG\r\n\x1a\n"[..]));
     let field = |at: usize| u32::from_be_bytes(*bytes[at..].first_chunk().unwrap());
@@ -297,7 +283,6 @@ fn a_show_that_cannot_be_copied_stays_saved() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// A clipboard that a cancelled Show must never reach.
 fn uncopied(_: &str) -> anyhow::Result<()> {
     bail!("A cancelled Show is never copied")
 }
@@ -324,11 +309,11 @@ fn a_cancelled_show_never_reaches_the_disk() -> anyhow::Result<()> {
 #[test]
 fn a_show_cancelled_before_staging_never_writes_its_files() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
-    // A file where the Shows folder belongs, so any attempt to write the bundle fails the call.
+
     let blocked = directory.path().join("shows");
     fs::write(&blocked, b"")?;
     let (input, permit) = permit();
-    // The folder is prepared once the Show is composed, so only the check before staging remains.
+
     let cancel_once_composed = || {
         input.cancel();
         Ok(blocked.clone())
@@ -366,7 +351,16 @@ fn a_show_that_lost_its_narration_says_why_in_its_files() -> anyhow::Result<()> 
             Ok(())
         },
     )?;
-    assert!(matches!(published, Published::Saved { lost: Some(_), .. }));
+    assert!(matches!(
+        published,
+        Published::Saved {
+            preservation: Preservation {
+                narration_lost: Some(_),
+                ..
+            },
+            ..
+        }
+    ));
     let summary = clipboard.context("The summary was copied")?;
     assert!(summary.contains("Audio capture stopped at 0:10 and the Show ended there"));
     let directory = fs::read_dir(shows.path())?
@@ -378,7 +372,6 @@ fn a_show_that_lost_its_narration_says_why_in_its_files() -> anyhow::Result<()> 
     Ok(())
 }
 
-/// The bytes of every file under `directory`.
 fn bytes_under(directory: &Path) -> io::Result<u64> {
     fs::read_dir(directory)?.try_fold(0_u64, |bytes, entry| {
         let entry = entry?;
@@ -404,7 +397,7 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    // What the recorder does with each kept frame, for screens that change in different ways.
+
     let scenes: [(&str, &dyn Fn(u32) -> Image); 5] = [
         ("still", &|_| desktop(width, height, 0, 0, false)),
         ("typing", &|frame| desktop(width, height, 0, frame, false)),
@@ -463,7 +456,7 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
             journal_mb / frames as f64,
         );
     }
-    // Publishing a one-minute Show of that size.
+
     let mut show = Rehearsal::new(width, height);
     for at in (0..60_000_u32).step_by(200) {
         let scroll = at / 10_000 * 300;
@@ -552,7 +545,9 @@ fn retrieval_is_advertised_only_when_both_source_and_command_are_available() -> 
             },
         )?;
         let Published::Saved {
-            show, source_lost, ..
+            show,
+            preservation: Preservation { source_lost, .. },
+            ..
         } = published
         else {
             bail!("Expected a saved Show");

@@ -1,5 +1,3 @@
-//! Native pixel locks become bounded, top-down opaque BGRA rows before leaving the decoder.
-
 use anyhow::{Context as _, ensure};
 use windows::{
     Win32::Media::MediaFoundation::{
@@ -19,7 +17,6 @@ impl Drop for Lock<'_> {
             clippy::let_underscore_must_use,
             reason = "Every successful native lock must unlock on errors as well as success before its buffer is released"
         )]
-        // SAFETY: this guard represents exactly one successful lock on the still-owned buffer.
         let _ = unsafe {
             match self {
                 Self::Flat(buffer) => buffer.Unlock(),
@@ -30,8 +27,6 @@ impl Drop for Lock<'_> {
 }
 
 pub(super) fn read(sample: &IMFSample, stride: i32, size: [u32; 2]) -> anyhow::Result<Vec<u8>> {
-    // SAFETY: the sample owns its buffer. Both lock paths retain the buffer and unlock it before
-    // return. Native buffer bounds are checked before creating slices or reading rows.
     unsafe {
         let buffer = sample.ConvertToContiguousBuffer()?;
         let (mut start, mut scanline) = (std::ptr::null_mut(), std::ptr::null_mut());

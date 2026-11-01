@@ -1,20 +1,14 @@
-//! Owned raster images, PNG, and area resampling.
-
 use std::{borrow::Cow, fmt};
 
 use tiny_skia::{IntSize, Pixmap, PixmapMut, PixmapRef, PremultipliedColorU8};
 
 use crate::{Error, convert};
 
-/// An owned image with nonzero dimensions, stored as premultiplied RGBA8 rows.
-///
-/// Captured screens are opaque, so for them premultiplied and straight alpha coincide.
 #[derive(Clone, PartialEq)]
 pub struct Image {
     pixmap: Pixmap,
 }
 
-/// Leaves out the pixels, which show the user's screen.
 impl fmt::Debug for Image {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Image")
@@ -25,7 +19,6 @@ impl fmt::Debug for Image {
 }
 
 impl Image {
-    /// Wraps straight-alpha RGBA8 rows, the layout PNG decoders produce.
     #[cfg(test)]
     pub(crate) fn from_rgba(width: u32, height: u32, mut rgba: Vec<u8>) -> Result<Self, Error> {
         let (pixels, _) = rgba.as_chunks_mut::<4>();
@@ -39,10 +32,6 @@ impl Image {
         Self::from_premultiplied(width, height, rgba)
     }
 
-    /// Wraps captured BGRA or BGRX rows; the screen is opaque, so their fourth byte is ignored.
-    ///
-    /// # Errors
-    /// Fails when a dimension is zero or `bgra` does not hold exactly `width × height` pixels.
     pub fn from_bgra(width: u32, height: u32, mut bgra: Vec<u8>) -> Result<Self, Error> {
         let (pixels, _) = bgra.as_chunks_mut::<4>();
         for [blue, _, red, alpha] in pixels {
@@ -52,7 +41,6 @@ impl Image {
         Self::from_premultiplied(width, height, bgra)
     }
 
-    /// An opaque image of one color.
     pub(crate) fn filled(
         width: u32,
         height: u32,
@@ -75,28 +63,21 @@ impl Image {
             .ok_or_else(|| Error::dimensions(width, height))
     }
 
-    /// Width in pixels.
     #[must_use]
     pub fn width(&self) -> u32 {
         self.pixmap.width()
     }
 
-    /// Height in pixels.
     #[must_use]
     pub fn height(&self) -> u32 {
         self.pixmap.height()
     }
 
-    /// Width divided by height.
     #[must_use]
     pub fn aspect(&self) -> f32 {
         self.width() as f32 / self.height() as f32
     }
 
-    /// Copies an exact rectangle of source pixels without scaling.
-    ///
-    /// # Errors
-    /// Rejects empty rectangles and rectangles extending outside the image.
     pub fn cropped(&self, left: u32, top: u32, width: u32, height: u32) -> Result<Self, Error> {
         let rectangle = left
             .checked_add(width)
@@ -119,7 +100,6 @@ impl Image {
             .ok_or_else(|| Error::dimensions(width, height))
     }
 
-    /// Decodes an RGBA PNG as [`Image::encode_png`] writes it.
     #[cfg(test)]
     pub(crate) fn decode_png(bytes: &[u8]) -> Self {
         let mut reader = png::Decoder::new(std::io::Cursor::new(bytes))
@@ -131,11 +111,6 @@ impl Image {
         Self::from_rgba(info.width, info.height, data).unwrap()
     }
 
-    /// Encodes the image as an RGBA PNG.
-    /// Fast compression favors latency; screen content still compresses well.
-    ///
-    /// # Errors
-    /// Fails if the encoder rejects the stream; errors do not contain pixels.
     pub fn encode_png(&self) -> Result<Vec<u8>, Error> {
         let rgba = self.straight_rgba();
         let mut png = Vec::new();
@@ -149,8 +124,6 @@ impl Image {
         Ok(png)
     }
 
-    /// Consumes the image into tightly packed, straight-alpha BGRA rows for a native renderer.
-    /// Opaque images reuse their pixel allocation; translucent pixels are unpremultiplied first.
     #[must_use]
     pub fn into_bgra(self) -> Vec<u8> {
         let mut bytes = if self
@@ -169,7 +142,6 @@ impl Image {
         bytes
     }
 
-    /// The pixels as straight-alpha RGBA8 rows, borrowed when every pixel is opaque.
     fn straight_rgba(&self) -> Cow<'_, [u8]> {
         let pixels = self.pixmap.pixels();
         if pixels.iter().all(PremultipliedColorU8::is_opaque) {
@@ -185,15 +157,13 @@ impl Image {
         }
     }
 
-    /// The image resampled to `width × height`, each output pixel averaging the source area it
-    /// covers, so large reductions keep text legible instead of aliasing.
     pub(crate) fn resized(&self, width: u32, height: u32) -> Option<Self> {
         let (columns, rows) = (
             footprints(self.width(), width),
             footprints(self.height(), height),
         );
         let wide = convert::count(width);
-        // The horizontal pass keeps full precision so the vertical pass rounds only once.
+
         let mut horizontal = Vec::with_capacity(wide.saturating_mul(convert::count(self.height())));
         for row in self.rows() {
             let pixels = row.as_chunks::<4>().0;
@@ -221,7 +191,6 @@ impl Image {
         Self::from_premultiplied(width, height, data).ok()
     }
 
-    /// The image's rows of premultiplied RGBA8 pixels.
     pub(crate) fn rows(&self) -> impl Iterator<Item = &[u8]> {
         self.pixmap
             .data()
@@ -237,8 +206,6 @@ impl Image {
     }
 }
 
-/// The source pixels one output pixel covers along an axis: consecutive pixels from `first`,
-/// each weighted by the share of the output pixel it fills. Weights sum to one.
 struct Footprint {
     first: usize,
     weights: Vec<f32>,
@@ -328,7 +295,6 @@ mod tests {
 
     #[test]
     fn reduction_averages_the_covered_area() {
-        // A one-pixel checkerboard reduces to the mean gray, never to either extreme.
         let checker: Vec<u8> = (0..16_u8)
             .flat_map(|index| {
                 let light = (index / 4 + index % 4) % 2 == 0;

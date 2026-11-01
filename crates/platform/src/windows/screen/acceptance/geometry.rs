@@ -4,10 +4,10 @@ use super::*;
 #[ignore = "Opt in: moves an owned window and reads only its geometry; no screen capture or input"]
 fn target_geometry_tracks_an_owned_window_without_sampling_input() -> anyhow::Result<()> {
     per_monitor_aware()?;
-    // SAFETY: a fixed desktop point selects a display without reading the user's pointer.
+
     let display =
         describe(unsafe { MonitorFromPoint(POINT::default(), MONITOR_DEFAULTTOPRIMARY) })?;
-    // SAFETY: the registered class owns this brush until its own windows are destroyed.
+
     let gray = unsafe { CreateSolidBrush(0x0060_6060) };
     let _class = Class::register(SUBJECT_CLASS, Some(DefWindowProcW), gray)?;
     let [left, top, right, bottom] = Layout::centered_on(display.native).pattern;
@@ -32,7 +32,7 @@ fn target_geometry_tracks_an_owned_window_without_sampling_input() -> anyhow::Re
         right,
         bottom,
     };
-    // SAFETY: only this test's live window moves; flags preserve activation and stacking.
+
     let positioned = unsafe {
         SetWindowPos(
             window.0,
@@ -73,7 +73,7 @@ fn target_geometry_tracks_an_owned_window_without_sampling_input() -> anyhow::Re
         "Owned target geometry: median {:?}, p95 {:?} across 1000 reads",
         elapsed[500], elapsed[950]
     );
-    // SAFETY: hiding this test's window neither changes focus nor injects input.
+
     unsafe { ShowWindow(window.0, SW_HIDE) };
     assert!(pointer_part(target).is_none());
     assert_eq!(pointer_part(area), Some(original));

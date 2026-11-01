@@ -1,6 +1,3 @@
-//! The single session authority. Each wake handles one message, advances work whose prerequisites
-//! are satisfied, then presents a projection of owned state.
-
 use std::{
     convert::Infallible, future::poll_fn, mem, ops::ControlFlow, pin::Pin, sync::Arc, task::Poll,
     time::Instant,
@@ -20,7 +17,10 @@ use super::{
     Snapshot, SnapshotEpoch, Wiring,
     device::Device,
     now,
-    ports::{CaptureEvent, PUBLISH_STOPPED, Ports, Published, SessionId, ShowEvent, Unchosen},
+    ports::{
+        CaptureEvent, PUBLISH_STOPPED, Ports, Preservation, Published, SessionId, ShowEvent,
+        Unchosen,
+    },
     session::{Delivered, Destination, Session},
     worker::{Completion, Worker},
 };
@@ -34,37 +34,23 @@ use crate::{
 const INSERT_FAILED: &str =
     "Cannot submit the text. Check desktop permissions and clipboard access, then try again.";
 
-/// What the status shows while no session is active: the latest result or failure.
 enum Outcome {
     Idle,
     Done,
     Practiced,
-    /// The dictation is on the clipboard; the message says how to paste it.
     Copied(&'static str),
-    /// The Show's summary is on the clipboard; how its screen recording ended and whether its
-    /// narration was lost decide the message.
     ShowCopied {
         ending: Ending,
-        lost: Option<NarrationLoss>,
-        source_lost: bool,
-        movie_lost: bool,
-        audio_kept: bool,
+        preservation: Preservation,
     },
-    /// The menu found the last Show gone.
     ShowGone,
     Recovered {
-        source_lost: bool,
-        movie_lost: bool,
-        lost: Option<NarrationLoss>,
-        audio_kept: bool,
+        preservation: Preservation,
         narrated_copy: bool,
     },
     Empty,
     Cancelled,
-    /// The Show was cancelled because its scope found nothing to record.
     Unchosen(Unchosen),
-    /// The pill and Settings show this message as is, so it never includes an error source that
-    /// could carry private text, such as a panic payload or engine output.
     Failed(String),
 }
 
@@ -74,8 +60,11 @@ impl Outcome {
             Self::Practiced => "Practice complete. Your words stay in Settings.".into(),
             Self::Failed(message) => message.clone(),
             Self::Copied(message) => (*message).into(),
-            Self::ShowCopied { ending, lost, .. } => {
-                let copied = match (ending, lost.is_some()) {
+            Self::ShowCopied {
+                ending,
+                preservation,
+            } => {
+                let copied = match (ending, preservation.narration_lost.is_some()) {
                     (Ending::Finished, false) => SHOW_COPIED,
                     (Ending::ScreenStopped, false) => {
                         "Show copied, but the screen stopped recording early."
@@ -96,7 +85,7 @@ impl Outcome {
                     },
                 };
                 let mut message = copied.to_owned();
-                if lost.is_some()
+                if preservation.narration_lost.is_some()
                     && let Some(failure) = notice.and_then(Notice::failure)
                 {
                     message.push(' ');
@@ -115,42 +104,31 @@ impl Outcome {
                 narrated_copy: true,
                 ..
             } => "Narrated copy saved. The original Show is unchanged.".into(),
-            Self::Recovered {
-                lost: Some(NarrationLoss::NotTranscribed | NarrationLoss::AudioStopped),
-                ..
-            } => "Show recovered without narration. Find it in Shows.".into(),
-            Self::Recovered {
-                lost: Some(NarrationLoss::Incomplete),
-                ..
-            } => "Show recovered with incomplete narration. Find it in Shows.".into(),
-            Self::Recovered { lost: None, .. } => "Show recovered. Find it in Shows.".into(),
+            Self::Recovered { preservation, .. } => match preservation.narration_lost {
+                Some(NarrationLoss::NotTranscribed | NarrationLoss::AudioStopped) => {
+                    "Show recovered without narration. Find it in Shows."
+                },
+                Some(NarrationLoss::Incomplete) => {
+                    "Show recovered with incomplete narration. Find it in Shows."
+                },
+                None => "Show recovered. Find it in Shows.",
+            }
+            .into(),
             Self::Idle | Self::Done | Self::Empty | Self::Cancelled => {
                 notice.map_or("", Notice::text).into()
             },
         };
-        if let Self::ShowCopied {
-            audio_kept,
-            source_lost,
-            movie_lost,
-            ..
-        }
-        | Self::Recovered {
-            audio_kept,
-            source_lost,
-            movie_lost,
-            ..
-        } = self
-        {
-            if *audio_kept {
+        if let Self::ShowCopied { preservation, .. } | Self::Recovered { preservation, .. } = self {
+            if preservation.audio_kept {
                 message.push_str(
                     " Audio is kept privately for retry in Shows until its original seven-day expiry.",
                 );
             }
-            if *movie_lost {
+            if preservation.movie_lost {
                 message
                     .push_str(" Video could not be saved; the selected keyframes are available.");
             }
-            if *source_lost {
+            if preservation.source_lost {
                 message.push_str(
                     " Retained source frames could not be saved; the selected keyframes are available.",
                 );
@@ -173,17 +151,12 @@ impl Outcome {
     }
 }
 
-/// Status text shown unless the outcome carries its own message: a failure or a copied delivery.
-/// A Show copied without narration still shows the failure it outlived, after its own message.
 enum Notice {
     CheckpointLost,
     MovieStopped,
     LoadingModel,
     SettingsApplied,
-    /// The model failed to load; a later load clears it.
     WarmupFailed(String),
-    /// Why audio capture or transcription cost a Show its narration, with the remedy. A later load
-    /// leaves it, since the cause may lie outside the model.
     NarrationLost(String),
 }
 
@@ -202,7 +175,6 @@ impl Notice {
         }
     }
 
-    /// The failure a session outlived, if this notice is one.
     fn failure(&self) -> Option<&str> {
         match self {
             Self::WarmupFailed(failure) | Self::NarrationLost(failure) => Some(failure),
@@ -223,7 +195,6 @@ enum Wake<W> {
     Show(ShowEvent),
     Worker(Completion<W>),
     Delivered(Result<Delivered, JoinError>),
-    /// An abandoned session's insertion or publication finished.
     Abandoned(SessionId, Result<Delivered, JoinError>),
     Retired,
     Recover(Recovery),
@@ -232,18 +203,15 @@ enum Wake<W> {
     Timer,
 }
 
-/// The latest session as the snapshot presents it, during the session and after it ends.
 struct Latest {
     id: SessionId,
     started: Instant,
-    /// Whether it became a Show, which the pill presents differently.
     show: bool,
 }
 
 struct Owner<P: Ports> {
     ports: P,
     config: Config,
-
     changes: watch::Receiver<Config>,
     inputs: Receiver<Input>,
     reports: Receiver<Report>,
@@ -255,30 +223,18 @@ struct Owner<P: Ports> {
     captures: Receiver<CaptureEvent>,
     show_events: Sender<ShowEvent>,
     shows: Receiver<ShowEvent>,
-
     permits: InputSender,
     gesture: Gesture,
     session: Option<Session>,
     latest: Latest,
-    /// The latest Show saved, which only a later saved Show replaces and only a report that finds
-    /// it gone forgets. A publication that commits after its session is abandoned still counts,
-    /// unless a later session's Show already does.
     last_show: Option<SavedShow>,
-    /// How many reports have shown since this owner started.
     reported: u64,
-
     worker: Worker<P::Speech>,
     microphone: Device<P::Microphone>,
     screen: Device<P::Screen>,
-    /// Abandoned insertions and publications by session, kept until they finish their own cleanup;
-    /// a publication that committed before it was abandoned still saves its Show.
     retiring: Vec<(SessionId, JoinHandle<Delivered>)>,
-    /// The session whose Show this owner last remembered, so a publication abandoned earlier
-    /// cannot replace that Show when it finishes.
     remembered: Option<SessionId>,
-    /// Whether the cue output is held open, as it is through every session while sounds are on.
     cues_held: bool,
-
     snapshots: watch::Sender<Snapshot>,
     meter: watch::Sender<Meter>,
     epoch: SnapshotEpoch,
@@ -360,15 +316,14 @@ impl<P: Ports> Owner<P> {
         let idle = self.session.is_none();
         let practice_closed = or_pending(self.practice.as_ref().map(mpsc::Sender::closed));
         let delivered = or_pending(self.session.as_mut().map(Session::delivered));
-        // Biased: stop outranks the input lane that `request_stop` closes beside it, so a pause
-        // never reads as a shortcut failure.
+
         tokio::select! {
             biased;
             _ = self.stopping.recv() => Wake::Stop,
             () = practice_closed => Wake::EndPractice,
             Ok(practice) = self.practices.recv() => Wake::Practice(practice),
             input = self.inputs.recv() => Wake::Input(input),
-            // Only `Runtime` sends reports and changes, and dropping it stops first.
+
             report = self.reports.recv() => report.map_or(Wake::Stop, Wake::Report),
             change = self.changes.changed() => change.map_or(Wake::Stop, |()| Wake::Configuration),
             Ok(event) = self.captures.recv() => Wake::Capture(event),
@@ -443,7 +398,7 @@ impl<P: Ports> Owner<P> {
                 if self.desktop_ready && self.gesture.state() == State::Idle =>
             {
                 self.end_practice();
-                // The Show needs the session that starting creates, so the start applies here.
+
                 let start = self.gesture.toggle(now());
                 self.handle_action(start)?;
                 self.start_show(scope);
@@ -466,7 +421,6 @@ impl<P: Ports> Owner<P> {
             Input::Escape => self.gesture.escape(),
             Input::Cancel => self.gesture.cancel(),
             Input::Interrupt => match self.gesture.interrupt() {
-                // Unlike `Cancel`, no cue: the user never asked to cancel.
                 Some(Action::Cancel) => {
                     self.discard();
                     None
@@ -490,11 +444,9 @@ impl<P: Ports> Owner<P> {
         ControlFlow::Break(())
     }
 
-    /// Shows `report` as [`Report::present`] describes, counting each that presents anew.
     fn report(&mut self, report: Report) {
         report.forget_gone(&mut self.last_show);
-        // The owner's own state, not a presented copy, decides idleness, so a session that started
-        // meanwhile is never overwritten.
+
         if self.session.is_some() {
             return;
         }
@@ -504,18 +456,13 @@ impl<P: Ports> Owner<P> {
         self.outcome = match report {
             Report::Failed(message) | Report::Recurring(message) => Outcome::Failed(message),
             Report::ShowCopied => Outcome::ShowCopied {
-                audio_kept: false,
                 ending: Ending::Finished,
-                lost: None,
-                source_lost: false,
-                movie_lost: false,
+                preservation: Preservation::default(),
             },
             Report::ShowGone(_) => Outcome::ShowGone,
         };
     }
 
-    /// Applies changed settings, which end any session in progress: it shows cancelled, with its
-    /// cue, so its speech never vanishes unannounced.
     fn configure(&mut self) {
         self.practice = None;
         let next = self.changes.borrow_and_update().clone();
@@ -558,8 +505,7 @@ impl<P: Ports> Owner<P> {
             },
             CaptureEvent::Ready(_) => {
                 session.audio_ready(gesture, now());
-                // The pill opens to listening here, so the cue sounds with it, never before the
-                // microphone listens.
+
                 let cue = if session.is_show() {
                     Cue::Show
                 } else {
@@ -585,29 +531,21 @@ impl<P: Ports> Owner<P> {
             },
             CaptureEvent::Finished(_, Err(error)) => {
                 if session.audio_stopped() {
-                    // A Show whose microphone listened ends where its audio stopped, keeping its
-                    // footage and the failure's remedy.
                     self.notice = Some(Notice::NarrationLost(error.to_string()));
                     self.conclude_capture();
                 } else {
-                    // Failing retires both devices, so the screen is never asked to finish footage
-                    // for nobody.
                     self.fail(error.to_string());
                 }
             },
         }
     }
 
-    /// The only way a capture event reaches a session: the identity must match and the session must
-    /// still be capturing, so late audio from a completed capture is ignored.
     fn current_capture_mut(&mut self, id: SessionId) -> Option<&mut Session> {
         self.session
             .as_mut()
             .filter(|session| session.id == id && session.is_capturing())
     }
 
-    /// Ends capture however it ended, finishing a Show's screen with its narration. A capture that
-    /// ended before the gesture did sounds the stop cue the gesture would have.
     fn conclude_capture(&mut self) {
         self.microphone.retire();
         self.screen.finish();
@@ -635,13 +573,10 @@ impl<P: Ports> Owner<P> {
             },
             Completion::Loaded(Err(error)) => {
                 if self.session_survives_warmup_failure() {
-                    // A Show that already lost its narration keeps that failure in view; the
-                    // snapshot's model state shows the load failed.
                     if !matches!(self.notice, Some(Notice::NarrationLost(_))) {
                         self.notice = Some(Notice::WarmupFailed(error.to_string()));
                     }
                 } else if self.session.as_mut().is_some_and(Session::not_transcribed) {
-                    // A Show waiting for the worker goes on without narration, the failure in view.
                     self.notice = Some(Notice::WarmupFailed(error.to_string()));
                 } else {
                     self.fail(error.to_string());
@@ -658,7 +593,6 @@ impl<P: Ports> Owner<P> {
                 }
             },
             Completion::Transcribed(ticket, Err(error)) => {
-                // The failed job has reaped its worker, even when its session no longer exists.
                 let replaced = self.worker.revive(&self.ports, &self.config);
                 let Some(session) = self
                     .session
@@ -670,7 +604,7 @@ impl<P: Ports> Owner<P> {
                 if replaced && session.is_transcribing() {
                     self.notice = Some(Notice::LoadingModel);
                 }
-                // A piece failure defers whole-recording fallback; a final request has one retry.
+
                 if !session.failed(ticket) {
                     if session.not_transcribed() {
                         self.notice = Some(Notice::NarrationLost(error.to_string()));
@@ -682,16 +616,12 @@ impl<P: Ports> Owner<P> {
         }
     }
 
-    /// A session that is not waiting for the worker survives a failed warmup: its gesture finishes
-    /// on its own terms, and an owned microphone must be released before a retry may start.
     fn session_survives_warmup_failure(&self) -> bool {
         self.session
             .as_ref()
             .is_some_and(|session| !session.awaits_worker())
     }
 
-    /// The session admits only matching request tickets and assembles a complete transcript before
-    /// cleanup. Corrections can therefore span piece boundaries without authorizing stale text.
     fn insert_transcript(&mut self, text: String) {
         let text = Vocabulary::new(&self.config.vocabulary).text(&transcript::for_insertion(
             &text,
@@ -722,11 +652,6 @@ impl<P: Ports> Owner<P> {
         }
     }
 
-    /// Turns the recording under way into a Show of what `scope` names, keeping the narration
-    /// already captured, and records it hands-free until the shortcut is pressed and released
-    /// again. The keyboard sends a Show only for a press during a physical hold, and its repeats, so
-    /// a recording locked hands-free with Space or a double tap turns too. So does one still waiting
-    /// for its microphone, as a Show the tray starts always is.
     fn start_show(&mut self, scope: Scope) {
         let held = matches!(self.gesture.state(), State::Held | State::HandsFree);
         let Some(session) = self.session.as_mut() else {
@@ -752,16 +677,13 @@ impl<P: Ports> Owner<P> {
             self.checkpoint_lost();
         }
         self.latest.show = true;
-        // A microphone still opening sounds the Show cue once it listens.
+
         if recording {
             self.cue_heard(Cue::Show);
         }
         self.gesture.show();
     }
 
-    /// Keeps a Show's footage. A screen that stopped before the gesture finished, as a capture
-    /// failing partway does, finishes the Show with it. A Show whose scope found nothing to record
-    /// is cancelled with its narration, since a Show never records more than its scope names.
     fn handle_show(&mut self, event: ShowEvent) -> Option<Action> {
         let session = self
             .session
@@ -809,7 +731,6 @@ impl<P: Ports> Owner<P> {
     }
 
     fn handle_delivered(&mut self, result: Result<Delivered, JoinError>) {
-        // Only a Show publishes, and a session cannot become one once transcription starts.
         let show = self.session.as_ref().is_some_and(Session::is_show);
         let outcome = match result {
             Ok(Delivered::Reopened(Ok(reopened))) => {
@@ -823,29 +744,22 @@ impl<P: Ports> Owner<P> {
             Ok(Delivered::Published(Ok(Published::Saved {
                 show: saved,
                 ending,
-                lost,
-                source_lost,
-                movie_lost,
-                audio_kept,
+                preservation,
                 copied,
             }))) => {
                 self.remember(saved, self.latest.id);
                 match copied {
                     Ok(()) => Outcome::ShowCopied {
                         ending,
-                        lost,
-                        source_lost,
-                        movie_lost,
-                        audio_kept,
+                        preservation,
                     },
                     Err(error) => {
-                        // What the Show lost still shows; its summary says how it ended.
                         let show = if ending == Ending::Finished {
                             "The Show"
                         } else {
                             "The Show, which stopped early,"
                         };
-                        let (narration, failure) = match lost {
+                        let (narration, failure) = match preservation.narration_lost {
                             Some(_) => (
                                 " without narration",
                                 self.notice.as_ref().and_then(Notice::failure),
@@ -870,18 +784,12 @@ impl<P: Ports> Owner<P> {
             },
             Ok(Delivered::Published(Ok(Published::Recovered {
                 show: saved,
-                source_lost,
-                movie_lost,
-                lost,
-                audio_kept,
+                preservation,
                 narrated_copy,
             }))) => {
                 self.remember(saved, self.latest.id);
                 Outcome::Recovered {
-                    source_lost,
-                    movie_lost,
-                    lost,
-                    audio_kept,
+                    preservation,
                     narrated_copy,
                 }
             },
@@ -901,13 +809,10 @@ impl<P: Ports> Owner<P> {
         if matches!(outcome, Outcome::Copied(_) | Outcome::ShowCopied { .. }) {
             self.cue(Cue::Copied);
         }
-        // `wait` already joined this delivery, so the session holds no work left to retire.
+
         self.end_session(outcome);
     }
 
-    /// Remembers `show`, which `session` saved, as the last Show. A pause may already have
-    /// announced over this owner, whose presentations the epoch then drops, yet the Show outlives
-    /// it: the announced snapshot takes it too, so the next owner starts from it.
     fn remember(&mut self, show: SavedShow, session: SessionId) {
         keep_presented(&self.snapshots, &show);
         self.last_show = Some(show);
@@ -923,7 +828,7 @@ impl<P: Ports> Owner<P> {
                 if let Some(session) = &mut self.session {
                     session.finish();
                 }
-                // The microphone has stopped taking samples, so it cannot hear this.
+
                 self.cue(Cue::Stop);
             },
             Some(Action::Cancel) => {
@@ -936,8 +841,6 @@ impl<P: Ports> Owner<P> {
     }
 
     fn start_session(&mut self) -> ControlFlow<()> {
-        // A closed lane still holds whatever closed it: the next wake reads a queued
-        // `Unavailable`, the stop lane, or the drained lane's error through `handle_input`.
         let Some(permit) = self.permits.begin() else {
             self.gesture.abandon();
             return ControlFlow::Continue(());
@@ -1016,9 +919,6 @@ impl<P: Ports> Owner<P> {
         ControlFlow::Continue(())
     }
 
-    /// Holds the cue output open from the moment a session begins, so its first cue never waits
-    /// for a device to open, and releases it as Speakeasy goes idle or sounds turn off, however the
-    /// session ended.
     fn hold_cues(&mut self) {
         let held = self.config.play_sounds && self.session.is_some();
         if held != self.cues_held {
@@ -1027,15 +927,12 @@ impl<P: Ports> Owner<P> {
         }
     }
 
-    /// Sounds `cue` while the user wants sounds.
     fn cue(&self, cue: Cue) {
         if self.config.play_sounds {
             self.ports.cue(cue);
         }
     }
 
-    /// Sounds `cue` where the listening microphone can hear it, telling the microphone first so
-    /// the speech gate listens beneath it.
     fn cue_heard(&self, cue: Cue) {
         if self.config.play_sounds {
             self.microphone.expect_cue();
@@ -1043,8 +940,6 @@ impl<P: Ports> Owner<P> {
         }
     }
 
-    /// Ends a session whose work has finished, so it holds nothing left to retire, and shows
-    /// `outcome`.
     fn end_session(&mut self, outcome: Outcome) {
         if let Some(session) = self.session.take() {
             session.permit.revoke();
@@ -1059,14 +954,12 @@ impl<P: Ports> Owner<P> {
         self.outcome = outcome;
     }
 
-    /// Discards the session, its insertion and any transcription under way, and shows it cancelled.
     fn discard(&mut self) {
         self.abandon();
         self.worker.revive(&self.ports, &self.config);
         self.outcome = Outcome::Cancelled;
     }
 
-    /// Revokes the session and hands its native work to cleanup without awaiting any OS call.
     fn abandon(&mut self) {
         if matches!(
             self.notice,
@@ -1156,8 +1049,6 @@ impl<P: Ports> Owner<P> {
         }
     }
 
-    /// Opens a Show's screen recorder once any previous one has retired, even after its narration
-    /// ended, so the Show still gets the screen as it was then.
     fn open_queued_screen(&mut self) {
         if self.permits.is_closed() || !self.screen.is_free() {
             return;
@@ -1200,15 +1091,12 @@ impl<P: Ports> Owner<P> {
         self.worker.transcribe(&self.config, || session.request());
     }
 
-    /// Publishes a Show once its narration and screen recording are both in.
     fn start_publishing(&mut self) {
         if let Some(session) = &mut self.session {
             session.publish(|publication, permit| self.ports.publish(publication, permit));
         }
     }
 
-    /// Remembers what an abandoned session's publication saved anyway, as [`saved_anyway`]
-    /// describes; the session's presented outcome stands.
     fn handle_abandoned(&mut self, session: SessionId, result: Result<Delivered, JoinError>) {
         match result {
             Ok(Delivered::Abandoned(Err(error))) => {
@@ -1229,7 +1117,10 @@ impl<P: Ports> Owner<P> {
         debug_assert_eq!(self.gesture.state() == State::Idle, self.session.is_none());
         let session = self.session.as_ref();
         let (ending, narration_lost) = match self.outcome {
-            Outcome::ShowCopied { ending, lost, .. } => (ending, lost),
+            Outcome::ShowCopied {
+                ending,
+                preservation,
+            } => (ending, preservation.narration_lost),
             _ => (Ending::Finished, None),
         };
         let snapshot = Snapshot {
@@ -1238,7 +1129,7 @@ impl<P: Ports> Owner<P> {
             reported: self.reported,
             phase: session.map_or_else(|| self.outcome.phase(), Session::phase),
             hands_free: self.gesture.state() == State::HandsFree,
-            // A Show copied again reads as one just copied, whatever the latest session was.
+
             show: self.latest.show || matches!(self.outcome, Outcome::ShowCopied { .. }),
             ending,
             narration_lost,
@@ -1261,13 +1152,12 @@ impl<P: Ports> Owner<P> {
 
     async fn shutdown(mut self) {
         self.permits.close();
-        // Nothing reads the capture lane from here on, and a capture thread reports `Finished`
-        // with a blocking send even when cancelled, so a full lane would stall its teardown.
+
         self.captures.close();
         self.shows.close();
         while self.shows.try_recv().is_ok() {}
         self.abandon();
-        // Abandoned work is never aborted: each task finishes its own cleanup.
+
         let retiring = mem::take(&mut self.retiring);
         let retired = async {
             let mut finished = Vec::with_capacity(retiring.len());
@@ -1282,7 +1172,7 @@ impl<P: Ports> Owner<P> {
             self.screen.stop(),
             retired
         );
-        // The devices are gone with their stops; only the presented snapshot outlives this owner.
+
         let mut remembered = self.remembered;
         for (session, result) in finished {
             if let Some(show) = saved_anyway(remembered, session, result) {
@@ -1308,9 +1198,6 @@ pub(super) async fn run<P: Ports>(wiring: Wiring<P>) {
     owner.shutdown().await;
 }
 
-/// The Show an abandoned `session`'s publication saved anyway, having committed before the cancel
-/// reached it, so the menu acts on the Show whose summary was copied; `None` once a later session's
-/// Show is `remembered`.
 fn saved_anyway(
     remembered: Option<SessionId>,
     session: SessionId,
@@ -1327,8 +1214,6 @@ fn saved_anyway(
         .then_some(show)
 }
 
-/// Writes `show` straight into the presented snapshot, even one a pause has announced over, so the
-/// Show outlives an owner that stops before it next presents.
 fn keep_presented(snapshots: &watch::Sender<Snapshot>, show: &SavedShow) {
     snapshots.send_if_modified(|presented| {
         presented
@@ -1338,8 +1223,6 @@ fn keep_presented(snapshots: &watch::Sender<Snapshot>, show: &SavedShow) {
     });
 }
 
-/// Resolves with the first of `tasks` to finish, removing it; pends while none has. Cancel-safe: an
-/// unfinished task stays, and dropping its handle would detach it from shutdown.
 fn next_finished<T>(
     tasks: &mut Vec<(SessionId, JoinHandle<T>)>,
 ) -> impl Future<Output = (SessionId, Result<T, JoinError>)> + '_ {
@@ -1361,7 +1244,6 @@ fn next_finished<T>(
     })
 }
 
-/// Pends unless a future is present; resolves once it completes.
 async fn or_pending<F: Future>(future: Option<F>) -> F::Output {
     match future {
         Some(future) => future.await,
@@ -1377,10 +1259,7 @@ mod tests {
         Delivered::Published(Ok(Published::Saved {
             show: SavedShow::assume(folder.to_owned()),
             ending: Ending::Finished,
-            lost: None,
-            source_lost: false,
-            movie_lost: false,
-            audio_kept: false,
+            preservation: Preservation::default(),
             copied: Ok(()),
         }))
     }
@@ -1410,20 +1289,22 @@ mod tests {
                 (
                     Outcome::ShowCopied {
                         ending: Ending::Finished,
-                        lost: None,
-                        audio_kept,
-                        source_lost,
-                        movie_lost: false,
+                        preservation: Preservation {
+                            source_lost,
+                            audio_kept,
+                            ..Preservation::default()
+                        },
                     },
                     SHOW_COPIED,
                 ),
                 (
                     Outcome::Recovered {
-                        lost: None,
+                        preservation: Preservation {
+                            source_lost,
+                            audio_kept,
+                            ..Preservation::default()
+                        },
                         narrated_copy: false,
-                        audio_kept,
-                        source_lost,
-                        movie_lost: false,
                     },
                     "Show recovered. Find it in Shows.",
                 ),

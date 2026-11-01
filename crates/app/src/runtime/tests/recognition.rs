@@ -1,5 +1,3 @@
-//! Early inference preserves session authority, complete output, and whole-recording fallback.
-
 use super::*;
 use crate::{config::Engine, runtime::ports::Partition, transcript::vocabulary::Correction};
 

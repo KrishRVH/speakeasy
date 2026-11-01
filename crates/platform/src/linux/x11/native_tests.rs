@@ -1,7 +1,3 @@
-//! Opt-in checks of X server behavior that fakes cannot reach. Each test starts a private Xvfb
-//! display and reruns itself there in a child process, so the keys it injects and the clipboard it
-//! writes never reach the current display.
-
 use std::{
     io::{BufRead as _, BufReader},
     process::{Child, Command, Stdio},
@@ -26,7 +22,6 @@ use super::{
 };
 use crate::{DesktopOptions, Input, InputSender};
 
-/// Set only for a child test, to the display its parent started.
 const PRIVATE_DISPLAY: &str = "SPEAKEASY_TEST_PRIVATE_DISPLAY";
 
 #[tokio::test]
@@ -61,8 +56,7 @@ async fn a_keyboard_switch_keeps_shortcuts_and_a_remap_stops_them() -> anyhow::R
     for symbol in [Keysym::Control_L, Keysym::Super_L, Keysym::space] {
         key(xproto::KEY_PRESS_EVENT, symbol)?;
     }
-    // The first synthetic key moves the core keyboard to the XTEST device, which the server
-    // announces as a mapping change although the mapping stays the same.
+
     let mut switched = false;
     while let Some(event) = connection.poll_for_event()? {
         switched |= matches!(event, Event::MappingNotify(_));
@@ -83,7 +77,6 @@ async fn a_keyboard_switch_keeps_shortcuts_and_a_remap_stops_them() -> anyhow::R
         key(xproto::KEY_RELEASE_EVENT, symbol)?;
     }
 
-    // The highest keycode now types F35: a mapping that actually changed.
     let code = connection.setup().max_keycode;
     let current = connection.get_keyboard_mapping(code, 1)?.reply()?;
     let remapped = vec![Keysym::F35.raw(); current.keysyms.len()];
@@ -174,8 +167,7 @@ fn a_fresh_clipboard_owns_its_first_copy() -> anyhow::Result<()> {
         )?
         .check()?;
     let selection = intern(&connection, b"CLIPBOARD")?;
-    // Another client owns the clipboard before each copy, so an owner query that outruns the copy's
-    // claim names that client.
+
     for _ in 0..100 {
         connection
             .set_selection_owner(other, selection, x11rb::CURRENT_TIME)?
@@ -188,9 +180,6 @@ fn a_fresh_clipboard_owns_its_first_copy() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Whether this process is the child that runs `test` on a private display. Otherwise it is the
-/// parent: it starts Xvfb, reruns `test` in a child on that display, and returns false once the
-/// child passes.
 fn on_private_display(test: &str) -> anyhow::Result<bool> {
     let private = std::env::var_os(PRIVATE_DISPLAY);
     if private.is_some() && private == std::env::var_os("DISPLAY") {
@@ -204,7 +193,6 @@ fn on_private_display(test: &str) -> anyhow::Result<bool> {
         .args(["--exact", &format!("{module}::{test}"), "--ignored"])
         .env("DISPLAY", &server.display)
         .env(PRIVATE_DISPLAY, &server.display)
-        // The desktop service chooses its input path from the session, not from DISPLAY.
         .env("XDG_SESSION_TYPE", "x11")
         .env_remove("WAYLAND_DISPLAY")
         .stdin(Stdio::null())
@@ -217,7 +205,6 @@ fn on_private_display(test: &str) -> anyhow::Result<bool> {
     Ok(false)
 }
 
-/// An Xvfb server a parent test started, killed on drop.
 struct PrivateServer {
     process: Child,
     display: String,
@@ -225,9 +212,6 @@ struct PrivateServer {
 
 impl PrivateServer {
     fn start() -> anyhow::Result<Self> {
-        // Xvfb reports its display once it accepts clients, and exits without reporting when the
-        // display is in use. Candidates start from the process ID so concurrent checks rarely meet.
-        // Only the abstract socket listens, so a killed server leaves no socket file behind.
         let first = (std::process::id() % 20_000).saturating_add(100);
         for number in (first..).take(8) {
             let display = format!(":{number}");

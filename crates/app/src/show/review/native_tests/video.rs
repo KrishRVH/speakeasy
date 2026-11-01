@@ -1,5 +1,3 @@
-//! Native video review uses recovered synthetic movies and dispatches events only to its owned window.
-
 mod annotations;
 
 use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput};

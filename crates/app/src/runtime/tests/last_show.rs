@@ -1,23 +1,15 @@
-//! The last saved Show: which publications the owner remembers, which it never does, that the
-//! memory survives a failed copy, a failed or cancelled Show, a later dictation, a pause, and a new
-//! owner, that a Show saved as its session is abandoned still counts, and how the menu's reports
-//! about it show and forget it.
-
 use super::*;
 
-/// The folder the fakes save a Show that said `said` in.
 fn saved(said: &str) -> SavedShow {
     SavedShow::assume(format!("shows/{said}"))
 }
 
-/// Records a Show that says `said` and finishes it, up to its publication.
 async fn record_show(h: &mut Harness, said: &str) -> anyhow::Result<()> {
     start_show(h).await?;
     finish_show(h);
     h.transcribe_next_as(said).await
 }
 
-/// Records a Show that says `said`, returning once the fake has saved it.
 async fn save_show(h: &mut Harness, said: &str) -> anyhow::Result<()> {
     record_show(h, said).await?;
     receive(&h.published).await?;
@@ -80,8 +72,7 @@ async fn a_show_cancelled_before_it_is_saved_leaves_the_last_one() -> anyhow::Re
     })?;
     record_show(&mut h, "cancelled").await?;
     publishing.reached().await?;
-    // Pausing revokes even a saving Show's permit before the owner hears of it, so the
-    // publication itself reports the cancellation.
+
     h.runtime.input.cancel();
     publishing.release().await?;
     h.phase(Phase::Cancelled).await?;
@@ -118,7 +109,7 @@ async fn a_show_saved_as_it_is_abandoned_is_remembered_but_still_reads_as_cancel
     persisted.release().await?;
     h.phase(Phase::Copied).await?;
     save_show(&mut h, "second").await?;
-    // Committed before the settings change abandons it, so its summary is copied regardless.
+
     persisted.reached().await?;
     change_settings(&h);
     h.phase(Phase::Cancelled).await?;
@@ -141,7 +132,7 @@ async fn a_show_saved_after_a_pause_announces_still_outlives_its_owner() -> anyh
     })?;
     save_show(&mut h, "newer").await?;
     persisted.reached().await?;
-    // A pause announces before it stops the owner, which is still finishing this Show.
+
     h.output
         .send_modify(|snapshot| snapshot.epoch = snapshot.epoch.next());
     persisted.release().await?;
@@ -158,7 +149,7 @@ async fn a_show_saved_as_a_pause_stops_its_owner_outlives_that_owner() -> anyhow
     })?;
     save_show(&mut h, "newer").await?;
     persisted.reached().await?;
-    // A pause announces and stops the owner in one turn, so the owner abandons this Show.
+
     h.output
         .send_modify(|snapshot| snapshot.epoch = snapshot.epoch.next());
     h.runtime.request_stop();
@@ -186,7 +177,7 @@ async fn the_last_show_copied_again_reads_as_a_copied_show_only_while_idle() -> 
     h.phase(Phase::Recording).await?;
     let (id, events) = receive(&h.captures).await?;
     h.report(Report::ShowCopied)?;
-    // The report lane outranks capture, so the level arrives only after the report is handled.
+
     events.send(CaptureEvent::Level(id, 0.5)).await?;
     h.observe_level(0.5).await?;
     let recording = h.snapshot();

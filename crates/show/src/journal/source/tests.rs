@@ -1,5 +1,3 @@
-//! Source evidence must survive thinning and size changes, reject damage, and load only one frame.
-
 use proptest::prelude::*;
 
 use super::*;

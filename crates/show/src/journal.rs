@@ -1,10 +1,3 @@
-//! The frames a Show samples, kept losslessly beside their signatures within a memory budget.
-//!
-//! Frames are cut into tiles, and each frame stores only the tiles that changed since the frame
-//! before it. A still screen therefore costs almost nothing, and every frame held rebuilds exactly.
-//! A journal over its budget thins evenly, and each frame's [`Sample`] is dropped with its tiles,
-//! so selection only picks frames the journal holds.
-
 use std::{fmt, iter, mem, ops::Range, sync::Arc, time::Duration};
 
 use crate::{
@@ -18,50 +11,33 @@ mod source;
 pub use log::{Log, Take, TakeEvent};
 pub use source::{Source, SourceError, SourceFrame};
 
-/// Tile edge in pixels: small enough that a blinking caret stores little, large enough that the
-/// index stays small.
 const TILE: usize = 64;
-/// Maximum pixel edge accepted by Show source and checkpoint formats; capture downscales to it.
+
 pub const MAX_FRAME_EDGE: u32 = 2_560;
 const PIXEL: usize = 4;
 
-/// Recorded frames and their signatures, in time order.
 pub struct Journal {
-    /// One per frame held.
     samples: Vec<Sample>,
-    /// Runs of frames of one size; a resolution change starts the next.
     segments: Vec<Segment>,
-    /// Compressed bytes held.
     bytes: usize,
-    /// The most compressed bytes held once more than two frames are.
     budget: usize,
-    /// Every `stride`th arrival is admitted; it doubles whenever the journal thins.
     stride: usize,
-    /// Arrivals counted by [`Journal::admit`].
     arrived: usize,
-    /// The last recorded frame, which the next is compared against; absent before the first frame
-    /// and once sealed.
     latest: Option<Image>,
 }
 
 struct Segment {
-    /// The index in [`Journal::samples`] of the segment's first frame.
     first: usize,
     width: usize,
     height: usize,
-    /// Each tile's versions, in recording order; the first belongs to the segment's first frame.
     tiles: Vec<Vec<Version>>,
 }
 
-/// A tile as one frame left it: rows of pixels, each byte replaced by its difference from the
-/// same byte of the pixel to its left, then deflated.
 struct Version {
-    /// The index of the first frame that shows this version.
     first: usize,
     data: Arc<[u8]>,
 }
 
-/// One tile's place in its frame, in pixels.
 #[derive(Clone, Copy)]
 struct Tile {
     left: usize,
@@ -71,8 +47,6 @@ struct Tile {
 }
 
 impl Tile {
-    // fdeflate uses up to 12 bits per input byte; noisy tiles can grow by half. Leave room for
-    // its fixed zlib/block headers and the source/log record framing as well.
     fn encoded_limit(self) -> usize {
         self.width
             .saturating_mul(self.height)
@@ -82,7 +56,6 @@ impl Tile {
             .saturating_add(128)
     }
 
-    /// The bytes the tile covers in each row of its frame.
     fn columns(self) -> Range<usize> {
         self.left.saturating_mul(PIXEL)..self.left.saturating_add(self.width).saturating_mul(PIXEL)
     }
@@ -94,7 +67,6 @@ impl Default for Journal {
     }
 }
 
-/// Summarizes the journal; its tiles are screen content and never print.
 impl fmt::Debug for Journal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Journal")
@@ -107,16 +79,11 @@ impl fmt::Debug for Journal {
 }
 
 impl Journal {
-    /// An empty journal without a budget.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// An empty journal that holds at most `budget` compressed bytes. Each time it runs past the
-    /// budget, every second frame is dropped and arrivals are admitted half as often from then on,
-    /// so a long scroll or video keeps even coverage within it. Two frames are always held,
-    /// whatever they cost.
     #[must_use]
     pub const fn with_budget(budget: usize) -> Self {
         Self {
@@ -130,42 +97,33 @@ impl Journal {
         }
     }
 
-    /// Counts a frame's arrival and, when the budget keeps it, returns the admission that records
-    /// it, so a frame the budget would drop costs nothing to prepare.
     pub fn admit(&mut self) -> Option<Admission<'_>> {
         let admitted = self.arrived.is_multiple_of(self.stride);
         self.arrived = self.arrived.saturating_add(1);
         admitted.then_some(Admission(self))
     }
 
-    /// The journal without the frame it keeps only to compare the next one against, for when
-    /// recording ends. Every frame held still rebuilds exactly; a frame recorded later starts a new
-    /// run of frames.
     #[must_use]
     pub fn sealed(mut self) -> Self {
         self.latest = None;
         self
     }
 
-    /// The signature of every frame held, in time order.
     #[must_use]
     pub fn samples(&self) -> &[Sample] {
         &self.samples
     }
 
-    /// Whether no frame is held.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.samples.is_empty()
     }
 
-    /// Compressed bytes held.
     #[must_use]
     pub const fn bytes(&self) -> usize {
         self.bytes
     }
 
-    /// The frame on screen at `at`: the latest recorded at or before it, else the first.
     #[must_use]
     pub fn frame_at(&self, at: Moment) -> Option<Image> {
         let index = self
@@ -179,9 +137,6 @@ impl Journal {
         self.segments.get(position)?.frame(index)
     }
 
-    /// Drops every second frame and its sample, keeping the first and the last, and admits
-    /// arrivals half as often from then on, so a journal over its budget keeps even coverage of
-    /// the whole recording. Every kept frame still rebuilds exactly.
     fn thin(&mut self) {
         let count = self.samples.len();
         let renumbered: Vec<Option<usize>> = (0..count)
@@ -204,16 +159,11 @@ impl Journal {
     }
 }
 
-/// A frame's arrival the journal admitted. Only [`Journal::admit`] makes one, so every frame
-/// recorded counts toward how often arrivals are admitted.
 #[derive(Debug)]
 #[must_use = "an admitted frame is recorded only through its admission"]
 pub struct Admission<'a>(&'a mut Journal);
 
 impl Admission<'_> {
-    /// Records a sampled image, then thins to budget. The returned entry shares its immutable
-    /// compressed tiles with the journal and can be sent to a checkpoint writer without another
-    /// compression pass. Callers that need no checkpoint can discard it.
     #[expect(
         clippy::must_use_candidate,
         reason = "Recording mutates the admitted journal; only checkpoint callers need the returned entry"
@@ -244,11 +194,6 @@ impl Admission<'_> {
         entry
     }
 
-    /// Restores an admitted checkpoint entry through the same sampling and thinning fold.
-    ///
-    /// # Errors
-    /// Rejects a delta whose geometry does not follow the journal. Log decoding checks entry
-    /// structure before constructing it; damaged compressed pixels fail when a frame is read.
     pub fn restore(self, at: Moment, entry: &Entry) -> Result<(), SourceError> {
         let Self(journal) = self;
         if !entry.reset
@@ -263,7 +208,6 @@ impl Admission<'_> {
     }
 }
 
-/// One admitted frame's signature and changed tiles. Private pixels never appear in diagnostics.
 #[derive(Clone)]
 pub struct Entry {
     width: usize,
@@ -283,8 +227,6 @@ impl fmt::Debug for Entry {
 }
 
 impl Entry {
-    /// Bytes a queued entry can retain independently of the journal, including its signature and
-    /// tile references. This is deliberately conservative rather than an allocator measurement.
     #[must_use]
     pub fn bytes(&self) -> usize {
         self.tiles.iter().fold(
@@ -348,9 +290,6 @@ impl Segment {
             .sum()
     }
 
-    /// The segment with only the frames `renumbered` keeps, numbered anew; `end` is the index after
-    /// its last frame. A tile version passes to the first kept frame that shows it, so the frames
-    /// after a dropped one rebuild unchanged. `None` when no frame of the segment is kept.
     fn thinned(self, renumbered: &[Option<usize>], end: usize) -> Option<Self> {
         let kept_from = |from: usize, until: usize| {
             renumbered
@@ -417,7 +356,6 @@ impl Version {
         }
     }
 
-    /// Writes this version of the tile into `rgba`, a frame `stride` bytes wide.
     fn restore(&self, tile: Tile, stride: usize, rgba: &mut [u8]) -> Option<()> {
         let columns = tile.columns();
         let row_bytes = columns.len();
@@ -447,8 +385,6 @@ impl Version {
     }
 }
 
-/// Pairs each run of frames with the index just past it: where the next run starts, or `end`
-/// after the last.
 fn with_ends<T>(
     runs: Vec<T>,
     start: impl Fn(&T) -> usize,
@@ -461,7 +397,6 @@ fn with_ends<T>(
     })
 }
 
-/// The tiles of a `width × height` frame, row by row.
 fn tiles(width: usize, height: usize) -> impl Iterator<Item = Tile> {
     (0..height).step_by(TILE).flat_map(move |top| {
         (0..width).step_by(TILE).map(move |left| Tile {
@@ -473,7 +408,6 @@ fn tiles(width: usize, height: usize) -> impl Iterator<Item = Tile> {
     })
 }
 
-/// The rows of `image` that `tile` covers, cut to its columns.
 fn tile_rows(image: &Image, tile: Tile) -> impl Iterator<Item = &[u8]> {
     let columns = tile.columns();
     image

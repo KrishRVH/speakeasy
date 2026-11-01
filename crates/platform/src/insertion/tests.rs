@@ -1,6 +1,3 @@
-//! Drives the checks before insertion touches its target, the modifier wait, UTF-16 chunking, and
-//! how an arboard read reports a clipboard change; no test touches the clipboard or sends input.
-
 use anyhow::Context as _;
 
 use super::{Delivery, Inserted, utf16_chunks, wait_for_released_modifiers};

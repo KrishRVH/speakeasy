@@ -1,5 +1,3 @@
-//! A scripted Show of a settings window, for previews and tests: deterministic, with no capture.
-
 use std::time::Duration;
 
 use tiny_skia::{
@@ -15,10 +13,8 @@ use crate::{
     signature::{Sample, Signature},
 };
 
-/// The demo renders frames this small just to fingerprint them; a fingerprint's 128 × 72 grid
-/// needs no more, and rendering costs grow with every pixel.
 const SAMPLE_SIZE: (u32, u32) = (320, 200);
-/// The scene's design size in logical pixels; frames scale it to any resolution.
+
 const SCENE: Size = Size {
     width: 1440.0,
     height: 900.0,
@@ -33,7 +29,7 @@ const CORNER_RADIUS: f32 = 14.0;
 const SIDEBAR_RIGHT: f32 = 380.0;
 const TITLE_BAR: f32 = 44.0;
 const SECTIONS: [&str; 4] = ["General", "Shortcuts", "Audio", "Appearance"];
-/// Where General and Appearance sit in [`SECTIONS`].
+
 const GENERAL: usize = 0;
 const APPEARANCE: usize = 3;
 const ROW_TOP: f32 = 230.0;
@@ -41,7 +37,7 @@ const ROW_HEIGHT: f32 = 78.0;
 const CONTROL_RIGHT: f32 = 1240.0;
 const SLIDER_LEFT: f32 = 900.0;
 const SLIDER_Y: f32 = row_center(2);
-/// The slider's value where the drag picks it up and where it lets go.
+
 const SLIDER_FROM: f32 = 0.35;
 const SLIDER_TO: f32 = 0.7;
 
@@ -59,7 +55,6 @@ const DRAG_START: Moment = Moment::from_millis(16_000);
 const DRAG_END: Moment = Moment::from_millis(17_000);
 const END: Moment = Moment::from_millis(20_000);
 
-/// The narration, as phrases starting at a moment.
 const NARRATION: [(u64, &str); 6] = [
     (400, "Here's the settings window."),
     (2_200, "When I open Appearance,"),
@@ -69,24 +64,17 @@ const NARRATION: [(u64, &str); 6] = [
     (15_600, "Dragging the text size slider works, though."),
 ];
 
-/// A scripted Show of a settings window, narrated throughout.
-///
-/// A click opens a section, ink circles a menu and points at a label running under a button, a
-/// toggle ignores a click and is pinned, and a slider follows a drag.
 #[derive(Clone, Debug)]
 pub struct Demo {
     typeface: Typeface,
 }
 
 impl Demo {
-    /// A demo whose interface text is drawn in `typeface`.
     #[must_use]
     pub const fn new(typeface: Typeface) -> Self {
         Self { typeface }
     }
 
-    /// The screen at `at`, rendered at `width × height` pixels; fails when a dimension is zero or
-    /// too large to allocate.
     fn frame(&self, at: Moment, (width, height): (u32, u32)) -> Result<Image, Error> {
         let mut image = Image::filled(width, height, [20, 22, 28])?;
         let scale = Transform::from_scale(width as f32 / SCENE.width, height as f32 / SCENE.height);
@@ -99,12 +87,6 @@ impl Demo {
         Ok(image)
     }
 
-    /// The scripted Show as a bundle, sampled every [`SAMPLE_INTERVAL`] as a recorded Show is,
-    /// with keyframes rendered at `keyframe_size` pixels.
-    ///
-    /// # Errors
-    /// Fails when a keyframe dimension is zero or too large to allocate, or the script records no
-    /// frames.
     pub fn bundle(&self, keyframe_size: (u32, u32)) -> Result<Bundle, Error> {
         let recording = recording();
         let samples = std::iter::successors(Some(Moment::START), |at| {
@@ -287,7 +269,6 @@ impl Scene<'_> {
         self.centered("Save", 17.0, save.center().x, 768.0, [255; 4]);
     }
 
-    /// A small downward triangle, as a menu shows.
     fn chevron(&mut self, center: Point) {
         let mut builder = PathBuilder::new();
         builder.move_to(center.x - 6.0, center.y - 3.0);
@@ -356,7 +337,6 @@ fn slider_x(value: f32) -> f32 {
     SLIDER_LEFT + (CONTROL_RIGHT - SLIDER_LEFT) * value
 }
 
-/// The slider follows the drag, easing between where it started and where it was let go.
 fn slider_value(at: Moment) -> f32 {
     let progress = at
         .since(DRAG_START)
@@ -370,7 +350,6 @@ fn normalized(x: f32, y: f32) -> Point {
     Point::new(x / SCENE.width, y / SCENE.height)
 }
 
-/// Everything the scripted Show captured except its frames.
 fn recording() -> Recording {
     Recording {
         duration: END,
@@ -402,7 +381,6 @@ fn recording() -> Recording {
     }
 }
 
-/// A circle around the theme menu, then a three-stroke arrow at the label under the button.
 fn strokes() -> Vec<Stroke> {
     let ink = |point: Point, at: u64| InkPoint {
         point: normalized(point.x, point.y),
@@ -438,7 +416,6 @@ fn strokes() -> Vec<Stroke> {
     .collect()
 }
 
-/// Words spread over each phrase at a steady speaking pace.
 fn narration() -> Narration {
     const PER_CHARACTER: Duration = Duration::from_millis(62);
     Narration::Words(

@@ -1,6 +1,3 @@
-//! Grouping strokes and pins into numbered marks, reading their shapes from generated strokes and
-//! strokes of real captures, and placing their labels.
-
 use std::{f32::consts::TAU, iter};
 
 use super::*;
@@ -28,7 +25,6 @@ fn shape_of(points: &[[f32; 2]], surface: Size) -> Shape {
     group(&[stroke(points, 0)], &[], surface)[0].shape
 }
 
-/// Corners joined by points 4 px apart on [`SURFACE`], as a mouse samples them.
 fn polyline(corners: &[[f32; 2]]) -> Vec<[f32; 2]> {
     let corners: Vec<Point> = corners.iter().copied().map(Point::from).collect();
     corners
@@ -44,7 +40,6 @@ fn polyline(corners: &[[f32; 2]]) -> Vec<[f32; 2]> {
         .collect()
 }
 
-/// Points 3° apart round an ellipse, from angle `from` to `to` in radians.
 fn ellipse(center: [f32; 2], radii: [f32; 2], from: f32, to: f32) -> Vec<[f32; 2]> {
     iter::successors(Some(from), |angle| Some(angle + TAU / 120.0))
         .take_while(|&angle| angle < to)
@@ -58,7 +53,6 @@ fn ellipse(center: [f32; 2], radii: [f32; 2], from: f32, to: f32) -> Vec<[f32; 2
         .collect()
 }
 
-/// `points` turned `degrees` clockwise on [`SURFACE`] about `center`.
 fn slanted(points: &[[f32; 2]], center: [f32; 2], degrees: f32) -> Vec<[f32; 2]> {
     points
         .iter()
@@ -70,7 +64,6 @@ fn slanted(points: &[[f32; 2]], center: [f32; 2], degrees: f32) -> Vec<[f32; 2]>
         .collect()
 }
 
-/// `samples` points back and forth over a line of text, drifting up and down.
 fn scribble(samples: u16) -> Vec<[f32; 2]> {
     (0..samples)
         .map(f32::from)
@@ -83,7 +76,6 @@ fn scribble(samples: u16) -> Vec<[f32; 2]> {
         .collect()
 }
 
-/// A stroke of a real capture, from `x, y, ms` triples begun `at` milliseconds into the Show.
 fn real(triples: &[u16], at: u64) -> Stroke {
     Stroke::new(
         triples
@@ -99,13 +91,10 @@ fn real(triples: &[u16], at: u64) -> Stroke {
     .unwrap()
 }
 
-/// A point Scrawl stores in ten-thousandths of the surface.
 fn scrawl(x: u16, y: u16) -> Point {
     Point::new(f32::from(x) / 10_000.0, f32::from(y) / 10_000.0)
 }
 
-/// The corners of an arrow drawn in one go: its shaft, then a barb out, back to the tip, and a
-/// barb out on the other side.
 const TWO_BARBED_ARROW: [[f32; 2]; 5] = [
     [0.1, 0.3],
     [0.3, 0.25],
@@ -197,8 +186,6 @@ fn an_arrow_points_at_its_head_whichever_way_it_was_drawn() {
     }
 }
 
-/// Strokes drawn with a mouse in real captures: a flat loop round a table cell, an arrow drawn in
-/// one go, and underlines whose ends hook back like a lone barb.
 #[test]
 fn real_strokes_read_as_they_were_drawn() {
     let marks = group(
@@ -269,14 +256,11 @@ fn arrows_drawn_one_after_another_are_not_one_arrow() {
     assert_eq!(marks[0].shape, Shape::Scribble);
 }
 
-/// A loop that runs on into a tail or past where it began, or starts with a lead-in, still
-/// circles something, however it is slanted: what the loop goes round.
 #[test]
 fn a_loop_with_a_lead_in_a_tail_or_an_overshoot_circles_what_it_goes_round() {
     let flat = |from: f32, to: f32| ellipse([0.3, 0.3], [0.1, 0.05], from, to);
     let flat_region = "① circled region x 0.20–0.40, y 0.25–0.35";
-    // Flat loops round a line of text, slanted until they fill about as much of their box along
-    // the surface's axes as an X's triangle fills of its own.
+
     let slanted_loop = |center: [f32; 2], radii: [f32; 2], degrees: f32| {
         slanted(&ellipse(center, radii, 0.0, TAU), center, degrees)
     };
@@ -302,7 +286,6 @@ fn a_loop_with_a_lead_in_a_tail_or_an_overshoot_circles_what_it_goes_round() {
             .concat(),
             flat_region,
         ),
-        // Short enough that the stroke's own ends meet as a loop's do.
         (
             "round loop with a short tail",
             [
@@ -322,7 +305,6 @@ fn a_loop_with_a_lead_in_a_tail_or_an_overshoot_circles_what_it_goes_round() {
             led_in,
             "① circled region x 0.26–0.55, y 0.35–0.45",
         ),
-        // Its lead-in and tail cross where the loop closes.
         (
             "α",
             polyline(&[
@@ -354,23 +336,18 @@ fn a_loop_with_a_lead_in_a_tail_or_an_overshoot_circles_what_it_goes_round() {
     );
 }
 
-/// The flat-loop guards and the search inside strokes lose no loop that closes at its ends: round
-/// and flat loops, loops open on either axis, and loops gone round again.
 #[test]
 fn every_loop_closed_at_its_ends_is_still_a_circle() {
     let center = [0.3, 0.3];
     let cases = [
         ellipse(center, [0.1, 0.1], 0.0, TAU),
         ellipse(center, [0.1, 0.05], 0.0, TAU),
-        // Open by about 30° beside one end of its short axis, and just round enough to need no
-        // flat-loop guard.
         ellipse(center, [0.115, 0.05], 0.25 * TAU, 1.25 * TAU - 0.55),
         ellipse(center, [0.1, 0.1], 0.3, TAU - 0.3),
         ellipse(center, [0.05, 0.1], 0.2, TAU - 0.2),
         ellipse(center, [0.1, 0.08], 0.0, 2.0 * TAU),
         ellipse(center, [0.1, 0.1], 0.0, 3.0 * TAU),
         ellipse(center, [0.1, 0.1], 0.0, 5.0 * TAU),
-        // Around one line of text, 6:1: closed, gone round twice, and open by 15 px.
         ellipse(center, [0.15, 0.025], 0.0, TAU),
         ellipse(center, [0.15, 0.025], 0.0, 2.0 * TAU),
         ellipse(center, [0.15, 0.025], 0.1, TAU),
@@ -380,7 +357,6 @@ fn every_loop_closed_at_its_ends_is_still_a_circle() {
     }
 }
 
-/// Going round and round a line of text is scribbling over it.
 #[test]
 fn a_flat_loop_counts_up_to_three_turns() {
     for turns in [1.0, 3.0] {
@@ -391,12 +367,8 @@ fn a_flat_loop_counts_up_to_three_turns() {
     assert_eq!(shape_of(&points, SURFACE), Shape::Scribble);
 }
 
-/// The loop search tries only some points of a long stroke as a loop's ends, but measures each
-/// stretch's length and area over every point along it, so sampling smooths no zigzag away.
 #[test]
 fn sampling_a_long_stroke_smooths_no_zigzag_away() {
-    // The search tries every third point of these 1,534, each on a smooth flat ellipse; the
-    // others zigzag across it.
     let mut zigzag: Vec<[f32; 2]> = (0..511_u16)
         .flat_map(|step| {
             let angle = TAU * f32::from(step) / 511.0;
@@ -408,7 +380,6 @@ fn sampling_a_long_stroke_smooths_no_zigzag_away() {
     assert_eq!(shape_of(&zigzag, SURFACE), Shape::Scribble);
 }
 
-/// Strokes that look a little like an arrow or a loop.
 #[test]
 fn strokes_that_resemble_arrows_or_circles_read_as_neither() {
     let figure_eight = (0..=240_u8)
@@ -448,9 +419,7 @@ fn strokes_that_resemble_arrows_or_circles_read_as_neither() {
             ]),
         ),
         ("brief scribble", scribble(60)),
-        // Closes on itself and fills its box: only its length tells it from a circle.
         ("ten-second scribble", scribble(600)),
-        // Each closes a triangle or a lobe where it crosses itself.
         (
             "X joined at the right",
             polyline(&[[0.1, 0.1], [0.2, 0.2], [0.2, 0.1], [0.1, 0.2]]),
@@ -483,7 +452,6 @@ fn strokes_that_resemble_arrows_or_circles_read_as_neither() {
             polyline(&[[0.1, 0.3], [0.3, 0.25], [0.26, 0.24]]),
         ),
         ("line", polyline(&[[0.1, 0.3], [0.4, 0.3]])),
-        // Each breaks one rule of an arrow drawn in one go.
         (
             "bent shaft",
             polyline(&[
@@ -679,11 +647,6 @@ fn underlines_report_their_extent_and_stroke_count() {
     );
 }
 
-/// Two strokes of one real Scrawl capture, drawn with a mouse on a 1728 × 1117 screen: a flat loop
-/// round a table cell that ends just past where it began, and an arrow drawn in one go, its shaft
-/// left to right, then a barb back above it, back to the tip, and a barb below. Strokes are
-/// `x, y, ms` triples: ten-thousandths of the surface, and milliseconds since the pen went down.
-/// Scrawl's test data, under the MIT License; see NOTICE.md.
 const CAPTURE: Size = Size {
     width: 1728.0,
     height: 1117.0,
@@ -714,8 +677,6 @@ const REAL_ARROW: [u16; 120] = [
     4481, 3284, 1308,
 ];
 
-/// Underlines from real Scrawl captures on a 2560 × 1440 screen whose ends hook back like an
-/// arrow's lone barb.
 const HOOK_CAPTURE: Size = Size {
     width: 2560.0,
     height: 1440.0,

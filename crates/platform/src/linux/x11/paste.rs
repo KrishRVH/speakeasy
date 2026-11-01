@@ -1,6 +1,3 @@
-//! X11 insertion: waits for released shortcut keys, copies, confirms clipboard ownership, focus,
-//! and released keys again, then sends the paste shortcut once through XTEST.
-
 use std::{
     ops::ControlFlow,
     panic::{self, AssertUnwindSafe},
@@ -32,13 +29,6 @@ use crate::{
     },
 };
 
-/// Serializes X11 insertion on its own thread. Dropping it revokes the current permit and closes its
-/// queue, then joins the thread; the desktop thread closes the input lane after reporting why it
-/// stopped.
-///
-/// Every request shares one X connection, so a failed setup or a panic ends the thread instead of
-/// serving on with a connection in an unknown state. It reports why, then abandons each queued
-/// request, which answers its caller.
 pub(super) struct InsertionWorker {
     _thread: OwnedThread,
     input: InputSender,
@@ -60,7 +50,6 @@ impl InsertionWorker {
         )
     }
 
-    /// Runs `open` on the worker thread, then `serve` with what it opened.
     fn spawn<S>(
         input: InputSender,
         requests: Receiver<Insertion>,
@@ -71,9 +60,6 @@ impl InsertionWorker {
         let thread = OwnedThread::spawn("x11-insertion", {
             let (input, requests) = (input.clone(), requests.clone());
             move || {
-                // Unwinding drops the request in hand, which answers its caller. `opened` drops
-                // only after a failed setup is reported, so that report precedes the desktop loop's
-                // generic setup failure.
                 let served = match panic::catch_unwind(AssertUnwindSafe(open)) {
                     Ok(Ok(state)) => {
                         opened.send(());
@@ -87,7 +73,7 @@ impl InsertionWorker {
                     Ok(Err(error)) => input.fail(format!(
                         "X11 input is unavailable: {error}. Check your desktop connection, then resume dictation."
                     )),
-                    // Never the panic payload, which could quote the text.
+
                     Err(_) => input.fail(
                         "X11 input stopped unexpectedly. Resume dictation to reconnect.".into(),
                     ),
@@ -103,10 +89,6 @@ impl InsertionWorker {
         })
     }
 
-    /// Resolves once the worker has opened its connection and read the keyboard mapping.
-    ///
-    /// # Errors
-    /// Fails when setup failed, after the worker has reported why.
     pub(super) async fn ready(&self) -> anyhow::Result<()> {
         self.ready.recv().await.context("X11 input setup stopped")
     }
@@ -119,8 +101,6 @@ impl Drop for InsertionWorker {
     }
 }
 
-/// What the insertion thread owns: one X connection, the keyboard mapping it read, and the
-/// options it pastes with.
 struct Paster {
     clipboard: Clipboard,
     keyboard: Keyboard,
@@ -168,7 +148,7 @@ impl Paster {
         let shortcut_held = self.options.paste != LinuxPaste::Manual
             && wait_for_released_modifiers(&request.permit, || self.modifiers_held())?;
         let owner_changed = self.clipboard.owner()? != previous_owner;
-        // Checked after that round trip, so a cancel during it never reaches the clipboard.
+
         if !request.permit.active() {
             return Ok(ControlFlow::Break(Inserted::Cancelled));
         }
@@ -193,7 +173,6 @@ impl Paster {
         Ok(ControlFlow::Continue(owner))
     }
 
-    /// Whether a modifier other than a lock is down.
     fn modifiers_held(&self) -> anyhow::Result<bool> {
         let keys = self.clipboard.connection.query_keymap()?.reply()?.keys;
         Ok(self.keyboard.held_modifiers(&keys) & !self.keyboard.lock_modifiers() != 0)
@@ -201,7 +180,7 @@ impl Paster {
 
     fn paste_copied(&self, request: &Insertion, owner: Window) -> anyhow::Result<Inserted> {
         let terminal = self.options.paste == LinuxPaste::Terminal;
-        // The first layout is the only one XTEST types through.
+
         let Some(chord) =
             PasteChord::resolve(terminal, |symbol| self.keyboard.unshifted_keycode(symbol))
         else {
@@ -220,7 +199,7 @@ impl Paster {
             .clipboard
             .external_target(HostSession::X11)
             .unwrap_or(false);
-        // Modifiers pressed during those round trips would join the synthetic paste chord.
+
         let released = !self.modifiers_held()?;
         if let Some(outcome) = Delivery::Paste.preflight(external, released) {
             return Ok(outcome);
@@ -231,7 +210,7 @@ impl Paster {
         if !request.permit.commit() {
             return Ok(Inserted::Cancelled);
         }
-        // Once committed, the key sequence completes even if cancellation arrives.
+
         let submitted = submit_paste(
             chord,
             |kind, code| Ok(connection.xtest_fake_input(kind, code, 0, 0, 0, 0, 0)?),
@@ -276,8 +255,7 @@ fn submit_paste<C>(
         };
         cookies.push(cookie);
     }
-    // Releases follow even a failed press. Checks wait for the barrier: a round trip per event
-    // would hold synthetic modifiers down.
+
     for code in chord.presses().rev() {
         match enqueue(xproto::KEY_RELEASE_EVENT, code) {
             Ok(cookie) => cookies.push(cookie),
@@ -315,8 +293,6 @@ mod tests {
         checks: usize,
     }
 
-    /// Runs `submit_paste` against fakes that refuse the enqueue at `fail_at` and, when asked,
-    /// the first check, then proves every enqueue precedes the barrier and every check follows it.
     fn trace_paste(
         shift: Option<u8>,
         fail_at: Option<usize>,
@@ -494,7 +470,7 @@ mod tests {
                 released
                     .recv_timeout(PATIENCE)
                     .expect("The test queues a second request");
-                // Unwinds without the panic hook, so the payload never reaches test output.
+
                 panic::resume_unwind(Box::new("private payload"));
             },
         )?;

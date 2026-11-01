@@ -1,5 +1,3 @@
-//! Durable narration precedes erasure; failed deletion keeps cleanup's authority and retry path.
-
 use super::*;
 
 async fn audio_checkpoint(parent: &Path) -> anyhow::Result<Checkpoint> {

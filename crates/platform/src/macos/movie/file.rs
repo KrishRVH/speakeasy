@@ -1,5 +1,3 @@
-//! `AVFoundation` reads the validated handle, never a path resolved a second time.
-
 use std::{
     fs::File,
     os::unix::fs::FileExt as _,
@@ -47,16 +45,12 @@ impl Input {
 }
 
 define_class!(
-    // SAFETY: NSObject has no subclass requirements. The immutable ivars contain a synchronized
-    // file lease; callbacks catch Rust panics and never send private native errors to diagnostics.
     #[unsafe(super = NSObject)]
     #[ivars = Input]
     struct Reader;
 
-    // SAFETY: NSObjectProtocol adds no requirements.
     unsafe impl NSObjectProtocol for Reader {}
 
-    // SAFETY: the callback has the documented signature and finishes each accepted request.
     unsafe impl AVAssetResourceLoaderDelegate for Reader {
         #[unsafe(method(resourceLoader:shouldWaitForLoadingOfRequestedResource:))]
         fn load(&self, _: &AVAssetResourceLoader, request: &AVAssetResourceLoadingRequest) -> bool {
@@ -64,7 +58,6 @@ define_class!(
                 catch_unwind(AssertUnwindSafe(|| self.respond(request))),
                 Ok(Ok(()))
             ) {
-                // SAFETY: this synthetic error has no untyped userInfo or private data.
                 let error = unsafe {
                     NSError::errorWithDomain_code_userInfo(
                         ns_string!("SpeakeasyMovieRead"),
@@ -72,8 +65,7 @@ define_class!(
                         None,
                     )
                 };
-                // SAFETY: the request is borrowed for this callback and the error contains no
-                // private path or media. A failure completes this accepted request exactly once.
+
                 unsafe {
                     request.finishLoadingWithError(Some(&error));
                 }
@@ -94,14 +86,13 @@ impl Reader {
             bytes: prefix.bytes,
             compatibility: prefix.compatibility().clone(),
         });
-        // SAFETY: NSObject initialization follows allocation and initialization of all Rust ivars.
+
         unsafe { msg_send![super(this), init] }
     }
 
     fn respond(&self, request: &AVAssetResourceLoadingRequest) -> anyhow::Result<()> {
         let input = self.ivars();
-        // SAFETY: AVFoundation owns this request throughout the delegate callback. Only the
-        // synthetic URL is served; all external references are forbidden on the asset as well.
+
         unsafe {
             ensure!(
                 request.request().URL().and_then(|url| url.absoluteString())
@@ -167,8 +158,7 @@ impl Asset {
         let url = NSURL::URLWithString(ns_string!("speakeasy-movie://local/recording.mp4"))
             .context("Cannot create the local movie resource")?;
         let restrictions = NSNumber::new_usize(AVAssetReferenceRestrictions::ForbidAll.0);
-        // SAFETY: these are documented asset options and an immutable URL with no filesystem
-        // path. The delegate stays strongly owned while the loader holds only a weak reference.
+
         let native = unsafe {
             let options = NSDictionary::from_slices(
                 &[AVURLAssetReferenceRestrictionsKey],
@@ -190,8 +180,6 @@ impl Asset {
 
 impl Drop for Asset {
     fn drop(&mut self) {
-        // SAFETY: the owner has already received image-generation completion. Detaching prevents
-        // new delegate work; taking the lease below waits for any callback still using the file.
         unsafe {
             self.native.cancelLoading();
             self.native.resourceLoader().setDelegate_queue(None, None);

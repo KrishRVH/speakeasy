@@ -1,5 +1,3 @@
-//! Single-line editing with UTF-16 IME ranges and grapheme cursor movement. Content never prints.
-
 use std::ops::Range;
 
 use unicode_segmentation::UnicodeSegmentation as _;
@@ -121,8 +119,6 @@ impl Edit {
         start..from_utf16(&self.text, range.end).max(start)
     }
 
-    /// A composition's selection is relative to the inserted text, never the whole field.
-    /// Reject oversized or multiline input before mutation; callers can show a local remedy.
     pub(super) fn replace(
         &mut self,
         range: Option<Range<usize>>,

@@ -1,7 +1,3 @@
-//! Checks that every frame held rebuilds exactly through resolution changes, sealing, and
-//! thinning, that a still screen costs almost nothing, and that a budget thins frames with their
-//! samples.
-
 use proptest::prelude::*;
 
 use super::*;
@@ -14,14 +10,12 @@ fn frame(width: u32, height: u32, paint: impl Fn(usize, usize) -> [u8; 4]) -> Im
     Image::from_rgba(width, height, pixels).unwrap()
 }
 
-/// The next arrival at a journal without a budget, which admits every one.
 fn admitted(journal: &mut Journal) -> Admission<'_> {
     journal
         .admit()
         .expect("A journal without a budget admits every arrival")
 }
 
-/// A frame of four flat quadrants in `shade`, 70 × 70 when `small` and 150 × 90 otherwise.
 #[expect(
     clippy::arithmetic_side_effects,
     reason = "A quadrant index under 4; debug overflow checks fail the test"
@@ -35,8 +29,6 @@ fn quadrants(shade: [u8; 4], small: bool) -> Image {
     })
 }
 
-/// Whether a frame is small: one draw in three, taken from `0..3` so the committed seeds still
-/// replay the cases they recorded.
 fn small() -> impl Strategy<Value = bool> {
     (0_usize..3).prop_map(|draw| draw == 2)
 }
@@ -61,7 +53,7 @@ fn a_still_screen_costs_almost_nothing_and_changes_cost_their_tiles() {
         first,
         "An unchanged screen stores nothing more"
     );
-    // A caret appearing changes one tile.
+
     let caret = |x: usize, y: usize| {
         if (100..102).contains(&x) && (40..60).contains(&y) {
             [0, 0, 0, 255]
@@ -100,7 +92,7 @@ fn any_recorded_moment_is_rebuilt_exactly() {
         );
     }
     assert_eq!(journal.frame_at(Moment::START).as_ref(), frames.first());
-    // A resolution change starts a new run of frames and leaves the old ones intact.
+
     let resized = frame(64, 64, gradient(3));
     admitted(&mut journal).record(Moment::from_millis(1_000), resized.clone());
     assert_eq!(
@@ -111,7 +103,7 @@ fn any_recorded_moment_is_rebuilt_exactly() {
         journal.frame_at(Moment::from_millis(150)).as_ref(),
         frames.get(1)
     );
-    // Sealing keeps every moment, and a frame recorded after it is stored whole.
+
     let whole = {
         let mut alone = Journal::new();
         admitted(&mut alone).record(Moment::START, resized.clone());
@@ -142,7 +134,6 @@ fn any_recorded_moment_is_rebuilt_exactly() {
 
 #[test]
 fn each_thinning_halves_how_often_arrivals_are_admitted() {
-    // With no room past two frames, every frame recorded after the first two thins the journal.
     let mut journal = Journal::with_budget(0);
     let mut admitted = Vec::new();
     for arrival in 0_u8..9 {
@@ -214,13 +205,13 @@ proptest! {
     fn a_budget_thins_frames_and_their_samples_together(
         arrivals in prop::collection::vec((-300_i64..=300, 0_u8..4, small()), 1..48),
     ) {
-        // A few frames' worth, so arrivals overrun it and the journal thins again and again.
+
         const BUDGET: usize = 1_500;
         let mut journal = Journal::with_budget(BUDGET);
         let (mut shade, mut millis) = ([0_u8; 4], 0_u64);
         let (mut first, mut last) = (None, None);
         for (delta, quadrant, small) in arrivals {
-            // Capture clocks can repeat a moment or step back.
+
             millis = millis.saturating_add_signed(delta);
             if let Some(value) = shade.get_mut(usize::from(quadrant)) {
                 *value = value.wrapping_add(40);

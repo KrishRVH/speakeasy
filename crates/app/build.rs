@@ -1,6 +1,3 @@
-//! Embeds Windows application resources before linking. Failures surface as Cargo errors, never as
-//! a panic or a partial executable.
-
 #![forbid(unsafe_code)]
 
 use std::io::{self, Write as _};
@@ -9,7 +6,7 @@ const RESOURCE_DIR: &str = "../../packaging/windows";
 
 fn main() -> io::Result<()> {
     let mut output = io::stdout().lock();
-    // Declaring any input stops Cargo from rerunning this script whenever a package file changes.
+
     writeln!(output, "cargo::rerun-if-changed=build.rs")?;
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return Ok(());

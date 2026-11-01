@@ -1,6 +1,3 @@
-//! Drives the Ctrl+Win and Fn policies with synthetic key events and the held-modifier rules with
-//! chosen key states; no test installs a hook or reads the keyboard.
-
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
@@ -171,24 +168,22 @@ fn mac_alternative_modifiers_preserve_quick_application_shortcuts() {
     }
 }
 
-/// What a macOS key event's flags report with no modifier held.
 const NO_MODIFIERS: Modifiers = Modifiers {
     shift: false,
     other_shortcut: false,
     talk: false,
 };
-/// What a macOS key event's flags report while Fn is held.
+
 const FN_HELD: Modifiers = Modifiers {
     talk: true,
     ..NO_MODIFIERS
 };
-/// What a macOS key event's flags report while Command is held.
+
 const COMMAND_HELD: Modifiers = Modifiers {
     other_shortcut: true,
     ..NO_MODIFIERS
 };
 
-/// What Windows reports while `keys` are held.
 fn held(keys: &[u32]) -> Physical {
     let control = keys.contains(&LEFT_CONTROL) || keys.contains(&RIGHT_CONTROL);
     Physical::read(|key| {
@@ -211,12 +206,10 @@ fn function(down: bool) -> MacEvent {
     }
 }
 
-/// Left Shift's flag change, down when `down`, beside the modifiers in `others`.
 fn shift(down: bool, others: Modifiers) -> MacEvent {
     shift_on(MAC_LEFT_SHIFT, down, others)
 }
 
-/// The flag change of Shift key `code`, down when `down`, beside the modifiers in `others`.
 fn shift_on(code: i64, down: bool, others: Modifiers) -> MacEvent {
     MacEvent::FlagsChanged {
         code,
@@ -231,7 +224,6 @@ fn key(code: i64, down: bool, held: Modifiers) -> MacEvent {
     MacEvent::Key { code, down, held }
 }
 
-/// The keyboard's own report while Fn is up.
 fn keyboard_fn_up() -> bool {
     false
 }
@@ -240,7 +232,6 @@ fn delivered(decision: &Decision) -> Vec<Action> {
     decision.actions().collect()
 }
 
-/// A Windows policy holding left Ctrl+Win, and what Windows reports while both are held.
 fn windows_holding() -> (Windows, Physical) {
     let mut policy = Windows::default();
     policy.observe(LEFT_CONTROL, true, NONE_HELD, now());
@@ -252,7 +243,6 @@ fn windows_holding() -> (Windows, Physical) {
     (policy, held(&[LEFT_CONTROL, LEFT_WINDOWS]))
 }
 
-/// A macOS policy holding Fn.
 fn mac_holding() -> Mac {
     let mut mac = Mac::default();
     assert!(mac.observe(function(true), keyboard_fn_up, now()).starts());
@@ -361,8 +351,6 @@ fn windows_sides_repeats_space_and_passive_escape() {
     assert_eq!(escape.action, Some(Action::Escape));
 }
 
-/// Escape during a hold is the keyboard's only way to cancel a Show, so it must reach the owner as
-/// itself, never as another shortcut interrupting the hold.
 #[test]
 fn escape_during_a_hold_reaches_the_app_and_keeps_the_hold() {
     let (mut policy, both) = windows_holding();
@@ -459,9 +447,6 @@ fn w_and_a_during_a_hold_start_window_and_area_shows() {
     }
 }
 
-/// Replays key events, each `(milliseconds, key, down)`, through the Windows policy with nothing
-/// else held, and returns the double taps that asked for a pin, from the first press to the second
-/// release in milliseconds.
 fn windows_pins(events: &[(u64, u32, bool)]) -> Vec<(u64, u64)> {
     let start = now();
     let millis = |at: Instant| u64::try_from(at.duration_since(start).as_millis()).unwrap();
@@ -534,7 +519,7 @@ fn shift_taps_pin_beside_the_held_talk_shortcut() {
                 .action
         };
         assert_eq!(tap(&mut policy, 500), None);
-        // The held shortcut's autorepeat comes between the taps.
+
         policy.observe(LEFT_CONTROL, true, both, at(640));
         assert_eq!(
             tap(&mut policy, 700),
@@ -742,14 +727,12 @@ fn windows_missed_release_and_other_shortcuts_do_not_restart_hold() {
 
 #[test]
 fn a_missed_release_lets_s_reach_the_app() {
-    // Ctrl+Win went up on the secure desktop, where the hook sees nothing.
     let (mut policy, _) = windows_holding();
     let typed = policy.observe(LETTER_S, true, NONE_HELD, now());
     assert!(!typed.swallows(), "S after a missed release was swallowed");
     assert_eq!(delivered(&typed), [Action::Release]);
     assert!(!policy.observe(LETTER_S, false, NONE_HELD, now()).swallows());
 
-    // The tap missed Fn's release, so the next key's flags show Fn up.
     let mut mac = mac_holding();
     let typed = mac.observe(key(MAC_S, true, NO_MODIFIERS), keyboard_fn_up, now());
     assert!(
@@ -767,13 +750,11 @@ fn a_missed_release_lets_s_reach_the_app() {
 
 #[test]
 fn a_show_key_whose_release_went_unseen_asks_for_no_show_outside_a_hold() {
-    // S and Ctrl+Win went up on the secure desktop, so S typed afterward belongs to no hold.
     let (mut policy, both) = windows_holding();
     policy.observe(LETTER_S, true, both, now());
     let typed = policy.observe(LETTER_S, true, NONE_HELD, now());
     assert_eq!(delivered(&typed), [Action::Release]);
 
-    // The tap went off while S was held, and S and Fn came up unseen.
     let (sender, _events) = async_channel::bounded(4);
     let mut mac = mac_holding();
     mac.observe(key(MAC_S, true, FN_HELD), keyboard_fn_up, now());
@@ -790,7 +771,7 @@ fn a_show_key_whose_release_went_unseen_asks_for_no_show_outside_a_hold() {
 fn a_posted_event_without_fn_ends_no_hold_the_keyboard_still_makes() {
     let keyboard_fn_down = || true;
     let mut mac = mac_holding();
-    // Another app posts a key release and a Command release whose flags leave Fn out.
+
     let posted = mac.observe(key(MAC_Q, false, NO_MODIFIERS), keyboard_fn_down, now());
     assert_eq!(delivered(&posted), [], "A posted key-up ended the hold");
     let command_up = MacEvent::FlagsChanged {
@@ -910,7 +891,6 @@ fn mac_lifecycle_interruption_waits_for_fn_release() -> anyhow::Result<()> {
             .starts()
     );
 
-    // Fn went up while the Mac slept, unseen; the first press after waking still starts.
     policy.interrupt(&input);
     assert!(
         policy

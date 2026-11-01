@@ -1,6 +1,3 @@
-//! Microphone format validation and the CPAL input streams it admits. Their real-time callbacks
-//! never allocate or block, and stream errors are classified here for the capture thread.
-
 use std::{num::NonZeroUsize, sync::Arc, time::Instant};
 
 use anyhow::{Context as _, anyhow, bail, ensure};
@@ -15,7 +12,6 @@ pub(crate) const MAX_SAMPLE_RATE: u32 = 192_000;
 const MAX_CHANNELS: usize = 32;
 const UNSUPPORTED_FORMAT: &str = "Microphone format is unsupported. Change it in your system's sound settings, or choose another microphone in Settings.";
 
-/// Everything the stream callbacks own for one capture.
 pub(super) struct CallbackState {
     pub(super) channels: NonZeroUsize,
     pub(super) producer: Producer<f32>,
@@ -66,8 +62,6 @@ where
         .map_err(microphone_error)
 }
 
-/// The callback pair for one capture, independent of any device so tests can replay native callback
-/// ordering without opening a microphone.
 pub(super) fn capture_callbacks<T>(
     state: CallbackState,
 ) -> (
@@ -137,10 +131,8 @@ fn handle_stream_error(error: cpal::Error, errors: &Sender<cpal::Error>, control
 
 fn is_recoverable(kind: cpal::ErrorKind, first_sample_queued: bool) -> bool {
     match kind {
-        // WASAPI can report a discontinuity before its first packet, when no queued speech can be
-        // lost. Later, an Xrun may have dropped words, so it fails the recording.
         cpal::ErrorKind::Xrun => !first_sample_queued,
-        // Refused real-time priority and automatic rerouting leave the stream delivering.
+
         cpal::ErrorKind::RealtimeDenied | cpal::ErrorKind::DeviceChanged => true,
         _ => false,
     }
@@ -159,8 +151,6 @@ pub(super) fn capture_failure(
     Ok(())
 }
 
-/// What happened to the microphone and what to do; only a failure without its own message carries
-/// the driver's words.
 pub(super) fn microphone_error(error: cpal::Error) -> anyhow::Error {
     match error.kind() {
         cpal::ErrorKind::DeviceBusy => anyhow!(

@@ -1,5 +1,3 @@
-//! Opening, showing, and hiding the Settings window, and its file picker.
-
 use std::path::{Path, PathBuf};
 
 use anyhow::anyhow;
@@ -19,7 +17,6 @@ use crate::{
     show::review::{self, Source},
 };
 
-/// Names the Settings window in errors about its native handle.
 const WINDOW_NAME: &str = "Settings";
 
 pub(crate) fn reveal(cx: &mut App) {
@@ -84,16 +81,12 @@ pub(crate) fn reveal_shows(cx: &mut App) {
     }
 }
 
-/// Ends a launch without a tray once its Settings window has closed. Other windows come and go
-/// without ending it, such as the Show overlay, which closes after every Show.
 pub(crate) fn quit_after_settings(cx: &mut App) {
     if settings_if_open(cx).is_none() {
         super::request_quit(cx);
     }
 }
 
-/// The Settings window while it is open, shown or hidden. A window is gone before observers of its
-/// closing run, so reading it fails once it has closed.
 fn settings_if_open(cx: &App) -> Option<WindowHandle<Settings>> {
     cx.try_global::<Services>()?
         .settings
@@ -145,12 +138,10 @@ pub(super) fn open(cx: &mut App) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Settings' size where the display has room: tall enough to show every control without scrolling.
 const SETTINGS_SIZE: Size<Pixels> = size(px(560.0), px(860.0));
-/// What a smaller display keeps free around Settings, centered, for its title bar, a menu bar, and
-/// a taskbar or dock.
+
 const DISPLAY_CLEARANCE: Pixels = px(180.0);
-/// Settings never opens shorter than this; its controls scroll above the pinned commands.
+
 const MIN_HEIGHT: Pixels = px(360.0);
 
 fn window_options(cx: &App) -> WindowOptions {
@@ -188,7 +179,7 @@ fn set_visible(settings: WindowHandle<Settings>, visible: bool, cx: &mut App) {
             cx.update_if_running(show_tray_hint);
         }
     });
-    // Replacing the task cancels a queued hide when Settings is reopened first.
+
     cx.global_mut::<Services>().visibility = Some(task);
 }
 
@@ -196,11 +187,11 @@ pub(super) fn hide_on_close(window: &mut Window, cx: &mut App) -> bool {
     if !cx.has_global::<Services>() {
         return true;
     }
-    // The close callback already borrows this window, so the handle cannot update it recursively.
+
     if let Some(Some(view)) = window.root::<Settings>() {
         view.update(cx, Settings::end_practice);
     }
-    // Without a working tray icon, nothing could bring a hidden Settings back.
+
     #[cfg(target_os = "linux")]
     if !cx
         .try_global::<crate::tray::Tray>()
@@ -222,7 +213,6 @@ fn hide_to_tray(cx: &mut App) {
     }
 }
 
-/// Shows the first-hide hint once.
 fn show_tray_hint(cx: &mut App) {
     let services = cx.global::<Services>();
     let marker = tray_hint_marker(&services.path, services.mode);
@@ -245,9 +235,6 @@ fn show_tray_hint(cx: &mut App) {
     }
 }
 
-/// The file beside `settings` that remembers the tray hint across launches, so the user's settings
-/// file is never rewritten for it. A demo records no hint there, though a tray preview takes the
-/// instance lock beside the settings, so it shows the hint once per launch.
 fn tray_hint_marker(settings: &Path, mode: LaunchMode) -> Option<PathBuf> {
     (!mode.is_demo()).then(|| settings.with_file_name("tray-hint-seen"))
 }
@@ -265,10 +252,6 @@ fn minimize_to_tray(window: &Window, cx: &App) -> anyhow::Result<gpui::Task<()>>
     }))
 }
 
-/// Asks for one file of the type `filter` describes.
-///
-/// Windows gets the platform dialog: GPUI shows its picker inside the UI thread's message loop,
-/// where it stays unpainted while GPUI is idle.
 #[cfg(target_os = "windows")]
 pub(super) fn choose_file(
     window: &Window,
@@ -280,7 +263,6 @@ pub(super) fn choose_file(
     async move { picker?.await }
 }
 
-/// GPUI's picker takes no file-type filter.
 #[cfg(not(target_os = "windows"))]
 pub(super) fn choose_file(
     _: &Window,

@@ -1,26 +1,13 @@
-//! Named OS threads whose exit an async owner can await and whose drop joins them, asking a
-//! stoppable one to stop first.
-
 use std::{convert::Infallible, io, thread};
 
-/// An OS thread that belongs to exactly one value.
-///
-/// Dropping it joins the thread, so the thread's captures are released before any field declared
-/// after it in the containing value. [`exited`](Self::exited) lets an async owner wait for the body
-/// to finish, and [`join`](Self::join) for the thread to end, without blocking its executor.
 #[derive(Debug)]
 pub struct OwnedThread {
-    /// Never sends; it closes once the thread drops the receiving end.
     exit: async_channel::Sender<Infallible>,
     thread: thread::Thread,
     handle: Option<thread::JoinHandle<()>>,
 }
 
 impl OwnedThread {
-    /// Runs `body` on a new thread called `name`.
-    ///
-    /// # Errors
-    /// Fails with the operating system's error when it cannot create the thread.
     pub fn spawn(name: &str, body: impl FnOnce() + Send + 'static) -> io::Result<Self> {
         let (exit, alive) = async_channel::bounded::<Infallible>(1);
         let handle = thread::Builder::new()
@@ -36,30 +23,21 @@ impl OwnedThread {
         })
     }
 
-    /// The thread, for unparking a body that parks.
     #[must_use]
     pub const fn thread(&self) -> &thread::Thread {
         &self.thread
     }
 
-    /// Resolves once the body has returned or unwound.
     pub fn exited(&self) -> impl Future<Output = ()> + Send + use<> {
         let exit = self.exit.clone();
         async move { exit.closed().await }
     }
 
-    /// Whether the body has returned or unwound.
     #[must_use]
     pub fn is_finished(&self) -> bool {
         self.exit.is_closed()
     }
 
-    /// Resolves once the body has returned or unwound and the thread has ended. A thread's end
-    /// still runs its thread-local destructors, such as a COM apartment's teardown, which can
-    /// block, so the join runs on Tokio's blocking pool rather than the awaiting executor.
-    ///
-    /// # Panics
-    /// Panics when awaited outside a Tokio runtime.
     pub async fn join(self) {
         self.exited().await;
         #[expect(
@@ -82,23 +60,13 @@ impl Drop for OwnedThread {
     }
 }
 
-/// An [`OwnedThread`] whose body watches a stop lane.
-///
-/// Dropping it closes the lane before joining, so the body is asked to stop before the drop waits
-/// for it, however the containing value orders its fields.
 #[derive(Debug)]
 pub struct StoppableThread {
-    /// Never sends; closing it asks the body to stop.
     stop: async_channel::Sender<Infallible>,
     thread: OwnedThread,
 }
 
 impl StoppableThread {
-    /// Runs `body` on a new thread called `name`, handing it a lane that never carries a value and
-    /// closes once [`request_stop`](Self::request_stop) runs or this value drops.
-    ///
-    /// # Errors
-    /// Fails with the operating system's error when it cannot create the thread.
     pub fn spawn(
         name: &str,
         body: impl FnOnce(async_channel::Receiver<Infallible>) + Send + 'static,
@@ -108,17 +76,14 @@ impl StoppableThread {
         Ok(Self { stop, thread })
     }
 
-    /// Asks the body to stop, without joining it.
     pub fn request_stop(&self) {
         self.stop.close();
     }
 
-    /// Resolves once the body has returned or unwound.
     pub fn stopped(&self) -> impl Future<Output = ()> + Send + use<> {
         self.thread.exited()
     }
 
-    /// Whether the body has returned or unwound.
     #[must_use]
     pub fn is_finished(&self) -> bool {
         self.thread.is_finished()
@@ -145,8 +110,7 @@ mod tests {
         let finished_while_held = thread.is_finished();
         release.send(()).await?;
         tokio::time::timeout(PATIENCE, thread.exited()).await?;
-        // Asserting before release would hang on failure: unwinding joins the blocked thread before
-        // dropping `release`.
+
         assert!(!finished_while_held);
         assert!(thread.is_finished());
         Ok(())
@@ -191,8 +155,7 @@ mod tests {
             let Err(_closed) = stopping.recv_blocking();
         })?;
         let (dropped, observed) = mpsc::channel();
-        // A drop that joined without closing the lane would block forever, so it runs off the test
-        // thread.
+
         thread::spawn(move || {
             drop(stoppable);
             dropped.send(()).unwrap();

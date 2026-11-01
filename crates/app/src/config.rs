@@ -1,17 +1,3 @@
-//! Typed settings: startup classification, path resolution, validation, and saves that patch the
-//! file.
-//!
-//! The JSON file is a user-edited contract that outlives releases. Missing keys read as
-//! [`Config::default`], so a new field needs no attribute, and unknown top-level keys are ignored,
-//! so a file from another release still loads. A renamed key keeps its old name with
-//! `#[serde(alias = "old")]`, on the field or on the enum variant that replaces a retired Engine or
-//! Theme, and a retyped key goes through a private wire struct that migrates the old shape.
-//! [`LinuxSettings`] stays strict because its shortcut and cancel keys exist only as hand edits, so a
-//! misspelled key fails instead of silently keeping a default; retiring one of its keys must keep
-//! accepting that key. A save writes only the keys Settings changed, so unknown keys, hand edits,
-//! path spellings and unchanged Linux defaults stay as the file has them, though a number past
-//! 64-bit precision comes back rounded.
-
 use std::{
     fs,
     io::{self, ErrorKind, Write as _},
@@ -53,7 +39,6 @@ impl Engine {
         }
     }
 
-    /// The next engine Settings offers, wrapping around.
     pub(crate) const fn next(self) -> Self {
         match self {
             Self::Whisper => Self::Parakeet,
@@ -76,7 +61,6 @@ pub(crate) struct Config {
     pub microphone: Option<String>,
     pub engine_executable: PathBuf,
     pub model: PathBuf,
-    /// A managed `NeMo` model. Manual files retain conservative batch behavior when this is absent.
     pub nemo_model: Option<Model>,
     pub language: String,
     pub recognition_terms: Terms,
@@ -89,7 +73,6 @@ pub(crate) struct Config {
     pub preserve_clipboard: bool,
     pub play_sounds: bool,
     pub theme: Theme,
-    /// Whether Windows starts Speakeasy when the user signs in; other platforms ignore it.
     pub start_at_login: bool,
 }
 
@@ -188,24 +171,17 @@ impl From<LinuxSettings> for DesktopOptions {
     }
 }
 
-/// How dictated text reaches the focused app. The file keeps it as `preserve_clipboard` and the
-/// Linux `manual_paste` and `terminal_paste` flags, which every release reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TextDelivery {
-    /// Copies the text and sends the paste shortcut: Command+V on macOS, Ctrl+V elsewhere.
     Paste,
-    /// Copies the text and sends Ctrl+Shift+V, which terminals expect.
     #[cfg(target_os = "linux")]
     TerminalPaste,
-    /// Types the text as key input, leaving the clipboard untouched.
     Type,
-    /// Copies the text for the user to paste, so Speakeasy needs no keyboard control.
     #[cfg(target_os = "linux")]
     Copy,
 }
 
 impl TextDelivery {
-    /// The next choice this platform offers, wrapping around.
     pub(crate) const fn next(self) -> Self {
         #[cfg(target_os = "linux")]
         match self {
@@ -223,9 +199,6 @@ impl TextDelivery {
 }
 
 impl Config {
-    /// How dictated text reaches the focused app, the one reading of the stored flags. On Linux,
-    /// manual paste wins over typing, because typing needs the keyboard control that manual paste
-    /// declines.
     pub(crate) const fn text_delivery(&self) -> TextDelivery {
         #[cfg(target_os = "linux")]
         if self.linux.manual_paste {
@@ -241,8 +214,6 @@ impl Config {
         TextDelivery::Paste
     }
 
-    /// Stores `delivery` as the flags that read back as it. Typing and copying keep the chosen
-    /// paste keys for a later return to paste.
     pub(crate) fn set_text_delivery(&mut self, delivery: TextDelivery) {
         self.preserve_clipboard = delivery == TextDelivery::Type;
         #[cfg(target_os = "linux")]
@@ -256,7 +227,6 @@ impl Config {
         }
     }
 
-    /// Removes English hesitations only for an explicit English request, including recovered audio.
     pub(crate) fn fillers(&self, language: &str) -> Fillers {
         if self.remove_fillers
             && language
@@ -289,7 +259,6 @@ impl Config {
         }
     }
 
-    /// Whether the user or the OS asks for reduced motion.
     pub(crate) fn prefers_reduced_motion(&self) -> bool {
         self.reduced_motion || speakeasy_platform::reduced_motion()
     }
@@ -306,9 +275,6 @@ impl Config {
         Ok(parse(&contents, path)?.0)
     }
 
-    /// Reads the settings at `path` for launch: the draft Settings edits, and how it stands. A file
-    /// that cannot be read yields defaults for Settings to edit, and [`Config::save_changes`] still
-    /// refuses to replace that file until it parses.
     pub(crate) fn load(path: &Path) -> (Self, Startup) {
         if !path.exists() {
             return (Self::first_launch(), Startup::Unconfigured);
@@ -326,9 +292,6 @@ impl Config {
         }
     }
 
-    /// What a first launch, with no settings file, starts from. Automatic setup installs Parakeet,
-    /// so the draft names it before setup runs; a file without an engine key still reads as
-    /// [`Config::default`]'s Whisper, which such files were written for.
     pub(crate) fn first_launch() -> Self {
         Self {
             engine: Engine::Parakeet,
@@ -337,9 +300,6 @@ impl Config {
         }
     }
 
-    /// What a save treats the file at `path` as holding when Settings opens on `draft`: the draft
-    /// for a file that exists, and otherwise the defaults a missing key reads as, so a save writes
-    /// every choice Settings made, a first launch's Parakeet included.
     pub(crate) fn held_by(path: &Path, draft: &Self) -> Self {
         if path.exists() {
             draft.clone()
@@ -348,13 +308,10 @@ impl Config {
         }
     }
 
-    /// Whether the user still has to choose a speech engine.
     pub(crate) fn needs_engine(&self) -> bool {
         self.engine_executable.as_os_str().is_empty()
     }
 
-    /// How far moving to `next` reaches: the highest tier among the fields that differ. Every field
-    /// is named, so a new one cannot compile until it is classified.
     pub(crate) fn change_to(&self, next: &Self) -> Change {
         let Self {
             linux,
@@ -392,8 +349,6 @@ impl Config {
                     || self.use_gpu != *use_gpu,
                 Change::Engine,
             ),
-            // Whisper takes the language with each request, so its launch language is only a
-            // default; Parakeet takes none.
             (self.language != *language, Change::Session),
             (
                 self.microphone != *microphone
@@ -403,13 +358,11 @@ impl Config {
                     || self.preserve_clipboard != *preserve_clipboard,
                 Change::Session,
             ),
-            // The owner sounds the cues, tells the microphone of each, and holds their output.
             (self.play_sounds != *play_sounds, Change::Session),
             (
                 self.theme != *theme || self.reduced_motion != *reduced_motion,
                 Change::Presentation,
             ),
-            // Services registers every save itself, so a session continues.
             (self.start_at_login != *start_at_login, Change::Presentation),
             (self.presets != *presets, Change::Presentation),
         ]
@@ -419,9 +372,6 @@ impl Config {
         .unwrap_or(Change::Unchanged)
     }
 
-    /// Resolves the engine and model of a copy against the settings directory and canonicalizes
-    /// them, then checks that they exist and that the remaining values are in range. The draft
-    /// stays as the user wrote it.
     pub(crate) fn validated(&self, path: &Path) -> anyhow::Result<ValidConfig> {
         self.validate_choices()?;
         presets::validate(&self.presets)?;
@@ -481,12 +431,6 @@ impl Config {
         Ok(())
     }
 
-    /// Saves what Settings changed in `draft`, writing each changed key's value from `validated`.
-    /// `held` is the settings the file last held, in each spelling a draft may still have, such as
-    /// a submitted draft and the paths validation resolved from it; a key that matches any of them
-    /// is unchanged. Every other key stays as the file has it, so edits made while Speakeasy runs
-    /// survive; a key changed both ways takes the Settings value. A new file gets every key but a
-    /// default Linux block, and a file the user still has to repair is never replaced.
     pub(crate) fn save_changes(
         held: &[&Self],
         draft: &Self,
@@ -517,33 +461,21 @@ impl Config {
     }
 }
 
-/// How far a settings change reaches, ordered by disruption; each tier's action covers the tiers
-/// below it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Change {
     Unchanged,
-    /// Only the shell, the pill and the tray read these, so a session continues.
     Presentation,
-    /// The owner reads these for each session or request, so a session in progress ends.
     Session,
-    /// These start the engine process, so the worker reloads.
     Engine,
-    /// Linux binds its desktop options when the owners start, so they restart.
     Desktop,
 }
 
-/// How saved settings stand at launch.
 pub(crate) enum Startup {
-    /// A first launch, or a file without an engine: Settings offers setup.
     Unconfigured,
     Configured(Box<ValidConfig>),
-    /// The file cannot be read or validated; the message says why.
     Invalid(String),
 }
 
-/// Settings whose engine and model resolved to canonical absolute files and whose values were in
-/// range when checked. Only [`Config::validated`] builds one; the files can still disappear later,
-/// and engine startup reports that.
 #[derive(Clone)]
 pub(crate) struct ValidConfig(Config);
 
@@ -552,7 +484,6 @@ impl ValidConfig {
         self.0
     }
 
-    /// Trusts `config` without checking it, for tests whose fake engines have no files.
     #[cfg(test)]
     pub(crate) const fn assume(config: Config) -> Self {
         Self(config)
@@ -567,11 +498,6 @@ impl Deref for ValidConfig {
     }
 }
 
-/// Parses `contents` as settings and as the map a save patches, so a file that reads is always one a
-/// save can patch: skipping an unknown key accepts values that holding it does not, such as `1e400`
-/// or a lone surrogate, and serde reads `linux` from an array that a save cannot patch key by key.
-/// Settings parse first, so when a setting and a value only the map refuses both fail, the notice
-/// names the setting.
 fn parse(contents: &[u8], path: &Path) -> anyhow::Result<(Config, Map<String, Value>)> {
     let invalid = || format!("Invalid settings in {}", path.display());
     let config: Config = from_json(contents).with_context(invalid)?;
@@ -583,10 +509,6 @@ fn parse(contents: &[u8], path: &Path) -> anyhow::Result<(Config, Map<String, Va
     Ok((config, file))
 }
 
-/// Reads `contents` as one JSON `T`. A failure is serde's account, with the values a key accepts
-/// where serde lists them, after the key it lies under: `linux.cancel` for a fault in that value, or
-/// `linux` for one between the block's keys, such as a key written twice. A fault outside every key,
-/// such as a top-level key written twice, is serde's account alone.
 fn from_json<'de, T: Deserialize<'de>>(contents: &'de [u8]) -> anyhow::Result<T> {
     let mut json = serde_json::Deserializer::from_slice(contents);
     let value = serde_path_to_error::deserialize(&mut json).map_err(|error| {
@@ -610,11 +532,8 @@ fn from_json<'de, T: Deserialize<'de>>(contents: &'de [u8]) -> anyhow::Result<T>
     Ok(value)
 }
 
-/// Linux's own limit on following a chain of links, which also ends a loop of them.
 const LINK_DEPTH: usize = 40;
 
-/// The file a save writes: where a link at `path` points, through any chain of links, so a settings
-/// file that a dotfile manager links in stays linked, even before the file it names exists.
 fn link_target(path: &Path) -> io::Result<PathBuf> {
     let mut target = path.to_owned();
     for _ in 0..LINK_DEPTH {
@@ -644,8 +563,6 @@ fn cannot_open(file: &Path, error: &io::Error) -> anyhow::Error {
     }
 }
 
-/// Sets each key whose value in `draft` matches none of `held` to its value in `validated`. Linux
-/// keys are compared one by one, because a default Linux block is not serialized at all.
 fn patch(
     file: &mut Map<String, Value>,
     held: &[&Config],
@@ -672,7 +589,6 @@ fn patch(
     Ok(())
 }
 
-/// The keys of `validated` whose values in `draft` match none of `held`, with their values.
 fn changes<'a, T: Serialize + 'a>(
     held: impl IntoIterator<Item = &'a T>,
     draft: &T,
@@ -692,8 +608,6 @@ fn changes<'a, T: Serialize + 'a>(
         .collect())
 }
 
-/// Replaces `target` with `contents` all at once from a temporary file beside it, so a failure
-/// never leaves half a file and the rename stays on one filesystem.
 fn replace(target: &Path, contents: &[u8]) -> io::Result<()> {
     let directory = target
         .parent()
@@ -707,8 +621,6 @@ fn replace(target: &Path, contents: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
-/// Settings that pass validation: a fake `engine` and `model.gguf` written into `directory`, which
-/// a settings file there may also name relatively.
 #[cfg(test)]
 pub(crate) fn valid_config(directory: &Path) -> anyhow::Result<Config> {
     let engine_executable = directory.join("engine");

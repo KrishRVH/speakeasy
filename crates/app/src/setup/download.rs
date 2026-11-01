@@ -1,6 +1,3 @@
-//! Pinned downloads: each file is fetched by URL, checked against its published size and SHA-256,
-//! resumed from its partial file after an interruption, and renamed into place only once verified.
-
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Write as _},
@@ -20,8 +17,6 @@ pub(super) struct Download<'a> {
     pub(super) sha256: &'a str,
 }
 
-/// Downloads into `directory`, resuming a partial file when the server honors the range. Returns
-/// the verified file.
 pub(super) async fn fetch(
     client: &Client,
     download: &Download<'_>,
@@ -140,7 +135,7 @@ async fn hash_partial(
         total: size,
     });
     let mut file = tokio::fs::File::open(partial).await?;
-    // Every asynchronous read is a blocking-pool round trip, so read a MiB at a time.
+
     let mut chunk = Vec::with_capacity(1024 * 1024);
     let mut hasher = Sha256::new();
     loop {
@@ -153,7 +148,7 @@ async fn hash_partial(
         progress.send_modify(|progress| {
             progress.done = progress.done.saturating_add(count as u64);
         });
-        // Cached reads can complete without yielding; let cancellation run between chunks.
+
         tokio::task::yield_now().await;
     }
     Ok(hasher)

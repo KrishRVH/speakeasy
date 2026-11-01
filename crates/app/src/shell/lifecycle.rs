@@ -1,11 +1,5 @@
-//! Service ownership across enable, pause, and quit, and the epoch that tells a late completion
-//! whether a newer request superseded it. A stopping owner is retained until acknowledgement; only
-//! the latest restart queued behind it runs.
-
 use std::mem;
 
-/// Advances whenever the requested service state changes, so a late completion can tell that it is
-/// stale.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct ConfigEpoch(u64);
 
@@ -15,8 +9,6 @@ impl ConfigEpoch {
     }
 }
 
-/// Where the service owners are between enable, pause, and quit, and the epoch of the latest
-/// request. Generic so tests can stand in for the native owners and the restart they queue.
 pub(super) struct Lifecycle<Owners, Restart> {
     state: State<Owners, Restart>,
     epoch: ConfigEpoch,
@@ -24,20 +16,14 @@ pub(super) struct Lifecycle<Owners, Restart> {
 
 #[derive(Default)]
 enum State<Owners, Restart> {
-    /// Dictation is off; no owners exist or are starting.
     #[default]
     Disabled,
-    /// Saved settings are checked off the UI thread before any owner exists; only the check for
-    /// this epoch may start owners.
     Validating(ConfigEpoch),
-    /// Owners are live.
     Running(Owners),
-    /// Owners are retiring; `pending` restarts the service once they acknowledge.
     Stopping {
         owners: Owners,
         pending: Option<Restart>,
     },
-    /// Terminal. Holds owners until they acknowledge retirement; `None` once none remain.
     Quitting(Option<Owners>),
 }
 
@@ -51,13 +37,10 @@ impl<Owners, Restart> Default for Lifecycle<Owners, Restart> {
 }
 
 impl<Owners, Restart> Lifecycle<Owners, Restart> {
-    /// The epoch of the latest request, which a save records when it is requested.
     pub(super) const fn epoch(&self) -> ConfigEpoch {
         self.epoch
     }
 
-    /// Whether dictation is on: owners run, as `live` judges them, or a resume is checking the
-    /// saved settings.
     pub(super) fn is_running(&self, live: impl FnOnce(&Owners) -> bool) -> bool {
         match &self.state {
             State::Running(owners) => live(owners),
@@ -66,9 +49,6 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
         }
     }
 
-    /// Whether a save requested at `saved_at` may enable dictation. A Pause after the Save wins:
-    /// only a save whose request no later one superseded may enable it, unless dictation is on
-    /// anyway or a restart waits for retiring owners.
     pub(super) fn save_may_enable(
         &self,
         saved_at: ConfigEpoch,
@@ -77,7 +57,6 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
         saved_at == self.epoch || self.is_running(live) || self.has_pending()
     }
 
-    /// Advances the epoch for new settings and returns true, unless Quit has begun.
     pub(super) fn reconfigure(&mut self) -> bool {
         if self.is_quitting() {
             return false;
@@ -86,8 +65,6 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
         true
     }
 
-    /// Starts checking the saved settings under a new epoch and returns it, unless owners exist or
-    /// Quit has begun.
     pub(super) fn validate(&mut self) -> Option<ConfigEpoch> {
         if !self.may_start() {
             return None;
@@ -97,7 +74,6 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
         Some(self.epoch)
     }
 
-    /// Ends the check started at `epoch` and returns true, unless a later request superseded it.
     pub(super) fn validated(&mut self, epoch: ConfigEpoch) -> bool {
         if !matches!(self.state, State::Validating(current) if current == epoch) {
             return false;
@@ -106,9 +82,6 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
         true
     }
 
-    /// Starts owners with `launch` and returns whether it ran, which it does only while no owners
-    /// exist and Quit has not begun. The settings `launch` starts from are newer than any check
-    /// still running, so that check ends even if `launch` fails.
     pub(super) fn start<E>(
         &mut self,
         launch: impl FnOnce() -> Result<Owners, E>,
@@ -141,7 +114,6 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
         }
     }
 
-    /// Whether owners are stopping or Quit has begun; either way, no resume may start owners.
     pub(super) const fn is_pausing(&self) -> bool {
         matches!(self.state, State::Stopping { .. } | State::Quitting(_))
     }
@@ -150,8 +122,6 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
         matches!(self.state, State::Quitting(_))
     }
 
-    /// Queues `restart` to run once retirement completes; returns whether owners are stopping to
-    /// receive it.
     pub(super) fn queue(&mut self, restart: Restart) -> bool {
         if let State::Stopping { pending, .. } = &mut self.state {
             *pending = Some(restart);
@@ -171,13 +141,10 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
         )
     }
 
-    /// Whether owners may start: none exist, live or retiring, and Quit has not begun.
     const fn may_start(&self) -> bool {
         matches!(self.state, State::Disabled | State::Validating(_))
     }
 
-    /// Advances the epoch and moves live owners to Stopping, abandoning any validation or queued
-    /// restart, unless Quit has begun. Returns whether retirement must start.
     pub(super) fn pause(&mut self) -> bool {
         let (state, started) = match mem::take(&mut self.state) {
             State::Running(owners) => (
@@ -205,8 +172,6 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
         started
     }
 
-    /// Enters the terminal Quitting state under a new epoch, keeping owners for retirement.
-    /// Returns false when already quitting.
     pub(super) fn quit(&mut self) -> bool {
         let owners = match mem::take(&mut self.state) {
             State::Running(owners) | State::Stopping { owners, .. } => Some(owners),
@@ -221,7 +186,6 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
         true
     }
 
-    /// Releases retired owners and returns the restart queued behind them.
     pub(super) fn retired(&mut self) -> Option<Restart> {
         match &mut self.state {
             State::Stopping { pending, .. } => {
@@ -244,7 +208,6 @@ mod tests {
 
     use super::{Lifecycle, State};
 
-    /// A lifecycle whose owners are live, as `start` leaves it.
     fn live<Owners, Restart>(owners: Owners) -> Lifecycle<Owners, Restart> {
         let mut lifecycle = Lifecycle::default();
         assert_eq!(lifecycle.start(|| Ok::<_, ()>(owners)), Ok(true));

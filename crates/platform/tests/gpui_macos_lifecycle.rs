@@ -1,8 +1,3 @@
-//! Regression tests for the vendored GPUI display-link registry. They exercise the production
-//! registry with fake `CoreVideo` and dispatch handles; native GUI acceptance covers the real
-//! dependency, which is not built with `cfg(test)`.
-
-// The vendored module imports `util::ResultExt`; this test crate stands in for `util`.
 extern crate self as util;
 
 trait ResultExt<T> {

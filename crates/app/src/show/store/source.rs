@@ -1,5 +1,3 @@
-//! Private source sidecars: bounded index reads, range-based frame loading, and streamed writes.
-
 use std::{
     fs::{self, File},
     io::{self, BufWriter, Read as _, Seek as _, Write as _},
@@ -14,7 +12,6 @@ use super::recall;
 
 pub(crate) const FILE: &str = "source.frames";
 
-/// Includes the uncovered time before the first sample and after the final sample.
 pub(crate) fn longest_gap(source: &Source) -> u64 {
     source
         .moments()
@@ -30,8 +27,6 @@ pub(crate) fn longest_gap(source: &Source) -> u64 {
         .unwrap_or(0)
 }
 
-/// Source is optional: old bundles and simulated bundles need not contain it. A present linked,
-/// nonregular, or oversized sidecar is an error, never treated as absent.
 pub(crate) fn size(directory: &Path) -> io::Result<Option<u64>> {
     match recall::regular_file(directory, FILE, Source::FILE_LIMIT) {
         Ok(()) => fs::metadata(directory.join(FILE)).map(|metadata| Some(metadata.len())),
@@ -46,8 +41,6 @@ pub(crate) fn inspect(directory: &Path) -> anyhow::Result<Source> {
         .context("Cannot inspect source.frames")
 }
 
-/// A selected index is an immutable snapshot. The underlying file is opened only for this read,
-/// so keeping a viewer open does not prevent expiry on Windows.
 pub(crate) fn frame(directory: &Path, source: &Source, at: Moment) -> anyhow::Result<SourceFrame> {
     let mut file = open(directory)?;
     anyhow::ensure!(
@@ -101,8 +94,6 @@ pub(super) fn write(directory: &Path, journal: &Journal, duration: Moment) -> an
     Ok(())
 }
 
-/// Writes only to a newly created explicit destination. Neither an existing export nor a link is
-/// replaced. A failed write removes only the new file this call owns.
 pub(crate) fn export(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);
@@ -115,7 +106,6 @@ pub(crate) fn export(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let written = file.write_all(bytes).and_then(|()| file.sync_all());
     drop(file);
     if let Err(error) = written {
-        // Keep the original failure, but make a failed cleanup visible as well.
         return match fs::remove_file(path) {
             Ok(()) => Err(error),
             Err(cleanup) => Err(io::Error::other(format!(

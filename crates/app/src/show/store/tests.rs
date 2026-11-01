@@ -1,5 +1,3 @@
-//! Naming, writing, reading back, and expiring Shows in temporary folders.
-
 use speakeasy_show::{Image, Journal, Moment, Recording, Typeface, compose, select};
 
 use super::{recall::SUMMARY_LIMIT, *};
@@ -10,7 +8,6 @@ fn at(seconds: u64) -> SystemTime {
         .unwrap()
 }
 
-/// The names in `directory`, sorted.
 fn names(directory: &Path) -> io::Result<Vec<String>> {
     let mut names = fs::read_dir(directory)?
         .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned()))
@@ -25,8 +22,7 @@ fn a_week_old_show_expires_unless_pinned() -> anyhow::Result<()> {
     let parent = root.path();
     let now = SystemTime::now();
     let days_ago = |days: u64| utc_stamp(now - Duration::from_hours(days * 24));
-    // Three Shows the writer named in one second. The bare `<stamp>` and `<stamp>-2` expire, so
-    // the sweep must read both name forms; the pinned `<stamp>-3` stays.
+
     let written = || -> anyhow::Result<String> {
         let show = fresh_directory(parent, now - Duration::from_hours(8 * 24))?;
         fs::create_dir(&show)?;
@@ -90,7 +86,7 @@ fn a_show_that_cannot_be_inspected_is_kept_and_fails_the_sweep() -> anyhow::Resu
     let expired = parent.join(utc_stamp(now - Duration::from_hours(9 * 24)));
     fs::create_dir(&sealed)?;
     fs::create_dir(&expired)?;
-    // A folder that can be listed but not searched hides whether it holds a pin.
+
     fs::set_permissions(&sealed, fs::Permissions::from_mode(0o600))?;
     let probe = fs::symlink_metadata(sealed.join(PIN)).map_err(|error| error.kind());
 
@@ -128,7 +124,6 @@ fn stamps_name_utc_moments_in_order() {
     assert_eq!(utc_stamp(at(4_102_444_799)), "20991231T235959Z");
 }
 
-/// A bundle of one blank frame.
 fn bundle() -> anyhow::Result<Bundle> {
     let mut journal = Journal::new();
     let frame = Image::from_bgra(32, 20, vec![255; 2_560])?;

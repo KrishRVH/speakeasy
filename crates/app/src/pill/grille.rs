@@ -1,6 +1,3 @@
-//! The door slot: a mirrored grille of recent levels behind a sliding lid. Everything paints inside
-//! one canvas, so bar geometry never touches layout or hit testing as the level moves.
-
 use gpui::{
     App, Bounds, BoxShadow, ContentMask, Corners, Pixels, Rgba, TransformationMatrix, Window, fill,
     linear_color_stop, linear_gradient, point, px, rgb, size,
@@ -14,23 +11,17 @@ use crate::{
 
 const OLDEST_AGE: usize = METER_BARS - 1;
 const BAR_WIDTH: f32 = 2.0;
-/// The distance from one grille bar's left edge to the next.
+
 const BAR_PITCH: f32 = 4.0;
-/// The distance from the lid keystone's center to each of its points. GPUI rasterizes an SVG tile at
-/// twice its device size and rounds it up to whole pixels; a five-pixel keystone stays an exact tile
-/// at whole scales and at 175%, where it is never resampled.
+
 const KEYSTONE_RADIUS: f32 = 2.5;
 
 #[derive(Clone, Copy)]
 pub(super) struct Grille {
-    /// How far the lid covers the slot, from 0 (open) to 1 (closed).
     pub(super) lid: f32,
-    /// The waveform's opacity, from 0 (dark) to 1 (lit).
     pub(super) waveform: f32,
-    /// Recent levels, oldest first.
     pub(super) levels: [f32; METER_BARS],
     pub(super) reduced_motion: bool,
-    /// The processing glow's position across the open slot, from 0 (left) to 1 (right).
     pub(super) sweep: Option<f32>,
     pub(super) palette: &'static Palette,
 }
@@ -223,12 +214,10 @@ impl Slot {
         self.height / 2.0
     }
 
-    /// A level bar's height: two pixels when silent, two short of each edge at full level.
     fn bar_height(self, level: f32) -> f32 {
         2.0 + level * (self.height - 6.0)
     }
 
-    /// The slot's height at `x`, which narrows across its rounded ends.
     fn height_at(self, x: f32) -> f32 {
         let radius = self.radius();
         let into_end = (self.x + radius - x)
@@ -242,13 +231,10 @@ fn rect(left: f32, top: f32, width: f32, height: f32) -> Bounds<Pixels> {
     Bounds::new(point(px(left), px(top)), size(px(width), px(height)))
 }
 
-/// The age of the level bar `index` shows: the center bar, or both center bars of an even count,
-/// show the newest level, and ages grow symmetrically outward up to the oldest level.
 fn mirrored_age(index: usize, count: usize) -> usize {
     (index.abs_diff(count.saturating_sub(1).saturating_sub(index)) / 2).min(OLDEST_AGE)
 }
 
-/// The length of a chord `offset` away from the center of a circle.
 fn chord(radius: f32, offset: f32) -> f32 {
     2.0 * (radius * radius - offset * offset).max(0.0).sqrt()
 }

@@ -1,6 +1,3 @@
-//! Silent movie storage and original-session timing. The container supplies surviving coverage;
-//! checkpoint metadata supplies only its origin, completion receipt, and annotation horizon.
-
 mod frame;
 pub(in crate::show::store) mod geometry;
 use std::{
@@ -30,7 +27,6 @@ pub(crate) struct Metadata {
     pub origin_ms: u64,
     pub size: [u32; 2],
     pub finished: Option<Finished>,
-    /// Filled during publication; absent in a live checkpoint.
     pub coverage: Option<Coverage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub geometry: Option<geometry::Geometry>,
@@ -283,8 +279,6 @@ fn read_metadata(directory: &Path) -> anyhow::Result<Metadata> {
     Ok(metadata)
 }
 
-/// Missing video remains compatible with still-only bundles. A present damaged or linked movie
-/// is an error, so exports and publication never silently substitute a different evidence set.
 pub(crate) fn inspect(directory: &Path) -> anyhow::Result<Option<Inspected>> {
     Ok(open(directory)?.map(|reading| reading.movie))
 }
@@ -308,7 +302,7 @@ pub(super) fn open(directory: &Path) -> anyhow::Result<Option<Reading>> {
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::fs::OpenOptionsExt as _;
-        // Deny writes through validation and native decoding; expiry may still unlink the bundle.
+
         const SHARE_READ_DELETE: u32 = 0x1 | 0x4;
         options.share_mode(SHARE_READ_DELETE);
     }
@@ -332,7 +326,7 @@ pub(super) fn open(directory: &Path) -> anyhow::Result<Option<Reading>> {
     let end_ms = metadata
         .origin_ms
         .saturating_add(u64::try_from(prefix.duration.as_millis())?);
-    // A codec's final sample occupies up to one 30 Hz tick beyond the requested end.
+
     anyhow::ensure!(
         end_ms <= limit.saturating_add(34),
         "Movie exceeds the session recording limit"
@@ -398,8 +392,6 @@ pub(crate) fn saved(directory: &Path, annotations: Moment) -> anyhow::Result<Opt
     Ok(Reading::optional(directory, annotations)?.map(|reading| reading.movie.metadata))
 }
 
-/// The source checkpoint stays locked throughout this operation. A valid movie's copy/sync
-/// failure aborts publication; its only surviving copy must remain recoverable.
 pub(in crate::show::store) fn retain(
     destination: &Path,
     mut reading: Reading,

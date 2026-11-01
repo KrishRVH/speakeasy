@@ -1,7 +1,3 @@
-//! Drives the gesture with explicit instants: tap and hands-free timing, Shows, cancellation,
-//! interruptions, and generated event sequences that must keep every capture within the recording
-//! limit.
-
 use proptest::prelude::*;
 
 use super::*;
@@ -110,7 +106,7 @@ proptest! {
                 .expect("The generated sequence spans less than one day");
             let saving = gesture.phase == Phase::Saving;
             event.apply(&mut gesture, now);
-            // Stands in for the owner's timer, which ticks once a deadline passes.
+
             gesture.tick(now);
             if saving && !matches!(event, Event::Abandon | Event::Complete) {
                 prop_assert_eq!(gesture.phase, Phase::Saving, "{:?} ended a Show being saved", event);

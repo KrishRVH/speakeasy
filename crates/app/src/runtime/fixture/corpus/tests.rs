@@ -1,5 +1,3 @@
-//! Corpus integrity and scoring regressions use synthetic content and fake insertion only.
-
 use super::*;
 use crate::runtime::{Ports as _, fixture::Fixture};
 

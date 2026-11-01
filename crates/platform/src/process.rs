@@ -1,10 +1,3 @@
-//! Termination authority over the local speech worker and every process it starts, and, on Linux
-//! and Windows, the check that the worker's loopback listener belongs to it.
-//!
-//! Authority comes only from a freshly spawned child, through the process handle or identifier its
-//! `Child` holds, never from a process lookup. Listener lookups only test membership in the group
-//! and never grant termination authority.
-
 #[cfg(target_os = "linux")]
 use std::fs;
 #[cfg(unix)]
@@ -38,12 +31,9 @@ use windows_sys::Win32::{
 #[cfg(target_os = "windows")]
 use crate::windows::{ok_or_last_error, take_handle};
 
-/// 127.0.0.1 as both listener tables hold an IPv4 address: its network-order bytes read as one
-/// host-order word.
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 const LOOPBACK: u32 = u32::from_ne_bytes(Ipv4Addr::LOCALHOST.octets());
 
-/// Owns a kill-on-close job containing the local speech worker.
 #[cfg(target_os = "windows")]
 #[derive(Debug)]
 pub struct ProcessGroup {
@@ -52,30 +42,20 @@ pub struct ProcessGroup {
 
 #[cfg(target_os = "windows")]
 impl ProcessGroup {
-    /// Attaches to a freshly spawned child through the process handle `child` holds.
-    ///
-    /// The job holds the child and every process it starts from then on; one it started before
-    /// this call stays outside, so attach right after spawning.
-    ///
-    /// # Errors
-    /// Fails when the child was already reaped or native group setup fails.
     pub fn attach(child: &tokio::process::Child) -> anyhow::Result<Self> {
         let process = child
             .raw_handle()
             .context("The child exited before it could be contained")?;
-        // SAFETY: `child` owns this open process handle and outlives the borrow, which ends with
-        // this call.
+
         Self::contain(unsafe { BorrowedHandle::borrow_raw(process) })
     }
 
-    /// Assigns `process` to a new kill-on-close job.
     fn contain(process: BorrowedHandle<'_>) -> anyhow::Result<Self> {
-        // SAFETY: null attributes and name create an unnamed job that only this group owns.
         let job = unsafe { take_handle(CreateJobObjectW(null(), null())) }?;
         let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
         limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
         let size = u32::try_from(size_of_val(&limits))?;
-        // SAFETY: the job handle is open and `limits` outlives this call, which reads `size` bytes.
+
         ok_or_last_error(unsafe {
             SetInformationJobObject(
                 job.as_raw_handle(),
@@ -84,43 +64,32 @@ impl ProcessGroup {
                 size,
             )
         })?;
-        // SAFETY: both handles are open for this call; the job then holds only this child.
+
         ok_or_last_error(unsafe {
             AssignProcessToJobObject(job.as_raw_handle(), process.as_raw_handle())
         })?;
         Ok(Self { job })
     }
 
-    /// Terminates only the owned child group; repeated calls have no effect.
     pub fn terminate(&mut self) {
-        // SAFETY: `self` keeps the job handle open, and the job holds only the child `contain`
-        // assigned and the processes it started.
         unsafe {
-            // A failure needs no handling: closing the job on drop still kills the group.
             TerminateJobObject(self.job.as_raw_handle(), 1);
         }
     }
 
-    /// Reports whether at least one IPv4 listener exists on 127.0.0.1:`port` and every one belongs
-    /// to a process in this job.
-    ///
-    /// # Errors
-    /// Fails when the system's listener table cannot be read.
     pub fn holds_loopback_listener(&self, port: u16) -> anyhow::Result<bool> {
         let owners = loopback_listener_owners(port)?;
         Ok(!owners.is_empty() && owners.into_iter().all(|owner| self.contains(owner)))
     }
 
-    /// Whether `pid` names a process in this job; a process this account cannot open is foreign.
     fn contains(&self, pid: u32) -> bool {
-        // SAFETY: a successful OpenProcess returns a fresh handle that only this function owns.
         let Ok(process) =
             (unsafe { take_handle(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid)) })
         else {
             return false;
         };
         let mut member = FALSE;
-        // SAFETY: both handles are open for this call, and `member` outlives it.
+
         let queried = unsafe {
             IsProcessInJob(
                 process.as_raw_handle(),
@@ -132,26 +101,19 @@ impl ProcessGroup {
     }
 }
 
-/// `MIB_TCPTABLE_OWNER_PID` is an entry count followed by rows of six `DWORD`s: state, local
-/// address, local port, remote address, remote port, and owning process. Addresses are in network
-/// byte order, and a port fills the two low-addressed bytes of its `DWORD`.
 #[cfg(target_os = "windows")]
 const ROW_WORDS: usize = 6;
 #[cfg(target_os = "windows")]
 const _: () = assert!(size_of::<MIB_TCPROW_OWNER_PID>() == ROW_WORDS * size_of::<u32>());
 
-/// The processes listening on 127.0.0.1:`port`.
 #[cfg(target_os = "windows")]
 fn loopback_listener_owners(port: u16) -> anyhow::Result<Vec<u32>> {
-    /// Winsock's IPv4 address family, the only one the engine binds.
     const AF_INET: u32 = 2;
-    /// A table that keeps outgrowing each new buffer is not worth chasing further.
+
     const ATTEMPTS: usize = 4;
     let mut table: Vec<u32> = Vec::new();
     let mut size = 0_u32;
     for _ in 0..ATTEMPTS {
-        // SAFETY: `table` is writable and suitably aligned for at least `size` bytes, and `size`
-        // outlives this call, which reads it and on a short buffer stores the size required.
         let status = unsafe {
             GetExtendedTcpTable(
                 table.as_mut_ptr().cast(),
@@ -173,7 +135,6 @@ fn loopback_listener_owners(port: u16) -> anyhow::Result<Vec<u32>> {
     anyhow::bail!("The system's listener table kept changing")
 }
 
-/// The owning processes of the rows in `table` that listen on 127.0.0.1:`port`.
 #[cfg(target_os = "windows")]
 fn listener_owners(table: &[u32], port: u16) -> Vec<u32> {
     let Some((&count, rows)) = table.split_first() else {
@@ -191,24 +152,14 @@ fn listener_owners(table: &[u32], port: u16) -> Vec<u32> {
         .collect()
 }
 
-/// Owns termination of a child process group until its leader is reaped.
 #[cfg(unix)]
 #[derive(Debug)]
 pub struct ProcessGroup {
-    /// The leader, whose identifier names the group until the group is terminated.
     leader: Option<libc::pid_t>,
 }
 
 #[cfg(unix)]
 impl ProcessGroup {
-    /// Attaches to a freshly spawned child through the identifier `child` holds until it is reaped.
-    ///
-    /// The caller spawns the child with `process_group(0)`, so its identifier names its group, and
-    /// terminates the group before reaping its leader: once reaped, the identifier may name another
-    /// process, so the group is never signaled again.
-    ///
-    /// # Errors
-    /// Fails when the child was already reaped.
     pub fn attach(child: &tokio::process::Child) -> anyhow::Result<Self> {
         Self::led_by(
             child
@@ -217,8 +168,6 @@ impl ProcessGroup {
         )
     }
 
-    /// Takes authority over the group `pid` leads, refusing an identifier no spawned child can
-    /// have: 0, 1, or one beyond `pid_t`.
     fn led_by(pid: u32) -> anyhow::Result<Self> {
         anyhow::ensure!(
             pid > 1,
@@ -229,28 +178,19 @@ impl ProcessGroup {
         })
     }
 
-    /// Terminates only the owned child group; repeated calls have no effect.
     pub fn terminate(&mut self) {
         if let Some(leader) = self.leader.take().filter(|&leader| unreaped(leader)) {
-            // SAFETY: killpg takes plain values. `leader` is above 1 and still an unreaped child,
-            // so it names only the child's own group, and ownership is cleared before signaling so
-            // no group is signaled twice.
             unsafe {
-                // A failure needs no handling: ESRCH means the group has already exited.
                 libc::killpg(leader, libc::SIGKILL);
             }
         }
     }
 }
 
-/// Whether `pid` names a child of this process, running or exited, that nobody has reaped, so the
-/// system cannot have given its identifier to another process.
 #[cfg(unix)]
 fn unreaped(pid: libc::pid_t) -> bool {
     let mut info = MaybeUninit::<libc::siginfo_t>::uninit();
-    // SAFETY: waitid writes at most one siginfo_t through the pointer, which `info` keeps valid
-    // for the call. WNOHANG returns at once, and WNOWAIT leaves an exited child for its owner to
-    // reap.
+
     unsafe {
         libc::waitid(
             libc::P_PID,
@@ -270,11 +210,6 @@ impl Drop for ProcessGroup {
 
 #[cfg(target_os = "linux")]
 impl ProcessGroup {
-    /// Reports whether at least one IPv4 listener exists on 127.0.0.1:`port` and every one is held
-    /// by a process in this group. A group that was terminated or whose leader was reaped holds none.
-    ///
-    /// # Errors
-    /// Fails when the system's socket table cannot be read.
     pub fn holds_loopback_listener(&self, port: u16) -> anyhow::Result<bool> {
         let Some(leader) = self.leader.filter(|&leader| unreaped(leader)) else {
             return Ok(false);
@@ -283,8 +218,7 @@ impl ProcessGroup {
         if unheld.is_empty() {
             return Ok(false);
         }
-        // Engines serve from the leader; the whole group is searched only for a wrapper that does
-        // not exec its engine.
+
         release_held(leader, &mut unheld);
         if !unheld.is_empty() {
             for member in fs::read_dir("/proc")?
@@ -299,8 +233,6 @@ impl ProcessGroup {
     }
 }
 
-/// The inodes of IPv4 sockets listening on 127.0.0.1:`port` in a `/proc/net/tcp` table, which
-/// prints each local address and port as hexadecimal in host byte order.
 #[cfg(target_os = "linux")]
 fn loopback_listeners(table: &str, port: u16) -> Vec<u64> {
     const LISTEN: &str = "0A";
@@ -321,8 +253,6 @@ fn loopback_listeners(table: &str, port: u16) -> Vec<u64> {
         .collect()
 }
 
-/// Removes from `unheld` each socket inode that process `pid` holds. A process that has exited or
-/// that this account cannot inspect holds none.
 #[cfg(target_os = "linux")]
 fn release_held(pid: libc::pid_t, unheld: &mut Vec<u64>) {
     let Ok(descriptors) = fs::read_dir(format!("/proc/{pid}/fd")) else {
@@ -343,8 +273,6 @@ fn release_held(pid: libc::pid_t, unheld: &mut Vec<u64>) {
     }
 }
 
-/// The process group of `pid`, read after the parenthesized command name, which may contain
-/// spaces and parentheses.
 #[cfg(target_os = "linux")]
 fn process_group(pid: libc::pid_t) -> Option<libc::pid_t> {
     let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
@@ -399,8 +327,7 @@ mod tests {
 
         let held = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
         let port = held.local_addr()?.port();
-        // A group leader that a child started and handed the listener, as a reaped leader's
-        // recycled identifier could name; the child reports the status it ended with.
+
         let mut parent = Command::new("sh")
             .args([
                 "-c",
@@ -439,10 +366,10 @@ mod tests {
 
         let held = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
         let port = held.local_addr()?.port();
-        // The queued connection adds an established socket on the held port without an owner.
+
         let client = TcpStream::connect(held.local_addr()?)?;
         let foreign = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
-        // The child's standard input becomes the only descriptor for the held listener.
+
         let mut child = Command::new("sleep")
             .arg("60")
             .process_group(0)
@@ -475,9 +402,7 @@ mod tests {
 
         let held = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
         let port = held.local_addr()?.port();
-        // Like a wrapper that does not exec its engine, the leader hands its only descriptor for
-        // the listener to a grandchild, so neither the leader's descriptors nor parentage find it;
-        // only group membership does. The leader reports once the grandchild exists.
+
         let mut leader = Command::new("sh")
             .args([
                 "-c",
@@ -515,8 +440,7 @@ mod tests {
             super::loopback_listener_owners(client.local_addr()?.port())?,
             Vec::<u32>::new()
         );
-        // Windows names the process that opened a socket as its owner, so the child opens its own
-        // listener and reports the port once it listens.
+
         let mut child = Command::new("powershell")
             .args([
                 "-NoProfile",
@@ -536,7 +460,7 @@ mod tests {
         let held = reported.trim().parse()?;
         assert!(group.holds_loopback_listener(held)?);
         assert!(!group.holds_loopback_listener(port)?);
-        // Closing the kill-on-close job ends the child.
+
         drop(group);
         child.wait()?;
         Ok(())

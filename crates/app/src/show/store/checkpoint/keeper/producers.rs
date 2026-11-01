@@ -1,6 +1,3 @@
-//! Capture-side queue budgets. A stalled audio writer leaves its backlog in the existing PCM
-//! buffer; a frame gap permanently closes that stream so replay never invents missing events.
-
 use std::time::{Duration, Instant};
 
 use async_channel::{Receiver, Sender};
@@ -150,7 +147,6 @@ impl AudioLog {
     }
 
     pub(crate) fn begin(&mut self, rate: u32, start: Duration, language: Box<str>) -> bool {
-        // Half a second of mono PCM16, capped so high-rate microphones keep the queue responsive.
         self.threshold = usize::try_from(rate)
             .unwrap_or(usize::MAX)
             .clamp(2, 64 << 10);
@@ -161,8 +157,6 @@ impl AudioLog {
         })
     }
 
-    /// False means storage stopped. A temporarily full queue returns true: the unsent samples
-    /// remain in PCM and the next drain iteration retries them in order.
     pub(crate) fn offer(&mut self, pcm: &[u8], cues: &[(usize, usize)]) -> bool {
         if !self.complete {
             return false;
@@ -171,8 +165,6 @@ impl AudioLog {
         self.complete
     }
 
-    /// Offers the remaining tail within the queue's fixed budget, then closes without waiting
-    /// for storage or device teardown. The session owns the keeper's eventual flush.
     pub(crate) fn finish(mut self, pcm: &[u8], cues: &[(usize, usize)]) -> bool {
         while self.complete && (self.offered < pcm.len() || self.cues < cues.len()) {
             let before = (self.offered, self.cues);

@@ -1,6 +1,3 @@
-//! Sixteen-pixel line glyphs drawn from embedded SVG assets, so the pill paints atlas tiles and
-//! never a path.
-
 use gpui::{prelude::*, px, rgb, svg};
 
 use crate::icons;

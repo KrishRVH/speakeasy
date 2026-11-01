@@ -1,5 +1,3 @@
-//! Synthetic native exports preserve annotation timing, crop order, and honest fallback metadata.
-
 use super::*;
 
 #[test]

@@ -1,10 +1,3 @@
-//! Pure keyboard policy for the modifier-only shortcuts: Ctrl+Win on Windows, Fn on macOS, the
-//! held-modifier rules for paste and Show ink, and the Shift double tap that drops a pin.
-//!
-//! Native callbacks report key events and deliver the decided input. Modifiers and Escape stay
-//! passive; only Space for hands-free and S, W, and A for a Show are swallowed, and only when
-//! pressed during a hold. Shift never interrupts a hold, since a Show draws with it.
-
 use std::{
     mem,
     time::{Duration, Instant},
@@ -12,25 +5,17 @@ use std::{
 
 use crate::{Input, InputSender, Scope, Taps};
 
-/// A Shift press released within this long is a tap.
 const SHIFT_TAP: Duration = Duration::from_millis(300);
-/// A second tap begins within this long of the first tap's release.
+
 const SHIFT_TAP_GAP: Duration = Duration::from_millis(400);
 
-/// Hold state for the modifier-only shortcut.
-///
-/// Space during a hold locks hands-free, and S, W, or A turns the recording into a Show; any other
-/// key belongs to a different shortcut, so it interrupts the recording and waits for the chord's
-/// release.
 #[derive(Default)]
 struct Chord {
     hold: Hold,
-    /// The [`HoldKey`]s being swallowed, by [`HoldKey::bit`].
     swallowing: u8,
 }
 
 impl Chord {
-    /// Starts a hold when the chord completes, unless it is already held or interrupted.
     fn press(&mut self) -> Option<Action> {
         if self.hold != Hold::Released {
             return None;
@@ -39,14 +24,10 @@ impl Chord {
         Some(Action::Press)
     }
 
-    /// Ends the hold when the chord breaks; only an uninterrupted hold reports a release.
     fn release(&mut self) -> Option<Action> {
         (mem::take(&mut self.hold) == Hold::Held).then_some(Action::Release)
     }
 
-    /// Swallows `key` pressed during a hold through its release, including repeats after the
-    /// chord itself is released, but acts only on presses during the hold, so a key whose release
-    /// went unseen asks for nothing once the hold is over.
     fn hold_key(&mut self, key: HoldKey, down: bool) -> Decision {
         let bit = key.bit();
         let acts = down && self.hold == Hold::Held;
@@ -69,7 +50,6 @@ impl Chord {
         Decision::pass(interrupted.then_some(Action::Interrupt))
     }
 
-    /// Ends an active hold; returns whether there was one.
     fn interrupt(&mut self) -> bool {
         let held = self.hold == Hold::Held;
         if held {
@@ -78,21 +58,16 @@ impl Chord {
         held
     }
 
-    /// Interrupts the recording for a session change, then waits for the chord's release.
     fn interrupt_recording(&mut self, input: &InputSender) {
         Action::Interrupt.deliver(input);
         self.interrupt();
     }
 
-    /// Whether the chord went down and has not been seen to come up.
     #[cfg(any(target_os = "macos", test))]
     fn awaits_release(&self) -> bool {
         self.hold != Hold::Released
     }
 
-    /// Ends the hold when the chord was not `held` just before this event, so its release never
-    /// arrived, as on the secure desktop or across sleep. Returns whether that ended an
-    /// uninterrupted hold, whose release the owner still has to hear.
     fn reconcile(&mut self, held: bool) -> bool {
         !held && self.release().is_some()
     }
@@ -103,16 +78,12 @@ enum Hold {
     #[default]
     Released,
     Held,
-    /// Another key ended the hold; nothing restarts it until the chord is released.
     Interrupted,
 }
 
-/// A key that acts when pressed during a hold.
 #[derive(Clone, Copy)]
 enum HoldKey {
-    /// Space locks hands-free.
     Space,
-    /// S, W, and A record a Show of the screen, the window under the pointer, or an area.
     Show(Scope),
 }
 
@@ -134,35 +105,27 @@ impl HoldKey {
     }
 }
 
-/// Two quick taps of Shift alone, which drop a numbered pin during a Show.
-///
-/// A tap is a press released within [`SHIFT_TAP`], and the second begins within [`SHIFT_TAP_GAP`]
-/// of the first's release with no other key between or held. The talk shortcut held through both
-/// taps does not count as another key. Shift stays passive, so an app's own double Shift still
-/// works.
-///
-/// Every tap also begins the next pair, and the Show decides which pairs pin, since only it sees
-/// whether a tap drew ink: a quick stroke before a double tap then costs that double tap nothing.
 #[derive(Clone, Copy, Default)]
 enum ShiftTaps {
     #[default]
     Idle,
-    /// Shift went down at `at`, as the second tap of a pair begun at `first` when there is one.
-    Down { at: Instant, first: Option<Instant> },
-    /// A tap pressed at `pressed` ended at `released`.
-    Tapped { pressed: Instant, released: Instant },
+    Down {
+        at: Instant,
+        first: Option<Instant>,
+    },
+    Tapped {
+        pressed: Instant,
+        released: Instant,
+    },
 }
 
 impl ShiftTaps {
-    /// Observes Shift going down or up at `at`; returns the double tap that completed, if any.
-    /// Shift as part of another shortcut is no tap and breaks any pair.
     fn shift(&mut self, down: bool, other_shortcut: bool, at: Instant) -> Option<Taps> {
         if other_shortcut {
             self.interrupt();
             return None;
         }
         let (next, doubled) = match (*self, down) {
-            // Autorepeat while Shift is held.
             (Self::Down { .. }, true) => (*self, None),
             (Self::Tapped { pressed, released }, true) => {
                 let first =
@@ -191,7 +154,6 @@ impl ShiftTaps {
         doubled
     }
 
-    /// Another key came between taps.
     fn interrupt(&mut self) {
         *self = Self::Idle;
     }
@@ -205,8 +167,6 @@ enum Action {
     Show(Scope),
     Pin(Taps),
     Escape,
-    /// Interrupt, then release: another shortcut, a session change, or a key-tap outage
-    /// interrupted the recording.
     Interrupt,
 }
 
@@ -227,10 +187,7 @@ impl Action {
     }
 }
 
-/// What a native callback does with one key event.
 pub(super) struct Decision {
-    /// The hold ended before this event without its release arriving; the owner hears that
-    /// release before `action`.
     missed_release: bool,
     action: Option<Action>,
     swallowed: bool,
@@ -260,7 +217,6 @@ impl Decision {
         }
     }
 
-    /// The actions to deliver, in order.
     fn actions(&self) -> impl Iterator<Item = Action> {
         self.missed_release
             .then_some(Action::Release)
@@ -268,12 +224,10 @@ impl Decision {
             .chain(self.action)
     }
 
-    /// Whether the focused app must not receive the event.
     pub(super) const fn swallows(&self) -> bool {
         self.swallowed
     }
 
-    /// Whether the event starts a hold.
     #[cfg(any(target_os = "windows", test))]
     pub(super) fn starts(&self) -> bool {
         self.action == Some(Action::Press)
@@ -286,46 +240,32 @@ impl Decision {
     }
 }
 
-/// Modifier keys held, as the paste wait and Show ink read them now or a macOS key event's flags
-/// report them.
 #[derive(Clone, Copy)]
 pub(super) struct Modifiers {
     pub(super) shift: bool,
-    /// A modifier outside the talk shortcut, or only part of it, which makes Shift part of another
-    /// shortcut.
     pub(super) other_shortcut: bool,
-    /// The hold-to-talk shortcut, macOS Fn or Windows Ctrl+Win, which may be down while Shift
-    /// draws.
     pub(super) talk: bool,
 }
 
 impl Modifiers {
-    /// Insertion waits while any modifier is held, so a paste never merges with the shortcut.
     pub(super) const fn any(self) -> bool {
         self.shift || self.other_shortcut || self.talk
     }
 
-    /// Shift alone draws, so Shift shortcuts never draw; the talk shortcut does not count, since
-    /// the user may still be holding it after pressing S.
     pub(super) const fn draws(self) -> bool {
         self.shift && !self.other_shortcut
     }
 }
 
-/// The keys Windows reports physically held just before a hook event, which corrects for events
-/// the hook missed, such as releases on the secure desktop.
 #[cfg(any(target_os = "windows", test))]
 #[derive(Clone, Copy)]
 pub(super) struct Physical {
-    /// Each of [`Windows::CHORD_KEYS`].
     chord_keys: [bool; 4],
-    /// [`Modifiers::other_shortcut`]: Shift pressed now belongs to another shortcut.
     other_shortcut: bool,
 }
 
 #[cfg(any(target_os = "windows", test))]
 impl Physical {
-    /// Reads each key's state through `down`, by virtual-key code.
     pub(super) fn read(down: impl Fn(u16) -> bool) -> Self {
         Self {
             chord_keys: Windows::CHORD_KEYS.map(&down),
@@ -334,7 +274,6 @@ impl Physical {
     }
 }
 
-/// Ctrl+Win policy over virtual-key codes from the low-level keyboard hook.
 #[cfg(any(target_os = "windows", test))]
 #[derive(Default)]
 pub(super) struct Windows {
@@ -347,7 +286,6 @@ pub(super) struct Windows {
 impl Windows {
     const ALT: u16 = 0x12;
     const AREA: u16 = 0x41;
-    /// Either Ctrl with either Windows key holds the chord.
     const CHORD_KEYS: [u16; 4] = [
         Self::LEFT_CONTROL,
         Self::RIGHT_CONTROL,
@@ -368,9 +306,6 @@ impl Windows {
     const SPACE: u16 = 0x20;
     const WINDOW: u16 = 0x57;
 
-    /// The modifiers `down` reports held, by virtual-key code. Ctrl and Windows together are the
-    /// talk shortcut; either alone, or Alt, makes Shift part of another shortcut, such as
-    /// Win+Shift+S.
     pub(super) fn modifiers(down: impl Fn(u16) -> bool) -> Modifiers {
         let control = down(Self::CONTROL);
         let windows = down(Self::LEFT_WINDOWS) || down(Self::RIGHT_WINDOWS);
@@ -381,14 +316,10 @@ impl Windows {
         }
     }
 
-    /// Interrupts the recording for a session change, then waits for the chord's release.
     pub(super) fn interrupt(&mut self, input: &InputSender) {
         self.chord.interrupt_recording(input);
     }
 
-    /// Decides one hook event at `at`. `physical` is what the OS reports held before this event;
-    /// it clears chord keys whose release the hook missed and tells Shift alone from Shift in
-    /// another shortcut.
     pub(super) fn observe(
         &mut self,
         key: u32,
@@ -401,8 +332,6 @@ impl Windows {
             .after_missed_release(missed_release)
     }
 
-    /// Forgets the chord keys Windows reports up before this event and ends a hold they no longer
-    /// make.
     fn reconcile(&mut self, chord_keys: [bool; 4]) -> bool {
         for (tracked, physically_down) in self.chord_keys_down.iter_mut().zip(chord_keys) {
             *tracked &= physically_down;
@@ -435,7 +364,6 @@ impl Windows {
         }
     }
 
-    /// Follows one of [`Self::CHORD_KEYS`] going down or up; `None` for any other key.
     fn chord_key(&mut self, key: u16, down: bool) -> Option<Decision> {
         let tracked = Self::CHORD_KEYS
             .into_iter()
@@ -443,8 +371,6 @@ impl Windows {
             .find_map(|(chord_key, tracked)| (chord_key == key).then_some(tracked))?;
         let was_down = mem::replace(tracked, down);
         if was_down != down {
-            // Ctrl or Win pressed or released between taps makes a shortcut such as Ctrl+Shift;
-            // holding the talk shortcut through both taps does not.
             self.taps.interrupt();
         }
         let action = match (self.chord_held(), down && !was_down) {
@@ -466,8 +392,6 @@ impl crate::MacShortcut {
         }
     }
 
-    /// IOLLEvent.h defines side-specific device bits alongside the aggregate `CGEvent` flags.
-    /// Exclude only the chosen right modifier: its left sibling must still interrupt a hold.
     pub(super) const fn modifiers(self, flags: u64) -> Modifiers {
         const SHIFT: u64 = 0x0002_0000;
         const CONTROL: u64 = 0x0004_0000;
@@ -492,23 +416,21 @@ impl crate::MacShortcut {
     }
 }
 
-/// One event from the macOS keyboard event tap, with the modifiers its flags report held.
 #[cfg(any(target_os = "macos", test))]
 pub(super) enum MacEvent {
-    /// A key went down, including autorepeat, or up.
     Key {
         code: i64,
         down: bool,
         held: Modifiers,
     },
-    /// Modifier flags changed.
-    FlagsChanged { code: i64, held: Modifiers },
+    FlagsChanged {
+        code: i64,
+        held: Modifiers,
+    },
 }
 
 #[cfg(any(target_os = "macos", test))]
 impl MacEvent {
-    /// The shortcut modifier's own flag change reports its new state. Other events can carry
-    /// synthetic flags, so an apparent release needs confirmation from physical key state.
     fn held_before(
         &self,
         shortcut: crate::MacShortcut,
@@ -523,7 +445,6 @@ impl MacEvent {
     }
 }
 
-/// Shortcut policy over virtual key codes from the macOS event tap.
 #[cfg(any(target_os = "macos", test))]
 #[derive(Default)]
 pub(super) struct Mac {
@@ -547,7 +468,6 @@ impl Mac {
     const RIGHT_OPTION: i64 = 61;
     const RIGHT_SHIFT: i64 = 60;
     const SCREEN: i64 = 1;
-    /// Command, Option, and Control, which make Fn part of another shortcut.
     const SHORTCUT_MODIFIERS: [i64; 7] = [
         Self::FUNCTION,
         Self::LEFT_COMMAND,
@@ -567,14 +487,10 @@ impl Mac {
         }
     }
 
-    /// Interrupts the recording for a session change, then waits for the shortcut's release.
     pub(super) fn interrupt(&mut self, input: &InputSender) {
         self.chord.interrupt_recording(input);
     }
 
-    /// Key events went by unseen while the tap was off, so no Shift tap pairs across the gap, and a
-    /// hold, whose edges the owner can no longer trust, ends and waits for the shortcut's release. A dictation
-    /// already released needs no more key edges, so it keeps its paste.
     pub(super) fn missed_events(&mut self, input: &InputSender) {
         self.taps.interrupt();
         if self.chord.interrupt() {
@@ -582,8 +498,6 @@ impl Mac {
         }
     }
 
-    /// Ends a hold whose release the tap missed, confirming apparent releases against physical
-    /// key state before interpreting the next event.
     pub(super) fn observe(
         &mut self,
         event: MacEvent,
@@ -617,7 +531,7 @@ impl Mac {
                 let pinned = self.taps.shift(held.shift, held.other_shortcut, at);
                 Decision::pass(pinned.map(Action::Pin))
             },
-            // A change that leaves one of them held is a press.
+
             MacEvent::FlagsChanged { code, held } if Self::SHORTCUT_MODIFIERS.contains(&code) => {
                 self.taps.interrupt();
                 self.chord.other_key(held.other_shortcut)
@@ -630,9 +544,7 @@ impl Mac {
                 self.taps.interrupt();
                 match code {
                     Self::ESCAPE => Decision::pass(down.then_some(Action::Escape)),
-                    // A deliberate hold distinguishes Show and hands-free gestures from ordinary
-                    // Command+S/W/A/Space and Option characters. Key-up still follows Chord's
-                    // swallowed-key bookkeeping after an accepted gesture.
+
                     Self::SPACE | Self::SCREEN | Self::WINDOW | Self::AREA
                         if down
                             && self.shortcut != crate::MacShortcut::Function

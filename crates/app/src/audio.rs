@@ -1,8 +1,3 @@
-//! Microphone capture on an owned thread, from device selection through draining and metering to
-//! sealing audio before driver teardown. The real-time callbacks live in `stream`, the in-place WAV
-//! buffer in `pcm`, the speech gate, which hears a voice beneath Speakeasy's own cues, in `speech`,
-//! and the input devices Settings offers in `microphones`.
-
 mod checkpoint;
 mod control;
 mod cuts;
@@ -45,7 +40,7 @@ use self::{
 use crate::runtime::ports::{CaptureEvent, Capturing, Listening, Sealed, SessionId};
 
 const INITIAL_RESERVATION: Duration = Duration::from_secs(10);
-/// Audio the callbacks can queue ahead of the drain loop before capture overflows.
+
 const RING_CAPACITY: Duration = Duration::from_secs(1);
 const METER_INTERVAL: Duration = Duration::from_millis(32);
 const DRAIN_INTERVAL: Duration = Duration::from_millis(5);
@@ -53,16 +48,11 @@ const METER_FLOOR_DBFS: f32 = -60.0;
 const METER_TOP_DBFS: f32 = -6.0;
 const CAPTURE_STOPPED: &str = "Microphone stopped unexpectedly. Try recording again.";
 
-/// One microphone capture on its own thread. Fields drop in declaration order, so a capture
-/// dropped without retiring cancels before its thread joins; the session owner retires it instead,
-/// awaiting native teardown without blocking its executor.
 pub(crate) struct Capture {
     signal: Signal,
-    /// Each message says a cue is starting, so the speech gate listens beneath it.
     cues: Sender<()>,
     keep: Sender<checkpoint::Keep>,
     whole: Sender<()>,
-    /// Exits once it has reported `Finished` and torn down its stream.
     thread: OwnedThread,
 }
 
@@ -120,7 +110,6 @@ impl Capture {
         let thread = OwnedThread::spawn("audio-capture", {
             let control = Arc::clone(&control);
             move || {
-                // A panicked capture's state is discarded; only its event lane is used afterwards.
                 let ran = panic::catch_unwind(AssertUnwindSafe(|| {
                     work(&events, &control, &heard, &kept, &entire)
                 }));
@@ -136,8 +125,7 @@ impl Capture {
                     reason = "A closed event lane belongs to a departed owner; retirement still observes this thread's exit"
                 )]
                 let _ = events.send_blocking(CaptureEvent::Finished(id, outcome));
-                // Audio is sealed before this potentially blocking driver teardown. Retirement
-                // acknowledges only after teardown, so another capture cannot overlap it.
+
                 drop(device);
             }
         })?;
@@ -199,8 +187,6 @@ impl Listening for Capture {
     }
 }
 
-/// Finish and cancel requests for the capture thread. Dropping it cancels without waiting, so
-/// retiring a capture never waits for an audio driver on the owner's input path.
 struct Signal {
     control: Arc<Control>,
     thread: Thread,
@@ -220,7 +206,6 @@ impl Drop for Signal {
     }
 }
 
-/// Why a capture ended before its stream played.
 enum Startup {
     Stopped,
     Failed(anyhow::Error),
@@ -232,21 +217,17 @@ impl<E: Into<anyhow::Error>> From<E> for Startup {
     }
 }
 
-/// The sealed outcome and resources retained until it has been reported. The generic device is
-/// an internal seam for testing blocked teardown without opening a microphone.
 struct Captured<D> {
     outcome: anyhow::Result<Option<Sealed>>,
     device: D,
 }
 
-/// Fields drop in declaration order, so the stream stops before its device and host.
 struct LiveStream {
     _stream: cpal::Stream,
     _device: cpal::Device,
     _host: cpal::Host,
 }
 
-/// A playing stream and the audio it has delivered so far. Unsealed PCM is erased on drop.
 struct Recorder<D = LiveStream> {
     pcm: Pcm16,
     speech: Audibility,
@@ -268,7 +249,6 @@ impl Recorder {
         events: &Sender<CaptureEvent>,
         control: &Arc<Control>,
     ) -> Result<Self, Startup> {
-        // Driver calls can block; recheck between them so a cancelled startup never plays a stream.
         let checkpoint = || {
             if control.mode() == Mode::Recording && !events.is_closed() {
                 Ok(())
@@ -297,7 +277,7 @@ impl Recorder {
             limit,
         };
         let stream = build_stream(&device, &format, callbacks)?;
-        // PCM stays at the device's native rate; the engine resamples.
+
         let pcm = Pcm16::with_reservation(samples_in(INITIAL_RESERVATION, rate), limit);
         let speech = Audibility::new(rate);
         checkpoint()?;
@@ -359,7 +339,7 @@ impl<D> Recorder<D> {
             if abandoned(control, events) {
                 return Ok(None);
             }
-            // A callback may have failed between the last poll and quiescence.
+
             capture_failure(control, &errors)?;
             speech.complete(pcm.audio());
             live.finish(pcm.audio());
@@ -373,8 +353,6 @@ impl<D> Recorder<D> {
         Captured { outcome, device }
     }
 
-    /// Moves audio from the ring into PCM, reporting readiness and levels, until capture finishes,
-    /// reaches the limit, or is abandoned.
     fn drain(
         &mut self,
         id: SessionId,
@@ -407,8 +385,7 @@ impl<D> Recorder<D> {
                 control.quiesce();
             }
             consume_pcm(&mut self.ring, &mut self.pcm, &mut meter);
-            // Checked after draining, not before, so a callback that fills the ring in between
-            // cannot leave audio in the recording that no `Ready` announced.
+
             if !ready && self.pcm.samples() > 0 {
                 ready = true;
                 events.send_blocking(CaptureEvent::Ready(id))?;
@@ -449,14 +426,12 @@ impl<D> Recorder<D> {
                     cuts.sent(end);
                 }
             }
-            // Finish and cancel unpark this thread at once, and an unpark that lands before the
-            // wait is not lost; the timeout only paces draining of the ring.
+
             thread::park_timeout(DRAIN_INTERVAL);
         }
     }
 }
 
-/// Accumulates sample energy and reports a speech level once per meter interval.
 struct LevelMeter {
     energy: f64,
     samples: u32,
@@ -514,7 +489,6 @@ fn select_device(
     )
 }
 
-/// Drains the ring, appending samples to `pcm` until it is full and metering each one kept.
 fn consume_pcm(ring: &mut Consumer<f32>, pcm: &mut Pcm16, meter: &mut LevelMeter) {
     let Ok(chunk) = ring.read_chunk(ring.slots()) else {
         return;
@@ -537,12 +511,10 @@ fn consume_pcm(ring: &mut Consumer<f32>, pcm: &mut Pcm16, meter: &mut LevelMeter
     chunk.commit_all();
 }
 
-/// Whether nobody wants the recording any more: it was cancelled, or its owner has gone.
 fn abandoned(control: &Control, events: &Sender<CaptureEvent>) -> bool {
     control.mode() == Mode::Cancelled || events.is_closed()
 }
 
-/// Maps RMS onto the meter's dBFS span, whose top is a speech reference rather than clipping.
 fn speech_meter_level(rms: f32) -> f32 {
     let above_floor = 20.0 * rms.max(0.000_001).log10() - METER_FLOOR_DBFS;
     (above_floor / (METER_TOP_DBFS - METER_FLOOR_DBFS)).clamp(0.0, 1.0)

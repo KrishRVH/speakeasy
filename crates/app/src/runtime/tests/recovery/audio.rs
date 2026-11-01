@@ -1,5 +1,3 @@
-//! Recovery speech uses the existing worker and never opens capture devices.
-
 use super::*;
 
 #[tokio::test(start_paused = true)]
@@ -84,7 +82,6 @@ async fn ordinary_dictation_never_creates_a_show_checkpoint() -> anyhow::Result<
     Ok(())
 }
 
-// This keeper uses an OS thread; virtual time can expire while its real file I/O is pending.
 #[tokio::test]
 async fn finishing_without_choosing_an_area_discards_the_session_checkpoint() -> anyhow::Result<()>
 {
@@ -131,8 +128,7 @@ async fn a_finished_show_keeps_an_unwind_but_discards_capture_failures() -> anyh
         })?;
         let (id, _, events) = start_show(&mut h).await?;
         finish_show(&h);
-        // Inputs outrank reports, so finish takes effect before this failed report. A later
-        // successful fake report is stale and cannot decide the checkpoint's disposition.
+
         let error = if unwound {
             anyhow!(crate::show::Unwound)
         } else {

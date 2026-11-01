@@ -1,5 +1,3 @@
-//! One owner feeds bounded native buffers; segment callbacks write only to its private file.
-
 mod buffers;
 mod output;
 mod settings;
@@ -43,8 +41,7 @@ impl crate::movie::encode::Codec for Codec {
         let output = output::Output::new(path, limit)?;
         let buffers = buffers::Buffers::new(size)?;
         let settings = settings::video(size)?;
-        // SAFETY: documented media constants configure an owned writer before it starts. Its
-        // strongly retained delegate owns the only file; the writer never receives a path or URL.
+
         let (native, input) = unsafe {
             let kind = UTType::typeWithIdentifier(AVFileTypeMPEG4.context("MP4 is unavailable")?)
                 .context("MP4 type is unavailable")?;
@@ -97,7 +94,7 @@ impl crate::movie::encode::Codec for Codec {
                 return Ok(false);
             }
             self.output.check()?;
-            // SAFETY: only this owner submits samples and controls the writer.
+
             unsafe {
                 ensure!(
                     self.native.status() == AVAssetWriterStatus::Writing,
@@ -117,8 +114,7 @@ impl crate::movie::encode::Codec for Codec {
         if cancelled() {
             return Ok(false);
         }
-        // SAFETY: the owned sample holds its independent pixel buffer; the native writer retains
-        // that sample as needed. Future canvas edits cannot mutate an already appended buffer.
+
         let appended = unsafe { self.input.appendSampleBuffer(&sample) };
         ensure!(appended, "The native movie writer refused a frame");
         self.frames = self
@@ -142,7 +138,7 @@ impl crate::movie::encode::Codec for Codec {
             )]
             let _ = completed.send(());
         });
-        // SAFETY: no append overlaps finalization; the owner remains alive until completion.
+
         unsafe {
             self.native.finishWritingWithCompletionHandler(&completion);
         }
@@ -150,7 +146,7 @@ impl crate::movie::encode::Codec for Codec {
             .recv()
             .context("Movie finalization did not complete")?;
         self.finished = true;
-        // SAFETY: completion has acknowledged finalization of every input.
+
         let status = unsafe { self.native.status() };
         ensure!(
             status == AVAssetWriterStatus::Completed,
@@ -163,7 +159,6 @@ impl crate::movie::encode::Codec for Codec {
 impl Drop for Codec {
     fn drop(&mut self) {
         if !self.finished {
-            // SAFETY: no append runs concurrently; cancellation waits for native work to stop.
             unsafe {
                 self.native.cancelWriting();
             }

@@ -1,6 +1,3 @@
-//! The pill's element tree: the capsule, its slot or message, and the marks inside them. It reads
-//! the pill's state and the scene of one frame and changes neither.
-
 use gpui::{
     AnyElement, BoxShadow, Div, SharedString, canvas, div, point, prelude::*, px, rgb, rgba,
 };
@@ -15,17 +12,14 @@ use crate::{
     theme::{Palette, alpha},
 };
 
-/// The slot row's horizontal padding.
 const ROW_PADDING: f32 = 7.0;
-/// The slot's horizontal inset inside the capsule: `ROW_PADDING` plus the capsule's one-pixel
-/// border on each side.
+
 const SLOT_SIDE_INSET: f32 = 2.0 * (ROW_PADDING + 1.0);
-/// The slot's total vertical inset inside the capsule.
+
 const SLOT_VERTICAL_INSET: f32 = 16.0;
-/// The room the mark and clock leave before the row's padding at the capsule's rounded end, which
-/// curves in closer to text than to the concentric slot.
+
 const TRAILING_INSET: f32 = 7.0;
-/// The lid position from which a closed slot's label fades in.
+
 const LABEL_FADE_FROM: f32 = 0.6;
 
 const TRAY_HINT: &str = if cfg!(target_os = "macos") {
@@ -88,7 +82,7 @@ impl Pill {
             Content::Error => self
                 .render_message(palette.warn, scene.footer(), palette)
                 .into_any_element(),
-            // Muted, since a notice is neither a success nor a warning.
+
             Content::Notice => self
                 .render_message(palette.muted, scene.footer(), palette)
                 .into_any_element(),
@@ -97,8 +91,6 @@ impl Pill {
         }
     }
 
-    /// The snapshot's message beside an attention mark in `color`, clipped to two lines above an
-    /// optional `footer`.
     fn render_message(&self, color: u32, footer: Option<&'static str>, palette: &Palette) -> Div {
         div()
             .w_full()
@@ -114,8 +106,6 @@ impl Pill {
                     .text_size(px(12.0))
                     .line_height(px(16.0))
                     .child(
-                        // GPUI truncates a clamped text as one long line, so its ellipsis can hang
-                        // just past the wrap width; the padding keeps it inside the clip.
                         div()
                             .line_clamp(2)
                             .text_ellipsis()
@@ -131,7 +121,7 @@ impl Pill {
     fn render_slot(&self, scene: Scene, palette: &'static Palette) -> Div {
         let (width, height) = (self.capsule.width.value(), self.capsule.height.value());
         let shows_clock = scene.shows_clock();
-        // The clock, or the drawing hint in its place, takes any width beyond a recording capsule's.
+
         let slot_room = if shows_clock {
             width.min(RECORDING_WIDTH)
         } else {
@@ -203,14 +193,13 @@ impl Pill {
                 } else {
                     (scene.clock.to_string().into(), palette.muted)
                 };
-                // A Show is always hands-free; its mark says the screen is recording too.
+
                 let mark = match (scene.show, scene.hands_free) {
                     (true, _) => Some(Symbol::Screen.element(palette.live)),
                     (false, true) => Some(Symbol::Lock.element(palette.muted)),
                     (false, false) => None,
                 };
-                // Against the far end, whatever the text's width in this platform's font, so the
-                // capsule's two ends keep matching margins.
+
                 row.child(
                     div()
                         .pr(px(TRAILING_INSET))
@@ -241,7 +230,6 @@ fn slot_label(scene: &Scene, palette: &Palette) -> Option<AnyElement> {
     }
 }
 
-/// `text` after `symbol`, which is drawn in `color`.
 fn marked(symbol: Symbol, color: u32, text: &'static str) -> AnyElement {
     div()
         .flex()

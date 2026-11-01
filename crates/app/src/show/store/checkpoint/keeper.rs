@@ -1,6 +1,3 @@
-//! One owner retains the checkpoint lock until its streams and native movie writer close.
-//! Separate bounded lanes isolate storage failures; credits keep queue accounting with producers.
-
 mod movie;
 mod producers;
 
@@ -35,7 +32,6 @@ pub(crate) struct Kept {
 }
 
 pub(crate) struct Keeper {
-    // Emergency drop stops and joins before the returned checkpoint's receiver can release its lock.
     thread: StoppableThread,
     closed: Receiver<anyhow::Result<Checkpoint>>,
 }
@@ -95,8 +91,6 @@ impl Keeper {
         })
     }
 
-    /// Resolves after both producers close and their last writes are flushed. The returned value
-    /// is the sole authority that can publish, retain, or discard these files.
     pub(crate) async fn close(self) -> anyhow::Result<Checkpoint> {
         self.thread.stopped().await;
         tokio::task::spawn_blocking(move || {
@@ -158,8 +152,6 @@ impl<T> Input<T> {
     }
 
     fn acknowledge(&self, bytes: usize) {
-        // Every outstanding record owns one credit slot. Sending each credit separately lets a
-        // producer recover its entire byte budget even when no further record can be enqueued.
         #[expect(
             clippy::let_underscore_must_use,
             reason = "The event budget guarantees a credit slot; a closed lane means its producer has left"
@@ -257,8 +249,7 @@ fn frame(
             );
             let (writing, target) = Writing::new(directory, started)?;
             *movie = Some(writing);
-            // A cancelled recorder drops the returned target; the independent lane still waits
-            // for that release before the checkpoint can unlock.
+
             #[expect(
                 clippy::let_underscore_must_use,
                 reason = "A dropped recorder refuses this target and closes its native lease"

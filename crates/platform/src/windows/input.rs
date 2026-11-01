@@ -1,9 +1,3 @@
-//! Windows keyboard observation: the Ctrl+Win low-level hook and the lifecycle window that
-//! interrupts the recording when the session locks, disconnects, ends, or sleeps, started beside
-//! the insertion thread.
-//!
-//! The hook thread creates and removes every native resource its callbacks reach.
-
 use std::{
     cell::RefCell,
     io,
@@ -55,9 +49,8 @@ use crate::{
     insertion, keyboard,
 };
 
-/// Posted by the keyboard hook so the message loop, not the hook callback, masks Start.
 const MASK_START: u32 = WM_APP + 1;
-/// A virtual key Windows leaves unassigned.
+
 const UNASSIGNED_KEY: VIRTUAL_KEY = 0xE8;
 
 thread_local! {
@@ -68,10 +61,7 @@ thread_local! {
     static HOOK: RefCell<Option<HookState>> = const { RefCell::new(None) };
 }
 
-/// What `InputMonitor` holds beside the hook thread: the event that stops it, and the insertion
-/// thread.
 pub(crate) struct Monitor {
-    // Shared with the hook thread, which waits on it, so the event closes once both release it.
     stop: Arc<StopEvent>,
     insertion: insertion::Worker,
 }
@@ -100,24 +90,18 @@ pub(crate) fn start(
     Ok((thread, Monitor { stop, insertion }, inserter))
 }
 
-/// The monitor's stop, set once and for good. A manual-reset event records a stop that comes
-/// before the hook thread first waits, and it ends that wait, which owner messages cannot reach.
 struct StopEvent(OwnedHandle);
 
 impl StopEvent {
     fn new() -> io::Result<Self> {
-        // SAFETY: null attributes and name create an unnamed manual-reset event whose handle
-        // nothing else owns.
         unsafe { take_handle(CreateEventW(null(), TRUE, FALSE, null())) }.map(Self)
     }
 
     fn set(&self) {
-        // SAFETY: the owned event stays open for this call, which takes the handle by value.
         unsafe { SetEvent(self.0.as_raw_handle()) };
     }
 
     fn is_set(&self) -> bool {
-        // SAFETY: the owned event stays open for this zero-timeout wait.
         unsafe { WaitForSingleObject(self.0.as_raw_handle(), 0) == WAIT_OBJECT_0 }
     }
 }
@@ -128,14 +112,11 @@ struct HookState {
 }
 
 impl HookState {
-    /// Delivers the policy's decision for one key event and returns whether to swallow it.
     fn observe(&mut self, key: u32, down: bool) -> bool {
-        // GetAsyncKeyState does not reflect this event until the hook returns.
         let physical = keyboard::Physical::read(is_key_down);
         let decision = self.policy.observe(key, down, physical, Instant::now());
         decision.deliver(&self.input);
         if decision.starts() {
-            // SAFETY: posts a value-only message to this hook's own thread.
             unsafe {
                 PostThreadMessageW(GetCurrentThreadId(), MASK_START, 0, 0);
             }
@@ -148,7 +129,6 @@ struct KeyboardHook(HHOOK);
 
 impl KeyboardHook {
     fn install() -> io::Result<Self> {
-        // SAFETY: keyboard_hook has the WH_KEYBOARD_LL signature and lives for the process.
         let hook = unsafe {
             SetWindowsHookExW(
                 WH_KEYBOARD_LL,
@@ -166,24 +146,18 @@ impl KeyboardHook {
 
 impl Drop for KeyboardHook {
     fn drop(&mut self) {
-        // SAFETY: this thread installed the hook and removes it exactly once.
         unsafe {
             UnhookWindowsHookEx(self.0);
         }
     }
 }
 
-/// A hidden window that receives session, shutdown, and power notifications.
-///
-/// Top-level rather than message-only: message-only windows miss the `WM_QUERYENDSESSION` and
-/// `WM_POWERBROADCAST` broadcasts. The shell and window utilities sometimes show hidden top-level
-/// windows, so it is a zero-size tool popup with nothing to draw and no taskbar button.
 struct LifecycleWindow(HWND);
 
 impl LifecycleWindow {
     fn create() -> io::Result<Self> {
         let class_name = w!("SpeakeasyEvents");
-        // SAFETY: a null module name selects this executable.
+
         let instance = unsafe { GetModuleHandleW(null()) };
         let class = WNDCLASSW {
             lpfnWndProc: Some(lifecycle_window),
@@ -191,14 +165,14 @@ impl LifecycleWindow {
             lpszClassName: class_name,
             ..Default::default()
         };
-        // SAFETY: the class names a static string and a procedure that live for the process.
+
         let registered = unsafe {
             RegisterClassW(&raw const class) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS
         };
         if !registered {
             return Err(io::Error::last_os_error());
         }
-        // SAFETY: the class is registered, and every pointer argument is static or null.
+
         let window = unsafe {
             CreateWindowExW(
                 WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
@@ -224,18 +198,12 @@ impl LifecycleWindow {
 
 impl Drop for LifecycleWindow {
     fn drop(&mut self) {
-        // SAFETY: this thread created the window and destroys it exactly once.
         unsafe {
             DestroyWindow(self.0);
         }
     }
 }
 
-/// Session-change notifications for a lifecycle window, unregistered before it is destroyed.
-///
-/// Registration fails early in logon, before Remote Desktop Services is ready, and wherever those
-/// services are off, so the message loop retries it for a while. The hook runs either way, and
-/// power and end-session messages reach the window without it.
 struct SessionNotifications<'window> {
     window: &'window LifecycleWindow,
     registration: Registration,
@@ -253,9 +221,8 @@ impl<'window> SessionNotifications<'window> {
 
     fn attempt_when_due(&mut self, now: Instant) {
         let window = self.window.0;
-        self.registration.attempt_when_due(now, || {
-            // SAFETY: the borrowed window stays live until this registration is dropped.
-            unsafe { WTSRegisterSessionNotification(window, NOTIFY_FOR_THIS_SESSION) != FALSE }
+        self.registration.attempt_when_due(now, || unsafe {
+            WTSRegisterSessionNotification(window, NOTIFY_FOR_THIS_SESSION) != FALSE
         });
     }
 }
@@ -263,7 +230,6 @@ impl<'window> SessionNotifications<'window> {
 impl Drop for SessionNotifications<'_> {
     fn drop(&mut self) {
         if self.registration == Registration::Registered {
-            // SAFETY: registration succeeded for this still-live window.
             unsafe {
                 WTSUnRegisterSessionNotification(self.window.0);
             }
@@ -271,16 +237,10 @@ impl Drop for SessionNotifications<'_> {
     }
 }
 
-/// Where registering for session notifications stands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Registration {
     Registered,
-    /// The next attempt is due at `at`, with `retries` more after it.
-    Pending {
-        at: Instant,
-        retries: u8,
-    },
-    /// Every attempt failed, so session changes go unobserved.
+    Pending { at: Instant, retries: u8 },
     Abandoned,
 }
 
@@ -295,7 +255,6 @@ impl Registration {
         }
     }
 
-    /// Runs `register` when an attempt is due at `now`, scheduling the next if it fails.
     fn attempt_when_due(&mut self, now: Instant, register: impl FnOnce() -> bool) {
         let Self::Pending { at, retries } = *self else {
             return;
@@ -313,9 +272,6 @@ impl Registration {
         };
     }
 
-    /// How long, in milliseconds, the message loop may wait before the next attempt falls due.
-    /// Rounding up keeps a fraction of a millisecond from becoming a zero timeout that spins until
-    /// then.
     fn timeout(self, now: Instant) -> u32 {
         match self {
             Self::Pending { at, .. } => {
@@ -350,10 +306,7 @@ fn run_event_loop(input: &InputSender, stop: &StopEvent) -> io::Result<()> {
     if stop.is_set() {
         return Ok(());
     }
-    // Windows silently removes a low-level hook whose callback misses LowLevelHooksTimeout, as a
-    // starved thread does on a busy system. This thread only decides key events and waits, so it
-    // may preempt other work.
-    // SAFETY: the pseudo-handle names this thread, and the call takes values only.
+
     unsafe {
         SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
     }
@@ -361,8 +314,7 @@ fn run_event_loop(input: &InputSender, stop: &StopEvent) -> io::Result<()> {
     let _hook = KeyboardHook::install()?;
     let window = LifecycleWindow::create()?;
     let mut notifications = SessionNotifications::register(&window, Instant::now());
-    // A stop landing after this check may still see readiness, which is harmless: each runtime has
-    // its own input lane, and the runtime is stopped together with its monitor.
+
     if stop.is_set() {
         return Ok(());
     }
@@ -373,23 +325,20 @@ fn run_event_loop(input: &InputSender, stop: &StopEvent) -> io::Result<()> {
     pump_messages(stop, &mut notifications)
 }
 
-/// Peeking makes Windows create this thread's queue before the hook posts to it.
 fn create_message_queue() {
     let mut message = MSG::default();
-    // SAFETY: PeekMessageW writes only this live local.
+
     unsafe {
         PeekMessageW(&raw mut message, null_mut(), 0, 0, PM_NOREMOVE);
     }
 }
 
-/// Runs the message loop until a stop or `WM_QUIT`; a stop wins even under continuous input.
-/// Between messages, it retries a session registration that failed.
 fn pump_messages(stop: &StopEvent, notifications: &mut SessionNotifications<'_>) -> io::Result<()> {
     let handles = [stop.0.as_raw_handle()];
     while dispatch_queued_messages(stop).is_continue() && !stop.is_set() {
         notifications.attempt_when_due(Instant::now());
         let timeout = notifications.registration.timeout(Instant::now());
-        // SAFETY: the one-handle array outlives this synchronous wait.
+
         let woken = unsafe {
             MsgWaitForMultipleObjectsEx(
                 1,
@@ -410,7 +359,7 @@ fn pump_messages(stop: &StopEvent, notifications: &mut SessionNotifications<'_>)
 
 fn dispatch_queued_messages(stop: &StopEvent) -> ControlFlow<()> {
     let mut message = MSG::default();
-    // SAFETY: PeekMessageW writes only this live local.
+
     while unsafe { PeekMessageW(&raw mut message, null_mut(), 0, 0, PM_REMOVE) } != FALSE {
         if stop.is_set() || message.message == WM_QUIT {
             return ControlFlow::Break(());
@@ -418,7 +367,6 @@ fn dispatch_queued_messages(stop: &StopEvent) -> ControlFlow<()> {
         if message.message == MASK_START {
             mask_start_menu();
         } else {
-            // SAFETY: the message came from this thread's queue and outlives both calls.
             unsafe {
                 TranslateMessage(&raw const message);
                 DispatchMessageW(&raw const message);
@@ -431,8 +379,6 @@ fn dispatch_queued_messages(stop: &StopEvent) -> ControlFlow<()> {
 unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     let swallow = code >= 0
         && panic::catch_unwind(|| {
-            // SAFETY: for nonnegative WH_KEYBOARD_LL callbacks lparam points to a KBDLLHOOKSTRUCT
-            // valid for this invocation.
             let event = unsafe { &*(lparam as *const KBDLLHOOKSTRUCT) };
             let down = wparam == WM_KEYDOWN as usize || wparam == WM_SYSKEYDOWN as usize;
             event.dwExtraInfo != OWN_INPUT
@@ -448,7 +394,7 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
     if swallow {
         return 1;
     }
-    // SAFETY: forwards this callback's own arguments unchanged.
+
     unsafe { CallNextHookEx(null_mut(), code, wparam, lparam) }
 }
 
@@ -470,12 +416,10 @@ unsafe extern "system" fn lifecycle_window(
     {
         close_input();
     }
-    // SAFETY: forwards this window procedure's own arguments unchanged.
+
     unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
 }
 
-/// Recovers from a panic inside a native callback, which must not unwind into the OS: closing the
-/// input makes the owner cancel rather than continue with lost key edges.
 fn close_input() {
     HOOK.with(|slot| {
         if let Ok(Some(state)) = slot.try_borrow().as_deref() {
@@ -499,8 +443,6 @@ fn interrupts_recording(message: u32, wparam: WPARAM) -> bool {
     }
 }
 
-/// Releasing Win without another key opens Start. An unassigned key while the chord is held marks
-/// Win as used, as other shortcut tools do.
 fn mask_start_menu() {
     #[expect(
         clippy::let_underscore_must_use,
@@ -563,7 +505,7 @@ mod tests {
     fn a_shown_lifecycle_window_has_no_frame_or_taskbar_button() -> anyhow::Result<()> {
         let window = LifecycleWindow::create()?;
         let mut frame = RECT::default();
-        // SAFETY: this thread owns the live window, and showing it activates nothing.
+
         let (visible, extended) = unsafe {
             ShowWindow(window.0, SW_SHOWNOACTIVATE);
             ok_or_last_error(GetWindowRect(window.0, &raw mut frame))?;

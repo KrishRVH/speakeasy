@@ -1,5 +1,3 @@
-//! Pinned cache integrity and resumable downloads over a synthetic loopback server.
-
 use std::{convert::Infallible, time::Duration};
 
 use tokio::{
@@ -16,8 +14,6 @@ use crate::{
 
 const BODY: &[u8] = b"Say the word. The door opens, and what is said stays inside.";
 
-/// Serves `BODY` on loopback, honoring `Range: bytes=N-`. The receiver yields the range start
-/// each request asked for.
 async fn serve_body() -> anyhow::Result<(String, async_channel::Receiver<Option<u64>>)> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let url = format!("http://{}", listener.local_addr()?);

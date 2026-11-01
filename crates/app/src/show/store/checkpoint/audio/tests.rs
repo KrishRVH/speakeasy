@@ -1,5 +1,3 @@
-//! Synthetic PCM exercises prefix recovery and the allocation limits before any engine is used.
-
 use proptest::prelude::*;
 
 use super::*;

@@ -1,8 +1,3 @@
-//! X11 and Xwayland access: reserved-shortcut grabs, focus checks, clipboard ownership, XTEST
-//! paste, and owned-window hints and visibility. Clipboard, focus, and paste calls run on owned
-//! worker threads, and window calls on the caller's thread through a short-lived connection; the
-//! desktop service's loop makes only the round trips that track shortcuts and the keyboard mapping.
-
 mod clipboard;
 #[cfg(test)]
 mod native_tests;
@@ -34,7 +29,7 @@ use super::{Actionable, HostSession, ShortcutLabels, stop_requested, watch_reada
 use crate::{DesktopOptions, Input, InputSender, LinuxPaste, insertion::Insertion};
 
 const MAX_FOCUS_ANCESTRY: usize = 32;
-/// The eight core modifier bits; key-event state also carries pointer-button bits above them.
+
 const CORE_MODIFIERS: u16 = 0xFF;
 
 #[derive(PartialEq, Eq)]
@@ -69,13 +64,11 @@ impl Keyboard {
         })
     }
 
-    /// Each keycode with the keysyms it types, from the first keycode up.
     fn keys(&self) -> impl Iterator<Item = (u8, &[u32])> {
         let rows = (self.symbols_per_key != 0).then(|| self.symbols.chunks(self.symbols_per_key));
         (self.first_keycode..=u8::MAX).zip(rows.into_iter().flatten())
     }
 
-    /// Each core modifier's mask with the keycodes mapped to it; a zero keycode fills an unused slot.
     fn modifiers(&self) -> impl Iterator<Item = (u16, &[u8])> {
         let groups = (self.keys_per_modifier != 0)
             .then(|| self.modifier_keys.chunks(self.keys_per_modifier));
@@ -141,7 +134,6 @@ struct KeyBinding {
     modifiers: u16,
 }
 
-/// The reserved dictate and cancel chords.
 #[derive(Clone, Copy)]
 struct Shortcuts {
     dictate: KeyBinding,
@@ -160,8 +152,6 @@ impl Shortcuts {
     }
 
     fn grab(self, connection: &XCBConnection, root: Window, lock: u16) -> anyhow::Result<()> {
-        // Passive grabs match the exact modifier state, so each Caps and Num Lock combination needs
-        // its own grab.
         let caps = u16::from(xproto::ModMask::LOCK);
         let lock_states = [0, lock & caps, lock & !caps, lock];
         for (binding, taken) in [
@@ -186,7 +176,6 @@ impl Shortcuts {
                     )?
                     .check()
                     .map_err(|error| match error {
-                        // The server refuses a passive grab that another client already holds.
                         ReplyError::X11Error(error) if error.error_kind == ErrorKind::Access => {
                             anyhow!(Actionable(taken))
                         },
@@ -198,7 +187,6 @@ impl Shortcuts {
     }
 }
 
-/// Turns grabbed shortcut presses and observed releases into dictation input.
 struct ShortcutTracker<'a> {
     connection: &'a XCBConnection,
     keyboard: &'a Keyboard,
@@ -206,7 +194,6 @@ struct ShortcutTracker<'a> {
     lock: u16,
     depends_on_mapping: bool,
     input: &'a InputSender,
-    /// The dictation chord while it is held.
     held: Option<KeyBinding>,
 }
 
@@ -220,9 +207,6 @@ impl ShortcutTracker<'_> {
         }
     }
 
-    /// Stops input when the keyboard mapping changed. The server announces the mapping whenever
-    /// input switches keyboards, as an XTEST paste after physical typing does, even when nothing
-    /// changed.
     fn check_mapping(&self) -> anyhow::Result<()> {
         ensure!(
             Keyboard::load(self.connection)? == *self.keyboard,
@@ -244,8 +228,7 @@ impl ShortcutTracker<'_> {
                 self.input.deliver(Input::Press);
             }
         }
-        // The grab reserves only the trigger: return the keyboard to the focused app, and let XI2
-        // raw events observe the release without a grab.
+
         self.connection.ungrab_keyboard(key.time)?;
         self.connection.flush()?;
         Ok(())
@@ -286,8 +269,7 @@ pub(super) async fn run(
         Some(Shortcuts::bind(&keyboard, options)?)
     };
     let lock = keyboard.lock_modifiers();
-    // The grabs wait for the worker: a chord pressed before this loop runs would hold the keyboard
-    // grabbed until it does.
+
     let worker = InsertionWorker::start(input.clone(), options.clone(), requests)?;
     tokio::select! {
         biased;
@@ -322,16 +304,11 @@ pub(super) async fn run(
     Ok(())
 }
 
-/// Whether input depends on the keyboard mapping it started with: the shortcut grabs and the
-/// insertion worker's paste keys come from it, while desktop bindings with manual paste use neither.
 fn depends_on_mapping(options: &DesktopOptions) -> bool {
     !(options.external_shortcut && options.paste == LinuxPaste::Manual)
 }
 
-/// Subscribes `root` to XI2 raw key releases, which arrive without a keyboard grab.
 fn observe_releases(connection: &XCBConnection, root: Window) -> anyhow::Result<()> {
-    // XI2 events flow only after the client announces its version; the reply carries nothing we
-    // need.
     connection.xinput_xi_query_version(2, 2)?.reply()?;
     connection
         .xinput_xi_select_events(
@@ -351,7 +328,6 @@ fn is_key_down(keys: &[u8; 32], code: u8) -> bool {
 }
 
 fn parse_binding(expression: &str) -> anyhow::Result<(Vec<Keysym>, &str)> {
-    /// The left and right keys of CTRL, LOGO, ALT, and SHIFT, which cannot be the ordinary key.
     const BINDING_MODIFIER_KEYS: [&str; 8] = [
         "Control_L",
         "Control_R",
@@ -403,8 +379,6 @@ fn has_external_target(connection: &XCBConnection, host: HostSession) -> anyhow:
     })
 }
 
-/// Whether focus belongs to another process. GPUI publishes `_NET_WM_PID` on its top-level
-/// windows, so the walk climbs from a focused child field to the first window that names a PID.
 fn focus_is_external(
     host: HostSession,
     mut window: Window,
@@ -412,7 +386,6 @@ fn focus_is_external(
     mut inspect: impl FnMut(Window) -> anyhow::Result<(Option<u32>, Window)>,
 ) -> anyhow::Result<bool> {
     if window == x11rb::NONE {
-        // Wayland clears Xwayland focus when a native editor takes it; on X11 it names no editor.
         return Ok(host == HostSession::Wayland);
     }
     if window == u32::from(xproto::InputFocus::POINTER_ROOT) {
@@ -459,7 +432,7 @@ pub(super) fn configure_pill(window: Window) -> anyhow::Result<()> {
     }
     .set(&connection, window)?
     .check()?;
-    // An empty input region lets clicks pass through.
+
     connection
         .shape_rectangles(
             shape::SO::SET,
@@ -491,9 +464,6 @@ pub(super) fn set_visible(window: Window, visible: bool) {
     let _ = change();
 }
 
-/// GPUI connects through libxcb, so these connections do too: resolving `DISPLAY` with the same
-/// library guarantees they reach the server that holds GPUI's windows, without relying on x11rb's
-/// pure-Rust resolver to match libxcb.
 fn connect() -> anyhow::Result<(XCBConnection, usize)> {
     Ok(XCBConnection::connect(None)?)
 }

@@ -1,6 +1,3 @@
-//! Bounded, selected-Show narration for native review. Recorded words remain separate from the
-//! user's summary; neither their contents nor an imported manifest's private errors are logged.
-
 use speakeasy_show::{NarrationLoss, Recording, TimedClause, timed_clauses};
 
 const MOST_TEXT: usize = 64 << 10;

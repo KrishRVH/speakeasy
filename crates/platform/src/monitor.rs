@@ -1,9 +1,3 @@
-//! Stop coordination for the macOS event tap's run loop, which cannot receive owner messages and
-//! publishes its `CFRunLoop` only once running. Portable, so its tests run on every host.
-//!
-//! Publishing the loop's handle and requesting stop share one lock, so a stop that arrives before
-//! the loop starts stays effective and a wake never reaches a retired handle.
-
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 struct MonitorState<T> {
@@ -11,7 +5,6 @@ struct MonitorState<T> {
     handle: Option<T>,
 }
 
-/// Stop state shared between a native event loop's thread and its owner.
 pub(crate) struct MonitorControl<T> {
     #[expect(
         clippy::disallowed_types,
@@ -33,8 +26,6 @@ impl<T> Default for MonitorControl<T> {
 }
 
 impl<T> MonitorControl<T> {
-    /// Publishes the loop's handle and runs `ready`, or returns `false` without publishing when a
-    /// stop already arrived.
     #[expect(
         clippy::significant_drop_tightening,
         reason = "Readiness must publish under the same lock as native initialization so stop cannot interleave"
@@ -49,7 +40,6 @@ impl<T> MonitorControl<T> {
         true
     }
 
-    /// Marks the loop stopping and wakes its published handle, if any.
     pub(crate) fn request_stop(&self, wake: impl FnOnce(&T)) {
         let mut state = self.state();
         state.stopping = true;
@@ -58,12 +48,10 @@ impl<T> MonitorControl<T> {
         }
     }
 
-    /// Whether a stop has been requested.
     pub(crate) fn stopping(&self) -> bool {
         self.state().stopping
     }
 
-    /// Retires the published handle once the loop has exited, so later stops wake nothing.
     pub(crate) fn retire(&self) {
         self.state().handle = None;
     }

@@ -1,6 +1,3 @@
-//! Publishing a finished Show: choosing and composing its keyframes, writing its bundle, and
-//! copying its summary for the agent.
-
 use std::{
     path::{Path, PathBuf},
     time::SystemTime,
@@ -11,10 +8,8 @@ use speakeasy_platform::InsertPermit;
 use speakeasy_show::{Journal, NarrationLoss, Recording, Typeface, compose, select};
 
 use super::{Checkpoint, Interrupted, SavedShow, recorder::NOTHING_RECORDED, store};
-use crate::runtime::ports::{Footage, PUBLISH_STOPPED, Published};
+use crate::runtime::ports::{Footage, PUBLISH_STOPPED, Preservation, Published};
 
-/// Everything that publication owns. Captures have released their producer lanes before this
-/// waits for the checkpoint; recovery holds the same files directly.
 pub(crate) struct Publication {
     pub footage: Footage,
     pub checkpoint: Option<super::Checkpointing>,
@@ -44,7 +39,6 @@ pub(crate) struct RecoveredSpeech {
     pub incomplete: bool,
 }
 
-/// Composes and writes off the caller's thread, after the single checkpoint writer has drained.
 pub(crate) async fn publish(
     publication: Publication,
     permit: InsertPermit,
@@ -54,8 +48,7 @@ pub(crate) async fn publish(
         checkpoint,
         origin,
     } = publication;
-    // A checkpoint failure must not cost the live in-memory Show. Its producers already report
-    // failure during capture; the bundle remains useful even when recovery storage is unavailable.
+
     let checkpoint = match checkpoint {
         Some(checkpoint) => checkpoint.close().await.ok(),
         None => None,
@@ -131,22 +124,22 @@ fn publish_with(
             if !audio_kept {
                 remove_published(checkpoint);
             }
+            let preservation = Preservation {
+                narration_lost: lost,
+                source_lost,
+                movie_lost,
+                audio_kept,
+            };
             match origin {
                 Origin::Live => Ok(Published::Saved {
                     show,
                     ending,
-                    lost,
-                    source_lost,
-                    movie_lost,
-                    audio_kept,
+                    preservation,
                     copied: copy(&summary),
                 }),
                 Origin::Recovered { pending } => Ok(Published::Recovered {
                     show,
-                    source_lost,
-                    movie_lost,
-                    lost,
-                    audio_kept,
+                    preservation,
                     narrated_copy: pending,
                 }),
             }
@@ -159,8 +152,6 @@ fn publish_with(
     }
 }
 
-/// Reads private files and prepares speech without opening a device, loading an engine, or
-/// touching the clipboard. The session supplies the existing local worker after this returns.
 pub(crate) async fn reopen(interrupted: Interrupted) -> anyhow::Result<Reopened> {
     tokio::task::spawn_blocking(move || reopen_with(interrupted))
         .await
@@ -176,8 +167,7 @@ fn reopen_with(interrupted: Interrupted) -> anyhow::Result<Reopened> {
     let pending = checkpoint.pending()?;
     let (mut recording, journal) = checkpoint.replay()?.finish();
     let mut speech = None;
-    // A corrupt transcript never suppresses surviving audio. Neither parser exposes private
-    // content in an error; unreadable audio still permits an initial frame-only recovery.
+
     match checkpoint.narration() {
         Ok(Some((narration, incomplete))) => {
             recording.narration = narration;

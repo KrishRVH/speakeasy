@@ -1,5 +1,3 @@
-//! Small checked readers for ISO BMFF metadata. Neither errors nor Debug expose source bytes.
-
 use super::MovieError;
 
 pub(super) struct Atom {

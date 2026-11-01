@@ -1,5 +1,3 @@
-//! Progressive saved annotations use only observed points, completed actions, and matching spaces.
-
 mod labels;
 
 use std::{fmt, time::Duration};
@@ -13,25 +11,18 @@ use crate::{
     locate::PixelRect, recording::Spaces,
 };
 
-/// The fitted image and the display rectangle captured in one presented video sample.
 #[derive(Clone, Copy, Debug)]
 pub struct VideoViewport {
-    /// Content bounds in the full encoded canvas; letterboxing remains untouched.
     pub content: PixelRect,
-    /// Display edges normalized to the capture's original display coordinate grid.
     pub source: Rect,
 }
 
-/// Counts drawn primitives and eligible primitives omitted for unknown or out-of-frame geometry.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct AnnotationReport {
-    /// Visible strokes, numbered labels, and completed action ripples.
     pub drawn: usize,
-    /// Eligible primitives outside the frame or without compatible coordinate and timing proofs.
     pub omitted: usize,
 }
 
-/// An immutable annotation snapshot without narration, summary text, images, or I/O.
 pub struct Annotations {
     duration: Moment,
     strokes: Vec<Stroke>,
@@ -52,10 +43,6 @@ impl fmt::Debug for Annotations {
 }
 
 impl Annotations {
-    /// Copies only the annotation data of a validated Show for repeated frame rendering.
-    ///
-    /// # Errors
-    /// Rejects invalid normalized geometry, times outside the recording, and unbound proofs.
     pub fn new(recording: &Recording, marks: &[Mark]) -> Result<Self, Error> {
         let point = |point: Point| {
             point.is_finite() && (0.0..=1.0).contains(&point.x) && (0.0..=1.0).contains(&point.y)
@@ -120,15 +107,6 @@ impl Annotations {
         })
     }
 
-    /// Paints at the actual decoded session timestamp. Observations have millisecond resolution.
-    /// Only the eligible point prefix shapes an outline; labels wait for complete marks, and
-    /// actions appear after release. Cut segments retain ink together until 1.2 seconds after
-    /// their final stored point. This is a saved-view policy, not a replay of live overlay fades.
-    ///
-    /// # Errors
-    /// Rejects a time beyond annotation coverage or a viewport outside the supplied image.
-    /// Unknown or incompatible primitive geometry is counted and omitted. Cancellation returns
-    /// `None` between primitive batches without changing the supplied image.
     pub fn paint(
         &self,
         image: &mut Image,

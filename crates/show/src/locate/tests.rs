@@ -1,5 +1,3 @@
-//! Locations remain explicit and source sampling never invents coverage.
-
 use proptest::prelude::*;
 use serde_json::json;
 

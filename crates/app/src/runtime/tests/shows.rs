@@ -1,6 +1,3 @@
-//! Show scenarios: S, W, or A during a hold, the tray's Shows, interruptions, screen lanes,
-//! footage, lost narration, and publication, against a fake screen and gated publication.
-
 use speakeasy_show::Ending;
 
 use super::{
@@ -139,7 +136,7 @@ async fn a_recording_escape_revoked_before_it_became_a_show_stays_dictation_and_
     h.phase(Phase::Recording).await?;
     receive(&h.captures).await?;
     tokio::time::advance(Duration::from_secs(1)).await;
-    // Delivered back to back, so Escape revokes the recording before the owner sees S.
+
     for input in [Input::Show(Scope::Screen), Input::Release, Input::Escape] {
         h.input(input);
     }
@@ -195,7 +192,7 @@ async fn an_interruption_finishes_a_recording_show_held_or_hands_free() -> anyho
             h.input(Input::Release);
         }
         h.take_sounds();
-        // The keyboard follows an interruption with the shortcut's release.
+
         for input in [Input::Interrupt, Input::Release] {
             h.input(input);
         }
@@ -407,13 +404,10 @@ async fn s_while_the_last_microphone_retires_still_starts_a_show() -> anyhow::Re
     h.close().await
 }
 
-/// What the pill and Settings say once a Show is copied without the narration it lost, before the
-/// failure that cost it.
 const COPIED_WITHOUT_NARRATION: &str = "Show copied without narration.";
-/// A capture failure whose message carries its remedy.
+
 const DISCONNECTED: &str = "The microphone was disconnected. Reconnect it.";
 
-/// Holds the shortcut and presses S once the microphone listens, returning the microphone's lane.
 async fn start_show_listening(h: &mut Harness) -> anyhow::Result<OpenedCapture> {
     h.input(Input::Press);
     h.phase(Phase::Recording).await?;
@@ -554,8 +548,6 @@ async fn a_model_that_fails_to_load_fails_dictation_but_copies_a_show_without_na
     h.close().await
 }
 
-/// Records a Show whose screen recording ends as `ending` and whose microphone then disconnects,
-/// up to its publication.
 async fn lose_screen_and_narration(h: &mut Harness, ending: Ending) -> anyhow::Result<()> {
     let (id, microphone) = start_show_listening(h).await?;
     let (_, _, screen) = receive(&h.shows).await?;
@@ -626,11 +618,11 @@ async fn a_show_that_lost_its_narration_and_is_discarded_leaves_no_trace() -> an
     h.phase(Phase::Cancelled).await?;
     retiring.reached().await?;
     h.input(Input::Release);
-    // The earlier Show's screen is still letting go, so this one's waits.
+
     let (id, events) = start_show_listening(&mut h).await?;
     events.send(disconnected(id)).await?;
     h.phase(Phase::Processing).await?;
-    // Losing its narration ended the Show, so only new settings discard it while it is saved.
+
     change_settings(&h);
     h.phase(Phase::Cancelled).await?;
     retiring.release().await?;
@@ -664,7 +656,6 @@ async fn a_screen_that_stops_recording_explains_why_and_frees_the_microphone() -
     h.close().await
 }
 
-/// Footage whose screen stopped recording before the Show was finished.
 fn stopped_footage() -> Box<Footage> {
     let mut footage = footage();
     footage.recording.ending = Ending::ScreenStopped;

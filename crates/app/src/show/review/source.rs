@@ -1,5 +1,3 @@
-//! Real discovery is read-only. Previews own a private temporary library of synthetic Shows.
-
 use std::{
     fs,
     path::PathBuf,

@@ -1,5 +1,3 @@
-//! The portal insertion pipeline and the remedies it reports when paste or direct text cannot run.
-
 use std::{
     convert::Infallible,
     os::fd::OwnedFd,
@@ -34,17 +32,12 @@ const PLAIN_TEXT: [&str; 2] = ["text/plain;charset=utf-8", "text/plain"];
 const MAX_TRANSFERS: usize = 4;
 const SELECTION_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// The insertion pipeline. A paste request waits for released modifiers unless the user pastes
-/// manually, then copies through the portal or X11 clipboard and confirms ownership; direct text
-/// skips both. Every request checks focus before it pastes or types through libei.
 pub(super) struct Insertions<'a> {
     transfers: Transfers<'a>,
     preparing: Option<Preparing<'a>>,
     bound: &'a mut Bound,
     pending: Option<(Insertion, Instant)>,
     selection: Option<Selection>,
-    /// The latest recording whose lost selection revoked it; its paste reports the loss instead of
-    /// a cancellation.
     forfeited: Option<InsertPermit>,
     notices: &'a Receiver<Notice>,
     selecting: &'a Sender<SelectionHandoff>,
@@ -150,15 +143,12 @@ impl<'a> Insertions<'a> {
         );
     }
 
-    /// When the pending request stops waiting for released modifiers.
     fn modifier_wait(&self) -> Option<tokio::time::Sleep> {
         self.pending
             .as_ref()
             .map(|(_, started)| deadline(*started, MODIFIER_WAIT))
     }
 
-    /// Catches up on notices and libei events, then starts the pending request once its wait for
-    /// released modifiers is over.
     fn advance_pending(&mut self) -> anyhow::Result<()> {
         self.apply_queued_notices();
         self.bound.dispatch()?;
@@ -241,11 +231,7 @@ impl<'a> Insertions<'a> {
         Ok(())
     }
 
-    /// Submits a prepared request. A libei disconnect found while catching up ends the service, as
-    /// it does between requests, because `ei::Sender::dispatch` reports it only once.
     fn finish(&mut self, request: Insertion, external: bool, route: Route) -> anyhow::Result<()> {
-        // Notices queued while preparation awaited other processes must apply first: a missed
-        // press could paste while the shortcut is held.
         self.apply_queued_notices();
         self.bound.dispatch()?;
         let outcome = match route {
@@ -303,27 +289,18 @@ impl<'a> Insertions<'a> {
 
 struct Preparing<'a> {
     request: Insertion,
-    /// Whether `task` is `SetSelection`. Transfers wait until it returns, because only then does
-    /// `selection` hold the new text.
     setting_selection: bool,
     task: LocalBoxFuture<'a, anyhow::Result<Prepared>>,
 }
 
-/// The outcome of one preparation stage.
 enum Prepared {
-    /// The portal clipboard offers the text; this session's ownership awaits confirmation.
     SelectionSet,
-    /// The X11 clipboard holds the text under the `owner` window.
     Copied { owner: Window },
-    /// Neither clipboard holds the text: the X11 clipboard changed, or the permit lapsed first.
     NotCopied,
-    /// Whether this session still owns the clipboard selection it set.
     Ownership { owned: bool },
-    /// Whether another app has focus, and how the insertion submits.
     Target { external: bool, route: Route },
 }
 
-/// How a prepared insertion submits once focus is known.
 enum Route {
     Direct,
     Paste { owned: bool },
@@ -385,7 +362,6 @@ async fn query_focus(
     permit: InsertPermit,
     route: Route,
 ) -> anyhow::Result<Prepared> {
-    // A failed focus query fails closed, as if Speakeasy had focus.
     let external = worker.external_target(permit).await.unwrap_or(false);
     Ok(Prepared::Target { external, route })
 }
@@ -411,7 +387,6 @@ fn insert_direct(bound: &mut Bound, request: &Insertion, external: bool) -> Inse
     Inserted::Sent
 }
 
-/// How to recover when direct text input cannot run.
 const fn text_remedy(blocked: TextBlocked) -> Inserted {
     Inserted::Unavailable(match blocked {
         TextBlocked::Unsupported => {
@@ -426,14 +401,10 @@ const fn text_remedy(blocked: TextBlocked) -> Inserted {
     })
 }
 
-/// The portal selection was taken by another app or never confirmed as this session's, so its loss
-/// revoked the paste.
 const SELECTION_LOST: Inserted = Inserted::Unavailable(
     "The clipboard changed or could not be confirmed before pasting. Dictate again, or choose Insert: Copy for manual paste in Settings.",
 );
 
-/// Submits a prepared paste. An unconfirmed or lost portal selection has already revoked its
-/// recording, so `owned` matters only to an X11 copy.
 fn finish_paste(
     bound: &mut Bound,
     request: &Insertion,
@@ -472,7 +443,6 @@ fn finish_paste(
     Inserted::Sent
 }
 
-/// How to paste the copied text when automatic paste cannot run.
 const fn paste_remedy(blocked: PasteBlocked) -> Inserted {
     match blocked {
         PasteBlocked::NoKeyboard => Inserted::Copied(
@@ -525,7 +495,6 @@ mod tests {
     };
     use crate::{Input, InputSender, linux::ShortcutLabels};
 
-    /// A binding that granted neither portal shortcuts nor keyboard input.
     fn unbound() -> Bound {
         Bound {
             shortcut_session: None,
@@ -534,8 +503,6 @@ mod tests {
         }
     }
 
-    /// Applies the pump's queued notices, then finishes `permit`'s paste to an external editor as
-    /// the insertion loop does once focus is known.
     fn paste_after_notices(
         notices: &Receiver<Notice>,
         forfeited: &mut Option<InsertPermit>,

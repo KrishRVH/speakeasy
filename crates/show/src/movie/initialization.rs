@@ -1,5 +1,3 @@
-//! The supported movie initialization has one AVC video track and no external media references.
-
 use super::{
     MovieError,
     atoms::{Fields, child, children, require},
@@ -177,7 +175,6 @@ pub(super) fn read(bytes: &[u8]) -> Result<Track, MovieError> {
     Ok(result)
 }
 
-/// Validate the `AVCDecoderConfigurationRecord` envelopes, not the encoded parameter-set syntax.
 fn configuration(bytes: &[u8]) -> Result<(), MovieError> {
     let mut fields = Fields::new(bytes);
     let header = fields.word()?;

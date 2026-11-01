@@ -1,5 +1,3 @@
-//! One decoded sample supplies exact session time, geometry, annotations, and optional crop.
-
 use std::time::Duration;
 
 use anyhow::Context as _;
@@ -116,7 +114,6 @@ pub(crate) fn decoder_time(at: Duration) -> Duration {
     if cfg!(target_os = "macos") {
         at
     } else {
-        // Media Foundation reports sample times in 100 ns units; Linux fixtures use that clock.
         at.saturating_sub(Duration::from_nanos(u64::from(at.subsec_nanos() % 100)))
     }
 }
@@ -145,7 +142,6 @@ impl Reading {
         sample.render(annotations, crop, &cancelled)
     }
 
-    /// The actual session timestamp and geometry accompany one native decode through cleanup.
     pub(crate) fn sample(
         self,
         at: Duration,

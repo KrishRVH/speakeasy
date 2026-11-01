@@ -1,5 +1,3 @@
-//! Explicit release discovery and authenticated update preparation.
-
 use std::{fmt, time::Duration};
 
 use anyhow::{Context as _, ensure};
@@ -51,7 +49,6 @@ impl fmt::Display for Version {
     }
 }
 
-/// One update operation owns its cancellable thread until completion or shutdown acknowledges it.
 pub(crate) struct Job<T> {
     thread: StoppableThread,
     result: Receiver<anyhow::Result<Option<T>>>,

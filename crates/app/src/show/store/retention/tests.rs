@@ -1,5 +1,3 @@
-//! Retention races use temporary files and threads, never the user's library or native devices.
-
 use std::sync::mpsc;
 
 use super::*;

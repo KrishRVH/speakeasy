@@ -1,6 +1,3 @@
-//! A take's pure event fold and bounded checkpoint records. Replay uses the live journal's
-//! admission, tile updates, and thinning; an interrupted prefix never fabricates an ending.
-
 use super::{
     Entry, Journal, SourceError,
     record::{Cursor, emit_record, payload, require},
@@ -12,46 +9,29 @@ const MAGIC: &[u8; 8] = b"SPKLOG01";
 const DURATION_MS: u64 = 360_000;
 const EDGE: usize = super::MAX_FRAME_EDGE as usize;
 
-/// Events consumed by a take, in order. An arrival is logged even when sampling skipped its image.
 #[derive(Clone, Debug)]
 pub enum TakeEvent {
-    /// The logical capture surface changed.
     Surface(Size),
-    /// A normalized pointer sample, possibly outside the surface.
     Pointer {
-        /// Milliseconds from the session start.
         at: Moment,
-        /// Position normalized to the current captured surface.
         point: Point,
-        /// Display rectangle observed with this pointer. Legacy samples leave it unknown.
         part: Option<Rect>,
-        /// Shift is held without taking input away from the focused app.
         drawing: bool,
-        /// The primary pointer button is down.
         pressed: bool,
     },
-    /// Pointer or target geometry became unavailable; no gesture may bridge this time.
     PointerGap(Moment),
-    /// The two Shift taps that asked for a pin.
     Pin(Span),
-    /// One capture arrival, with tiles only when an image was admitted and could be prepared.
     Arrival {
-        /// Arrival time relative to the session start.
         at: Moment,
-        /// Absent when sampling skipped this arrival or preparing its image failed.
         entry: Option<Entry>,
     },
-    /// Capture explicitly ended; absent after interruption.
     End {
-        /// The final time, no earlier than any consumed event.
         at: Moment,
-        /// Whether capture finished normally or its target was lost.
         ending: Ending,
     },
 }
 
 impl TakeEvent {
-    /// Conservative memory retained while this event waits for a checkpoint writer.
     #[must_use]
     pub fn bytes(&self) -> usize {
         match self {
@@ -63,7 +43,6 @@ impl TakeEvent {
     }
 }
 
-/// Journal and pointer state for one Show. No file, clock, callback, or native resource is owned.
 #[derive(Debug)]
 pub struct Take {
     journal: Journal,
@@ -73,7 +52,6 @@ pub struct Take {
 }
 
 impl Take {
-    /// Starts a take with the given compressed-frame budget and logical surface.
     #[must_use]
     pub fn new(budget: usize, surface: Size) -> Self {
         Self {
@@ -84,29 +62,21 @@ impl Take {
         }
     }
 
-    /// Read-only frame state for preview and publication.
     #[must_use]
     pub const fn journal(&self) -> &Journal {
         &self.journal
     }
 
-    /// Read-only ink and marks for the live overlay.
     #[must_use]
     pub const fn tracker(&self) -> &Tracker {
         &self.tracker
     }
 
-    /// Whether the take consumed an explicit end record.
     #[must_use]
     pub const fn ended(&self) -> bool {
         self.ending.is_some()
     }
 
-    /// Consumes a live arrival. `prepare` runs only for admitted arrivals and can reject an invalid
-    /// image. The returned event records that exact decision for a checkpoint.
-    ///
-    /// # Errors
-    /// Rejects arrivals after End or outside the checkpoint's time range, before preparing pixels.
     pub fn arrive(
         &mut self,
         at: Moment,
@@ -122,8 +92,6 @@ impl Take {
         Ok(TakeEvent::Arrival { at, entry })
     }
 
-    /// Ends live capture at the last consumed event or the requested time, within the log's
-    /// timeline. Delayed native callbacks and a suspend cannot invalidate frames already captured.
     pub fn end(&mut self, at: Moment, ending: Ending) -> TakeEvent {
         self.latest = self
             .latest
@@ -135,11 +103,6 @@ impl Take {
         }
     }
 
-    /// Applies a normalized event, including a replayed arrival, through the same take state.
-    ///
-    /// # Errors
-    /// Rejects events after End, nonfinite geometry, excessive times, or a frame that sampling
-    /// would have skipped. A caller stops replay at the first rejected record.
     pub fn apply(&mut self, event: &TakeEvent) -> Result<(), SourceError> {
         require(!self.ended(), "checkpoint has events after its ending")?;
         match event {
@@ -175,7 +138,7 @@ impl Take {
             },
             TakeEvent::Arrival { at, entry } => {
                 valid_time(*at)?;
-                // Check the decision before advancing, so an inconsistent record leaves the prefix intact.
+
                 require(
                     entry.is_none() || self.journal.arrived.is_multiple_of(self.journal.stride),
                     "checkpoint frame disagrees with sampling",
@@ -206,8 +169,6 @@ impl Take {
         Ok(())
     }
 
-    /// Finishes the last complete prefix. Missing End means the screen stopped; no narration is
-    /// inferred. The journal's last millisecond-adjusted sample is included in its duration.
     #[must_use]
     pub fn finish(self) -> (Recording, Journal) {
         let at = self
@@ -223,23 +184,14 @@ impl Take {
     }
 }
 
-/// Stateless checkpoint encoding. Callers stream one framed record at a time and stop at a torn
-/// or invalid record. This codec never allocates for a caller-declared count before bounding it.
 #[derive(Debug)]
 pub struct Log;
 
 impl Log {
-    /// Fixed header length, including its checksum.
     pub const HEADER_BYTES: usize = 33;
-    /// Maximum compressed bytes a checkpoint can ask its replay journal to retain.
     pub const MAX_BUDGET: usize = 384 << 20;
-    /// Largest complete event accepted before allocation, including framing.
     pub const RECORD_LIMIT: usize = 40 << 20;
 
-    /// Encodes a versioned checkpoint header.
-    ///
-    /// # Errors
-    /// Rejects invalid geometry or a budget above the replay limit.
     pub fn header(budget: usize, surface: Size) -> Result<Vec<u8>, SourceError> {
         require(
             budget <= Self::MAX_BUDGET,
@@ -258,10 +210,6 @@ impl Log {
         Ok(bytes)
     }
 
-    /// Opens a replay take from exactly one header.
-    ///
-    /// # Errors
-    /// Rejects unsupported versions, truncated headers, bad checksums, or unreasonable limits.
     pub fn start(header: &[u8]) -> Result<Take, SourceError> {
         require(
             header.len() == Self::HEADER_BYTES && header.get(..8) == Some(MAGIC),
@@ -282,10 +230,6 @@ impl Log {
         Ok(Take::new(budget, surface))
     }
 
-    /// Reads the four-byte record length before the caller allocates the remaining bytes.
-    ///
-    /// # Errors
-    /// Rejects a partial length or a record above the fixed cap.
     pub fn record_size(header: &[u8]) -> Result<usize, SourceError> {
         let length = Cursor(header)
             .usize()?
@@ -298,11 +242,6 @@ impl Log {
         Ok(length)
     }
 
-    /// Encodes one event, off the recording thread. Tile data is copied once into the bounded
-    /// record buffer; callers can reuse the journal's immutable entry on their writer lane.
-    ///
-    /// # Errors
-    /// Rejects frames larger than the checkpoint format permits.
     pub fn encode(event: &TakeEvent) -> Result<Vec<u8>, SourceError> {
         let mut data = vec![0; 5];
         let kind = match event {
@@ -379,10 +318,6 @@ impl Log {
         Ok(data)
     }
 
-    /// Decodes one complete checksummed event. Pixel bytes remain compressed.
-    ///
-    /// # Errors
-    /// Rejects malformed records, invalid dimensions/counts, and unknown event kinds.
     pub fn decode(record: &[u8]) -> Result<TakeEvent, SourceError> {
         require(
             record.len() <= Self::RECORD_LIMIT,

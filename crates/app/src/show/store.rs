@@ -1,5 +1,3 @@
-//! Where Shows live on disk: stamp naming, private all-at-once writes, and seven-day expiry.
-
 use std::{
     collections::BTreeSet,
     fs,
@@ -13,29 +11,22 @@ use anyhow::Context as _;
 use gpui::App;
 use speakeasy_show::{Bundle, Journal, Moment, Retrieval};
 
-/// How long an unpinned Show is kept.
 const KEPT_FOR: Duration = Duration::from_hours(7 * 24);
-/// A staging directory this old belongs to a publication that never finished, such as one cut
-/// short by a crash; publishing takes seconds.
+
 const ABANDONED_AFTER: Duration = Duration::from_hours(1);
-/// How often a long-running app looks for expired Shows.
+
 const SWEEP_EVERY: Duration = Duration::from_hours(1);
-/// A file of this name inside a Show keeps it.
+
 const PIN: &str = ".pinned";
-/// Begins the name of the hidden directory a bundle is staged in, which the sweep deletes once
-/// abandoned.
+
 const STAGING_PREFIX: &str = ".partial-";
-/// Expired Shows leave the visible library before recursive deletion, which can fail partway.
+
 const EXPIRED_PREFIX: &str = ".expired-";
 
-/// Where Shows live: machine-local, beside the engines and models.
 pub(super) fn directory() -> anyhow::Result<PathBuf> {
     Ok(crate::paths::data_root()?.join("shows"))
 }
 
-/// [`directory`], ready for a new Show. On Unix it is created or tightened to be the user's alone,
-/// since even a Show's name tells when the user recorded; Windows already limits local application
-/// data to the user.
 pub(super) fn private_directory() -> anyhow::Result<PathBuf> {
     let directory = directory()?;
     #[cfg(unix)]
@@ -43,8 +34,6 @@ pub(super) fn private_directory() -> anyhow::Result<PathBuf> {
     Ok(directory)
 }
 
-/// Creates `directory` if needed and leaves it readable only by the user. A link is refused rather
-/// than followed, so only a folder Speakeasy owns has its permissions changed.
 #[cfg(unix)]
 fn make_private(directory: &Path) -> anyhow::Result<()> {
     use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
@@ -66,7 +55,6 @@ fn make_private(directory: &Path) -> anyhow::Result<()> {
         .map_err(cannot_save(directory))
 }
 
-/// An unused directory under `parent` named for `now` in UTC, such as `20261019T143603Z`.
 pub(super) fn fresh_directory(parent: &Path, now: SystemTime) -> anyhow::Result<PathBuf> {
     let stamp = utc_stamp(now);
     (1..=100_u8)
@@ -78,12 +66,9 @@ pub(super) fn fresh_directory(parent: &Path, now: SystemTime) -> anyhow::Result<
         .context("Too many Shows were written this second")
 }
 
-/// A bundle written to a hidden sibling of its directory. It appears there only once persisted,
-/// so a reader never sees half a bundle, and dropping it unpersisted deletes it.
 pub(super) struct Staged {
     staging: tempfile::TempDir,
     directory: PathBuf,
-    /// The summary written in the bundle, naming its files where it appears.
     summary: String,
     pub source_lost: bool,
 }
@@ -116,7 +101,6 @@ impl Staged {
         Ok(lost)
     }
 
-    /// Moves the bundle into place and returns the saved Show with the summary written in it.
     pub(super) fn persist(mut self) -> anyhow::Result<(SavedShow, String)> {
         let parent = self.directory.parent().unwrap_or(&self.directory);
         fs::rename(self.staging.path(), &self.directory).map_err(cannot_save(parent))?;
@@ -133,35 +117,26 @@ impl Staged {
     }
 }
 
-/// Optional retained evidence. A source failure preserves the selected keyframes, reports the
-/// loss, and omits the retrieval note; an unavailable command omits only the note.
 pub(super) struct Retained<'a> {
     pub journal: &'a Journal,
     pub duration: Moment,
     pub command: Option<&'a Path>,
 }
 
-/// A Show whose bundle was persisted, known only by its folder: no transcript or summary text
-/// stays in memory, and what is read back is whatever the folder holds then. The path never
-/// changes, so every snapshot that presents the Show shares it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SavedShow(Arc<Path>);
 
 impl SavedShow {
-    /// Stable identity only; callers perform any existence check off the UI thread.
     pub(crate) fn directory(&self) -> &Path {
         &self.0
     }
 
-    /// Trusts `directory` as a saved Show's folder, for tests whose Shows are never written.
     #[cfg(test)]
     pub(crate) fn assume(directory: impl Into<PathBuf>) -> Self {
         Self(directory.into().into())
     }
 }
 
-/// Explains a failed write of a Show into the Shows folder `parent`, naming that folder rather than
-/// the hidden staging one, with the system's reason and what to do.
 fn cannot_save(parent: &Path) -> impl FnOnce(io::Error) -> anyhow::Error {
     move |error| {
         anyhow::anyhow!(
@@ -172,9 +147,6 @@ fn cannot_save(parent: &Path) -> impl FnOnce(io::Error) -> anyhow::Error {
     }
 }
 
-/// Writes `bundle` beside `directory`, which must not exist yet, with a summary naming its files
-/// there. On Unix the bundle is the user's alone; on Windows it takes its parent's access, which
-/// for the Shows folder is the user's alone (see [`private_directory`]).
 pub(super) fn stage(
     directory: &Path,
     bundle: Bundle,
@@ -218,8 +190,7 @@ pub(super) fn stage(
         write_flushed(&staging.path().join(&file.name), &file.contents)
             .map_err(cannot_save(parent))?;
     }
-    // Flushed before the rename, so a crash leaves either no bundle or all of it. On Unix a
-    // folder's entries survive a crash only once the folder itself is flushed.
+
     #[cfg(unix)]
     for folder in folders {
         fs::File::open(folder)
@@ -234,17 +205,13 @@ pub(super) fn stage(
     })
 }
 
-/// Writes a new file holding `contents` and flushes it to disk.
 fn write_flushed(path: &Path, contents: &[u8]) -> io::Result<()> {
     let mut file = fs::File::create_new(path)?;
     file.write_all(contents)?;
     file.sync_all()
 }
 
-/// Deletes expired Shows now and then hourly for the app's life, giving each failure to `report`;
-/// a failure that persists is reported again at every sweep.
 pub(crate) fn attend(report: impl Fn(&anyhow::Error, &mut App) + 'static, cx: &App) {
-    // Without a data folder no Show can be published, so none can expire.
     let Ok(parent) = directory() else {
         return;
     };
@@ -266,9 +233,6 @@ pub(crate) fn attend(report: impl Fn(&anyhow::Error, &mut App) + 'static, cx: &A
     .detach();
 }
 
-/// Deletes the Shows under `parent` that expired by `now`, and staging left by publications that
-/// never finished. Only directories named the way Speakeasy names them are touched. An entry that
-/// cannot be inspected is kept and fails the sweep, which goes on to expire the rest.
 pub(super) fn sweep(parent: &Path, now: SystemTime) -> anyhow::Result<()> {
     let entries = match fs::read_dir(parent) {
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
@@ -289,7 +253,7 @@ pub(super) fn sweep(parent: &Path, now: SystemTime) -> anyhow::Result<()> {
             },
             Ok(Cleanup::Keep) => {},
             Ok(Cleanup::Blocked) => stuck = true,
-            // An entry renamed or deleted since the listing has nothing left to expire.
+
             Err(error) if error.kind() == ErrorKind::NotFound => {},
             Err(error) => {
                 unchecked.get_or_insert(error);
@@ -321,8 +285,6 @@ enum Cleanup {
     Blocked,
 }
 
-/// The lock orders Keep against the final pin check and rename, across app and CLI processes.
-/// Recursive removal happens after release: an open file cannot stall another Show's Keep.
 fn retire_expired(
     parent: &Path,
     entry: &fs::DirEntry,
@@ -352,9 +314,6 @@ fn retire_expired(
     }
 }
 
-/// Whether `entry`, judged by its own type so a link is never followed out of the folder, is a
-/// directory holding an unpinned Show stamped before `cutoff`, staging abandoned by `now`, or
-/// the remainder of a previously retired Show.
 fn expired(entry: &fs::DirEntry, cutoff: &str, now: SystemTime) -> io::Result<bool> {
     if !entry.file_type()?.is_dir() {
         return Ok(false);
@@ -371,7 +330,7 @@ fn expired(entry: &fs::DirEntry, cutoff: &str, now: SystemTime) -> io::Result<bo
     }
     if name.starts_with(STAGING_PREFIX) {
         let modified = entry.metadata()?.modified()?;
-        // Staging modified after `now` is the clock stepping back, not abandonment.
+
         Ok(now
             .duration_since(modified)
             .is_ok_and(|age| age >= ABANDONED_AFTER))
@@ -380,8 +339,6 @@ fn expired(entry: &fs::DirEntry, cutoff: &str, now: SystemTime) -> io::Result<bo
     }
 }
 
-/// Whether the Show at `path` holds a pin. Only a pin known to be absent lets it expire, and a
-/// pin that is itself a link still counts.
 pub(super) fn pinned(path: &Path) -> io::Result<bool> {
     match fs::symlink_metadata(path.join(PIN)) {
         Ok(_) => Ok(true),
@@ -390,7 +347,6 @@ pub(super) fn pinned(path: &Path) -> io::Result<bool> {
     }
 }
 
-/// The stamp a Show's directory is named for, such as `20261019T143603Z` in `20261019T143603Z-2`.
 fn stamp(name: &str) -> Option<&str> {
     let (stamp, suffix) = name.split_at_checked(16)?;
     let stamped = stamp.bytes().enumerate().all(|(index, byte)| match index {
@@ -405,7 +361,6 @@ fn stamp(name: &str) -> Option<&str> {
     (stamped && numbered).then_some(stamp)
 }
 
-/// `now` in UTC as `YYYYMMDDTHHMMSSZ`, which sorts in time order.
 fn utc_stamp(now: SystemTime) -> String {
     let seconds = now
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -421,9 +376,7 @@ fn utc_stamp(now: SystemTime) -> String {
     )
 }
 
-/// The proleptic Gregorian date `days` after 1970-01-01, after Howard Hinnant's `civil_from_days`.
 fn civil_date(days: u64) -> (u64, u64, u64) {
-    // Count years from March, so each year's leap day falls at its end.
     let shifted = days.saturating_add(719_468);
     let era = shifted / 146_097;
     let day_of_era = shifted % 146_097;

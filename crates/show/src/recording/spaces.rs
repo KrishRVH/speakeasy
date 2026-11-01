@@ -1,5 +1,3 @@
-//! Coordinate proofs follow the points that actually contribute to a stroke or pin.
-
 use serde::{Deserialize, Serialize};
 
 use crate::{Mark, Moment, Pin, Rect, Shape};
@@ -18,8 +16,6 @@ pub(crate) struct PinSpace {
     pub observed: Option<Moment>,
 }
 
-/// Coordinate spaces for retained strokes and pins. Missing legacy provenance proves nothing;
-/// a mixed stroke has no space, and grouped strokes must share one uninterrupted generation.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Spaces {
     pub(crate) strokes: Vec<Option<Space>>,
@@ -29,7 +25,6 @@ pub struct Spaces {
 }
 
 impl Spaces {
-    /// Whether no provenance was recorded, as in older bundles.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.strokes.is_empty() && self.pins.is_empty() && self.actions.is_empty()

@@ -1,7 +1,3 @@
-//! At most one recording device, open or retiring: the microphone, or a Show's screen recorder.
-//! The owner opens only from `Free`, and retirement acknowledges native teardown before another
-//! capture can start.
-
 use std::{future::pending, mem};
 
 use speakeasy_core::gesture::State;
@@ -26,7 +22,6 @@ impl<R: Capturing> Device<R> {
         matches!(self, Self::Free)
     }
 
-    /// Holds a device that has just opened, finishing it at once when its gesture already has.
     pub(super) fn open(&mut self, recording: R, gesture: State) {
         debug_assert!(self.is_free());
         if gesture == State::Processing {
@@ -48,8 +43,6 @@ impl<R: Capturing> Device<R> {
         };
     }
 
-    /// Pends unless retiring; resolves once the device is released, leaving it free. Cancel-safe:
-    /// dropped early, it leaves the device retiring.
     pub(super) async fn retired(&mut self) {
         let Self::Retiring(task) = self else {
             return pending().await;
@@ -58,7 +51,6 @@ impl<R: Capturing> Device<R> {
         *self = Self::Free;
     }
 
-    /// Resolves once any open or retiring device has been released.
     pub(super) async fn stop(mut self) {
         self.retire();
         if let Self::Retiring(task) = self {

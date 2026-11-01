@@ -1,8 +1,3 @@
-//! A Show's screen recorder, on an owned thread. It journals frames with their signatures and
-//! records the pointer's ink, pins, and actions, publishing live ink and numbered marks to the
-//! overlay as they are made. An area Show first has the user drag out its area on the overlay. A
-//! Show records only what its scope names: with no window or area to record, it records nothing.
-
 use std::{
     mem,
     sync::Arc,
@@ -24,25 +19,22 @@ use crate::runtime::{
     ports::{Capturing, Footage, Pinning, SessionId, ShowEvent, Unchosen},
 };
 
-/// Frames larger than this on the long edge are halved; a reading model gains nothing from more.
 pub(super) const LONGEST_EDGE: u32 = speakeasy_show::MAX_FRAME_EDGE;
-/// The most compressed bytes a Show's journal holds; see [`speakeasy_show::Journal::with_budget`].
+
 const JOURNAL_BUDGET: usize = speakeasy_show::Log::MAX_BUDGET;
-/// How long a Show finished before its first frame waits for one; a Show needs the screen.
+
 const FIRST_FRAME_WAIT: Duration = Duration::from_secs(3);
-/// How many frames wait for the recorder; [`ScreenCapture::start`] says what capture does with a
-/// frame the lane has no room for.
+
 const FRAME_LANE: usize = 2;
-/// How many pointer events wait for the recorder, including the reserved observation-gap slot.
+
 const POINTER_LANE: usize = 256;
-/// How many pins wait for the recorder. A pin that finds the lane full is dropped.
+
 const PIN_LANE: usize = 8;
-/// The failure a recording reports when capture or the recorder itself stops without an outcome.
+
 const CAPTURE_STOPPED: &str = "Screen capture stopped unexpectedly. Start the Show again.";
-/// The failure a Show reports when not one frame of the screen was recorded.
+
 pub(super) const NOTHING_RECORDED: &str = "The Show recorded no frames. Start the Show again.";
 
-/// The recorder unwound before reporting; its checkpoint may still contain usable frames.
 #[derive(Debug)]
 pub(crate) struct Unwound;
 
@@ -54,21 +46,13 @@ impl std::fmt::Display for Unwound {
 
 impl std::error::Error for Unwound {}
 
-/// A Show's screen recording; the session owner finishes or retires it like a microphone. Fields
-/// drop in declaration order, so a recorder dropped without retiring cancels before its thread
-/// joins.
 pub(crate) struct ScreenRecorder {
-    /// Sending finishes the recording; closing it, as dropping this only sender does, cancels.
     finish: Sender<()>,
-    /// The double taps of Shift that asked for pins.
     pins: Sender<Taps>,
     thread: OwnedThread,
 }
 
 impl ScreenRecorder {
-    /// Starts recording what `scope` names, near the pointer, for session `id`, whose timeline
-    /// began at `started`, publishing the display, live ink, and marks to `canvas` and the
-    /// footage to `events` once finished.
     pub(crate) fn start(
         id: SessionId,
         started: Instant,
@@ -123,24 +107,16 @@ impl Pinning for ScreenRecorder {
     }
 }
 
-/// How a recording ended.
 enum Ended {
     Recorded(Box<Footage>),
     Unchosen(Unchosen),
     Cancelled,
 }
 
-/// Reports a recording however its thread leaves it: when dropped, it hides the overlay and tells
-/// the owner how recording ended, with its footage, its failure, or that its scope found nothing to
-/// record. A recording that finds itself cancelled reports nothing, even one that ended first; a
-/// cancel that lands while it reports leaves the owner a report it ignores, as it does any from a
-/// session it has ended.
 struct Report<'a> {
     id: SessionId,
     events: Sender<ShowEvent>,
     lanes: &'a Lanes<'a>,
-    /// How recording ended: [`Unwound`] until it returns, so a recording that unwinds
-    /// reports a fixed failure rather than a panic's message, which could carry private text.
     outcome: anyhow::Result<Ended>,
 }
 
@@ -164,8 +140,7 @@ impl Drop for Report<'_> {
             Ok(Ended::Cancelled) => return,
             Err(error) => ShowEvent::Finished(self.id, Err(error)),
         };
-        // A recording can end without seeing the cancel, as one looking for a window does, but the
-        // owner that cancelled it waits for no report.
+
         if self.lanes.finishing.is_closed() {
             return;
         }
@@ -177,15 +152,12 @@ impl Drop for Report<'_> {
     }
 }
 
-/// What reaches the recording thread from the owner, and where it publishes to the overlay.
 struct Lanes<'a> {
-    /// A message finishes the recording; closing cancels it.
     finishing: Receiver<()>,
     pinned: Receiver<Taps>,
     canvas: &'a watch::Sender<Canvas>,
 }
 
-/// Records until finished or cancelled, returning how recording ended.
 fn record(
     started: Instant,
     scope: Scope,
@@ -239,15 +211,12 @@ fn record(
         })
 }
 
-/// How choosing what a Show's scope names ended.
 enum Choice {
     Chosen(Target),
     Unchosen(Unchosen),
     Cancelled,
 }
 
-/// Resolves what `scope` names into a target. W takes the window under the pointer, and A the area
-/// dragged out on the overlay over the display under the pointer.
 async fn choose(scope: Scope, lanes: &Lanes<'_>) -> anyhow::Result<Choice> {
     let display = match scope {
         Scope::Screen => return Ok(Choice::Chosen(Target::screen_under_pointer()?)),
@@ -268,19 +237,13 @@ async fn choose(scope: Scope, lanes: &Lanes<'_>) -> anyhow::Result<Choice> {
     })
 }
 
-/// How picking an area ended.
 #[derive(Debug, PartialEq)]
 enum Picked {
-    /// The part of the display dragged out.
     Area(Part),
-    /// The Show finished first, a click chose no area, or the overlay could not appear to take a
-    /// drag.
     Unchosen,
     Cancelled,
 }
 
-/// Waits for the part of the display dragged out on `choice`, which the overlay closes for a click
-/// or when it cannot appear. Pins asked for before it returns mark nothing.
 async fn pick(choice: &Receiver<Part>, lanes: &Lanes<'_>) -> Picked {
     let picked = tokio::select! {
         biased;
@@ -294,22 +257,16 @@ async fn pick(choice: &Receiver<Part>, lanes: &Lanes<'_>) -> Picked {
     picked
 }
 
-/// Where a take's frames and pointer samples come from.
 struct Sources<S> {
     frames: Receiver<ScreenEvent>,
     samples: Receiver<PointerSample>,
-    /// Stops the capture and the pointer monitor once awaited, resolving when both have released
-    /// the display and pointer.
     stop: S,
 }
 
-/// The thread's state while recording.
 struct Take<'a> {
     started: Instant,
     canvas: &'a watch::Sender<Canvas>,
-    /// The display's size in logical pixels.
     display: [f32; 2],
-    /// The newest observed target geometry, independent of frame-lane delivery order.
     part: Part,
     placed_at: Instant,
     state: speakeasy_show::Take,
@@ -319,8 +276,6 @@ struct Take<'a> {
 }
 
 impl<'a> Take<'a> {
-    /// A take of the `part` of a display `size` logical pixels across, on a timeline that began
-    /// at `started`, publishing ink and marks to `canvas`.
     fn new(
         started: Instant,
         size: [f32; 2],
@@ -340,11 +295,6 @@ impl<'a> Take<'a> {
         }
     }
 
-    /// Records what `sources` send until finished, then stops them before returning the footage;
-    /// `None` once cancelled. A Show finished before its first frame waits up to
-    /// [`FIRST_FRAME_WAIT`] for one. The footage lasts until finishing was asked for, the first
-    /// frame such a wait received, or capture stopped on its own; stopping the sources adds
-    /// nothing.
     async fn run(
         mut self,
         lanes: &Lanes<'_>,
@@ -355,10 +305,9 @@ impl<'a> Take<'a> {
             samples,
             stop,
         } = sources;
-        // Set once finished: the latest moment to keep waiting for a first frame.
+
         let mut finished_by = None;
-        // When and how the take ended, or `None` once the owner retired this recording, which
-        // reports nothing.
+
         let ended = loop {
             tokio::select! {
                 biased;
@@ -399,17 +348,17 @@ impl<'a> Take<'a> {
                         },
                         Err(_) => (Ending::ScreenStopped, anyhow!(CAPTURE_STOPPED)),
                     };
-                    // Frames already journaled stay sound, so capture stopping partway ends the
-                    // take with them. The footage notes only why: a failure's native text never
-                    // reaches a saved file.
+
+
+
                     break Some(if self.state.journal().is_empty() {
                         Err(failure)
                     } else {
                         Ok((runtime::now(), ending))
                     });
                 },
-                // Samples first, so a pin lands where the pointer is and sees the taps that asked
-                // for it.
+
+
                 Ok(sample) = samples.recv() => {
                     if let Err(error) = self.pointer(sample) {
                         break Some(Err(error));
@@ -561,8 +510,6 @@ impl<'a> Take<'a> {
         Ok(())
     }
 
-    /// Publishes the stroke being drawn to the overlay, with the strokes just `finished` and the
-    /// `marks` when they changed.
     fn publish_ink(&self, finished: Vec<Arc<[Point]>>, marks: Option<Arc<[Mark]>>) {
         let drawing: Vec<Point> = self
             .state
@@ -579,7 +526,6 @@ impl<'a> Take<'a> {
         });
     }
 
-    /// What the take recorded, lasting until `ended`, and how it ended.
     async fn into_footage(mut self, ended: Instant, ending: Ending) -> anyhow::Result<Footage> {
         let ended = self.moment(ended);
         let event = self.state.end(ended, ending);
@@ -597,7 +543,6 @@ impl<'a> Take<'a> {
     }
 }
 
-/// How a take ends once the window it records can no longer be followed.
 const fn window_ending(gone: WindowGone) -> Ending {
     match gone {
         WindowGone::Closed => Ending::WindowClosed,
@@ -605,7 +550,6 @@ const fn window_ending(gone: WindowGone) -> Ending {
     }
 }
 
-/// The size in logical pixels of the `part` of a display `display` logical pixels across.
 fn surface([width, height]: [f32; 2], part: Part) -> Size {
     Size {
         width: width * part.width(),
@@ -618,8 +562,6 @@ fn first_frame_deadline() -> tokio::time::Instant {
     now.checked_add(FIRST_FRAME_WAIT).unwrap_or(now)
 }
 
-/// Releases the display and pointer before anything is reported, so a new Show cannot overlap
-/// them.
 async fn stop(capture: &ScreenCapture, pointer: &PointerMonitor) {
     capture.request_stop();
     pointer.request_stop();
@@ -629,7 +571,6 @@ async fn stop(capture: &ScreenCapture, pointer: &PointerMonitor) {
 #[cfg(test)]
 mod tests;
 
-/// Linux records no Shows.
 #[cfg(all(test, any(target_os = "windows", target_os = "macos")))]
 mod native_tests {
     use anyhow::Context as _;
@@ -637,8 +578,6 @@ mod native_tests {
 
     use super::*;
 
-    /// Records the real screen briefly and checks only the footage's shape: no pixel is compared,
-    /// written, or printed.
     #[tokio::test]
     #[ignore = "Records the real screen for about a second and keeps no pixels; native opt-in"]
     async fn a_real_screen_records_footage_on_one_timeline() -> anyhow::Result<()> {
@@ -707,8 +646,6 @@ mod native_tests {
         Ok(())
     }
 
-    /// Records the real screen for ten seconds so a process sampler can measure what recording
-    /// costs; it reports only the footage's shape.
     #[tokio::test]
     #[ignore = "Records the real screen for ten seconds and keeps no pixels; native opt-in profiling"]
     async fn profile_real_screen_recording() -> anyhow::Result<()> {

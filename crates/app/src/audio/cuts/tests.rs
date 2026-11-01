@@ -1,5 +1,3 @@
-//! Every accepted piece accounts for original PCM, without changing final sealing or cue gating.
-
 use proptest::prelude::*;
 
 use super::*;

@@ -1,6 +1,3 @@
-//! Explicit portable ZIP exports. Only format-owned files leave the bundle; summary edits remain
-//! verbatim, and a relative-path guide replaces reliance on the recording machine's paths.
-
 use std::{
     fs::File,
     io::{self, Read as _, Seek, Write as _},
@@ -15,7 +12,7 @@ use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 use super::{movie, recall, source};
 
 const GUIDE: &str = "README.md";
-/// A malicious or damaged inventory cannot make an export consume unbounded disk space.
+
 const CONTENT_LIMIT: u64 = 2 << 30;
 
 #[derive(Debug, Serialize)]
@@ -27,9 +24,6 @@ pub(crate) struct Exported {
     pub retained_frames: bool,
 }
 
-/// Writes an explicit new archive without changing the original Show or its retention. Staging
-/// is private and removed on failure; the destination appears only after the archive is flushed.
-/// Exports are independent copies and do not expire with the managed Show.
 pub(crate) fn write(directory: &Path, destination: &Path) -> anyhow::Result<Exported> {
     let directory = directory
         .canonicalize()
@@ -100,8 +94,7 @@ fn archive(
         .context("Cannot export show.json")?;
     let manifest = Manifest::parse(&bytes)?;
     let mut archive = ZipWriter::new(writer);
-    // Images and the source journal are already compressed. Stored entries also work in native
-    // archive readers without adding codec dependencies or recompressing screen pixels.
+
     let options = SimpleFileOptions::default()
         .compression_method(CompressionMethod::Stored)
         .unix_permissions(0o600);

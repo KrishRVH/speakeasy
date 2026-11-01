@@ -1,6 +1,3 @@
-//! Engine choice: each platform's pinned NeMo-Speech.cpp builds and the order setup tries them in.
-//! A GPU build is kept only once its own `doctor` report shows it runs on this machine.
-
 use std::{
     path::{Path, PathBuf},
     process::Stdio,
@@ -70,21 +67,17 @@ const METAL: Download<'static> = Download {
     sha256: "5cb02ba7c04f0b5585ce5cde9c830be5f0b7dfb4c83083c500109c381b4f2da9",
 };
 
-/// The engine build setup chose, and whether it should run on the GPU.
 pub(super) struct ChosenEngine {
     directory: PathBuf,
     pub(super) use_gpu: bool,
 }
 
 impl ChosenEngine {
-    /// Other builds may still belong to the active worker. Setup never removes a usable engine.
     pub(super) fn executable(self) -> PathBuf {
         self.directory.join(EXECUTABLE)
     }
 }
 
-/// Tries CUDA with an NVIDIA driver, then Vulkan, then CPU. `LocalSpeech` still transcribes silence
-/// before reporting a GPU choice, or any Linux one, ready.
 #[cfg(any(
     target_os = "windows",
     all(target_os = "linux", target_arch = "x86_64")
@@ -169,7 +162,6 @@ fn nvidia_driver() -> bool {
     }
 }
 
-/// Asks the build at `directory` whether it runs here, which can take up to a minute on a cold GPU.
 async fn doctor(
     directory: &Path,
     progress: &watch::Sender<Progress>,
@@ -197,7 +189,6 @@ fn is_accelerated(report: &serde_json::Value) -> bool {
     test
 ))]
 fn has_discrete_gpu(report: &serde_json::Value) -> bool {
-    // After a five-minute recording, Parakeet holds about 3.8 GB of GPU memory.
     const GPU_MEMORY: u64 = 6_000_000_000;
     is_accelerated(report)
         && report["devices"].as_array().is_some_and(|devices| {

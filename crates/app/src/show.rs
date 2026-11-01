@@ -1,6 +1,3 @@
-//! Shows: screen recordings with narration and ink, published as private bundles and inspected
-//! through the command line or recalled from the tray.
-
 mod command;
 pub(crate) mod copy;
 pub(crate) mod edits;
@@ -23,7 +20,6 @@ pub(crate) use self::{
     store::{SavedShow, attend as attend_retention},
 };
 
-/// Begins private checkpointing only for an explicitly requested Show.
 pub(crate) fn keep(recorded: std::time::SystemTime) -> anyhow::Result<Kept> {
     Keeper::start(store::private_directory, recorded)
 }

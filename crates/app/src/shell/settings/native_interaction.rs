@@ -1,6 +1,3 @@
-//! Owned-window acceptance of picker focus and the borrowed-window close callback. No devices or
-//! system input are used; private practice text and permission observations are synthetic fixtures.
-
 use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
@@ -195,8 +192,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                 })??;
                 navigate(settings, cx).await?;
                 other.update(cx, |_, window, _| window.remove_window())?;
-                // GPUI invokes should-close with the window already borrowed, but without borrowing
-                // the Settings entity. Recursing through WindowHandle::update silently misses it.
+
                 cx.update(|cx| close(settings, cx))??;
                 settings.update(cx, |view, _, _| {
                     assert!(view.practice.text.is_empty());

@@ -1,5 +1,3 @@
-//! Headless Show commands. Inspection reports paths and metadata; private text stays in files.
-
 mod output;
 mod source;
 
@@ -11,8 +9,7 @@ use speakeasy_show::{Demo, Typeface};
 use super::store::{self, address, recall, retention};
 
 const SKILL: &str = include_str!("../../../../skills/speakeasy-show/SKILL.md");
-/// The demo's keyframes render as a Show records a 2880 × 1800 display, halved to fit
-/// [`super::recorder::LONGEST_EDGE`].
+
 const DEMO_SIZE: (u32, u32) = (1_440, 900);
 
 const HELP: &str = "speakeasy show list [--json]
@@ -60,7 +57,6 @@ skill prints the agent reading guide for this installed version.
 demo writes a simulated Show and prints its summary.
 All commands work without a display, microphone, speech engine or running app.";
 
-/// What the command line asks of saved Shows. Retention changes require an explicit target.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Command {
     Help,

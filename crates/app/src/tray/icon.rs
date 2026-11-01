@@ -1,7 +1,3 @@
-//! The tray mark: a lamp-lit door slot with stepped bars cut through it. Busy, Paused and Attention
-//! add a cut-jewel badge; Recording turns the slot red, or adds its own badge in a macOS template,
-//! which cannot show color. Shapes are signed distances in icon pixels, negative inside.
-
 use crate::{
     status::Indicator,
     theme::{Theme, quantize},
@@ -9,7 +5,7 @@ use crate::{
 
 pub(super) const SIZE: u32 = 32;
 const BYTES: usize = (SIZE * SIZE * 4) as usize;
-/// Two-pixel bars cut through the slot, as (left edge, height), centered on y = 16.
+
 const BARS: [(f32, f32); 5] = [
     (8.0, 4.0),
     (11.5, 6.0),
@@ -17,20 +13,18 @@ const BARS: [(f32, f32); 5] = [
     (18.5, 6.0),
     (22.0, 4.0),
 ];
-/// Light, like system icons on a dark taskbar.
+
 const LIGHT_BADGE: u32 = 0xE0_E0_E6;
 const BADGE_CENTER: f32 = 25.0;
-/// The Busy badge's ring, measured to the middle of its stroke.
+
 const RING_RADIUS: f32 = 4.2;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum IconStyle {
     Color,
-    /// A black alpha mask that macOS recolors for the menu bar.
     Template,
 }
 
-/// One state's colors and badge.
 struct Mark {
     style: IconStyle,
     badge: Option<Badge>,
@@ -82,7 +76,7 @@ impl Mark {
             Some(badge) => (badge.distance(x, y), coverage(badge_diamond(x, y, 7.8))),
             None => (f32::MAX, 0.0),
         };
-        // A faint keyline keeps the lamp color legible on light taskbars.
+
         let keyline = match self.style {
             IconStyle::Color => coverage(slot.min(badge) - 1.0) * 0.45,
             IconStyle::Template => 0.0,
@@ -107,7 +101,6 @@ impl Mark {
     }
 }
 
-/// A cut-jewel badge at the icon's lower right.
 #[derive(Clone, Copy)]
 enum Badge {
     Recording,
@@ -121,7 +114,6 @@ impl Badge {
         match self {
             Self::Recording => badge_diamond(x, y, 5.0),
             Self::Busy => {
-                // A three-quarter ring with round caps, open at the upper left.
                 let (dx, dy) = (x - BADGE_CENTER, y - BADGE_CENTER);
                 let from_centerline = if dx < 0.0 && dy < 0.0 {
                     dx.hypot(dy + RING_RADIUS).min((dx + RING_RADIUS).hypot(dy))
@@ -144,7 +136,6 @@ impl Badge {
     }
 }
 
-/// Straight-alpha RGBA pixels, `SIZE` by `SIZE`.
 pub(super) fn raster(indicator: Indicator, theme: Theme, style: IconStyle) -> Vec<u8> {
     let mark = Mark::new(indicator, theme, style);
     let mut rgba = Vec::with_capacity(BYTES);
@@ -162,7 +153,6 @@ fn rounded_rect(x: f32, y: f32, [left, top, right, bottom]: [f32; 4], radius: f3
     qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - radius
 }
 
-/// A diamond centered on the badge, its corners `size` pixels from the center.
 fn badge_diamond(x: f32, y: f32, size: f32) -> f32 {
     ((x - BADGE_CENTER).abs() + (y - BADGE_CENTER).abs() - size) * std::f32::consts::FRAC_1_SQRT_2
 }
@@ -171,7 +161,6 @@ fn coverage(distance: f32) -> f32 {
     (0.5 - distance).clamp(0.0, 1.0)
 }
 
-/// Blends `(color, opacity)` layers bottom to top, source over.
 fn composite(layers: [(u32, f32); 3]) -> ([f32; 3], f32) {
     layers
         .into_iter()

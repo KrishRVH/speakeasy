@@ -34,7 +34,7 @@ fn read(
     let sample = prefix.samples()[index];
     let descriptor = file.as_raw_fd();
     let frame = crate::read_movie_frame(file, &prefix, sample.at, cancelled)?;
-    // SAFETY: querying an integer descriptor never takes ownership or touches another resource.
+
     let descriptor_status = unsafe { libc::fcntl(descriptor, libc::F_GETFD) };
     assert_eq!(descriptor_status, -1, "Movie retained its input");
     Ok(frame)

@@ -1,5 +1,3 @@
-//! Framed binary records with bounded cursors and content-free failures.
-
 use super::SourceError;
 
 pub(super) fn require(condition: bool, message: &'static str) -> Result<(), SourceError> {

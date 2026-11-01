@@ -1,24 +1,16 @@
-//! Analytic critically damped springs for frame-rate independent animation.
-
 use std::time::Duration;
 
 const POSITION_TOLERANCE: f32 = 0.05;
 const VELOCITY_TOLERANCE: f32 = 0.1;
 
-/// A critically damped spring evaluated in closed form.
-///
-/// Stepping is independent of refresh rate and stays stable after a delayed frame. Retargeting
-/// keeps the current position and velocity, so interrupted motion stays continuous.
 #[derive(Debug)]
 pub struct Spring {
     value: f32,
     velocity: f32,
-    /// Destination the spring settles toward.
     pub target: f32,
 }
 
 impl Spring {
-    /// A spring resting at `value`.
     #[must_use]
     pub const fn new(value: f32) -> Self {
         Self {
@@ -28,16 +20,12 @@ impl Spring {
         }
     }
 
-    /// The current position.
     #[must_use]
     pub const fn value(&self) -> f32 {
         self.value
     }
 
-    /// Advances by `elapsed`; a higher positive `omega` settles sooner.
     pub fn step(&mut self, elapsed: Duration, omega: f32) {
-        // With displacement x₀ and velocity v₀: x(t) = (x₀ + slope·t)·e^(−ωt) and
-        // v(t) = (v₀ − ω·slope·t)·e^(−ωt), where slope = v₀ + ω·x₀.
         let seconds = elapsed.as_secs_f32();
         let displacement = self.value - self.target;
         let slope = self.velocity + omega * displacement;
@@ -49,14 +37,12 @@ impl Spring {
         }
     }
 
-    /// Whether position and velocity are within the rendering tolerance.
     #[must_use]
     pub fn settled(&self) -> bool {
         (self.value - self.target).abs() < POSITION_TOLERANCE
             && self.velocity.abs() < VELOCITY_TOLERANCE
     }
 
-    /// Settles immediately at the target, for reduced-motion rendering.
     pub const fn snap(&mut self) {
         self.value = self.target;
         self.velocity = 0.0;
@@ -84,7 +70,7 @@ mod tests {
             slow.step(Duration::from_secs(1) / 60, OMEGA);
         }
         assert!((fast.value() - slow.value()).abs() < 0.001);
-        // Retargeted mid-flight, the spring keeps its momentum and carries on before turning back.
+
         let interrupted_at = fast.value();
         fast.target = 72.0;
         fast.step(Duration::from_secs(1) / 120, OMEGA);

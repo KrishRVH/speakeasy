@@ -1,5 +1,3 @@
-//! Export trust and ownership checks use synthetic pixels, private text sentinels, and temp files.
-
 use std::{collections::BTreeSet, fs};
 
 use serde_json::json;

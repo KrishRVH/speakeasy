@@ -1,11 +1,5 @@
-//! Sound cues against the fake ports: which moments sound, that a microphone expects each cue it
-//! could pick up before that cue plays, that the cue output is held open exactly through each
-//! session, and that turning sounds off silences all three.
-
 use super::*;
 
-/// Holds the shortcut, presses S, then finishes the Show by pressing and releasing the shortcut
-/// again and lets it publish, returning its session.
 async fn record_a_show(h: &mut Harness) -> anyhow::Result<SessionId> {
     let (id, ..) = start_show(h).await?;
     finish_show(h);
@@ -39,7 +33,7 @@ async fn a_recording_sounds_its_start_once_listening_and_its_stop() -> anyhow::R
 async fn a_recording_finished_before_its_microphone_listens_sounds_only_its_stop()
 -> anyhow::Result<()> {
     let mut h = Harness::new()?;
-    // The second toggle outranks the microphone's readiness, which then finds the session stopping.
+
     h.input(Input::Toggle);
     h.input(Input::Toggle);
     h.transcribe_next_as("fixture").await?;

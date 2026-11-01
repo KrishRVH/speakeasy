@@ -1,7 +1,3 @@
-//! Checks the capture thread's lifecycle, retirement and teardown, its metering, PCM consumption,
-//! and the cue notices its speech gate hears, with fake devices and synthetic samples; no test opens
-//! a microphone.
-
 use std::sync::PoisonError;
 
 use anyhow::ensure;
@@ -49,9 +45,6 @@ fn stopped_startup_returns_without_audio() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Whether `retirement` stays pending until `release` lets the blocked capture end. It answers only
-/// once the capture is released and retired, so a failing assertion cannot unwind into a join on the
-/// blocked thread.
 async fn pending_until_released(
     retirement: impl Future<Output = ()>,
     release: &Sender<()>,
@@ -73,7 +66,7 @@ async fn sealed_audio_is_reported_before_device_teardown_and_retirement_waits() 
     impl Drop for Device {
         fn drop(&mut self) {
             self.entered.send_blocking(()).unwrap();
-            // Closing the fixture gate on failure also releases teardown.
+
             self.release.recv_blocking().unwrap_or_default();
         }
     }
@@ -158,8 +151,6 @@ async fn consumer_wakes(cancel: bool, wake_before_park: bool) -> anyhow::Result<
     let gate = Arc::new((Mutex::new(!wake_before_park), Condvar::new()));
     let waiting = Arc::clone(&gate);
     let capture = Capture::spawn(SessionId::FIRST, events, move |_, control, _, _, _| {
-        // Arm after reading the control, so a lost notification cannot pass by finishing before
-        // the thread enters its wait.
         ensure!(control.mode() == Mode::Recording);
         armed.send_blocking(thread::current())?;
         let (lock, ready) = &*waiting;
@@ -192,7 +183,7 @@ async fn consumer_wakes(cancel: bool, wake_before_park: bool) -> anyhow::Result<
         let woke = timeout(Duration::from_millis(400), retirement.as_mut())
             .await
             .is_ok();
-        // A fallback wake reaps the thread even when the notification under test is lost.
+
         consumer.unpark();
         if !woke {
             timeout(PATIENCE, retirement).await?;

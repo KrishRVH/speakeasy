@@ -1,5 +1,3 @@
-//! A language picker with one keyboard focus, visible arrow navigation, and focus restored on close.
-
 use gpui::{Context, FocusHandle, KeyDownEvent, KeyUpEvent, ScrollHandle, Subscription, Window};
 
 use super::{Action, Settings};
@@ -14,7 +12,6 @@ pub(super) struct Picker {
     pub(super) menu: FocusHandle,
     pub(super) scroll: ScrollHandle,
     pub(super) cursor: Option<usize>,
-    // Opening binds focus cleanup to the popup's window; Settings owns that subscription.
     focus_out: Option<Subscription>,
 }
 
@@ -61,8 +58,7 @@ impl Settings {
                         {
                             return;
                         }
-                        // Deactivation leaves focus in the closing menu. Restore its button
-                        // without activating this window or taking focus from another control.
+
                         if inside {
                             view.language.button.focus(window);
                         }
@@ -134,8 +130,7 @@ impl Settings {
         let Some(cursor) = self.language.cursor else {
             return;
         };
-        // Select on release, like GPUI buttons: returning focus on key-down would let the same
-        // key-up activate the Language button and reopen this menu.
+
         if let Some(&(language, _)) = options(&self.config).get(cursor) {
             self.act(Action::SelectLanguage(language), window, cx);
         }

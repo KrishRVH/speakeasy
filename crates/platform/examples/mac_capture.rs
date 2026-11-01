@@ -1,5 +1,3 @@
-//! Explicit owned-window screen acceptance. It neither saves pixels nor accesses audio or input hooks.
-
 #[cfg(not(target_os = "macos"))]
 fn main() -> anyhow::Result<()> {
     anyhow::bail!("This owned-window check requires macOS")
@@ -67,7 +65,7 @@ mod native {
         );
         let mut displays = [0; 2];
         let mut count = 0;
-        // SAFETY: the two-element display array and count output are writable for this query.
+
         let status = unsafe { CGGetActiveDisplayList(2, displays.as_mut_ptr(), &raw mut count) };
         ensure!(
             status == CGError::Success && count == 1 && displays[0] == CGMainDisplayID(),
@@ -168,8 +166,6 @@ mod native {
         [x, y, width, height]: [f64; 4],
         level: isize,
     ) -> anyhow::Result<Retained<NSWindow>> {
-        // SAFETY: allocation and all window work stay on the main thread; the window owns a
-        // fixed synthetic rectangle and is never released by Cocoa while Rust retains it.
         let window = unsafe {
             NSWindow::initWithContentRect_styleMask_backing_defer(
                 NSWindow::alloc(main),
@@ -179,7 +175,7 @@ mod native {
                 false,
             )
         };
-        // SAFETY: Rust retains this window through close, so Cocoa must not independently release it.
+
         unsafe {
             window.setReleasedWhenClosed(false);
         }

@@ -1,7 +1,3 @@
-//! One warm worker, or one job that owns it. Replacement moves the previous job out of the
-//! observation path, then awaits its cleanup before loading. Errors reap the owned worker;
-//! unwinding remains an emergency kill-on-drop.
-
 use std::{future::pending, mem, time::Duration};
 
 use anyhow::{anyhow, ensure};
@@ -24,14 +20,12 @@ use crate::{
     },
 };
 
-/// How long a recovering worker may take to answer a silent request.
 const RECOVERY_PROBE: Duration = Duration::from_secs(2);
 
 #[derive(Default)]
 pub(super) enum Worker<W> {
     #[default]
     Unavailable,
-    /// Starting a worker, or recovering the one a cancelled transcription left behind.
     Loading(Job<W>),
     Ready(W),
     Transcribing {
@@ -66,8 +60,6 @@ impl<W: Speech> Worker<W> {
         ticket.session == session && ticket.part == Part::Stream
     }
 
-    /// Pends unless a job is running; resolves once it finishes, leaving the worker unavailable
-    /// until the owner stores the outcome. Cancel-safe: dropped early, it leaves the job running.
     pub(super) async fn completed(&mut self) -> Completion<W> {
         let completion = match self {
             Self::Loading(job) => Completion::Loaded(joined((&mut job.task).await)),
@@ -75,7 +67,7 @@ impl<W: Speech> Worker<W> {
                 Ok((worker, Transcription::Heard(transcript))) => {
                     Completion::Transcribed(*ticket, Ok((worker, transcript)))
                 },
-                // Only a job moved out of observation is cancelled; its worker is sound anyway.
+
                 Ok((worker, Transcription::Cancelled)) => Completion::Loaded(Ok(worker)),
                 Ok((worker, Transcription::Abandoned)) => Completion::Abandoned(*ticket, worker),
                 Err(error) => Completion::Transcribed(*ticket, Err(error)),
@@ -86,7 +78,6 @@ impl<W: Speech> Worker<W> {
         completion
     }
 
-    /// Starts loading when no worker exists; returns whether a load began.
     pub(super) fn revive<P: Ports<Speech = W>>(&mut self, ports: &P, config: &Config) -> bool {
         let unavailable = matches!(self, Self::Unavailable);
         if unavailable {
@@ -95,7 +86,6 @@ impl<W: Speech> Worker<W> {
         unavailable
     }
 
-    /// Stops the current worker and loads a fresh one once it has exited.
     pub(super) fn reload<P: Ports<Speech = W>>(&mut self, ports: &P, config: &Config) {
         let previous = self.take_cancelled();
         *self = Self::Loading(Job::spawn(|cancelled| {
@@ -108,13 +98,11 @@ impl<W: Speech> Worker<W> {
         }));
     }
 
-    /// Keeps the worker of a cancelled transcription when it still responds; otherwise stops it and
-    /// loads a replacement.
     pub(super) fn recover<P: Ports<Speech = W>>(&mut self, ports: &P, config: &Config) {
         let streaming =
             matches!(self, Self::Transcribing { ticket, .. } if ticket.part == Part::Stream);
         let previous = self.take_cancelled();
-        // Engines serialize requests, and an abandoned CPU inference outlasts the probe bound.
+
         let probe = config.use_gpu || streaming;
         *self = Self::Loading(Job::spawn(|mut cancelled| {
             let load = ports.load(config.clone(), cancelled.clone());
@@ -128,7 +116,6 @@ impl<W: Speech> Worker<W> {
         }));
     }
 
-    /// Pulls the next request only while ready, moving its audio into the owned worker job.
     pub(super) fn transcribe(&mut self, config: &Config, next: impl FnOnce() -> Option<Request>) {
         let mut worker = match mem::take(self) {
             Self::Ready(worker) => worker,
@@ -197,7 +184,6 @@ impl<W: Speech> Worker<W> {
         }
     }
 
-    /// Cancels any job and resolves once its worker has stopped.
     pub(super) async fn stop(self) {
         self.request_stop();
         if let Some((mut worker, _)) = self.into_worker().await {
@@ -205,8 +191,6 @@ impl<W: Speech> Worker<W> {
         }
     }
 
-    /// Returns the worker if its transcription completed or, when probing is allowed, it answers a
-    /// silent request in time; otherwise, or once cancelled, stops it.
     async fn into_responsive(
         self,
         probe: bool,
@@ -222,14 +206,12 @@ impl<W: Speech> Worker<W> {
         None
     }
 
-    /// Takes the current state out of the observation path and cancels its job.
     fn take_cancelled(&mut self) -> Self {
         let previous = mem::take(self);
         previous.request_stop();
         previous
     }
 
-    /// Waits out any job and returns its worker, noting whether it just completed a transcript.
     async fn into_worker(self) -> Option<(W, bool)> {
         match self {
             Self::Ready(worker) => Some((worker, false)),
@@ -251,17 +233,14 @@ impl<W: Speech> Worker<W> {
 }
 
 pub(super) enum Completion<W> {
-    /// The stream ended without final text; reuse the worker for whole-recording fallback.
     Abandoned(Ticket, W),
     Loaded(anyhow::Result<W>),
     Transcribed(Ticket, anyhow::Result<(W, Transcript)>),
 }
 
 pub(super) enum Transcription {
-    /// A stream ended without final text; the worker remains reusable.
     Abandoned,
     Heard(Transcript),
-    /// The job was detached from observation and its request was cancelled.
     Cancelled,
 }
 
@@ -287,12 +266,10 @@ impl<T: Send + 'static> Job<T> {
     }
 }
 
-/// A failed join reports a fixed message, since a panic payload could carry private text.
 fn joined<T>(result: Result<anyhow::Result<T>, JoinError>) -> anyhow::Result<T> {
     result.unwrap_or_else(|_| Err(anyhow!("Transcription stopped unexpectedly. Try again.")))
 }
 
-/// Returns raw dictation text for whole-session cleanup, or cleaned timed Show narration.
 async fn transcript_of<W: Speech>(
     worker: &mut W,
     wav: Vec<u8>,
@@ -313,7 +290,6 @@ async fn transcript_of<W: Speech>(
     })
 }
 
-/// Whether a silent request completes within the recovery bound, unless cancellation comes first.
 async fn responds<W: Speech>(worker: &mut W, cancelled: &mut watch::Receiver<bool>) -> bool {
     tokio::select! {
         biased;

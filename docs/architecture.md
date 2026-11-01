@@ -27,9 +27,10 @@ flowchart LR
 
 ## Change and test map
 
-Owning modules describe their contracts in `//!` summaries; `rg -m1 '^//!' crates` lists them.
-[AGENTS.md](../AGENTS.md#ownership-and-interfaces) maps the crates. Find the area you are changing,
-read its owners, and run their tests, which live in each module unless a test file is named.
+[AGENTS.md](../AGENTS.md#ownership-and-interfaces) maps the crates. This map records their
+contracts; [native contracts](native-contracts.md) covers FFI, callback lifetimes, and native-thread
+ownership. Find the area you are changing, read its owners, and run their tests, which live in each
+module unless a test file is named.
 
 - **Gestures and deadlines**: [core/src/gesture.rs](../crates/core/src/gesture.rs) turns timestamped
   shortcut transitions into actions and deadlines, and decides what each cancel or interruption does
@@ -62,7 +63,10 @@ read its owners, and run their tests, which live in each module unless a test fi
   [stream/tests.rs](../crates/app/src/audio/stream/tests.rs) use synthetic samples; microphones.rs
   checks that a scan the driver blocks serves the next request. The energy gate retains audio after
   100 ms of audible windows, with a floor near −70 dBFS for quiet microphones. PCM stays unchanged.
-  Background noise above the floor can also qualify.
+  Background noise above the floor can also qualify. Callbacks count themselves as publishing before
+  reading the capture mode. Finish/cancel and that count share sequentially consistent ordering; the
+  drain advances the mode, then waits for publishing callbacks before sealing audio. Mode only
+  advances, so a late finish cannot undo cancellation.
 - **Sound cues**: [sounds.rs](../crates/app/src/sounds.rs) plays the cues the owner asks for through
   `Ports::cue` on an owned output thread, which `Ports::hold_cues` keeps open through each session.
   A recording may overhear a cue, so [speech.rs](../crates/app/src/audio/speech.rs) hears only the
@@ -272,8 +276,10 @@ read its owners, and run their tests, which live in each module unless a test fi
   latest pending seek. Closing cancels its receipt; Quit cancels and drains the owner.
   [preview/frame.rs](../crates/app/src/show/preview/frame.rs) caps PNG files at 32 MiB and
   dimensions at 4096 pixels per side. It decodes off the UI thread, leaves private pixels out of
-  GPUI's asset cache, and passes decoded video BGRA directly to the renderer. Decoder errors never
-  include content. Services owns accepted Keep/Discard writes through
+  GPUI's asset cache, and passes source and video BGRA directly to the renderer. `Image` owns
+  premultiplied RGBA; `into_bgra` consumes it into straight-alpha BGRA, reusing opaque pixel
+  storage. GPUI's `RenderImage` expects BGRA bytes inside `image::Frame` despite the buffer's RGBA
+  type. Decoder errors never include content. Services owns accepted Keep/Discard writes through
   [edits.rs](../crates/app/src/show/edits.rs); Quit awaits them, and an immutable fixture lease
   keeps preview storage alive until completion. Recovery enters the session owner's shielded
   publication stage through a bounded request lane. Recovering retained audio uses the configured
@@ -314,7 +320,17 @@ read its owners, and run their tests, which live in each module unless a test fi
   view. [align/tests.rs](../crates/show/src/align/tests.rs) also replays narration from Scrawl's
   public recordings, trimmed beside it to timed words and marks in `show.json`'s shape. Timed
   narration rows reuse alignment's clause boundaries with ten-second display splits; they expose the
-  first word's reported onset, never alignment's inferred silence intervals.
+  first word's reported onset, never alignment's inferred silence intervals. Keyframes show actual
+  sample times; narration anchors describe when their action or drawing began. Alignment partitions
+  timed words once, in order. Clause pauses use word onsets because recognizers can extend word ends
+  through silence. Finished clauses reach at most 700 ms past the last word's onset; unfinished
+  thoughts can resume within four seconds. An anchor in silence can take a clause beginning within a
+  second unless the next anchor is nearer. Resumed clauses carry the unfinished thought; text starts
+  remain increasing and punctuation stays attached. Marks take selection priority; ordinary frames
+  add coverage or a changed screen. An opening frame is added only when it differs and narration
+  precedes the first chosen anchor. Selection caps at 36 keyframes, merges crowded mark groups, and
+  spreads remaining frames across the recording. Float-to-pixel conversions saturate outside their
+  integer range and map NaN to zero.
 - **Show bundle format**: [bundle.rs](../crates/show/src/bundle.rs) and
   [describe.rs](../crates/show/src/describe.rs).
   [bundle/tests.rs](../crates/show/src/bundle/tests.rs) checks paginated sheets and pins
@@ -372,7 +388,13 @@ read its owners, and run their tests, which live in each module unless a test fi
   siblings, expiry, lock ownership, and durable discard/publication markers.
   [journal/log.rs](../crates/show/src/journal/log.rs) shares live/replay admission, thinning, and
   pointer folding; checksums and bounded records stop replay at its first damaged event. Property
-  tests compare replayed frames, timing, and annotations with live state.
+  tests compare replayed frames, timing, and annotations with live state. The journal stores
+  lossless changed tiles and thins samples and tiles together, retaining the first and last held
+  frames. Each thinning doubles admission stride; skipped arrivals need no pixel preparation. Its
+  compressed budget is a target with a two-frame exception, not a strict resident-memory cap.
+  Sealing drops only the comparison image. A lookup returns the latest retained sample at or before
+  the query, or the first sample for an earlier query. Callers report its actual timestamp; retained
+  samples do not establish what appeared in the gaps.
   [journal/source.rs](../crates/show/src/journal/source.rs) streams optional retained frames into
   `source.frames` (512 MiB maximum), with checksummed tiles and an index capped at 64 MiB/4096
   frames. [store/source.rs](../crates/app/src/show/store/source.rs) performs bounded range reads;
@@ -605,10 +627,42 @@ stateDiagram-v2
     Recognizing --> [*]: cancel; revoke permit and recover active final request
 ```
 
+### Destruction order
+
+Field order carries resource lifetime in these owners:
+
+- `Capture.signal` cancels before its thread joins; audio streams drop before their device and host
+  handles. `Sounds.asks` closes before `_player` joins. `ScreenRecorder.finish` closes before its
+  thread joins; a finish message seals footage, while channel closure cancels it.
+- `LocalSpeech.group` terminates the process group before `child` drops. Setup's emergency child
+  cleanup runs before its directory lock releases; the normal asynchronous path reaps the child.
+- `Instance` joins its server, removes its port file, then releases the lock, so an exiting instance
+  cannot delete a successor's port file.
+- Settings requests setup/update cancellation and flushes accepted saves before those fields join.
+  `Owners` requests both runtime and monitor stop before either joins.
+
+Native show/window calls are deferred until GPUI releases its current window borrow: they can
+synchronously request another frame. One deferred task per window lets a superseding request cancel
+an older unrun call. An IME composition's selection offsets are UTF-16 relative to the inserted
+text.
+
 ## Local recognition and privacy
 
 Remote microphone routing belongs to the OS and the user's audio bridge; see
 [remote dictation](remote-dictation.md).
+
+Constructing `Ports::load` does no native work: reload and recovery create its future before waiting
+for the previous worker's teardown and poll it only afterward. `Speech::transcribe_stream` returns
+`Ok(None)` only after establishing that the worker is reusable; an error requires stopping it before
+whole-recording fallback. A silent inference establishes responsiveness and serialization behind
+abandoned work; a health endpoint does not. Completion and retirement waits in the owner's select
+loop leave their owned tasks in place when another branch wins.
+
+All reqwest clients start at [http::client_builder](../crates/app/src/http.rs). On Linux it attaches
+the shared ring provider and HTTP/1.1 ALPN; internet clients use platform certificate verification,
+while loopback clients need no system CA bundle. Direct constructors and `Default` bypass this setup
+and can panic. Clippy catches the named constructors but cannot name those `Default`
+implementations.
 
 The speech worker listens on loopback only. On Linux and Windows, Speakeasy declares the worker
 ready, and sends each request, only after checking that the worker's own process group, a job object

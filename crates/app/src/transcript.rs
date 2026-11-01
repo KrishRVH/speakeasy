@@ -1,5 +1,3 @@
-//! Deterministic transcript cleanup before native insertion or a Show.
-
 pub(crate) mod vocabulary;
 
 use speakeasy_show::{Narration, Word};
@@ -7,17 +5,12 @@ use speakeasy_show::{Narration, Word};
 const PAUSES: [char; 4] = [',', ';', ':', '…'];
 const SENTENCE_ENDINGS: [char; 3] = ['.', '!', '?'];
 
-/// Whether to remove English hesitation tokens or keep literal engine words.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Fillers {
     Preserve,
     Remove,
 }
 
-/// Joins engine segments with single spaces, never line breaks, and optionally removes standalone
-/// `um` / `uh`, ignoring ASCII case. Compounds, identifiers, and individually quoted tokens stay
-/// literal. Work is linear in the input length, with at most one output allocation and no token
-/// collections or per-word allocations.
 pub(crate) fn for_insertion(text: &str, fillers: Fillers) -> String {
     let mut output = String::with_capacity(text.len());
     for token in text.split_whitespace() {
@@ -35,8 +28,6 @@ pub(crate) fn for_insertion(text: &str, fillers: Fillers) -> String {
     output
 }
 
-/// The same cleanup for a Show's narration. Timed words lose their hesitations one by one, and a
-/// sentence ending a hesitation carried moves to the word before, where clause breaks read it.
 pub(crate) fn for_show(narration: Narration, fillers: Fillers) -> Narration {
     match (narration, fillers) {
         (Narration::Text(text), _) => Narration::Text(for_insertion(&text, fillers)),
@@ -58,7 +49,6 @@ pub(crate) fn for_show(narration: Narration, fillers: Fillers) -> Narration {
     }
 }
 
-/// When `token` is a standalone `um` or `uh`, the sentence ending it carried.
 fn hesitation(token: &str) -> Option<&str> {
     let spoken = token.trim_start_matches(is_pause_or_ending);
     let word = spoken.trim_end_matches(is_pause_or_ending);
@@ -67,8 +57,6 @@ fn hesitation(token: &str) -> Option<&str> {
         .then(|| trailing.trim_matches(PAUSES))
 }
 
-/// Ends the text before a removed hesitation: a comma before it belonged to that pause, but a
-/// sentence ending still matters.
 fn close_after_hesitation(text: &mut String, ending: &str) {
     if text.ends_with(',') {
         text.pop();

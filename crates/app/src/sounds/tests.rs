@@ -1,12 +1,8 @@
-//! Checks rendering, mixing, and the player's device lifecycle against a fake sink; only the opt-in
-//! test opens an output device.
-
 use std::{f64::consts::TAU, thread};
 
 use super::*;
 use crate::testing::PATIENCE;
 
-/// How long the players under test keep a released device open.
 const BRIEF_LINGER: Duration = Duration::from_millis(50);
 
 #[derive(Debug, PartialEq, Eq)]
@@ -40,8 +36,6 @@ impl Drop for FakeSink {
     }
 }
 
-/// A player on its own thread whose sinks report to the returned lane; each sink is broken when
-/// `broken` says so for its number, counting from 1.
 fn player(broken: fn(u8) -> bool) -> (Sender<Ask>, Receiver<Event>, thread::JoinHandle<()>) {
     let (asks, asked) = mpsc::channel();
     let (events, reports) = mpsc::channel();
@@ -64,7 +58,6 @@ fn next(reports: &Receiver<Event>) -> Event {
     reports.recv_timeout(PATIENCE).unwrap()
 }
 
-/// Asserts that the player reports nothing for several of its lingers.
 fn quiet(reports: &Receiver<Event>, why: &str) {
     assert_eq!(
         reports.recv_timeout(BRIEF_LINGER.saturating_mul(4)),
@@ -73,7 +66,6 @@ fn quiet(reports: &Receiver<Event>, why: &str) {
     );
 }
 
-/// When a cue asked for at `at` must be heard by.
 fn by(at: Instant) -> Instant {
     at.checked_add(LATE).unwrap()
 }
@@ -146,13 +138,12 @@ fn recordings_resample_by_interpolating_between_samples() {
         *doubled,
         [0.0, 0.0625, 0.125, 0.1875, 0.25, 0.3125, 0.375, 0.1875]
     );
-    // 44.1 kHz keeps the recording's length in time.
+
     let cue = Cue::Copied.pcm();
     let rendered = resample(cue, NonZeroU32::new(44_100).unwrap());
     assert_eq!(rendered.len(), cue.len() / 2 * 44_100 / 48_000);
 }
 
-/// A second of a half-scale sine at `hz`, recorded at 48 kHz.
 #[expect(
     clippy::cast_possible_truncation,
     reason = "A half-scale sine stays within the i16 range"
@@ -168,21 +159,18 @@ fn recorded_tone(hz: f64) -> Vec<u8> {
 
 #[test]
 fn a_slower_output_drops_what_would_fold_back_into_its_band() {
-    // A Bluetooth headset's microphone often turns its output down to 16 kHz.
     let rate = NonZeroU32::new(16_000).unwrap();
     let rms = |samples: &[f32]| {
         let settled = &samples[1_000..];
         (settled.iter().map(|sample| sample * sample).sum::<f32>() / settled.len() as f32).sqrt()
     };
     let kept = rms(&resample(&recorded_tone(1_000.0), rate));
-    // 16 kHz would play a 14 kHz tone as one at 2 kHz.
+
     let folded = rms(&resample(&recorded_tone(14_000.0), rate));
     assert!(kept > 0.35, "{kept}");
     assert!(folded < 0.01 * kept, "{folded}");
 }
 
-/// A mixer onto `channels` whose bank holds only `start` and `stop`, with the lane that asks it for
-/// cues.
 fn mixer(channels: usize, start: &[f32], stop: &[f32]) -> (Producer<(Cue, Instant)>, Mixer) {
     let bank = Bank {
         start: start.into(),
@@ -204,7 +192,7 @@ fn cues_mix_onto_every_channel_and_end_in_silence() {
     asks.push((Cue::Stop, heard)).unwrap();
     let mut output = [0.0_f32; 8];
     mixer.fill(&mut output, heard);
-    // Overlapping cues add, and their sum stops at full scale.
+
     assert_eq!(output, [1.0, 1.0, 1.0, 1.0, 0.75, 0.75, 0.0, 0.0]);
     mixer.fill(&mut output, heard);
     assert_eq!(output, [0.0; 8]);
@@ -238,7 +226,7 @@ fn a_callback_is_heard_once_the_devices_latency_has_passed() {
     };
     let expected = now.checked_add(Duration::from_millis(40)).unwrap();
     assert_eq!(heard(now, latency), expected);
-    // A device that reports playback before its callback is heard at once.
+
     let backwards = cpal::OutputStreamTimestamp {
         callback: playing,
         playback: called,

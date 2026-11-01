@@ -1,6 +1,3 @@
-//! Settings observes consent on opening and activation. The snapshot never authorizes a session
-//! or replaces a device error, and demo windows never call the native queries.
-
 use gpui::{Context, Window};
 use speakeasy_platform::{Permission, Permissions};
 

@@ -1,6 +1,3 @@
-//! Opt-in owned-window rendering and frame-source acceptance, without audio, global input or
-//! clipboard access.
-
 #![forbid(unsafe_code)]
 
 #[path = "../src/icons.rs"]
@@ -20,7 +17,7 @@ use raw_window_handle::HasWindowHandle;
 
 const TIMEOUT: Duration = Duration::from_secs(3);
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
-/// Lets the native renderer finish submitting a frame or applying a visibility change.
+
 const PRESENT_SETTLE: Duration = Duration::from_millis(20);
 const CYCLES: usize = 25;
 
@@ -122,7 +119,6 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     #[cfg(target_os = "linux")]
     let sampler = window.update(cx, |_, window, _| linux::Sampler::of(window))??;
     for iteration in 0..CYCLES {
-        // A pathless first cycle makes a later one exercise the renderer's lazy path targets.
         let draws_path = iteration != 0;
         window.update(cx, |scene, _, _| scene.draws_path = draws_path)?;
         native.set_pill_visible(true);
@@ -189,7 +185,6 @@ fn paint_diamond(bounds: Bounds<Pixels>, window: &mut Window) {
 
 #[cfg(target_os = "linux")]
 mod linux {
-    //! Pixel samples of the owned window on the private X11 display.
 
     use std::time::Instant;
 
@@ -203,7 +198,6 @@ mod linux {
 
     use super::{BACKGROUND, DIAMOND, ICON, POLL_INTERVAL, TIMEOUT};
 
-    /// The owned window's id and display scale on the private X11 display.
     pub(super) struct Sampler {
         window: u32,
         scale: f32,

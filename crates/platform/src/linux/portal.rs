@@ -1,6 +1,3 @@
-//! Wayland desktop access through xdg-desktop-portal: global shortcuts, keyboard input over libei,
-//! and the portal clipboard. Every request and session the service opens is closed on retirement.
-
 mod insertion;
 mod transfer;
 
@@ -38,18 +35,17 @@ const REMOTE: &str = "org.freedesktop.portal.RemoteDesktop";
 const CLIPBOARD: &str = "org.freedesktop.portal.Clipboard";
 const REQUEST: &str = "org.freedesktop.portal.Request";
 const SESSION: &str = "org.freedesktop.portal.Session";
-/// Shortcut IDs Speakeasy binds; the portal reports activations by these IDs.
+
 const DICTATE_ID: &str = "dictate";
 const CANCEL_ID: &str = "cancel";
 const KEYBOARD_DEVICE: u32 = 1;
 const PERSIST_UNTIL_REVOKED: u32 = 2;
 const PERSISTENT_REMOTE_VERSION: u32 = 2;
-/// Depth of the shortcut and clipboard-ownership signal queues and of the notices derived from
-/// them; it also bounds the ownership changes one clipboard handoff may see before it overruns.
+
 const SIGNAL_BACKLOG: usize = 64;
-/// Any portal restart or session closure ends desktop access, so a short queue suffices.
+
 const REVOCATION_BACKLOG: usize = 4;
-/// The clipboard portal's signal stream ended.
+
 const CLIPBOARD_DISCONNECTED: &str = "Clipboard portal disconnected";
 const CLOSE_TIMEOUT: Duration = Duration::from_millis(500);
 const OWNERSHIP_SETTLE: Duration = Duration::from_millis(500);
@@ -60,23 +56,17 @@ type DesktopChanges = futures_util::stream::Select<MessageStream, MessageStream>
 
 struct Portal {
     connection: Connection,
-    /// This connection's unique bus name as it appears in portal object paths.
     sender_segment: String,
     unanswered: Vec<OwnedObjectPath>,
     sessions: Vec<OwnedObjectPath>,
-    /// Prefixes request and session tokens with the process ID and connection time; the unique
-    /// bus name and monotonic sequence distinguish requests on this connection.
     nonce: String,
     sequence: u64,
 }
 
 impl Portal {
-    /// Connects and registers, then subscribes to the session closures and portal restarts that
-    /// revoke desktop access, before any session exists. Registration comes first because its call
-    /// starts an inactive portal, which would otherwise read as a restart.
     async fn connect() -> anyhow::Result<(Self, DesktopChanges)> {
         let connection = Connection::session().await?;
-        // The host registry accepts registration only before any other portal call.
+
         let registered = connection
             .call_method(
                 Some(DESTINATION),
@@ -111,7 +101,6 @@ impl Portal {
         Ok((portal, changes))
     }
 
-    /// The path prefix of every session this connection creates.
     fn session_root(&self) -> String {
         format!("{DESKTOP}/session/{}/", self.sender_segment)
     }
@@ -121,8 +110,6 @@ impl Portal {
         format!("{}_{}", self.nonce, self.sequence)
     }
 
-    /// A new request token and the options that carry it; the portal names the request object
-    /// after that token, which is the path [`Self::request`] awaits.
     fn request_options(&mut self) -> (String, Options) {
         let handle = self.next_token();
         let options = Options::from([("handle_token", Value::from(handle.clone()))]);
@@ -133,8 +120,6 @@ impl Portal {
         Ok(Proxy::new(&self.connection, DESTINATION, DESKTOP, interface).await?)
     }
 
-    /// Calls a portal method that answers through a Request object and awaits that answer. A portal
-    /// restart leaves the request unanswered; binding, its only caller, watches for restarts.
     async fn request<B: serde::Serialize + zbus::zvariant::DynamicType + Sync>(
         &mut self,
         interface: &'static str,
@@ -146,8 +131,7 @@ impl Portal {
             format!("{DESKTOP}/request/{}/{token}", self.sender_segment).try_into()?;
         let request = Proxy::new(&self.connection, DESTINATION, path.clone(), REQUEST).await?;
         let mut responses = request.receive_signal("Response").await?;
-        // Track the request before calling, so retirement can close a consent dialog that has
-        // not answered yet.
+
         self.unanswered.push(path.clone());
         let returned: OwnedObjectPath = self.proxy(interface).await?.call(method, body).await?;
         ensure!(
@@ -208,8 +192,6 @@ impl Portal {
     }
 }
 
-/// What binding established: the shortcut session and the remote desktop for keyboard input that
-/// the portal granted, and the shortcut labels Settings shows.
 struct Bound {
     shortcut_session: Option<OwnedObjectPath>,
     remote: Option<Remote>,
@@ -246,24 +228,14 @@ struct Remote {
     shares_clipboard: bool,
 }
 
-/// What the pump reports to the insertion loop.
 enum Notice {
-    /// The dictation shortcut was pressed, so libei's last modifier report is stale.
     ModifiersChanged,
-    /// This session does not own the portal selection holding this recording's text.
-    SelectionLost {
-        permit: InsertPermit,
-        /// Whether this loss is what revoked the recording, as `InsertPermit::forfeit` reports.
-        revoked: bool,
-    },
+    SelectionLost { permit: InsertPermit, revoked: bool },
 }
 
-/// Watches shortcuts, session revocation, and clipboard ownership while insertion awaits other
-/// processes, revoking a permit as soon as its selection is lost.
 struct Pump {
     input: InputSender,
     shortcut_session: Option<OwnedObjectPath>,
-    /// The prefix of every session this connection opened, as `Portal::session_root` gives it.
     session_root: String,
     shortcuts: MessageStream,
     changes: DesktopChanges,
@@ -275,7 +247,6 @@ struct Pump {
     handoff: Option<PendingHandoff>,
 }
 
-/// A selection handoff waiting for its ownership signals to settle.
 struct PendingHandoff {
     handoff: SelectionHandoff,
     started: Instant,
@@ -336,8 +307,6 @@ impl Pump {
     }
 
     fn begin_handoff(&mut self, handoff: SelectionHandoff) -> anyhow::Result<()> {
-        // SetSelection has completed: its queued ownership signals still belong to the
-        // preceding permit, so settle them before the new selection takes over.
         let mut queued = iter::from_fn(|| self.owners.next().now_or_never()).fuse();
         for event in queued.by_ref().take(SIGNAL_BACKLOG) {
             self.ownership
@@ -378,7 +347,7 @@ impl Pump {
         let Some(input) = shortcut_event(&mut self.held, &action, activated) else {
             return Ok(ControlFlow::Continue(()));
         };
-        // An insertion that misses this press could paste while the shortcut is still held.
+
         if matches!(input, Input::Press) && self.notify.try_send(Notice::ModifiersChanged).is_err()
         {
             self.input.close();
@@ -389,13 +358,11 @@ impl Pump {
     }
 }
 
-/// A new portal selection awaiting confirmation that this session owns it.
 struct SelectionHandoff {
     permit: InsertPermit,
     ready: Reply<bool>,
 }
 
-/// Which recording's portal selection this session currently owns.
 struct SelectionOwnership {
     session: Option<OwnedObjectPath>,
     monitored: Option<InsertPermit>,
@@ -440,8 +407,6 @@ pub(super) async fn run(
     requests: Receiver<Insertion>,
     stopping: &Receiver<Infallible>,
 ) -> anyhow::Result<()> {
-    // Desktop bindings and manual paste need neither portal shortcuts nor keyboard input;
-    // Xwayland serves the copy.
     if options.paste == LinuxPaste::Manual && options.external_shortcut {
         return x11::run(input, options, requests, stopping).await;
     }
@@ -450,9 +415,7 @@ pub(super) async fn run(
         () = stop_requested(stopping, input) => return Ok(()),
         connected = Portal::connect() => connected?,
     };
-    // A portal restart, or a session closed while a later consent dialog is open, ends binding,
-    // which closes that dialog. Binding is polled before revocation: a declined dialog answers
-    // before the portal closes its session, and that answer names the cause.
+
     let session_root = portal.session_root();
     let bound = tokio::select! {
         biased;
@@ -470,7 +433,6 @@ pub(super) async fn run(
 }
 
 async fn bind(portal: &mut Portal, options: &DesktopOptions) -> anyhow::Result<Bound> {
-    // A host without libei fails here, before the user is asked for permissions it cannot use.
     let libei = (options.paste != LinuxPaste::Manual)
         .then(ei::Api::load)
         .transpose()?;
@@ -491,7 +453,6 @@ async fn bind(portal: &mut Portal, options: &DesktopOptions) -> anyhow::Result<B
     })
 }
 
-/// Binds the dictate and cancel shortcuts, returning their session and the labels Settings shows.
 async fn bind_shortcuts(
     portal: &mut Portal,
     options: &DesktopOptions,
@@ -612,7 +573,7 @@ async fn start_remote_desktop(
 
 async fn request_clipboard(portal: &Portal, session: &OwnedObjectPath) -> anyhow::Result<bool> {
     let clipboard = portal.proxy(CLIPBOARD).await?;
-    // Creating a proxy does not contact the portal; reading `version` proves the interface exists.
+
     if clipboard.get_property::<u32>("version").await.is_err() {
         return Ok(false);
     }
@@ -641,7 +602,7 @@ async fn serve(
     let owners = selection_owner_changes(&portal.connection).await?;
     let (notify, notices) = async_channel::bounded(SIGNAL_BACKLOG);
     let (selecting, selections) = async_channel::bounded(1);
-    // Dropping the set aborts the pump once serving ends.
+
     let mut pump = JoinSet::new();
     pump.spawn_local(
         Pump {
@@ -663,8 +624,7 @@ async fn serve(
         }
         .watch(),
     );
-    // Focus checks need the X worker, which touches X clipboard contents only for X11 copies,
-    // never for portal copies or direct text.
+
     let worker = x11::ClipboardWorker::start(input.clone())?;
     tokio::select! {
         biased;
@@ -679,8 +639,6 @@ async fn serve(
     .await
 }
 
-/// Whether a registration failed because the portal predates the host registry and identifies the
-/// app from its launcher instead. zbus reports a method call's error reply by its D-Bus error name.
 fn lacks_registry(error: &zbus::Error) -> bool {
     matches!(
         error,
@@ -693,8 +651,6 @@ fn lacks_registry(error: &zbus::Error) -> bool {
     )
 }
 
-/// Activation and release share one stream: separate queues can reorder a double-tap into two
-/// activations followed by two releases.
 async fn shortcut_signals(connection: &Connection) -> anyhow::Result<MessageStream> {
     let rule = MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
@@ -705,7 +661,6 @@ async fn shortcut_signals(connection: &Connection) -> anyhow::Result<MessageStre
     Ok(MessageStream::for_match_rule(rule, connection, Some(SIGNAL_BACKLOG)).await?)
 }
 
-/// Clipboard ownership changes, queued to the depth a handoff drains.
 async fn selection_owner_changes(connection: &Connection) -> anyhow::Result<MessageStream> {
     let rule = MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
@@ -717,8 +672,6 @@ async fn selection_owner_changes(connection: &Connection) -> anyhow::Result<Mess
     Ok(MessageStream::for_match_rule(rule, connection, Some(SIGNAL_BACKLOG)).await?)
 }
 
-/// Fails with why desktop access ended once a session under `session_root` closes, the portal
-/// restarts, or monitoring stops.
 async fn revocation(
     changes: &mut DesktopChanges,
     session_root: &str,
@@ -729,8 +682,6 @@ async fn revocation(
     bail!("Portal session monitoring stopped")
 }
 
-/// Fails when `event` revokes desktop access: a portal restart, or the closure of a session under
-/// `session_root`. Another connection's sessions sit under another root.
 fn check_revocation(event: &Message, session_root: &str) -> anyhow::Result<()> {
     let header = event.header();
     if header
@@ -748,7 +699,6 @@ fn check_revocation(event: &Message, session_root: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Session closures and portal restarts, either of which revokes desktop access.
 async fn desktop_changes(connection: &Connection) -> anyhow::Result<DesktopChanges> {
     let closed = MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
@@ -767,7 +717,6 @@ async fn desktop_changes(connection: &Connection) -> anyhow::Result<DesktopChang
     ))
 }
 
-/// Pends unless a future is present; resolves once it completes.
 async fn or_pending<F: Future>(future: Option<F>) -> F::Output {
     match future {
         Some(future) => future.await,
@@ -779,9 +728,6 @@ fn deadline(started: Instant, wait: Duration) -> tokio::time::Sleep {
     tokio::time::sleep_until(started.checked_add(wait).unwrap_or(started).into())
 }
 
-/// Revokes `permit`, whose selection this session does not own, and tells the insertion loop. The
-/// pump shares that loop's thread and sends with no await after revoking, and the loop applies
-/// queued notices before it pastes, so a paste this loss revoked always learns why.
 fn lose_selection(permit: InsertPermit, notify: &Sender<Notice>) -> anyhow::Result<()> {
     let revoked = permit.forfeit();
     notify.try_send(Notice::SelectionLost { permit, revoked })?;
@@ -811,7 +757,6 @@ mod tests {
         Ok(format!("{DESKTOP}/session/fixture").try_into()?)
     }
 
-    /// The portal announcing whether `session` owns the clipboard selection.
     pub(super) fn owner_changed(session: &OwnedObjectPath, owned: bool) -> anyhow::Result<Message> {
         let values = Results::from([("session_is_owner".into(), OwnedValue::from(owned))]);
         let signal = Message::signal(DESKTOP, CLIPBOARD, "SelectionOwnerChanged")?;

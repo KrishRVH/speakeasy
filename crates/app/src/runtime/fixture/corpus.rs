@@ -1,5 +1,3 @@
-//! Pinned public corpus inputs and content-free word-error/latency summaries for the opt-in replay.
-
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
@@ -158,7 +156,6 @@ struct Metrics {
     formatting_reference_words: usize,
     formatting_word_errors: usize,
     formatting_word_error_rate: Option<f64>,
-    // Accelerated replay still yields accuracy results, but must never enter latency percentiles.
     realtime_insertions: usize,
     stop_to_fake_insert_p50_ms: Option<f64>,
     stop_to_fake_insert_p95_ms: Option<f64>,

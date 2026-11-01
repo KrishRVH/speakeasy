@@ -1,6 +1,3 @@
-//! Continuous inference remains optional work: cancellation, promotion, and a busy worker keep
-//! session authority and complete sealed audio.
-
 use zeroize::Zeroizing;
 
 use super::*;
@@ -41,7 +38,7 @@ async fn cancellation_closes_the_stream_and_reuses_a_responsive_cpu_worker() -> 
     let (id, events) = h.start().await?;
     let (feed, audio) = live();
     events.send(CaptureEvent::Streaming(id, audio)).await?;
-    // An owner round trip admits the stream before the cancellation arrives.
+
     events.send(CaptureEvent::Level(id, 0.5)).await?;
     h.observe_level(0.5).await?;
     h.input(Input::Cancel);

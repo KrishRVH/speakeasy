@@ -134,10 +134,9 @@ fn inspect(path: &Path) -> anyhow::Result<MoviePrefix> {
 
 fn assert_closed((descriptor, previous): (std::os::fd::RawFd, std::fs::Metadata)) {
     let mut current = MaybeUninit::<libc::stat>::uninit();
-    // SAFETY: fstat only queries the descriptor and initializes this correctly sized output.
+
     let status = unsafe { libc::fstat(descriptor, current.as_mut_ptr()) };
     if status == 0 {
-        // SAFETY: successful fstat initialized every field read here.
         let current = unsafe { current.assume_init() };
         assert!(
             u64::try_from(current.st_dev).ok() != Some(previous.dev())

@@ -1,10 +1,5 @@
-//! The floating pill: a borderless popup that animates the latest session snapshot. It only
-//! presents; wakes and frames redraw the current snapshot and never publish session state or move a
-//! capture or insertion deadline.
-
 mod grille;
-// Clippy's `allow-*-in-tests` settings recognize only a bare `cfg(test)`, so the platform gate is
-// a separate attribute.
+
 #[cfg(test)]
 #[cfg(target_os = "linux")]
 mod native_tests;
@@ -37,43 +32,40 @@ const METER_BARS: usize = 24;
 const FRAME_INTERVAL: Duration = Duration::from_millis(5);
 
 const SUBMITTED_FOR: Duration = Duration::from_millis(350);
-/// Long enough to read **Show copied**, which tells the user to paste.
+
 const COPIED_FOR: Duration = Duration::from_millis(1600);
-/// Long enough to read a two-line remedy for pasting copied text by hand.
+
 const NOTICE_FOR: Duration = Duration::from_secs(6);
 const EMPTY_FOR: Duration = Duration::from_millis(1200);
 const ERROR_FOR: Duration = Duration::from_secs(8);
 const TRAY_HINT_FOR: Duration = Duration::from_secs(3);
-/// The footer that points from a message the pill may clip to Settings, which shows all of it.
+
 const DETAILS: &str = "Details in Settings";
-/// How long a recording that turns into a Show says how to draw, in place of its clock.
+
 const DRAW_HINT_FOR: Duration = Duration::from_secs(3);
 
-/// The final stretch of a recording during which the pill counts down to the limit.
 pub(crate) const COUNTDOWN: Duration = Duration::from_secs(30);
 const SWEEP_DELAY: Duration = Duration::from_millis(250);
 const SWEEP_PERIOD: Duration = Duration::from_millis(1200);
 
 const RESTING_SIZE: Size<f32> = size(60.0, 30.0);
 const RECORDING_WIDTH: f32 = 152.0;
-/// The widest capsule, which shows a message or the tray hint.
+
 const MESSAGE_WIDTH: f32 = 360.0;
-/// The tallest capsule: a two-line message above an optional footer.
+
 const MESSAGE_SIZE: Size<f32> = size(MESSAGE_WIDTH, 64.0);
 const HIDDEN_LIFT: f32 = 6.0;
 const SHADOW_OFFSET: f32 = 4.0;
 const SHADOW_BLUR: f32 = 16.0;
-/// Room under the shown capsule for its drop shadow and for the `HIDDEN_LIFT` it sinks while hiding.
+
 const SHADOW_ROOM: f32 = SHADOW_OFFSET + SHADOW_BLUR + HIDDEN_LIFT;
-/// The fixed native window holds the widest capsule with its shadow's blur on both sides, and the
-/// tallest with `SHADOW_ROOM` beneath it.
+
 const _: () = assert!(
     MESSAGE_WIDTH + 2.0 * SHADOW_BLUR <= PILL_WIDTH as f32
         && MESSAGE_SIZE.height + SHADOW_ROOM <= PILL_HEIGHT as f32,
     "The capsule must fit the native pill window"
 );
-/// The window's clearance above the display's bottom edge. Windows and macOS move the pill onto
-/// their work area; GPUI's X11 display has none, so on Linux this keeps it above a bottom panel.
+
 const BOTTOM_CLEARANCE: f32 = 50.0;
 
 const LID_OPEN: f32 = 0.0;
@@ -149,7 +141,6 @@ impl Pill {
         cx.notify();
     }
 
-    /// Shows the tray hint unless the pill is already visible; returns whether it did.
     pub(crate) fn show_tray_hint(&mut self, cx: &mut Context<'_, Self>) -> bool {
         if self.visible {
             return false;
@@ -183,7 +174,6 @@ impl Pill {
         }
         self.snapshot = snapshot;
         if state_changed {
-            // A hidden native window never renders, so it cannot wait for `render` to show it.
             if !self.visible && self.scene(now).is_shown() {
                 self.set_visible(true, cx);
             }
@@ -191,8 +181,6 @@ impl Pill {
         }
     }
 
-    /// Adds `meter` to the level history while the current snapshot records the session it
-    /// measured; a level that arrives before its session's snapshot or after it ends is dropped.
     fn apply_meter(&mut self, meter: Meter, cx: &mut Context<'_, Self>) {
         let snapshot = &self.snapshot;
         if snapshot.phase != Phase::Recording
@@ -205,8 +193,7 @@ impl Pill {
         self.history.rotate_left(1);
         let [.., newest] = &mut self.history;
         *newest = meter.level;
-        // Exact comparison: any tolerance would hide quiet speech. An animating pill paints new
-        // levels on its pending frame.
+
         if previous.map(f32::to_bits) != self.history.map(f32::to_bits) && !self.animating {
             cx.notify();
         }
@@ -232,8 +219,6 @@ impl Pill {
         }
     }
 
-    /// Retargets every spring for `scene`, steps it by `since_frame`, and returns whether any is
-    /// still moving.
     fn advance_springs(&mut self, scene: &Scene, since_frame: Duration) -> bool {
         self.capsule.retarget(scene);
         let reduced_motion = self.reduced_motion;
@@ -256,7 +241,7 @@ impl Pill {
                 Phase::Recording => level,
                 _ => 0.0,
             };
-            // Bars rise fast enough to catch a syllable and fall slowly enough to read.
+
             let omega = if spring.target > spring.value() {
                 48.0
             } else {
@@ -267,8 +252,6 @@ impl Pill {
         moving
     }
 
-    /// Hidden native windows receive no frames, so springs settle now: the next entrance starts at
-    /// rest, not from wherever the fade-out left them moving.
     fn rest_while_hidden(&mut self) {
         for (spring, _) in self.capsule.springs_mut() {
             spring.snap();
@@ -285,8 +268,6 @@ impl Pill {
         }));
     }
 
-    /// Redraws on the first native frame at or after `frame_due`, staying in display sync without a
-    /// repeating timer or redraws between deadlines.
     fn request_deadline_frame(&mut self, window: &Window, cx: &Context<'_, Self>) {
         if self.frame_pending {
             return;
@@ -352,7 +333,6 @@ impl Render for Pill {
     }
 }
 
-/// The capsule's geometry and its slot's lid and waveform, each eased by a spring.
 struct Capsule {
     width: Spring,
     height: Spring,
@@ -401,19 +381,14 @@ impl Capsule {
     }
 }
 
-/// What the pill presents at one instant.
 struct Scene {
     phase: Phase,
     since_phase: Duration,
     tray_hint: Option<Duration>,
-    /// Time left on a new Show's drawing hint.
     draw_hint: Option<Duration>,
     hands_free: bool,
-    /// Whether the session records the screen as a Show, or the result is a Show copied again.
     show: bool,
-    /// How a copied Show's screen recording ended.
     ending: Ending,
-    /// Why a copied Show's narration was lost, if it was.
     narration_lost: Option<NarrationLoss>,
     clock: Clock,
 }
@@ -423,13 +398,10 @@ impl Scene {
         self.phase.is_active() || self.feedback().is_some() || self.tray_hint.is_some()
     }
 
-    /// Time left on the completion or failure feedback.
     fn feedback(&self) -> Option<Duration> {
         feedback_remaining(self.phase, self.labels_copy(), self.since_phase)
     }
 
-    /// Whether a copy shows the compact Show label rather than the snapshot's message, which says
-    /// what a Show lost.
     fn labels_copy(&self) -> bool {
         self.show && self.ending == Ending::Finished && self.narration_lost.is_none()
     }
@@ -438,8 +410,6 @@ impl Scene {
         matches!(self.phase, Phase::Recording | Phase::Stopping)
     }
 
-    /// The line under a message: [`DETAILS`] under a failure, and under a Show that lost its
-    /// narration, whose remedy two lines may not hold beside how the Show ended.
     fn footer(&self) -> Option<&'static str> {
         (self.phase == Phase::Error || self.narration_lost.is_some()).then_some(DETAILS)
     }
@@ -467,7 +437,6 @@ impl Scene {
         self.is_capturing() && (self.hands_free || self.clock.near_limit)
     }
 
-    /// The drawing hint takes the clock's place, unless the clock is counting down to the limit.
     fn shows_draw_hint(&self) -> bool {
         self.draw_hint.is_some() && self.shows_clock() && !self.clock.near_limit
     }
@@ -521,26 +490,18 @@ impl Scene {
     }
 }
 
-/// What the capsule holds.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Content {
     TrayHint,
     Error,
-    /// Copied dictation, whose message says how to paste it; a Show copied after its recording
-    /// stopped early, as when its screen stopped or its window closed or went off screen, or after
-    /// its narration was lost; a Show cancelled with nothing to record; or a notice. Any other
-    /// copied Show keeps its compact slot.
     Notice,
     Slot,
     Idle,
 }
 
-/// The recording's elapsed seconds, and whether it has reached the countdown before its limit.
 struct Clock {
     seconds: u64,
     near_limit: bool,
-    /// Until the recording's next whole second, when the shown time changes. Counting from the
-    /// recording's start, not the last wake, keeps late wakes from delaying or skipping a second.
     next_tick: Duration,
 }
 
@@ -555,7 +516,6 @@ impl Clock {
     }
 }
 
-/// Formats as `M:SS`, or as the time left, `M:SS left`, once the countdown begins.
 impl fmt::Display for Clock {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.near_limit {
@@ -567,12 +527,6 @@ impl fmt::Display for Clock {
     }
 }
 
-/// Opens the pill, hidden, to present `updates` and `levels`. It starts centered above the primary
-/// display's bottom edge; Windows and macOS move it to the bottom of the user's current display
-/// each time it shows.
-///
-/// Fails without a display, when the platform cannot open the window, or when the window cannot be
-/// made nonactivating and click-through.
 pub(crate) fn open(
     updates: watch::Receiver<Snapshot>,
     levels: watch::Receiver<Meter>,
@@ -608,8 +562,7 @@ pub(crate) fn open(
         },
         |window, cx| {
             window.set_window_title("Speakeasy pill");
-            // The pill lives as long as the app; a close request from outside, such as a tool
-            // closing the process's main window, is refused.
+
             window.on_window_should_close(cx, |_, _| false);
             configured = native_window(window, "pill").and_then(|native| native.configure_pill());
             cx.new(|cx| Pill::new(updates, levels, reduced_motion, theme, window, cx))
@@ -619,8 +572,6 @@ pub(crate) fn open(
     Ok(pill)
 }
 
-/// Time left on `phase`'s feedback, which began `since_phase` ago; a copy `labeled` with the compact
-/// Show label is quicker to read than a message.
 fn feedback_remaining(phase: Phase, labeled: bool, since_phase: Duration) -> Option<Duration> {
     let duration = match phase {
         Phase::Done => SUBMITTED_FOR,
@@ -635,8 +586,6 @@ fn feedback_remaining(phase: Phase, labeled: bool, since_phase: Duration) -> Opt
         .filter(|left| !left.is_zero())
 }
 
-/// Whether `snapshot` begins new feedback after `previous`, restarting its time on screen: a new
-/// session, phase, or report, or a failure that says something new.
 fn begins_feedback(previous: &Snapshot, snapshot: &Snapshot) -> bool {
     snapshot.session != previous.session
         || snapshot.reported != previous.reported
@@ -644,9 +593,6 @@ fn begins_feedback(previous: &Snapshot, snapshot: &Snapshot) -> bool {
         || (snapshot.phase == Phase::Error && snapshot.message != previous.message)
 }
 
-/// When the drawing hint ends, given the snapshot that replaces `previous` and the deadline `until`
-/// kept so far. A session's hint starts the first time it records as a Show, so S pressed while the
-/// microphone opens still gets the full hint, and the session's later snapshots keep its deadline.
 fn draw_hint_until(
     previous: &Snapshot,
     snapshot: &Snapshot,

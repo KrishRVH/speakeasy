@@ -1,6 +1,3 @@
-//! Authenticated continuous PCM recognition on the owned engine. Only committed finals return;
-//! transport, protocol, or backpressure failures leave whole-recording fallback to the owner.
-
 use std::{mem, time::Duration};
 
 use anyhow::{anyhow, ensure};
@@ -101,8 +98,8 @@ async fn recognize(socket: &mut Socket, mut audio: LiveAudio) -> anyhow::Result<
                     let Ok(tail) = (&mut audio.tail).await else {
                         return Ok(None);
                     };
-                    // Capture never waits on inference. Its final tail can include a backlog;
-                    // preserve every sample while keeping each network write small and bounded.
+
+
                     for chunk in tail.chunks(chunk_size) {
                         send(socket, Message::Binary(chunk.to_vec().into())).await?;
                     }
@@ -140,7 +137,7 @@ async fn recognize(socket: &mut Socket, mut audio: LiveAudio) -> anyhow::Result<
                                 final_seen = true;
                             },
                             "input_audio_buffer.committed" => {
-                                // NeMo Speech 0.2.0 emits finish()'s finals before this acknowledgement.
+
                                 ensure!(committed && final_seen, FAILED);
                                 return Ok(Some(mem::take(&mut *text)));
                             },

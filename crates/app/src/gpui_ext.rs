@@ -1,10 +1,3 @@
-//! GPUI conveniences: updates whose only failure is that their target no longer exists, views that
-//! follow a watch channel, and native windows for platform calls, now or deferred past GPUI's
-//! window borrow.
-//!
-//! The `update_if_*` closures return `()`, so those helpers can never discard an error the closure
-//! itself produced.
-
 use anyhow::{Context as _, anyhow};
 use gpui::{
     AnyWindowHandle, App, AppContext, AsyncApp, Context, Flatten, Render, Task, WeakEntity, Window,
@@ -15,7 +8,6 @@ use speakeasy_platform::NativeWindow;
 use tokio::sync::watch;
 
 pub(crate) trait EntityUpdate<T> {
-    /// The `Flatten` bound mirrors `WeakEntity::update`, so both `App` and `AsyncApp` qualify.
     fn update_if_alive<C>(&self, cx: &mut C, update: impl FnOnce(&mut T, &mut Context<'_, T>))
     where
         C: AppContext,
@@ -72,17 +64,12 @@ impl AppUpdate for AsyncApp {
     }
 }
 
-/// The native window behind `window`, for platform calls on its UI thread, now or through
-/// [`defer_native`] once GPUI's borrow ends; `name` labels the error people see.
 pub(crate) fn native_window(window: &Window, name: &str) -> anyhow::Result<NativeWindow> {
     let handle = HasWindowHandle::window_handle(window)
         .map_err(|error| anyhow!("Cannot access {name} window: {error}"))?;
     NativeWindow::new(handle).with_context(|| format!("Cannot access {name} window"))
 }
 
-/// Applies the receiver's current value to the view, then each later one, while the view and the
-/// publisher live. `select` copies what `apply` needs while the watch lock is held; the lock is
-/// released before the view updates, so a publisher on another thread never waits on GPUI.
 pub(crate) fn follow<V: 'static, T: 'static, U: 'static>(
     mut updates: watch::Receiver<T>,
     cx: &Context<'_, V>,
@@ -100,10 +87,6 @@ pub(crate) fn follow<V: 'static, T: 'static, U: 'static>(
     })
 }
 
-/// Runs `native` on `window`'s native window in a task, after GPUI releases the current window
-/// borrow: native show can synchronously request a GPUI frame. A closed window, or one whose handle
-/// cannot be read, skips the call. Dropping or replacing the returned task cancels a call that has
-/// not run, so a caller keeps one slot per window and a newer request supersedes an older one.
 pub(crate) fn defer_native(
     window: AnyWindowHandle,
     name: &'static str,

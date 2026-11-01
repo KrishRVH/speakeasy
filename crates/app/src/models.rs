@@ -1,5 +1,3 @@
-//! Curated local model choices. The persisted runner stays separate from its model's capabilities.
-
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,8 +30,6 @@ impl Model {
     }
 }
 
-/// Preserve explicit locale choices and adapt a previous engine's bare language code. Unsupported
-/// languages use detection instead of an invalid decoder prompt.
 pub(crate) fn nemotron_language(language: &str) -> &str {
     if LANGUAGES.iter().any(|(code, _)| *code == language) {
         return language;
@@ -53,8 +49,6 @@ pub(crate) fn nemotron_language(language: &str) -> &str {
         .unwrap_or("auto")
 }
 
-/// The unadapted Nemotron checkpoint supports these 32 locales. Other tokenizer languages require
-/// fine-tuning and must not be offered as working choices for this download.
 pub(crate) const LANGUAGES: &[(&str, &str)] = &[
     ("auto", "Automatic"),
     ("en-US", "English (US)"),
@@ -91,7 +85,6 @@ pub(crate) const LANGUAGES: &[(&str, &str)] = &[
     ("et-EE", "Estonian"),
 ];
 
-/// Whisper uses language codes without a regional suffix; Norwegian's code is `no`.
 pub(crate) fn whisper_language(locale: &str) -> &str {
     match locale {
         "nb-NO" => "no",
@@ -101,7 +94,6 @@ pub(crate) fn whisper_language(locale: &str) -> &str {
     }
 }
 
-/// Whisper language codes; actual coverage depends on the manually selected multilingual model.
 pub(crate) const WHISPER_LANGUAGES: &[(&str, &str)] = &[
     ("auto", "Automatic"),
     ("af", "Afrikaans"),

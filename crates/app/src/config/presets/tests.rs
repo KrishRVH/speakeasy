@@ -1,5 +1,3 @@
-//! Preset persistence, domain-specific corrections, and the boundary around global settings.
-
 use proptest::prelude::*;
 
 use super::*;

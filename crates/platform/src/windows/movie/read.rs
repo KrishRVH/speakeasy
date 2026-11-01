@@ -1,5 +1,3 @@
-//! A synchronous native reader seeks in a validated local file and releases its I/O before return.
-
 use std::{fs::File, time::Duration};
 
 use anyhow::{Context as _, ensure};
@@ -57,7 +55,7 @@ fn decode(
         return Ok(None);
     }
     let ticks = i64::try_from(at.as_nanos() / 100)?;
-    // SAFETY: the position variant is owned through this call; zero GUID selects 100 ns time.
+
     unsafe { reader.SetCurrentPosition(&GUID::zeroed(), &PROPVARIANT::from(ticks))? };
     let Some(decoded) = select(&reader, size, ticks, cancelled)? else {
         return Ok(None);
@@ -78,8 +76,6 @@ fn decode(
 }
 
 fn reader(stream: &file::ReadStream) -> anyhow::Result<IMFSourceReader> {
-    // SAFETY: all attribute and media type values are documented native encodings. The reader
-    // reads only the caller's validated local file through its owned, read-only byte stream.
     unsafe {
         let mut attributes = None;
         MFCreateAttributes(&raw mut attributes, 1)?;
@@ -114,9 +110,7 @@ fn preserve_timestamps(reader: &IMFSourceReader) -> anyhow::Result<()> {
     for index in 0..8 {
         let mut category = GUID::zeroed();
         let mut transform = None;
-        // SAFETY: this owner has configured the reader but submitted no reads. The returned
-        // transform is retained through configuration; its types and sample flow remain owned
-        // by the source reader. Disabling frame-rate conversion preserves original sample times.
+
         unsafe {
             extended.GetTransformForStream(
                 STREAM,
@@ -137,7 +131,6 @@ fn preserve_timestamps(reader: &IMFSourceReader) -> anyhow::Result<()> {
 }
 
 fn format_stride(format: &IMFMediaType, expected: [u32; 2]) -> anyhow::Result<i32> {
-    // SAFETY: the decoder owns this initialized media type; these calls only read attributes.
     unsafe {
         let packed = format.GetUINT64(&MF_MT_FRAME_SIZE)?;
         let size = [
@@ -178,7 +171,6 @@ fn select(
     requested: i64,
     cancelled: &dyn Fn() -> bool,
 ) -> anyhow::Result<Option<Decoded>> {
-    // SAFETY: the reader owns its initialized output type; no sample has been selected yet.
     let mut stride = format_stride(&unsafe { reader.GetCurrentMediaType(STREAM)? }, size)?;
     let mut previous: Option<Decoded> = None;
     for _ in 0..10_802 {
@@ -186,8 +178,7 @@ fn select(
             return Ok(None);
         }
         let (mut flags, mut sample) = (0, None);
-        // SAFETY: all outputs are live initialized locals; the synchronous reader retains its
-        // stream and returns owned samples. No sample's pixels escape their lock.
+
         unsafe {
             reader.ReadSample(
                 STREAM,
@@ -206,12 +197,9 @@ fn select(
             "Video failed or lost its color processor during decoding"
         );
         if flags & MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED.0.cast_unsigned() != 0 {
-            // SAFETY: a successful format-change notification requires querying the new type.
-            // Revalidate before admitting this sample, while retaining each earlier sample's stride.
             stride = format_stride(&unsafe { reader.GetCurrentMediaType(STREAM)? }, size)?;
         }
         if let Some(sample) = sample {
-            // SAFETY: this sample remains owned throughout the query and subsequent selection.
             let at = unsafe { sample.GetSampleTime()? };
             ensure!(
                 (0..=3_600_000_000).contains(&at)

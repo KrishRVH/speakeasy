@@ -1,5 +1,3 @@
-//! A stream returns only committed finals; abandoned feeds and private protocol failures fail closed.
-
 use tokio::{
     net::TcpListener,
     sync::{mpsc, oneshot},

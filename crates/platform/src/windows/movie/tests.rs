@@ -162,10 +162,9 @@ fn encode_synthetic_movie_fragments() -> anyhow::Result<()> {
         "Native encoder did not exercise its byte cap"
     );
     assert!(std::fs::metadata(&path)?.len() <= limit);
-    // Exclusive replacement verifies that synchronous teardown released the native file handle.
+
     std::fs::rename(&path, directory.join("capped-closed.mp4"))?;
-    // Even initialization that cannot fit a header must release native references and close its
-    // file; it cannot leave teardown waiting for work that can no longer be submitted.
+
     let too_small = directory.join("no-header.mp4");
     if let Ok(mut encoder) = Encoder::open(&too_small, canvas::Canvas::new([320, 240])?, 1) {
         let submitted = encoder.write(&frame(320, 240, 50), Duration::ZERO, &mut || false);
@@ -179,7 +178,7 @@ fn encode_synthetic_movie_fragments() -> anyhow::Result<()> {
 
 fn wait_for_sample(start: Instant, number: u32) -> Duration {
     let at = Duration::from_nanos(u64::from(number).saturating_mul(1_000_000_000) / 30);
-    // Match capture pacing so this fixture exercises the disk cap rather than the input queue.
+
     std::thread::sleep(at.saturating_sub(start.elapsed()));
     at
 }

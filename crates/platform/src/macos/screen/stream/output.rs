@@ -1,5 +1,3 @@
-//! Native callbacks copy admitted pixels into a bounded lane without borrowing OS surfaces.
-
 use std::{
     convert::Infallible,
     panic::{self, AssertUnwindSafe},
@@ -33,16 +31,12 @@ pub(super) struct State {
 }
 
 define_class!(
-    // SAFETY: callback state is immutable; channels synchronize delivery, and no borrowed native
-    // sample or error escapes its callback. Both native entry points contain Rust panics.
     #[unsafe(super = NSObject)]
     #[ivars = State]
     pub(super) struct Output;
 
-    // SAFETY: NSObjectProtocol adds no requirements.
     unsafe impl NSObjectProtocol for Output {}
 
-    // SAFETY: the signature matches the screen-only output protocol, on its private serial queue.
     unsafe impl SCStreamOutput for Output {
         #[unsafe(method(stream:didOutputSampleBuffer:ofType:))]
         fn sample(&self, _: &SCStream, sample: &CMSampleBuffer, kind: SCStreamOutputType) {
@@ -55,7 +49,6 @@ define_class!(
         }
     }
 
-    // SAFETY: this signature borrows the error only for the notification; diagnostics stay local.
     unsafe impl SCStreamDelegate for Output {
         #[unsafe(method(stream:didStopWithError:))]
         fn stopped(&self, _: &SCStream, error: &NSError) {
@@ -92,7 +85,7 @@ impl Output {
             size,
             clock: Clock::new()?,
         });
-        // SAFETY: every Rust ivar is initialized before NSObject initialization.
+
         Ok(unsafe { msg_send![super(this), init] })
     }
 
@@ -100,12 +93,11 @@ impl Output {
         if kind != SCStreamOutputType::Screen || self.ivars().frames.is_closed() {
             return Ok(());
         }
-        // SAFETY: ScreenCaptureKit lends the sample throughout this callback.
+
         if !unsafe { sample.is_valid() && sample.data_is_ready() } {
             return Ok(());
         }
-        // SAFETY: documented sample attachments are dictionaries with string keys. This retained
-        // array owns those dictionaries while status and display time are read.
+
         let attachments = unsafe {
             let array = sample
                 .sample_attachments_array(false)
@@ -113,7 +105,7 @@ impl Output {
             CFRetained::cast_unchecked::<CFArray<CFDictionary<CFString, CFType>>>(array)
         };
         let info = attachments.get(0).ok_or(Failure::Stalled)?;
-        // SAFETY: these immutable ScreenCaptureKit keys live for the process.
+
         let status = number(&info, unsafe { SCStreamFrameInfoStatus }).ok_or(Failure::Stalled)?;
         match SCFrameStatus(isize::try_from(status).map_err(|_status| Failure::Stalled)?) {
             SCFrameStatus::Idle | SCFrameStatus::Started => return Ok(()),
@@ -123,14 +115,14 @@ impl Output {
         if self.ivars().frames.is_full() {
             return Ok(());
         }
-        // SAFETY: the display-time key is an immutable exported constant.
+
         let ticks = number(&info, unsafe { SCStreamFrameInfoDisplayTime })
             .and_then(|value| u64::try_from(value).ok())
             .ok_or(Failure::Stalled)?;
         let Some(at) = self.ivars().clock.at(ticks, Instant::now()) else {
             return Ok(());
         };
-        // SAFETY: the image buffer remains borrowed from this live sample.
+
         let buffer = unsafe { sample.image_buffer() }.ok_or(Failure::Stalled)?;
         if [
             CVPixelBufferGetWidth(&buffer),
@@ -158,8 +150,6 @@ impl Output {
 }
 
 fn number(info: &CFDictionary<CFString, CFType>, key: &NSString) -> Option<i64> {
-    // SAFETY: NSString and CFString are toll-free bridged; this immutable exported key lives
-    // throughout the lookup, and no retained ownership is manufactured by the reference cast.
     let key = unsafe { &*std::ptr::from_ref(key).cast::<CFString>() };
     info.get(key)?.downcast::<CFNumber>().ok()?.as_i64()
 }
@@ -173,8 +163,7 @@ impl Clock {
     fn new() -> Result<Self, Failure> {
         for _ in 0..4 {
             let before = Instant::now();
-            // SAFETY: the shared Core Media host clock uses mach_absolute_time and has no native
-            // thread requirement. Only its numeric timestamp is retained.
+
             let origin = unsafe { CMClock::host_time_clock().time() };
             if let Some(clock) = Self::anchored(origin, before, Instant::now()) {
                 return Ok(clock);
@@ -194,7 +183,6 @@ impl Clock {
     }
 
     fn at(&self, ticks: u64, now: Instant) -> Option<Instant> {
-        // SAFETY: ScreenCaptureKit displayTime uses the host clock's native system units.
         let native = unsafe { CMClock::make_host_time_from_system_units(ticks) };
         let elapsed = host_time(native)?.checked_sub(self.origin)?;
         let at = self.instant.checked_add(elapsed)?;

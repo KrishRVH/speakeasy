@@ -1,5 +1,3 @@
-//! Contact sheets: keyframes in readable pages sized for a reading model.
-
 use std::ops::Range;
 
 use tiny_skia::{PixmapPaint, Transform};
@@ -13,34 +11,30 @@ use crate::{
 const PADDING: u32 = 6;
 const GUTTER: u32 = 6;
 const BACKGROUND: [u8; 3] = [28, 29, 34];
-/// Vision models read about this many pixels on the long edge before downscaling, and about this
-/// many in all.
+
 const LONGEST_EDGE: f32 = 1_600.0;
 const MOST_PIXELS: f32 = 1_560_000.0;
-/// The most frames one row holds.
+
 const ROW_FRAMES: usize = 6;
-/// More frames start another sheet rather than shrinking every thumbnail.
+
 const PAGE_FRAMES: usize = 6;
-/// Layout treats frames as no narrower or wider than these aspects, so an extreme crop still gets
-/// a usable cell; the frame then keeps its own proportions inside it.
+
 const NARROWEST: f32 = 0.25;
 const WIDEST: f32 = 4.5;
-/// The sheet never narrows below this, however many rows it holds.
+
 const SMALLEST_INNER: u32 = 64;
-/// Fixed padding and gutters keep a sheet from shrinking in proportion, so fitting it within the
-/// limits can take a few passes.
+
 const FIT_PASSES: usize = 16;
-/// Two frames whose aspects add up past this sit in rows of their own.
+
 const PAIR_SPLIT: f32 = 3.6;
-/// Among three or more frames, one takes a row to itself only when at least this wide.
+
 const WIDE_ALONE: f32 = 1.85;
-/// Frames shown smaller or larger than these multiples of the median area are penalized.
+
 const SMALL_AREA: f32 = 0.58;
 const LARGE_AREA: f32 = 2.3;
-/// A frame narrower than this share of the sheet's width is cramped.
+
 const NARROW_SHARE: f32 = 0.16;
 
-/// One keyframe's place on the sheet, in whole pixels.
 #[derive(Clone, Copy)]
 struct Cell {
     left: u32,
@@ -50,7 +44,6 @@ struct Cell {
 }
 
 impl Cell {
-    /// The cell as a rectangle in pixels.
     fn bounds(self) -> Rect {
         Rect::from_origin(
             Point::new(self.left as f32, self.top as f32),
@@ -59,7 +52,6 @@ impl Cell {
         )
     }
 
-    /// Where an image `width` × `height` pixels goes to sit centered in the cell.
     fn centered_origin(self, width: u32, height: u32) -> (i32, i32) {
         let center = |start: u32, room: u32, size: u32| {
             i32::try_from(start.saturating_add(room.saturating_sub(size) / 2)).unwrap_or(i32::MAX)
@@ -71,7 +63,6 @@ impl Cell {
     }
 }
 
-/// A sheet's size and each frame's cell on it, in whole pixels.
 struct Layout {
     width: u32,
     height: u32,
@@ -79,16 +70,12 @@ struct Layout {
 }
 
 impl Layout {
-    /// The factor that brings the sheet within [`LONGEST_EDGE`] and [`MOST_PIXELS`]; at least one
-    /// once it fits.
     fn fit(&self) -> f32 {
         let (width, height) = (self.width as f32, self.height as f32);
         (LONGEST_EDGE / width.max(height)).min((MOST_PIXELS / (width * height)).sqrt())
     }
 }
 
-/// Splits `keyframes`, in order, into the fewest sheets of at most six, shared evenly so no sheet
-/// is left with a frame or two.
 pub(crate) fn pages<T>(keyframes: &[T]) -> impl Iterator<Item = &[T]> {
     let sheets = keyframes.len().div_ceil(PAGE_FRAMES);
     let edge = move |page: usize| page.saturating_mul(keyframes.len()).div_ceil(sheets);
@@ -99,7 +86,6 @@ pub(crate) fn pages<T>(keyframes: &[T]) -> impl Iterator<Item = &[T]> {
     })
 }
 
-/// Lays the keyframes out in justified rows and draws them, badged, on one image.
 pub(crate) fn render(
     labels: &[(usize, String)],
     frames: &[(Image, Corner)],
@@ -158,8 +144,6 @@ pub(crate) fn render(
     Ok(sheet)
 }
 
-/// The frame's size in its cell. Planning sized the cell for the frame, so the frame fills it,
-/// unless its aspect was clamped for layout; then it keeps its proportions and is centered.
 fn fitted(image: &Image, cell: Cell) -> (u32, u32) {
     let scale =
         (cell.width as f32 / image.width() as f32).min(cell.height as f32 / image.height() as f32);
@@ -172,10 +156,6 @@ fn fitted(image: &Image, cell: Cell) -> (u32, u32) {
     }
 }
 
-/// The sheet's size and each frame's cell, given frames' aspect ratios and native widths.
-///
-/// Frames keep their native size where the sheet allows, small crops still get room, and the
-/// whole sheet stays within [`LONGEST_EDGE`] and [`MOST_PIXELS`].
 fn layout(aspects: &[f32], widths: &[f32]) -> Layout {
     let rows = plan(aspects);
     let row_aspects: Vec<f32> = rows.iter().map(|row| sum(aspects, row)).collect();
@@ -201,13 +181,10 @@ fn layout(aspects: &[f32], widths: &[f32]) -> Layout {
     place(aspects, &rows, &row_aspects, inner)
 }
 
-/// The gutters between a row's frames, in pixels.
 fn gaps(row: &Range<usize>) -> u32 {
     GUTTER.saturating_mul(u32::try_from(row.len().saturating_sub(1)).unwrap_or(u32::MAX))
 }
 
-/// Cells for justified rows `inner` pixels wide. Heights round down, so a row's frames at its
-/// height never overflow its width.
 fn place(aspects: &[f32], rows: &[Range<usize>], row_aspects: &[f32], inner: u32) -> Layout {
     let mut cells = Vec::with_capacity(aspects.len());
     let mut top = PADDING;
@@ -247,8 +224,6 @@ fn sum(values: &[f32], range: &Range<usize>) -> f32 {
     values.get(range.clone()).unwrap_or_default().iter().sum()
 }
 
-/// The aspect of justified rows stacked into one sheet: at a shared width their heights add, so
-/// the reciprocals of their aspects do.
 fn stacked_aspect(row_aspects: &[f32]) -> f32 {
     row_aspects
         .iter()
@@ -257,12 +232,6 @@ fn stacked_aspect(row_aspects: &[f32]) -> f32 {
         .recip()
 }
 
-/// Splits frames, in order, into justified rows of one to six.
-///
-/// Two frames share a row unless together they are too wide. For three or more, every split is
-/// scored and the cheapest wins. The score keeps the sheet's aspect near a vision model's sweet
-/// spot, keeps every frame's displayed area near the others' so wide and tall crops both stay
-/// legible, and avoids cramped rows; a frame gets a row to itself only when it is very wide.
 fn plan(aspects: &[f32]) -> Vec<Range<usize>> {
     match *aspects {
         [] => Vec::new(),
@@ -273,7 +242,6 @@ fn plan(aspects: &[f32]) -> Vec<Range<usize>> {
     }
 }
 
-/// Consecutive rows of the given lengths.
 fn rows(lengths: &[usize]) -> Vec<Range<usize>> {
     lengths
         .iter()
@@ -285,7 +253,6 @@ fn rows(lengths: &[usize]) -> Vec<Range<usize>> {
         .collect()
 }
 
-/// The cheapest split of the frames into rows found so far.
 struct Best {
     cost: f32,
     rows: Vec<Range<usize>>,
@@ -302,7 +269,7 @@ impl<'a> Scorer<'a> {
     fn new(aspects: &'a [f32]) -> Self {
         let total: f32 = aspects.iter().sum();
         let mean_aspect = total / aspects.len() as f32;
-        // Portrait frames, such as phones, read best on a squarer sheet.
+
         let target_sheet = if mean_aspect < 0.7 { 1.05 } else { 1.25 };
         Self {
             aspects,
@@ -312,8 +279,6 @@ impl<'a> Scorer<'a> {
         }
     }
 
-    /// The cheapest split of the frames into rows of one to six, where a frame sits alone only
-    /// when at least [`WIDE_ALONE`].
     fn cheapest(&self) -> Vec<Range<usize>> {
         let mut best = Best {
             cost: f32::INFINITY,
@@ -323,8 +288,6 @@ impl<'a> Scorer<'a> {
         best.rows
     }
 
-    /// Tries every split of the frames from `start` on after `rows`, keeping the cheapest whole
-    /// split in `best`.
     fn search(&self, start: usize, rows: &mut Vec<Range<usize>>, best: &mut Best) {
         let rest = self.aspects.get(start..).unwrap_or_default();
         let Some(&first) = rest.first() else {
@@ -344,8 +307,6 @@ impl<'a> Scorer<'a> {
         }
     }
 
-    /// How far `rows` falls from a legible sheet; lower is better. The weights are Scrawl's, tuned
-    /// by eye against simulated captures.
     fn cost(&self, rows: &[Range<usize>]) -> f32 {
         let count = self.aspects.len() as f32;
         let row_count = rows.len() as f32;
@@ -353,7 +314,6 @@ impl<'a> Scorer<'a> {
         let sheet_aspect = stacked_aspect(&row_aspects);
         let sheet_penalty = (sheet_aspect / self.target_sheet).ln().powi(2) * 1.8;
 
-        // A frame's displayed area is proportional to its aspect over its row's aspect squared.
         let areas: Vec<f32> = rows
             .iter()
             .zip(&row_aspects)
@@ -437,15 +397,13 @@ mod tests {
         assert_eq!(lengths(&[1.6; 3]), [3]);
         assert_eq!(lengths(&[1.6; 6]), [2, 2, 2]);
         assert_eq!(lengths(&[1.6; 12]), [3, 3, 3, 3]);
-        // A very wide frame takes a row to itself; phones sit four to a row.
+
         assert_eq!(lengths(&[2.4, 1.0, 1.6, 0.8, 1.6]), [1, 2, 2]);
         assert_eq!(lengths(&[0.46; 8]), [4, 4]);
     }
 
     #[test]
     fn layout_stays_within_what_a_model_reads() {
-        // The first case lays out tall against the longest edge; the other two need more than one
-        // fitting pass (see `FIT_PASSES`).
         for aspects in [
             &[0.25, 0.25, 4.5, 4.5, 3.0, 0.46, 4.5, 2.4, 0.56, 2.0][..],
             &[3.0, 4.5, 4.5, 2.0, 0.56, 1.33, 4.5, 4.5, 4.5],
@@ -460,7 +418,7 @@ mod tests {
         }
         let cells = layout(&[1.6; 12], &[2560.0; 12]).cells;
         assert_eq!(cells.len(), 12);
-        // Rows are justified: the last cell of every row ends at the same right edge.
+
         let right_edges: Vec<u32> = cells
             .array_windows()
             .filter(|[one, next]| next.top != one.top)

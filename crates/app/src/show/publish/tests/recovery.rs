@@ -1,5 +1,3 @@
-//! Real private checkpoint files and publication, with no microphone, speech engine, or clipboard.
-
 use std::time::Duration;
 
 use speakeasy_show::{Ending, Take, TakeEvent};
@@ -159,7 +157,7 @@ fn optional_source_failure_still_saves_selected_keyframes_and_reports_the_loss()
 -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let (mut footage, narration) = rehearse(80, 60);
-    // Delayed shutdown can exceed the sidecar format's timeline while selected keyframes stay valid.
+
     footage.recording.duration = Moment::from_millis(360_001);
     let (_input, permit) = permit();
     let result = publish_with(
@@ -173,7 +171,7 @@ fn optional_source_failure_still_saves_selected_keyframes_and_reports_the_loss()
     )?;
     let Published::Saved {
         show,
-        source_lost,
+        preservation: Preservation { source_lost, .. },
         copied: Ok(()),
         ..
     } = result

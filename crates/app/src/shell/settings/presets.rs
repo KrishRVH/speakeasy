@@ -1,5 +1,3 @@
-//! Explicit named snapshots share Settings' draft, pending editors, and durable save queue.
-
 use gpui::{
     App, AppContext as _, Context, Entity, IntoElement, SharedString, Window, div, prelude::*, px,
     rgb,

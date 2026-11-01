@@ -1,6 +1,3 @@
-//! Bounded, indexed source frames. Callers supply byte ranges and consume encoded chunks; this
-//! module owns the format and reconstructs one image without loading the other images.
-
 use std::{fmt, ops::Range};
 
 use super::{
@@ -19,10 +16,9 @@ const FOOTER_BYTES: u64 = 16;
 const INDEX_LIMIT: usize = 64 << 20;
 const FRAME_LIMIT: usize = 4_096;
 const EDGE_LIMIT: u32 = super::MAX_FRAME_EDGE;
-// The format allows teardown slack beyond the app's five-minute capture limit.
+
 const DURATION_LIMIT_MS: u64 = 360_000;
 
-/// A content-free failure to read or encode source evidence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SourceError(pub(crate) &'static str);
 
@@ -34,7 +30,6 @@ impl fmt::Display for SourceError {
 
 impl std::error::Error for SourceError {}
 
-/// An index of held source samples. It contains no pixels, narration, or open files.
 #[derive(Debug)]
 pub struct Source {
     duration: Moment,
@@ -60,25 +55,15 @@ struct Location {
     record: Range<u64>,
 }
 
-/// The actual sample served for a requested moment, which can fall between retained samples.
 #[derive(Debug)]
 pub struct SourceFrame {
-    /// When this frame was sampled; never the requested time unless it matches.
     pub at: Moment,
-    /// The unannotated recorded image.
     pub image: Image,
 }
 
 impl Source {
-    /// The largest source file accepted, including its index.
     pub const FILE_LIMIT: u64 = 512 << 20;
 
-    /// Reads only the header, footer, and index. `read` must return exactly the requested bytes.
-    /// The index's checksum, counts, ordering, geometry, and ranges are checked before use.
-    ///
-    /// # Errors
-    /// Fails for an unsupported or damaged file, a size above the fixed format limits, or a
-    /// caller's read error. Format errors never contain source bytes.
     pub fn read<E: From<SourceError>>(
         length: u64,
         mut read: impl FnMut(Range<u64>) -> Result<Vec<u8>, E>,
@@ -202,38 +187,31 @@ impl Source {
         })
     }
 
-    /// The end of the recorded timeline, which may follow the last sample.
     #[must_use]
     pub const fn duration(&self) -> Moment {
         self.duration
     }
 
-    /// Moments actually retained, strictly increasing. Gaps are missing evidence, not video.
     #[must_use]
     pub fn moments(&self) -> &[Moment] {
         &self.moments
     }
 
-    /// Frames delivered to the journal, including arrivals its memory budget declined.
     #[must_use]
     pub const fn arrivals(&self) -> u64 {
         self.arrivals
     }
 
-    /// The final arrival stride after thinning, starting at one.
     #[must_use]
     pub const fn stride(&self) -> u64 {
         self.stride
     }
 
-    /// The encoded file size, including checksums and the index.
     #[must_use]
     pub const fn bytes(&self) -> u64 {
         self.bytes
     }
 
-    /// Whether every retained sample in `window`, including its carried-in frame, has the same
-    /// dimensions. Reads only the index, so thinning an export cannot hide a surface resize.
     #[must_use]
     pub fn stable_geometry(&self, window: Span) -> bool {
         let first = self
@@ -259,12 +237,6 @@ impl Source {
             })
     }
 
-    /// Reconstructs the latest held frame at or before `at`, or the first if `at` precedes it.
-    /// Only that frame's compressed tiles are read, each checked before decompression.
-    ///
-    /// # Errors
-    /// Fails for a time beyond the recording, a damaged tile, or a caller's read error. No partial
-    /// image is returned, and no decoder message can expose private bytes.
     pub fn frame<E: From<SourceError>>(
         &self,
         at: Moment,
@@ -322,13 +294,6 @@ impl Source {
 }
 
 impl Journal {
-    /// Streams the retained journal as source evidence, without building another copy of its
-    /// compressed frames. `emit` receives bounded chunks; only the index is assembled in memory.
-    /// The caller supplies the recording's end because the last frame may precede it.
-    ///
-    /// # Errors
-    /// Fails when the journal exceeds the source format's limits or `emit` fails. The caller must
-    /// discard a partial output. No source file is complete until its footer has been emitted.
     pub fn write_source<E: From<SourceError>>(
         &self,
         duration: Moment,

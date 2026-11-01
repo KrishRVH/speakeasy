@@ -1,5 +1,3 @@
-//! Owned-window Settings input acceptance; synthetic IME calls never touch microphone or clipboard.
-
 use std::time::Duration;
 
 use anyhow::Context as _;

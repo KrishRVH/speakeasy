@@ -1,5 +1,3 @@
-//! Private audio survives failures and expires independently of a saved bundle.
-
 use super::*;
 
 async fn with_audio(parent: &Path) -> anyhow::Result<Checkpoint> {
@@ -79,7 +77,9 @@ async fn pending_retry_preserves_edits_and_failure_does_not_publish_another_copy
     let (_input, active) = permit();
     let Published::Saved {
         show: original,
-        audio_kept: true,
+        preservation: Preservation {
+            audio_kept: true, ..
+        },
         ..
     } = publish_with(
         None,
@@ -134,7 +134,9 @@ async fn pending_retry_preserves_edits_and_failure_does_not_publish_another_copy
     let Published::Recovered {
         show: copy,
         narrated_copy: true,
-        audio_kept: false,
+        preservation: Preservation {
+            audio_kept: false, ..
+        },
         ..
     } = publish_with(
         None,
@@ -175,7 +177,9 @@ async fn kept_bundle_cannot_extend_audio_expiry_and_discard_audio_leaves_it_unto
         let (_input, active) = permit();
         let Published::Saved {
             show,
-            audio_kept: true,
+            preservation: Preservation {
+                audio_kept: true, ..
+            },
             ..
         } = publish_with(
             None,

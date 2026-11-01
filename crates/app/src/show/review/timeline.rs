@@ -1,5 +1,3 @@
-//! A time-scaled video scrubber requests indexed samples; the preview owner coalesces pending seeks.
-
 use gpui::{
     Bounds, Context, MouseButton, Pixels, Window, canvas, div, prelude::*, px, relative, rgb,
 };

@@ -1,5 +1,3 @@
-//! An immutable display crop owns its native stream until stop and queue drain acknowledge.
-
 mod output;
 
 use std::{
@@ -179,7 +177,7 @@ struct Stream {
 impl Stream {
     fn new(source: &Source, part: Part, interval: Duration) -> Result<Self, Failure> {
         let configuration = source.configuration(part).ok_or(Failure::DisplayLost)?;
-        // SAFETY: the configuration is owned, not in use yet, and captures screen output only.
+
         let size = unsafe {
             configuration.setMinimumFrameInterval(objc2_core_media::CMTime::new(
                 i64::try_from(interval.as_nanos()).map_err(|_overflow| Failure::Unstarted)?,
@@ -194,8 +192,7 @@ impl Stream {
         let (stopped, terminated) = async_channel::bounded(1);
         let output = output::Output::new(part, size, frames, failures, stopped)?;
         let queue = DispatchQueue::new("speakeasy.screen", None);
-        // SAFETY: the immutable filter/configuration and strongly held callback have no UI-thread
-        // affinity. Only the private serial queue receives pixel callbacks.
+
         let native = unsafe {
             let native = SCStream::initWithFilter_configuration_delegate(
                 SCStream::alloc(),
@@ -226,7 +223,7 @@ impl Stream {
     fn start(&mut self) -> Result<(), Failure> {
         self.running = true;
         let (completion, reply) = completed(Operation::Start);
-        // SAFETY: the completion owns its sendable result channel, and this owner waits for it.
+
         unsafe {
             self.native
                 .startCaptureWithCompletionHandler(Some(&completion));
@@ -240,7 +237,7 @@ impl Stream {
             return Ok(());
         }
         let (completion, reply) = completed(Operation::Stop);
-        // SAFETY: start has completed, no reconfiguration overlaps, and the owner waits for stop.
+
         unsafe {
             self.native
                 .stopCaptureWithCompletionHandler(Some(&completion));
@@ -264,8 +261,6 @@ impl Drop for Stream {
             clippy::let_underscore_must_use,
             reason = "An already stopped native stream may report no output; queue drainage remains mandatory"
         )]
-        // SAFETY: the strong output remains alive while native registration is removed. Draining
-        // its serial queue then waits for borrowed samples and their copied pixels to be released.
         let _ = unsafe {
             self.native.removeStreamOutput_type_error(
                 ProtocolObject::from_ref(&*self.output),
@@ -287,7 +282,6 @@ enum Operation {
 fn completed(operation: Operation) -> (Completion, mpsc::Receiver<Result<(), Failure>>) {
     let (sent, reply) = mpsc::sync_channel(1);
     let block = RcBlock::new(move |error: *mut NSError| {
-        // SAFETY: ScreenCaptureKit lends this optional error for the completion call.
         let error = unsafe { error.as_ref() };
         let result = panic::catch_unwind(AssertUnwindSafe(|| completion_result(error, operation)))
             .unwrap_or(Err(Failure::Stalled));
@@ -304,7 +298,7 @@ fn completion_result(error: Option<&NSError>, operation: Operation) -> Result<()
     let Some(error) = error else {
         return Ok(());
     };
-    // SAFETY: the native error domain is an immutable process-lifetime constant.
+
     let domain = unsafe { objc2_screen_capture_kit::SCStreamErrorDomain };
     if operation == Operation::Stop
         && *error.domain() == *domain

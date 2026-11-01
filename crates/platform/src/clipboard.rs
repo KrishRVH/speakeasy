@@ -1,12 +1,7 @@
-//! Bounded visual clipboard representations and the final authorization check after native access.
-//! Clipboard contents stay out of Debug output.
-
 use anyhow::{Context as _, ensure};
 
 const EDGE_LIMIT: u32 = 4096;
 
-/// Text and, for a visual moment, matching lossless image representations. Prepare this off the
-/// UI thread; it encodes at most 4096 × 4096 pixels and retains no native resources.
 pub struct ClipboardContent {
     pub(crate) text: String,
     pub(crate) image: Option<Image>,
@@ -32,13 +27,8 @@ impl std::fmt::Debug for ClipboardContent {
 }
 
 impl ClipboardContent {
-    /// Maximum UTF-8 text size, including any accompanying context or labels.
     pub const MAX_TEXT_BYTES: usize = 1 << 20;
 
-    /// Prepares plain text without changing the clipboard.
-    ///
-    /// # Errors
-    /// Refuses text larger than 1 MiB or containing NUL, which native text formats truncate.
     pub fn text(text: String) -> anyhow::Result<Self> {
         ensure!(
             text.len() <= Self::MAX_TEXT_BYTES,
@@ -51,11 +41,6 @@ impl ClipboardContent {
         Ok(Self { text, image: None })
     }
 
-    /// Prepares the displayed moment and its textual context. Pixels are straight-alpha BGRA8,
-    /// top to bottom, without row padding; both image formats describe those exact pixels.
-    ///
-    /// # Errors
-    /// Refuses invalid dimensions, mismatched pixels, invalid text, or PNG encoding failure.
     pub fn moment(
         text: String,
         width: u32,
@@ -105,16 +90,6 @@ impl ClipboardContent {
     }
 }
 
-/// Copies prepared text/image formats without pasting. A receiver chooses which formats it reads;
-/// this does not promise that every application accepts both image and text.
-///
-/// Call off the UI thread. `authorized` runs after native clipboard preparation, immediately before
-/// replacing its contents. False returns `Ok(false)` without a write. The caller owns and drains
-/// this operation, and its authorization must reject cancellation and newer recordings.
-///
-/// # Errors
-/// Fails when clipboard access or any representation fails. Privacy markers are installed before
-/// content. Linux reports unsupported, matching its current Show clipboard behavior.
 pub fn copy_content(
     content: &ClipboardContent,
     authorized: impl FnOnce() -> bool,
@@ -138,9 +113,16 @@ pub(crate) fn copy_when<L>(
 
 #[cfg(any(target_os = "windows", test))]
 fn dib(width: u32, height: u32, bgra: &[u8]) -> anyhow::Result<Vec<u8>> {
-    let mut out = Vec::with_capacity(bgra.len().saturating_add(124));
-    // BITMAPV5HEADER uses little-endian fields, top-down rows, explicit BGRA masks and sRGB.
-    out.extend(124_u32.to_le_bytes());
+    const V5_HEADER_LEN: u32 = 124;
+    const BITFIELDS_OFFSET: usize = 40;
+    const INTENT_OFFSET: usize = 108;
+    const BI_BITFIELDS: u32 = 3;
+    const LCS_SRGB: u32 = 0x7352_4742;
+    const LCS_GM_IMAGES: u32 = 4;
+
+    let header_len = usize::try_from(V5_HEADER_LEN)?;
+    let mut out = Vec::with_capacity(bgra.len().saturating_add(header_len));
+    out.extend(V5_HEADER_LEN.to_le_bytes());
     out.extend(i32::try_from(width)?.to_le_bytes());
     out.extend(
         i32::try_from(height)?
@@ -150,21 +132,21 @@ fn dib(width: u32, height: u32, bgra: &[u8]) -> anyhow::Result<Vec<u8>> {
     );
     out.extend(1_u16.to_le_bytes());
     out.extend(32_u16.to_le_bytes());
-    out.extend(3_u32.to_le_bytes()); // BI_BITFIELDS
+    out.extend(BI_BITFIELDS.to_le_bytes());
     out.extend(u32::try_from(bgra.len())?.to_le_bytes());
-    out.resize(40, 0);
+    out.resize(BITFIELDS_OFFSET, 0);
     for mask in [
         0x00FF_0000_u32,
         0x0000_FF00,
         0x0000_00FF,
         0xFF00_0000,
-        0x7352_4742,
+        LCS_SRGB,
     ] {
         out.extend(mask.to_le_bytes());
     }
-    out.resize(108, 0);
-    out.extend(4_u32.to_le_bytes()); // LCS_GM_IMAGES
-    out.resize(124, 0);
+    out.resize(INTENT_OFFSET, 0);
+    out.extend(LCS_GM_IMAGES.to_le_bytes());
+    out.resize(header_len, 0);
     out.extend_from_slice(bgra);
     Ok(out)
 }

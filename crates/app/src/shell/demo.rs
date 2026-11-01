@@ -1,7 +1,3 @@
-//! The `--demo` preview: a scripted session published on the snapshot and meter channels. The
-//! script never reaches the runtime, a microphone, or text insertion; its Show draws on the overlay
-//! and records nothing.
-
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -19,7 +15,6 @@ use crate::{
     show::Canvas,
 };
 
-/// Two seconds into the pill's countdown, so the preview shows it.
 const NEAR_RECORDING_LIMIT: Duration = RECORDING_LIMIT
     .saturating_sub(COUNTDOWN)
     .saturating_add(Duration::from_secs(2));
@@ -58,15 +53,12 @@ pub(super) async fn play(
     play_interruptions(&output, show_session).await;
 }
 
-/// A held recording that S turns into a Show, circled on the overlay, finished hands-free, and
-/// copied.
 async fn play_show(
     output: &watch::Sender<Snapshot>,
     meter: &watch::Sender<Meter>,
     canvas: &watch::Sender<Canvas>,
     session: u64,
 ) {
-    // A platform that records no Shows has no display to draw on, and the preview draws nothing.
     let display = Display::under_pointer().ok();
     let clear = Clear::new(canvas);
     let mut snapshot = starting(session);
@@ -74,7 +66,7 @@ async fn play_show(
     snapshot.phase = Phase::Recording;
     let start = Instant::now();
     let mut lifted = false;
-    // Long enough for the drawing hint to hand back to the clock.
+
     while start.elapsed() < Duration::from_millis(4500) {
         let seconds = start.elapsed().as_secs_f32();
         let show = seconds > 0.8;
@@ -104,8 +96,6 @@ async fn play_show(
     }
 }
 
-/// Empties the overlay's canvas when made and again however the Show ends, including when a replay
-/// drops the preview mid-stroke.
 struct Clear<'a>(&'a watch::Sender<Canvas>);
 
 impl<'a> Clear<'a> {
@@ -121,20 +111,17 @@ impl Drop for Clear<'_> {
     }
 }
 
-/// Draws a circle on `display` from one second into the recording, lifting the pen as the circle
-/// closes so the ink and its number hold and fade as they do in a real Show. Returns whether the
-/// pen lifted.
 fn circle(canvas: &watch::Sender<Canvas>, display: Display, seconds: f32) -> bool {
     const DRAWN_FROM: f32 = 1.0;
     const LIFTED_AT: f32 = 1.8;
     const CENTER: Point = Point::new(0.5, 0.45);
     const RADIUS: f32 = 0.1;
-    // A little past one turn, as a hand closes a circle.
+
     const TURNS: f32 = 1.08;
     let progress = (seconds - DRAWN_FROM) / (LIFTED_AT - DRAWN_FROM);
     let [width, height] = display.size;
     let across = RADIUS * height / width;
-    // As densely as the pointer is sampled.
+
     let points: Vec<Point> = (0..=100_u16)
         .map(|step| f32::from(step) / 100.0)
         .take_while(|&share| share <= progress)
@@ -173,8 +160,6 @@ fn circle(canvas: &watch::Sender<Canvas>, display: Display, seconds: f32) -> boo
     lifted
 }
 
-/// Each recording cuts off the previous ending, and a cancel is followed at once by the next
-/// recording.
 async fn play_interruptions(output: &watch::Sender<Snapshot>, mut session: u64) {
     for (ending, message, held) in [
         (Phase::Cancelled, "", Duration::from_millis(60)),
@@ -210,7 +195,6 @@ fn starting(session: u64) -> Snapshot {
     }
 }
 
-/// Publishes `snapshot` unless it is already current, as the owner does, then holds it.
 async fn present(output: &watch::Sender<Snapshot>, snapshot: &Snapshot, duration: Duration) {
     output.send_if_modified(|current| {
         let changed = *current != *snapshot;
@@ -222,7 +206,6 @@ async fn present(output: &watch::Sender<Snapshot>, snapshot: &Snapshot, duration
     Timer::after(duration).await;
 }
 
-/// Reports `level` as the meter of `snapshot`'s session.
 fn measure(meter: &watch::Sender<Meter>, snapshot: &Snapshot, level: f32) {
     meter.send_replace(Meter {
         epoch: snapshot.epoch,

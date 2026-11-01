@@ -1,8 +1,3 @@
-//! macOS adapter: the shortcut event tap, session-change interruption, native window presentation,
-//! clipboard or direct text insertion, and Show screen capture.
-//!
-//! The tap's run-loop thread creates and removes every native resource its callbacks reach.
-
 mod clipboard;
 pub(crate) mod movie;
 pub(crate) mod screen;
@@ -57,16 +52,11 @@ use super::{
     screen::geometry::Bounds,
 };
 
-/// Tags input Speakeasy synthesizes, so its own event tap ignores it.
 const OWN_INPUT: i64 = 0x5350_4541;
-/// Core Graphics bounds a keyboard event's Unicode payload, so direct text posts in runs of about
-/// this many UTF-16 units.
+
 const TEXT_EVENT_UNITS: usize = 16;
 
-/// What `InputMonitor` holds beside the event tap's thread, which it joins before dropping this:
-/// the tap's stop control, the lifecycle observers, and the insertion thread.
 pub(super) struct Monitor {
-    // Shared with the run-loop thread, which publishes its run loop for the owner to stop.
     control: Arc<MonitorControl<CFRunLoop>>,
     _observers: Vec<Observer>,
     insertion: insertion::Worker,
@@ -110,7 +100,6 @@ pub(super) fn start(
     Ok((thread, monitor, inserter))
 }
 
-/// The run-loop entry observer's context, borrowed from `run_event_loop`'s frame.
 struct RunLoopReady<'a> {
     shortcut: MacShortcut,
     control: &'a MonitorControl<CFRunLoop>,
@@ -118,8 +107,6 @@ struct RunLoopReady<'a> {
 }
 
 impl RunLoopReady<'_> {
-    /// Publishes the current run loop and reports readiness, or stops the run loop when a stop
-    /// already arrived.
     fn publish(&self) {
         let run_loop = CFRunLoop::get_current();
         let started = self.control.start(run_loop.clone(), || {
@@ -134,8 +121,6 @@ impl RunLoopReady<'_> {
     }
 }
 
-/// The shortcut policy, which the event tap decides on its run-loop thread and lifecycle notifications
-/// interrupt from the thread that posts them.
 #[derive(Default)]
 struct SharedPolicy {
     shortcut: MacShortcut,
@@ -147,14 +132,11 @@ struct SharedPolicy {
 }
 
 impl SharedPolicy {
-    /// A panic while deciding already closed the input lane, so a poisoned policy decides nothing
-    /// the owner still hears.
     fn lock(&self) -> MutexGuard<'_, keyboard::Mac> {
         self.policy.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
-/// Removes a notification observer when dropped.
 struct Observer {
     center: Retained<NSNotificationCenter>,
     token: Retained<ProtocolObject<dyn NSObjectProtocol>>,
@@ -176,9 +158,7 @@ impl Observer {
                 input.close();
             }
         });
-        // SAFETY: with no queue the block runs on whichever thread posts the notification; it
-        // captures only an `InputSender` and the locked policy, which any thread may use, touches
-        // no AppKit object, and the center retains it until the observer is removed.
+
         let token = unsafe {
             center.addObserverForName_object_queue_usingBlock(Some(name), None, None, &callback)
         };
@@ -188,7 +168,6 @@ impl Observer {
 
 impl Drop for Observer {
     fn drop(&mut self) {
-        // SAFETY: this token came from this center and stays retained until removal.
         unsafe {
             self.center.removeObserver((*self.token).as_ref());
         }
@@ -197,7 +176,7 @@ impl Drop for Observer {
 
 fn lifecycle_observers(input: &InputSender, policy: &Arc<SharedPolicy>) -> Vec<Observer> {
     let workspace = NSWorkspace::sharedWorkspace().notificationCenter();
-    // SAFETY: AppKit's exported notification names are immutable constants.
+
     let (will_sleep, resigned) = unsafe {
         (
             NSWorkspaceWillSleepNotification,
@@ -213,7 +192,6 @@ fn lifecycle_observers(input: &InputSender, policy: &Arc<SharedPolicy>) -> Vec<O
     ]
 }
 
-/// Why the shortcut cannot be watched, when no more specific reason applies.
 const UNWATCHED: &str = "Cannot watch the dictation shortcut. Resume dictation to try again.";
 
 fn monitor(input: &InputSender, control: &MonitorControl<CFRunLoop>, policy: &SharedPolicy) {
@@ -257,8 +235,7 @@ fn run_event_loop(
         release: None,
         copyDescription: None,
     };
-    // SAFETY: this thread owns the observer and its stack context throughout CFRunLoopRun. Entry
-    // fires once, and the observer is removed before return.
+
     let raw = unsafe {
         CFRunLoopObserverCreate(
             kCFAllocatorDefault,
@@ -270,10 +247,9 @@ fn run_event_loop(
         )
     };
     ensure!(!raw.is_null(), UNWATCHED);
-    // SAFETY: `raw` is a non-null observer from a Create function, whose one reference the wrapper
-    // takes over and releases once.
+
     let observer = unsafe { CFRunLoopObserver::wrap_under_create_rule(raw) };
-    // SAFETY: this is Core Foundation's permanent mode constant.
+
     let modes = unsafe { kCFRunLoopCommonModes };
     run_loop.add_source(&source, modes);
     run_loop.add_observer(&observer, modes);
@@ -284,7 +260,6 @@ fn run_event_loop(
     Ok(())
 }
 
-/// The event tap's port, which the tap's own callback needs to turn the tap back on.
 #[derive(Default)]
 struct TapPort {
     #[expect(
@@ -295,18 +270,15 @@ struct TapPort {
 }
 
 impl TapPort {
-    /// Records the port before the run loop can deliver any event to the tap.
     fn publish(&self, port: &CFMachPort) {
         self.port.get_or_init(|| port.clone());
     }
 
-    /// Turns the tap back on after macOS turned it off; returns whether it is on.
     fn reenable(&self) -> bool {
         let Some(port) = self.port.get() else {
             return false;
         };
-        // SAFETY: both crates name the same Core Foundation port, which `self` keeps alive
-        // throughout this borrow.
+
         let port = unsafe {
             &*port
                 .as_concrete_TypeRef()
@@ -322,8 +294,6 @@ fn shortcut_tap<'tap>(
     policy: &'tap SharedPolicy,
     port: &'tap TapPort,
 ) -> anyhow::Result<CGEventTap<'tap>> {
-    // SAFETY: run_event_loop drops the tap before the state it borrows and adds the tap's source
-    // only to this thread's run loop, so the callback runs only here while that state lives.
     unsafe {
         CGEventTap::new_unchecked(
             CGEventTapLocation::Session,
@@ -335,8 +305,8 @@ fn shortcut_tap<'tap>(
                 CGEventType::FlagsChanged,
             ],
             move |_, kind, event| {
-                // Closing the input makes the owner cancel rather than continue with lost key
-                // edges.
+
+
                 panic::catch_unwind(AssertUnwindSafe(|| {
                     observe(input, &mut policy.lock(), policy.shortcut, port, kind, event)
                 }))
@@ -354,15 +324,11 @@ fn shortcut_tap<'tap>(
     })
 }
 
-/// Publishes the run loop only once it has entered: `CFRunLoopStop` before entry does not reliably
-/// stop a later run, so a stop that arrived earlier ends the run from here.
 extern "C" fn on_run_loop_entry(
     _: CFRunLoopObserverRef,
     _: CFRunLoopActivity,
     context: *mut c_void,
 ) {
-    // SAFETY: run_event_loop keeps this stack context alive until the run loop has returned and
-    // removes its observer before releasing the context.
     let ready = unsafe { &*context.cast::<RunLoopReady<'_>>() };
     if panic::catch_unwind(AssertUnwindSafe(|| ready.publish())).is_err() {
         ready.input.close();
@@ -370,8 +336,6 @@ extern "C" fn on_run_loop_entry(
     }
 }
 
-/// The selected modifier, its Space/S/W/A gestures, passive Escape, and Shift taps, on the run-loop
-/// thread.
 fn observe(
     input: &InputSender,
     policy: &mut keyboard::Mac,
@@ -394,7 +358,7 @@ fn observe(
         return CallbackResult::Keep;
     }
     let code = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
-    // Both crates mirror the same CGEventFlags bits.
+
     let held = shortcut.modifiers(event.get_flags().bits());
     let key_event = match kind {
         CGEventType::KeyDown => MacEvent::Key {
@@ -428,10 +392,6 @@ fn observe(
 }
 
 impl NativeWindow {
-    /// Configures the pill for nonactivating, click-through presentation.
-    ///
-    /// # Errors
-    /// `AppKit` configuration cannot fail; the `Result` matches the other platforms.
     #[expect(
         clippy::unnecessary_wraps,
         reason = "Windows and X11 configuration can fail; callers share one signature on every platform"
@@ -439,9 +399,7 @@ impl NativeWindow {
     pub fn configure_pill(&self) -> anyhow::Result<()> {
         let window = &self.native.ns_window;
         window.setIgnoresMouseEvents(true);
-        // A titled panel highlights its top edge in dark mode and shadows the whole transparent
-        // window; the capsule draws its own shadow. The view already fills the frame, so its size
-        // holds.
+
         window.setStyleMask(NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel);
         window.setHasShadow(false);
         window.setLevel(NSFloatingWindowLevel);
@@ -452,7 +410,6 @@ impl NativeWindow {
         Ok(())
     }
 
-    /// Shows an ordinary app window in front, or hides it.
     pub fn set_window_visible(&self, visible: bool) {
         let window = &self.native.ns_window;
         if visible {
@@ -463,7 +420,6 @@ impl NativeWindow {
         }
     }
 
-    /// Shows or hides the pill without activating it.
     pub fn set_pill_visible(&self, visible: bool) {
         let window = &self.native.ns_window;
         if visible {
@@ -477,7 +433,6 @@ impl NativeWindow {
     }
 }
 
-/// Bottom-center of the visible frame of the screen under the pointer.
 fn pill_origin_under_pointer() -> Option<NSPoint> {
     let main = MainThreadMarker::new()?;
     let pointer = NSEvent::mouseLocation();
@@ -491,8 +446,6 @@ fn pill_origin_under_pointer() -> Option<NSPoint> {
     ))
 }
 
-/// A GPUI window's `NSWindow`, retained so it stays valid. `NSWindow` is main-thread-only, so
-/// neither it nor this is `Send`.
 pub(super) struct Window {
     ns_window: Retained<NSWindow>,
 }
@@ -506,15 +459,13 @@ impl Window {
         let RawWindowHandle::AppKit(view) = handle.as_raw() else {
             bail!("Expected an AppKit window");
         };
-        // SAFETY: the borrowed handle keeps its NSView live, and the marker proves this is the main
-        // thread AppKit requires.
+
         let view = unsafe { view.ns_view.cast::<NSView>().as_ref() };
         let ns_window = view.window().context("The view has no window")?;
         Ok(Self { ns_window })
     }
 }
 
-/// The modifier keys held now, as the session's combined input state reports them.
 pub(super) fn modifiers() -> Modifiers {
     modifiers_for(MacShortcut::Function)
 }
@@ -524,22 +475,17 @@ pub(super) fn modifiers_for(shortcut: MacShortcut) -> Modifiers {
         .modifiers(cg::CGEventSource::flags_state(cg::CGEventSourceStateID::CombinedSessionState).0)
 }
 
-/// The native steps of one macOS insertion, as [`insertion::NativeInsert`] defines them.
 pub(super) struct Insert;
 
 impl insertion::NativeInsert for Insert {
     type Keys = Vec<CGEvent>;
     type Lease = clipboard::Lease;
-    /// The pasteboard change count, which every change advances.
     type Mark = isize;
 
     fn acquire(&mut self) -> anyhow::Result<clipboard::Lease> {
         clipboard::acquire()
     }
 
-    /// Keeps the text on this Mac, out of Universal Clipboard, and marks it transient before it
-    /// arrives, so clipboard managers that follow nspasteboard.org never see it unmarked. The mark
-    /// asks them only not to record or display it; the text stays on the pasteboard to paste.
     fn write(&mut self, lease: clipboard::Lease, text: &str) -> anyhow::Result<()> {
         clipboard::write(lease, text)
     }
@@ -602,14 +548,12 @@ fn private_event_source() -> anyhow::Result<CGEventSource> {
         .map_err(|()| anyhow!("Cannot create keyboard event source"))
 }
 
-/// A key event from `source` tagged as Speakeasy's own, so its event tap passes over it.
 fn own_key_event(source: &CGEventSource, code: CGKeyCode, down: bool) -> Option<CGEvent> {
     let event = CGEvent::new_keyboard_event(source.clone(), code, down).ok()?;
     event.set_integer_value_field(EventField::EVENT_SOURCE_USER_DATA, OWN_INPUT);
     Some(event)
 }
 
-/// Whether `pid` names Speakeasy's own process.
 fn is_own_process(pid: i64) -> bool {
     pid == i64::from(std::process::id())
 }
@@ -627,7 +571,6 @@ pub(super) fn attach_stdio() -> bool {
     std::os::unix::process::parent_id() != LAUNCHD || !discards_stderr()
 }
 
-/// Whether standard error is closed or is `/dev/null`.
 fn discards_stderr() -> bool {
     let stderr = io::stderr()
         .as_fd()

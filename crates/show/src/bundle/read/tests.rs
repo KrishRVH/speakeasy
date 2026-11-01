@@ -1,5 +1,3 @@
-//! Broken references and private decoder failures are rejected before inspection.
-
 use proptest::prelude::*;
 use serde_json::{Value, json};
 

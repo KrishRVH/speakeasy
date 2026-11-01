@@ -1,8 +1,3 @@
-//! Setup installs a compatible NeMo-Speech.cpp build and a pinned model. `Setup` runs it on an owned
-//! thread that cancels and joins on drop, and `Installation`
-//! holds the lock on its directory until its native child is reaped, so one setup installs there at
-//! a time.
-
 mod archive;
 mod download;
 mod engine;
@@ -47,7 +42,6 @@ const NEMOTRON: Download<'static> = Download {
     sha256: "3fc991d3badad7277c11030a7519832cddaf2057aafed6d4b25147e953a070b1",
 };
 
-/// What setup is doing; `done` and `total` count the bytes of the current step when it has a size.
 #[derive(Clone, Copy)]
 pub(crate) struct Progress {
     pub step: &'static str,
@@ -71,7 +65,6 @@ impl Default for Progress {
     }
 }
 
-/// The engine and model a finished setup chose for this machine.
 pub(crate) struct Installed {
     choice: Model,
     engine_executable: PathBuf,
@@ -92,8 +85,6 @@ impl Installed {
     }
 }
 
-/// A setup running on its own thread. Dropping it cancels the setup and joins the thread;
-/// cancellation keeps partial downloads for the next run.
 pub(crate) struct Setup {
     thread: StoppableThread,
     updates: watch::Receiver<Progress>,
@@ -171,8 +162,6 @@ impl Setup {
         self.updates.clone()
     }
 
-    /// Resolves once the thread has stopped, with its result, or `None` when it stopped without
-    /// one.
     pub(crate) fn outcome(
         &self,
     ) -> impl Future<Output = Option<anyhow::Result<Installed>>> + use<> {
@@ -198,9 +187,7 @@ impl Setup {
     }
 }
 
-/// Keeps the shared setup directory locked until its native child is reaped.
 struct Installation {
-    // Declared first, so an unwinding drop kills the child before releasing the lock.
     child: Option<Child>,
     _lock: File,
 }
@@ -230,7 +217,6 @@ impl Installation {
         result
     }
 
-    /// Creates `root` if needed and waits for its setup lock, reporting the wait.
     async fn acquire(root: &Path, progress: &watch::Sender<Progress>) -> anyhow::Result<Self> {
         fs::create_dir_all(root).map_err(file_error(root))?;
         let lock = OpenOptions::new()
@@ -258,7 +244,6 @@ impl Installation {
         }
     }
 
-    /// Runs `command` as the owned child; returns its exit status and whatever it piped to stdout.
     async fn output(&mut self, command: &mut Command) -> anyhow::Result<(ExitStatus, Vec<u8>)> {
         let child = self.child.insert(command.spawn()?);
         let mut pipe = child.stdout.take();
@@ -274,7 +259,6 @@ impl Installation {
     }
 
     async fn stop(&mut self) {
-        // Reap in place: a caller cancelled mid-wait leaves the child here for `run` to reap.
         if let Some(child) = &mut self.child {
             kill_and_reap(child).await;
         }
@@ -314,8 +298,6 @@ async fn install(
     })
 }
 
-/// Explains a failed file operation in `directory`, with the system's reason and the remedy it
-/// calls for, in one message that reads whole without its source chain.
 fn file_error(directory: &Path) -> impl FnOnce(io::Error) -> anyhow::Error {
     move |error| {
         anyhow!(

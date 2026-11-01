@@ -1,6 +1,3 @@
-//! Speakeasy's entry point: parses the command line, then launches the native dictation and Show
-//! app around its single-owner recording runtime, or runs a command in the terminal.
-
 #![forbid(unsafe_code)]
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
@@ -51,21 +48,16 @@ use crate::{
     shell::{LaunchMode, Services},
 };
 
-// Josefin Sans SemiBold, SIL Open Font License 1.1 (assets/JosefinSans-OFL.txt).
 const BRAND_FONT: &str = "Josefin Sans";
 const BRAND_FONT_FILE: &[u8] = include_bytes!("../assets/JosefinSans-SemiBold.ttf");
 
-/// What the command line asks for.
 enum Invocation {
     Help,
     Version,
-    /// Opens the app, from the settings file `--config` names or else the default, which is found
-    /// only when the app runs.
     Launch {
         mode: LaunchMode,
         settings: Option<PathBuf>,
     },
-    /// Sends a desktop command, offered only on Linux, to the live app holding `settings`.
     Send {
         request: Request,
         settings: Option<PathBuf>,
@@ -74,7 +66,6 @@ enum Invocation {
 }
 
 impl Invocation {
-    /// Reads the arguments after the program name, refusing any Speakeasy does not offer.
     fn parse(args: impl Iterator<Item = OsString>) -> anyhow::Result<Self> {
         let mut args = args.peekable();
         if args.next_if(|arg| arg == "show").is_some() {
@@ -142,7 +133,6 @@ fn main() -> ExitCode {
     }
 }
 
-/// The settings file `settings` names, or else the default, as an absolute path.
 fn settings_file(settings: Option<PathBuf>) -> anyhow::Result<PathBuf> {
     let file = settings.map_or_else(paths::settings_file, Ok)?;
     Ok(std::path::absolute(file)?)
@@ -175,7 +165,7 @@ fn launch(
 ) -> anyhow::Result<()> {
     let (instance, requests) = acquired.unzip();
     let default_settings = settings_file(None).is_ok_and(|default| default == path);
-    // A demo is simulated, so it never reads the user's settings.
+
     let (config, startup) = if mode.is_demo() {
         (Config::first_launch(), Startup::Unconfigured)
     } else {
@@ -251,7 +241,7 @@ fn launch(
         if let Err(error) = &applied {
             cx.global::<Services>().publish_error(error);
         }
-        // A failure to dictate outranks one to start at login, which the next launch retries.
+
         #[cfg(target_os = "windows")]
         if let Some(on) = sign_in
             && let Err(error) = speakeasy_platform::start_at_login(on)
@@ -265,7 +255,7 @@ fn launch(
             abandon(error, (), cx);
             return;
         }
-        // Linux always opens Settings so portal permissions and tray availability stay reachable.
+
         if !configured || !cx.global::<Services>().is_running() || cfg!(target_os = "linux") {
             shell::reveal(cx);
         }
@@ -283,10 +273,6 @@ fn launch(
     Ok(())
 }
 
-/// Ends a launch that cannot go on, once its error has been seen, and keeps `held`, such as the
-/// instance lock, until then, so a launch meanwhile finds this one instead of starting another.
-/// The dialog waits for a task of its own because its modal loop runs the app's queued tasks, and
-/// those cannot borrow the app while `Application::run`'s callback holds it.
 fn abandon<Held: 'static>(error: anyhow::Error, held: Held, cx: &App) {
     let message = format!("{error:#}");
     cx.spawn(async move |cx| {
@@ -297,7 +283,6 @@ fn abandon<Held: 'static>(error: anyhow::Error, held: Held, cx: &App) {
     .detach();
 }
 
-/// Runs a command in the terminal that launched it and reports its failure there.
 fn in_terminal(command: impl FnOnce() -> anyhow::Result<()>) -> ExitCode {
     speakeasy_platform::attach_stdio();
     match command() {
@@ -313,19 +298,12 @@ fn in_terminal(command: impl FnOnce() -> anyhow::Result<()>) -> ExitCode {
     }
 }
 
-/// Why Speakeasy ends before the app opens.
 enum Stop {
-    /// The command line asks for something Speakeasy does not offer.
     Usage(anyhow::Error),
-    /// The app cannot start, as when it cannot lock its settings directory.
     Launch(anyhow::Error),
 }
 
 impl Stop {
-    /// Explains the stop on the `terminal` that launched Speakeasy, so a script or agent reads the
-    /// reason instead of waiting on a dialog no one sees, and in a dialog only when there is none,
-    /// as after a launch from the desktop. A command line exits with the usage-error status 2, and
-    /// a failed launch with 1.
     fn report(self, terminal: Option<impl io::Write>) -> ExitCode {
         let (error, hint, status) = match self {
             Self::Usage(error) => (error, "\nspeakeasy --help lists what it accepts.", 2),
@@ -345,7 +323,6 @@ impl Stop {
     }
 }
 
-/// The standard error of the terminal that launched Speakeasy, if one did.
 fn terminal() -> Option<io::Stderr> {
     speakeasy_platform::attach_stdio().then(io::stderr)
 }
@@ -390,10 +367,6 @@ fn print_version() -> io::Result<()> {
     )
 }
 
-/// Whether a launch turns Windows' sign-in launch on or off, as its settings say, or leaves it
-/// alone (`None`). Only a live launch of the default settings, the file the sign-in launch opens,
-/// touches it, and settings that need repair leave it as it was, so the next sign-in still opens
-/// them.
 #[cfg(any(target_os = "windows", test))]
 fn sign_in_launch(
     mode: LaunchMode,
@@ -405,9 +378,7 @@ fn sign_in_launch(
         .then_some(config.start_at_login)
 }
 
-/// Splits the launch state into the settings to apply, if any, and the first snapshot.
 fn split_startup(startup: Startup) -> (Option<ValidConfig>, Snapshot) {
-    // Applying a configured app's settings replaces this placeholder before it shows.
     let placeholder = || Snapshot {
         message: "Speakeasy is not set up yet.".into(),
         ..Snapshot::default()
@@ -436,8 +407,6 @@ fn load_brand_font(cx: &App) {
         .add_fonts(vec![Cow::Borrowed(BRAND_FONT_FILE)]);
 }
 
-/// Drops the tray before Services, since its tasks reach Services, and releases the instance lock
-/// last.
 fn release_services(
     cx: &mut App,
     #[cfg(target_os = "windows")] handoff: std::sync::mpsc::Sender<updates::Installer>,
@@ -451,8 +420,7 @@ fn release_services(
     #[cfg(target_os = "windows")]
     let installer = services.take_installer();
     let instance = services.into_instance();
-    // GPUI closes every window, flushing Settings' final save, before polling this future, so a
-    // relaunch cannot race that save for the instance lock.
+
     async move {
         drop(instance);
         #[cfg(target_os = "windows")]

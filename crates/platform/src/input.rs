@@ -1,6 +1,3 @@
-//! The lane from desktop callbacks to the session owner, and the commit gate that lets Escape
-//! revoke a recording's insertion while a native clipboard call is blocked.
-
 use std::{
     sync::{
         Arc,
@@ -13,58 +10,28 @@ use async_channel::Sender;
 
 use crate::Scope;
 
-/// Desktop observations and explicit dictation commands sent to the owner.
 #[derive(Clone, Debug)]
 pub enum Input {
-    /// The physical shortcut became held.
     Press,
-    /// The physical shortcut was released.
     Release,
-    /// Space during a hold requests hands-free capture.
     Lock,
-    /// S, W, or A during a hold turns the recording into a Show, which also records the screen,
-    /// the window under the pointer, or an area dragged out next.
     Show(Scope),
-    /// Shift tapped twice alone, which asks a Show being recorded for a numbered pin.
     Pin(Taps),
-    /// Escape went down. It also reaches the focused app, so the owner decides what it cancels.
     Escape,
-    /// The user asks to discard the active session, from the tray, a desktop command, or Linux's
-    /// reserved cancel chord; the owner decides what it discards.
     Cancel,
-    /// Another shortcut, a session change, or a macOS key-tap outage interrupted the recording.
-    /// The user never asked to cancel, so the owner discards dictation without a cue and finishes
-    /// a recording Show.
     Interrupt,
-    /// Starts or finishes hands-free capture.
     Toggle,
-    /// Starts a hands-free Show of what the scope names, as the tray's Show entries ask; the owner
-    /// ignores it while a session is under way.
     StartShow(Scope),
-    /// Desktop access failed; the message explains how to resume.
     Unavailable(String),
-    /// Shortcut and insertion preparation has completed.
-    DesktopReady {
-        /// The accepted dictation shortcut for display in Settings.
-        shortcut: String,
-        /// The accepted cancellation shortcut for display in Settings.
-        cancel: String,
-    },
+    DesktopReady { shortcut: String, cancel: String },
 }
 
-/// Two quick taps of Shift alone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Taps {
-    /// When the first tap pressed Shift.
     pub pressed: Instant,
-    /// When the second tap released it.
     pub released: Instant,
 }
 
-/// The lane from OS callbacks to the session owner, carrying the recording's commit gate.
-///
-/// Clipboard preparation may block; Escape must still be able to invalidate the pending paste. A
-/// permit's successful commit is the point of no return.
 #[derive(Clone, Debug)]
 pub struct InputSender {
     sender: Sender<Input>,
@@ -72,7 +39,6 @@ pub struct InputSender {
 }
 
 impl InputSender {
-    /// An input lane with no recording authorized.
     #[must_use]
     pub fn new(sender: Sender<Input>) -> Self {
         Self {
@@ -81,11 +47,6 @@ impl InputSender {
         }
     }
 
-    /// Queues `event` for the owner without waiting.
-    ///
-    /// Escape, cancellation, interruption, and desktop failure revoke the current recording before
-    /// the owner sees them, unless it is [shielded](InsertPermit::shield). A full queue closes the
-    /// lane, disabling dictation rather than losing an Escape or a release.
     pub fn deliver(&self, event: Input) {
         if matches!(
             event,
@@ -98,27 +59,21 @@ impl InputSender {
         }
     }
 
-    /// Reports that desktop access failed, then disables native input and insertion.
     pub fn fail(&self, message: String) {
         self.deliver(Input::Unavailable(message));
         self.close();
     }
 
-    /// Whether native input and insertion are permanently disabled.
     #[must_use]
     pub fn is_closed(&self) -> bool {
         self.sender.is_closed()
     }
 
-    /// Resolves once native input and insertion are permanently disabled.
     #[cfg(target_os = "linux")]
     pub(crate) fn closed(&self) -> impl Future<Output = ()> {
         self.sender.closed()
     }
 
-    /// Authorizes a new recording, invalidating every older permit.
-    ///
-    /// Returns `None` once the lane is closed or generations run out.
     #[must_use]
     pub fn begin(&self) -> Option<InsertPermit> {
         if self.is_closed() {
@@ -129,7 +84,7 @@ impl InputSender {
             gate: self.gate.clone(),
             generation,
         };
-        // A close racing this call may have revoked the previous generation instead of this one.
+
         if self.is_closed() {
             permit.revoke();
             return None;
@@ -137,38 +92,30 @@ impl InputSender {
         Some(permit)
     }
 
-    /// Whether the current recording still has insertion authority.
     #[must_use]
     pub fn active(&self) -> bool {
         self.gate.is_authorized()
     }
 
-    /// Observes idle input without authorizing or revoking a recording. A later recording or
-    /// closed input invalidates this observation even if that recording has already finished.
     #[must_use]
     pub fn idle(&self) -> Option<IdleInput> {
-        let generation = self.gate.0.load(Ordering::Acquire);
-        (!self.is_closed() && generation & (Gate::AUTHORIZED | Gate::REVOKED) != Gate::AUTHORIZED)
-            .then(|| IdleInput {
-                input: self.clone(),
-                generation,
-            })
+        let generation = self.gate.idle_generation()?;
+        (!self.is_closed()).then(|| IdleInput {
+            input: self.clone(),
+            generation,
+        })
     }
 
-    /// Revokes the current recording without waiting for the owner, shielded or not.
     pub fn cancel(&self) {
         self.gate.revoke_current();
     }
 
-    /// Disables native input and revokes every outstanding insertion permit, shielded or not.
     pub fn close(&self) {
         self.sender.close();
         self.cancel();
     }
 }
 
-/// An idle input generation observed before preparing an explicit clipboard copy. This does not
-/// authorize insertion; it only detects recordings or shutdown that supersede the observation.
 #[derive(Debug)]
 pub struct IdleInput {
     input: InputSender,
@@ -176,15 +123,12 @@ pub struct IdleInput {
 }
 
 impl IdleInput {
-    /// Whether input is still idle in exactly the observed generation.
     #[must_use]
     pub fn is_current(&self) -> bool {
-        !self.input.is_closed() && self.input.gate.0.load(Ordering::Acquire) == self.generation
+        !self.input.is_closed() && self.input.gate.is_exactly(self.generation)
     }
 }
 
-/// Authorization for exactly one recording. Starting another recording never authorizes an old
-/// clipboard operation that is still preparing its input.
 #[derive(Clone, Debug)]
 pub struct InsertPermit {
     gate: Gate,
@@ -197,47 +141,32 @@ impl InsertPermit {
         self.gate.is_same(&other.gate) && self.generation == other.generation
     }
 
-    /// Revokes only this recording, including while an OS operation is blocked. An obsolete permit
-    /// cannot revoke a newer recording.
     pub fn revoke(&self) {
         self.gate.revoke(self.generation);
     }
 
-    /// Leaves this recording's cancellation to whoever holds its permit: the cancels that
-    /// [`InputSender::deliver`] passes on no longer revoke it on their way, while
-    /// [`revoke`](Self::revoke), [`InputSender::cancel`], closing input, and a newer recording still
-    /// end it. Returns whether it still held authority.
     #[must_use]
     pub fn shield(&self) -> bool {
         self.gate.shield(self.generation)
     }
 
-    /// Revokes only this recording, reporting whether this call ended its authority: false when an
-    /// earlier revocation such as Escape, a commit, or a newer recording ended it.
     #[cfg(target_os = "linux")]
     #[must_use]
     pub(crate) fn forfeit(&self) -> bool {
         self.gate.revoke(self.generation)
     }
 
-    /// Whether this recording still has insertion authority.
     #[must_use]
     pub fn active(&self) -> bool {
         self.gate.is_current(self.generation)
     }
 
-    /// Consumes this recording's authority immediately before native input is submitted, returning
-    /// whether it still held authority.
     #[must_use]
     pub fn commit(&self) -> bool {
         self.gate.revoke(self.generation)
     }
 }
 
-/// The current recording generation, shared with the callbacks that revoke it.
-///
-/// Generations count up above three state bits. A permit holds authority only while the gate equals
-/// its authorized generation, shielded or not, so only one revocation of it can succeed.
 #[derive(Clone, Debug, Default)]
 #[expect(
     clippy::disallowed_types,
@@ -247,13 +176,12 @@ struct Gate(Arc<AtomicU64>);
 
 impl Gate {
     const AUTHORIZED: u64 = 1;
-    const GENERATION_STEP: u64 = 8;
+    const GENERATION_STEP: u64 = 1 << Self::STATE_BITS;
     const REVOKED: u64 = 2;
-    /// [`Self::revoke_unshielded`] passes the generation by.
     const SHIELDED: u64 = 4;
-    const STATE: u64 = Self::AUTHORIZED | Self::REVOKED | Self::SHIELDED;
+    const STATE: u64 = Self::GENERATION_STEP - 1;
+    const STATE_BITS: u32 = 3;
 
-    /// Authorizes the next generation, superseding the current one; none once generations run out.
     fn advance(&self) -> Option<u64> {
         let next = |current: u64| {
             Some((current & !Self::STATE).checked_add(Self::GENERATION_STEP)? | Self::AUTHORIZED)
@@ -265,17 +193,14 @@ impl Gate {
         next(previous)
     }
 
-    /// Revokes `generation` if it is still current, reporting whether it was.
     fn revoke(&self, generation: u64) -> bool {
         self.mark_current(generation, Self::REVOKED)
     }
 
-    /// Shields `generation` if it is still current, reporting whether it was.
     fn shield(&self, generation: u64) -> bool {
         self.mark_current(generation, Self::SHIELDED)
     }
 
-    /// Sets `bit` while `generation`, shielded or not, is current; reports whether it was.
     fn mark_current(&self, generation: u64, bit: u64) -> bool {
         self.0
             .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
@@ -298,6 +223,15 @@ impl Gate {
             .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
                 (current & Self::SHIELDED == 0).then_some(current | Self::REVOKED)
             });
+    }
+
+    fn idle_generation(&self) -> Option<u64> {
+        let generation = self.0.load(Ordering::Acquire);
+        (generation & (Self::AUTHORIZED | Self::REVOKED) != Self::AUTHORIZED).then_some(generation)
+    }
+
+    fn is_exactly(&self, generation: u64) -> bool {
+        self.0.load(Ordering::Acquire) == generation
     }
 
     fn is_current(&self, generation: u64) -> bool {

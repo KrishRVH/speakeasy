@@ -4,7 +4,7 @@ use super::*;
 fn calibration_never_backdates_a_native_frame_and_rejects_scheduler_gaps() {
     let before = Instant::now();
     let after = before.checked_add(Duration::from_micros(700)).unwrap();
-    // SAFETY: all fixture times are finite, positive host durations with nonzero scales.
+
     let (origin, later) = unsafe {
         (
             CMTime::new(1, 1),

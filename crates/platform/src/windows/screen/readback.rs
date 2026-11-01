@@ -1,6 +1,3 @@
-//! The Direct3D 11 device on the adapter that drives the display, and reading capture frames back
-//! to memory, halved on the GPU until they fit.
-
 use std::{num::NonZeroU32, slice};
 
 use windows::Win32::{
@@ -26,12 +23,9 @@ use crate::screen::geometry::{fit, pack_rows};
 
 pub(super) const BYTES_PER_PIXEL: usize = 4;
 
-/// A Direct3D 11 device on the adapter that drives `monitor`, so frames need no copy between
-/// adapters; the default adapter serves a display that no adapter reports.
 pub(super) fn device_for(
     monitor: HMONITOR,
 ) -> windows::core::Result<(ID3D11Device, ID3D11DeviceContext)> {
-    // SAFETY: enumeration only reads descriptions through the live interfaces DXGI returns.
     let adapter = unsafe {
         let factory: IDXGIFactory1 = CreateDXGIFactory1()?;
         (0..)
@@ -52,7 +46,7 @@ pub(super) fn device_for(
         D3D_DRIVER_TYPE_HARDWARE
     };
     let (mut device, mut context) = (None, None);
-    // SAFETY: any adapter is live, and both out-parameters are live locals.
+
     unsafe {
         D3D11CreateDevice(
             adapter.as_ref(),
@@ -69,20 +63,16 @@ pub(super) fn device_for(
     Ok((created(device)?, created(context)?))
 }
 
-/// Reads one size of box out of frames back to memory, halved on the GPU until it fits.
 pub(super) struct Readback {
     source: [u32; 2],
     size: [u32; 2],
-    /// The frame and its halvings, while it needs halving.
     mips: Option<Mips>,
-    /// A CPU-readable copy of the delivered level, reused frame after frame.
     staging: ID3D11Texture2D,
 }
 
 struct Mips {
     texture: ID3D11Texture2D,
     view: ID3D11ShaderResourceView,
-    /// The mip level delivered: the first whose long edge fits.
     level: NonZeroU32,
 }
 
@@ -112,24 +102,19 @@ impl Readback {
         })
     }
 
-    /// The size of the box read.
     pub(super) const fn source(&self) -> [u32; 2] {
         self.source
     }
 
-    /// The size delivered: that of the first mip level whose long edge fits.
     pub(super) const fn size(&self) -> [u32; 2] {
         self.size
     }
 
-    /// The mip level delivered, zero when the frame already fits.
     #[cfg(test)]
     pub(super) fn level(&self) -> u32 {
         self.mips.as_ref().map_or(0, |mips| mips.level.get())
     }
 
-    /// Copies the box of the source size at `[left, top]` in `frame`, which must hold the whole
-    /// box, to memory as tightly packed BGRA rows of the delivered size.
     pub(super) fn read(
         &self,
         context: &ID3D11DeviceContext,
@@ -149,8 +134,7 @@ impl Readback {
             .mips
             .as_ref()
             .map_or(&self.staging, |mips| &mips.texture);
-        // SAFETY: every texture belongs to this context's device and shares the frame's format,
-        // and the region lies within the frame, as the caller ensures.
+
         unsafe {
             context.CopySubresourceRegion(first, 0, 0, 0, 0, frame, 0, Some(&raw const region));
             if let Some(mips) = &self.mips {
@@ -168,10 +152,10 @@ impl Readback {
             }
         }
         let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-        // SAFETY: the staging texture allows CPU reads; mapping waits for the copies above.
+
         unsafe { context.Map(&self.staging, 0, D3D11_MAP_READ, 0, Some(&raw mut mapped))? };
         let packed = self.pack(&mapped);
-        // SAFETY: the texture is mapped, and `pack` no longer borrows its bytes.
+
         unsafe { context.Unmap(&self.staging, 0) };
         packed
     }
@@ -184,8 +168,7 @@ impl Readback {
             return Err(E_UNEXPECTED.into());
         }
         let length = mapped_len(pitch, row, height).ok_or(E_UNEXPECTED)?;
-        // SAFETY: Direct3D maps `height` rows starting `pitch` bytes apart, valid until the caller
-        // unmaps them, and `length` ends with the last row's pixels.
+
         let bytes = unsafe { slice::from_raw_parts(mapped.pData.cast::<u8>(), length) };
         pack_rows(bytes, pitch, width, height).ok_or_else(|| E_UNEXPECTED.into())
     }
@@ -208,7 +191,7 @@ impl Mips {
             },
         )?;
         let mut view = None;
-        // SAFETY: the texture is live and the out-parameter outlives the call.
+
         unsafe { device.CreateShaderResourceView(&texture, None, Some(&raw mut view))? };
         Ok(Self {
             texture,
@@ -218,7 +201,6 @@ impl Mips {
     }
 }
 
-/// A single-sampled BGRA texture `[width, height]` in size, with `levels` mip levels.
 pub(super) fn texture_description([width, height]: [u32; 2], levels: u32) -> D3D11_TEXTURE2D_DESC {
     D3D11_TEXTURE2D_DESC {
         Width: width,
@@ -239,17 +221,15 @@ fn create_texture(
     description: &D3D11_TEXTURE2D_DESC,
 ) -> windows::core::Result<ID3D11Texture2D> {
     let mut texture = None;
-    // SAFETY: the description and out-parameter outlive the call, which reads no initial data.
+
     unsafe { device.CreateTexture2D(description, None, Some(&raw mut texture))? };
     created(texture)
 }
 
-/// A creation call that succeeds always fills its out-parameter.
 pub(super) fn created<T>(value: Option<T>) -> windows::core::Result<T> {
     value.ok_or_else(|| E_UNEXPECTED.into())
 }
 
-/// How many times `fit` halved `source` to reach `fitted`, which is the mip level holding it.
 fn halvings([width, _]: [u32; 2], [fitted, _]: [u32; 2]) -> u32 {
     width
         .checked_div(fitted)
@@ -257,7 +237,6 @@ fn halvings([width, _]: [u32; 2], [fitted, _]: [u32; 2]) -> u32 {
         .unwrap_or(0)
 }
 
-/// The bytes a mapping of `rows` rows must hold: every row but the last spans the full pitch.
 fn mapped_len(pitch: usize, row: usize, rows: usize) -> Option<usize> {
     pitch.checked_mul(rows.checked_sub(1)?)?.checked_add(row)
 }
@@ -292,7 +271,6 @@ mod tests {
 
     #[test]
     fn a_mapping_ends_with_its_last_row_of_pixels() {
-        // Two rows of two pixels, each starting 12 bytes after the last; the last row is unpadded.
         let mapped = [1, 1, 1, 1, 2, 2, 2, 2, 9, 9, 9, 9, 3, 3, 3, 3, 4, 4, 4, 4];
         assert_eq!(mapped_len(12, 8, 2), Some(mapped.len()));
         assert_eq!(

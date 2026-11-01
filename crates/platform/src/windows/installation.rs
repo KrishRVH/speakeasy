@@ -8,11 +8,6 @@ use windows_sys::Win32::{
 
 use super::to_wide;
 
-/// Reads the per-user Windows installer's registered directory without changing it.
-/// A portable copy has no registration. Call off the UI thread; registry access can block.
-///
-/// # Errors
-/// Fails when the registry is inaccessible or contains an invalid installation path.
 pub fn installed_directory() -> anyhow::Result<Option<PathBuf>> {
     let key = to_wide(
         r"Software\Microsoft\Windows\CurrentVersion\Uninstall\io.github.krvh.speakeasy_is1",
@@ -20,8 +15,7 @@ pub fn installed_directory() -> anyhow::Result<Option<PathBuf>> {
     let value = to_wide("InstallLocation");
     let mut buffer = vec![0_u16; 32_768];
     let mut length = u32::try_from(buffer.len().saturating_mul(2))?;
-    // SAFETY: names are NUL-terminated and the aligned buffer has `length` writable bytes.
-    // All pointers remain valid for this synchronous, read-only registry call.
+
     let status = unsafe {
         RegGetValueW(
             HKEY_CURRENT_USER,

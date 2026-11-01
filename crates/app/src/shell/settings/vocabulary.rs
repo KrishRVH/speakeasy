@@ -1,5 +1,3 @@
-//! Phrase corrections edit the existing Settings draft and use its durable save queue.
-
 use gpui::{
     App, AppContext as _, Context, Entity, IntoElement, SharedString, Window, div, prelude::*, px,
     rgb,

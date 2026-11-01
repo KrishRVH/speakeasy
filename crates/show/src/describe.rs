@@ -1,6 +1,3 @@
-//! How a Show reads to its agent: marks, actions, keyframe events, and the markers beside
-//! narration in the summary. Positions are normalized to the surface; screen text never appears.
-
 use std::fmt;
 
 use crate::{
@@ -9,7 +6,6 @@ use crate::{
     select::{Basis, Reason},
 };
 
-/// What a keyframe chosen for `basis` shows, for a reader; `marks` are the selection's.
 pub(crate) fn event(basis: &Basis, marks: &[Mark]) -> String {
     match basis {
         Basis::Mark { group, during } => marks
@@ -35,7 +31,6 @@ pub(crate) fn event(basis: &Basis, marks: &[Mark]) -> String {
     }
 }
 
-/// Describes the mark for a reader after its number, with positions normalized to the surface.
 impl fmt::Display for Mark {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Rect {
@@ -65,7 +60,6 @@ impl fmt::Display for Mark {
 }
 
 impl Shape {
-    /// What drawing the shape did, in a few words.
     const fn verb(self) -> &'static str {
         match self {
             Self::Tap => "tapped",
@@ -79,12 +73,10 @@ impl Shape {
     }
 }
 
-/// A mark's number as a circled numeral, ① through ㊿, then in parentheses.
 struct Numeral(usize);
 
 impl fmt::Display for Numeral {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Unicode circles each run of numbers in its own block, from the code point `glyph`.
         let circled = |glyph: u32, from: usize| {
             let offset = u32::try_from(self.0.checked_sub(from)?).ok()?;
             char::from_u32(glyph.checked_add(offset)?)
@@ -102,8 +94,6 @@ impl fmt::Display for Numeral {
     }
 }
 
-/// What a keyframe shows happening beside the words said over it: the click or drag whose result
-/// it shows, or what each of its numbered marks does and any click or drag it also reports.
 pub(crate) struct Marker<'a>(pub(crate) &'a Keyframe, pub(crate) &'a [Mark]);
 
 impl fmt::Display for Marker<'_> {
@@ -124,7 +114,6 @@ impl fmt::Display for Marker<'_> {
     }
 }
 
-/// A count and its noun, plural unless the count is one.
 pub(crate) struct Count(pub(crate) usize, pub(crate) &'static str);
 
 impl fmt::Display for Count {
@@ -135,7 +124,6 @@ impl fmt::Display for Count {
     }
 }
 
-/// How many strokes a mark joined, as a parenthetical when more than one.
 struct Strokes(usize);
 
 impl fmt::Display for Strokes {
@@ -147,7 +135,6 @@ impl fmt::Display for Strokes {
     }
 }
 
-/// What an action did, in a word or two, such as "clicked" or "dragged right".
 struct Verb(Action);
 
 impl fmt::Display for Verb {
@@ -159,7 +146,6 @@ impl fmt::Display for Verb {
     }
 }
 
-/// An action described for a reader, with where it happened.
 struct Described(Action);
 
 impl fmt::Display for Described {
@@ -172,7 +158,6 @@ impl fmt::Display for Described {
     }
 }
 
-/// The main direction of a movement, or "a little" when it barely moved.
 struct Direction(Point);
 
 impl fmt::Display for Direction {
@@ -191,7 +176,6 @@ impl fmt::Display for Direction {
     }
 }
 
-/// A normalized position, written for a reader.
 struct At(Point);
 
 impl fmt::Display for At {

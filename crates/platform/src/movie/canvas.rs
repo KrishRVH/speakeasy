@@ -1,6 +1,3 @@
-//! A fixed even canvas. Every resized frame clears the margins so pixels from an earlier window
-//! size cannot remain visible. Bilinear fitting never enlarges the capture's pixels.
-
 use anyhow::{Context as _, ensure};
 
 use crate::{Frame, Part};

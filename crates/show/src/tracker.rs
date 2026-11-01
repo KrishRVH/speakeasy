@@ -1,22 +1,15 @@
-//! Turning pointer samples into ink, pins, and the clicks and drags that passed through.
-//!
-//! Holding Shift and moving the pointer draws; clicks keep reaching the apps underneath, so
-//! pressing a button never draws and drawing never clicks.
-
 use std::mem;
 
 use crate::{Action, InkPoint, Mark, Moment, Pin, Point, Recording, Size, Span, Stroke, marks};
 
-/// A press that moves further than this many pixels before release is a drag.
 const DRAG_PIXELS: f32 = 12.0;
-/// Ink samples closer together than this many pixels add nothing to a stroke.
+
 const INK_SPACING_PIXELS: f32 = 1.5;
-/// Ink spanning fewer pixels is Shift held to type a capital letter, not drawing.
+
 const SHORTEST_STROKE_PIXELS: f32 = 6.0;
-/// A stroke this long is cut, and drawing continues in a new one.
+
 const MOST_STROKE_POINTS: usize = 2_400;
 
-/// Follows the pointer over the captured surface and keeps what it drew, pinned, and did.
 #[derive(Debug)]
 pub struct Tracker {
     surface: Size,
@@ -25,35 +18,25 @@ pub struct Tracker {
     drawn_space: Option<crate::recording::spaces::Space>,
     last_drawn_space: Option<crate::recording::spaces::Space>,
     spaces: crate::Spaces,
-    /// Where the pointer was last seen.
     pointer: Option<InkPoint>,
     drawing: Vec<InkPoint>,
-    /// Whether the stroke being drawn has spanned enough to be ink.
     deliberate: bool,
     press: Button,
     pin_after: Option<Moment>,
-    /// When Shift, down to draw at the last sample, went down.
     shift_down: Option<Moment>,
-    /// Each press of Shift that drew ink or was down with the button, by the moment it first did,
-    /// earlier first.
     shift_uses: Vec<Moment>,
     strokes: Vec<Stroke>,
     pins: Vec<Pin>,
     actions: Vec<Action>,
 }
 
-/// A button press in progress.
 #[derive(Clone, Copy, Debug)]
 struct Press {
     at: Moment,
     from: Point,
-    /// Where the pointer is now.
     to: Point,
     space: Option<crate::recording::spaces::Space>,
-    /// The farthest the pointer has moved from `from`, in pixels.
     reach: f32,
-    /// Whether Shift was held to draw at any point in the press, which then records no click or
-    /// drag.
     drawing: bool,
 }
 
@@ -65,7 +48,6 @@ enum Button {
 }
 
 impl Tracker {
-    /// A tracker for a surface `surface` logical pixels in size, which distances are measured in.
     #[must_use]
     pub const fn new(surface: Size) -> Self {
         Self {
@@ -92,8 +74,6 @@ impl Tracker {
         }
     }
 
-    /// Measures distances against a surface now `surface` logical pixels in size, as a resized
-    /// window's is; the recording reports the latest size.
     pub const fn resize(&mut self, surface: Size) {
         self.surface = surface;
     }
@@ -113,7 +93,6 @@ impl Tracker {
         true
     }
 
-    /// Ends known ink and discards gestures that cross an unavailable pointer observation.
     pub fn gap(&mut self, at: Moment) {
         self.lift();
         self.space = None;
@@ -123,9 +102,6 @@ impl Tracker {
         self.pin_after = Some(self.pin_after.unwrap_or(at).max(at));
     }
 
-    /// Observes the pointer at `at`, in time order, with `drawing` while Shift is held to draw and
-    /// `pressed` while the primary button is down. `point` is normalized to the surface, and may
-    /// lie outside it when the pointer is on another display.
     pub fn observe(&mut self, at: Moment, point: Point, drawing: bool, pressed: bool) {
         if self.pointer.is_none()
             && let Some(gap) = &mut self.pin_after
@@ -168,24 +144,16 @@ impl Tracker {
         }
     }
 
-    /// The stroke being drawn, once it spans enough to be ink rather than Shift held for a capital
-    /// letter; until then, nothing.
     #[must_use]
     pub fn drawing(&self) -> &[InkPoint] {
         if self.deliberate { &self.drawing } else { &[] }
     }
 
-    /// The strokes finished so far, in drawing order.
     #[must_use]
     pub fn strokes(&self) -> &[Stroke] {
         &self.strokes
     }
 
-    /// Drops a pin where the pointer was last seen for `taps`, two quick taps of Shift from the
-    /// first press to the second release, and returns whether it did. Taps that drew ink or were
-    /// down with the button ask for nothing: two quick strokes, as in an X, or two Shift-clicks tap
-    /// Shift as a double tap does. A tap that ended a pin begins no other, so three taps pin once.
-    /// Nothing drops while the pointer is off the surface or unseen.
     pub fn pin(&mut self, taps: Span) -> bool {
         let used = self
             .shift_uses
@@ -219,15 +187,11 @@ impl Tracker {
         }
     }
 
-    /// The marks the finished strokes and pins make so far, numbered as the bundle will number
-    /// them: a later stroke or pin never renumbers an earlier mark.
     #[must_use]
     pub fn marks(&self) -> Vec<Mark> {
         marks::group(&self.strokes, &self.pins, self.surface)
     }
 
-    /// Ends any stroke or press in progress at `at` and returns what was recorded, lasting until
-    /// `at` and not yet narrated.
     #[must_use]
     pub fn finish(mut self, at: Moment) -> Recording {
         self.lift();
@@ -271,8 +235,6 @@ impl Tracker {
         self.drawing.push(ink);
     }
 
-    /// Notes that the press of Shift down now drew ink or was down with the button at `at`; whether
-    /// a press was used is all a pin asks, so only its first use is kept.
     fn use_shift(&mut self, at: Moment) {
         let noted = self
             .shift_down
@@ -282,8 +244,6 @@ impl Tracker {
         }
     }
 
-    /// Ends the stroke being drawn without lifting the pen: the next stroke starts where this one
-    /// ended, as deliberate as it was.
     fn cut(&mut self) {
         let (joint, deliberate) = (self.drawing.last().copied(), self.deliberate);
         let space = self.last_drawn_space;
@@ -294,7 +254,6 @@ impl Tracker {
         self.deliberate = deliberate;
     }
 
-    /// Ends the stroke being drawn, keeping it only if it spans enough to be deliberate.
     fn lift(&mut self) {
         let points = mem::take(&mut self.drawing);
         let space = self.drawn_space.take();
@@ -338,12 +297,10 @@ impl Tracker {
     }
 }
 
-/// Whether a normalized point lies on the surface.
 fn inside(point: Point) -> bool {
     (0.0..=1.0).contains(&point.x) && (0.0..=1.0).contains(&point.y)
 }
 
-/// The distance between two normalized points, in pixels of `surface`.
 fn pixels(surface: Size, one: Point, other: Point) -> f32 {
     (one - other).scaled(surface.width, surface.height).length()
 }
@@ -357,8 +314,6 @@ mod tests {
         height: 500.0,
     };
 
-    /// Replays `(milliseconds, x, y, drawing, pressed)` samples, finishing after the last, and
-    /// returns the strokes and actions recorded.
     fn replay(samples: &[(u64, f32, f32, bool, bool)]) -> (Vec<Stroke>, Vec<Action>) {
         let mut tracker = Tracker::new(SURFACE);
         let mut end = Moment::START;
@@ -406,7 +361,7 @@ mod tests {
     #[test]
     fn a_stroke_cut_for_length_keeps_drawing_one_joined_line() {
         let mut tracker = Tracker::new(SURFACE);
-        // Laps of a circle 200 pixels in radius, sampled every 2 pixels.
+
         let draw = |tracker: &mut Tracker, index: u16| {
             let turn = f32::from(index) / 100.0;
             let point = Point::new(0.5 + 0.2 * turn.cos(), 0.5 + 0.4 * turn.sin());
@@ -424,18 +379,13 @@ mod tests {
         assert_eq!(strokes[0].points().last(), strokes[1].points().first());
     }
 
-    /// How a test taps Shift.
     #[derive(Clone, Copy)]
     enum Tap {
         Clean,
-        /// Flicking the pointer 20 pixels right, which draws a quick stroke.
         Flick,
-        /// Holding the button down.
         ShiftClick,
     }
 
-    /// Taps Shift for 60 ms from `millis` with the pointer at `x`, 0.4, as `kind` says; returns
-    /// the tap's span.
     fn tap(tracker: &mut Tracker, millis: u64, x: f32, kind: Tap) -> Span {
         let at = |offset: u64| Moment::from_millis(millis.saturating_add(offset));
         let (flicked, pressed) = match kind {
@@ -453,7 +403,6 @@ mod tests {
         tap(tracker, millis, x, Tap::Clean)
     }
 
-    /// Asks for the pin of a double tap from `first`'s press to `second`'s release.
     fn pin(tracker: &mut Tracker, first: Span, second: Span) -> bool {
         tracker.pin(Span::new(first.start(), second.end()))
     }
