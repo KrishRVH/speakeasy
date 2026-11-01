@@ -31,6 +31,7 @@ pub(crate) fn event(basis: &Basis, marks: &[Mark]) -> String {
             snapped: false,
         } => format!("said “{word}”"),
         Basis::Middle => "the screen midway through".to_owned(),
+        Basis::Opening => "the screen before the first change".to_owned(),
     }
 }
 

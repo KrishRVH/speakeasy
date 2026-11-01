@@ -230,6 +230,17 @@ impl<'a> Frames<'a> {
         })
     }
 
+    /// The screen before `moment`, anchored at the recording's start so that it takes what was
+    /// said before anything else.
+    pub(super) fn opening_candidate(&self, moment: Moment) -> Candidate {
+        Candidate {
+            frame: self.last_before(moment),
+            span: Span::at(Moment::START),
+            score: 0.0,
+            basis: Basis::Opening,
+        }
+    }
+
     /// The recording's last screen, shown as a scene change.
     pub(super) fn last_candidate(&self) -> Candidate {
         let frame = self.last();

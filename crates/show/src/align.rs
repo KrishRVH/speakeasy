@@ -134,6 +134,16 @@ pub(crate) fn align(anchors: &[Moment], narration: &Narration) -> Vec<Option<Str
         .collect()
 }
 
+pub(crate) fn said_before(anchor: Moment, narration: &Narration) -> bool {
+    let words = ordered(narration.words());
+    let starts = text_starts(&[anchor], &clauses(&words));
+    starts.first().is_some_and(|start| {
+        words
+            .first()
+            .is_some_and(|word| word.span.start().saturating_add(ONSET_TOLERANCE) < *start)
+    })
+}
+
 /// Words read as one clause.
 struct Clause {
     first: usize,
