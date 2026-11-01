@@ -23,7 +23,7 @@ mod native {
     use objc2::{MainThreadMarker, MainThreadOnly as _, rc::Retained};
     use objc2_app_kit::{
         NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSColor, NSWindow,
-        NSWindowStyleMask,
+        NSWindowOrderingMode, NSWindowStyleMask,
     };
     use objc2_core_graphics::{CGDisplayBounds, CGError, CGGetActiveDisplayList, CGMainDisplayID};
     use objc2_foundation::{NSDate, NSPoint, NSRect, NSRunLoop, NSSize};
@@ -34,7 +34,10 @@ mod native {
             .nth(1)
             .context("Use --owned-screen to opt into synthetic window capture")?;
         ensure!(
-            mode == "--owned-screen" || mode == "--source",
+            matches!(
+                mode.as_str(),
+                "--owned-screen" | "--source" | "--owned-window" | "--window-source"
+            ),
             "Use --owned-screen to opt into synthetic window capture"
         );
         let main = MainThreadMarker::new()
@@ -42,12 +45,17 @@ mod native {
         let app = NSApplication::sharedApplication(main);
         app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
         app.finishLaunching();
-        if mode == "--source" {
-            return source(main);
+        if mode == "--source" || mode == "--window-source" {
+            return source(main, mode == "--window-source");
         }
+        let moving = mode == "--owned-window";
         let mut source = Source(
             Command::new(std::env::current_exe()?)
-                .arg("--source")
+                .arg(if moving {
+                    "--window-source"
+                } else {
+                    "--source"
+                })
                 .stdout(Stdio::piped())
                 .stderr(Stdio::null())
                 .spawn()?,
@@ -75,6 +83,14 @@ mod native {
         );
         let bounds = CGDisplayBounds(CGMainDisplayID());
         let display = Display::under_pointer()?;
+        let target = if moving {
+            Some(
+                Target::window_under_pointer()?
+                    .context("The owned source is not under the pointer")?,
+            )
+        } else {
+            None
+        };
         ensure!(
             (f64::from(display.size[0]) - bounds.size.width).abs() < 0.01
                 && (f64::from(display.size[1]) - bounds.size.height).abs() < 0.01
@@ -104,7 +120,7 @@ mod native {
                     .enable_time()
                     .build()
                     .map_err(anyhow::Error::from)
-                    .and_then(|runtime| runtime.block_on(verify(display, part)));
+                    .and_then(|runtime| runtime.block_on(verify(display, part, target)));
                 #[expect(
                     clippy::let_underscore_must_use,
                     reason = "The main-thread owner waits for this terminal result while pumping its native run loop"
@@ -139,8 +155,26 @@ mod native {
         (value / f64::from(size)) as f32
     }
 
-    fn source(main: MainThreadMarker) -> anyhow::Result<()> {
-        let window = window(main, [100.0, 100.0, 400.0, 300.0], 100)?;
+    fn source(main: MainThreadMarker, moving: bool) -> anyhow::Result<()> {
+        let display = CGDisplayBounds(CGMainDisplayID());
+        let initial = if moving {
+            [0.0, 0.0, display.size.width, display.size.height]
+        } else {
+            [100.0, 100.0, 400.0, 300.0]
+        };
+        let window = window(main, initial, if moving { 0 } else { 100 })?;
+        let popup = if moving {
+            let popup = self::window(main, [160.0, 150.0, 80.0, 60.0], 1)?;
+            popup.setBackgroundColor(Some(&color([220, 220, 20])));
+            // SAFETY: both owned windows stay on the main thread, and the parent retains its child.
+            unsafe {
+                window.addChildWindow_ordered(&popup, NSWindowOrderingMode::Above);
+            }
+            popup.orderOut(None);
+            Some(popup)
+        } else {
+            None
+        };
         window.setBackgroundColor(Some(&color([230, 30, 20])));
         window.orderFrontRegardless();
         window.display();
@@ -148,9 +182,13 @@ mod native {
         std::io::stdout().lock().flush()?;
         let started = Instant::now();
         let mut previous = 0;
+        let mut menu_visible = false;
         loop {
             let phase = (started.elapsed().as_millis() / 200) % 2;
             if phase != previous {
+                if moving && started.elapsed() >= Duration::from_secs(2) {
+                    move_window(&window, phase);
+                }
                 window.setBackgroundColor(Some(&color(if phase == 0 {
                     [230, 30, 20]
                 } else {
@@ -159,7 +197,36 @@ mod native {
                 window.display();
                 previous = phase;
             }
+            if let Some(popup) = &popup {
+                let visible = started.elapsed() >= Duration::from_secs(2)
+                    && started.elapsed().as_millis() % 1000 < 100;
+                if visible != menu_visible {
+                    show_menu(popup, visible);
+                    menu_visible = visible;
+                }
+            }
             pump();
+        }
+    }
+
+    fn move_window(window: &NSWindow, phase: u128) {
+        let [x, y, width, height] = if phase == 0 {
+            [100.0, 100.0, 400.0, 300.0]
+        } else {
+            [220.0, 140.0, 320.0, 240.0]
+        };
+        window.setFrame_display(
+            NSRect::new(NSPoint::new(x, y), NSSize::new(width, height)),
+            true,
+        );
+    }
+
+    fn show_menu(popup: &NSWindow, visible: bool) {
+        if visible {
+            popup.orderFrontRegardless();
+            popup.display();
+        } else {
+            popup.orderOut(None);
         }
     }
 
@@ -206,17 +273,17 @@ mod native {
         NSRunLoop::currentRunLoop().runUntilDate(&NSDate::dateWithTimeIntervalSinceNow(0.02));
     }
 
-    async fn verify(display: Display, part: Part) -> anyhow::Result<()> {
+    async fn verify(display: Display, part: Part, target: Option<Target>) -> anyhow::Result<()> {
         for _ in 0..2 {
             let (events, frames) = async_channel::bounded(3);
             let capture = ScreenCapture::start(
-                Target::area(display, part),
+                target.unwrap_or_else(|| Target::area(display, part)),
                 Duration::from_millis(33),
                 2560,
                 events,
                 None,
             )?;
-            let result = inspect(&frames, part).await;
+            let result = inspect(&frames, part, target.map(|_| display)).await;
             capture.request_stop();
             capture.stopped().await;
             while frames.try_recv().is_ok() {}
@@ -232,12 +299,16 @@ mod native {
     async fn inspect(
         frames: &async_channel::Receiver<ScreenEvent>,
         part: Part,
+        moving: Option<Display>,
     ) -> anyhow::Result<()> {
         let deadline = tokio::time::sleep(Duration::from_secs(3));
         tokio::pin!(deadline);
         let mut seen = [false; 2];
         let mut previous = None;
         let mut count = 0_u32;
+        let mut moved = false;
+        let mut previous_part = None;
+        let mut saw_menu = false;
         loop {
             let event = tokio::select! {
                 () = &mut deadline => break,
@@ -249,7 +320,7 @@ mod native {
                 );
             };
             ensure!(
-                frame.part == part && frame.width > 0 && frame.height > 0,
+                (moving.is_some() || frame.part == part) && frame.width > 0 && frame.height > 0,
                 "Owned capture changed its fixed region"
             );
             ensure!(
@@ -257,7 +328,66 @@ mod native {
                 "Native timestamps are not monotonic presentation times"
             );
             previous = Some(frame.at);
+            if let Some(display) = moving {
+                let valid = [
+                    [
+                        0.0,
+                        0.0,
+                        f64::from(display.size[0]),
+                        f64::from(display.size[1]),
+                    ],
+                    [100.0, 100.0, 400.0, 300.0],
+                    [220.0, 140.0, 320.0, 240.0],
+                ]
+                .into_iter()
+                .any(|[x, y, width, height]| {
+                    let top = f64::from(display.size[1]) - y - height;
+                    let expected = Part::between(
+                        [ratio(x, display.size[0]), ratio(top, display.size[1])],
+                        [
+                            ratio(x + width, display.size[0]),
+                            ratio(top + height, display.size[1]),
+                        ],
+                    );
+                    [
+                        frame.part.left - expected.left,
+                        frame.part.top - expected.top,
+                        frame.part.right - expected.right,
+                        frame.part.bottom - expected.bottom,
+                    ]
+                    .into_iter()
+                    .all(|delta| delta.abs() < 0.001)
+                });
+                ensure!(
+                    valid,
+                    "Native frame has unexpected owned-window geometry: {:?}",
+                    frame.part
+                );
+                moved |= previous_part.is_some_and(|part| part != frame.part);
+                previous_part = Some(frame.part);
+            }
             let patterns = [[20, 30, 230], [30, 220, 20]];
+            if moving.is_some() {
+                for pixel in frame.bgra.as_chunks::<4>().0 {
+                    let matches = |pattern| matches_pixel(*pixel, pattern);
+                    let menu = matches([20, 220, 220]);
+                    saw_menu |= menu;
+                    ensure!(
+                        menu || patterns.into_iter().any(matches),
+                        "The window stream contains pixels outside its owned source or includes the excluded window"
+                    );
+                }
+                for (present, pattern) in seen.iter_mut().zip(patterns) {
+                    *present |= frame
+                        .bgra
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .any(|pixel| matches_pixel(*pixel, pattern));
+                }
+                count = count.saturating_add(1);
+                continue;
+            }
             let matched = patterns.iter().position(|pattern| {
                 frame.bgra.as_chunks::<4>().0.iter().all(|pixel| {
                     pixel[..3]
@@ -276,10 +406,25 @@ mod native {
             count >= 4 && seen.into_iter().all(|present| present),
             "The owned capture missed changing content"
         );
+        ensure!(
+            moving.is_none() || moved,
+            "The window stream did not follow movement and resizing"
+        );
+        ensure!(
+            moving.is_none() || saw_menu,
+            "The window stream missed the brief owned child window"
+        );
         Ok(())
     }
 
     struct Source(Child);
+
+    fn matches_pixel(pixel: [u8; 4], pattern: [u8; 3]) -> bool {
+        pixel[..3]
+            .iter()
+            .zip(pattern)
+            .all(|(actual, expected)| actual.abs_diff(expected) <= 3)
+    }
 
     impl Drop for Source {
         fn drop(&mut self) {

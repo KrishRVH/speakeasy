@@ -1,10 +1,8 @@
 //! Screen capture, pointer sampling, and the Show overlay on macOS.
 //!
-//! Capture polls `ScreenCaptureKit` for stills of one display with Speakeasy's own application
-//! filtered out, so neither the pill nor the overlay ever appears in a frame. A Show of part of the
-//! display asks each still for that part only, looking up a window's place in Core Graphics' window
-//! list before and after each still, and stops once the window closes or goes off screen. A still
-//! the list cannot vouch for is dropped as missed, and capture that misses for too long has stalled.
+//! Display and area streams exclude Speakeasy's application. Window streams include only the
+//! selected external window and its children, following its bounds while each native frame carries
+//! its own source rectangle. macOS before 14.2 retains the screenshot fallback for window Shows.
 //! `ScreenCaptureKit` answers on queues of its own: each answer is read where it arrives and
 //! crosses to the capture thread over a channel, and the capture thread stops waiting the moment
 //! the Show stops.
@@ -26,6 +24,7 @@ use block2::{DynBlock, RcBlock};
 use objc2::{
     AllocAnyThread, RefEncode,
     rc::{Retained, autoreleasepool},
+    sel,
 };
 use objc2_app_kit::{
     NSPanel, NSStatusWindowLevel, NSWindowCollectionBehavior, NSWindowSharingType,
@@ -49,7 +48,7 @@ use objc2_core_video::{
     CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags, CVPixelBufferUnlockBaseAddress,
     kCVPixelFormatType_32BGRA, kCVReturnSuccess,
 };
-use objc2_foundation::{NSArray, NSError, NSPoint, NSRect, NSSize};
+use objc2_foundation::{NSArray, NSError, NSObjectProtocol as _, NSPoint, NSRect, NSSize};
 use objc2_screen_capture_kit::{
     SCContentFilter, SCScreenshotManager, SCShareableContent, SCStreamConfiguration,
     SCStreamErrorCode, SCStreamErrorDomain,
@@ -263,7 +262,7 @@ pub(crate) fn capture(
     stopping: &Receiver<Infallible>,
     movie: Option<crate::MovieTarget>,
 ) {
-    if matches!(target.region, Region::Window(_, _)) {
+    if matches!(target.region, Region::Window(_, _)) && !Source::window_streams() {
         drop(movie);
         capture_stills_owned(target, interval, longest_edge, events, stopping);
     } else if let Err(failure) =
@@ -314,9 +313,13 @@ async fn capture_stills(
     longest_edge: u32,
     events: &Sender<ScreenEvent>,
 ) -> Result<Infallible, Failure> {
-    let source = answer(Source::fetch(target.display().native.id, longest_edge))
-        .await
-        .unwrap_or(Err(Failure::Stalled))?;
+    let source = answer(Source::fetch(
+        target.display().native.id,
+        longest_edge,
+        None,
+    ))
+    .await
+    .unwrap_or(Err(Failure::Stalled))?;
     let mut last_frame = Instant::now();
     loop {
         // An unanswered request is a missed still, and so is a window that cannot be placed: a
@@ -352,6 +355,7 @@ struct Source {
     points: [f64; 2],
     scale: f64,
     longest_edge: u32,
+    window: bool,
 }
 
 #[expect(
@@ -366,7 +370,11 @@ unsafe impl Send for Source {}
 impl Source {
     /// Lists the shareable content, which prompts for Screen Recording the first time, and builds
     /// the capture of display `id` from it.
-    fn fetch(id: CGDirectDisplayID, longest_edge: u32) -> Receiver<Result<Self, Failure>> {
+    fn fetch(
+        id: CGDirectDisplayID,
+        longest_edge: u32,
+        window: Option<Window>,
+    ) -> Receiver<Result<Self, Failure>> {
         ask(
             |handler| {
                 // SAFETY: the handler has the documented signature and captures only sendable
@@ -376,7 +384,12 @@ impl Source {
             move |content: Option<&SCShareableContent>, _: Option<&NSError>| {
                 // Of the reasons macOS lists no content, a missing Screen Recording permission is
                 // the one the user can act on, and macOS versions do not report it consistently.
-                Self::new(content.ok_or(Failure::Permission)?, id, longest_edge)
+                Self::new(
+                    content.ok_or(Failure::Permission)?,
+                    id,
+                    longest_edge,
+                    window,
+                )
             },
         )
     }
@@ -385,6 +398,7 @@ impl Source {
         content: &SCShareableContent,
         id: CGDirectDisplayID,
         longest_edge: u32,
+        window: Option<Window>,
     ) -> Result<Self, Failure> {
         // SAFETY: these accessors only read the content snapshot.
         let (display, own) = unsafe {
@@ -403,22 +417,52 @@ impl Source {
         // Excluding the application, rather than its windows, also leaves out windows it opens
         // after the filter is built, such as the overlay.
         // SAFETY: the display and application come from the same content, as the filter expects.
-        let filter = unsafe {
-            SCContentFilter::initWithDisplay_excludingApplications_exceptingWindows(
-                SCContentFilter::alloc(),
-                &display,
-                &NSArray::from_retained_slice(&[own]),
-                &NSArray::new(),
-            )
+        let filter = if let Some(window) = window {
+            // SAFETY: the selected window comes from this content snapshot and is checked to
+            // belong to another process. Its filter cannot admit Speakeasy's independent windows.
+            unsafe {
+                let selected = content
+                    .windows()
+                    .iter()
+                    .find(|candidate| candidate.windowID() == window.0)
+                    .ok_or(Failure::Window(WindowGone::Closed))?;
+                if selected
+                    .owningApplication()
+                    .is_none_or(|application| super::is_own_process(application.processID().into()))
+                {
+                    return Err(Failure::Exposed);
+                }
+                SCContentFilter::initWithDisplay_includingWindows(
+                    SCContentFilter::alloc(),
+                    &display,
+                    &NSArray::from_retained_slice(&[selected]),
+                )
+            }
+        } else {
+            // SAFETY: the display and excluded application come from the same content snapshot.
+            unsafe {
+                SCContentFilter::initWithDisplay_excludingApplications_exceptingWindows(
+                    SCContentFilter::alloc(),
+                    &display,
+                    &NSArray::from_retained_slice(&[own]),
+                    &NSArray::new(),
+                )
+            }
         };
         // SAFETY: a filter's content rectangle and scale are plain reads.
-        let (points, scale) = unsafe { (filter.contentRect().size, filter.pointPixelScale()) };
+        let (points, scale) = unsafe { (display.frame().size, filter.pointPixelScale()) };
         Ok(Self {
             filter,
             points: [points.width, points.height],
             scale: f64::from(scale),
             longest_edge,
+            window: window.is_some(),
         })
+    }
+
+    fn window_streams() -> bool {
+        // SAFETY: this unshared configuration is used only to query native API availability.
+        unsafe { SCStreamConfiguration::new() }.respondsToSelector(sel!(setIncludeChildWindows:))
     }
 
     /// How to capture `part` of the display: at its size in pixels, halved until it fits the
@@ -453,6 +497,11 @@ impl Source {
             // Halving can round the axes differently. Stretching by that fraction of a pixel keeps
             // each frame filled edge to edge, where letterboxing would shift ink off what it marks.
             configuration.setPreservesAspectRatio(false);
+            if self.window {
+                configuration.setIgnoreShadowsDisplay(true);
+                // This path is selected only when the 14.2 child-window selector exists.
+                configuration.setIncludeChildWindows(true);
+            }
             configuration
         };
         Some(configuration)

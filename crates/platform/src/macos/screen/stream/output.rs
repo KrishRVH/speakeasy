@@ -11,17 +11,20 @@ use objc2::{
     AllocAnyThread as _, DefinedClass as _, define_class, msg_send,
     rc::{Retained, autoreleasepool},
 };
-use objc2_core_foundation::{CFArray, CFDictionary, CFNumber, CFRetained, CFString, CFType};
+use objc2_core_foundation::{
+    CFArray, CFDictionary, CFNumber, CFRetained, CFString, CFType, CGRect,
+};
+use objc2_core_graphics::CGRectMakeWithDictionaryRepresentation;
 use objc2_core_media::{CMClock, CMSampleBuffer, CMTime, CMTimeFlags};
 use objc2_core_video::{CVPixelBufferGetHeight, CVPixelBufferGetWidth};
 use objc2_foundation::{NSError, NSObject, NSObjectProtocol, NSString};
 use objc2_screen_capture_kit::{
     SCFrameStatus, SCStream, SCStreamDelegate, SCStreamFrameInfoDisplayTime,
-    SCStreamFrameInfoStatus, SCStreamOutput, SCStreamOutputType,
+    SCStreamFrameInfoScreenRect, SCStreamFrameInfoStatus, SCStreamOutput, SCStreamOutputType,
 };
 
 use super::super::{Failure, frame, refused};
-use crate::{Frame, Part};
+use crate::{Frame, Part, screen::geometry::Bounds};
 
 pub(super) struct State {
     frames: Sender<Frame>,
@@ -29,6 +32,7 @@ pub(super) struct State {
     stopped: Sender<Infallible>,
     part: Part,
     size: [usize; 2],
+    display: Option<Bounds>,
     clock: Clock,
 }
 
@@ -77,6 +81,7 @@ impl Output {
     pub(super) fn new(
         part: Part,
         size: [usize; 2],
+        display: Option<Bounds>,
         frames: Sender<Frame>,
         failures: Sender<Failure>,
         stopped: Sender<Infallible>,
@@ -90,6 +95,7 @@ impl Output {
             stopped,
             part,
             size,
+            display,
             clock: Clock::new()?,
         });
         // SAFETY: every Rust ivar is initialized before NSObject initialization.
@@ -132,14 +138,29 @@ impl Output {
         };
         // SAFETY: the image buffer remains borrowed from this live sample.
         let buffer = unsafe { sample.image_buffer() }.ok_or(Failure::Stalled)?;
-        if [
+        let size = [
             CVPixelBufferGetWidth(&buffer),
             CVPixelBufferGetHeight(&buffer),
-        ] != self.ivars().size
-        {
+        ];
+        if !size.into_iter().all(|edge| (1..=2560).contains(&edge)) {
             return Err(Failure::DisplayLost);
         }
-        let frame = frame(sample, self.ivars().part, at).ok_or(Failure::Stalled)?;
+        let part = if let Some(display) = self.ivars().display {
+            // SAFETY: this process-lifetime key describes the captured sample, including frames
+            // queued before a crop update. No latest-window observation labels its pixels.
+            let rectangle =
+                rectangle(&info, unsafe { SCStreamFrameInfoScreenRect }).ok_or(Failure::Stalled)?;
+            let Some(part) = captured_part(display, rectangle.into()) else {
+                return Ok(());
+            };
+            part
+        } else {
+            if size != self.ivars().size {
+                return Err(Failure::DisplayLost);
+            }
+            self.ivars().part
+        };
+        let frame = frame(sample, part, at).ok_or(Failure::Stalled)?;
         #[expect(
             clippy::let_underscore_must_use,
             reason = "A full bounded lane drops a frame; a stopped owner no longer accepts pixels"
@@ -162,6 +183,40 @@ fn number(info: &CFDictionary<CFString, CFType>, key: &NSString) -> Option<i64> 
     // throughout the lookup, and no retained ownership is manufactured by the reference cast.
     let key = unsafe { &*std::ptr::from_ref(key).cast::<CFString>() };
     info.get(key)?.downcast::<CFNumber>().ok()?.as_i64()
+}
+
+fn rectangle(info: &CFDictionary<CFString, CFType>, key: &NSString) -> Option<CGRect> {
+    // SAFETY: ScreenCaptureKit's NSString keys are toll-free bridged to immutable CFString.
+    let key = unsafe { &*std::ptr::from_ref(key).cast::<CFString>() };
+    let dictionary = info.get(key)?.downcast::<CFDictionary>().ok()?;
+    let mut rectangle = CGRect::default();
+    // SAFETY: the dictionary is retained and the rectangle is writable for the conversion.
+    unsafe { CGRectMakeWithDictionaryRepresentation(Some(&dictionary), &raw mut rectangle) }
+        .then_some(rectangle)
+}
+
+fn captured_part(display: Bounds, captured: Bounds) -> Option<Part> {
+    if !captured
+        .origin
+        .into_iter()
+        .chain(captured.size)
+        .all(f64::is_finite)
+        || captured.size.into_iter().any(|extent| extent <= 0.0)
+    {
+        return None;
+    }
+    let part = display.part_covered_by(captured)?;
+    for ((start, extent), (origin, limit)) in captured
+        .origin
+        .into_iter()
+        .zip(captured.size)
+        .zip(display.origin.into_iter().zip(display.size))
+    {
+        if start < origin - 0.5 || start + extent > origin + limit + 0.5 {
+            return None;
+        }
+    }
+    Some(part)
 }
 
 struct Clock {

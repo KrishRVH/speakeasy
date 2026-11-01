@@ -1,4 +1,4 @@
-//! An immutable display crop owns its native stream until stop and queue drain acknowledge.
+//! One stream owns capture through stop and queue drain; moving crops use each frame's geometry.
 
 mod output;
 
@@ -19,11 +19,11 @@ use objc2_foundation::NSError;
 use objc2_screen_capture_kit::{SCStream, SCStreamOutputType};
 use tokio::runtime;
 
-use super::{Failure, PATIENCE, Source, answer, display_bounds, refused};
+use super::{Failure, PATIENCE, Place, Source, answer, display_bounds, place, refused};
 use crate::{
     Frame, Part, ScreenEvent, Target,
     movie::recording::{INTERVAL, Movie},
-    screen::geometry::Bounds,
+    screen::{Region, geometry::Bounds},
 };
 
 pub(super) fn capture(
@@ -36,6 +36,10 @@ pub(super) fn capture(
 ) -> Result<(), Failure> {
     let deadline = target_movie.as_ref().map(crate::MovieTarget::deadline);
     let mut movie = Movie::new(target_movie);
+    let window = match target.region {
+        Region::Window(window, _) => Some(window),
+        _ => None,
+    };
     let runtime = runtime::Builder::new_current_thread()
         .enable_time()
         .build()
@@ -44,7 +48,7 @@ pub(super) fn capture(
         tokio::select! {
             _ = stopping.recv() => Ok(None),
             () = events.closed() => Ok(None),
-            source = answer(Source::fetch(target.display.native.id, longest_edge)) => {
+            source = answer(Source::fetch(target.display.native.id, longest_edge, window)) => {
                 source.unwrap_or(Err(Failure::Stalled)).map(Some)
             },
         }
@@ -64,10 +68,21 @@ pub(super) fn capture(
     } else {
         interval.max(INTERVAL)
     };
-    let mut stream = Stream::new(&source, target.part(), cadence)?;
+    let Place::Covers(part) = place(target)? else {
+        return Err(Failure::Stalled);
+    };
+    let mut stream = Stream::new(&source, part, cadence, window.map(|_| geometry.bounds))?;
     let outcome = stream.start().and_then(|()| {
         record(
-            target, interval, events, stopping, deadline, geometry, &stream, &mut movie,
+            target,
+            interval,
+            events,
+            stopping,
+            deadline,
+            geometry,
+            &source,
+            &mut stream,
+            &mut movie,
         )
     });
     if let Err(failure) = outcome {
@@ -95,7 +110,8 @@ fn record(
     stopping: &Receiver<Infallible>,
     deadline: Option<Instant>,
     geometry: Geometry,
-    stream: &Stream,
+    source: &Source,
+    stream: &mut Stream,
     movie: &mut Movie,
 ) -> Result<(), Failure> {
     let started = Instant::now();
@@ -106,11 +122,23 @@ fn record(
         if stopping.is_closed() || events.is_closed() || deadline.is_some_and(|end| now >= end) {
             return Ok(());
         }
-        if let Ok(failure) = stream.failures.try_recv() {
-            return Err(failure);
-        }
         if Geometry::read(target.display.native.id) != geometry {
             return Err(Failure::DisplayLost);
+        }
+        if source.window {
+            match place(target)? {
+                Place::Covers(part) => stream.follow(source, part)?,
+                Place::Unknown => {
+                    if last_frame.is_none_or(|at: Instant| at.elapsed() >= PATIENCE) {
+                        return Err(Failure::Stalled);
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                    continue;
+                },
+            }
+        }
+        if let Ok(failure) = stream.failures.try_recv() {
+            return Err(failure);
         }
         let mut movie_failed = false;
         while let Ok(frame) = stream.frames.try_recv() {
@@ -174,25 +202,24 @@ struct Stream {
     failures: Receiver<Failure>,
     stopped: Receiver<Infallible>,
     running: bool,
+    part: Part,
+    interval: Duration,
 }
 
 impl Stream {
-    fn new(source: &Source, part: Part, interval: Duration) -> Result<Self, Failure> {
-        let configuration = source.configuration(part).ok_or(Failure::DisplayLost)?;
+    fn new(
+        source: &Source,
+        part: Part,
+        interval: Duration,
+        display: Option<Bounds>,
+    ) -> Result<Self, Failure> {
+        let configuration = configure(source, part, interval)?;
         // SAFETY: the configuration is owned, not in use yet, and captures screen output only.
-        let size = unsafe {
-            configuration.setMinimumFrameInterval(objc2_core_media::CMTime::new(
-                i64::try_from(interval.as_nanos()).map_err(|_overflow| Failure::Unstarted)?,
-                1_000_000_000,
-            ));
-            configuration.setQueueDepth(3);
-            configuration.setCapturesAudio(false);
-            [configuration.width(), configuration.height()]
-        };
+        let size = unsafe { [configuration.width(), configuration.height()] };
         let (frames, received) = async_channel::bounded(2);
         let (failures, failed) = async_channel::bounded(1);
         let (stopped, terminated) = async_channel::bounded(1);
-        let output = output::Output::new(part, size, frames, failures, stopped)?;
+        let output = output::Output::new(part, size, display, frames, failures, stopped)?;
         let queue = DispatchQueue::new("speakeasy.screen", None);
         // SAFETY: the immutable filter/configuration and strongly held callback have no UI-thread
         // affinity. Only the private serial queue receives pixel callbacks.
@@ -220,7 +247,26 @@ impl Stream {
             failures: failed,
             stopped: terminated,
             running: false,
+            part,
+            interval,
         })
+    }
+
+    fn follow(&mut self, source: &Source, part: Part) -> Result<(), Failure> {
+        if self.part == part {
+            return Ok(());
+        }
+        let configuration = configure(source, part, self.interval)?;
+        let (completion, reply) = completed(Operation::Configure);
+        // SAFETY: only the capture owner changes configuration, after the prior operation has
+        // acknowledged. Queued frames retain their native source rectangles, not this new crop.
+        unsafe {
+            self.native
+                .updateConfiguration_completionHandler(&configuration, Some(&completion));
+        }
+        reply.recv().unwrap_or(Err(Failure::Stalled))?;
+        self.part = part;
+        Ok(())
     }
 
     fn start(&mut self) -> Result<(), Failure> {
@@ -282,6 +328,25 @@ type Completion = RcBlock<dyn Fn(*mut NSError)>;
 enum Operation {
     Start,
     Stop,
+    Configure,
+}
+
+fn configure(
+    source: &Source,
+    part: Part,
+    interval: Duration,
+) -> Result<Retained<objc2_screen_capture_kit::SCStreamConfiguration>, Failure> {
+    let configuration = source.configuration(part).ok_or(Failure::DisplayLost)?;
+    // SAFETY: the owner prepares an unused configuration with bounded cadence and screen output only.
+    unsafe {
+        configuration.setMinimumFrameInterval(objc2_core_media::CMTime::new(
+            i64::try_from(interval.as_nanos()).map_err(|_overflow| Failure::Unstarted)?,
+            1_000_000_000,
+        ));
+        configuration.setQueueDepth(3);
+        configuration.setCapturesAudio(false);
+    }
+    Ok(configuration)
 }
 
 fn completed(operation: Operation) -> (Completion, mpsc::Receiver<Result<(), Failure>>) {
