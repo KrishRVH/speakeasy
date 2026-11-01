@@ -244,6 +244,7 @@ fn a_closed_control_stdout_never_claims_an_acknowledged_action_was_refused() -> 
                     Err(error) => return Err(error.into()),
                 }
             };
+            stream.set_nonblocking(false)?;
             stream.set_read_timeout(Some(Duration::from_secs(5)))?;
             stream.set_write_timeout(Some(Duration::from_secs(5)))?;
             let mut nonce = [0; 16];
