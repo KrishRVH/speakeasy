@@ -329,9 +329,9 @@ impl ScreenCapture {
     /// took its place. No frame waits behind a full lane: Windows holds back its newest frame
     /// until there is room or a newer one replaces it, and macOS drops it. No frame shows a
     /// Speakeasy window, including one opened while capturing; they still appear in the user's own
-    /// screen sharing before and after. On Windows, an optional movie lease records silent
-    /// full-motion video from the same admitted pixels. Its event lane closes only after native
-    /// file cleanup; other platforms release the unused lease without creating a movie.
+    /// screen sharing before and after. On Windows and for fixed Mac regions, an optional movie
+    /// lease records silent video from admitted pixels. Its event lane closes only after native
+    /// cleanup. Mac window capture and Linux release the unused lease without creating a movie.
     ///
     /// # Errors
     /// Fails when the thread cannot start. Failures after starting arrive as
@@ -344,9 +344,9 @@ impl ScreenCapture {
         movie: Option<crate::MovieTarget>,
     ) -> anyhow::Result<Self> {
         let thread = StoppableThread::spawn("screen-capture", move |stopping| {
-            #[cfg(target_os = "windows")]
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
             native::capture(target, interval, longest_edge, &events, &stopping, movie);
-            #[cfg(not(target_os = "windows"))]
+            #[cfg(target_os = "linux")]
             {
                 drop(movie);
                 native::capture(target, interval, longest_edge, &events, &stopping);

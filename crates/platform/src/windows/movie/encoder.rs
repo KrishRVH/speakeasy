@@ -1,7 +1,7 @@
 //! Native objects stay on the capture thread. Field order releases the writer, shuts down its
 //! sink, closes its stream, and only then leaves Media Foundation and the COM apartment.
 
-use std::{ops::ControlFlow, path::Path, time::Duration};
+use std::{path::Path, time::Duration};
 
 use anyhow::{Context as _, ensure};
 use windows::{
@@ -22,61 +22,18 @@ use windows::{
     core::{GUID, Interface as _},
 };
 
-use super::{canvas::Canvas, convert::Converter, file, foundation::Foundation};
-use crate::Frame;
+use super::{convert::Converter, file, foundation::Foundation};
+use crate::movie::encode::{self, Clock};
 
 const TICKS: u64 = 10_000_000;
 const QUEUED_BYTES: u32 = 64 << 20;
-const FRAME_LIMIT: u32 = 9_000;
-// A longer stall saves the submitted prefix rather than monopolizing the capture thread.
-const CATCH_UP_LIMIT: u32 = 60;
 
-pub(super) enum End {
-    Before(Duration),
-    Through(Duration),
-}
-
-pub(super) trait Observer {
-    fn cancelled(&mut self) -> bool;
-
-    /// Acknowledge durable geometry before this sample may be submitted. False means cancelled;
-    /// an error means persistence failed and the caller must report incomplete video.
-    fn geometry(
-        &mut self,
-        sample: u32,
-        content: [u32; 4],
-        part: crate::Part,
-    ) -> anyhow::Result<bool>;
-}
-
-#[cfg(test)]
-impl<F: FnMut() -> bool> Observer for F {
-    fn cancelled(&mut self) -> bool {
-        self()
-    }
-
-    fn geometry(&mut self, _: u32, _: [u32; 4], _: crate::Part) -> anyhow::Result<bool> {
-        Ok(true)
-    }
-}
-
-#[derive(Clone, Copy)]
-pub(super) struct Coverage {
-    pub last: Duration,
-    pub at: Duration,
-    pub frames: u32,
-}
-
-pub(super) struct Encoder {
+pub(crate) struct Codec {
     writer: IMFSinkWriter,
     converter: Converter,
     _sink: Sink,
     stream: file::Stream,
-    canvas: Canvas,
     synced: Duration,
-    capture: Option<Duration>,
-    coverage: Option<Coverage>,
-    geometry: Option<([u32; 4], crate::Part)>,
     _foundation: Foundation,
 }
 
@@ -94,11 +51,12 @@ impl Drop for Sink {
     }
 }
 
-impl Encoder {
-    pub(super) fn open(path: &Path, canvas: Canvas, limit: u64) -> anyhow::Result<Self> {
+impl encode::Codec for Codec {
+    const CLOCK: Clock = Clock::HundredNanoseconds;
+
+    fn open(path: &Path, size: [u32; 2], limit: u64) -> anyhow::Result<Self> {
         let foundation = Foundation::start()?;
         let stream = file::create(path, limit)?;
-        let size = canvas.size();
         let output = media(&MFVideoFormat_H264, size)?;
         // SAFETY: the attributes and media types are owned, initialized COM objects. Values are
         // documented native encodings; none borrows Rust memory beyond these calls.
@@ -152,98 +110,39 @@ impl Encoder {
             converter,
             _sink: sink,
             stream,
-            canvas,
             synced: Duration::ZERO,
-            capture: None,
-            coverage: None,
-            geometry: None,
             _foundation: foundation,
         })
     }
 
-    pub(super) fn write(
+    fn write(
         &mut self,
-        frame: &Frame,
-        at: Duration,
-        observer: &mut impl Observer,
-    ) -> anyhow::Result<ControlFlow<()>> {
-        let at = Duration::from_nanos(u64::try_from(at.as_nanos() / 100)?.saturating_mul(100));
-        ensure!(
-            at <= Duration::from_secs(300)
-                && self
-                    .capture
-                    .map_or_else(|| at.is_zero(), |previous| at >= previous),
-            "Movie capture time is invalid"
-        );
-        // Contiguous input prevents native frame-rate conversion from filling gaps with a
-        // future image. Painting is safe only after every earlier grid point has been submitted.
-        if self.advance(End::Before(at), observer)?.is_break() || observer.cancelled() {
-            return Ok(ControlFlow::Break(()));
+        pixels: &[u8],
+        index: u32,
+        _cancelled: &mut dyn FnMut() -> bool,
+    ) -> anyhow::Result<bool> {
+        let at = Self::CLOCK.time(index);
+        let through = Self::CLOCK.time(index.saturating_add(1));
+        submit(
+            &self.writer,
+            &self.converter,
+            pixels,
+            at,
+            through.saturating_sub(at),
+        )?;
+        Ok(true)
+    }
+
+    fn checkpoint(&mut self, at: Duration) -> anyhow::Result<()> {
+        if at.saturating_sub(self.synced) >= Duration::from_secs(1) {
+            // SAFETY: the byte stream stays open until finalization; Flush syncs its file.
+            unsafe { self.stream.native.Flush()? };
+            self.synced = at;
         }
-        self.canvas.paint(frame)?;
-        self.capture = Some(at);
-        self.advance(End::Through(at), observer)
+        Ok(())
     }
 
-    pub(super) fn advance(
-        &mut self,
-        end: End,
-        observer: &mut impl Observer,
-    ) -> anyhow::Result<ControlFlow<()>> {
-        let Some(capture) = self.capture else {
-            return Ok(ControlFlow::Continue(()));
-        };
-        let ticks = match end {
-            End::Before(at) => at.as_nanos() / 100,
-            End::Through(at) => (at.as_nanos() / 100).saturating_add(1),
-        };
-        let first = self.coverage.map_or(0, |coverage| coverage.frames);
-        let mut index = first;
-        while index < FRAME_LIMIT && time(index).as_nanos() / 100 < ticks {
-            if observer.cancelled() {
-                return Ok(ControlFlow::Break(()));
-            }
-            ensure!(
-                index.saturating_sub(first) < CATCH_UP_LIMIT,
-                "Video encoding fell behind; retained frames remain available"
-            );
-            let at = time(index);
-            let through = time(index.saturating_add(1));
-            let content = self.canvas.content();
-            let part = self.canvas.part();
-            if self.geometry != Some((content, part)) {
-                if !observer.geometry(index, content, part)? || observer.cancelled() {
-                    return Ok(ControlFlow::Break(()));
-                }
-                self.geometry = Some((content, part));
-            }
-            submit(
-                &self.writer,
-                &self.converter,
-                self.canvas.held(),
-                at,
-                through.saturating_sub(at),
-            )?;
-            index = index.saturating_add(1);
-            self.coverage = Some(Coverage {
-                last: capture,
-                at,
-                frames: index,
-            });
-            if at.saturating_sub(self.synced) >= Duration::from_secs(1) {
-                // SAFETY: the byte stream stays open until finalization; Flush syncs its file.
-                unsafe { self.stream.native.Flush()? };
-                self.synced = at;
-            }
-        }
-        Ok(ControlFlow::Continue(()))
-    }
-
-    pub(super) const fn coverage(&self) -> Option<Coverage> {
-        self.coverage
-    }
-
-    pub(super) fn finish(self) -> anyhow::Result<()> {
+    fn finish(self) -> anyhow::Result<()> {
         self.converter.finish()?;
         // SAFETY: all input submissions ended. Finalize closes the stream; no later Flush may
         // touch it. Field teardown still shuts the sink down when Finalize fails.
@@ -251,15 +150,6 @@ impl Encoder {
         self.stream.sync.sync_data()?;
         Ok(())
     }
-}
-
-fn time(index: u32) -> Duration {
-    Duration::from_nanos(
-        u64::from(index)
-            .saturating_mul(TICKS)
-            .saturating_div(30)
-            .saturating_mul(100),
-    )
 }
 
 fn submit(

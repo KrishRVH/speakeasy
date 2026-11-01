@@ -64,3 +64,27 @@ fn native_untagged_movie_keeps_legacy_colors() -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+#[test]
+#[ignore = "Opt in: decode synthetic Mac encoder artifacts on Windows"]
+fn native_mac_movies_preserve_colors_and_timestamps() -> anyhow::Result<()> {
+    let directory = PathBuf::from(
+        std::env::var_os("SPEAKEASY_MAC_MOVIE_DIRECTORY")
+            .ok_or_else(|| anyhow::anyhow!("Choose the synthetic Mac movie directory"))?,
+    );
+    for (name, count, size) in [
+        ("moving", 120, [320, 240]),
+        ("single", 1, [320, 240]),
+        ("hd", 2, [1280, 720]),
+    ] {
+        for index in [count - 1, 0, count / 2] {
+            let at = Duration::from_nanos(u64::try_from(index)? * 10_000_000 / 30 * 100);
+            let file = std::fs::File::open(directory.join(format!("{name}.mp4")))?;
+            let frame = read::frame(file, size, at, &|| false)?
+                .ok_or_else(|| anyhow::anyhow!("Synthetic Mac frame cancelled"))?;
+            assert_eq!(frame.at, at);
+            crate::movie::tests::check_colors(&frame, index);
+        }
+    }
+    Ok(())
+}

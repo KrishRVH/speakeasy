@@ -49,6 +49,7 @@ objc2-core-foundation = { version = "0.3.2", default-features = false }
 objc2-core-graphics = { version = "0.3.2", default-features = false }
 objc2-core-media = { version = "0.3.2", default-features = false }
 objc2-core-video = { version = "0.3.2", default-features = false }
+objc2-uniform-type-identifiers = { version = "0.3.2", default-features = false }
 objc2-foundation = "0.3.2"
 objc2-screen-capture-kit = { version = "0.3.2", default-features = false }
 png = "0.18.1"

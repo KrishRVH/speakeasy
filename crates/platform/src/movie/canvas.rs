@@ -7,7 +7,7 @@ use crate::{Frame, Part};
 
 const EDGE: u32 = 2_560;
 
-pub(super) struct Canvas {
+pub(crate) struct Canvas {
     size: [u32; 2],
     pixels: Vec<u8>,
     content: [u32; 4],
@@ -15,7 +15,7 @@ pub(super) struct Canvas {
 }
 
 impl Canvas {
-    pub(super) fn new(size: [u32; 2]) -> anyhow::Result<Self> {
+    pub(crate) fn new(size: [u32; 2]) -> anyhow::Result<Self> {
         ensure!(
             size.into_iter().all(|edge| (1..=EDGE).contains(&edge)),
             "Invalid movie canvas"
@@ -30,23 +30,23 @@ impl Canvas {
         })
     }
 
-    pub(super) const fn size(&self) -> [u32; 2] {
+    pub(crate) const fn size(&self) -> [u32; 2] {
         self.size
     }
 
-    pub(super) fn held(&self) -> &[u8] {
+    pub(crate) fn held(&self) -> &[u8] {
         &self.pixels
     }
 
-    pub(super) const fn content(&self) -> [u32; 4] {
+    pub(crate) const fn content(&self) -> [u32; 4] {
         self.content
     }
 
-    pub(super) const fn part(&self) -> Part {
+    pub(crate) const fn part(&self) -> Part {
         self.part
     }
 
-    pub(super) fn paint(&mut self, frame: &Frame) -> anyhow::Result<&[u8]> {
+    pub(crate) fn paint(&mut self, frame: &Frame) -> anyhow::Result<&[u8]> {
         let source = [frame.width, frame.height];
         ensure!(
             source.into_iter().all(|edge| (1..=EDGE).contains(&edge))

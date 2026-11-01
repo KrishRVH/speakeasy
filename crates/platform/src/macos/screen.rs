@@ -9,6 +9,8 @@
 //! crosses to the capture thread over a channel, and the capture thread stops waiting the moment
 //! the Show stops.
 
+mod stream;
+
 use std::{
     convert::Infallible,
     fmt,
@@ -259,6 +261,28 @@ pub(crate) fn capture(
     longest_edge: u32,
     events: &Sender<ScreenEvent>,
     stopping: &Receiver<Infallible>,
+    movie: Option<crate::MovieTarget>,
+) {
+    if matches!(target.region, Region::Window(_, _)) {
+        drop(movie);
+        capture_stills_owned(target, interval, longest_edge, events, stopping);
+    } else if let Err(failure) =
+        stream::capture(target, interval, longest_edge, events, stopping, movie)
+    {
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "The final failure replaces a queued still; a closed lane has no observer"
+        )]
+        let _ = events.force_send(failure.into());
+    }
+}
+
+fn capture_stills_owned(
+    target: Target,
+    interval: Duration,
+    longest_edge: u32,
+    events: &Sender<ScreenEvent>,
+    stopping: &Receiver<Infallible>,
 ) {
     let Ok(runtime) = runtime::Builder::new_current_thread().enable_time().build() else {
         // Nothing has been sent yet, so the lane has room for the failure.
@@ -453,7 +477,7 @@ impl Source {
                 };
             },
             move |sample: Option<&CMSampleBuffer>, error: Option<&NSError>| match sample {
-                Some(sample) => Ok(frame(sample, part)),
+                Some(sample) => Ok(frame(sample, part, Instant::now())),
                 None if error.is_some_and(refused) => Err(Failure::Permission),
                 None => Ok(None),
             },
@@ -502,8 +526,7 @@ async fn answer<O>(replies: Receiver<O>) -> Option<O> {
 /// Copies the pixels out of a `ScreenCaptureKit` still of `part` of the display, which carries a
 /// pixel buffer in the configured format; reading it in place costs one copy, where a still image
 /// would first be copied whole by its data provider.
-fn frame(sample: &CMSampleBuffer, part: Part) -> Option<Frame> {
-    let captured = Instant::now();
+fn frame(sample: &CMSampleBuffer, part: Part, captured: Instant) -> Option<Frame> {
     // SAFETY: ScreenCaptureKit keeps the sample alive for its completion handler, which calls this.
     let buffer = unsafe { sample.image_buffer() }?;
     if CVPixelBufferGetPixelFormatType(&buffer) != kCVPixelFormatType_32BGRA {

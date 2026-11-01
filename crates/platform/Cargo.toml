@@ -43,13 +43,14 @@ dispatch2.workspace = true
 objc2.workspace = true
 objc2-app-kit = { workspace = true, features = ["NSAccessibility", "NSAlert", "NSApplication", "NSEvent", "NSPanel", "NSPasteboard", "NSPasteboardItem", "NSResponder", "NSRunningApplication", "NSScreen", "NSView", "NSWindow", "NSWorkspace", "libc"] }
 objc2-application-services = { workspace = true, features = ["AXUIElement", "HIServices"] }
-objc2-av-foundation = { workspace = true, features = ["AVAsset", "AVAssetImageGenerator", "AVAssetResourceLoader", "AVCaptureDevice", "AVMediaFormat", "block2", "dispatch2", "objc2-core-foundation", "objc2-core-graphics", "objc2-core-media"] }
+objc2-av-foundation = { workspace = true, features = ["AVAsset", "AVAssetImageGenerator", "AVAssetResourceLoader", "AVAssetSegmentReport", "AVAssetWriter", "AVAssetWriterInput", "AVCaptureDevice", "AVMediaFormat", "AVVideoSettings", "block2", "dispatch2", "objc2-core-foundation", "objc2-core-graphics", "objc2-core-media", "objc2-uniform-type-identifiers"] }
 objc2-core-foundation = { workspace = true, features = ["CFArray", "CFDictionary", "CFNumber", "CFString"] }
 objc2-core-graphics = { workspace = true, features = ["CGBitmapContext", "CGColorSpace", "CGContext", "CGDirectDisplay", "CGError", "CGEvent", "CGEventSource", "CGEventTypes", "CGGeometry", "CGImage", "CGRemoteOperation", "CGWindow"] }
-objc2-core-media = { workspace = true, features = ["CMSampleBuffer", "CMTime", "objc2", "objc2-core-video"] }
-objc2-core-video = { workspace = true, features = ["CVBase", "CVBuffer", "CVImageBuffer", "CVPixelBuffer", "CVReturn"] }
+objc2-core-media = { workspace = true, features = ["CMFormatDescription", "CMSampleBuffer", "CMSync", "CMTime", "objc2", "objc2-core-video"] }
+objc2-core-video = { workspace = true, features = ["CVBase", "CVBuffer", "CVImageBuffer", "CVPixelBuffer", "CVPixelBufferPool", "CVReturn"] }
+objc2-uniform-type-identifiers = { workspace = true, features = ["UTType"] }
 objc2-foundation.workspace = true
-objc2-screen-capture-kit = { workspace = true, features = ["SCError", "SCScreenshotManager", "SCShareableContent", "SCStream", "block2", "libc", "objc2-core-foundation", "objc2-core-graphics", "objc2-core-media"] }
+objc2-screen-capture-kit = { workspace = true, features = ["SCError", "SCScreenshotManager", "SCShareableContent", "SCStream", "block2", "dispatch2", "libc", "objc2-core-foundation", "objc2-core-graphics", "objc2-core-media"] }
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
@@ -60,6 +61,7 @@ windows-sys = { workspace = true, features = ["Win32_System_StationsAndDesktops"
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 tempfile.workspace = true
+objc2-app-kit = { workspace = true, features = ["NSColor", "NSGraphics", "objc2-core-foundation"] }
 
 [lints]
 workspace = true

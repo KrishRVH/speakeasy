@@ -12,6 +12,8 @@
 //! Every position is in physical pixels: the manifest makes Speakeasy per-monitor DPI aware, so the
 //! cursor, monitor bounds, and window placement share one coordinate space.
 
+use crate::movie::recording as movie;
+
 mod exclusion;
 mod readback;
 
@@ -81,7 +83,7 @@ use self::{
     exclusion::{Exclusions, exclude_always},
     readback::{Readback, device_for},
 };
-use super::{BASE_DPI, is_key_down, is_own_window, modifiers, movie, ok_or_last_error};
+use super::{BASE_DPI, is_key_down, is_own_window, modifiers, ok_or_last_error};
 use crate::{
     NativeWindow,
     screen::{

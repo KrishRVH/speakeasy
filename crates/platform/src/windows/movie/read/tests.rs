@@ -21,6 +21,18 @@ fn video_media_types_may_omit_the_default_stride() -> anyhow::Result<()> {
             &MF_MT_FRAME_SIZE,
             (u64::from(width) << 32) | u64::from(height),
         )?;
+        format.SetUINT32(
+            &MF_MT_VIDEO_PRIMARIES,
+            u32::try_from(MFVideoPrimaries_BT709.0)?,
+        )?;
+        format.SetUINT32(
+            &MF_MT_TRANSFER_FUNCTION,
+            u32::try_from(MFVideoTransFunc_sRGB.0)?,
+        )?;
+        format.SetUINT32(
+            &MF_MT_VIDEO_NOMINAL_RANGE,
+            u32::try_from(MFNominalRange_0_255.0)?,
+        )?;
         format
     };
     assert_eq!(format_stride(&format, [320, 240])?, -1280);

@@ -12,7 +12,7 @@ mod input;
 mod insertion;
 pub(crate) mod installation;
 pub(crate) mod login;
-mod movie;
+pub(crate) mod movie;
 pub(crate) use movie::read::frame as read_movie_frame;
 mod presentation;
 pub(crate) mod screen;

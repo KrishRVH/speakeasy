@@ -394,51 +394,61 @@ module unless a test file is named.
   on every host; native capture is opt-in, and window lookup and the picker's clicks need native
   acceptance. On Windows, an opt-in acceptance test stops an owned window's capture as it hides,
   minimizes, cloaks, moves away, and closes. The
-  [movie adapter](../crates/platform/src/windows/movie.rs) writes silent H.264 fragments from the
-  same admitted, cropped Windows frames. Its non-cloneable [lease](../crates/platform/src/movie.rs)
-  waits for a durable origin acknowledgment before opening the file and closes only after native
-  file handles release. It bounds its canvas to 2560 pixels per edge, its reported native input
-  queue to 64 MiB, and actual file writes to 384 MiB. Those bounds do not cover memory allocated
-  internally by the system codec. Resized windows fit inside a cleared fixed canvas. Display size,
-  position, or scale changes end capture, since the pointer coordinate grid is no longer valid. An
-  explicit 30 Hz clock submits the latest eligible capture and holds it through quiet periods;
-  contiguous input prevents the native converter from filling a gap with a future image. Captures
-  sharing an unsubmitted tick coalesce. Before presenting a changed content or source rectangle, the
-  encoder waits for its durable, checksummed geometry receipt. The first receipt starts at sample
-  zero; coalesced inputs never create unpresented layouts. Cancellation after acceptance still
-  prevents submission; failed persistence reports a video failure. Every read image reaches the
-  movie before quiet advancement, including images read for the still lane. Cancellation is checked
-  between submissions, and a catch-up burst stops after 60 samples instead of monopolizing the
-  capture thread. A failure retains the committed output count and presentation horizon separately
-  from the last capture time. Finalization adds no samples. The original session deadline bounds
-  capture and held output. Windows Shows save this video beside their sampled lossless frames; Mac
-  Shows currently retain only sampled frames. [show/src/movie.rs](../crates/show/src/movie.rs)
-  validates bounded, single-track fragment metadata and returns only the complete prefix. It checks
-  sample byte ranges and timing, not compressed picture decoding. Inspection also identifies Media
-  Foundation's undeclared fragment-header padding. Publication, ZIP export, and Mac reads declare
-  that zero word as a default size only when every affected sample has an explicit size and no later
-  header field can change meaning. This changes one flag byte per affected fragment; picture bytes,
-  timestamps, offsets, and the source file stay intact. Legacy bundles receive the same correction
-  during Mac reads without an on-disk migration.
-  [store/movie.rs](../crates/app/src/show/store/movie.rs) copies that prefix from the validated
-  handle before publication commits, records the separate annotation horizon, and checks finalized
-  native timing against the fragments. Failed copy or sync preserves the checkpoint. A missing or
-  incomplete first fragment permits still-only publication with an explicit video-loss notice; other
-  damaged video stays recoverable with a concrete manual remedy. Saved-bundle inspection and export
-  remain strict. A sparse geometry table is published inside versioned movie metadata; the bounded
-  checkpoint journal stays private. A random identifier pairs the header with that journal; it does
-  not authenticate MP4 bytes. A damaged journal retains geometry only through the last complete
-  change’s first sample, clipping against surviving video after computing this bound. Missing
-  geometry preserves uncropped video. ZIP export also copies the validated handle and metadata
-  snapshot. The viewer offers Windows and macOS video scrubbing, switchable saved annotations, and
-  playback in the system player. [draw/video.rs](../crates/show/src/draw/video.rs) renders only
-  observed ink prefixes, completed marks, and completed actions whose coordinate proofs match the
-  decoded sample. Pins retain their actual observation time; action proofs include the release
-  position. Missing legacy proofs are omitted. Continuous cut segments expire together. This
-  saved-view policy does not reconstruct live overlay fades. A text-free immutable annotation
-  snapshot serves repeated previews; completed pixels carry their rendering status through seeks and
-  toggles. Explicit `show frame --video` queries use the
-  [native reader](../crates/platform/src/windows/movie/read.rs) on Windows and the
+  [recording owner](../crates/platform/src/movie/recording.rs) writes silent H.264 fragments from
+  admitted frames through the [Windows codec](../crates/platform/src/windows/movie/encoder.rs) or
+  [Mac codec](../crates/platform/src/macos/movie/encode.rs). Its non-cloneable
+  [lease](../crates/platform/src/movie.rs) waits for a durable origin acknowledgment before opening
+  the file and closes only after native file handles release. It bounds its canvas to 2560 pixels
+  per edge, its reported native input queue to 64 MiB, and actual file writes to 384 MiB. Those
+  bounds do not cover memory allocated internally by the system codec. Resized windows fit inside a
+  cleared fixed canvas. Display size, position, or scale changes end capture, since the pointer
+  coordinate grid is no longer valid. An explicit 30 Hz clock submits the latest eligible capture
+  and holds it through quiet periods; contiguous input prevents the native converter from filling a
+  gap with a future image. Captures sharing an unsubmitted tick coalesce. Before presenting a
+  changed content or source rectangle, the encoder waits for its durable, checksummed geometry
+  receipt. The first receipt starts at sample zero; coalesced inputs never create unpresented
+  layouts. Cancellation after acceptance still prevents submission; failed persistence reports a
+  video failure. Every read image reaches the movie before quiet advancement, including images read
+  for the still lane. Cancellation is checked between submissions, and a catch-up burst stops after
+  60 samples instead of monopolizing the capture thread. A failure retains the committed output
+  count and presentation horizon separately from the last capture time. Finalization adds no
+  samples. The original session deadline bounds capture and held output. Windows Shows and Mac
+  screen and area Shows save video beside their sampled lossless frames; Mac window Shows retain
+  sampled frames only. The [Mac stream](../crates/platform/src/macos/screen/stream.rs) keeps an
+  immutable display crop, excludes Speakeasy's application, and copies complete BGRA frames into a
+  two-slot lane. It maps native display timestamps through a bounded host-clock calibration and
+  rechecks display geometry before admitting each queued frame. Native screen output has no audio or
+  cursor. A separate terminal lane reports failure before cleanup waits; successful stop, an
+  already-stopped native error, or the native stopped notification must acknowledge termination
+  before output removal and callback-queue drainage. The movie lease stays owned through this
+  cleanup and codec finalization. The Mac codec receives no file URL: its delegate serializes
+  complete segment writes within the file cap, syncs each segment, and latches failures before
+  releasing the output lock. [show/src/movie.rs](../crates/show/src/movie.rs) validates bounded,
+  single-track fragment metadata and returns only the complete prefix. It checks sample byte ranges
+  and timing, not compressed picture decoding. Inspection also identifies Media Foundation's
+  undeclared fragment-header padding. Publication, ZIP export, and Mac reads declare that zero word
+  as a default size only when every affected sample has an explicit size and no later header field
+  can change meaning. This changes one flag byte per affected fragment; picture bytes, timestamps,
+  offsets, and the source file stay intact. Legacy bundles receive the same correction during Mac
+  reads without an on-disk migration. [store/movie.rs](../crates/app/src/show/store/movie.rs) copies
+  that prefix from the validated handle before publication commits, records the separate annotation
+  horizon, and checks finalized native timing against the fragments. Failed copy or sync preserves
+  the checkpoint. A missing or incomplete first fragment permits still-only publication with an
+  explicit video-loss notice; other damaged video stays recoverable with a concrete manual remedy.
+  Saved-bundle inspection and export remain strict. A sparse geometry table is published inside
+  versioned movie metadata; the bounded checkpoint journal stays private. A random identifier pairs
+  the header with that journal; it does not authenticate MP4 bytes. A damaged journal retains
+  geometry only through the last complete change’s first sample, clipping against surviving video
+  after computing this bound. Missing geometry preserves uncropped video. ZIP export also copies the
+  validated handle and metadata snapshot. The viewer offers Windows and macOS video scrubbing,
+  switchable saved annotations, and playback in the system player.
+  [draw/video.rs](../crates/show/src/draw/video.rs) renders only observed ink prefixes, completed
+  marks, and completed actions whose coordinate proofs match the decoded sample. Pins retain their
+  actual observation time; action proofs include the release position. Missing legacy proofs are
+  omitted. Continuous cut segments expire together. This saved-view policy does not reconstruct live
+  overlay fades. A text-free immutable annotation snapshot serves repeated previews; completed
+  pixels carry their rendering status through seeks and toggles. Explicit `show frame --video`
+  queries use the [native reader](../crates/platform/src/windows/movie/read.rs) on Windows and the
   [Mac image generator](../crates/platform/src/macos/movie.rs) on macOS. Validation and decoding
   share one open file; Windows also denies other writers. Mac reads that handle through a private
   resource loader, rejects external references, and closes the lease after active reads finish. The

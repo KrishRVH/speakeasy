@@ -2,6 +2,7 @@
 
 mod file;
 
+pub(crate) mod encode;
 #[cfg(test)]
 mod tests;
 

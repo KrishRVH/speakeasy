@@ -1,6 +1,13 @@
 //! A checkpoint's independent movie-write lease. Cancellation asks the native writer to stop;
 //! closing the event lane acknowledges that its encoder and file handles have been released.
 
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+pub(crate) mod canvas;
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+pub(crate) mod encode;
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+pub(crate) mod recording;
+
 use std::{
     convert::Infallible,
     path::{Path, PathBuf},
@@ -228,7 +235,7 @@ impl MovieTarget {
         self.deadline
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     pub(crate) fn begin(
         &self,
         at: Instant,
@@ -249,7 +256,7 @@ impl MovieTarget {
         self.accepted(answer, stopping).unwrap_or(false)
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     pub(crate) fn geometry(
         &self,
         sample: u32,
@@ -272,7 +279,7 @@ impl MovieTarget {
         self.accepted(answer, stopping)
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     fn accepted(
         &self,
         answer: Receiver<bool>,
@@ -300,7 +307,7 @@ impl MovieTarget {
         Ok(true)
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     pub(crate) fn finish(&self, last: Instant, through: Instant, frames: u32, finalized: bool) {
         #[expect(
             clippy::let_underscore_must_use,
@@ -324,13 +331,13 @@ pub(crate) mod tests {
 
     use super::*;
 
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     #[expect(
         clippy::arithmetic_side_effects,
-        reason = "Fixture dimensions are fixed to SD or HD and all coordinates fit usize"
+        reason = "Fixture dimensions are fixed to SD, HD, or a bounded large canvas and all coordinates fit usize"
     )]
     pub(crate) fn color_frame(index: usize, size: [u32; 2]) -> crate::Frame {
-        assert!(matches!(size, [320, 240] | [1280, 720]));
+        assert!(matches!(size, [320, 240] | [1280, 720] | [2560, 1440]));
         let [width, height] = size.map(|edge| usize::try_from(edge).unwrap());
         let mut bgra = Vec::with_capacity(width * height * 4);
         let blue = if index.is_multiple_of(2) { 20 } else { 230 };
@@ -371,7 +378,10 @@ pub(crate) mod tests {
         reason = "Synthetic fixture coordinates and dimensions are fixed and fit usize"
     )]
     pub(crate) fn check_colors(frame: &MovieFrame, index: usize) {
-        assert!(matches!(frame.size, [320, 240] | [1280, 720]));
+        assert!(matches!(
+            frame.size,
+            [320, 240] | [1280, 720] | [2560, 1440]
+        ));
         let [width, height] = frame.size.map(|edge| usize::try_from(edge).unwrap());
         assert_eq!(frame.bgra.len(), width * height * 4);
         assert!(

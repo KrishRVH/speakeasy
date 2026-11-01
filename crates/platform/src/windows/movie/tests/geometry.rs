@@ -5,7 +5,7 @@ use super::*;
 #[derive(Default)]
 struct Receipts(Vec<(u32, [u32; 4], crate::Part)>);
 
-impl encoder::Observer for Receipts {
+impl crate::movie::encode::Observer for Receipts {
     fn cancelled(&mut self) -> bool {
         false
     }
