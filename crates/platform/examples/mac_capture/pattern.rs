@@ -2,7 +2,7 @@
 
 use anyhow::Context as _;
 use objc2::{MainThreadMarker, MainThreadOnly as _, define_class, msg_send, rc::Retained};
-use objc2_app_kit::{NSColor, NSRectFill, NSView, NSWindow};
+use objc2_app_kit::{NSAutoresizingMaskOptions, NSColor, NSRectFill, NSView, NSWindow};
 use objc2_foundation::{NSObjectProtocol, NSPoint, NSRect, NSSize};
 
 define_class!(
@@ -31,8 +31,15 @@ impl Pattern {
         let bounds = self.bounds();
         window.backgroundColor().setFill();
         NSRectFill(bounds);
+        let identity = if bounds.size.width > 600.0 {
+            [240.0, 240.0, 240.0]
+        } else if bounds.size.width > 350.0 {
+            [240.0, 180.0, 180.0]
+        } else {
+            [180.0, 240.0, 180.0]
+        };
         for ([x, y, width, height], [red, green, blue]) in [
-            ([0.1, 0.2, 0.2, 0.1], [240.0, 240.0, 240.0]),
+            ([0.1, 0.2, 0.2, 0.1], identity),
             ([0.7, 0.6, 0.1, 0.2], [220.0, 20.0, 220.0]),
         ] {
             NSColor::colorWithSRGBRed_green_blue_alpha(
@@ -64,6 +71,9 @@ pub(super) fn attach(window: &NSWindow, main: MainThreadMarker) -> anyhow::Resul
         .bounds();
     // SAFETY: this view is allocated and initialized on the main thread with owned fixture bounds.
     let view: Retained<Pattern> = unsafe { msg_send![Pattern::alloc(main), initWithFrame: bounds] };
+    view.setAutoresizingMask(
+        NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable,
+    );
     window.setContentView(Some(&view));
     Ok(())
 }

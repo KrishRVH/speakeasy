@@ -391,8 +391,8 @@ mod native {
                 previous_part = Some(frame.part);
             }
             let patterns = [[20, 30, 230], [30, 220, 20]];
-            if moving.is_some() {
-                landmarks(&frame)?;
+            if let Some(display) = moving {
+                landmarks(&frame, display)?;
                 for pixel in frame.bgra.as_chunks::<4>().0 {
                     let matches = |pattern| matches_pixel(*pixel, pattern);
                     let menu = matches([20, 220, 220]);
@@ -451,8 +451,16 @@ mod native {
             .all(|(actual, expected)| actual.abs_diff(expected) <= 3)
     }
 
-    fn landmarks(frame: &speakeasy_platform::Frame) -> anyhow::Result<()> {
-        for ([x, y], expected) in [([20, 75], [240, 240, 240]), ([78, 30], [220, 20, 220])] {
+    fn landmarks(frame: &speakeasy_platform::Frame, display: Display) -> anyhow::Result<()> {
+        let width = frame.part.width() * display.size[0];
+        let identity = if width > 600.0 {
+            [240, 240, 240]
+        } else if width > 350.0 {
+            [180, 180, 240]
+        } else {
+            [180, 240, 180]
+        };
+        for ([x, y], expected) in [([20, 75], identity), ([78, 30], [220, 20, 220])] {
             let x = frame.width.saturating_mul(x) / 100;
             let y = frame.height.saturating_mul(y) / 100;
             let offset = usize::try_from(
@@ -468,7 +476,10 @@ mod native {
                 .context("Owned landmark lies outside the captured frame")?;
             ensure!(
                 matches_pixel(pixel, expected),
-                "A captured landmark shifted or stretched during a window change"
+                "A captured landmark shifted, stretched or changed geometry identity: {}x{} {:?}",
+                frame.width,
+                frame.height,
+                frame.part
             );
         }
         Ok(())

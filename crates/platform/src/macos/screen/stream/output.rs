@@ -146,6 +146,8 @@ impl Output {
             return Err(Failure::DisplayLost);
         }
         let part = if let Some(display) = self.ivars().display {
+            #[cfg(feature = "native-acceptance")]
+            diagnose(&info, size);
             // SAFETY: this process-lifetime key describes the captured sample, including frames
             // queued before a crop update. No latest-window observation labels its pixels.
             let rectangle =
@@ -173,6 +175,39 @@ impl Output {
         )]
         let _ = self.ivars().failures.try_send(failure);
     }
+}
+
+#[cfg(feature = "native-acceptance")]
+fn diagnose(info: &CFDictionary<CFString, CFType>, size: [usize; 2]) {
+    use std::io::Write as _;
+
+    use objc2_screen_capture_kit::{
+        SCStreamFrameInfoBoundingRect, SCStreamFrameInfoContentRect, SCStreamFrameInfoContentScale,
+        SCStreamFrameInfoScaleFactor,
+    };
+    let real = |key: &NSString| {
+        // SAFETY: these immutable framework string keys are toll-free bridged.
+        let key = unsafe { &*std::ptr::from_ref(key).cast::<CFString>() };
+        info.get(key)?.downcast::<CFNumber>().ok()?.as_f64()
+    };
+    // SAFETY: only numeric metadata from the explicitly owned-window acceptance is inspected.
+    let values = unsafe {
+        (
+            rectangle(info, SCStreamFrameInfoScreenRect),
+            rectangle(info, SCStreamFrameInfoContentRect),
+            rectangle(info, SCStreamFrameInfoBoundingRect),
+            real(SCStreamFrameInfoScaleFactor),
+            real(SCStreamFrameInfoContentScale),
+        )
+    };
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "A closed diagnostic output cannot affect the owned capture result"
+    )]
+    let _ = writeln!(
+        std::io::stderr().lock(),
+        "Owned capture geometry: {size:?} {values:?}"
+    );
 }
 
 fn number(info: &CFDictionary<CFString, CFType>, key: &NSString) -> Option<i64> {
