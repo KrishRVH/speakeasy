@@ -44,10 +44,9 @@ cp LICENSE "$bundle/Contents/Resources/"
 cargo about generate --locked --fail -c packaging/about.toml --target aarch64-apple-darwin -o "$bundle/Contents/Resources/THIRD-PARTY-NOTICES.txt" packaging/notices.hbs
 cp crates/app/assets/JosefinSans-OFL.txt "$bundle/Contents/Resources/"
 cp crates/show/NOTICE.md "$bundle/Contents/Resources/"
-# An ad-hoc signature's designated requirement is the binary's cdhash, so every build drops the
-# Accessibility and Screen Recording grants. A stable bundle identifier is necessary but not
-# sufficient: only a persistent signing identity keeps grants, and its requirement includes the
-# identifier, so never rename CFBundleIdentifier. Gatekeeper also wants notarization.
+# Ad-hoc signatures change identity with the binary and can require permission grants again.
+# A persistent signing identity and bundle identifier support permission continuity; verify
+# consent after replacement. Gatekeeper also requires notarization for distribution.
 if [[ -n "$signing_identity" ]]; then
   codesign --force --sign "$signing_identity" --options runtime --timestamp \
     --entitlements packaging/macos/Entitlements.plist "$bundle"

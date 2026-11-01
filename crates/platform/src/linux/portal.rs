@@ -64,9 +64,8 @@ struct Portal {
     sender_segment: String,
     unanswered: Vec<OwnedObjectPath>,
     sessions: Vec<OwnedObjectPath>,
-    /// Prefixes every request and session token. org.freedesktop.portal.Request asks for tokens
-    /// that are unique and not guessable: the bus name and `sequence` keep them unique, and this
-    /// process ID and connection time keep them hard to guess.
+    /// Prefixes request and session tokens with the process ID and connection time; the unique
+    /// bus name and monotonic sequence distinguish requests on this connection.
     nonce: String,
     sequence: u64,
 }

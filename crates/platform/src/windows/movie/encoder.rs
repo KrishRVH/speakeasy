@@ -41,12 +41,11 @@ struct Sink(IMFMediaSink);
 
 impl Drop for Sink {
     fn drop(&mut self) {
-        // SAFETY: this guard owns a live sink on the initializing thread; its writer is gone.
         #[expect(
             clippy::let_underscore_must_use,
             reason = "Shutdown still runs after failed finalization; recovery inspects the surviving file instead of assuming it is complete"
         )]
-        // SAFETY: this guard owns the live sink after all writer submissions end.
+        // SAFETY: this guard owns a live sink on the initializing thread; its writer is gone.
         let _ = unsafe { self.0.Shutdown() };
     }
 }
@@ -209,7 +208,6 @@ struct Locked<'a>(&'a IMFMediaBuffer);
 
 impl Drop for Locked<'_> {
     fn drop(&mut self) {
-        // SAFETY: this guard exists only after Lock succeeded and drops before its buffer.
         #[expect(
             clippy::let_underscore_must_use,
             reason = "Unlock is mandatory on every partial sample construction path; an unsuccessful sample is never submitted"

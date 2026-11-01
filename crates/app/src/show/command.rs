@@ -41,7 +41,7 @@ Each cell reports its actual sample time; carried-in frames may precede the wind
 frame exports the retained image at or before a time, or the first image before capture began.
 It reports the actual sample time, excludes annotations, and never overwrites a file.
 Source frames are available only in Shows saved by versions that retain them.
-frame --video decodes the retained movie on Windows, using original session times.
+frame --video decodes the retained movie on Windows and macOS, using original session times.
 It reports actual decoded time and separate annotation coverage, including recovered video tails.
 --annotated adds timed saved ink, pins, and completed actions; reports list omitted annotations.
 It requires geometry and annotation coverage at the decoded sample. --crop needs matching geometry.

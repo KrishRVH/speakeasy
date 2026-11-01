@@ -1,4 +1,4 @@
-//! macOS adapter: the Fn event tap, session-change interruption, native window presentation,
+//! macOS adapter: the shortcut event tap, session-change interruption, native window presentation,
 //! clipboard or direct text insertion, and Show screen capture.
 //!
 //! The tap's run-loop thread creates and removes every native resource its callbacks reach.
@@ -134,7 +134,7 @@ impl RunLoopReady<'_> {
     }
 }
 
-/// The Fn policy, which the event tap decides on its run-loop thread and lifecycle notifications
+/// The shortcut policy, which the event tap decides on its run-loop thread and lifecycle notifications
 /// interrupt from the thread that posts them.
 #[derive(Default)]
 struct SharedPolicy {

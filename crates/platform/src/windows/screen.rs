@@ -495,8 +495,8 @@ struct Capture {
     longest_edge: u32,
     /// Reads back the part of each frame shown, at that part's size.
     readback: Readback,
-    /// The newest frame not yet read, and when it was on screen.
-    pending: Option<(Direct3D11CaptureFrame, Instant)>,
+    /// The newest unread frame, its composition time, and the observed target rectangle.
+    pending: Option<(Direct3D11CaptureFrame, Instant, Part)>,
 }
 
 impl Capture {
@@ -594,7 +594,8 @@ impl Capture {
         if captured < clean_from {
             return Ok(false);
         }
-        self.pending = Some((frame, captured));
+        let part = self.follow()?;
+        self.pending = Some((frame, captured, part));
         Ok(true)
     }
 
@@ -613,19 +614,25 @@ impl Capture {
 
     /// Reads the pending frame back to memory, leaving none pending.
     fn read_pending(&mut self) -> Result<Option<Frame>, Failure> {
-        let Some((frame, captured)) = self.pending.take() else {
+        let Some((frame, captured, part)) = self.pending.take() else {
             return Ok(None);
         };
+        if self.follow()? != part {
+            return Ok(None);
+        }
         let surface: IDirect3DDxgiInterfaceAccess = frame.Surface()?.cast()?;
         // SAFETY: the frame's surface is a live texture on this capture's device.
         let texture: ID3D11Texture2D = unsafe { surface.GetInterface()? };
-        let crop = pixel_box(self.follow()?, self.content);
+        let crop = pixel_box(part, self.content);
         let source = crop_size(crop);
         if source != self.readback.source() {
             self.readback = Readback::new(&self.device, source, self.longest_edge)?;
         }
         let [left, top, ..] = crop;
         let bgra = self.readback.read(&self.context, &texture, [left, top])?;
+        if self.follow()? != part {
+            return Ok(None);
+        }
         let [width, height] = self.readback.size();
         Ok(Some(Frame {
             at: captured,

@@ -82,7 +82,7 @@ The source patches cover native windows, accessibility, frame scheduling, and pa
   The matching media requirement is documented in the
   [media compatibility patch](../gpui_media/README.speakeasy.md). It also
   builds `image` with only the formats GPUI's `ImageFormat` names, which drops
-  the AVIF encoder; Speakeasy renders no raster images.
+  the AVIF encoder; Show review uses PNG raster images.
 - `src/platform/linux/platform.rs` stubs the credential methods: writes fail,
   reads find nothing, and deletes succeed. Speakeasy stores no credentials, so
   `Cargo.toml` drops the oo7 keyring client and the crypto crates it brought.

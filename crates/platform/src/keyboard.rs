@@ -587,13 +587,13 @@ impl Mac {
     pub(super) fn observe(
         &mut self,
         event: MacEvent,
-        keyboard_fn: impl FnOnce() -> bool,
+        keyboard_held: impl FnOnce() -> bool,
         at: Instant,
     ) -> Decision {
         let missed_release = self.chord.awaits_release()
             && self
                 .chord
-                .reconcile(event.held_before(self.shortcut, keyboard_fn));
+                .reconcile(event.held_before(self.shortcut, keyboard_held));
         self.decide(event, at).after_missed_release(missed_release)
     }
 

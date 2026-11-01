@@ -3,16 +3,19 @@
 
 #![forbid(unsafe_code)]
 
+use std::io::{self, Write as _};
+
 const RESOURCE_DIR: &str = "../../packaging/windows";
 
-fn main() {
+fn main() -> io::Result<()> {
+    let mut output = io::stdout().lock();
     // Declaring any input stops Cargo from rerunning this script whenever a package file changes.
-    println!("cargo::rerun-if-changed=build.rs");
+    writeln!(output, "cargo::rerun-if-changed=build.rs")?;
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
-        return;
+        return Ok(());
     }
     for resource in ["speakeasy.rc", "speakeasy.ico", "speakeasy.manifest"] {
-        println!("cargo::rerun-if-changed={RESOURCE_DIR}/{resource}");
+        writeln!(output, "cargo::rerun-if-changed={RESOURCE_DIR}/{resource}")?;
     }
     let embedded = embed_resource::compile_for_everything(
         format!("{RESOURCE_DIR}/speakeasy.rc"),
@@ -20,6 +23,10 @@ fn main() {
     )
     .manifest_required();
     if let Err(error) = embedded {
-        println!("cargo::error=Cannot embed Windows resources: {error}");
+        writeln!(
+            output,
+            "cargo::error=Cannot embed Windows resources: {error}"
+        )?;
     }
+    Ok(())
 }

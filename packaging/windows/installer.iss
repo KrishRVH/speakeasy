@@ -1,4 +1,4 @@
-; Installation owns application files only. Settings, models, and Shows remain in LocalAppData.
+; Installation owns application files only. Settings remain in AppData; models and Shows in LocalAppData.
 #ifndef AppVersion
   #error AppVersion must come from the packaged executable
 #endif

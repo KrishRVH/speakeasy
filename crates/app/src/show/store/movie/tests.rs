@@ -39,6 +39,11 @@ fn publication_keeps_only_complete_video_and_separate_annotation_coverage() -> a
     assert!(inspected.movie.prefix.truncated);
     retain(destination.path(), inspected, Moment::from_millis(500))?;
     let kept = saved(destination.path(), Moment::from_millis(500))?.unwrap();
+    for path in ["/tmp/a``b/recording.mp4", "/tmp/Show video.mp4"] {
+        let note = kept.note(Path::new(path))?;
+        let fence = if path.contains('`') { "```" } else { "`" };
+        assert!(note.contains(&format!("Silent video: {fence} {path} {fence}.")));
+    }
     let coverage = kept.coverage.unwrap();
     assert_eq!(kept.origin_ms, 250);
     assert_eq!(coverage.end_ms, 1_250);

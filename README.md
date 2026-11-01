@@ -399,8 +399,9 @@ commands from a terminal or agent, returning output and exit status to the calle
 
 On a Mac, allow Microphone and Accessibility access when asked, and Screen & System Audio Recording
 for Shows. If macOS says it cannot verify Speakeasy, open **System Settings › Privacy & Security**
-and choose **Open Anyway**. After each update, macOS forgets the Accessibility and Screen & System
-Audio Recording grants: remove Speakeasy from those lists with − and add it again.
+and choose **Open Anyway**. Check permissions after replacing the app: locally signed builds can
+require Accessibility and Screen & System Audio Recording grants again. If either stops working,
+remove Speakeasy from that list with − and add it again.
 
 The first launch sets everything up. Speakeasy checks the machine, downloads the matching
 [NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp) build and NVIDIA's Parakeet v3 model,
@@ -791,7 +792,7 @@ paused clock exercises gesture deadlines and the five-minute cap.
   into Mac screen capture on a host with one active display. Two owned processes show a changing
   synthetic window and an overlapping excluded window. It checks their pixels in memory,
   presentation timestamps, and stop/restart; it writes no pixels and accesses no microphone,
-  clipboard, or input hooks. The optional `screen` workflow input runs it alongside a `movie` check
+  clipboard, or input hooks. Set both `movie=true` and `screen=true` in the Check workflow to run it
   on the disposable Mac runner. Screen Recording permission is required.
 - On Windows, set `SPEAKEASY_MOVIE_PROBE_DIRECTORY` to an empty artifact directory and run
   `cargo test --locked -p speakeasy-platform encode_synthetic_movie_fragments --release -- --ignored --test-threads=1`.

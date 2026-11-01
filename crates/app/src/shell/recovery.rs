@@ -7,7 +7,7 @@ use anyhow::anyhow;
 use gpui::{App, BorrowAppContext as _};
 
 use super::Services;
-use crate::{gpui_ext::AppUpdate as _, runtime::Report, show::SavedShow};
+use crate::{gpui_ext::AppUpdate as _, runtime::Report};
 
 /// What the menu does with the last Show.
 #[derive(Clone, Copy)]
@@ -22,11 +22,7 @@ impl LastShow {
     pub(crate) fn run(self, cx: &mut App) {
         match self {
             Self::Copy => copy(cx),
-            Self::Open => recover(
-                |show| Ok(show.folder()?.map(Path::to_owned)),
-                |folder, cx| cx.open_with_system(&folder),
-                cx,
-            ),
+            Self::Open => open(cx),
         }
     }
 }
@@ -59,26 +55,19 @@ fn copy(cx: &mut App) {
     cx.global_mut::<Services>().recovery = Some(copying);
 }
 
-/// Runs `work` off the UI thread on the Show the menu acts on, if it acts, replacing any recovery
-/// still under way, then hands what `work` found to `done`. A Show found gone is reported as such,
-/// and a failure as Services reports any other.
-fn recover<T: Send + 'static>(
-    work: impl FnOnce(&SavedShow) -> anyhow::Result<Option<T>> + Send + 'static,
-    done: impl FnOnce(T, &mut App) + 'static,
-    cx: &mut App,
-) {
+fn open(cx: &mut App) {
     cx.update_global::<Services, _>(|services, cx| {
         let Some(show) = services.recallable_show(&services.output.borrow()).cloned() else {
             return;
         };
         let found = cx.background_executor().spawn({
             let show = show.clone();
-            async move { work(&show) }
+            async move { show.folder().map(|folder| folder.map(Path::to_owned)) }
         });
         services.recovery = Some(cx.spawn(async move |cx| {
             let found = found.await;
             cx.update_if_running(|cx| match found {
-                Ok(Some(value)) => done(value, cx),
+                Ok(Some(folder)) => cx.open_with_system(&folder),
                 Ok(None) => cx.global::<Services>().report(Report::ShowGone(show)),
                 Err(error) => cx.global::<Services>().report(&error),
             });

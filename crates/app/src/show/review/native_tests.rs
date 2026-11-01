@@ -309,7 +309,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     window.read_with(cx, |view, _| {
         assert_eq!(
             view.detail.as_ref().map(|detail| detail.frames.len()),
-            Some(4)
+            Some(5)
         );
         assert_eq!(
             view.library.selected.as_ref().map(|key| key.frame),

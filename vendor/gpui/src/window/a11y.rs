@@ -4,19 +4,8 @@
 //!
 //! ## Architecture
 //!
-//! ```text
-//!                              ┌────────────────────────────────┐   ┌─────────────────────┐
-//!                           ┌─▶│ AccessKit Adapter (MacOS)      │◀─▶│ MacOS System APIs   │
-//!                           │  └────────────────────────────────┘   └─────────────────────┘
-//!                           │
-//! ┌──────┐   ┌───────────┐  │  ┌────────────────────────────────┐   ┌─────────────────────┐
-//! │ GPUI │◀─▶│ AccessKit │◀─┼─▶│ AccessKit Adapter (Windows)    │◀─▶│ Windows System APIs │
-//! └──────┘   └───────────┘  │  └────────────────────────────────┘   └─────────────────────┘
-//!                           │
-//!                           │  ┌────────────────────────────────┐   ┌─────────────────────┐
-//!                           └─▶│ AccessKit Adapter (Linux)      │◀─▶│ dbus                │
-//!                              └────────────────────────────────┘   └─────────────────────┘
-//! ```
+//! GPUI builds an AccessKit tree and routes actions through its Windows adapter to UI Automation.
+//! The macOS and Linux platform bridges are not implemented in this fork.
 //!
 //! In order for GPUI apps to be usable for people using assistive technology,
 //! we must do a few things:
@@ -35,9 +24,6 @@
 //! - Activate and deactivate accessibility features when requested by the
 //!   system.
 //!
-//! Activating and deactivating at the right time is trivial, so I won't go into
-//! detail here. The other two are almost orthogonal in implementation.
-//!
 //! The state for both lives in the [`A11y`] struct in this module.
 //!
 //! ### Reporting UI changes
@@ -52,11 +38,10 @@
 //! node's ID changes, then, from AccessKit's point of view, it is a different
 //! node.
 //!
-//! We derive the node ID from the [`GlobalElementId`] in
-//! [`GlobalElementId::accesskit_node_id`]. Nodes without [`GlobalElementId`]s
-//! cannot produce an AccessKit [`NodeId`], and so are not included in the
-//! accessibility tree. We try to warn when using accessibility APIs on
-//! [`div()`] without setting an ID.
+//! Persistent identities map element keys and text revisions to allocated native IDs. Text edits
+//! retire their earlier identities so stale ranges cannot act on replacement text. Elements need
+//! a [`GlobalElementId`] to participate in the accessibility tree; using accessibility APIs on
+//! [`div()`] without setting an ID produces a warning.
 //!
 //! This all happens in [`Drawable::prepaint`]. The [`A11y`] struct maintains a
 //! stack of nodes during prepainting, which we can use to calculate the

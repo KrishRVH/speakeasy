@@ -1,10 +1,9 @@
 //! Screen capture, pointer sampling, and the Show overlay on macOS.
 //!
-//! Capture polls `ScreenCaptureKit` for stills of one display with Speakeasy's own application
-//! filtered out, so neither the pill nor the overlay ever appears in a frame. A Show of part of the
-//! display asks each still for that part only, looking up a window's place in Core Graphics' window
-//! list before and after each still, and stops once the window closes or goes off screen. A still
-//! the list cannot vouch for is dropped as missed, and capture that misses for too long has stalled.
+//! Screen and area Shows stream a fixed display crop. Window Shows poll `ScreenCaptureKit` for
+//! stills, checking the window's place before and after each request. Both exclude Speakeasy's
+//! application. A window that closes or goes off screen ends capture; changed or unknown geometry
+//! drops the still. Missing answers or unknown geometry for too long mean capture has stalled.
 //! `ScreenCaptureKit` answers on queues of its own: each answer is read where it arrives and
 //! crosses to the capture thread over a channel, and the capture thread stops waiting the moment
 //! the Show stops.
@@ -66,7 +65,7 @@ use crate::{
 
 /// Why a Show cannot tell what lies under the pointer.
 const NO_POINTER: &str = "Cannot find the pointer. Try again.";
-/// How long `ScreenCaptureKit` may take to answer, and capture may go without a frame, before the
+/// How long capture may go without a screenshot answer and a known target rectangle before the
 /// Show reports that capture stopped.
 const PATIENCE: Duration = Duration::from_secs(5);
 
@@ -317,7 +316,7 @@ async fn capture_stills(
     let source = answer(Source::fetch(target.display().native.id, longest_edge))
         .await
         .unwrap_or(Err(Failure::Stalled))?;
-    let mut last_frame = Instant::now();
+    let mut last_answer = Instant::now();
     loop {
         // An unanswered request is a missed still, and so is a window that cannot be placed: a
         // still of its last place could show whatever took it. A long enough run of misses is a
@@ -326,18 +325,21 @@ async fn capture_stills(
             Place::Covers(part) => answer(source.still(part)?).await.unwrap_or(Ok(None))?,
             Place::Unknown => None,
         };
-        match still {
-            // A window lost during capture may expose what was behind it; that still is a miss.
-            Some(frame) if matches!(place(target)?, Place::Covers(_)) => {
-                last_frame = frame.at;
+        if let Some(frame) = still
+            && let Place::Covers(part) = place(target)?
+        {
+            last_answer = frame.at;
+            // Movement may expose the background, but a completed request is not a stall.
+            if part == frame.part {
                 #[expect(
                     clippy::let_underscore_must_use,
                     reason = "A frame the lane has no room for is dropped, and a closed lane ends capture"
                 )]
                 let _ = events.try_send(ScreenEvent::Frame(frame));
-            },
-            _ if last_frame.elapsed() >= PATIENCE => return Err(Failure::Stalled),
-            _ => {},
+            }
+        }
+        if last_answer.elapsed() >= PATIENCE {
+            return Err(Failure::Stalled);
         }
         // Waiting a whole interval after each answer keeps frames an interval apart, however long
         // ScreenCaptureKit takes to deliver them.

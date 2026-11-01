@@ -61,7 +61,7 @@ fn fixture() -> anyhow::Result<Root> {
                 fs::write(path, serde_json::to_vec_pretty(&manifest)?)?;
                 fs::write(
                     destination.join("summary.md"),
-                    "Screen recording (0:20, 4 keyframes).\nThe recorded window closed before you finished.\nYour speech couldn't be transcribed; these frames are all that remains.\n",
+                    "Screen recording (0:20, 5 keyframes).\nThe recorded window closed before you finished.\nYour speech couldn't be transcribed; these frames are all that remains.\n",
                 )?;
             },
             _ => fs::remove_file(destination.join("frames/frame-03.png"))?,

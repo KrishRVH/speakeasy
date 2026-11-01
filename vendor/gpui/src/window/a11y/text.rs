@@ -26,7 +26,7 @@ pub struct AccessibleText<'a> {
     pub line: &'a ShapedLine,
     /// The unscrolled line origin in logical window coordinates.
     pub origin: Point<Pixels>,
-    /// The paint viewport in logical window coordinates, intersected with the current content mask.
+    /// The full paint viewport in logical window coordinates; registration applies the content mask.
     pub viewport: Bounds<Pixels>,
     /// Current horizontal offset in logical pixels.
     pub scroll_offset: Pixels,

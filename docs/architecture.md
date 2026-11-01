@@ -27,10 +27,9 @@ flowchart LR
 
 ## Change and test map
 
-Every source file opens with a `//!` summary, and the owning file's summary is its contract;
-`rg -m1 '^//!' crates` lists them. [AGENTS.md](../AGENTS.md#ownership-and-interfaces) maps the
-crates. Find the area you are changing, read its owners, and run their tests, which live in each
-module unless a test file is named.
+Owning modules describe their contracts in `//!` summaries; `rg -m1 '^//!' crates` lists them.
+[AGENTS.md](../AGENTS.md#ownership-and-interfaces) maps the crates. Find the area you are changing,
+read its owners, and run their tests, which live in each module unless a test file is named.
 
 - **Gestures and deadlines**: [core/src/gesture.rs](../crates/core/src/gesture.rs) turns timestamped
   shortcut transitions into actions and deadlines, and decides what each cancel or interruption does
@@ -277,25 +276,26 @@ module unless a test file is named.
   include content. Services owns accepted Keep/Discard writes through
   [edits.rs](../crates/app/src/show/edits.rs); Quit awaits them, and an immutable fixture lease
   keeps preview storage alive until completion. Recovery enters the session owner's shielded
-  publication stage through a bounded request lane, without microphone, inference, or clipboard
-  work. The [video timeline](../crates/app/src/show/review/timeline.rs) uses complete fragment
-  sample times for stepping and seeking. Lookups and captions preserve the decoder's clock: 100 ns
-  on Windows and nanoseconds on macOS; Evidence copying emits a retrieval query only when a whole
-  millisecond lies inside the displayed sample. During seeking, the previous video image stays
-  visible and copying is disabled. [review/tests.rs](../crates/app/src/show/review/tests.rs) checks
-  navigation, damage, and private text boundaries. Opt-in
-  [native_tests.rs](../crates/app/src/show/review/native_tests.rs) exercises the real view with
-  synthetic files, including rendering on a private Linux display, retention actions, stale
-  completion notices, and cleanup on close. Retention writes run off the UI thread and stay bound to
-  their original Show; activation rereads the summary and pin. The shell supplies copy availability
-  and routes accepted writes and recovery while the view owns result receipts.
-  [copy.rs](../crates/app/src/show/copy.rs) owns explicit review/tray copies through native cleanup.
-  It retains the displayed image snapshot, reads or encodes off the UI thread, and rejects dropped
-  receipts, lifecycle cancellation, and any newer input generation before native replacement. Copies
-  made while paused are cancelled before an owner starts. Quit drains the worker, and a replacement
-  waits for its predecessor to finish. [copy/tests.rs](../crates/app/src/show/copy/tests.rs) checks
-  those races with fake native access; the owned-window review test checks the actual visual request
-  through an injected copy action without touching the clipboard.
+  publication stage through a bounded request lane. Recovering retained audio uses the configured
+  local speech worker; recovery opens no microphone and performs no clipboard work. The
+  [video timeline](../crates/app/src/show/review/timeline.rs) uses complete fragment sample times
+  for stepping and seeking. Lookups and captions preserve the decoder's clock: 100 ns on Windows and
+  nanoseconds on macOS; Evidence copying emits a retrieval query only when a whole millisecond lies
+  inside the displayed sample. During seeking, the previous video image stays visible and copying is
+  disabled. [review/tests.rs](../crates/app/src/show/review/tests.rs) checks navigation, damage, and
+  private text boundaries. Opt-in [native_tests.rs](../crates/app/src/show/review/native_tests.rs)
+  exercises the real view with synthetic files, including rendering on a private Linux display,
+  retention actions, stale completion notices, and cleanup on close. Retention writes run off the UI
+  thread and stay bound to their original Show; activation rereads the summary and pin. The shell
+  supplies copy availability and routes accepted writes and recovery while the view owns result
+  receipts. [copy.rs](../crates/app/src/show/copy.rs) owns explicit review/tray copies through
+  native cleanup. It retains the displayed image snapshot, reads or encodes off the UI thread, and
+  rejects dropped receipts, lifecycle cancellation, and any newer input generation before native
+  replacement. Copies made while paused are cancelled before an owner starts. Quit drains the
+  worker, and a replacement waits for its predecessor to finish.
+  [copy/tests.rs](../crates/app/src/show/copy/tests.rs) checks those races with fake native access;
+  the owned-window review test checks the actual visual request through an injected copy action
+  without touching the clipboard.
 - **Show composition**: [crates/show/src](../crates/show/src), notably
   [locate.rs](../crates/show/src/locate.rs) resolves phrases and marks to exact recorded spans;
   [locate/evidence.rs](../crates/show/src/locate/evidence.rs) renders bounded source sheets and mark
@@ -388,8 +388,11 @@ module unless a test file is named.
   [macos/screen.rs](../crates/platform/src/macos/screen.rs) capture a display, a window as it moves
   until it closes or goes off screen, or an area, and
   [show/overlay.rs](../crates/app/src/show/overlay.rs) shows ink, mark numbers, and the area picker.
-  Pointer samples carry their target geometry; queued stills cannot rewind the live overlay, and
-  each sample uses its own surface for annotation coordinates and gesture distances. Unavailable
+  Mac window screenshots reject a changed rectangle after their request. Windows pending frames
+  retain the rectangle observed when polled and reject a rectangle that differs before or after GPU
+  readback. These sampled observations do not establish a window's exact rectangle at composition
+  time. Pointer samples carry their target geometry; queued stills cannot rewind the live overlay,
+  and each sample uses its own surface for annotation coordinates and gesture distances. Unavailable
   observations and queue overflow produce explicit gaps, with one lane slot reserved for their
   delivery. Gaps preserve known ink, discard incomplete clicks and drags, and prevent pins from
   crossing an unobserved interval. Finishing drains observations through the chosen end after the

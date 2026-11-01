@@ -160,12 +160,12 @@ impl Metadata {
         } else {
             ""
         };
+        let path = path.display().to_string();
+        let longest_run = path.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+        let fence = "`".repeat(longest_run.saturating_add(1));
         Ok(format!(
-            "\n\nSilent video: `{}`. Recorded session coverage: {}–{} ms. {partial}The video has no narration audio or drawn annotations; its last image may be held through the end. Marks and narration in show.json are documented through {} ms.{geometry}\n",
-            path.display(),
-            self.origin_ms,
-            coverage.end_ms,
-            coverage.annotations_through_ms
+            "\n\nSilent video: {fence} {path} {fence}. Recorded session coverage: {}–{} ms. {partial}The video has no narration audio or drawn annotations; its last image may be held through the end. Marks and narration in show.json are documented through {} ms.{geometry}\n",
+            self.origin_ms, coverage.end_ms, coverage.annotations_through_ms
         ))
     }
 }

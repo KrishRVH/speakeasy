@@ -225,6 +225,9 @@ impl Paster {
         if let Some(outcome) = Delivery::Paste.preflight(external, released) {
             return Ok(outcome);
         }
+        if !self.clipboard.owns(owner)? {
+            return Ok(CLIPBOARD_CHANGED);
+        }
         if !request.permit.commit() {
             return Ok(Inserted::Cancelled);
         }
