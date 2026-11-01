@@ -1,6 +1,7 @@
 mod command;
 pub(crate) mod copy;
 pub(crate) mod edits;
+pub(crate) mod opencode;
 mod overlay;
 pub(crate) mod preview;
 mod publish;
