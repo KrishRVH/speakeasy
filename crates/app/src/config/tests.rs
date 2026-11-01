@@ -170,6 +170,12 @@ fn delivery_reconfigures_only_the_owner_that_changes() {
     let base = Config::default();
     for (text_delivery, delivery, paste, change) in [
         (
+            TextDelivery::Paste,
+            Delivery::Paste,
+            LinuxPaste::Standard,
+            Change::Unchanged,
+        ),
+        (
             TextDelivery::Type,
             Delivery::Direct,
             LinuxPaste::Standard,
