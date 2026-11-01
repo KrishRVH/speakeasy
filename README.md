@@ -175,14 +175,14 @@ In **All retained frames**, numbered mark buttons jump to the sample at or befor
 viewer reports both the mark time and the actual sample time. If retained frames cannot be saved,
 the selected keyframes still save and Speakeasy reports the loss.
 
-On Windows, choose **Video** to scrub the recorded timeline or step through its actual samples.
-Numbered marks and timed narration jump to their recorded times. The displayed timestamp belongs to
-the decoded frame; recovered video can extend past the annotation journal. Rapid seeks replace the
-pending request while the previous decoder closes, and copying waits for the selected frame. The
-**Annotations** switch controls saved ink and marks; the caption explains missing annotations.
-**Play video** opens the original MP4 in your system player, without drawn annotations or narration
-audio. Its 30 Hz timeline holds the latest captured image during quiet periods. A long encoder stall
-stops video and keeps its completed prefix; sampled frames continue recording.
+On Windows and macOS, choose **Video** to scrub the recorded timeline or step through its actual
+samples. Numbered marks and timed narration jump to their recorded times. The displayed timestamp
+belongs to the decoded frame; recovered video can extend past the annotation journal. Rapid seeks
+replace the pending request while the previous decoder closes, and copying waits for the selected
+frame. The **Annotations** switch controls saved ink and marks; the caption explains missing
+annotations. **Play video** opens the original MP4 in your system player, without drawn annotations
+or narration audio. Its 30 Hz timeline holds the latest captured image during quiet periods. A long
+encoder stall stops video and keeps its completed prefix; sampled frames continue recording.
 
 Choose **Narration** beside **Summary** to read the recorded words. Click a timed clause to jump to
 a frame; the caption gives both the clause's time and the displayed frame's actual time, including
@@ -284,11 +284,11 @@ cell. `--crop` focuses on a numbered mark with surrounding context, and refuses 
 surface resize. Reports include the requested window, carried-in sample, sampling gaps, actual
 times, and source crop pixels. Exports require new paths and preserve the saved bundle.
 
-On Windows, `frame --video` retrieves a moment from `recording.mp4` by time, mark, or phrase. Times
-use the original recording's clock. The report distinguishes the requested time from the actual
-decoded sample and includes video coverage and the separate annotation horizon. Recovered video can
-extend beyond the sampled-frame journal. Add `--crop` with `--mark` to focus on a mark with
-surrounding context. The crop uses the actual decoded frame’s content rectangle and requires a
+On Windows and macOS, `frame --video` retrieves a moment from `recording.mp4` by time, mark, or
+phrase. Times use the original recording's clock. The report distinguishes the requested time from
+the actual decoded sample and includes video coverage and the separate annotation horizon. Recovered
+video can extend beyond the sampled-frame journal. Add `--crop` with `--mark` to focus on a mark
+with surrounding context. The crop uses the actual decoded frame’s content rectangle and requires a
 matching saved coordinate space for every point in the mark. Older, mixed, missing, or mismatched
 geometry refuses the crop; the uncropped video remains available. Add `--annotated` to draw saved
 ink progressively, label completed marks, and show completed pointer actions. The viewer's
@@ -297,7 +297,7 @@ retrieval command. Drawn pixels stay within the captured content; crops follow a
 Unknown or incompatible marks are omitted and counted in the report. Explicit annotated exports
 require video geometry and annotation coverage; the viewer explains when it shows original video
 instead. These saved annotations do not reproduce live overlay fades. Video contact sheets are not
-supported. Other platforms can open the movie in their system player.
+supported. Linux can open the movie in its system player.
 
 `keep` accepts an ID or an explicit path directly inside Speakeasy's Shows folder. `--off` allows
 expiry at the original date; it does not grant another seven days. These actions never recreate a
@@ -764,6 +764,15 @@ paused clock exercises gesture deadlines and the five-minute cap.
   with `native_settings_picker_` it checks language and page navigation, focus restoration,
   permission refresh using fake observations, and private practice cleanup. Run each filter
   separately so each process owns one GPUI application.
+- On macOS with FFmpeg installed, `bash scripts/check-movie-macos.sh` generates synthetic silent
+  movies and checks native frame timestamps, pixels, cancellation, file ownership, and a seek near
+  the five-minute limit. It accesses no microphone, screen, input, or clipboard. The Check
+  workflow's optional `movie` input also encodes a synthetic color-and-motion clip on Windows and
+  checks original and normalized retained prefixes through the Mac reader, including HD neutral
+  midtones, without accessing live devices. `movie_fixture_run` reuses the synthetic Windows
+  artifact from a specified run for a focused Mac check; it skips the normal native matrix. The
+  Windows `native_untagged_movie_keeps_legacy_colors` filter accepts an older synthetic color
+  fixture through `SPEAKEASY_LEGACY_MOVIE` for compatibility checks.
 - On Windows, set `SPEAKEASY_MOVIE_PROBE_DIRECTORY` to an empty artifact directory and run
   `cargo test --locked -p speakeasy-platform encode_synthetic_movie_fragments --release -- --ignored --test-threads=1`.
   It exercises the native movie adapter with generated pixels, checks motion and quiet-tail timing

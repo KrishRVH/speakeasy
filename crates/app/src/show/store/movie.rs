@@ -214,16 +214,30 @@ impl Reading {
         let bytes = self.movie.prefix.bytes;
         anyhow::ensure!(bytes <= limit, "Movie exceeds the export size limit");
         self.file.rewind()?;
-        let copied = std::io::copy(&mut (&mut self.file).take(bytes), out)?;
-        anyhow::ensure!(copied == bytes, "Movie changed during publication");
-        Ok(copied)
+        let mut position = 0_u64;
+        let mut buffer = vec![0; 64 * 1024];
+        while position < bytes {
+            let count = usize::try_from(bytes.saturating_sub(position).min(64 * 1024))?;
+            let chunk = buffer
+                .get_mut(..count)
+                .context("Movie copy exceeded its buffer")?;
+            self.file
+                .read_exact(chunk)
+                .context("Movie changed during publication")?;
+            self.movie.prefix.compatibility().apply(position, chunk)?;
+            out.write_all(chunk)?;
+            position = position
+                .checked_add(u64::try_from(count)?)
+                .context("Movie copy position overflowed")?;
+        }
+        Ok(position)
     }
 }
 
 pub(super) enum CheckpointMovie {
     Absent,
     Unavailable,
-    Present(Reading),
+    Present(Box<Reading>),
 }
 
 pub(super) fn checkpoint(directory: &Path) -> anyhow::Result<CheckpointMovie> {
@@ -246,7 +260,7 @@ pub(super) fn checkpoint(directory: &Path) -> anyhow::Result<CheckpointMovie> {
         return Ok(CheckpointMovie::Unavailable);
     }
     match open(directory) {
-        Ok(Some(movie)) => Ok(CheckpointMovie::Present(movie)),
+        Ok(Some(movie)) => Ok(CheckpointMovie::Present(Box::new(movie))),
         Ok(None) => Ok(CheckpointMovie::Absent),
         Err(error) if matches!(error.downcast_ref::<speakeasy_show::MovieError>(), Some(speakeasy_show::MovieError::NoFragment)) => Ok(CheckpointMovie::Unavailable),
         Err(error) => Err(error.context(format!("Video cannot be recovered automatically. To save the stills, move recording.mp4, recording.json, and any recording.geometry out of {} into a private folder, then choose Recover again. Keep those files for repair.", directory.display()))),

@@ -74,7 +74,7 @@ pub(super) fn viewport(movie: &super::Inspected, at: std::time::Duration) -> Opt
     let sample = movie
         .prefix
         .samples()
-        .binary_search_by_key(&at, |at| super::decoder_time(*at))
+        .binary_search_by_key(&at, |sample| super::decoder_time(sample.at))
         .ok()?;
     let layout = movie
         .metadata

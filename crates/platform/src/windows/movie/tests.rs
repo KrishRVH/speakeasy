@@ -3,6 +3,7 @@ use std::{path::PathBuf, time::Duration};
 use super::*;
 use crate::Part;
 
+mod colors;
 mod geometry;
 mod timing;
 

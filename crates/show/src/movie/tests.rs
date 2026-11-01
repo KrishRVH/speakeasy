@@ -1,5 +1,7 @@
 use super::*;
 
+mod compatibility;
+
 mod fixture {
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -22,15 +24,32 @@ fn sample_navigation_preserves_fractional_times_instead_of_assuming_a_frame_rate
     let media = bytes.windows(4).position(|bytes| bytes == b"mdhd").unwrap();
     bytes[media + 16..media + 20].copy_from_slice(&30_000_u32.to_be_bytes());
     let prefix = inspect(&bytes).unwrap();
+    assert_eq!(prefix.timescale, 30_000);
+    assert_eq!(prefix.samples()[1].ticks, 1_000);
     assert_eq!(
-        prefix.samples(),
+        prefix
+            .samples()
+            .partition_point(|sample| sample.at <= Duration::from_nanos(33_333_333)),
+        2
+    );
+    assert_eq!(
+        prefix
+            .samples()
+            .iter()
+            .map(|sample| sample.at)
+            .collect::<Vec<_>>(),
         [Duration::ZERO, Duration::from_nanos(33_333_333)]
     );
     assert_eq!(prefix.duration, Duration::from_nanos(66_666_666));
     let run = bytes.windows(4).position(|bytes| bytes == b"trun").unwrap();
     bytes[run + 16..run + 20].copy_from_slice(&1_500_u32.to_be_bytes());
     assert_eq!(
-        inspect(&bytes).unwrap().samples(),
+        inspect(&bytes)
+            .unwrap()
+            .samples()
+            .iter()
+            .map(|sample| sample.at)
+            .collect::<Vec<_>>(),
         [Duration::ZERO, Duration::from_millis(50)]
     );
 }
@@ -41,7 +60,14 @@ fn recovery_never_claims_samples_from_an_incomplete_fragment() {
     let complete = inspect(&fixture.bytes).unwrap();
     assert_eq!(complete.frames, 2);
     assert_eq!(complete.duration, Duration::from_secs(2));
-    assert_eq!(complete.samples(), [Duration::ZERO, Duration::from_secs(1)]);
+    assert_eq!(
+        complete
+            .samples()
+            .iter()
+            .map(|sample| sample.at)
+            .collect::<Vec<_>>(),
+        [Duration::ZERO, Duration::from_secs(1)]
+    );
     assert!(!complete.truncated);
     for cut in fixture.initialized..fixture.bytes.len() {
         let result = inspect(&fixture.bytes[..cut]);
@@ -51,7 +77,14 @@ fn recovery_never_claims_samples_from_an_incomplete_fragment() {
             let prefix = result.unwrap();
             assert_eq!(prefix.bytes, u64::try_from(fixture.ends[0]).unwrap());
             assert_eq!(prefix.frames, 1);
-            assert_eq!(prefix.samples(), [Duration::ZERO]);
+            assert_eq!(
+                prefix
+                    .samples()
+                    .iter()
+                    .map(|sample| sample.at)
+                    .collect::<Vec<_>>(),
+                [Duration::ZERO]
+            );
             assert_eq!(prefix.duration, Duration::from_secs(1));
             assert_eq!(prefix.truncated, cut != fixture.ends[0]);
         }

@@ -6,17 +6,20 @@ use anyhow::{Context as _, ensure};
 use windows::{
     Win32::{
         Media::MediaFoundation::{
-            IMFMediaType, IMFSample, IMFSourceReader, MF_E_ATTRIBUTENOTFOUND, MF_MT_DEFAULT_STRIDE,
-            MF_MT_FRAME_SIZE, MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE, MF_SOURCE_READER_ALL_STREAMS,
-            MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, MF_SOURCE_READER_FIRST_VIDEO_STREAM,
-            MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED, MF_SOURCE_READERF_ENDOFSTREAM,
-            MF_SOURCE_READERF_ERROR, MFCreateAttributes, MFCreateMediaType,
-            MFCreateSourceReaderFromByteStream, MFGetStrideForBitmapInfoHeader, MFMediaType_Video,
-            MFVideoFormat_RGB32,
+            IMFMediaType, IMFSample, IMFSourceReader, IMFSourceReaderEx, MF_E_ATTRIBUTENOTFOUND,
+            MF_MT_DEFAULT_STRIDE, MF_MT_FRAME_SIZE, MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE,
+            MF_MT_TRANSFER_FUNCTION, MF_MT_VIDEO_NOMINAL_RANGE, MF_MT_VIDEO_PRIMARIES,
+            MF_SOURCE_READER_ALL_STREAMS, MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING,
+            MF_SOURCE_READER_FIRST_VIDEO_STREAM, MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED,
+            MF_SOURCE_READERF_ENDOFSTREAM, MF_SOURCE_READERF_ERROR, MF_XVP_DISABLE_FRC,
+            MFCreateAttributes, MFCreateMediaType, MFCreateSourceReaderFromByteStream,
+            MFGetStrideForBitmapInfoHeader, MFMediaType_Video, MFNominalRange_0_255,
+            MFT_CATEGORY_VIDEO_PROCESSOR, MFVideoFormat_RGB32, MFVideoPrimaries_BT709,
+            MFVideoTransFunc_sRGB,
         },
         System::Com::StructuredStorage::PROPVARIANT,
     },
-    core::GUID,
+    core::{GUID, Interface as _},
 };
 
 use super::{file, foundation::Foundation};
@@ -87,16 +90,56 @@ fn reader(stream: &file::ReadStream) -> anyhow::Result<IMFSourceReader> {
         let mut attributes = None;
         MFCreateAttributes(&raw mut attributes, 1)?;
         let attributes = attributes.context("Video reader attributes are unavailable")?;
-        attributes.SetUINT32(&MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, 1)?;
+        attributes.SetUINT32(&MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING, 1)?;
         let reader = MFCreateSourceReaderFromByteStream(&stream.native, &attributes)?;
         reader.SetStreamSelection(MF_SOURCE_READER_ALL_STREAMS.0.cast_unsigned(), false)?;
         reader.SetStreamSelection(STREAM, true)?;
         let format = MFCreateMediaType()?;
         format.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
         format.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_RGB32)?;
+        format.SetUINT32(
+            &MF_MT_VIDEO_PRIMARIES,
+            u32::try_from(MFVideoPrimaries_BT709.0)?,
+        )?;
+        format.SetUINT32(
+            &MF_MT_TRANSFER_FUNCTION,
+            u32::try_from(MFVideoTransFunc_sRGB.0)?,
+        )?;
+        format.SetUINT32(
+            &MF_MT_VIDEO_NOMINAL_RANGE,
+            u32::try_from(MFNominalRange_0_255.0)?,
+        )?;
         reader.SetCurrentMediaType(STREAM, None, &format)?;
+        preserve_timestamps(&reader)?;
         Ok(reader)
     }
+}
+
+fn preserve_timestamps(reader: &IMFSourceReader) -> anyhow::Result<()> {
+    let extended: IMFSourceReaderEx = reader.cast()?;
+    for index in 0..8 {
+        let mut category = GUID::zeroed();
+        let mut transform = None;
+        // SAFETY: this owner has configured the reader but submitted no reads. The returned
+        // transform is retained through configuration; its types and sample flow remain owned
+        // by the source reader. Disabling frame-rate conversion preserves original sample times.
+        unsafe {
+            extended.GetTransformForStream(
+                STREAM,
+                index,
+                Some(&raw mut category),
+                &raw mut transform,
+            )?;
+            if category == MFT_CATEGORY_VIDEO_PROCESSOR {
+                transform
+                    .context("Movie color processor is unavailable")?
+                    .GetAttributes()?
+                    .SetUINT32(&MF_XVP_DISABLE_FRC, 1)?;
+                return Ok(());
+            }
+        }
+    }
+    anyhow::bail!("Movie decoder exceeded its processing limit")
 }
 
 fn format_stride(format: &IMFMediaType, expected: [u32; 2]) -> anyhow::Result<i32> {

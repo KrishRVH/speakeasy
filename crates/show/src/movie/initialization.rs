@@ -16,7 +16,7 @@ pub(super) struct Track {
 
 pub(super) fn read(bytes: &[u8]) -> Result<Track, MovieError> {
     let boxes = children(bytes)?;
-    let mut movie = Fields::new(child(&boxes, *b"mvhd")?);
+    let mut movie = Fields::new(child(&boxes, *b"mvhd")?.bytes);
     let version = movie.word()? >> 24;
     require(
         (version == 0 && movie.rest().len() == 96) || (version == 1 && movie.rest().len() == 108),
@@ -25,15 +25,15 @@ pub(super) fn read(bytes: &[u8]) -> Result<Track, MovieError> {
     movie.skip(if version == 0 { 8 } else { 16 })?;
     require(movie.word()? != 0, "Movie header timescale is zero")?;
     require(
-        boxes.iter().filter(|(kind, _)| kind == b"trak").count() == 1,
+        boxes.iter().filter(|part| part.kind == *b"trak").count() == 1,
         "Movie must have one silent video track",
     )?;
-    let track = children(child(&boxes, *b"trak")?)?;
+    let track = children(child(&boxes, *b"trak")?.bytes)?;
     require(
-        track.iter().all(|(kind, _)| kind != b"edts"),
+        track.iter().all(|part| part.kind != *b"edts"),
         "Movie edit lists are unsupported",
     )?;
-    let track_header = child(&track, *b"tkhd")?;
+    let track_header = child(&track, *b"tkhd")?.bytes;
     let mut header = Fields::new(track_header);
     match header.word()? >> 24 {
         0 => {
@@ -58,14 +58,14 @@ pub(super) fn read(bytes: &[u8]) -> Result<Track, MovieError> {
     }
     let id = header.word()?;
     require(id != 0, "Movie track identity is zero")?;
-    let media = children(child(&track, *b"mdia")?)?;
-    let mut handler = Fields::new(child(&media, *b"hdlr")?);
+    let media = children(child(&track, *b"mdia")?.bytes)?;
+    let mut handler = Fields::new(child(&media, *b"hdlr")?.bytes);
     handler.skip(8)?;
     require(
         handler.kind()? == *b"vide",
         "Movie contains a non-video track",
     )?;
-    let media_header = child(&media, *b"mdhd")?;
+    let media_header = child(&media, *b"mdhd")?.bytes;
     let mut header = Fields::new(media_header);
     match header.word()? >> 24 {
         0 => {
@@ -93,32 +93,32 @@ pub(super) fn read(bytes: &[u8]) -> Result<Track, MovieError> {
         (1..=1_000_000_000).contains(&timescale),
         "Movie timescale is invalid",
     )?;
-    let media = children(child(&media, *b"minf")?)?;
-    let references = children(child(&media, *b"dinf")?)?;
-    let mut reference = Fields::new(child(&references, *b"dref")?);
+    let media = children(child(&media, *b"minf")?.bytes)?;
+    let references = children(child(&media, *b"dinf")?.bytes)?;
+    let mut reference = Fields::new(child(&references, *b"dref")?.bytes);
     require(
         reference.word()? == 0 && reference.word()? == 1,
         "Movie references external media",
     )?;
     let reference = children(reference.rest())?;
     require(
-        reference.len() == 1 && child(&reference, *b"url ")? == [0, 0, 0, 1],
+        reference.len() == 1 && child(&reference, *b"url ")?.bytes == [0, 0, 0, 1],
         "Movie references external media",
     )?;
-    let samples = children(child(&media, *b"stbl")?)?;
+    let samples = children(child(&media, *b"stbl")?.bytes)?;
     for kind in [b"stts", b"stsc", b"stco"] {
-        let mut table = Fields::new(child(&samples, *kind)?);
+        let mut table = Fields::new(child(&samples, *kind)?.bytes);
         require(
             table.word()? == 0 && table.word()? == 0 && table.empty(),
             "Movie initialization contains samples",
         )?;
     }
-    let mut sizes = Fields::new(child(&samples, *b"stsz")?);
+    let mut sizes = Fields::new(child(&samples, *b"stsz")?.bytes);
     require(
         sizes.word()? == 0 && sizes.word()? == 0 && sizes.word()? == 0 && sizes.empty(),
         "Movie initialization contains sample sizes",
     )?;
-    let mut descriptions = Fields::new(child(&samples, *b"stsd")?);
+    let mut descriptions = Fields::new(child(&samples, *b"stsd")?.bytes);
     require(
         descriptions.word()? == 0 && descriptions.word()? == 1,
         "Movie has multiple sample descriptions",
@@ -128,7 +128,7 @@ pub(super) fn read(bytes: &[u8]) -> Result<Track, MovieError> {
         description.len() == 1,
         "Movie has multiple codec configurations",
     )?;
-    let mut avc = Fields::new(child(&description, *b"avc1")?);
+    let mut avc = Fields::new(child(&description, *b"avc1")?.bytes);
     avc.skip(6)?;
     require(avc.short()? == 1, "Movie sample uses an external reference")?;
     avc.skip(16)?;
@@ -150,14 +150,14 @@ pub(super) fn read(bytes: &[u8]) -> Result<Track, MovieError> {
     )?;
     avc.skip(50)?;
     let codec = children(avc.rest())?;
-    let config = child(&codec, *b"avcC")?;
+    let config = child(&codec, *b"avcC")?.bytes;
     configuration(config)?;
-    let extends = children(child(&boxes, *b"mvex")?)?;
+    let extends = children(child(&boxes, *b"mvex")?.bytes)?;
     require(
-        extends.iter().filter(|(kind, _)| kind == b"trex").count() == 1,
+        extends.iter().filter(|part| part.kind == *b"trex").count() == 1,
         "Movie has multiple fragment defaults",
     )?;
-    let mut defaults = Fields::new(child(&extends, *b"trex")?);
+    let mut defaults = Fields::new(child(&extends, *b"trex")?.bytes);
     require(
         defaults.word()? == 0 && defaults.word()? == id && defaults.word()? == 1,
         "Movie fragment defaults do not match its track",

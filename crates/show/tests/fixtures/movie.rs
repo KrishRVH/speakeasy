@@ -87,3 +87,56 @@ pub(super) fn movie() -> MovieFixture {
         ends,
     }
 }
+
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "All offsets address this bounded, hand-built container fixture; missing atoms and invalid extents fail the test"
+)]
+pub(super) fn padded(
+    mut bytes: Vec<u8>,
+    fragment: usize,
+    padding: &[u8],
+    flags: Option<u32>,
+) -> (Vec<u8>, usize) {
+    let header = bytes
+        .windows(4)
+        .enumerate()
+        .filter_map(|(at, tag)| (tag == b"tfhd").then_some(at))
+        .nth(fragment)
+        .unwrap();
+    let moof = bytes[..header]
+        .windows(4)
+        .rposition(|tag| tag == b"moof")
+        .unwrap();
+    let traf = bytes[..header]
+        .windows(4)
+        .rposition(|tag| tag == b"traf")
+        .unwrap();
+    let data = header
+        + bytes[header..]
+            .windows(4)
+            .position(|tag| tag == b"mdat")
+            .unwrap()
+        + 4;
+    let added = 8 + flags.map_or(0, |_| 4) + padding.len();
+    let mut tail = u64::try_from(data + added).unwrap().to_be_bytes().to_vec();
+    if let Some(flags) = flags {
+        tail.extend(flags.to_be_bytes());
+    }
+    tail.extend(padding);
+    for tag in [header, moof, traf] {
+        let size = u32::from_be_bytes(bytes[tag - 4..tag].try_into().unwrap());
+        bytes[tag - 4..tag].copy_from_slice(&(size + u32::try_from(added).unwrap()).to_be_bytes());
+    }
+    bytes[header + 4..header + 8]
+        .copy_from_slice(&(if flags.is_some() { 33_u32 } else { 1 }).to_be_bytes());
+    bytes.splice(header + 12..header + 12, tail);
+    let run = header
+        + bytes[header..]
+            .windows(4)
+            .position(|tag| tag == b"trun")
+            .unwrap();
+    bytes[run + 12..run + 16].fill(0);
+    (bytes, header + 7)
+}
+

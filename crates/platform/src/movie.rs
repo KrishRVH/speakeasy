@@ -8,6 +8,7 @@ use std::{
 };
 
 use async_channel::{Receiver, Sender};
+use speakeasy_show::MoviePrefix;
 
 /// A decoded video sample. Pixel rows are top-down, tightly packed opaque BGRA.
 pub struct MovieFrame {
@@ -33,6 +34,8 @@ impl std::fmt::Debug for MovieFrame {
 ///
 /// The caller must first validate the file's
 /// silent single-track container and canvas, using the same open file handle.
+/// `prefix` comes from that validation. macOS requests its selected predecessor exactly;
+/// Windows seeks to `at` and checks the decoded timestamp.
 ///
 /// Runs blocking native work on the calling background thread. Cancellation is checked between
 /// native calls; a blocked codec must finish before this returns and releases all its resources.
@@ -40,21 +43,24 @@ impl std::fmt::Debug for MovieFrame {
 ///
 /// # Errors
 /// Rejects changed file length, canvas mismatch, invalid samples, and native decoder failure.
-/// Currently supported on Windows; other hosts report unavailability without opening a decoder.
+/// Supported on Windows and macOS; other hosts report unavailability without opening a decoder.
 pub fn read_movie_frame(
     file: std::fs::File,
-    bytes: u64,
-    size: [u32; 2],
+    prefix: &MoviePrefix,
     at: std::time::Duration,
     cancelled: impl Fn() -> bool,
 ) -> anyhow::Result<Option<MovieFrame>> {
     anyhow::ensure!(
-        file.metadata()?.len() == bytes && (1..=1 << 30).contains(&bytes),
+        file.metadata()?.len() == prefix.bytes
+            && (1..=MoviePrefix::FILE_LIMIT).contains(&prefix.bytes),
         "Movie changed; refresh the Show before reading it"
     );
     anyhow::ensure!(
-        size.into_iter()
+        prefix
+            .size
+            .into_iter()
             .all(|edge| (2..=2560).contains(&edge) && edge.is_multiple_of(2))
+            && at <= prefix.duration
             && at <= std::time::Duration::from_secs(300),
         "Movie frame request is out of range"
     );
@@ -63,12 +69,30 @@ pub fn read_movie_frame(
     }
     #[cfg(target_os = "windows")]
     {
-        crate::windows::read_movie_frame(file, size, at, &cancelled)
+        crate::windows::read_movie_frame(file, prefix.size, at, &cancelled)
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    {
+        use anyhow::Context as _;
+        let index = prefix
+            .samples()
+            .partition_point(|sample| sample.at <= at)
+            .saturating_sub(1);
+        let sample = prefix
+            .samples()
+            .get(index)
+            .context("Movie has no retained sample")?;
+        anyhow::ensure!(
+            (1..=1_000_000_000).contains(&prefix.timescale)
+                && sample.ticks <= u64::from(prefix.timescale).saturating_mul(360),
+            "Movie sample timestamp is out of range"
+        );
+        crate::macos::movie::frame(file, prefix, (sample.ticks, prefix.timescale), &cancelled)
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         anyhow::bail!(
-            "Video frame decoding is currently available on Windows. Open recording.mp4 in your system player."
+            "Video frame decoding is available on Windows and macOS. Open recording.mp4 in your system player."
         )
     }
 }
@@ -292,13 +316,104 @@ impl MovieTarget {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::{
         future::Future as _,
         task::{Context, Waker},
     };
 
     use super::*;
+
+    #[cfg(target_os = "windows")]
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "Fixture dimensions are fixed to SD or HD and all coordinates fit usize"
+    )]
+    pub(crate) fn color_frame(index: usize, size: [u32; 2]) -> crate::Frame {
+        assert!(matches!(size, [320, 240] | [1280, 720]));
+        let [width, height] = size.map(|edge| usize::try_from(edge).unwrap());
+        let mut bgra = Vec::with_capacity(width * height * 4);
+        let blue = if index.is_multiple_of(2) { 20 } else { 230 };
+        for row in 0..height {
+            for column in 0..width {
+                let (x, y) = (column * 320 / width, row * 240 / height);
+                let color = if (100..220).contains(&x) && (80..160).contains(&y) {
+                    [blue, 80, 150]
+                } else {
+                    match (x >= 160, y >= 120) {
+                        (false, false) => [20, 30, 230],
+                        (true, false) => [30, 220, 20],
+                        (false, true) => [220, 20, 30],
+                        (true, true) => [180, 180, 180],
+                    }
+                };
+                let color = match (size, x, y) {
+                    ([1280, 720], 180..220, 180..220) => [64; 3],
+                    ([1280, 720], 230..270, 180..220) => [128; 3],
+                    _ => color,
+                };
+                bgra.extend(color);
+                bgra.push(255);
+            }
+        }
+        crate::Frame {
+            at: Instant::now(),
+            width: size[0],
+            height: size[1],
+            bgra,
+            part: crate::Part::WHOLE,
+        }
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "Synthetic fixture coordinates and dimensions are fixed and fit usize"
+    )]
+    pub(crate) fn check_colors(frame: &MovieFrame, index: usize) {
+        assert!(matches!(frame.size, [320, 240] | [1280, 720]));
+        let [width, height] = frame.size.map(|edge| usize::try_from(edge).unwrap());
+        assert_eq!(frame.bgra.len(), width * height * 4);
+        assert!(
+            frame
+                .bgra
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .all(|pixel| pixel[3] == 255)
+        );
+        for (x, y, expected) in [
+            (20, 20, [20, 30, 230]),
+            (300, 20, [30, 220, 20]),
+            (20, 220, [220, 20, 30]),
+            (300, 220, [180, 180, 180]),
+            (
+                160,
+                120,
+                [if index.is_multiple_of(2) { 20 } else { 230 }, 80, 150],
+            ),
+        ] {
+            let start = ((y * height / 240) * width + x * width / 320) * 4;
+            assert!(
+                frame.bgra[start..start + 3]
+                    .iter()
+                    .zip(expected)
+                    .all(|(actual, expected)| actual.abs_diff(expected) < 12),
+                "Synthetic pixel at ({x}, {y}) changed color, orientation, or sample"
+            );
+        }
+        if frame.size == [1280, 720] {
+            for (x, shade) in [(200, 64_u8), (250, 128)] {
+                let start = ((200 * height / 240) * width + x * width / 320) * 4;
+                assert!(
+                    frame.bgra[start..start + 3]
+                        .iter()
+                        .all(|value| value.abs_diff(shade) < 12),
+                    "HD neutral midtone changed its transfer or range"
+                );
+            }
+        }
+    }
 
     #[tokio::test]
     async fn the_session_deadline_cancels_an_unused_target_without_releasing_its_lease() {

@@ -272,15 +272,16 @@ module unless a test file is named.
   keeps preview storage alive until completion. Recovery enters the session owner's shielded
   publication stage through a bounded request lane, without microphone, inference, or clipboard
   work. The [video timeline](../crates/app/src/show/review/timeline.rs) uses complete fragment
-  sample times for stepping and seeking. Lookups and captions preserve the decoder's 100 ns clock;
-  Evidence copying emits a retrieval query only when a whole millisecond lies inside the displayed
-  sample. During seeking, the previous video image stays visible and copying is disabled.
-  [review/tests.rs](../crates/app/src/show/review/tests.rs) checks navigation, damage, and private
-  text boundaries. Opt-in [native_tests.rs](../crates/app/src/show/review/native_tests.rs) exercises
-  the real view with synthetic files, including rendering on a private Linux display, retention
-  actions, stale completion notices, and cleanup on close. Retention writes run off the UI thread
-  and stay bound to their original Show; activation rereads the summary and pin. The shell supplies
-  copy availability and routes accepted writes and recovery while the view owns result receipts.
+  sample times for stepping and seeking. Lookups and captions preserve the decoder's clock: 100 ns
+  on Windows and nanoseconds on macOS; Evidence copying emits a retrieval query only when a whole
+  millisecond lies inside the displayed sample. During seeking, the previous video image stays
+  visible and copying is disabled. [review/tests.rs](../crates/app/src/show/review/tests.rs) checks
+  navigation, damage, and private text boundaries. Opt-in
+  [native_tests.rs](../crates/app/src/show/review/native_tests.rs) exercises the real view with
+  synthetic files, including rendering on a private Linux display, retention actions, stale
+  completion notices, and cleanup on close. Retention writes run off the UI thread and stay bound to
+  their original Show; activation rereads the summary and pin. The shell supplies copy availability
+  and routes accepted writes and recovery while the view owns result receipts.
   [copy.rs](../crates/app/src/show/copy.rs) owns explicit review/tray copies through native cleanup.
   It retains the displayed image snapshot, reads or encodes off the UI thread, and rejects dropped
   receipts, lifecycle cancellation, and any newer input generation before native replacement. Copies
@@ -413,7 +414,12 @@ module unless a test file is named.
   capture and held output. Windows Shows save this video beside their sampled lossless frames; Mac
   Shows currently retain only sampled frames. [show/src/movie.rs](../crates/show/src/movie.rs)
   validates bounded, single-track fragment metadata and returns only the complete prefix. It checks
-  sample byte ranges and timing, not compressed picture decoding.
+  sample byte ranges and timing, not compressed picture decoding. Inspection also identifies Media
+  Foundation's undeclared fragment-header padding. Publication, ZIP export, and Mac reads declare
+  that zero word as a default size only when every affected sample has an explicit size and no later
+  header field can change meaning. This changes one flag byte per affected fragment; picture bytes,
+  timestamps, offsets, and the source file stay intact. Legacy bundles receive the same correction
+  during Mac reads without an on-disk migration.
   [store/movie.rs](../crates/app/src/show/store/movie.rs) copies that prefix from the validated
   handle before publication commits, records the separate annotation horizon, and checks finalized
   native timing against the fragments. Failed copy or sync preserves the checkpoint. A missing or
@@ -424,17 +430,23 @@ module unless a test file is named.
   not authenticate MP4 bytes. A damaged journal retains geometry only through the last complete
   change’s first sample, clipping against surviving video after computing this bound. Missing
   geometry preserves uncropped video. ZIP export also copies the validated handle and metadata
-  snapshot. The viewer offers Windows video scrubbing, switchable saved annotations, and playback in
-  the system player. [draw/video.rs](../crates/show/src/draw/video.rs) renders only observed ink
-  prefixes, completed marks, and completed actions whose coordinate proofs match the decoded sample.
-  Pins retain their actual observation time; action proofs include the release position. Missing
-  legacy proofs are omitted. Continuous cut segments expire together. This saved-view policy does
-  not reconstruct live overlay fades. A text-free immutable annotation snapshot serves repeated
-  previews; completed pixels carry their rendering status through seeks and toggles. Explicit
-  `show frame --video` queries use the [native reader](../crates/platform/src/windows/movie/read.rs)
-  on Windows. Validation and decoding share one open file with writes denied. The synchronous reader
-  releases its decoder and native I/O before returning; cancellation is checked between native
-  calls. It checks canvas and buffer bounds and returns top-down opaque BGRA with the actual decoded
+  snapshot. The viewer offers Windows and macOS video scrubbing, switchable saved annotations, and
+  playback in the system player. [draw/video.rs](../crates/show/src/draw/video.rs) renders only
+  observed ink prefixes, completed marks, and completed actions whose coordinate proofs match the
+  decoded sample. Pins retain their actual observation time; action proofs include the release
+  position. Missing legacy proofs are omitted. Continuous cut segments expire together. This
+  saved-view policy does not reconstruct live overlay fades. A text-free immutable annotation
+  snapshot serves repeated previews; completed pixels carry their rendering status through seeks and
+  toggles. Explicit `show frame --video` queries use the
+  [native reader](../crates/platform/src/windows/movie/read.rs) on Windows and the
+  [Mac image generator](../crates/platform/src/macos/movie.rs) on macOS. Validation and decoding
+  share one open file; Windows also denies other writers. Mac reads that handle through a private
+  resource loader, rejects external references, and closes the lease after active reads finish. The
+  validated sample table retains exact ticks alongside display timestamps; Mac requests its selected
+  predecessor without rounding and verifies the actual rational time. Encoded pixels exclude track
+  transforms and aperture cropping. Both readers release native I/O before returning; cancellation
+  is checked between native calls and Mac waits for image-generation completion after cancelling.
+  Canvas and buffer bounds are checked, and output is top-down opaque BGRA with the actual decoded
   timestamp. The [video command](../crates/app/src/show/command/source/video.rs) reports
   session-relative time and separate annotation coverage, including recovered tails. `--annotated`
   shares the preview renderer at the exact decoded session time, reports omitted primitives, and
@@ -445,6 +457,14 @@ module unless a test file is named.
   direction, orientation, cancellation, file replacement, and exports beyond the annotation journal.
   Synthetic encoder checks decode irregular captures sample by sample, reject future images, and
   exercise quiet fragments, same-tick coalescing, cancellation, and partial progress after a stall.
+
+  Windows converts sRGB RGB32 through an explicit
+  [native processor](../crates/platform/src/windows/movie/convert.rs) into limited-range BT.709
+  NV12; the H.264 stream carries matching primaries, transfer, matrix, and range. Hidden sink-writer
+  converters are disabled. Progressive conversion returns one sample with unchanged timing per input
+  and no delayed output at finalization. The Windows reader requests sRGB output and disables
+  frame-rate conversion so color processing cannot synthesize timestamps.
+
 - **Scripts and packaging**: [scripts/](../scripts) and [packaging/](../packaging) profile, check,
   package, and launch the app, [app/build.rs](../crates/app/build.rs) embeds the Windows resources,
   and `mise run hygiene` runs [check_repository.py](../scripts/check_repository.py).

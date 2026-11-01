@@ -1,6 +1,11 @@
 //! Opt-in decoding checks use only the synthetic encoder fixtures, including recovered prefixes.
 
-use std::{fs::OpenOptions, os::windows::fs::OpenOptionsExt as _, path::PathBuf};
+use std::{
+    fs::OpenOptions,
+    io::{Read as _, Seek as _},
+    os::windows::fs::OpenOptionsExt as _,
+    path::PathBuf,
+};
 
 use super::*;
 
@@ -33,15 +38,16 @@ fn recovered_movie_seeks_preserve_pixels_time_and_file_ownership() -> anyhow::Re
     for name in ["moving.mp4", "held.mp4", "capped-closed.mp4"] {
         let path = directory.join(name);
         let decode = |ms, cancelled: &dyn Fn() -> bool| {
-            let file = File::open(&path)?;
+            let mut file = File::open(&path)?;
             let bytes = file.metadata()?.len();
-            crate::read_movie_frame(
-                file,
-                bytes,
-                [1280, 720],
-                Duration::from_millis(ms),
-                cancelled,
-            )
+            let prefix = speakeasy_show::MoviePrefix::read::<anyhow::Error>(bytes, |range| {
+                file.seek(std::io::SeekFrom::Start(range.start))?;
+                let mut bytes =
+                    vec![0; usize::try_from(range.end.checked_sub(range.start).unwrap())?];
+                file.read_exact(&mut bytes)?;
+                Ok(bytes)
+            })?;
+            crate::read_movie_frame(file, &prefix, Duration::from_millis(ms), cancelled)
         };
         for ms in [3500, 0, 1505, 3999] {
             let frame = decode(ms, &|| false)?.context("Synthetic read was cancelled")?;

@@ -323,19 +323,19 @@ impl Detail {
                             .iter()
                             .copied()
                             .enumerate()
-                            .map(|(index, at)| Frame {
+                            .map(|(index, sample)| Frame {
                                 number: index.saturating_add(1),
                                 at: Moment::from_millis(metadata.origin_ms.saturating_add(
-                                    u64::try_from(at.as_millis()).unwrap_or(u64::MAX),
+                                    u64::try_from(sample.at.as_millis()).unwrap_or(u64::MAX),
                                 )),
                                 marker: String::new(),
                                 file: crate::show::preview::Content::Video {
-                                    span: at..inspected
-                                        .prefix
-                                        .samples()
-                                        .get(index.saturating_add(1))
-                                        .copied()
-                                        .unwrap_or(inspected.prefix.duration),
+                                    span: sample.at
+                                        ..inspected
+                                            .prefix
+                                            .samples()
+                                            .get(index.saturating_add(1))
+                                            .map_or(inspected.prefix.duration, |sample| sample.at),
                                     annotations,
                                     scene: scene.clone(),
                                 },

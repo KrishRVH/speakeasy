@@ -2,6 +2,7 @@
 //! this writer. The checkpoint lease outlives native teardown, including failed finalization.
 
 mod canvas;
+mod convert;
 mod encoder;
 mod file;
 mod foundation;

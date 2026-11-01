@@ -113,8 +113,12 @@ impl Sample {
 }
 
 pub(crate) fn decoder_time(at: Duration) -> Duration {
-    // Windows decoding reports sample times in 100 ns units.
-    at.saturating_sub(Duration::from_nanos(u64::from(at.subsec_nanos() % 100)))
+    if cfg!(target_os = "macos") {
+        at
+    } else {
+        // Media Foundation reports sample times in 100 ns units; Linux fixtures use that clock.
+        at.saturating_sub(Duration::from_nanos(u64::from(at.subsec_nanos() % 100)))
+    }
 }
 
 impl Reading {
@@ -159,13 +163,8 @@ impl Reading {
                 .context("Movie has no published coverage")?
                 .annotations_through_ms,
         );
-        let Some(frame) = speakeasy_platform::read_movie_frame(
-            self.file,
-            self.movie.prefix.bytes,
-            self.movie.metadata.size,
-            at,
-            cancelled,
-        )?
+        let prefix = &self.movie.prefix;
+        let Some(frame) = speakeasy_platform::read_movie_frame(self.file, prefix, at, cancelled)?
         else {
             return Ok(None);
         };

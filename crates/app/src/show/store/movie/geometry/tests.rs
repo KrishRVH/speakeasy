@@ -154,7 +154,10 @@ fn crops_use_the_decoded_sample_and_expand_inside_content_instead_of_letterboxin
             },
         ],
     });
-    assert_eq!(movie.prefix.samples()[1], Duration::from_nanos(33_333_333));
+    assert_eq!(
+        movie.prefix.samples()[1].at,
+        Duration::from_nanos(33_333_333)
+    );
     let pixels: Vec<_> = (0..240)
         .flat_map(|_| (0..320).flat_map(|x| [u8::try_from(x % 256).unwrap(), 50, 90, 255]))
         .collect();
@@ -177,7 +180,11 @@ fn crops_use_the_decoded_sample_and_expand_inside_content_instead_of_letterboxin
             part: Rect::from([0.25, 0.0, 0.75, 1.0]),
         })
     };
-    let (cropped, rect) = crop(&movie, frame(Duration::from_nanos(33_333_300)), bounds())?;
+    let (cropped, rect) = crop(
+        &movie,
+        frame(super::super::decoder_time(Duration::from_nanos(33_333_333))),
+        bounds(),
+    )?;
     assert_eq!(
         rect,
         Some(PixelRect {
@@ -190,9 +197,21 @@ fn crops_use_the_decoded_sample_and_expand_inside_content_instead_of_letterboxin
     let expected = Image::from_bgra(320, 240, pixels.clone())?.cropped(80, 0, 32, 48)?;
     assert_eq!(cropped.encode_png()?, expected.encode_png()?);
     assert!(crop(&movie, frame(Duration::ZERO), bounds()).is_err());
-    assert!(crop(&movie, frame(Duration::from_nanos(33_333_333)), bounds()).is_err());
+    let wrong_clock = if cfg!(target_os = "macos") {
+        33_333_300
+    } else {
+        33_333_333
+    };
+    assert!(crop(&movie, frame(Duration::from_nanos(wrong_clock)), bounds()).is_err());
     movie.metadata.geometry.as_mut().unwrap().through = 1;
-    assert!(crop(&movie, frame(Duration::from_nanos(33_333_300)), bounds()).is_err());
+    assert!(
+        crop(
+            &movie,
+            frame(super::super::decoder_time(Duration::from_nanos(33_333_333))),
+            bounds()
+        )
+        .is_err()
+    );
     movie.metadata.geometry = None;
     assert!(crop(&movie, frame(Duration::ZERO), bounds()).is_err());
     let (raw, rect) = crop(&movie, frame(Duration::ZERO), None)?;

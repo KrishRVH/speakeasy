@@ -4,6 +4,7 @@
 //! The tap's run-loop thread creates and removes every native resource its callbacks reach.
 
 mod clipboard;
+pub(crate) mod movie;
 pub(crate) mod screen;
 use std::{
     cell::OnceCell,

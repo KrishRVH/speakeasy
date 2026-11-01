@@ -374,18 +374,21 @@ impl Review {
                             )
                             .child("All retained frames"),
                         )
-                        .when(cfg!(target_os = "windows"), |bar| {
-                            bar.child(
-                                button(
-                                    Action::Mode(Mode::Video),
-                                    palette,
-                                    detail.movie.is_some(),
-                                    self.mode == Mode::Video,
-                                    cx,
+                        .when(
+                            cfg!(any(target_os = "windows", target_os = "macos")),
+                            |bar| {
+                                bar.child(
+                                    button(
+                                        Action::Mode(Mode::Video),
+                                        palette,
+                                        detail.movie.is_some(),
+                                        self.mode == Mode::Video,
+                                        cx,
+                                    )
+                                    .child("Video"),
                                 )
-                                .child("Video"),
-                            )
-                        })
+                            },
+                        )
                         .when(self.mode == Mode::Video, |bar| {
                             bar.child(
                                 button(

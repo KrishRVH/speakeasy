@@ -51,7 +51,7 @@ pub use crate::{
     },
     marks::{Mark, Shape},
     moment::{Moment, Span},
-    movie::{MovieError, MoviePrefix},
+    movie::{MovieCompatibility, MovieError, MoviePrefix, MovieSample},
     recording::{
         Action, EmptyStroke, Ending, InkPoint, Narration, NarrationLoss, Pin, Recording, Size,
         Spaces, Stroke, Word,

@@ -78,10 +78,15 @@ impl<'a> Fields<'a> {
     }
 }
 
-type Child<'a> = ([u8; 4], &'a [u8]);
+pub(super) struct Child<'a> {
+    pub kind: [u8; 4],
+    pub bytes: &'a [u8],
+    pub payload: u64,
+}
 
 pub(super) fn children(mut bytes: &[u8]) -> Result<Vec<Child<'_>>, MovieError> {
     let mut found = Vec::new();
+    let mut position = 0_u64;
     while !bytes.is_empty() {
         require(
             found.len() < 64,
@@ -99,20 +104,28 @@ pub(super) fn children(mut bytes: &[u8]) -> Result<Vec<Child<'_>>, MovieError> {
             .checked_sub(header)
             .and_then(|length| usize::try_from(length).ok())
             .ok_or(MovieError::Invalid("Movie child box length is invalid"))?;
-        found.push((kind, fields.take(payload)?));
+        found.push(Child {
+            kind,
+            bytes: fields.take(payload)?,
+            payload: position.saturating_add(header),
+        });
         bytes = fields.rest();
+        position = position.saturating_add(length);
     }
     Ok(found)
 }
 
-pub(super) fn child<'a>(boxes: &[Child<'a>], kind: [u8; 4]) -> Result<&'a [u8], MovieError> {
-    let mut matching = boxes.iter().filter(|(candidate, _)| *candidate == kind);
-    let (_, bytes) = matching.next().ok_or(MovieError::Invalid(
+pub(super) fn child<'a, 'b>(
+    boxes: &'b [Child<'a>],
+    kind: [u8; 4],
+) -> Result<&'b Child<'a>, MovieError> {
+    let mut matching = boxes.iter().filter(|candidate| candidate.kind == kind);
+    let found = matching.next().ok_or(MovieError::Invalid(
         "Movie metadata is missing a required box",
     ))?;
     require(
         matching.next().is_none(),
         "Movie metadata repeats a required box",
     )?;
-    Ok(bytes)
+    Ok(found)
 }

@@ -6,6 +6,14 @@ on:
         description: Build and test the Windows installer on the disposable runner
         type: boolean
         default: false
+      movie:
+        description: Check native movie playback and Windows-to-Mac colors with synthetic files
+        type: boolean
+        default: false
+      movie_fixture_run:
+        description: Reuse synthetic Windows movies from this run for a focused Mac decoder check
+        type: string
+        default: ''
   push:
     branches: [main]
 
@@ -20,6 +28,7 @@ concurrency:
 # without their SDKs, so its code for those systems compiles and runs here.
 jobs:
   native:
+    if: ${{ !inputs.movie || !inputs.movie_fixture_run }}
     strategy:
       fail-fast: false
       matrix:
@@ -35,6 +44,28 @@ jobs:
         with:
           key: check-${{ matrix.os }}
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Check macOS movie playback
+        if: runner.os == 'macOS' && inputs.movie
+        timeout-minutes: 10
+        run: |
+          brew install ffmpeg
+          bash scripts/check-movie-macos.sh
+      - name: Encode a Windows movie for color acceptance
+        if: runner.os == 'Windows' && inputs.movie
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          New-Item -ItemType Directory -Path artifacts/movie -Force | Out-Null
+          $env:SPEAKEASY_MOVIE_PROBE_DIRECTORY = Join-Path $PWD 'artifacts/movie'
+          cargo test --locked -p speakeasy-platform native_movie_color_interoperability -- --ignored --nocapture --test-threads=1
+          if ($LASTEXITCODE -ne 0) { throw 'Native movie color acceptance failed.' }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: runner.os == 'Windows' && inputs.movie
+        with:
+          name: windows-movie
+          path: artifacts/movie/*.mp4
+          if-no-files-found: error
+          retention-days: 1
       - run: mise run rust:test
       - name: Build the Windows installer for acceptance
         if: runner.os == 'Windows' && inputs.installer
@@ -52,3 +83,31 @@ jobs:
           gh release download v0.6.0 --pattern speakeasy-windows-x64.zip --dir artifacts/previous
           if ($LASTEXITCODE -ne 0) { throw 'Could not fetch the previous released app fixture.' }
           ./scripts/check-installer.ps1 -Installer artifacts/speakeasy-windows-x64-setup.exe -PreviousArchive artifacts/previous/speakeasy-windows-x64.zip
+
+  movie-colors:
+    if: ${{ always() && inputs.movie && (needs.native.result == 'success' || inputs.movie_fixture_run != '') }}
+    needs: native
+    runs-on: macos-15
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        with:
+          version: 2026.10.15
+          install_args: rust
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: check-macos-15
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: windows-movie
+          path: artifacts/movie
+          run-id: ${{ inputs.movie_fixture_run || github.run_id }}
+          github-token: ${{ github.token }}
+      - name: Decode the Windows movie on macOS
+        timeout-minutes: 5
+        run: |
+          export SPEAKEASY_WINDOWS_MOVIE="$PWD/artifacts/movie/windows.mp4"
+          cargo test --locked -p speakeasy-platform native_windows_movie_preserves_colors_on_macos -- --ignored --nocapture --test-threads=1

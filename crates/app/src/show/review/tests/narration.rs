@@ -240,7 +240,11 @@ fn a_video_reference_requests_inside_the_displayed_sample_instead_of_rounding_in
             scene: None,
         },
     };
-    let at = Duration::from_nanos(283_333_300);
+    let at = Duration::from_nanos(if cfg!(target_os = "macos") {
+        283_333_333
+    } else {
+        283_333_300
+    });
     let text = pointer(
         std::path::Path::new("synthetic"),
         &frame,
@@ -282,17 +286,18 @@ fn a_video_reference_requests_inside_the_displayed_sample_instead_of_rounding_in
         annotations: Moment::from_millis(1000),
         scene: None,
     };
-    assert!(
-        !pointer(
-            std::path::Path::new("synthetic"),
-            &frame,
-            Mode::Video,
-            None,
-            Duration::from_micros(99_500),
-            crate::show::store::movie::AnnotationState::Off,
-        )
-        .contains("--at"),
-        "A query at the decoder's next sample boundary selected the wrong frame"
+    let reference = pointer(
+        std::path::Path::new("synthetic"),
+        &frame,
+        Mode::Video,
+        None,
+        Duration::from_micros(99_500),
+        crate::show::store::movie::AnnotationState::Off,
+    );
+    assert_eq!(
+        reference.contains("--at"),
+        cfg!(target_os = "macos"),
+        "Only the nanosecond clock keeps the next sample strictly beyond 100 ms"
     );
 }
 #[test]
@@ -342,8 +347,12 @@ fn video_seeking_and_request_captions_preserve_submillisecond_order() -> anyhow:
     };
     assert_eq!(
         detail.locate(Moment::from_millis(284)),
-        Some((1, Relation::At)),
-        "Navigation disagreed with the decoder's 100 ns clock"
+        if cfg!(target_os = "macos") {
+            Some((0, Relation::Earlier(Duration::from_millis(34))))
+        } else {
+            Some((1, Relation::At))
+        },
+        "Navigation disagreed with the platform decoder's clock"
     );
     Ok(())
 }

@@ -2,11 +2,13 @@
 //! pairs survive recovery. Container durations and final indexes cannot establish surviving frames.
 
 mod atoms;
+mod compatibility;
 mod initialization;
 
 use std::{fmt, ops::Range, time::Duration};
 
 use atoms::{Atom, Fields, child, children, require};
+pub use compatibility::MovieCompatibility;
 use initialization::Track;
 
 const HEADER_LIMIT: u64 = 1 << 20;
@@ -39,7 +41,7 @@ impl std::error::Error for MovieError {}
 /// decoding. A native decoder can still reject damaged compressed image bytes.
 #[derive(Clone, Debug)]
 pub struct MoviePrefix {
-    /// Copy exactly this many bytes, starting at zero, to recover the surviving fragments.
+    /// Copy this many bytes from zero, applying `compatibility()`, to recover surviving fragments.
     pub bytes: u64,
     /// Encoded width and height, before any player scaling.
     pub size: [u32; 2],
@@ -47,9 +49,21 @@ pub struct MoviePrefix {
     pub duration: Duration,
     /// Number of samples in complete fragments, including held images produced by the codec.
     pub frames: u32,
-    samples: Vec<Duration>,
+    /// Ticks per second in the validated video track.
+    pub timescale: u32,
+    samples: Vec<MovieSample>,
+    compatibility: MovieCompatibility,
     /// A malformed or incomplete fragment follows the surviving prefix.
     pub truncated: bool,
+}
+
+/// One validated presentation time, retaining the exact native value beside its display clock.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MovieSample {
+    /// Presentation time rounded down to nanoseconds for navigation and display.
+    pub at: Duration,
+    /// Exact presentation ticks in the containing prefix's timescale.
+    pub ticks: u64,
 }
 
 impl MoviePrefix {
@@ -58,13 +72,19 @@ impl MoviePrefix {
 
     /// Presentation times of complete surviving samples, relative to the movie's zero origin.
     #[must_use]
-    pub fn samples(&self) -> &[Duration] {
+    pub fn samples(&self) -> &[MovieSample] {
         &self.samples
+    }
+
+    /// Offset-preserving header corrections proved safe by this container inspection.
+    #[must_use]
+    pub const fn compatibility(&self) -> &MovieCompatibility {
+        &self.compatibility
     }
 
     /// Reads bounded metadata ranges from a silent, single-track fragmented AVC MP4. `read` must
     /// return exactly the requested bytes. The returned prefix excludes optional final indexes;
-    /// preserving byte offsets allows copying without rewriting fragment tables. Picture decoding
+    /// compatibility corrections preserve byte offsets and sample tables. Picture decoding
     /// remains the player's responsibility. Reordered presentation timestamps are unsupported.
     ///
     /// # Errors
@@ -85,7 +105,9 @@ impl MoviePrefix {
             size: track.size,
             duration: Duration::ZERO,
             frames: 0,
+            timescale: track.timescale,
             samples: Vec::new(),
+            compatibility: MovieCompatibility::default(),
             truncated: false,
         };
         let mut decoded = 0_u64;
@@ -121,7 +143,15 @@ impl MoviePrefix {
                 break;
             }
             let bytes = input.bytes(atom.payload..atom.end)?;
-            let fragment = match fragment(&bytes, position, &data, &track, sequence, decoded) {
+            let fragment = match fragment(
+                &bytes,
+                atom.payload,
+                position,
+                &data,
+                &track,
+                sequence,
+                decoded,
+            ) {
                 Ok(fragment) => fragment,
                 Err(error) => {
                     if result.frames == 0 {
@@ -139,8 +169,14 @@ impl MoviePrefix {
             decoded = fragment.decoded;
             presented = presented.max(fragment.presented);
             result.frames = frames;
+            if let Some(flag) = fragment.compatibility {
+                result.compatibility.headers.push(flag);
+            }
             for at in fragment.times {
-                result.samples.push(duration(at, track.timescale)?);
+                result.samples.push(MovieSample {
+                    at: duration(at, track.timescale)?,
+                    ticks: at,
+                });
             }
             result.bytes = data.end;
             position = data.end;
@@ -277,10 +313,12 @@ struct Fragment {
     decoded: u64,
     presented: u64,
     times: Vec<u64>,
+    compatibility: Option<u64>,
 }
 
 fn fragment(
     bytes: &[u8],
+    payload: u64,
     start: u64,
     data: &Atom,
     track: &Track,
@@ -288,17 +326,19 @@ fn fragment(
     decoded: u64,
 ) -> Result<Fragment, MovieError> {
     let boxes = children(bytes)?;
-    let mut header = Fields::new(child(&boxes, *b"mfhd")?);
+    let mut header = Fields::new(child(&boxes, *b"mfhd")?.bytes);
     require(
         header.word()? == 0 && header.word()? == sequence && header.empty(),
         "Movie fragment sequence is invalid",
     )?;
     require(
-        boxes.iter().filter(|(kind, _)| kind == b"traf").count() == 1,
+        boxes.iter().filter(|part| part.kind == *b"traf").count() == 1,
         "Movie must contain one fragment track",
     )?;
-    let parts = children(child(&boxes, *b"traf")?)?;
-    let mut header = Fields::new(child(&parts, *b"tfhd")?);
+    let track_box = child(&boxes, *b"traf")?;
+    let parts = children(track_box.bytes)?;
+    let header_box = child(&parts, *b"tfhd")?;
+    let mut header = Fields::new(header_box.bytes);
     let flags = header.word()?;
     require(
         flags & !0x0002_003B == 0 && header.word()? == track.id,
@@ -341,9 +381,15 @@ fn fragment(
         decoded,
         presented: decoded,
         times: Vec::new(),
+        compatibility: (flags == 1 && header.rest() == [0; 4]).then_some(
+            payload
+                .saturating_add(track_box.payload)
+                .saturating_add(header_box.payload)
+                .saturating_add(3),
+        ),
     };
-    if parts.iter().any(|(kind, _)| kind == b"tfdt") {
-        let mut time = Fields::new(child(&parts, *b"tfdt")?);
+    if parts.iter().any(|part| part.kind == *b"tfdt") {
+        let mut time = Fields::new(child(&parts, *b"tfdt")?.bytes);
         let at = match time.word()? {
             0 => u64::from(time.word()?),
             0x0100_0000 => time.wide()?,
@@ -355,10 +401,13 @@ fn fragment(
         )?;
     }
     let mut next = data.payload;
-    let runs = parts.iter().filter(|(kind, _)| kind == b"trun");
-    for (_, bytes) in runs {
-        let mut run = Fields::new(bytes);
+    let runs = parts.iter().filter(|part| part.kind == *b"trun");
+    for part in runs {
+        let mut run = Fields::new(part.bytes);
         let flags = run.word()?;
+        if flags & 0x200 == 0 {
+            result.compatibility = None;
+        }
         require(
             flags & !0x0100_0F05 == 0,
             "Movie sample table flags are unsupported",

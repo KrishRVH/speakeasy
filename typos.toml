@@ -1,6 +1,10 @@
 [default]
 locale = "en-us"
 
+[default.extend-identifiers]
+# FFmpeg's H.264 bitstream-filter option.
+colour_primaries = "colour_primaries"
+
 [default.extend-words]
 # Emulated Input Server is the native portal/libei interface name.
 EIS = "EIS"
