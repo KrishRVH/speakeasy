@@ -1,6 +1,13 @@
 #![forbid(unsafe_code)]
 
-use std::{fs, path::Path, process::Command};
+use std::{
+    fs,
+    io::Write as _,
+    path::Path,
+    process::{Command, Stdio},
+};
+
+use serde_json::{Value, json};
 
 const CLI: &str = env!("CARGO_BIN_EXE_speakeasy-cli");
 const APP: &str = env!("CARGO_BIN_EXE_speakeasy");
@@ -77,4 +84,128 @@ fn an_isolated_console_entry_never_launches_the_app_for_help_or_invalid_options(
             .unwrap()
             .contains("extract the whole package")
     );
+}
+
+#[test]
+fn mcp_stdio_roundtrips_both_protocols_through_the_console_process() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let name = "Show ü & %OS%";
+    let directory = root.path().join(name);
+    fs::create_dir_all(directory.join("frames"))?;
+    let manifest = json!({
+        "version": 2, "duration": 1000, "surface": {"width": 2, "height": 2},
+        "strokes": [], "pins": [], "actions": [], "narration": {"words": []},
+        "marks": [], "keyframes": [{"index": 1, "at": 500, "reason": "middle", "marks": [0,0]}]
+    });
+    fs::write(directory.join("show.json"), serde_json::to_vec(&manifest)?)?;
+    let summary = "Public fixture: ü, \"quoted\" and a literal \\ path.\nSecond line.\n";
+    fs::write(directory.join("summary.md"), summary)?;
+    let png = speakeasy_show::Image::from_bgra(2, 2, [20, 40, 60, 255].repeat(4))?.encode_png()?;
+    fs::write(directory.join("contact-sheet.png"), &png)?;
+    fs::write(directory.join("frames/frame-01.png"), png)?;
+    for modern in [false, true] {
+        let first = if modern {
+            json!({"jsonrpc": "2.0", "id": 1, "method": "server/discover", "params": {}})
+        } else {
+            json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "public-process-fixture", "version": "1"}}})
+        };
+        let mut requests = vec![first];
+        if !modern {
+            requests.push(json!({"jsonrpc": "2.0", "method": "notifications/initialized"}));
+        }
+        requests.extend([
+            json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}),
+            json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "show_read", "arguments": {"show": name}}}),
+        ]);
+        if modern {
+            for request in &mut requests {
+                request["params"]["_meta"] = json!({
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                    "io.modelcontextprotocol/clientCapabilities": {}
+                });
+            }
+        }
+        let mut child = Command::new(CLI)
+            .current_dir(root.path())
+            .args(["show", "mcp", "--root", "."])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        {
+            let mut input = child.stdin.take().unwrap();
+            for request in requests {
+                serde_json::to_writer(&mut input, &request)?;
+                writeln!(input)?;
+            }
+        }
+        let result = child.wait_with_output()?;
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(result.stderr.is_empty());
+        let output = String::from_utf8(result.stdout)?;
+        let replies = output
+            .lines()
+            .map(serde_json::from_str::<Value>)
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(replies.len(), 3);
+        for (reply, id) in replies.iter().zip(1..=3) {
+            assert_eq!(reply["jsonrpc"], "2.0");
+            assert_eq!(reply["id"], id);
+            assert!(reply.get("error").is_none());
+        }
+        if modern {
+            assert_eq!(replies[0]["result"]["resultType"], "complete");
+        } else {
+            assert_eq!(replies[0]["result"]["protocolVersion"], "2025-11-25");
+        }
+        assert!(
+            replies[1]["result"]["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|tool| tool["name"] == "show_read")
+        );
+        assert_eq!(replies[2]["result"]["isError"], false);
+        let evidence: Value =
+            serde_json::from_str(replies[2]["result"]["content"][0]["text"].as_str().unwrap())?;
+        assert_eq!(evidence["summary"]["text"], summary);
+        assert_eq!(fs::read_to_string(directory.join("summary.md"))?, summary);
+    }
+    Ok(())
+}
+
+#[test]
+fn console_control_verbs_reach_the_app_and_preserve_json_exit_status_without_a_desktop()
+-> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let settings = root.path().join("isolated ü settings.json");
+    for arguments in [
+        vec!["status"],
+        vec!["dictation", "start", "--style", "snake"],
+        vec!["dictation", "stop", "0000000000000001-1"],
+        vec!["dictation", "cancel", "0000000000000001-1"],
+        vec!["paste-last"],
+        vec!["style", "verbatim"],
+        vec!["preset", "Public preset ü &"],
+    ] {
+        let output = Command::new(CLI)
+            .args(arguments)
+            .arg("--config")
+            .arg(&settings)
+            .output()?;
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stderr.is_empty());
+        let text = String::from_utf8(output.stdout)?;
+        assert_eq!(text.lines().count(), 1);
+        let reply: Value = serde_json::from_str(&text)?;
+        assert_eq!(reply["v"], 1);
+        assert_eq!(reply["result"], "unknown");
+        assert!(reply.get("status").is_none());
+    }
+    assert!(fs::read_dir(root.path())?.next().is_none());
+    Ok(())
 }
