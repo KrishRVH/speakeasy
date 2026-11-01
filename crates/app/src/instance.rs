@@ -123,8 +123,9 @@ impl Instance {
             },
         };
         let sent = (|| {
-            stream.write_all(&[CONTROL])?;
-            write_frame(&mut stream, &bytes)
+            let mut frame = vec![CONTROL];
+            write_frame(&mut frame, &bytes)?;
+            stream.write_all(&frame)
         })();
         if sent.is_err() {
             return Reply::unknown(CONTROL_OUTDATED);
@@ -270,6 +271,7 @@ enum Incoming {
 }
 
 fn handshake(stream: &mut TcpStream, nonce: u128) -> io::Result<Option<Incoming>> {
+    stream.set_nodelay(true)?;
     stream.set_write_timeout(Some(IO_TIMEOUT))?;
     let mut caller = Caller {
         stream,
@@ -399,6 +401,7 @@ fn connect(port_file: &Path) -> anyhow::Result<TcpStream> {
     let endpoint = Endpoint::read(port_file)?;
     let address = SocketAddr::from((Ipv4Addr::LOCALHOST, endpoint.port));
     let mut stream = TcpStream::connect_timeout(&address, IO_TIMEOUT).context(NOT_RUNNING)?;
+    stream.set_nodelay(true)?;
     stream.set_read_timeout(Some(IO_TIMEOUT))?;
     stream.set_write_timeout(Some(IO_TIMEOUT))?;
     stream.write_all(&endpoint.nonce.to_le_bytes())?;
