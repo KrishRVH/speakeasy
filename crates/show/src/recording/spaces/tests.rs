@@ -37,21 +37,25 @@ fn delayed_pins_follow_the_point_used_instead_of_the_tap_timestamp() {
     let recording = tracker.finish(ms(150));
     assert_eq!(recording.mark_part(&mark), Some(RESIZED));
     assert_eq!(recording.pins[0].point, Point::new(0.6, 0.7));
-    assert_eq!(recording.spaces.pins[0].unwrap().observed, Some(ms(120)));
+    assert_eq!(recording.spaces.pins[0].unwrap().observed, ms(120));
 }
 
 #[test]
-fn legacy_pin_proofs_keep_geometry_without_inventing_timing_or_action_proofs() {
-    let mut spaces: Spaces = serde_json::from_value(serde_json::json!({
-        "strokes":[], "pins":[{"generation":1,"part":[0,0,1,1]}]
-    }))
-    .unwrap();
+fn pin_proofs_require_observation_and_complete_lane_vectors() {
+    let mut saved = serde_json::json!({
+        "strokes":[], "pins":[{"generation":1,"part":[0,0,1,1]}],
+        "actions":[null,null,null]
+    });
+    assert!(serde_json::from_value::<Spaces>(saved.clone()).is_err());
+    saved["pins"][0]["observed"] = serde_json::json!(100);
+    let mut spaces: Spaces = serde_json::from_value(saved).unwrap();
     assert!(spaces.valid(0, 1, 3, ms(100)));
-    assert_eq!(spaces.pins[0].unwrap().observed, None);
-    spaces.pins[0].as_mut().unwrap().observed = Some(ms(101));
+    spaces.pins[0].as_mut().unwrap().observed = ms(101);
     assert!(!spaces.valid(0, 1, 3, ms(100)));
-    spaces.pins[0].as_mut().unwrap().observed = Some(ms(100));
+    spaces.pins[0].as_mut().unwrap().observed = ms(100);
     spaces.actions = vec![None];
+    assert!(!spaces.valid(0, 1, 3, ms(100)));
+    spaces.actions.clear();
     assert!(!spaces.valid(0, 1, 3, ms(100)));
 }
 
@@ -83,7 +87,7 @@ fn actions_include_the_release_space_but_finalization_uses_the_stored_endpoint()
 }
 
 #[test]
-fn grouped_marks_cannot_cross_resizes_gaps_or_unknown_legacy_samples() {
+fn grouped_marks_cannot_cross_resizes_gaps_or_unknown_samples() {
     for mode in 0..4 {
         let mut tracker = tracker();
         assert!(tracker.locate(Some(WHOLE)));
@@ -164,7 +168,7 @@ fn mixed_strokes_and_unbound_proof_vectors_never_supply_crop_coordinates()
     ));
     assert_eq!(recording.mark_part(&mark), None);
     let bad: Spaces = serde_json::from_value(
-        serde_json::json!({"strokes":[{"generation":1,"part":[0,0,2,1]}],"pins":[]}),
+        serde_json::json!({"strokes":[{"generation":1,"part":[0,0,2,1]}],"pins":[],"actions":[]}),
     )?;
     assert!(!bad.valid(1, 0, 0, ms(40)));
     Ok(())

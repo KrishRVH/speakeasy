@@ -141,7 +141,7 @@ fn labels_wait_for_the_complete_mark() {
 }
 
 #[test]
-fn delayed_pins_wait_for_observation_and_legacy_timing_stays_unknown() {
+fn delayed_pins_wait_for_observation_and_unknown_geometry_is_omitted() {
     let mut tracker = Tracker::new(Size {
         width: 1000.0,
         height: 1000.0,
@@ -167,10 +167,10 @@ fn delayed_pins_wait_for_observation_and_legacy_timing_stays_unknown() {
         .drawn,
         0
     );
-    recording.spaces.pins[0].as_mut().unwrap().observed = None;
-    let legacy = Annotations::new(&recording, &marks).unwrap();
+    recording.spaces.pins[0] = None;
+    let unlocated = Annotations::new(&recording, &marks).unwrap();
     assert_eq!(
-        painted(&legacy, Duration::from_millis(2000)).1,
+        painted(&unlocated, Duration::from_millis(2000)).1,
         AnnotationReport {
             drawn: 0,
             omitted: 1

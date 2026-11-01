@@ -56,22 +56,6 @@ fn native_movie_color_interoperability() -> anyhow::Result<()> {
 }
 
 #[test]
-#[ignore = "Opt in: read a retained untagged synthetic Windows color fixture"]
-fn native_untagged_movie_keeps_legacy_colors() -> anyhow::Result<()> {
-    let path = std::env::var_os("SPEAKEASY_LEGACY_MOVIE")
-        .ok_or_else(|| anyhow::anyhow!("Choose the untagged synthetic color fixture"))?;
-    for index in [0_usize, 1, 119] {
-        let at = Duration::from_nanos(u64::try_from(index)? * 10_000_000 / 30 * 100);
-        let file = std::fs::File::open(&path)?;
-        let bytes = file.metadata()?.len();
-        let frame = read::frame(file, bytes, [320, 240], at, &|| false)?
-            .ok_or_else(|| anyhow::anyhow!("Synthetic legacy color frame cancelled"))?;
-        crate::movie::tests::check_colors(&frame, index);
-    }
-    Ok(())
-}
-
-#[test]
 #[ignore = "Opt in: decode synthetic Mac encoder artifacts on Windows"]
 fn native_mac_movies_preserve_colors_and_timestamps() -> anyhow::Result<()> {
     let directory = PathBuf::from(

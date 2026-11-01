@@ -1,12 +1,12 @@
 mod atoms;
-mod compatibility;
 mod initialization;
+mod normalization;
 
 use std::{fmt, ops::Range, time::Duration};
 
 use atoms::{Atom, Fields, child, children, require};
-pub use compatibility::MovieCompatibility;
 use initialization::Track;
+pub use normalization::MovieNormalization;
 
 const HEADER_LIMIT: u64 = 1 << 20;
 const SAMPLE_LIMIT: u32 = 10_801;
@@ -37,7 +37,7 @@ pub struct MoviePrefix {
     pub frames: u32,
     pub timescale: u32,
     samples: Vec<MovieSample>,
-    compatibility: MovieCompatibility,
+    normalization: MovieNormalization,
     pub truncated: bool,
 }
 
@@ -56,8 +56,8 @@ impl MoviePrefix {
     }
 
     #[must_use]
-    pub const fn compatibility(&self) -> &MovieCompatibility {
-        &self.compatibility
+    pub const fn normalization(&self) -> &MovieNormalization {
+        &self.normalization
     }
 
     pub fn read<E: From<MovieError>>(
@@ -77,7 +77,7 @@ impl MoviePrefix {
             frames: 0,
             timescale: track.timescale,
             samples: Vec::new(),
-            compatibility: MovieCompatibility::default(),
+            normalization: MovieNormalization::default(),
             truncated: false,
         };
         let mut decoded = 0_u64;
@@ -139,8 +139,8 @@ impl MoviePrefix {
             decoded = fragment.decoded;
             presented = presented.max(fragment.presented);
             result.frames = frames;
-            if let Some(flag) = fragment.compatibility {
-                result.compatibility.headers.push(flag);
+            if let Some(flag) = fragment.normalization {
+                result.normalization.headers.push(flag);
             }
             for at in fragment.times {
                 result.samples.push(MovieSample {
@@ -282,7 +282,7 @@ struct Fragment {
     decoded: u64,
     presented: u64,
     times: Vec<u64>,
-    compatibility: Option<u64>,
+    normalization: Option<u64>,
 }
 
 fn fragment(
@@ -350,7 +350,7 @@ fn fragment(
         decoded,
         presented: decoded,
         times: Vec::new(),
-        compatibility: (flags == 1 && header.rest() == [0; 4]).then_some(
+        normalization: (flags == 1 && header.rest() == [0; 4]).then_some(
             payload
                 .saturating_add(track_box.payload)
                 .saturating_add(header_box.payload)
@@ -375,7 +375,7 @@ fn fragment(
         let mut run = Fields::new(part.bytes);
         let flags = run.word()?;
         if flags & 0x200 == 0 {
-            result.compatibility = None;
+            result.normalization = None;
         }
         require(
             flags & !0x0100_0F05 == 0,

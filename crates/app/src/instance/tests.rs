@@ -6,7 +6,7 @@ fn next_request(requests: &Receiver<Event>) -> anyhow::Result<Request> {
     loop {
         if let Ok(event) = requests.try_recv() {
             return match event {
-                Event::Legacy(request) => Ok(request),
+                Event::Shortcut(request) => Ok(request),
                 Event::Control(_) => bail!("Unexpected control call"),
             };
         }
@@ -108,7 +108,7 @@ fn unreachable_instances_name_their_remedy() -> anyhow::Result<()> {
         .port();
     for (published, remedy) in [
         (format!("{stale} {:032x}", 1), NOT_RUNNING),
-        (stale.to_string(), OUTDATED),
+        (stale.to_string(), INVALID_ENDPOINT),
     ] {
         fs::write(directory.path().join(PORT_FILE), published)?;
         let error = Instance::send(&path, Request::Toggle)
@@ -182,7 +182,7 @@ async fn failed_accepts_are_retried_until_shutdown() -> anyhow::Result<()> {
     });
     tokio::task::spawn_blocking(move || Instance::send(&path, Request::Toggle)).await??;
     let delivered = tokio::time::timeout(PATIENCE, received.recv()).await??;
-    assert!(matches!(delivered, Event::Legacy(Request::Toggle)));
+    assert!(matches!(delivered, Event::Shortcut(Request::Toggle)));
     tokio::time::sleep(ACCEPT_RETRY * 5).await;
     requests.close();
     tokio::time::timeout(PATIENCE, server).await??;

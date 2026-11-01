@@ -44,7 +44,7 @@ pub struct Manifest {
 
 impl Manifest {
     pub const FILE: &str = "show.json";
-    pub const VERSION: u32 = 2;
+    pub const VERSION: u32 = 3;
 }
 
 #[derive(Clone, Debug)]

@@ -4,7 +4,7 @@ use super::*;
 
 fn manifest() -> serde_json::Value {
     json!({
-        "version": 2, "duration": 1000, "surface": {"width": 800, "height": 600},
+        "version": 3, "duration": 1000, "surface": {"width": 800, "height": 600},
         "strokes": [], "pins": [], "actions": [], "narration": {"text": "PRIVATE_NARRATION"},
         "marks": [], "keyframes": [{"index": 1, "at": 500, "reason": "middle",
             "event": "PRIVATE_EVENT", "marks": [0, 0]}]
@@ -32,7 +32,7 @@ fn discovery_includes_damage_and_sorts_same_second_suffixes_numerically() -> any
     fs::write(older.join(PIN), b"")?;
     fs::remove_file(first.join("frames/frame-01.png"))?;
     fs::write(second.join(Manifest::FILE), b"not JSON")?;
-    fs::write(tenth.join(Manifest::FILE), br#"{"version":3}"#)?;
+    fs::write(tenth.join(Manifest::FILE), br#"{"version":4}"#)?;
     write(root.path(), ".partial-interrupted")?;
     write(root.path(), "exported-show")?;
     fs::write(root.path().join("20261022T143205Z"), b"not a folder")?;
@@ -48,7 +48,7 @@ fn discovery_includes_damage_and_sorts_same_second_suffixes_numerically() -> any
     );
     assert!(matches!(
         found[0].show,
-        Err(ReadError::Manifest(Unreadable::Unsupported(3)))
+        Err(ReadError::Manifest(Unreadable::Unsupported(4)))
     ));
     assert!(matches!(
         found[1].show,

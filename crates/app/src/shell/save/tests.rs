@@ -202,7 +202,7 @@ async fn a_draft_needs_saving_until_the_file_holds_it_or_a_write_is_making_it() 
     let opened = Config {
         engine_executable: "engine".into(),
         model: "model.gguf".into(),
-        ..Config::first_launch()
+        ..Config::default()
     };
     let mut queue = SaveQueue::new(path, opened.clone());
     assert!(

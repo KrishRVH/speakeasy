@@ -1,11 +1,11 @@
 use super::{MovieError, require};
 
 #[derive(Clone, Debug, Default)]
-pub struct MovieCompatibility {
+pub struct MovieNormalization {
     pub(super) headers: Vec<u64>,
 }
 
-impl MovieCompatibility {
+impl MovieNormalization {
     pub fn apply(&self, at: u64, bytes: &mut [u8]) -> Result<(), MovieError> {
         require(
             u64::try_from(bytes.len())

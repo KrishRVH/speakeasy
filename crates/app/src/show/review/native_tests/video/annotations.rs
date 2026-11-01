@@ -23,7 +23,7 @@ pub(super) async fn exercise(
         .context("Synthetic pin mark is missing")? = serde_json::json!([280, 280]);
     manifest.as_object_mut().context("Synthetic manifest must be an object")?.extend([
         ("pins".into(), serde_json::json!([{"at":280,"point":[0.5,0.5]}])),
-        ("spaces".into(), serde_json::json!({"strokes":[],"pins":[{"generation":1,"part":[0,0.25,1,0.75],"observed":283}]})),
+        ("spaces".into(), serde_json::json!({"strokes":[],"pins":[{"generation":1,"part":[0,0.25,1,0.75],"observed":283}],"actions":[]})),
     ]);
     fs::write(directory.join("show.json"), serde_json::to_vec(&manifest)?)?;
     cx.update(|cx| cx.set_global(Copies::default()))?;

@@ -208,7 +208,7 @@ Decoding uses the same validated open File, never reopens a path. Media-type-cha
 revalidate dimensions/color format and associate stride with the returned sample. Flat and 2D native
 locks remain owned until unlock; signed pitch, offsets and allocation bounds are checked before
 copying top-down opaque BGRA. Cancellation is observed between native calls, and native I/O is
-released before return. Untagged released movies retain their supported color behavior.
+released before return.
 
 ## Mac codec and verified-file decoder
 
@@ -225,8 +225,8 @@ The asset's private resource URL resolves only to the validated file. Its strong
 backs a weak native registration; external references are forbidden. Each bounded read holds the
 file mutex only through file access, releasing it before responding with copied NSData. Asset
 teardown detaches/cancels and takes the optional File under the same mutex, so no concurrent read
-retains the file afterward. Compatibility normalization applies only validated byte fixups without
-changing the source file.
+retains the file afterward. The reader passes the published movie bytes directly to AVFoundation;
+Media Foundation fragment headers are normalized before publication.
 
 The AVAssetWriter has no output URL: only the strongly held segment delegate owns its create-new
 private file. Segment order, actual byte cap and sync are enforced under one lock. Failure/panic is

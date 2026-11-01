@@ -22,8 +22,7 @@ pub(super) const HEADER_LIMIT: u64 = 4 << 20;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct Metadata {
     version: u8,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    identity: Option<[u8; 16]>,
+    identity: [u8; 16],
     pub origin_ms: u64,
     pub size: [u32; 2],
     pub finished: Option<Finished>,
@@ -77,7 +76,7 @@ impl Metadata {
         let geometry = geometry::Writing::create(directory, identity, size)?;
         let metadata = Self {
             version: 2,
-            identity: Some(identity),
+            identity,
             origin_ms: u64::try_from(origin.as_millis())?,
             size,
             finished: None,
@@ -220,7 +219,7 @@ impl Reading {
             self.file
                 .read_exact(chunk)
                 .context("Movie changed during publication")?;
-            self.movie.prefix.compatibility().apply(position, chunk)?;
+            self.movie.prefix.normalization().apply(position, chunk)?;
             out.write_all(chunk)?;
             position = position
                 .checked_add(u64::try_from(count)?)
@@ -268,10 +267,8 @@ fn read_metadata(directory: &Path) -> anyhow::Result<Metadata> {
     let metadata: Metadata = serde_json::from_slice(&bytes)
         .map_err(|_private_content| anyhow::anyhow!("Movie timing metadata is damaged"))?;
     anyhow::ensure!(
-        ((metadata.version == 1 && metadata.identity.is_none() && metadata.geometry.is_none())
-            || (metadata.version == 2
-                && metadata.identity.is_some()
-                && metadata.geometry.is_some() == metadata.coverage.is_some()))
+        metadata.version == 2
+            && metadata.geometry.is_some() == metadata.coverage.is_some()
             && metadata.origin_ms
                 < u64::try_from(speakeasy_core::gesture::RECORDING_LIMIT.as_millis())?,
         "Movie timing metadata is unsupported"
@@ -367,21 +364,19 @@ pub(super) fn open(directory: &Path) -> anyhow::Result<Option<Reading>> {
             "Saved movie coverage differs from its fragments"
         );
     }
-    if let Some(identity) = metadata.identity {
-        if metadata.coverage.is_none() {
-            metadata.geometry = Some(geometry::recover(
-                directory,
-                identity,
-                metadata.size,
-                prefix.frames,
-            )?);
-        }
-        metadata
-            .geometry
-            .as_ref()
-            .context("Video crop geometry is missing")?
-            .validate(metadata.size, prefix.frames)?;
+    if metadata.coverage.is_none() {
+        metadata.geometry = Some(geometry::recover(
+            directory,
+            metadata.identity,
+            metadata.size,
+            prefix.frames,
+        )?);
     }
+    metadata
+        .geometry
+        .as_ref()
+        .context("Video crop geometry is missing")?
+        .validate(metadata.size, prefix.frames)?;
     Ok(Some(Reading {
         file,
         movie: Inspected { metadata, prefix },

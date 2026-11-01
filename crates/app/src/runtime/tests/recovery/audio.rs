@@ -3,10 +3,7 @@ use super::*;
 #[tokio::test(start_paused = true)]
 async fn recovery_uses_original_language_and_current_cleanup_without_capture_or_paste()
 -> anyhow::Result<()> {
-    for engine in [
-        crate::config::Engine::Whisper,
-        crate::config::Engine::Parakeet,
-    ] {
+    for engine in [crate::config::Engine::Whisper, crate::config::Engine::Nemo] {
         let (_root, interrupted) = interrupted_with_audio(true).await?;
         let config = Config {
             engine,

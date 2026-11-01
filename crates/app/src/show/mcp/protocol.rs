@@ -5,8 +5,8 @@ use serde_json::{Map, Value, json};
 
 use super::{DISCLOSURE, Roots, tools};
 
-pub(super) const MODERN: &str = "2026-07-28";
-pub(super) const LEGACY: &str = "2025-11-25";
+pub(super) const STATELESS_VERSION: &str = "2026-07-28";
+pub(super) const INITIALIZED_VERSION: &str = "2025-11-25";
 const VERSION_META: &str = "io.modelcontextprotocol/protocolVersion";
 const CAPABILITIES_META: &str = "io.modelcontextprotocol/clientCapabilities";
 const LINE_LIMIT: usize = 64 << 10;
@@ -174,7 +174,7 @@ impl Protocol {
         }
         let result = match method {
             "server/discover" => json!({
-                "supportedVersions": [MODERN, LEGACY], "capabilities": {"tools": {}},
+                "supportedVersions": [STATELESS_VERSION, INITIALIZED_VERSION], "capabilities": {"tools": {}},
                 "_meta": {"io.modelcontextprotocol/serverInfo": server_info()},
                 "instructions": DISCLOSURE, "ttlMs": 0, "cacheScope": "private"
             }),
@@ -210,12 +210,7 @@ impl Protocol {
 
     fn initialize(&mut self, id: Value, params: &Map<String, Value>) -> Value {
         if !matches!(self.phase, Phase::New) {
-            return error(
-                id,
-                -32600,
-                "Legacy initialization is already complete",
-                None,
-            );
+            return error(id, -32600, "MCP initialization is already complete", None);
         }
         if !params.get("protocolVersion").is_some_and(Value::is_string)
             || !params.get("capabilities").is_some_and(Value::is_object)
@@ -234,7 +229,7 @@ impl Protocol {
         self.phase = Phase::Initializing;
         success(
             id,
-            json!({"protocolVersion": LEGACY, "capabilities": {"tools": {}}, "serverInfo": server_info(), "instructions": DISCLOSURE}),
+            json!({"protocolVersion": INITIALIZED_VERSION, "capabilities": {"tools": {}}, "serverInfo": server_info(), "instructions": DISCLOSURE}),
             false,
         )
     }
@@ -259,11 +254,11 @@ fn metadata(params: &Map<String, Value>) -> Result<(), MetadataError> {
             data: None,
         });
     };
-    if version != MODERN {
+    if version != STATELESS_VERSION {
         return Err(MetadataError {
             code: -32022,
             message: "Unsupported protocol version",
-            data: Some(json!({"supported": [MODERN], "requested": version})),
+            data: Some(json!({"supported": [STATELESS_VERSION], "requested": version})),
         });
     }
     if !capabilities.is_some_and(Value::is_object) {

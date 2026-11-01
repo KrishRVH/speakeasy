@@ -6,7 +6,7 @@ use crate::{Image, SourceFrame};
 
 fn manifest() -> Manifest {
     Manifest::parse(&serde_json::to_vec(&json!({
-        "version": 2, "duration": 4000, "surface": {"width": 800, "height": 600},
+        "version": 3, "duration": 4000, "surface": {"width": 800, "height": 600},
         "strokes": [], "pins": [], "actions": [],
         "narration": {"words": [
             {"span": [100,200], "text": "SAVE, the"}, {"span": [250,400], "text": "café!"},

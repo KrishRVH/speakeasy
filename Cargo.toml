@@ -9,7 +9,7 @@ gpui_media = { path = "vendor/gpui_media" }
 accesskit_windows = { path = "vendor/accesskit_windows" }
 
 [workspace.package]
-version = "0.7.0"
+version = "0.8.0"
 edition = "2024"
 rust-version = "1.99.1"
 license = "MIT"

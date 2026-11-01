@@ -93,7 +93,7 @@ fn mcp_stdio_roundtrips_both_protocols_through_the_console_process() -> anyhow::
     let directory = root.path().join(name);
     fs::create_dir_all(directory.join("frames"))?;
     let manifest = json!({
-        "version": 2, "duration": 1000, "surface": {"width": 2, "height": 2},
+        "version": 3, "duration": 1000, "surface": {"width": 2, "height": 2},
         "strokes": [], "pins": [], "actions": [], "narration": {"words": []},
         "marks": [], "keyframes": [{"index": 1, "at": 500, "reason": "middle", "event": "public fixture", "marks": [0,0]}]
     });

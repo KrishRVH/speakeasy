@@ -68,10 +68,10 @@ through Xwayland run on a serialized, owned worker. A committed clipboard select
 available until ownership changes or the service retires.
 
 Settings' **Insert** control offers **Paste (Ctrl+V)**, **Paste (Ctrl+Shift+V)** for terminals,
-**Type (Keep clipboard)**, and **Copy for manual paste**. In the settings file, `manual_paste` takes
-precedence over `preserve_clipboard`, which takes precedence over `terminal_paste`. Typing requires
-advertised EI text support on Wayland; X11 reports it as unavailable. The terminal chord is the
-user's choice; Speakeasy never infers it from the focused application.
+**Type (Keep clipboard)**, and **Copy for manual paste**. The `text_delivery` setting stores one
+choice: `paste`, `terminal_paste`, `type`, or `copy`. Typing requires advertised EI text support on
+Wayland; X11 reports it as unavailable. The terminal chord is the user's choice; Speakeasy never
+infers it from the focused application.
 
 ## Presentation and lifecycle
 

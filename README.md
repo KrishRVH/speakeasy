@@ -186,10 +186,10 @@ lost narration stay visible; the viewer never substitutes another Show when the 
 or is deleted. Choose **All retained frames** to inspect moments outside the selected keyframes.
 Coverage shows the sample count and longest gap; the journal thins frames under memory pressure, so
 this is sampled evidence rather than video. Switching modes keeps the nearest frame at or before the
-current time. Source images have no annotations. Older Shows still offer their selected keyframes.
-In **All retained frames**, numbered mark buttons jump to the sample at or before the mark. The
-viewer reports both the mark time and the actual sample time. If retained frames cannot be saved,
-the selected keyframes still save and Speakeasy reports the loss.
+current time. Source images have no annotations. In **All retained frames**, numbered mark buttons
+jump to the sample at or before the mark. The viewer reports both the mark time and the actual
+sample time. If retained frames cannot be saved, the selected keyframes still save and Speakeasy
+reports the loss.
 
 On Windows and macOS, choose **Video** to scrub the recorded timeline or step through its actual
 samples. Numbered marks and timed narration jump to their recorded times. The displayed timestamp
@@ -242,9 +242,9 @@ selectable caption track when narration has word timings. Install FFmpeg 5.1 or 
 AAC support, put `ffmpeg` on PATH, then restart Speakeasy. macOS also checks the standard Homebrew
 and MacPorts locations. Export runs locally on all platforms with retained video. The original
 recording stays unchanged. **Cancel export** or closing the window cancels the video export; Quit
-waits for cleanup. Voice expires seven days after recording even when you keep the Show. Older Shows
-without saved voice and Shows whose voice has expired export silently, with a notice. Explicitly
-exported videos do not expire automatically.
+waits for cleanup. Voice expires seven days after recording even when you keep the Show. Shows
+without available voice export silently, with a notice. Explicitly exported videos do not expire
+automatically.
 
 An **Interrupted Show** offers **Recover Show** and **Discard**. Recovery restores checkpointed
 frames, ink, marks, and narration into a new bundle, using your configured local speech engine and
@@ -356,13 +356,13 @@ not numbered pin marks. If the manifest cannot be read, duration, counts, and pi
 and inspection omits its detail fields and frame tables. Inspection exits with status 1 for damage
 or an unsupported format, after printing its findings. A listing succeeds even when individual Shows
 are damaged. An unreadable Shows folder fails the command; a missing one is an empty listing. The
-recording's `narrationLost` field is absent for complete narration, or `audioStopped`,
+recording's `narrationLost` field is absent when no narration loss was reported, or `audioStopped`,
 `notTranscribed`, or `incomplete`. `incomplete` means recovery transcribed the surviving audio
 prefix; its text and timings cover only that prefix. CLI builds without narration recovery support
 cannot read this value.
 
-Manifests are limited to 16 MiB and summaries to 1 MiB. Only format 2 is read; unknown fields are
-ignored.
+Manifests are limited to 16 MiB and summaries to 1 MiB. Only the current format, 3, is read and
+written; unknown fields are ignored. Other formats are reported as unsupported and left untouched.
 
 For MCP clients, run `speakeasy show mcp --setup` to print Claude Code, Codex, and generic setup
 snippets. The stdio server requires explicit `--root PATH` arguments: each root is one saved Show or
@@ -406,7 +406,7 @@ stop and cancel require its exact session token, which expires with that session
 Busy starts, stale tokens, and commands targeting Shows or private practice are refused. Read status
 after an uncertain result instead of blindly retrying. `style` changes the next-recording default;
 `dictation start --style` overrides only that recording. These explicit commands work on all three
-platforms; Linux's legacy `--toggle` and `--cancel` still require Desktop bindings.
+platforms; Linux's desktop-binding `--toggle` and `--cancel` still require Desktop bindings.
 
 `show skill` prints the [agent reading guide](skills/speakeasy-show/SKILL.md) embedded in the
 installed binary. Save it as `SKILL.md` in a skill folder your agent loads. It explains the reading
@@ -606,8 +606,9 @@ assign the two commands Settings shows in your desktop's shortcut settings: `spe
 hands-free. Choose **Insert: Copy for manual paste** as well to avoid requesting keyboard-control
 access. The optional `linux` settings object holds the `shortcut` and `cancel` chords in portal
 syntax, such as `CTRL+LOGO+space`: X11 grabs them, and Wayland requests them as preferred triggers.
-It also holds the `terminal_paste`, `manual_paste`, and `external_shortcut` flags that Insert and
-Shortcuts set. Save and resume after changing bindings or keyboard maps.
+It also holds `external_shortcut`, which Shortcuts sets. The top-level `text_delivery` setting holds
+Insert's choice: `paste`, `terminal_paste`, `type`, or `copy`. Save and resume after changing
+bindings or keyboard maps.
 
 A tray host is optional: without one, closing Settings quits and the launcher reopens the app.
 Configuration lives under `$XDG_CONFIG_HOME/speakeasy`, downloads under `$XDG_DATA_HOME/speakeasy`,
@@ -812,8 +813,7 @@ paused clock exercises gesture deadlines and the five-minute cap.
   and timeout, staged-file retention, upgrade/relaunch, and uninstall on disposable GitHub Actions
   Windows runners. It uses owned demo windows without devices and preserves settings, model files,
   edited Shows, and other copies' sign-in entries. The Check workflow's optional `installer` input
-  also packages the pinned v0.6.0 GUI alongside the current CLI as an older installed fixture and
-  upgrades it to the current build; the old release has no installer, CLI, or version query.
+  runs these checks with the current packaged build.
 - On macOS, `bash scripts/check-update-macos.sh` builds the opt-in `native-acceptance` feature and
   opens owned demo windows. It holds an accepted Show write during external, nested, repeated, and
   app-owned quit requests, then checks rendering callbacks, configuration preservation, and instance
@@ -857,11 +857,10 @@ paused clock exercises gesture deadlines and the five-minute cap.
   movies and checks native frame timestamps, pixels, cancellation, file ownership, and a seek near
   the five-minute limit. It accesses no microphone, screen, input, or clipboard. The Check
   workflow's optional `movie` input also encodes a synthetic color-and-motion clip on Windows and
-  checks original and normalized retained prefixes through the Mac reader, including HD neutral
-  midtones, without accessing live devices. `movie_fixture_run` reuses the synthetic Windows
-  artifact from a specified run for a focused Mac check; it skips the normal native matrix. The
-  Windows `native_untagged_movie_keeps_legacy_colors` filter accepts an older synthetic color
-  fixture through `SPEAKEASY_LEGACY_MOVIE` for compatibility checks.
+  normalizes its fragment headers into the published format and checks the retained prefix through
+  the Mac reader, including HD neutral midtones, without accessing live devices. `movie_fixture_run`
+  reuses the synthetic Windows artifact from a specified run for a focused Mac check; it skips the
+  normal native matrix.
 - On macOS, set `SPEAKEASY_MAC_MOVIE_DIRECTORY` to a new artifact directory and run
   `cargo test --locked -p speakeasy-platform native_mac_movie_encoding -- --ignored --test-threads=1`.
   It checks native H.264 fragments, held and irregular timing, resized content, colors, bounded
@@ -919,6 +918,13 @@ Speakeasy is a preview, versioned `0.MINOR.PATCH` under [SemVer](https://semver.
 [Cargo reads](https://doc.rust-lang.org/cargo/reference/semver.html) major version zero: MINOR marks
 breaking changes. The version reaches 1.0.0 only when the maintainer declares the public surface
 stable.
+
+Until the official 1.0.0 release, only the latest Speakeasy version and its current formats, files,
+settings, and protocols are supported. Optimize for agentic development with one clear, idiomatic
+implementation of current behavior. Replace obsolete code, schemas, tests, and documentation; remove
+compatibility readers, migrations, aliases, transition shims, and old-version upgrade scaffolding.
+Unsupported formats produce an error. Breaking preview changes use a MINOR release under the rules
+below.
 
 The public surface is what people, scripts, and coding agents rely on from one release to the next:
 

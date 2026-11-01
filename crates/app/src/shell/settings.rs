@@ -251,8 +251,7 @@ impl Settings {
     }
 
     fn cycle_delivery(&mut self) {
-        let next = self.config.text_delivery().next();
-        self.config.set_text_delivery(next);
+        self.config.text_delivery = self.config.text_delivery.next();
         self.edited();
     }
 
@@ -302,8 +301,8 @@ impl Settings {
             return;
         }
         let title = match (self.config.engine, file) {
-            (Engine::Parakeet, EngineFile::Executable) => "Choose nemo-speech",
-            (Engine::Parakeet, EngineFile::Model) => "Choose a NeMo GGUF model",
+            (Engine::Nemo, EngineFile::Executable) => "Choose nemo-speech",
+            (Engine::Nemo, EngineFile::Model) => "Choose a NeMo GGUF model",
             (Engine::Whisper, EngineFile::Executable) => "Choose whisper-server",
             (Engine::Whisper, EngineFile::Model) => "Choose a Whisper GGML model",
         };
@@ -312,7 +311,7 @@ impl Settings {
                 name: "Programs",
                 pattern: "*.exe",
             },
-            (Engine::Parakeet, EngineFile::Model) => FileFilter {
+            (Engine::Nemo, EngineFile::Model) => FileFilter {
                 name: "NeMo models",
                 pattern: "*.gguf",
             },

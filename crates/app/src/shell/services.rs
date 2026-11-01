@@ -235,7 +235,7 @@ impl Services {
             while let Ok(request) = requests.recv().await {
                 if cx
                     .update(|cx| match request {
-                        Event::Legacy(request) => handle_request(request, cx),
+                        Event::Shortcut(request) => handle_request(request, cx),
                         Event::Control(call) => cx.update_global::<Services, _>(|services, cx| {
                             services.control(call, cx);
                         }),

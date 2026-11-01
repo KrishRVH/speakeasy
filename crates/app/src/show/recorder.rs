@@ -489,7 +489,7 @@ impl<'a> Take<'a> {
                 self.apply(TakeEvent::Pointer {
                     at,
                     point: Point::from(part.within(position)),
-                    part: Some([part.left, part.top, part.right, part.bottom].into()),
+                    part: [part.left, part.top, part.right, part.bottom].into(),
                     drawing,
                     pressed,
                 })?;

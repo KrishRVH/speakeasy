@@ -6,9 +6,13 @@ async fn unavailable_insertion_keeps_exact_text_for_a_fresh_delivery() -> anyhow
     results
         .send(Inserted::Unavailable("Fixture target unavailable."))
         .await?;
-    let mut h = Harness::with_ports(Config::default(), |ports| {
-        ports.insert_results = Some(pending);
-    })?;
+    let mut h = Harness::with_ports(
+        Config {
+            language: "en".into(),
+            ..Config::default()
+        },
+        |ports| ports.insert_results = Some(pending),
+    )?;
     h.start().await?;
     h.finish_as("Um, retained fixture.").await?;
     h.phase(Phase::Error).await?;

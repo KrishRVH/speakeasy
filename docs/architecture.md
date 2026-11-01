@@ -147,15 +147,17 @@ module unless a test file is named.
   [navigation.rs](../crates/app/src/shell/settings/navigation.rs) owns page selection and keyboard
   focus without changing that draft, and ends private practice when its page is hidden.
   [config.rs](../crates/app/src/config.rs) and [paths.rs](../crates/app/src/paths.rs) own the file
-  contract and where it lives. [config/presets.rs](../crates/app/src/config/presets.rs) stores
-  bounded named dictation choices, validates them without opening inactive model paths, and loads
-  them into the draft. Its snapshot excludes microphone, delivery, shortcuts, sound, and
-  presentation options. [settings/presets.rs](../crates/app/src/shell/settings/presets.rs) commits
-  pending phrase and hint edits when capturing a preset and blocks loading during unfinished edits,
-  model setup, file selection, or saves. The existing save queue applies loaded choices;
-  library-only changes leave sessions running.
-  [text_field.rs](../crates/app/src/shell/settings/text_field.rs) owns native selection and IME
-  composition; its pure edit state tests Unicode boundaries, and
+  contract and where it lives. Missing fields use the same NeMo/auto defaults as a new install.
+  Unsupported fields and values stop loading and saving without replacing the file; saves preserve
+  concurrent edits to current settings. One `text_delivery` choice controls insertion.
+  [config/presets.rs](../crates/app/src/config/presets.rs) stores bounded named dictation choices,
+  validates them without opening inactive model paths, and loads them into the draft. Its snapshot
+  excludes microphone, delivery, shortcuts, sound, and presentation options.
+  [settings/presets.rs](../crates/app/src/shell/settings/presets.rs) commits pending phrase and hint
+  edits when capturing a preset and blocks loading during unfinished edits, model setup, file
+  selection, or saves. The existing save queue applies loaded choices; library-only changes leave
+  sessions running. [text_field.rs](../crates/app/src/shell/settings/text_field.rs) owns native
+  selection and IME composition; its pure edit state tests Unicode boundaries, and
   [native_tests.rs](../crates/app/src/shell/settings/native_tests.rs) checks owned-window
   composition and save draining. The
   [native interaction test](../crates/app/src/shell/settings/native_interaction.rs) checks language
@@ -245,11 +247,11 @@ module unless a test file is named.
   [shell/recovery.rs](../crates/app/src/shell/recovery.rs) copies or opens the last Show off the UI
   thread.
 - **Instance and relaunch**: [instance.rs](../crates/app/src/instance.rs) owns the lock and the
-  secret-gated loopback commands. Legacy opcodes 0–2 keep their meanings and Linux binding gate.
+  secret-gated loopback commands. Shortcut opcodes 0–2 serve relaunch and Linux desktop bindings.
   Opcode 3 carries versioned JSON in a length-prefixed 4 KiB frame. An owned server thread bounds
   authentication and owns up to eight concurrent control receipts, each with a two-second deadline.
-  Legacy cancel/toggle bindings remain responsive while a receipt waits; shutdown drains every task.
-  [control.rs](../crates/app/src/control.rs) rejects malformed commands without echoing input.
+  Shortcut cancel/toggle bindings remain responsive while a receipt waits; shutdown drains every
+  task. [control.rs](../crates/app/src/control.rs) rejects malformed commands without echoing input.
   [owner/commands.rs](../crates/app/src/runtime/owner/commands.rs) admits actions only for live
   callers and acknowledges actual owner decisions. Stop/cancel tokens combine the runtime
   incarnation with the session ID and exclude Shows and practice. Style is acknowledged by its
@@ -273,16 +275,17 @@ module unless a test file is named.
   inspection and temporal queries between CLI and [show/mcp.rs](../crates/app/src/show/mcp.rs). MCP
   exposes three read-only tools within explicit launch roots, refuses child symlinks, bounds
   lines/content/images, and reports actual source sample times. It serves the 2026-07-28 stateless
-  protocol and the 2025-11-25 initialized protocol. No tool exports, sends, or reads ordinary
-  dictation. Setup resolves the durable installed launcher and only prints client stanzas.
-  [show/opencode.rs](../crates/app/src/show/opencode.rs) owns explicit discovery and submission to
-  an already-running loopback V2 service. Review chooses a concrete session; the CLI requires its
-  ID. Submission rechecks the session and endpoint, preserves edited summaries, and includes every
-  manifest contact sheet within a 12 MiB request limit or refuses. Audio and movies are excluded.
-  Closing the receipt cancels preparation; after POST, the owner drains the bounded response even if
-  the view closes. Quit drains that owner. Only a matching session/message queue receipt proves
-  acceptance; ambiguous responses stay unknown and never trigger automatic retries. Module tests use
-  fake local servers and fixtures; no check contacts the user's agent service.
+  protocol and the 2025-11-25 initialized protocol used by current external clients. No tool
+  exports, sends, or reads ordinary dictation. Setup resolves the durable installed launcher and
+  only prints client stanzas. [show/opencode.rs](../crates/app/src/show/opencode.rs) owns explicit
+  discovery and submission to an already-running loopback V2 service. Review chooses a concrete
+  session; the CLI requires its ID. Submission rechecks the session and endpoint, preserves edited
+  summaries, and includes every manifest contact sheet within a 12 MiB request limit or refuses.
+  Audio and movies are excluded. Closing the receipt cancels preparation; after POST, the owner
+  drains the bounded response even if the view closes. Quit drains that owner. Only a matching
+  session/message queue receipt proves acceptance; ambiguous responses stay unknown and never
+  trigger automatic retries. Module tests use fake local servers and fixtures; no check contacts the
+  user's agent service.
 - **Show recording and publication**: [show.rs](../crates/app/src/show.rs),
   [show/recorder.rs](../crates/app/src/show/recorder.rs),
   [show/publish.rs](../crates/app/src/show/publish.rs), and the session owner.
@@ -376,9 +379,9 @@ module unless a test file is named.
   sibling on Windows, the original AppImage on Linux, or a durable app executable; temporary mounts
   and unavailable commands are omitted. Existing summaries are never regenerated.
   [bundle/read.rs](../crates/show/src/bundle/read.rs) validates format versions and references
-  without I/O, exposes sheet membership, and strips private decoder messages from failures. Its
-  [tests](../crates/show/src/bundle/read/tests.rs) reject broken references and exercise generated
-  manifest mutations and sheet sizes.
+  without I/O, accepts only the current format, exposes sheet membership, and strips private decoder
+  messages from failures. Its [tests](../crates/show/src/bundle/read/tests.rs) reject broken
+  references and exercise generated manifest mutations and sheet sizes.
 - **Show store**: [show/store.rs](../crates/app/src/show/store.rs) names, writes, and expires
   bundles, and [store/recall.rs](../crates/app/src/show/store/recall.rs) reads a saved one back; it
   also discovers and inspects saved Shows without changing them.
@@ -458,10 +461,10 @@ module unless a test file is named.
   `source.frames` (512 MiB maximum), with checksummed tiles and an index capped at 64 MiB/4096
   frames. [store/source.rs](../crates/app/src/show/store/source.rs) performs bounded range reads;
   the viewer and CLI decode only the requested frame. Source exports require explicit time/path and
-  never overwrite. Older bundles remain readable without this optional file. Source writes use a
-  temporary file; failure saves selected keyframes with a nonfatal notice.
-  [publish/tests/recovery.rs](../crates/app/src/show/publish/tests/recovery.rs) covers this
-  fallback, publication failure, revocation, original expiry, and duplicate recovery prevention.
+  never overwrite. Source writes use a temporary file; failure saves selected keyframes with a
+  nonfatal notice. [publish/tests/recovery.rs](../crates/app/src/show/publish/tests/recovery.rs)
+  covers this fallback, publication failure, revocation, original expiry, and duplicate recovery
+  prevention.
 - **Screen capture and overlay**: [platform/src/screen.rs](../crates/platform/src/screen.rs),
   [screen/geometry.rs](../crates/platform/src/screen/geometry.rs),
   [windows/screen.rs](../crates/platform/src/windows/screen.rs) with
@@ -519,17 +522,17 @@ module unless a test file is named.
   [show/src/movie.rs](../crates/show/src/movie.rs) validates bounded, single-track fragment metadata
   and returns only the complete prefix. It checks sample byte ranges and timing, not compressed
   picture decoding. Inspection also identifies Media Foundation's undeclared fragment-header
-  padding. Publication, ZIP export, and Mac reads declare that zero word as a default size only when
-  every affected sample has an explicit size and no later header field can change meaning. This
-  changes one flag byte per affected fragment; picture bytes, timestamps, offsets, and the source
-  file stay intact. Legacy bundles receive the same correction during Mac reads without an on-disk
-  migration. [store/movie.rs](../crates/app/src/show/store/movie.rs) copies that prefix from the
-  validated handle before publication commits, records the separate annotation horizon, and checks
-  finalized native timing against the fragments. Failed copy or sync preserves the checkpoint. A
-  missing or incomplete first fragment permits still-only publication with an explicit video-loss
-  notice; other damaged video stays recoverable with a concrete manual remedy. Saved-bundle
-  inspection and export remain strict. A sparse geometry table is published inside versioned movie
-  metadata; the bounded checkpoint journal stays private. A random identifier pairs the header with
+  padding. Publication and ZIP export declare that zero word as a default size only when every
+  affected sample has an explicit size and no later header field can change meaning. This changes
+  one flag byte per affected fragment; picture bytes, timestamps, offsets, and the source file stay
+  intact. Mac reads use the published bytes directly.
+  [store/movie.rs](../crates/app/src/show/store/movie.rs) copies that prefix from the validated
+  handle before publication commits, records the separate annotation horizon, and checks finalized
+  native timing against the fragments. Failed copy or sync preserves the checkpoint. A missing or
+  incomplete first fragment permits still-only publication with an explicit video-loss notice; other
+  damaged video stays recoverable with a concrete manual remedy. Saved-bundle inspection and export
+  accept only movie metadata version 2. A sparse geometry table is published inside that metadata;
+  the bounded checkpoint journal stays private. A required random identifier pairs the header with
   that journal; it does not authenticate MP4 bytes. A damaged journal retains geometry only through
   the last complete change’s first sample, clipping against surviving video after computing this
   bound. Missing geometry preserves uncropped video. ZIP export also copies the validated handle and
@@ -537,10 +540,11 @@ module unless a test file is named.
   annotations, and playback in the system player. [draw/video.rs](../crates/show/src/draw/video.rs)
   renders only observed ink prefixes, completed marks, and completed actions whose coordinate proofs
   match the decoded sample. Pins retain their actual observation time; action proofs include the
-  release position. Missing legacy proofs are omitted. Continuous cut segments expire together. This
-  saved-view policy does not reconstruct live overlay fades. A text-free immutable annotation
-  snapshot serves repeated previews; completed pixels carry their rendering status through seeks and
-  toggles. Explicit `show frame --video` queries use the
+  release position. Every saved pin proof includes its observation time, and nonempty proof vectors
+  cover every recorded stroke, pin, and action. Unknown geometry is omitted. Continuous cut segments
+  expire together. This saved-view policy does not reconstruct live overlay fades. A text-free
+  immutable annotation snapshot serves repeated previews; completed pixels carry their rendering
+  status through seeks and toggles. Explicit `show frame --video` queries use the
   [native reader](../crates/platform/src/windows/movie/read.rs) on Windows and the
   [Mac image generator](../crates/platform/src/macos/movie.rs) on macOS. Validation and decoding
   share one open file; Windows also denies other writers. Mac reads that handle through a private
@@ -556,10 +560,11 @@ module unless a test file is named.
   refuses samples without geometry or annotation coverage. Annotation rendering precedes cropping.
   It refuses crops unless the actual decoded sample’s saved source rectangle matches the mark’s
   coordinate proof. Crops expand within the fitted content, with output coordinates reported in the
-  full canvas. Legacy videos remain available uncropped. Opt-in synthetic checks cover seek
-  direction, orientation, cancellation, file replacement, and exports beyond the annotation journal.
-  Synthetic encoder checks decode irregular captures sample by sample, reject future images, and
-  exercise quiet fragments, same-tick coalescing, cancellation, and partial progress after a stall.
+  full canvas. Missing geometry permits only unannotated, uncropped video. Opt-in synthetic checks
+  cover seek direction, orientation, cancellation, file replacement, and exports beyond the
+  annotation journal. Synthetic encoder checks decode irregular captures sample by sample, reject
+  future images, and exercise quiet fragments, same-tick coalescing, cancellation, and partial
+  progress after a stall.
 
   Windows converts sRGB RGB32 through an explicit
   [native processor](../crates/platform/src/windows/movie/convert.rs) into limited-range BT.709

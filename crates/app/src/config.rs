@@ -23,32 +23,31 @@ use crate::{
 
 pub(crate) mod presets;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Engine {
-    #[default]
     Whisper,
-    Parakeet,
+    Nemo,
 }
 
 impl Engine {
     pub(crate) const fn label(self) -> &'static str {
         match self {
             Self::Whisper => "Whisper",
-            Self::Parakeet => "NeMo",
+            Self::Nemo => "NeMo",
         }
     }
 
     pub(crate) const fn next(self) -> Self {
         match self {
-            Self::Whisper => Self::Parakeet,
-            Self::Parakeet => Self::Whisper,
+            Self::Whisper => Self::Nemo,
+            Self::Nemo => Self::Whisper,
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 #[expect(
     clippy::struct_excessive_bools,
     reason = "Each flag persists an independent user preference that can be toggled separately"
@@ -70,7 +69,7 @@ pub(crate) struct Config {
     pub threads: u16,
     pub use_gpu: bool,
     pub reduced_motion: bool,
-    pub preserve_clipboard: bool,
+    pub text_delivery: TextDelivery,
     pub play_sounds: bool,
     pub theme: Theme,
     pub start_at_login: bool,
@@ -81,12 +80,12 @@ impl Default for Config {
         Self {
             linux: LinuxSettings::default(),
             mac_shortcut: MacShortcut::default(),
-            engine: Engine::default(),
+            engine: Engine::Nemo,
             microphone: None,
             engine_executable: PathBuf::new(),
             model: PathBuf::new(),
             nemo_model: None,
-            language: "en".into(),
+            language: "auto".into(),
             recognition_terms: Terms::default(),
             remove_fillers: true,
             vocabulary: Vec::new(),
@@ -94,7 +93,7 @@ impl Default for Config {
             threads: 4,
             use_gpu: true,
             reduced_motion: false,
-            preserve_clipboard: false,
+            text_delivery: TextDelivery::default(),
             play_sounds: true,
             theme: Theme::default(),
             start_at_login: false,
@@ -107,8 +106,6 @@ impl Default for Config {
 pub(crate) struct LinuxSettings {
     pub shortcut: String,
     pub cancel: String,
-    pub terminal_paste: bool,
-    pub manual_paste: bool,
     pub external_shortcut: bool,
 }
 
@@ -120,59 +117,19 @@ impl LinuxSettings {
 
 impl Default for LinuxSettings {
     fn default() -> Self {
-        DesktopOptions::default().into()
-    }
-}
-
-impl From<DesktopOptions> for LinuxSettings {
-    fn from(
-        DesktopOptions {
-            mac_shortcut: _,
-            shortcut,
-            cancel,
-            paste,
-            external_shortcut,
-        }: DesktopOptions,
-    ) -> Self {
+        let defaults = DesktopOptions::default();
         Self {
-            shortcut,
-            cancel,
-            terminal_paste: paste == LinuxPaste::Terminal,
-            manual_paste: paste == LinuxPaste::Manual,
-            external_shortcut,
+            shortcut: defaults.shortcut,
+            cancel: defaults.cancel,
+            external_shortcut: defaults.external_shortcut,
         }
     }
 }
 
-impl From<LinuxSettings> for DesktopOptions {
-    fn from(
-        LinuxSettings {
-            shortcut,
-            cancel,
-            terminal_paste,
-            manual_paste,
-            external_shortcut,
-        }: LinuxSettings,
-    ) -> Self {
-        let paste = if manual_paste {
-            LinuxPaste::Manual
-        } else if terminal_paste {
-            LinuxPaste::Terminal
-        } else {
-            LinuxPaste::Standard
-        };
-        Self {
-            mac_shortcut: MacShortcut::default(),
-            shortcut,
-            cancel,
-            paste,
-            external_shortcut,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum TextDelivery {
+    #[default]
     Paste,
     #[cfg(target_os = "linux")]
     TerminalPaste,
@@ -182,6 +139,16 @@ pub(crate) enum TextDelivery {
 }
 
 impl TextDelivery {
+    const fn linux_paste(self) -> LinuxPaste {
+        match self {
+            Self::Paste | Self::Type => LinuxPaste::Standard,
+            #[cfg(target_os = "linux")]
+            Self::TerminalPaste => LinuxPaste::Terminal,
+            #[cfg(target_os = "linux")]
+            Self::Copy => LinuxPaste::Manual,
+        }
+    }
+
     pub(crate) const fn next(self) -> Self {
         #[cfg(target_os = "linux")]
         match self {
@@ -199,34 +166,6 @@ impl TextDelivery {
 }
 
 impl Config {
-    pub(crate) const fn text_delivery(&self) -> TextDelivery {
-        #[cfg(target_os = "linux")]
-        if self.linux.manual_paste {
-            return TextDelivery::Copy;
-        }
-        if self.preserve_clipboard {
-            return TextDelivery::Type;
-        }
-        #[cfg(target_os = "linux")]
-        if self.linux.terminal_paste {
-            return TextDelivery::TerminalPaste;
-        }
-        TextDelivery::Paste
-    }
-
-    pub(crate) fn set_text_delivery(&mut self, delivery: TextDelivery) {
-        self.preserve_clipboard = delivery == TextDelivery::Type;
-        #[cfg(target_os = "linux")]
-        {
-            self.linux.manual_paste = delivery == TextDelivery::Copy;
-            match delivery {
-                TextDelivery::Paste => self.linux.terminal_paste = false,
-                TextDelivery::TerminalPaste => self.linux.terminal_paste = true,
-                TextDelivery::Type | TextDelivery::Copy => {},
-            }
-        }
-    }
-
     pub(crate) fn fillers(&self, language: &str) -> Fillers {
         if self.remove_fillers
             && language
@@ -245,13 +184,12 @@ impl Config {
     }
 
     pub(crate) fn model_choice(&self) -> Option<Model> {
-        self.nemo_model.filter(|choice| {
-            self.engine == Engine::Parakeet && Model::at(&self.model) == Some(*choice)
-        })
+        self.nemo_model
+            .filter(|choice| self.engine == Engine::Nemo && Model::at(&self.model) == Some(*choice))
     }
 
     pub(crate) fn delivery(&self) -> Delivery {
-        match self.text_delivery() {
+        match self.text_delivery {
             TextDelivery::Type => Delivery::Direct,
             TextDelivery::Paste => Delivery::Paste,
             #[cfg(target_os = "linux")]
@@ -266,7 +204,10 @@ impl Config {
     pub(crate) fn desktop_options(&self) -> DesktopOptions {
         DesktopOptions {
             mac_shortcut: self.mac_shortcut,
-            ..self.linux.clone().into()
+            shortcut: self.linux.shortcut.clone(),
+            cancel: self.linux.cancel.clone(),
+            paste: self.text_delivery.linux_paste(),
+            external_shortcut: self.linux.external_shortcut,
         }
     }
 
@@ -277,7 +218,7 @@ impl Config {
 
     pub(crate) fn load(path: &Path) -> (Self, Startup) {
         if !path.exists() {
-            return (Self::first_launch(), Startup::Unconfigured);
+            return (Self::default(), Startup::Unconfigured);
         }
         let config = match Self::read(path) {
             Ok(config) => config,
@@ -289,14 +230,6 @@ impl Config {
         match config.validated(path) {
             Ok(valid) => (Self::clone(&valid), Startup::Configured(Box::new(valid))),
             Err(error) => (config, Startup::Invalid(format!("{error:#}"))),
-        }
-    }
-
-    pub(crate) fn first_launch() -> Self {
-        Self {
-            engine: Engine::Parakeet,
-            language: "auto".into(),
-            ..Self::default()
         }
     }
 
@@ -329,14 +262,16 @@ impl Config {
             threads,
             use_gpu,
             reduced_motion,
-            preserve_clipboard,
+            text_delivery,
             play_sounds,
             theme,
             start_at_login,
         } = next;
         [
             (
-                (cfg!(target_os = "linux") && self.linux != *linux)
+                (cfg!(target_os = "linux")
+                    && (self.linux != *linux
+                        || self.text_delivery.linux_paste() != text_delivery.linux_paste()))
                     || (cfg!(target_os = "macos") && self.mac_shortcut != *mac_shortcut),
                 Change::Desktop,
             ),
@@ -355,7 +290,7 @@ impl Config {
                     || self.recognition_terms != *recognition_terms
                     || self.remove_fillers != *remove_fillers
                     || self.vocabulary != *vocabulary
-                    || self.preserve_clipboard != *preserve_clipboard,
+                    || self.text_delivery != *text_delivery,
                 Change::Session,
             ),
             (self.play_sounds != *play_sounds, Change::Session),

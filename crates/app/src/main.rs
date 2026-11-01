@@ -189,7 +189,7 @@ fn launch(
     let default_settings = settings_file(None).is_ok_and(|default| default == path);
 
     let (config, startup) = if mode.is_demo() {
-        (Config::first_launch(), Startup::Unconfigured)
+        (Config::default(), Startup::Unconfigured)
     } else {
         Config::load(&path)
     };

@@ -117,7 +117,7 @@ impl LocalSpeech {
 
     async fn wait_until_serving(&mut self) -> anyhow::Result<()> {
         let health = self.url(match self.engine {
-            Engine::Parakeet => "ready",
+            Engine::Nemo => "ready",
             Engine::Whisper => "health",
         });
         loop {
@@ -153,7 +153,7 @@ impl LocalSpeech {
             ..
         } = self;
         match engine {
-            Engine::Parakeet => format!("http://{LOOPBACK}:{port}/{path}"),
+            Engine::Nemo => format!("http://{LOOPBACK}:{port}/{path}"),
             Engine::Whisper => format!("http://{LOOPBACK}:{port}/{secret}/{path}"),
         }
     }
@@ -180,7 +180,7 @@ impl LocalSpeech {
     ) -> anyhow::Result<R> {
         self.verify_listener().await?;
         let request = match self.engine {
-            Engine::Parakeet => {
+            Engine::Nemo => {
                 let rate = audio::wav_sample_rate(&wav)?;
                 ensure!(
                     (8_000..=96_000).contains(&rate),
@@ -463,7 +463,7 @@ fn server_command(config: &Config, port: u16, secret: &str, served: &Path) -> Co
     let port = port.to_string();
     let mut command = hidden_command(&config.engine_executable);
     match config.engine {
-        Engine::Parakeet => {
+        Engine::Nemo => {
             let device = if config.use_gpu { "auto" } else { "cpu" };
             command
                 .args(["serve", "--asr-model"])

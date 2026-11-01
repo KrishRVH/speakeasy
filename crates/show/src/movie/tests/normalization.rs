@@ -10,23 +10,23 @@ fn normalization_preserves_samples_and_all_bytes_except_the_declared_header_flag
         let mut bytes = original.clone();
         for (index, chunk) in bytes.chunks_mut(width).enumerate() {
             prefix
-                .compatibility()
+                .normalization()
                 .apply(u64::try_from(index * width).unwrap(), chunk)
                 .unwrap();
         }
         assert_eq!(bytes, expected);
-        prefix.compatibility().apply(0, &mut bytes).unwrap();
+        prefix.normalization().apply(0, &mut bytes).unwrap();
         assert_eq!(bytes, expected);
     }
     let normalized = inspect(&expected).unwrap();
     assert_eq!(normalized.samples(), prefix.samples());
     assert_eq!(normalized.duration, prefix.duration);
     assert_eq!(normalized.bytes, prefix.bytes);
-    assert_eq!(normalized.compatibility().headers, [0_u64; 0]);
+    assert_eq!(normalized.normalization().headers, [0_u64; 0]);
     let mut changed = original;
     changed[flag] = 33;
-    assert!(prefix.compatibility().apply(0, &mut changed).is_err());
-    assert!(prefix.compatibility().apply(u64::MAX, &mut [0]).is_err());
+    assert!(prefix.normalization().apply(0, &mut changed).is_err());
+    assert!(prefix.normalization().apply(u64::MAX, &mut [0]).is_err());
 }
 
 #[test]
@@ -35,7 +35,7 @@ fn normalization_never_reinterprets_optional_fields_or_inherited_sizes() {
         let (original, _) = padded(fixture::movie().bytes, 0, padding, flags);
         let prefix = inspect(&original).unwrap();
         let mut bytes = original.clone();
-        prefix.compatibility().apply(0, &mut bytes).unwrap();
+        prefix.normalization().apply(0, &mut bytes).unwrap();
         assert_eq!(bytes, original);
     }
     let mut bytes = fixture::movie().bytes;
@@ -52,7 +52,7 @@ fn normalization_never_reinterprets_optional_fields_or_inherited_sizes() {
     let (original, _) = padded(bytes, 0, &[0; 4], None);
     let prefix = inspect(&original).unwrap();
     let mut bytes = original.clone();
-    prefix.compatibility().apply(0, &mut bytes).unwrap();
+    prefix.normalization().apply(0, &mut bytes).unwrap();
     assert_eq!(bytes, original);
 }
 
@@ -64,7 +64,7 @@ fn rejected_fragments_never_contribute_header_corrections() {
     assert_eq!(prefix.frames, 1);
     assert!(prefix.truncated);
     let mut corrected = bytes.clone();
-    prefix.compatibility().apply(0, &mut corrected).unwrap();
+    prefix.normalization().apply(0, &mut corrected).unwrap();
     assert_eq!(corrected, bytes);
 }
 
@@ -76,7 +76,7 @@ proptest::proptest! {
         let start = start.min(original.len());
         let end = start.saturating_add(length).min(original.len());
         let mut part = original[start..end].to_vec();
-        prefix.compatibility().apply(u64::try_from(start).unwrap(), &mut part).unwrap();
+        prefix.normalization().apply(u64::try_from(start).unwrap(), &mut part).unwrap();
         let mut expected = original;
         expected[flag] = 17;
         proptest::prop_assert_eq!(part, &expected[start..end]);

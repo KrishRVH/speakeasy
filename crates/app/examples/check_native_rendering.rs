@@ -80,10 +80,6 @@ fn main() -> anyhow::Result<()> {
                     reason = "A closed stderr cannot carry the diagnostic, but the check must still exit with failure"
                 )]
                 let _ = writeln!(io::stderr().lock(), "{error:#}");
-                #[expect(
-                    clippy::exit,
-                    reason = "NSApplication termination exits before run returns, so a failed native check must set its status here"
-                )]
                 std::process::exit(1);
             }
             #[expect(

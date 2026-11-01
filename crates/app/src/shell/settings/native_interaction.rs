@@ -237,7 +237,7 @@ async fn parakeet_cleanup_language(
 ) -> anyhow::Result<()> {
     let original = settings.read_with(cx, |view, _| view.config.clone())?;
     settings.update(cx, |view, _, cx| {
-        view.config.engine = Engine::Parakeet;
+        view.config.engine = Engine::Nemo;
         view.config.language = "de-DE".into();
         cx.notify();
     })?;

@@ -287,7 +287,13 @@ async fn shutdown_revokes_and_owns_pending_insertion_cleanup() -> anyhow::Result
 
 #[tokio::test(start_paused = true)]
 async fn silence_and_empty_recognition_never_report_submission() -> anyhow::Result<()> {
-    let mut h = Harness::new()?;
+    let mut h = Harness::with_ports(
+        Config {
+            language: "en".into(),
+            ..Config::default()
+        },
+        |_| {},
+    )?;
     let (id, events) = h.start().await?;
     events.send(CaptureEvent::Finished(id, Ok(None))).await?;
     h.phase(Phase::Empty).await?;
@@ -325,10 +331,10 @@ async fn copied_text_is_a_notice_that_carries_its_remedy_until_the_next_paste() 
 }
 
 #[tokio::test(start_paused = true)]
-async fn parakeet_preserves_non_english_words_in_dictation_and_shows() -> anyhow::Result<()> {
+async fn nemo_preserves_non_english_words_in_dictation_and_shows() -> anyhow::Result<()> {
     for language in ["de", "auto"] {
         let config = Config {
-            engine: crate::config::Engine::Parakeet,
+            engine: crate::config::Engine::Nemo,
             language: language.into(),
             ..Config::default()
         };
@@ -349,13 +355,20 @@ async fn parakeet_preserves_non_english_words_in_dictation_and_shows() -> anyhow
 
 #[tokio::test(start_paused = true)]
 async fn saved_cleanup_opt_out_keeps_words_and_worker() -> anyhow::Result<()> {
-    let mut h = Harness::new()?;
+    let mut h = Harness::with_ports(
+        Config {
+            language: "en".into(),
+            ..Config::default()
+        },
+        |_| {},
+    )?;
     receive(&h.loads).await?;
     h.start().await?;
     h.finish_as("Um, speak uh clearly.").await?;
     assert_eq!(receive(&h.pasted).await?, "speak clearly.");
     h.phase(Phase::Done).await?;
     let opted_out = Config {
+        language: "en".into(),
         remove_fillers: false,
         ..Config::default()
     };
@@ -392,7 +405,7 @@ async fn dictation_inserts_once_and_request_preferences_keep_the_warm_worker() -
     h.phase(Phase::Done).await?;
     let config = Config {
         reduced_motion: true,
-        preserve_clipboard: true,
+        text_delivery: crate::config::TextDelivery::Type,
         language: "auto".into(),
         ..Config::default()
     };
@@ -408,7 +421,7 @@ async fn dictation_inserts_once_and_request_preferences_keep_the_warm_worker() -
     );
     assert!(h.pasted.try_recv().is_err(), "A result was submitted twice");
     let mut config = h.runtime.configuration.borrow().clone();
-    config.engine = Engine::Parakeet;
+    config.engine = Engine::Whisper;
     h.runtime.configure(ValidConfig::assume(config));
     receive(&h.loads).await?;
     h.start().await?;
@@ -907,13 +920,20 @@ async fn profile_ready_text_latency() -> anyhow::Result<()> {
 #[tokio::test(start_paused = true)]
 async fn phrase_corrections_follow_filler_cleanup_for_dictation_and_shows_without_reloading()
 -> anyhow::Result<()> {
-    let mut h = Harness::new()?;
+    let mut h = Harness::with_ports(
+        Config {
+            language: "en".into(),
+            ..Config::default()
+        },
+        |_| {},
+    )?;
     receive(&h.loads).await?;
     h.start().await?;
     h.finish_as("Ready.").await?;
     assert_eq!(receive(&h.pasted).await?, "Ready.");
     h.phase(Phase::Done).await?;
     let config = Config {
+        language: "en".into(),
         vocabulary: vec![crate::transcript::vocabulary::Correction {
             heard: "cube control".into(),
             written: "kubectl".into(),

@@ -74,7 +74,7 @@ pub(crate) struct Installed {
 
 impl Installed {
     pub(crate) fn apply_to(self, config: &mut Config) {
-        config.engine = Engine::Parakeet;
+        config.engine = Engine::Nemo;
         config.nemo_model = Some(self.choice);
         if self.choice == Model::Nemotron {
             config.language = crate::models::nemotron_language(&config.language).into();

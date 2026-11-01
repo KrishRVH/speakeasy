@@ -26,7 +26,7 @@ const MAX_PORT_FILE_BYTES: u64 = 64;
 const ACKNOWLEDGED: u8 = 0x06;
 const NOT_RUNNING: &str = "Speakeasy is not running. Start it before using a desktop shortcut";
 
-const OUTDATED: &str = "Restart Speakeasy to use desktop shortcuts";
+const INVALID_ENDPOINT: &str = "Restart Speakeasy to use desktop shortcuts";
 const IO_TIMEOUT: Duration = Duration::from_millis(100);
 const REVEAL_ATTEMPTS: u32 = 25;
 const REVEAL_RETRY: Duration = Duration::from_millis(20);
@@ -35,7 +35,7 @@ const ACCEPT_RETRY: Duration = Duration::from_millis(10);
 const MAX_CONTROL_CALLS: usize = 8;
 const CONTROL: u8 = 3;
 const UNCONFIRMED: &str = "Speakeasy did not confirm the command. Check its state before trying again; no retry was sent.";
-const CONTROL_OUTDATED: &str = "Speakeasy closed without confirming the command. Restart Speakeasy to use this command, and check its state before trying again.";
+const CONTROL_DISCONNECTED: &str = "Speakeasy closed without confirming the command. Restart Speakeasy to use this command, and check its state before trying again.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -58,7 +58,7 @@ impl Request {
 
 #[derive(Debug)]
 pub(crate) enum Event {
-    Legacy(Request),
+    Shortcut(Request),
     Control(Call),
 }
 
@@ -129,7 +129,7 @@ impl Instance {
             stream.write_all(&frame)
         })();
         if sent.is_err() {
-            return Reply::unknown(CONTROL_OUTDATED);
+            return Reply::unknown(CONTROL_DISCONNECTED);
         }
         let mut caller = Caller {
             stream: &mut stream,
@@ -147,7 +147,7 @@ impl Instance {
                         | io::ErrorKind::BrokenPipe
                 ) =>
             {
-                Reply::unknown(CONTROL_OUTDATED)
+                Reply::unknown(CONTROL_DISCONNECTED)
             },
             Err(_) => Reply::unknown(UNCONFIRMED),
         }
@@ -188,7 +188,7 @@ impl Endpoint {
             .context(NOT_RUNNING)?
             .take(MAX_PORT_FILE_BYTES)
             .read_to_string(&mut text)
-            .context(OUTDATED)?;
+            .context(INVALID_ENDPOINT)?;
         text.trim()
             .split_once(' ')
             .and_then(|(port, nonce)| {
@@ -197,7 +197,7 @@ impl Endpoint {
                     nonce: u128::from_str_radix(nonce, 16).ok()?,
                 })
             })
-            .context(OUTDATED)
+            .context(INVALID_ENDPOINT)
     }
 }
 
@@ -284,8 +284,8 @@ async fn accept_connections<F>(
         };
 
         match request {
-            Incoming::Legacy(request) => {
-                if requests.send(Event::Legacy(request)).await.is_err() {
+            Incoming::Shortcut(request) => {
+                if requests.send(Event::Shortcut(request)).await.is_err() {
                     break;
                 }
             },
@@ -311,7 +311,7 @@ async fn accept_connections<F>(
 }
 
 enum Incoming {
-    Legacy(Request),
+    Shortcut(Request),
     Control(Result<Command, &'static str>),
 }
 
@@ -336,7 +336,7 @@ async fn handshake(stream: &mut AsyncStream, nonce: u128) -> io::Result<Option<I
             stream.read_exact(&mut bytes).await?;
             return Ok(Some(Incoming::Control(Command::decode(&bytes))));
         }
-        Ok(Request::from_byte(byte).map(Incoming::Legacy))
+        Ok(Request::from_byte(byte).map(Incoming::Shortcut))
     };
     tokio::time::timeout(IO_TIMEOUT, read)
         .await

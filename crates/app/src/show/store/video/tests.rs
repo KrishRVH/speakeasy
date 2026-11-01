@@ -189,9 +189,9 @@ fn fixture(root: &Path) -> anyhow::Result<PathBuf> {
     fs::write(
         directory.join(Manifest::FILE),
         serde_json::to_vec(&json!({
-            "version": 2, "duration": 2250, "surface": {"width": 160, "height": 100},
+            "version": 3, "duration": 2250, "surface": {"width": 160, "height": 100},
         "strokes": [[[0.125, 0.5, 600], [0.875, 0.5, 900]]], "pins": [], "actions": [],
-            "spaces": {"strokes": [{"generation": 1, "part": [0.0, 0.0, 1.0, 1.0]}], "pins": []},
+            "spaces": {"strokes": [{"generation": 1, "part": [0.0, 0.0, 1.0, 1.0]}], "pins": [], "actions": []},
             "narration": {"words": [{"span": [750, 1500], "text": CAPTION}]},
             "marks": [], "keyframes": [{"index": 1, "at": 500, "reason": "middle", "event": "synthetic", "marks": [0, 0]}]
         }))?,

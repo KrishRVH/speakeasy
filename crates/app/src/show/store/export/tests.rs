@@ -10,7 +10,7 @@ fn fixture(parent: &Path) -> anyhow::Result<PathBuf> {
     let directory = parent.join("original");
     fs::create_dir_all(directory.join("frames"))?;
     let manifest = serde_json::to_vec(&json!({
-        "version": 2, "duration": 1000, "surface": {"width": 70, "height": 65},
+        "version": 3, "duration": 1000, "surface": {"width": 70, "height": 65},
         "strokes": [], "pins": [], "actions": [], "narration": {"text": "PRIVATE_NARRATION"},
         "marks": [], "keyframes": [{"index": 1, "at": 500, "reason": "middle", "event": "PRIVATE_EVENT", "marks": [0, 0]}]
     }))?;

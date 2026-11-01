@@ -15,7 +15,7 @@ fn inspection_json_keeps_its_published_shape_and_field_order() -> anyhow::Result
     fs::write(
         directory.join("show.json"),
         serde_json::to_vec(&json!({
-            "version": 2, "duration": 1000, "surface": {"width": 2, "height": 2},
+            "version": 3, "duration": 1000, "surface": {"width": 2, "height": 2},
             "strokes": [], "pins": [], "actions": [], "narration": {"text": "PRIVATE_NARRATION"},
             "marks": [], "keyframes": [{"index": 1, "at": 500, "reason": "middle", "event": "PRIVATE_EVENT", "marks": [0,0]}]
         }))?,

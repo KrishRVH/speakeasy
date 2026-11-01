@@ -146,6 +146,8 @@ fn server_arguments_match_each_engine() {
             .collect::<Vec<_>>()
     };
     let whisper = Config {
+        engine: Engine::Whisper,
+        language: "en".into(),
         model: "model.bin".into(),
         use_gpu: false,
         ..Config::default()
@@ -179,13 +181,13 @@ fn server_arguments_match_each_engine() {
         arguments(&whisper_on_gpu).last().map(String::as_str),
         Some("en")
     );
-    let parakeet = Config {
-        engine: Engine::Parakeet,
+    let nemo = Config {
+        engine: Engine::Nemo,
         model: "model.nemo".into(),
         ..Config::default()
     };
     assert_eq!(
-        arguments(&parakeet),
+        arguments(&nemo),
         [
             "serve",
             "--asr-model",
@@ -248,6 +250,7 @@ fn fake_engine(script: &str) -> anyhow::Result<(tempfile::TempDir, Config)> {
     std::fs::write(&executable, script)?;
     std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))?;
     let config = Config {
+        engine: Engine::Whisper,
         engine_executable: executable,
         use_gpu: false,
         ..Config::default()
@@ -526,7 +529,7 @@ async fn streaming_verifies_the_listener_before_sending_credentials_or_audio() -
 {
     let listener = tokio::net::TcpListener::bind((LOOPBACK, 0)).await?;
     let mut speech = sleeping_engine(listener.local_addr()?.port()).await?;
-    speech.engine = Engine::Parakeet;
+    speech.engine = Engine::Nemo;
     speech.nemotron = true;
     let (_frames, received) = tokio::sync::mpsc::channel(1);
     let result = timeout(
@@ -572,7 +575,7 @@ async fn streaming_authenticates_and_sends_per_request_language_and_hints() -> a
     listener.set_nonblocking(true)?;
     let listener = tokio::net::TcpListener::from_std(listener)?;
     let (_directory, mut speech) = shell_engine("read -r _", held).await?;
-    speech.engine = Engine::Parakeet;
+    speech.engine = Engine::Nemo;
     speech.nemotron = true;
     let authorization = format!("Bearer {}", speech.secret);
     let mut terms = Terms::default();
@@ -770,7 +773,7 @@ async fn abandoned_and_failed_streams_probe_the_owned_engine_before_reuse() -> a
         listener.set_nonblocking(true)?;
         let listener = tokio::net::TcpListener::from_std(listener)?;
         let (_directory, mut speech) = shell_engine("read -r _", held).await?;
-        speech.engine = Engine::Parakeet;
+        speech.engine = Engine::Nemo;
         speech.nemotron = true;
         let (frames, received) = tokio::sync::mpsc::channel(1);
         let _frames = failed.then_some(frames);

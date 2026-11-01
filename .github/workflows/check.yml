@@ -85,12 +85,7 @@ jobs:
         if: runner.os == 'Windows' && inputs.installer
         shell: pwsh
         timeout-minutes: 5
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release download v0.6.0 --pattern speakeasy-windows-x64.zip --dir artifacts/previous
-          if ($LASTEXITCODE -ne 0) { throw 'Could not fetch the previous released app fixture.' }
-          ./scripts/check-installer.ps1 -Installer artifacts/speakeasy-windows-x64-setup.exe -PreviousArchive artifacts/previous/speakeasy-windows-x64.zip
+        run: ./scripts/check-installer.ps1 -Installer artifacts/speakeasy-windows-x64-setup.exe
 
   mac-updates:
     if: ${{ inputs.mac_updates }}

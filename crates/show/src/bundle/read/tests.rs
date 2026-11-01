@@ -5,12 +5,12 @@ use super::*;
 
 fn fixture() -> Value {
     json!({
-        "version": 2,
+        "version": 3,
         "duration": 3000,
         "surface": {"width": 800, "height": 600},
         "strokes": [[[0.2, 0.3, 100], [0.4, 0.3, 200]]],
         "pins": [], "actions": [],
-        "spaces":{"strokes":[{"generation":1,"part":[0,0,1,1]}],"pins":[]},
+        "spaces":{"strokes":[{"generation":1,"part":[0,0,1,1]}],"pins":[],"actions":[]},
         "narration": {"words": [{"span": [100, 200], "text": "PRIVATE_SPEECH"}]},
         "marks": [{"number": 1, "shape": "underline", "strokes": [0, 1],
             "span": [100, 200], "bounds": [0.2, 0.3, 0.4, 0.3]}],
@@ -27,18 +27,14 @@ fn parse(value: &Value) -> Result<Manifest, Unreadable> {
 }
 
 #[test]
-fn future_fields_are_compatible_but_future_formats_are_not_guessed() {
-    let mut value = fixture();
-    value["extra"] = json!({"anything": [1, 2]});
-    let manifest = parse(&value).unwrap();
-    assert_eq!(manifest.keyframes().len(), 2);
+fn unsupported_formats_are_rejected_before_their_contents() {
     assert_eq!(
-        parse(&json!({"version": 3, "keyframes": "changed format"})),
-        Err(Unreadable::Unsupported(3))
+        parse(&json!({"version": 4, "keyframes": "changed format"})),
+        Err(Unreadable::Unsupported(4))
     );
     assert_eq!(
-        parse(&json!({"version": 1})),
-        Err(Unreadable::Unsupported(1))
+        parse(&json!({"version": 2})),
+        Err(Unreadable::Unsupported(2))
     );
 }
 
@@ -52,11 +48,17 @@ fn broken_references_and_order_are_rejected() {
         })
         .collect();
     let faults = [
-        ("/spaces", json!({"strokes": [], "pins": [null]})),
-        ("/spaces", json!({"strokes": [null, null], "pins": []})),
         (
             "/spaces",
-            json!({"strokes": [{"generation":1,"part":[0,0,2,1]}], "pins": []}),
+            json!({"strokes": [], "pins": [null], "actions": []}),
+        ),
+        (
+            "/spaces",
+            json!({"strokes": [null, null], "pins": [], "actions": []}),
+        ),
+        (
+            "/spaces",
+            json!({"strokes": [{"generation":1,"part":[0,0,2,1]}], "pins": [], "actions": []}),
         ),
         ("/keyframes", json!([])),
         ("/keyframes", json!(oversized)),

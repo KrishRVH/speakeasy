@@ -1,6 +1,6 @@
 use super::*;
 
-mod compatibility;
+mod normalization;
 
 mod fixture {
     include!(concat!(

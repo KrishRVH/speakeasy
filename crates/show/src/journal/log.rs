@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{Ending, Image, Moment, Point, Recording, Rect, Signature, Size, Span, Tracker};
 
-const MAGIC: &[u8; 8] = b"SPKLOG01";
+const MAGIC: &[u8; 8] = b"SPKLOG02";
 const DURATION_MS: u64 = 360_000;
 const EDGE: usize = super::MAX_FRAME_EDGE as usize;
 
@@ -15,7 +15,7 @@ pub enum TakeEvent {
     Pointer {
         at: Moment,
         point: Point,
-        part: Option<Rect>,
+        part: Rect,
         drawing: bool,
         pressed: bool,
     },
@@ -120,7 +120,7 @@ impl Take {
                 valid_time(*at)?;
                 require(point.is_finite(), "checkpoint pointer is not finite")?;
                 require(
-                    self.tracker.locate(*part),
+                    self.tracker.locate(Some(*part)),
                     "checkpoint pointer geometry is invalid",
                 )?;
                 self.latest = self.latest.max(*at);
@@ -262,16 +262,12 @@ impl Log {
                 data.extend_from_slice(&point.y.to_le_bytes());
                 data.push(u8::from(*drawing));
                 data.push(u8::from(*pressed));
-                if let Some(part) = part {
-                    data.extend(
-                        [part.left, part.top, part.right, part.bottom]
-                            .into_iter()
-                            .flat_map(f32::to_le_bytes),
-                    );
-                    7
-                } else {
-                    2
-                }
+                data.extend(
+                    [part.left, part.top, part.right, part.bottom]
+                        .into_iter()
+                        .flat_map(f32::to_le_bytes),
+                );
+                7
             },
             TakeEvent::Pin(span) => {
                 data.extend_from_slice(&span.start().as_millis().to_le_bytes());
@@ -332,7 +328,7 @@ impl Log {
                 width: f32::from_le_bytes(data.take()?),
                 height: f32::from_le_bytes(data.take()?),
             }),
-            2 | 7 => TakeEvent::Pointer {
+            7 => TakeEvent::Pointer {
                 at: Moment::from_millis(data.wide()?),
                 point: Point::new(
                     f32::from_le_bytes(data.take()?),
@@ -340,16 +336,12 @@ impl Log {
                 ),
                 drawing: boolean(&mut data)?,
                 pressed: boolean(&mut data)?,
-                part: if kind == 7 {
-                    Some(Rect::from([
-                        f32::from_le_bytes(data.take()?),
-                        f32::from_le_bytes(data.take()?),
-                        f32::from_le_bytes(data.take()?),
-                        f32::from_le_bytes(data.take()?),
-                    ]))
-                } else {
-                    None
-                },
+                part: Rect::from([
+                    f32::from_le_bytes(data.take()?),
+                    f32::from_le_bytes(data.take()?),
+                    f32::from_le_bytes(data.take()?),
+                    f32::from_le_bytes(data.take()?),
+                ]),
             },
             3 => TakeEvent::Pin(Span::new(
                 Moment::from_millis(data.wide()?),

@@ -1,7 +1,6 @@
-# Disposable CI runners only: install, upgrade, and uninstall; demo opens no devices.
+# Disposable CI runners only: install, update, and uninstall; demo opens no devices.
 param(
-    [Parameter(Mandatory = $true)][string]$Installer,
-    [string]$PreviousArchive
+    [Parameter(Mandatory = $true)][string]$Installer
 )
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true' -or !$env:RUNNER_TEMP) {
@@ -36,8 +35,8 @@ function Check-UserData {
         }
     }
 }
-function Invoke-Setup([string]$Source = $Installer) {
-    $process = Start-Process -FilePath $Source -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$app`"" -Wait -PassThru
+function Invoke-Setup {
+    $process = Start-Process -FilePath $Installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$app`"" -Wait -PassThru
     if ($process.ExitCode -ne 0) { throw "Installer failed with exit code $($process.ExitCode)." }
 }
 function Invoke-Uninstall {
@@ -59,31 +58,6 @@ function Close-Preview([Diagnostics.Process]$Preview) {
     } finally {
         if (!$Preview.HasExited) { $Preview.Kill(); [void]$Preview.WaitForExit(10000) }
         $Preview.Dispose()
-    }
-}
-function Prepare-PreviousVersion {
-    if (!$PreviousArchive) { return }
-    $expectedArchive = '446a959ee8771e36b2d57db4b93af597b3b3f4c2a62323cc366f7a4f16e5c2d3'
-    if ((Get-FileHash -LiteralPath $PreviousArchive -Algorithm SHA256).Hash -ne $expectedArchive) {
-        throw 'The previous fixture must be the published v0.6.0 Windows ZIP.'
-    }
-    $previous = Join-Path $work 'previous'
-    Expand-Archive -LiteralPath $PreviousArchive -DestinationPath $previous
-    $oldNumber = '0.6.0'
-    $newNumber = $version.Trim().Substring('speakeasy '.Length)
-    if ([version]$oldNumber -ge [version]$newNumber) { throw 'Upgrade acceptance requires an older released app.' }
-    # v0.6.0 has no installer, CLI, or version query. Package its pinned GUI with the current installer and CLI.
-    $package = Join-Path $work 'previous-package'
-    New-Item -ItemType Directory -Path $package | Out-Null
-    Copy-Item (Join-Path $app '*') $package
-    Copy-Item (Join-Path $previous 'speakeasy.exe') $package -Force
-    $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
-    if (!$iscc) { $iscc = "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe" }
-    & $iscc /Qp "/DAppVersion=$oldNumber" "/DPackageRoot=$package" "/O$previous" (Join-Path $PSScriptRoot '../packaging/windows/installer.iss')
-    if ($LASTEXITCODE -ne 0) { throw 'Could not package the previous released app fixture.' }
-    Invoke-Setup (Join-Path $previous 'speakeasy-windows-x64-setup.exe')
-    if ((Get-FileHash -LiteralPath (Join-Path $app 'speakeasy.exe')).Hash -ne (Get-FileHash -LiteralPath (Join-Path $previous 'speakeasy.exe')).Hash) {
-        throw 'The previous released GUI was not installed.'
     }
 }
 function Check-UpdateHandoff([bool]$ReleaseParent) {
@@ -146,7 +120,7 @@ function Check-UpdateHandoff([bool]$ReleaseParent) {
         } while ($preview.MainWindowHandle -eq [IntPtr]::Zero)
         $observed = & (Join-Path $app 'speakeasy-cli.exe') --version
         if ($LASTEXITCODE -ne 0 -or $observed -ne $version) { throw 'Upgrade did not install the current app version.' }
-        if ((Get-FileHash -LiteralPath $image).Hash -ne $currentImageHash) { throw 'Upgrade did not replace the previous GUI with the current packaged image.' }
+        if ((Get-FileHash -LiteralPath $image).Hash -ne $currentImageHash) { throw 'Update did not install the current packaged GUI.' }
         Check-UserData
     } finally {
         if ($preview) { Close-Preview $preview }
@@ -242,7 +216,6 @@ try {
     Check-RunningAppProtection
     Check-ConsoleImageProtection
     Check-UpdateHandoff $false
-    Prepare-PreviousVersion
     Check-UpdateHandoff $true
     if (!(Test-Path $runKey)) { New-Item -Path $runKey -Force | Out-Null }
     New-ItemProperty -Path $runKey -Name 'Speakeasy' -Value ('"' + (Join-Path $app 'speakeasy.exe') + '"') -PropertyType String -Force | Out-Null

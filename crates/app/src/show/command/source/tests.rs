@@ -58,7 +58,7 @@ fn source_commands_report_samples_preserve_files_and_handle_closed_pipes() -> an
     fs::write(
         directory.join("show.json"),
         serde_json::to_vec(&serde_json::json!({
-            "version":2, "duration":1000, "surface":{"width":2,"height":2},
+            "version":3, "duration":1000, "surface":{"width":2,"height":2},
             "strokes":[],"pins":[],"actions":[],"marks":[],"narration":{"words":[]},
             "keyframes":[{"index":1,"at":100,"reason":"middle","event":"PRIVATE_EVENT","marks":[0,0]}]
         }))?,
@@ -143,7 +143,7 @@ fn phrase_windows_require_an_explicit_match_and_export_honest_samples() -> anyho
     fs::write(
         directory.join("show.json"),
         serde_json::to_vec(&serde_json::json!({
-            "version":2, "duration":4000, "surface":{"width":100,"height":100},
+            "version":3, "duration":4000, "surface":{"width":100,"height":100},
             "strokes":[],"pins":[],"actions":[],
             "marks":[{"number":1,"shape":"pin","point":[0.5,0.5],"bounds":[0.5,0.5,0.5,0.5],"span":[2500,2500],"strokes":[0,0]}],
             "narration":{"words":[{"span":[400,800],"text":"PRIVATE_PHRASE"},{"span":[2500,2700],"text":"PRIVATE_PHRASE"}]},

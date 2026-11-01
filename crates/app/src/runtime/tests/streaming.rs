@@ -5,7 +5,7 @@ use crate::{models::Model, runtime::ports::LiveAudio};
 
 fn config() -> Config {
     Config {
-        engine: crate::config::Engine::Parakeet,
+        engine: crate::config::Engine::Nemo,
         nemo_model: Some(Model::Nemotron),
         model: Model::Nemotron.file_name().into(),
         use_gpu: false,

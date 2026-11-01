@@ -3,7 +3,7 @@ use std::io::Cursor;
 use super::*;
 
 fn modern(id: Value, method: &str) -> Value {
-    json!({"jsonrpc": "2.0", "id": id, "method": method, "params": {"_meta": {VERSION_META: MODERN, CAPABILITIES_META: {}}}})
+    json!({"jsonrpc": "2.0", "id": id, "method": method, "params": {"_meta": {VERSION_META: STATELESS_VERSION, CAPABILITIES_META: {}}}})
 }
 
 fn exchange(lines: &[Value]) -> anyhow::Result<Vec<Value>> {
@@ -26,7 +26,7 @@ fn exchange(lines: &[Value]) -> anyhow::Result<Vec<Value>> {
 #[test]
 fn modern_requests_are_stateless_and_each_requires_metadata() -> anyhow::Result<()> {
     let mut missing = modern(json!(3), "tools/list");
-    missing["params"]["_meta"] = json!({VERSION_META: MODERN});
+    missing["params"]["_meta"] = json!({VERSION_META: STATELESS_VERSION});
     let mut wrong = modern(json!(4), "tools/list");
     wrong["params"]["_meta"][VERSION_META] = json!("2099-01-01");
     let replies = exchange(&[
@@ -45,10 +45,13 @@ fn modern_requests_are_stateless_and_each_requires_metadata() -> anyhow::Result<
     assert_eq!(replies[2]["error"]["code"], -32602);
     assert_eq!(replies[3]["error"]["code"], -32022);
     assert_eq!(replies[3]["error"]["data"]["requested"], "2099-01-01");
-    assert_eq!(replies[3]["error"]["data"]["supported"], json!([MODERN]));
+    assert_eq!(
+        replies[3]["error"]["data"]["supported"],
+        json!([STATELESS_VERSION])
+    );
     assert_eq!(
         replies[4]["result"]["supportedVersions"],
-        json!([MODERN, LEGACY])
+        json!([STATELESS_VERSION, INITIALIZED_VERSION])
     );
     assert!(
         replies[4]["result"]["capabilities"]
@@ -59,7 +62,8 @@ fn modern_requests_are_stateless_and_each_requires_metadata() -> anyhow::Result<
 }
 
 #[test]
-fn legacy_negotiates_a_supported_version_and_notifications_are_silent() -> anyhow::Result<()> {
+fn initialized_clients_negotiate_a_supported_version_and_notifications_are_silent()
+-> anyhow::Result<()> {
     let replies = exchange(&[
         json!({"jsonrpc": "2.0", "id": "init", "method": "initialize", "params": {"protocolVersion": "unknown", "capabilities": {}, "clientInfo": {"name": "fixture", "version": "1"}}}),
         json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}),
@@ -71,7 +75,7 @@ fn legacy_negotiates_a_supported_version_and_notifications_are_silent() -> anyho
         json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "show_list", "arguments": {}}}),
     ])?;
     assert_eq!(replies.len(), 5);
-    assert_eq!(replies[0]["result"]["protocolVersion"], LEGACY);
+    assert_eq!(replies[0]["result"]["protocolVersion"], INITIALIZED_VERSION);
     assert_eq!(replies[1]["error"]["code"], -32602);
     assert_eq!(replies[2]["result"], json!({}));
     assert!(replies[3]["result"].get("resultType").is_none());

@@ -12,15 +12,13 @@ pub(crate) struct Space {
 pub(crate) struct PinSpace {
     #[serde(flatten)]
     pub space: Space,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub observed: Option<Moment>,
+    pub observed: Moment,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Spaces {
     pub(crate) strokes: Vec<Option<Space>>,
     pub(crate) pins: Vec<Option<PinSpace>>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) actions: Vec<Option<Space>>,
 }
 
@@ -31,9 +29,10 @@ impl Spaces {
     }
 
     pub(crate) fn valid(&self, strokes: usize, pins: usize, actions: usize, end: Moment) -> bool {
-        ((self.strokes.is_empty() && self.pins.is_empty())
-            || (self.strokes.len() == strokes && self.pins.len() == pins))
-            && (self.actions.is_empty() || self.actions.len() == actions)
+        (self.is_empty()
+            || (self.strokes.len() == strokes
+                && self.pins.len() == pins
+                && self.actions.len() == actions))
             && self
                 .strokes
                 .iter()
@@ -44,7 +43,7 @@ impl Spaces {
                 .pins
                 .iter()
                 .flatten()
-                .all(|proof| valid(proof.space.part) && proof.observed.is_none_or(|at| at <= end))
+                .all(|proof| valid(proof.space.part) && proof.observed <= end)
     }
 
     pub(crate) fn mark(&self, mark: &Mark, pins: &[Pin]) -> Option<Rect> {

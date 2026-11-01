@@ -31,7 +31,7 @@ pub(super) fn fixture(parent: &Path, name: &str) -> anyhow::Result<PathBuf> {
 
 pub(super) fn fixture_manifest() -> serde_json::Value {
     json!({
-        "version": 2, "duration": 1000, "surface": {"width": 2, "height": 2},
+        "version": 3, "duration": 1000, "surface": {"width": 2, "height": 2},
         "strokes": [], "pins": [], "actions": [],
         "narration": {"words": [{"span": [200, 300], "text": "PRIVATE_NARRATION"}, {"span": [600, 700], "text": "PRIVATE_NARRATION"}]},
         "marks": [{"number": 1, "shape": "pin", "point": [0.5,0.5], "bounds": [0.5,0.5,0.5,0.5], "span": [500,500], "strokes": [0,0]}],

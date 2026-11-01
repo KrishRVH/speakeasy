@@ -103,6 +103,9 @@ same push. A new version on `main` publishes with those notes; no other push rel
 
 ## Current repository
 
+For format, settings, CLI, or protocol changes, follow the pre-1.0 current-version-only policy in
+[Versions](README.md#versions).
+
 Keep current contracts in code, tests, and docs; Git holds history. Replace rather than accumulate:
 remove obsolete code, settings, tests, and docs with the change. Names, types, and tests carry local
 meaning; the owning documentation page preserves invariants, platform behavior, and trust seams they

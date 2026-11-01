@@ -61,7 +61,7 @@ six samples by default (`--most` accepts 1–12), widened by `--around` millisec
 Inspect `windowMs`, `carriedInMs`, `longestGapMs`, and each cell's `sampledMs` and `cropPx` before
 describing the sequence. A carried-in sample can be much older than the requested window. Crops
 refuse a surface resize. Exports require a new local path and preserve the saved bundle. Source
-images have no ink or marks. Sampling can leave gaps, and older Shows may have no source frames.
+images have no ink or marks. Sampling can leave gaps; a failed source write leaves only keyframes.
 Neither nearby images nor a successful structural inspection prove the missing moment.
 
 When inspection reports retained video and source sampling missed the relevant moment, use

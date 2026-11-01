@@ -19,7 +19,7 @@ use objc2_av_foundation::{
 use objc2_foundation::{
     NSData, NSDictionary, NSError, NSNumber, NSObject, NSObjectProtocol, NSURL, ns_string,
 };
-use speakeasy_show::{MovieCompatibility, MoviePrefix};
+use speakeasy_show::MoviePrefix;
 
 struct Input {
     #[expect(
@@ -28,7 +28,6 @@ struct Input {
     )]
     file: Mutex<Option<File>>,
     bytes: u64,
-    compatibility: MovieCompatibility,
 }
 
 impl Input {
@@ -39,7 +38,6 @@ impl Input {
         let result = file.read_exact_at(bytes, at);
         drop(lease);
         result?;
-        self.compatibility.apply(at, bytes)?;
         Ok(())
     }
 }
@@ -84,7 +82,6 @@ impl Reader {
         let this = Self::alloc().set_ivars(Input {
             file: Mutex::new(Some(file)),
             bytes: prefix.bytes,
-            compatibility: prefix.compatibility().clone(),
         });
 
         unsafe { msg_send![super(this), init] }

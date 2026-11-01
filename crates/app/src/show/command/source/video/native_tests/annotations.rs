@@ -11,7 +11,7 @@ fn native_annotated_video_exports_match_full_canvas_crops_and_refuse_uncovered_s
     let mut manifest: serde_json::Value =
         serde_json::from_slice(&fs::read(show.join("show.json"))?)?;
     manifest["pins"] = serde_json::json!([{"at":750,"point":[0.5,0.5]}]);
-    manifest["spaces"] = serde_json::json!({"strokes":[],"pins":[{"generation":1,"part":[0,0,0.5,1],"observed":750}]});
+    manifest["spaces"] = serde_json::json!({"strokes":[],"pins":[{"generation":1,"part":[0,0,0.5,1],"observed":750}],"actions":[]});
     fs::write(show.join("show.json"), serde_json::to_vec(&manifest)?)?;
     let run = |name: &str, options: &[&str]| -> anyhow::Result<serde_json::Value> {
         let args = [
@@ -68,12 +68,10 @@ fn native_annotated_video_exports_match_full_canvas_crops_and_refuse_uncovered_s
         .unwrap()
         .remove("observed");
     fs::write(show.join("show.json"), serde_json::to_vec(&manifest)?)?;
-    let legacy = run("legacy.png", &["--mark", "1"])?;
-    assert_eq!(
-        legacy["video"]["rendering"],
-        serde_json::json!({"state":"painted","drawn":0,"omitted":1})
-    );
-    assert_eq!(raw_png, fs::read(root.path().join("legacy.png"))?);
+    assert!(run("missing-time.png", &["--mark", "1"]).is_err());
+    assert!(!root.path().join("missing-time.png").exists());
+    manifest["spaces"]["pins"][0]["observed"] = serde_json::json!(750);
+    fs::write(show.join("show.json"), serde_json::to_vec(&manifest)?)?;
     let mut header: serde_json::Value =
         serde_json::from_slice(&fs::read(show.join(movie::HEADER))?)?;
     header.as_object_mut().unwrap().remove("geometry");

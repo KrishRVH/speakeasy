@@ -3,21 +3,21 @@ use crate::{config::Engine, runtime::ports::Partition, transcript::vocabulary::C
 
 fn config() -> Config {
     Config {
-        engine: Engine::Parakeet,
+        engine: Engine::Nemo,
+        language: "en".into(),
         use_gpu: false,
         ..Config::default()
     }
 }
 
 #[tokio::test(start_paused = true)]
-async fn segmentation_admits_only_parakeet_dictation_regardless_of_language() -> anyhow::Result<()>
-{
+async fn segmentation_admits_only_nemo_dictation_regardless_of_language() -> anyhow::Result<()> {
     for (engine, language, show, expected) in [
-        (Engine::Parakeet, "en", false, true),
-        (Engine::Parakeet, "auto", false, true),
+        (Engine::Nemo, "en", false, true),
+        (Engine::Nemo, "auto", false, true),
         (Engine::Whisper, "en", false, false),
         (Engine::Whisper, "auto", false, false),
-        (Engine::Parakeet, "auto", true, false),
+        (Engine::Nemo, "auto", true, false),
     ] {
         let (segmentation, admitted) = async_channel::bounded(1);
         let mut h = Harness::with_ports(

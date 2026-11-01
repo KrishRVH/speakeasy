@@ -143,17 +143,12 @@ fn retained_colors(path: &Path, size: [u32; 2], indices: &[usize]) -> anyhow::Re
         prefix.bytes
     );
     drop(retained);
-    for normalized in [false, true] {
-        if normalized {
-            let mut bytes = std::fs::read(&path)?;
-            prefix.compatibility().apply(0, &mut bytes)?;
-            std::fs::write(&path, bytes)?;
-        }
-        for &index in indices {
-            let frame =
-                read(&path, index, || false)?.context("Synthetic Windows frame cancelled")?;
-            check_colors(&frame, index);
-        }
+    let mut bytes = std::fs::read(&path)?;
+    prefix.normalization().apply(0, &mut bytes)?;
+    std::fs::write(&path, bytes)?;
+    for &index in indices {
+        let frame = read(&path, index, || false)?.context("Synthetic Windows frame cancelled")?;
+        check_colors(&frame, index);
     }
     Ok(())
 }

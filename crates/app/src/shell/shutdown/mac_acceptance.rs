@@ -102,7 +102,7 @@ fn start(mode: Mode, main: MainThreadMarker, cx: &mut App) -> anyhow::Result<()>
     let (instance, _requests) =
         Instance::acquire(&settings)?.context("Owned configuration is busy")?;
     crate::load_brand_font(cx);
-    let config = Config::first_launch();
+    let config = Config::default();
     let (output, snapshots) = watch::channel(Snapshot::default());
     let (meter, levels) = watch::channel(Meter::default());
     let (canvas, _ink) = watch::channel(crate::show::Canvas::default());

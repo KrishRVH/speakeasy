@@ -175,12 +175,10 @@ impl Tracker {
                 at: taps.end(),
                 point,
             });
-            self.spaces
-                .pins
-                .push(self.space.map(|space| crate::recording::spaces::PinSpace {
-                    space,
-                    observed: Some(observed),
-                }));
+            self.spaces.pins.push(
+                self.space
+                    .map(|space| crate::recording::spaces::PinSpace { space, observed }),
+            );
             true
         } else {
             false

@@ -24,7 +24,7 @@ fn handoff(force_native_quit: bool) -> anyhow::Result<()> {
         .with_assets(crate::icons::Icons)
         .run(move |cx| {
             crate::load_brand_font(cx);
-            let config = Config::first_launch();
+            let config = Config::default();
             let (output, snapshots) = watch::channel(Snapshot::default());
             let (meter, levels) = watch::channel(Meter::default());
             let (canvas, _ink) = watch::channel(crate::show::Canvas::default());

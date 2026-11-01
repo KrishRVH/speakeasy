@@ -25,7 +25,7 @@ fn control_waits_for_its_owner_and_preserves_the_reply() -> anyhow::Result<()> {
     let (_instance, requests) = Instance::acquire(&path)?.context("First owner missing")?;
     let client = thread::spawn(move || Instance::control(&path, Command::Start { style: None }));
     let Event::Control(call) = requests.recv_blocking()? else {
-        panic!("Control request became a legacy action");
+        panic!("Control request became a shortcut action");
     };
     assert!(
         !client.is_finished(),
@@ -42,7 +42,7 @@ fn control_waits_for_its_owner_and_preserves_the_reply() -> anyhow::Result<()> {
 }
 
 #[test]
-fn pending_control_does_not_block_legacy_cancel_or_toggle() -> anyhow::Result<()> {
+fn pending_control_does_not_block_shortcut_cancel_or_toggle() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
     let (_instance, requests) = Instance::acquire(&path)?.context("First owner missing")?;
@@ -50,7 +50,7 @@ fn pending_control_does_not_block_legacy_cancel_or_toggle() -> anyhow::Result<()
     client.write_all(&[CONTROL])?;
     write_frame(&mut client, &Command::Status.encode().unwrap())?;
     let Event::Control(call) = requests.recv_blocking()? else {
-        panic!("Control request became a legacy action");
+        panic!("Control request became a shortcut action");
     };
     for request in [Request::Cancel, Request::Toggle] {
         Instance::send(&path, request)?;
@@ -75,7 +75,7 @@ fn concurrent_control_is_bounded_and_shutdown_closes_every_receipt() -> anyhow::
         client.write_all(&[CONTROL])?;
         write_frame(&mut client, &Command::Status.encode().unwrap())?;
         let Event::Control(call) = requests.recv_blocking()? else {
-            panic!("Control request became a legacy action");
+            panic!("Control request became a shortcut action");
         };
         clients.push(client);
         calls.push(call);
@@ -97,7 +97,7 @@ fn concurrent_control_is_bounded_and_shutdown_closes_every_receipt() -> anyhow::
 }
 
 #[test]
-fn a_full_control_lane_refuses_without_waiting_or_dropping_legacy_work() -> anyhow::Result<()> {
+fn a_full_control_lane_refuses_without_waiting_or_dropping_shortcut_work() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
     let (_instance, requests) = Instance::acquire(&path)?.context("First owner missing")?;
@@ -121,7 +121,7 @@ async fn a_disconnected_caller_closes_its_pending_owner_receipt() -> anyhow::Res
         &Command::Start { style: None }.encode().unwrap(),
     )?;
     let Event::Control(call) = tokio::time::timeout(PATIENCE, requests.recv()).await?? else {
-        panic!("Control request became a legacy action");
+        panic!("Control request became a shortcut action");
     };
     drop(client);
     tokio::time::timeout(PATIENCE, call.reply.closed()).await?;
@@ -136,7 +136,7 @@ fn unconfirmed_calls_expire_without_being_retried() -> anyhow::Result<()> {
     let (_instance, requests) = Instance::acquire(&path)?.context("First owner missing")?;
     let client = thread::spawn(move || Instance::control(&path, Command::Start { style: None }));
     let Event::Control(call) = requests.recv_blocking()? else {
-        panic!("Control request became a legacy action");
+        panic!("Control request became a shortcut action");
     };
     let reply = client.join().unwrap();
     assert_eq!(reply.result, Disposition::Unknown);
@@ -147,13 +147,13 @@ fn unconfirmed_calls_expire_without_being_retried() -> anyhow::Result<()> {
 }
 
 #[test]
-fn an_abandoned_receipt_is_unknown_without_claiming_an_old_server() -> anyhow::Result<()> {
+fn an_abandoned_receipt_is_unknown_without_claiming_a_disconnection() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
     let (_instance, requests) = Instance::acquire(&path)?.context("First owner missing")?;
     let client = thread::spawn(move || Instance::control(&path, Command::Start { style: None }));
     let Event::Control(call) = requests.recv_blocking()? else {
-        panic!("Control request became a legacy action");
+        panic!("Control request became a shortcut action");
     };
     drop(call);
     let reply = client.join().unwrap();
@@ -201,7 +201,7 @@ fn oversized_control_frames_are_refused_before_reading_the_body() -> anyhow::Res
 }
 
 #[test]
-fn a_legacy_server_closing_after_opcode_three_is_never_reported_as_success() -> anyhow::Result<()> {
+fn a_peer_closing_after_the_control_opcode_is_never_reported_as_success() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;

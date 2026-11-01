@@ -541,7 +541,7 @@ impl Settings {
     }
 
     fn delivery_control(&self, ui: &Ui<'_>) -> impl IntoElement {
-        let label = match self.config.text_delivery() {
+        let label = match self.config.text_delivery {
             #[cfg(not(target_os = "linux"))]
             TextDelivery::Paste => "Keep clipboard: Off",
             #[cfg(not(target_os = "linux"))]
@@ -559,7 +559,7 @@ impl Settings {
     }
 
     fn language_control(&self, ui: &Ui<'_>) -> AnyElement {
-        let cleanup = self.config.engine == Engine::Parakeet && !self.config.uses_nemotron();
+        let cleanup = self.config.engine == Engine::Nemo && !self.config.uses_nemotron();
         let languages = language::options(&self.config);
         let code = language::selected(&self.config);
         let name = languages

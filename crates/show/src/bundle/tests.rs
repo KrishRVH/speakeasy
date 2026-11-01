@@ -100,7 +100,7 @@ fn show_json_keeps_its_wire_format() {
     };
     let click = json!({"kind": "click", "at": 400, "point": [0.5, 0.25]});
     let golden = json!({
-        "version": 2,
+        "version": 3,
         "duration": 2000,
         "surface": {"width": 800.0, "height": 600.0},
         "strokes": [[[0.25, 0.5, 100], [0.75, 0.5, 300]]],

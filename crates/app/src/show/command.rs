@@ -45,7 +45,7 @@ Each cell reports its actual sample time; carried-in frames may precede the wind
 --crop requires --mark and keeps surrounding context; source images have no ink.
 frame exports the retained image at or before a time, or the first image before capture began.
 It reports the actual sample time, excludes annotations, and never overwrites a file.
-Source frames are available only in Shows saved by versions that retain them.
+Source frames are unavailable when their write failed; saved keyframes remain available.
 frame --video decodes the retained movie on Windows and macOS, using original session times.
 It reports actual decoded time and separate annotation coverage, including recovered video tails.
 --annotated adds timed saved ink, pins, and completed actions; reports list omitted annotations.
@@ -59,7 +59,7 @@ export writes a new ZIP with saved images, narration, retained samples, and a re
 It preserves summary edits, excludes recovery audio and unrelated files, and never overwrites.
 Exported copies do not expire automatically. Reports print paths and sizes, never private text.
 video uses FFmpeg from PATH to export timed annotations and original voice, when available.
-Voice expires seven days after recording even for kept Shows; older Shows export silently.
+Voice expires seven days after recording even for kept Shows; unavailable voice exports silently.
 --captions adds a selectable subtitle track from timed narration. Video reports missing coverage.
 Focus selects an interval; without FOCUS the entire retained video is exported.
 discard permanently removes an explicit interrupted:ID or checkpoint path from list,

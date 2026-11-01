@@ -1,64 +1,57 @@
 # Release notes
 
-Speakeasy 0.7.0 makes a Show harder to lose and easier to start: the shortcut finishes it on
-release, Escape alone stays with your app, an interruption saves it rather than discarding it, and a
-Show whose narration fails is still saved. The tray can start a Show and copy or open the last one,
-and Windows can start Speakeasy when you sign in.
+Speakeasy 0.8.0 adds Show review and recovery, voiced and annotated video exports, more everyday
+dictation controls, and explicit agent integrations.
 
-- **Finishing and cancelling a Show.** Pressing the shortcut again finishes a Show when you release
-  it, so holding the shortcut and tapping <kbd>Escape</kbd> cancels it instead. <kbd>Escape</kbd>
-  alone stays with your app during a Show: cancel with the shortcut and <kbd>Escape</kbd>, or
-  **Cancel Show** in the tray. A Show that is finishing is saved even if you press
-  <kbd>Escape</kbd>. Pressing another shortcut while you hold Speakeasy's, locking the screen, or
-  sleeping finishes the Show rather than discarding it. Dictation's gestures are unchanged.
-- **Shows from the tray.** On Windows and Mac, **Show screen** and **Show area…** start a Show of
-  the display under the pointer or of an area you drag out, for a keyboard without the shortcut,
-  such as a Mac keyboard with no Fn key. **Copy last Show** copies the latest Show's `summary.md`
-  again as it reads now, edits included, and **Open last Show** opens its folder. Speakeasy
-  remembers only that one Show, and only until it quits; a finished Show that cannot be copied stays
-  saved, and the pill points you to Copy last Show.
-- **A Show records only what it names.** <kbd>W</kbd> over no window it can record, such as the
-  desktop or the taskbar, and <kbd>A</kbd> finished before you drag out an area, or clicked instead,
-  cancel the Show and say why. A recorded window that closes, is minimized or hidden, moves to
-  another desktop, or goes off screen ends the Show with what it recorded until then, as does screen
-  capture that stops early; the pill and the summary say why and when.
-- **Narration that fails.** When the microphone stops or your speech cannot be transcribed, the Show
-  is saved without narration rather than lost: the pill says **Show copied without narration** and
-  points to Settings for what went wrong, the summary tells your agent why, and no audio is kept.
-- **Summaries for agents.** `summary.md` asks your agent to open the contact sheets and the frames
-  that matter before acting, to trust the screen's spelling of a name over speech recognition, and
-  to cite frames as #N and marks by their circled numbers. Every path in it is a code span, so a
-  folder with spaces reads unambiguously, and a Show's files reach the disk before it appears.
-- **Ink and keyframes.** One-stroke arrows and loops drawn inside longer strokes are recognized, and
-  a crossed stroke such as an X reads as neither. Ink pairs with the sentence you say around it,
-  across pauses to draw and hesitations. A click's keyframe shows its result once the change settles
-  and counts only a change that starts within 500 ms, and a quick click keeps its own keyframe.
-  Clicks are marked with a thin ring and dot edged in white, which leave the control legible. A
-  window Show that is resized is measured at its new size.
-- **Clipboard.** A copied Show summary stays out of Windows clipboard history and cloud clipboard,
-  and out of Universal Clipboard and clipboard managers that honor transient items on Mac, as pasted
-  dictation does.
-- **Start at login.** On Windows, **Start at login** in Settings, off by default, opens Speakeasy in
-  the tray when you sign in. If Windows' Startup apps page has turned it off, Settings says so
-  beside the switch.
-- **Settings and the command line.** Settings explains each Show key, drawing, pins, and finishing.
-  A settings file that fails to read names the key at fault, without its value.
-  `speakeasy --version` prints the version. A rejected command line, or a launch that fails before
-  its windows open, is reported on the terminal that ran it, with status 2 or 1; only a desktop
-  launch shows a dialog. `--config` and `--out` must name a path.
-- **Speech.** A transcription that fails is retried once on a fresh engine, so an engine that died
-  while idle no longer costs the recording. An engine that dies names the cause and keeps its
-  remedy, and the local engine starts on Linux installs without a CA bundle.
-- **Linux.** libei capability lists end as libei reads them, and X11 paste rechecks held keys right
-  before it pastes.
-- **Under the hood.** Code, tests, and documentation across the tree are polished.
+**Breaking changes:** Until 1.0.0, Speakeasy supports its current formats and settings only. Shows
+use `show.json` format 3 and the current recording and recovery formats; earlier formats are
+unsupported. Settings use `engine: "nemo"` and one `text_delivery` choice; old engine names and
+delivery keys are rejected. Omitted engine and language settings now mean `nemo` and `auto`. There
+are no migration or compatibility paths.
 
-Dictation, models, filler removal, and sound cues are otherwise unchanged. Recordings retain the
-five-minute limit. Audio and recognition stay local, with no dictation history or uploads; Shows
-stay private and are deleted after seven days unless a `.pinned` file keeps them.
+**Show privacy:** Shows now save private audio for recovery and video export. Voice expires seven
+days after the original recording, even when the Show is kept. Ordinary dictation stays in memory.
 
-Windows x64 and Apple silicon macOS zip packages, plus experimental Linux x86_64 AppImage and
-bundled tar packages, are attached with SHA-256 checksums. Verification runs locally. Live
-microphone, keyboard-hook, screen capture, clipboard/editor, and compositor acceptance remain
-separate; see [architecture](https://github.com/KrishRVH/speakeasy/blob/main/docs/architecture.md)
-and [performance](https://github.com/KrishRVH/speakeasy/blob/main/docs/performance.md).
+- **Review and recover Shows.** Browse saved Shows, navigate narration and numbered marks, inspect
+  retained frames, and copy a moment's image with its summary and narration. Keep or discard
+  bundles, recover interrupted recordings, or retry failed narration without overwriting earlier
+  Shows or your edits.
+- **Voiced, annotated video.** Windows Shows and Mac screen and area Shows retain video for playback
+  and precise frame retrieval. Export a separate MP4 with timed ink, marks, original voice when
+  available, and selectable captions when narration has word timings. Export requires local FFmpeg
+  5.1 or newer with H.264 and AAC support and retained video. Exports are silent with a notice when
+  voice is unavailable or expired. Mac Show capture remains experimental, and window Shows use still
+  images.
+- **Portable bundles.** Export ZIP bundles containing the edited summary, manifest, contact sheets,
+  keyframes, and available source samples. Saved voice, recovery audio, and retention markers are
+  excluded. Explicit ZIP and MP4 exports stay where you save them and do not expire automatically.
+- **Everyday dictation.** Add phrase corrections, save named dictation presets, and choose local
+  text styles including Verbatim, camelCase, and snake_case. Paste the last completed dictation
+  again from memory. Mac users can choose Fn, Right Option, or Right Command. English filler removal
+  now requires English to be selected; Automatic and other languages preserve words.
+- **Local speech.** Optional Nemotron adds continuous recognition and recognition hints. Parakeet
+  starts recognition during longer dictation to reduce work after release. Both deliver text once,
+  when you finish. Quiet-speech handling improves; switching engines remains explicit.
+- **Agent integrations.** Scoped, read-only MCP tools let an agent list and inspect Shows and
+  retrieve images from folders you explicitly grant. Setup prints configuration for Claude Code,
+  Codex, and other MCP clients. Send an edited summary and its contact sheets to an explicitly
+  selected OpenCode session; a successful handoff confirms queue acceptance. These workflows can
+  expose the requested content to the agent's model provider. They exclude audio and movies.
+- **Scriptable controls.** Status, dictation start/stop/cancel, style, preset, and paste-last
+  commands communicate with the running app. Owner acknowledgements and recording-specific tokens
+  prevent stale commands from stopping a newer recording; uncertain outcomes are reported
+  explicitly.
+- **Settings and accessibility.** Dictation, Words, and Advanced pages organize setup, private
+  practice, corrections, and model choices. Settings shows observed permission status. Windows adds
+  accessible controls and text selection; complete screen-reader navigation remains unfinished.
+- **Reliability and packages.** Improve cancellation, shutdown, capture geometry, checkpoint
+  recovery, and export cleanup. Windows gains a per-user installer and authenticated update
+  preparation; macOS gains a DMG alongside its ZIP.
+
+Hold-to-talk, double-tap hands-free, and the five-minute recording limit remain. Recognition stays
+local, with no accounts, telemetry, dictation history, or automatic uploads. Managed Shows expire
+after seven days unless kept; keeping a Show never extends its audio retention.
+
+Packages support Windows 11 x64 and macOS 14 or newer on Apple silicon. Experimental Linux x86_64
+AppImage and bundled tar packages require glibc 2.35 or newer; Linux does not record Shows. Attached
+SHA-256 checksums cover the packages, and signed metadata supports Windows update preparation.

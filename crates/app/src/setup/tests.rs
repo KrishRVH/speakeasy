@@ -34,7 +34,10 @@ fn model_installation_preserves_language_gpu_preference_and_unrelated_edits() {
         assert!(!config.use_gpu);
         assert_eq!(config.threads, 8);
     }
-    let mut config = Config::default();
+    let mut config = Config {
+        language: "en".into(),
+        ..Config::default()
+    };
     Installed {
         choice: Model::Nemotron,
         engine_executable: "engine".into(),

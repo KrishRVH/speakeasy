@@ -1,5 +1,5 @@
 {
-  "engine": "parakeet",
+  "engine": "nemo",
   "engine_executable": "",
   "model": "",
   "nemo_model": null,
@@ -13,7 +13,7 @@
   "threads": 4,
   "use_gpu": true,
   "reduced_motion": false,
-  "preserve_clipboard": false,
+  "text_delivery": "paste",
   "play_sounds": true,
   "theme": "jet",
   "start_at_login": false

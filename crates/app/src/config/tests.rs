@@ -8,7 +8,7 @@ use super::*;
 fn managed_model_identity_cannot_follow_a_different_file_and_hint_edits_keep_the_worker()
 -> anyhow::Result<()> {
     let mut base = Config {
-        engine: Engine::Parakeet,
+        engine: Engine::Nemo,
         nemo_model: Some(Model::Nemotron),
         model: Model::Nemotron.file_name().into(),
         ..Config::default()
@@ -50,7 +50,7 @@ fn a_new_file_skips_default_linux_keys_and_a_change_writes_only_its_key() -> any
 }
 
 #[test]
-fn a_save_keeps_unknown_keys_hand_edits_and_path_spellings() -> anyhow::Result<()> {
+fn a_save_keeps_hand_edits_and_path_spellings() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
     valid_config(directory.path())?;
@@ -64,7 +64,7 @@ fn a_save_keeps_unknown_keys_hand_edits_and_path_spellings() -> anyhow::Result<(
 
     fs::write(
         &path,
-        r#"{"engine_executable":"engine","model":"model.gguf","threads":8,"retired":1}"#,
+        r#"{"engine_executable":"engine","model":"model.gguf","threads":8}"#,
     )?;
     let draft = Config {
         theme: Theme::Iris,
@@ -74,17 +74,13 @@ fn a_save_keeps_unknown_keys_hand_edits_and_path_spellings() -> anyhow::Result<(
     Config::save_changes(&[&base], &draft, &validated, &path)?;
     let saved = saved(&path)?;
     let keys: Vec<_> = saved.as_object().into_iter().flat_map(Map::keys).collect();
-    assert_eq!(
-        keys,
-        ["engine_executable", "model", "threads", "retired", "theme"]
-    );
+    assert_eq!(keys, ["engine_executable", "model", "threads", "theme"]);
     assert_eq!(
         saved,
         serde_json::json!({
             "engine_executable": "engine",
             "model": "model.gguf",
             "threads": 8,
-            "retired": 1,
             "theme": "iris",
         })
     );
@@ -92,53 +88,33 @@ fn a_save_keeps_unknown_keys_hand_edits_and_path_spellings() -> anyhow::Result<(
 }
 
 #[test]
-fn released_delivery_keys_read_and_save_unchanged() -> anyhow::Result<()> {
+fn delivery_changes_save_one_current_key() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
     fs::write(
         &path,
-        r#"{"engine_executable":"e","model":"m","preserve_clipboard":true}"#,
+        r#"{"engine_executable":"e","model":"m","text_delivery":"type"}"#,
     )?;
-    let base = Config::read(&path)?;
-    assert_eq!(base.text_delivery(), TextDelivery::Type);
-    let mut config = base.clone();
-    config.set_text_delivery(TextDelivery::Paste);
-    save(&base, &config, &path)?;
-    assert_eq!(
-        saved(&path)?,
-        serde_json::json!({"engine_executable": "e", "model": "m", "preserve_clipboard": false})
-    );
-    assert_eq!(Config::read(&path)?.text_delivery(), TextDelivery::Paste);
-
-    #[cfg(target_os = "linux")]
-    {
-        let released = serde_json::json!({
-            "engine_executable": "e",
-            "model": "m",
-            "preserve_clipboard": true,
-            "linux": {
-                "shortcut": "CTRL+ALT+d",
-                "cancel": "CTRL+ALT+Escape",
-                "terminal_paste": true,
-                "manual_paste": false,
-                "external_shortcut": false,
-            },
-        });
-        fs::write(&path, released.to_string())?;
-        let base = Config::read(&path)?;
-        assert_eq!(base.text_delivery(), TextDelivery::Type);
-        let mut config = base.clone();
-        config.set_text_delivery(TextDelivery::Copy);
+    let mut base = Config::read(&path)?;
+    for (text_delivery, name) in [
+        (TextDelivery::Paste, "paste"),
+        (TextDelivery::Type, "type"),
+        #[cfg(target_os = "linux")]
+        (TextDelivery::TerminalPaste, "terminal_paste"),
+        #[cfg(target_os = "linux")]
+        (TextDelivery::Copy, "copy"),
+    ] {
+        let config = Config {
+            text_delivery,
+            ..base.clone()
+        };
         save(&base, &config, &path)?;
-        let mut expected = released;
-        expected["preserve_clipboard"] = false.into();
-        expected["linux"]["manual_paste"] = true.into();
-        assert_eq!(saved(&path)?, expected);
-        let mut config = Config::read(&path)?;
-        assert_eq!(config.text_delivery(), TextDelivery::Copy);
-        config.set_text_delivery(TextDelivery::Type);
-        assert!(config.linux.terminal_paste, "Typing forgot the paste keys");
-        assert_eq!(config.text_delivery(), TextDelivery::Type);
+        assert_eq!(
+            saved(&path)?,
+            serde_json::json!({"engine_executable": "e", "model": "m", "text_delivery": name})
+        );
+        base = Config::read(&path)?;
+        assert_eq!(base.text_delivery, text_delivery);
     }
     Ok(())
 }
@@ -152,14 +128,14 @@ fn filler_cleanup_follows_engine_language_and_switch() -> anyhow::Result<()> {
         (Engine::Whisper, "en-CA", true),
         (Engine::Whisper, "de", false),
         (Engine::Whisper, "auto", false),
-        (Engine::Parakeet, "en", true),
-        (Engine::Parakeet, "EN", true),
-        (Engine::Parakeet, "en-GB", true),
-        (Engine::Parakeet, "en-AU", true),
-        (Engine::Parakeet, "EN-au", true),
-        (Engine::Parakeet, "de-en", false),
-        (Engine::Parakeet, "de", false),
-        (Engine::Parakeet, "auto", false),
+        (Engine::Nemo, "en", true),
+        (Engine::Nemo, "EN", true),
+        (Engine::Nemo, "en-GB", true),
+        (Engine::Nemo, "en-AU", true),
+        (Engine::Nemo, "EN-au", true),
+        (Engine::Nemo, "de-en", false),
+        (Engine::Nemo, "de", false),
+        (Engine::Nemo, "auto", false),
     ] {
         for remove_fillers in [true, false] {
             let config = Config {
@@ -181,7 +157,7 @@ fn filler_cleanup_follows_engine_language_and_switch() -> anyhow::Result<()> {
             );
         }
     }
-    let without_switch: Config = serde_json::from_str(r#"{"engine":"parakeet","language":"de"}"#)?;
+    let without_switch: Config = serde_json::from_str(r#"{"engine":"nemo","language":"de"}"#)?;
     assert_eq!(
         without_switch.fillers(&without_switch.language),
         Fillers::Preserve
@@ -189,27 +165,47 @@ fn filler_cleanup_follows_engine_language_and_switch() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 #[test]
-fn manual_paste_wins_over_keep_clipboard() {
-    let config = Config {
-        preserve_clipboard: true,
-        linux: LinuxSettings {
-            manual_paste: true,
-            ..LinuxSettings::default()
-        },
-        ..Config::default()
-    };
-    assert_eq!(config.text_delivery(), TextDelivery::Copy);
-    assert_eq!(config.delivery(), Delivery::Paste);
-    assert_eq!(config.desktop_options().paste, LinuxPaste::Manual);
+fn delivery_reconfigures_only_the_owner_that_changes() {
+    let base = Config::default();
+    for (text_delivery, delivery, paste, change) in [
+        (
+            TextDelivery::Type,
+            Delivery::Direct,
+            LinuxPaste::Standard,
+            Change::Session,
+        ),
+        #[cfg(target_os = "linux")]
+        (
+            TextDelivery::TerminalPaste,
+            Delivery::Paste,
+            LinuxPaste::Terminal,
+            Change::Desktop,
+        ),
+        #[cfg(target_os = "linux")]
+        (
+            TextDelivery::Copy,
+            Delivery::Paste,
+            LinuxPaste::Manual,
+            Change::Desktop,
+        ),
+    ] {
+        let config = Config {
+            text_delivery,
+            ..base.clone()
+        };
+        assert_eq!(base.change_to(&config), change);
+        assert_eq!(config.delivery(), delivery);
+        assert_eq!(config.desktop_options().paste, paste);
+        assert_eq!(config.change_to(&base), change);
+    }
 }
 
 #[test]
 fn shipped_example_is_what_a_first_launch_starts_from() -> anyhow::Result<()> {
     const EXAMPLE: &str = include_str!("../../../../settings.example.json");
     let config: Config = serde_json::from_str(EXAMPLE)?;
-    assert_eq!(config, Config::first_launch());
+    assert_eq!(config, Config::default());
     assert_eq!(
         serde_json::to_value(&config)?,
         serde_json::from_str::<Value>(EXAMPLE)?
@@ -219,7 +215,7 @@ fn shipped_example_is_what_a_first_launch_starts_from() -> anyhow::Result<()> {
 
 #[test]
 fn engine_and_theme_spellings_are_the_wire_format() -> anyhow::Result<()> {
-    for (engine, name) in [(Engine::Whisper, "whisper"), (Engine::Parakeet, "parakeet")] {
+    for (engine, name) in [(Engine::Whisper, "whisper"), (Engine::Nemo, "nemo")] {
         assert_eq!(serde_json::to_value(engine)?, name);
         assert_eq!(serde_json::from_value::<Engine>(name.into())?, engine);
     }
@@ -252,27 +248,27 @@ fn omitted_keys_read_as_the_defaults() -> anyhow::Result<()> {
 }
 
 #[test]
-fn unknown_top_level_keys_are_ignored_but_linux_keys_stay_strict() -> anyhow::Result<()> {
+fn unsupported_settings_are_rejected_without_overwriting_the_file() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
-    fs::write(
-        &path,
-        r#"{"engine_executable":"e","model":"m","retired":1}"#,
-    )?;
-    let expected = Config {
-        engine_executable: "e".into(),
-        model: "m".into(),
-        ..Config::default()
+    let base = Config::default();
+    let draft = Config {
+        theme: Theme::Iris,
+        ..base.clone()
     };
-    assert_eq!(Config::read(&path)?, expected);
-    fs::write(
-        &path,
-        r#"{"engine_executable":"e","model":"m","linux":{"chord":"X"}}"#,
-    )?;
-    let error = Config::read(&path)
-        .err()
-        .context("An unknown Linux key was accepted")?;
-    assert!(format!("{error:#}").contains("chord"));
+    for contents in [
+        r#"{"retired":1}"#,
+        r#"{"preserve_clipboard":true}"#,
+        r#"{"linux":{"terminal_paste":true}}"#,
+        r#"{"linux":{"manual_paste":true}}"#,
+        r#"{"engine":"parakeet"}"#,
+        r#"{"linux":{"chord":"X"}}"#,
+    ] {
+        fs::write(&path, contents)?;
+        assert!(Config::read(&path).is_err(), "{contents}");
+        assert!(save(&base, &draft, &path).is_err(), "{contents}");
+        assert_eq!(fs::read(&path)?, contents.as_bytes());
+    }
     Ok(())
 }
 
@@ -289,15 +285,15 @@ fn a_file_that_reads_is_one_a_save_can_patch() -> anyhow::Result<()> {
         theme: Theme::Iris,
         ..held.clone()
     };
-    for (case, retired) in [
-        ("a plain unknown value", &b"1"[..]),
+    for (case, language) in [
+        ("a valid language", &br#""en""#[..]),
         ("an out-of-range number", b"1e400"),
         ("a lone surrogate", br#""\ud800""#),
         ("invalid UTF-8", b"\"\xff\""),
     ] {
         let contents = [
-            br#"{"engine_executable":"e","model":"m","retired":"#,
-            retired,
+            br#"{"engine_executable":"e","model":"m","language":"#,
+            language,
             b"}",
         ];
         fs::write(&path, contents.concat())?;
@@ -347,19 +343,19 @@ fn a_save_writes_through_a_linked_settings_file() -> anyhow::Result<()> {
 }
 
 #[test]
-fn a_first_launch_saves_its_engine_into_a_file_that_appears_later() -> anyhow::Result<()> {
+fn a_new_file_save_preserves_choices_when_the_file_appears_later() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
-    let draft = Config::first_launch();
+    let draft = Config {
+        engine: Engine::Whisper,
+        ..Config::default()
+    };
     let held = Config::held_by(&path, &draft);
 
     fs::write(&path, br#"{"theme":"iris"}"#)?;
     save(&held, &draft, &path)?;
     let file = saved(&path)?;
-    assert_eq!(
-        file["engine"], "parakeet",
-        "The first launch's engine was not saved"
-    );
+    assert_eq!(file["engine"], "whisper", "The chosen engine was not saved");
     assert_eq!(
         file["theme"], "iris",
         "A key Settings did not change was overwritten"
@@ -404,8 +400,8 @@ fn a_repair_notice_names_the_key_before_serdes_account() -> anyhow::Result<()> {
             "theme: expected value at line 1 column 10",
         ),
         (
-            r#"{"retired":1e400}"#,
-            "retired: number out of range at line 1 column 16",
+            r#"{"threads":1e400}"#,
+            "threads: number out of range at line 1 column 16",
         ),
         (
             r#"{"linux":{"cancel":"a","cancel":"b"}}"#,
@@ -478,7 +474,7 @@ fn startup_classifies_saved_settings() -> anyhow::Result<()> {
     let path = directory.path().join("settings.json");
     let (config, startup) = Config::load(&path);
     assert!(matches!(startup, Startup::Unconfigured));
-    assert_eq!(config, Config::first_launch());
+    assert_eq!(config, Config::default());
 
     fs::write(&path, "{")?;
     let (config, startup) = Config::load(&path);
@@ -495,8 +491,8 @@ fn startup_classifies_saved_settings() -> anyhow::Result<()> {
     );
     assert_eq!(
         config.engine,
-        Engine::Whisper,
-        "A file without an engine key did not read as Whisper"
+        Engine::Nemo,
+        "An omitted engine key did not use the current default"
     );
 
     valid_config(directory.path())?;
@@ -537,7 +533,6 @@ fn vocabulary_saves_preserve_other_hand_edits_and_require_session_reconfiguratio
     save(&base, &base, &path)?;
     let mut file = saved(&path)?;
     file["threads"] = 8.into();
-    file["unknown"] = true.into();
     fs::write(&path, serde_json::to_vec(&file)?)?;
     let mut draft = base.clone();
     draft.vocabulary.push(Correction {
@@ -549,7 +544,6 @@ fn vocabulary_saves_preserve_other_hand_edits_and_require_session_reconfiguratio
     Config::save_changes(&[&base], &draft, &draft.validated(&path)?, &path)?;
     let stored = saved(&path)?;
     assert_eq!(stored["threads"], 8);
-    assert_eq!(stored["unknown"], true);
     assert_eq!(Config::read(&path)?.vocabulary, draft.vocabulary);
     let mut external = stored;
     external["vocabulary"][0]["written"] = "Hand edited".into();

@@ -39,7 +39,7 @@ pub(super) fn resolve(recording: &Recording, marks: &[Mark]) -> Vec<Label> {
                     pins.get(&key(mark.span.start(), point))
                         .copied()
                         .flatten()
-                        .and_then(|proof| proof.observed.map(|at| (proof.space.part, at))),
+                        .map(|proof| (proof.space.part, proof.observed)),
                 )
             } else {
                 Anchor::Ink(recording.spaces.mark(mark, &recording.pins))

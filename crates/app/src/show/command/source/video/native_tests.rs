@@ -35,8 +35,7 @@ fn native_mark_crops_match_presented_pixels_and_refuse_incompatible_spaces() -> 
     ] {
         manifest["marks"][0]["span"] = serde_json::json!([at, at]);
         manifest["pins"] = serde_json::json!([{"at":at,"point":[0.5,0.5]}]);
-        manifest["spaces"] =
-            serde_json::json!({"strokes":[],"pins":[{"generation":1,"part":part}]});
+        manifest["spaces"] = serde_json::json!({"strokes":[],"pins":[{"generation":1,"part":part,"observed":at}],"actions":[]});
         fs::write(show.join("show.json"), serde_json::to_vec(&manifest)?)?;
         let report = run(name)?;
         assert_eq!(

@@ -2,7 +2,7 @@ use proptest::prelude::*;
 
 use super::*;
 use crate::{
-    config::{Change, ValidConfig, valid_config},
+    config::{Change, TextDelivery, ValidConfig, valid_config},
     theme::Theme,
     transcript::vocabulary::Vocabulary,
 };
@@ -11,15 +11,16 @@ use crate::{
 fn loading_a_domain_restores_its_words_and_model_without_changing_global_preferences()
 -> anyhow::Result<()> {
     let mut writing = Config {
+        engine: Engine::Whisper,
         microphone: Some("Chosen microphone".into()),
-        preserve_clipboard: true,
+        text_delivery: TextDelivery::Type,
         theme: Theme::Iris,
         play_sounds: false,
         ..Config::default()
     };
     let prose = Preset::capture("Writing".into(), &writing)?;
     let mut coding = writing.clone();
-    coding.engine = Engine::Parakeet;
+    coding.engine = Engine::Nemo;
     coding.engine_executable = "nemo-speech.exe".into();
     coding.model = Model::Nemotron.file_name().into();
     coding.nemo_model = Some(Model::Nemotron);
@@ -33,7 +34,7 @@ fn loading_a_domain_restores_its_words_and_model_without_changing_global_prefere
     coding.use_gpu = false;
     coding.remove_fillers = false;
     coding.microphone = None;
-    coding.preserve_clipboard = false;
+    coding.text_delivery = TextDelivery::Paste;
     coding.theme = Theme::default();
     coding.play_sounds = true;
     let technical = Preset::capture("Coding".into(), &coding)?;
@@ -42,11 +43,11 @@ fn loading_a_domain_restores_its_words_and_model_without_changing_global_prefere
         Vocabulary::new(&writing.vocabulary).text("Use rust."),
         "Use Rust."
     );
-    assert_eq!(writing.engine, Engine::Parakeet);
+    assert_eq!(writing.engine, Engine::Nemo);
     assert_eq!(writing.language, "en-US");
     assert_eq!(writing.recognition_terms, technical.recognition_terms);
     assert_eq!(writing.microphone.as_deref(), Some("Chosen microphone"));
-    assert!(writing.preserve_clipboard && !writing.play_sounds);
+    assert!(writing.text_delivery == TextDelivery::Type && !writing.play_sounds);
     assert_eq!(writing.theme, Theme::Iris);
     prose.load(&mut writing);
     assert_eq!(
@@ -77,7 +78,6 @@ fn inactive_paths_survive_save_and_only_a_loaded_missing_model_prevents_applicat
         .push(Preset::capture("Earlier model".into(), &missing)?);
     assert_eq!(held.change_to(&draft), Change::Presentation);
     let mut file: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
-    file["future_setting"] = serde_json::json!("keep this edit");
     file["play_sounds"] = false.into();
     std::fs::write(&path, serde_json::to_vec(&file)?)?;
     Config::save_changes(&[&held], &draft, &draft.validated(&path)?, &path)?;
@@ -89,15 +89,11 @@ fn inactive_paths_survive_save_and_only_a_loaded_missing_model_prevents_applicat
     saved.presets[0].load(&mut loaded);
     assert_eq!(saved.change_to(&loaded), Change::Engine);
     assert!(loaded.validated(&path).is_err());
-    assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&std::fs::read(&path)?)?["future_setting"],
-        "keep this edit"
-    );
     Ok(())
 }
 
 #[test]
-fn old_files_need_no_presets_and_invalid_libraries_are_rejected_even_without_an_engine()
+fn sparse_settings_need_no_presets_and_invalid_libraries_are_rejected_even_without_an_engine()
 -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");

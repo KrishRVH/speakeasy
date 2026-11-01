@@ -43,7 +43,7 @@ fn show() -> anyhow::Result<tempfile::TempDir> {
         .map(|index| json!({"index": index, "at": index.saturating_mul(100), "reason": "middle", "event": "NOT_SENT_EVENT", "marks": [0, 0]}))
         .collect();
     let manifest = serde_json::to_vec(&json!({
-        "version": 2, "duration": 1000, "surface": {"width": 100, "height": 100},
+        "version": 3, "duration": 1000, "surface": {"width": 100, "height": 100},
         "strokes": [], "pins": [], "actions": [], "narration": {"text": "NOT_SENT_NARRATION"},
         "marks": [], "keyframes": frames,
     }))?;
