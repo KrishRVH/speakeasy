@@ -207,9 +207,16 @@ module unless a test file is named.
   [services.rs](../crates/app/src/shell/services.rs),
   [lifecycle.rs](../crates/app/src/shell/lifecycle.rs),
   [shutdown.rs](../crates/app/src/shell/shutdown.rs), [save.rs](../crates/app/src/shell/save.rs),
-  [window.rs](../crates/app/src/shell/window.rs), and [main.rs](../crates/app/src/main.rs).
-  [save/tests.rs](../crates/app/src/shell/save/tests.rs) checks ordered writes and edits made during
-  one; lifecycle.rs's tests check terminal Quit and Pause or a resume check around Save.
+  [window.rs](../crates/app/src/shell/window.rs), and [main.rs](../crates/app/src/main.rs). Mac
+  native quit requests enter the same drain through GPUI's termination delegate. A pending request
+  cannot bypass cleanup by arriving again; only the drained owner approves termination. Requests
+  nested inside a foreground task or application borrow are canceled before draining, so their
+  native call can return. This can cancel a macOS logout request. The opt-in
+  [Mac acceptance](../crates/app/src/shell/shutdown/mac_acceptance.rs) holds an accepted Show write
+  across external, nested, repeated, and app-owned quit, checking foreground frames and instance
+  release without devices or input. [save/tests.rs](../crates/app/src/shell/save/tests.rs) checks
+  ordered writes and edits made during one; lifecycle.rs's tests check terminal Quit and Pause or a
+  resume check around Save.
 - **Start at login**: [windows/login.rs](../crates/platform/src/windows/login.rs) writes or deletes
   the Windows Run value and reads Windows' Startup apps approval of it;
   [main.rs](../crates/app/src/main.rs) decides which launches touch it, and

@@ -732,6 +732,12 @@ paused clock exercises gesture deadlines and the five-minute cap.
   edited Shows, and other copies' sign-in entries. The Check workflow's optional `installer` input
   also packages the pinned v0.6.0 GUI alongside the current CLI as an older installed fixture and
   upgrades it to the current build; the old release has no installer, CLI, or version query.
+- On macOS, `bash scripts/check-update-macos.sh` builds the opt-in `native-acceptance` feature and
+  opens owned demo windows. It holds an accepted Show write during external, nested, repeated, and
+  app-owned quit requests, then checks rendering callbacks, configuration preservation, and instance
+  release. It uses no microphone, capture, input injection, or clipboard. The Check workflow's
+  `mac_updates` input runs this on a disposable Mac runner. Default builds and release packages omit
+  the acceptance entry points.
 - `scripts/check-demo-windows.ps1 -Executable <speakeasy.exe>` checks that the demo pill stays
   non-activating and passes clicks through, and that closing Shows keeps Settings open. It also
   checks Settings through Windows UI Automation with synthetic Unicode input: roles, selection,

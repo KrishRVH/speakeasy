@@ -208,6 +208,36 @@ impl Application {
         self
     }
 
+    /// Defers native macOS termination until the handler finishes its work and calls [`App::quit`].
+    /// The handler runs once, outside any application borrow held by nested native event loops.
+    /// A request arriving inside an application borrow or foreground task is canceled before
+    /// draining to avoid a nested-loop deadlock; this can cancel an OS logout request.
+    #[cfg(target_os = "macos")]
+    pub fn on_quit_requested(&self, callback: impl FnOnce(&mut App) + 'static) -> &Self {
+        let app = Rc::downgrade(&self.0);
+        let foreground = self.foreground_executor();
+        self.0.borrow().platform.on_quit_requested(Box::new(move || {
+            let borrowable = app.upgrade().is_some_and(|app| app.try_borrow_mut().is_ok());
+            foreground
+                .spawn(async move {
+                    loop {
+                        let Some(app) = app.upgrade() else {
+                            return;
+                        };
+                        if let Ok(mut cx) = app.try_borrow_mut() {
+                            callback(&mut cx);
+                            return;
+                        }
+                        drop(app);
+                        crate::Timer::after(Duration::from_millis(1)).await;
+                    }
+                })
+                .detach();
+            borrowable
+        }));
+        self
+    }
+
     /// Returns a handle to the [`BackgroundExecutor`] associated with this app, which can be used to spawn futures in the background.
     pub fn background_executor(&self) -> BackgroundExecutor {
         self.0.borrow().background_executor.clone()

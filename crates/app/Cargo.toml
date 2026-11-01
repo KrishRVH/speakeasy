@@ -7,6 +7,9 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+native-acceptance = ["dep:objc2", "dep:objc2-app-kit"]
+
 [package.metadata.cargo-machete]
 # build.rs uses this to embed the Windows manifest and application resources.
 ignored = ["embed-resource"]
@@ -55,6 +58,10 @@ rustls-platform-verifier.workspace = true
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 x11rb = { workspace = true, features = ["allow-unsafe-code", "shape"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { workspace = true, optional = true }
+objc2-app-kit = { workspace = true, optional = true, features = ["NSApplication", "NSResponder", "NSRunningApplication", "libc"] }
 
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 # Setup downloads over the operating system's TLS stack and trust store.

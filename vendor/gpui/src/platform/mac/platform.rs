@@ -75,6 +75,7 @@ unsafe fn build_classes() {
         APP_CLASS = {
             let mut decl = ClassDecl::new("GPUIApplication", class!(NSApplication)).unwrap();
             decl.add_ivar::<*mut c_void>(MAC_PLATFORM_IVAR);
+            decl.add_method(sel!(terminate:), terminate as extern "C" fn(&mut Object, Sel, id));
             decl.register()
         }
     };
@@ -93,6 +94,10 @@ unsafe fn build_classes() {
             decl.add_method(
                 sel!(applicationShouldHandleReopen:hasVisibleWindows:),
                 should_handle_reopen as extern "C" fn(&mut Object, Sel, id, bool),
+            );
+            decl.add_method(
+                sel!(applicationShouldTerminate:),
+                should_terminate as extern "C" fn(&mut Object, Sel, id) -> NSUInteger,
             );
             decl.add_method(
                 sel!(applicationWillTerminate:),
@@ -156,6 +161,14 @@ unsafe fn build_classes() {
 
 pub(crate) struct MacPlatform(Mutex<MacPlatformState>);
 
+#[derive(Clone, Copy, Default)]
+enum Termination {
+    #[default]
+    Idle,
+    Requested { native_pending: bool },
+    Approved,
+}
+
 pub(crate) struct MacPlatformState {
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
@@ -168,6 +181,8 @@ pub(crate) struct MacPlatformState {
     reopen: Option<Box<dyn FnMut()>>,
     on_keyboard_layout_change: Option<Box<dyn FnMut()>>,
     quit: Option<Box<dyn FnMut()>>,
+    quit_requested: Option<Box<dyn FnOnce() -> bool>>,
+    termination: Termination,
     menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
     validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
     will_open_menu: Option<Box<dyn FnMut()>>,
@@ -209,6 +224,8 @@ impl MacPlatform {
             metadata_pasteboard_type: unsafe { ns_string("zed-metadata") },
             reopen: None,
             quit: None,
+            quit_requested: None,
+            termination: Termination::Idle,
             menu_command: None,
             validate_menu_command: None,
             will_open_menu: None,
@@ -516,8 +533,20 @@ impl Platform for MacPlatform {
 
         unsafe extern "C" fn quit(_: *mut c_void) {
             unsafe {
-                let app = NSApplication::sharedApplication(nil);
-                let _: () = msg_send![app, terminate: nil];
+                let app: id = msg_send![APP_CLASS, sharedApplication];
+                let pointer = *(*app).get_ivar::<*const c_void>(MAC_PLATFORM_IVAR);
+                let pending = pointer.cast::<MacPlatform>().as_ref().is_some_and(|platform| {
+                    let mut state = platform.0.lock();
+                    matches!(
+                        std::mem::replace(&mut state.termination, Termination::Approved),
+                        Termination::Requested { native_pending: true }
+                    )
+                });
+                if pending {
+                    let _: () = msg_send![app, replyToApplicationShouldTerminate: YES];
+                } else {
+                    let _: () = msg_send![app, terminate: nil];
+                }
             }
         }
     }
@@ -873,6 +902,10 @@ impl Platform for MacPlatform {
 
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
         self.0.lock().quit = Some(callback);
+    }
+
+    fn on_quit_requested(&self, callback: Box<dyn FnOnce() -> bool>) {
+        self.0.lock().quit_requested = Some(callback);
     }
 
     fn on_reopen(&self, callback: Box<dyn FnMut()>) {
@@ -1416,6 +1449,36 @@ extern "C" fn should_handle_reopen(this: &mut Object, _: Sel, _: id, has_open_wi
             platform.0.lock().reopen.get_or_insert(callback);
         }
     }
+}
+
+extern "C" fn terminate(this: &mut Object, _: Sel, sender: id) {
+    unsafe {
+        let pointer = *this.get_ivar::<*const c_void>(MAC_PLATFORM_IVAR);
+        let pending = pointer.cast::<MacPlatform>().as_ref().is_some_and(|platform| {
+            matches!(platform.0.lock().termination, Termination::Requested { .. })
+        });
+        if !pending {
+            let _: () = msg_send![super(this, class!(NSApplication)), terminate: sender];
+        }
+    }
+}
+
+extern "C" fn should_terminate(this: &mut Object, _: Sel, _: id) -> NSUInteger {
+    let platform = unsafe { get_mac_platform(this) };
+    let mut state = platform.0.lock();
+    match state.termination {
+        Termination::Approved => return 1,
+        Termination::Requested { native_pending } => return if native_pending { 2 } else { 0 },
+        Termination::Idle => {},
+    }
+    let Some(callback) = state.quit_requested.take() else {
+        return 1;
+    };
+    drop(state);
+    let native_pending = callback() && !MacDispatcher::is_dispatching_foreground();
+    let mut state = platform.0.lock();
+    state.termination = Termination::Requested { native_pending };
+    if native_pending { 2 } else { 0 }
 }
 
 extern "C" fn will_terminate(this: &mut Object, _: Sel, _: id) {

@@ -5064,6 +5064,8 @@ dependencies = [
  "getrandom 0.4.3",
  "gpui",
  "image",
+ "objc2",
+ "objc2-app-kit",
  "proptest",
  "raw-window-handle",
  "reqwest",

@@ -229,6 +229,8 @@ pub(crate) trait Platform: 'static {
     fn open_with_system(&self, path: &Path);
 
     fn on_quit(&self, callback: Box<dyn FnMut()>);
+    #[cfg(target_os = "macos")]
+    fn on_quit_requested(&self, _callback: Box<dyn FnOnce() -> bool>) {}
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
 
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap);

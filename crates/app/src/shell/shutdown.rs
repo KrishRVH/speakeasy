@@ -19,6 +19,9 @@ const DRAIN_POLL: Duration = Duration::from_millis(10);
 #[cfg(target_os = "windows")]
 mod native_tests;
 
+#[cfg(all(feature = "native-acceptance", target_os = "macos"))]
+pub(super) mod mac_acceptance;
+
 pub(crate) fn request_quit(cx: &mut App) {
     begin_quit(
         cx,

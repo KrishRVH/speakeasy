@@ -6,6 +6,10 @@ on:
         description: Build and test the Windows installer on the disposable runner
         type: boolean
         default: false
+      mac_updates:
+        description: Check owned Mac update shutdown without devices or input
+        type: boolean
+        default: false
       movie:
         description: Check native movie playback and Windows-to-Mac colors with synthetic files
         type: boolean
@@ -32,7 +36,7 @@ concurrency:
 # without their SDKs, so its code for those systems compiles and runs here.
 jobs:
   native:
-    if: ${{ !inputs.movie || !inputs.movie_fixture_run }}
+    if: ${{ !inputs.mac_updates && (!inputs.movie || !inputs.movie_fixture_run) }}
     strategy:
       fail-fast: false
       matrix:
@@ -87,6 +91,23 @@ jobs:
           gh release download v0.6.0 --pattern speakeasy-windows-x64.zip --dir artifacts/previous
           if ($LASTEXITCODE -ne 0) { throw 'Could not fetch the previous released app fixture.' }
           ./scripts/check-installer.ps1 -Installer artifacts/speakeasy-windows-x64-setup.exe -PreviousArchive artifacts/previous/speakeasy-windows-x64.zip
+
+  mac-updates:
+    if: ${{ inputs.mac_updates }}
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        with:
+          version: 2026.10.15
+          install_args: rust
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: check-macos-15
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Check owned Mac quit and update cleanup
+        timeout-minutes: 10
+        run: bash scripts/check-update-macos.sh
 
   movie-colors:
     if: ${{ always() && inputs.movie && (needs.native.result == 'success' || inputs.movie_fixture_run != '') }}

@@ -41,7 +41,10 @@ pub(crate) struct Edits {
 }
 
 impl Edits {
-    #[cfg(all(test, target_os = "windows"))]
+    #[cfg(any(
+        all(test, target_os = "windows"),
+        all(feature = "native-acceptance", target_os = "macos")
+    ))]
     pub(crate) fn held_until(&mut self, release: Receiver<()>) -> anyhow::Result<Receipt> {
         self.start(move || {
             release.recv_blocking()?;

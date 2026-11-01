@@ -12,6 +12,7 @@ use objc::{
 use std::{
     ffi::c_void,
     ptr::{NonNull, addr_of},
+    sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
 
@@ -27,6 +28,16 @@ pub(crate) fn dispatch_get_main_queue() -> dispatch_queue_t {
 }
 
 pub(crate) struct MacDispatcher;
+
+// The context-free native trampoline brackets the sole foreground executor. Native termination
+// must observe that scope before borrowing App; no application event can report a blocked callback.
+static FOREGROUND_DISPATCH: AtomicBool = AtomicBool::new(false);
+
+impl MacDispatcher {
+    pub(crate) fn is_dispatching_foreground() -> bool {
+        FOREGROUND_DISPATCH.load(Ordering::Relaxed)
+    }
+}
 
 impl PlatformDispatcher for MacDispatcher {
     fn is_main_thread(&self) -> bool {
@@ -49,7 +60,7 @@ impl PlatformDispatcher for MacDispatcher {
             dispatch_async_f(
                 dispatch_get_main_queue(),
                 runnable.into_raw().as_ptr() as *mut c_void,
-                Some(trampoline),
+                Some(foreground_trampoline),
             );
         }
     }
@@ -72,4 +83,17 @@ impl PlatformDispatcher for MacDispatcher {
 extern "C" fn trampoline(runnable: *mut c_void) {
     let task = unsafe { Runnable::<()>::from_raw(NonNull::new_unchecked(runnable as *mut ())) };
     task.run();
+}
+
+extern "C" fn foreground_trampoline(runnable: *mut c_void) {
+    struct Scope(bool);
+
+    impl Drop for Scope {
+        fn drop(&mut self) {
+            FOREGROUND_DISPATCH.store(self.0, Ordering::Relaxed);
+        }
+    }
+
+    let _scope = Scope(FOREGROUND_DISPATCH.swap(true, Ordering::Relaxed));
+    trampoline(runnable);
 }

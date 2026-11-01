@@ -117,6 +117,13 @@ impl Invocation {
 }
 
 fn main() -> ExitCode {
+    #[cfg(all(feature = "native-acceptance", target_os = "macos"))]
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|arg| arg == "--check-owned-quit" || arg == "--send-owned-quit")
+    {
+        return in_terminal(shell::native_quit_check);
+    }
     let invocation = match Invocation::parse(std::env::args_os().skip(1)) {
         Ok(invocation) => invocation,
         Err(error) => return Stop::Usage(error).report(terminal()),
@@ -182,6 +189,8 @@ fn launch(
     let (meter, levels) = watch::channel(Meter::default());
     let application = Application::new().with_assets(icons::Icons);
     application.on_reopen(shell::reveal);
+    #[cfg(target_os = "macos")]
+    application.on_quit_requested(shell::request_quit);
     #[cfg(target_os = "windows")]
     let (handoff, ready) = std::sync::mpsc::channel();
     application.run(move |cx| {
