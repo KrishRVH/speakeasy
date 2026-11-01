@@ -40,7 +40,7 @@ fn show() -> anyhow::Result<tempfile::TempDir> {
     let directory = tempfile::tempdir()?;
     fs::create_dir(directory.path().join("frames"))?;
     let frames: Vec<_> = (1_u64..=7)
-        .map(|index| json!({"index": index, "at": index.saturating_mul(100), "reason": "middle", "marks": [0, 0]}))
+        .map(|index| json!({"index": index, "at": index.saturating_mul(100), "reason": "middle", "event": "NOT_SENT_EVENT", "marks": [0, 0]}))
         .collect();
     let manifest = serde_json::to_vec(&json!({
         "version": 2, "duration": 1000, "surface": {"width": 100, "height": 100},
