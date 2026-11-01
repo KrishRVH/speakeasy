@@ -171,10 +171,6 @@ mod native {
         let popup = if moving {
             let popup = self::window(main, [160.0, 150.0, 80.0, 60.0], 1)?;
             popup.setBackgroundColor(Some(&color([220, 220, 20])));
-            // SAFETY: both owned windows stay on the main thread, and the parent retains its child.
-            unsafe {
-                window.addChildWindow_ordered(&popup, NSWindowOrderingMode::Above);
-            }
             popup.orderOut(None);
             Some(popup)
         } else {
@@ -216,7 +212,7 @@ mod native {
                 let visible = started.elapsed() >= Duration::from_secs(2)
                     && (600..700).contains(&(started.elapsed().as_millis() % 1600));
                 if visible != menu_visible {
-                    show_menu(popup, visible);
+                    show_menu(&window, popup, visible);
                     menu_visible = visible;
                 }
             }
@@ -249,8 +245,13 @@ mod native {
         anyhow::bail!("Build with --features native-acceptance for owned-window selection")
     }
 
-    fn show_menu(popup: &NSWindow, visible: bool) {
+    fn show_menu(parent: &NSWindow, popup: &NSWindow, visible: bool) {
         if visible {
+            // SAFETY: both owned windows stay on the main thread. orderOut detaches the child,
+            // so each appearance restores its native parent relationship.
+            unsafe {
+                parent.addChildWindow_ordered(popup, NSWindowOrderingMode::Above);
+            }
             popup.orderFrontRegardless();
             popup.display();
         } else {
