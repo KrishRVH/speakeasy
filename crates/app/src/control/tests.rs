@@ -96,6 +96,29 @@ fn disconnected_and_expired_calls_cannot_authorize_work() {
 }
 
 #[test]
+fn forwarded_calls_lose_authority_when_the_original_caller_disconnects() {
+    let (call, caller) = Call::new(Command::Preset {
+        name: "Fixture preset".into(),
+    });
+    let (forwarded, confirmation) = call.forwarded();
+    assert!(forwarded.is_live());
+    drop(caller);
+    assert!(!forwarded.reply.is_closed());
+    assert!(confirmation.try_recv().is_err());
+    assert!(!forwarded.is_live());
+}
+
+#[test]
+fn forwarding_an_expired_call_cannot_renew_its_authority() {
+    let (mut call, _caller) = Call::new(Command::Preset {
+        name: "Fixture preset".into(),
+    });
+    call.deadline = Instant::now();
+    let (forwarded, _confirmation) = call.forwarded();
+    assert!(!forwarded.is_live());
+}
+
+#[test]
 fn replies_are_one_content_free_json_line_with_distinct_exit_dispositions() -> anyhow::Result<()> {
     for (reply, exit) in [
         (Reply::ok(status()), 0),
