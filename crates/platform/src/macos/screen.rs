@@ -466,10 +466,9 @@ impl Source {
                 }) {
                     return Err(Failure::Exposed);
                 }
-                SCContentFilter::initWithDisplay_includingWindows(
+                SCContentFilter::initWithDesktopIndependentWindow(
                     SCContentFilter::alloc(),
-                    &display,
-                    &NSArray::from_retained_slice(&[selected]),
+                    &selected,
                 )
             }
         } else {
@@ -519,7 +518,9 @@ impl Source {
         let configuration = unsafe {
             let configuration = SCStreamConfiguration::new();
             // In points from the display's top-left corner.
-            configuration.setSourceRect(area);
+            if !self.window {
+                configuration.setSourceRect(area);
+            }
             configuration.setWidth(width as usize);
             configuration.setHeight(height as usize);
             configuration.setPixelFormat(kCVPixelFormatType_32BGRA);
@@ -532,7 +533,7 @@ impl Source {
             // each frame filled edge to edge, where letterboxing would shift ink off what it marks.
             configuration.setPreservesAspectRatio(false);
             if self.window {
-                configuration.setIgnoreShadowsDisplay(true);
+                configuration.setIgnoreShadowsSingleWindow(true);
                 // This path is selected only when the 14.2 child-window selector exists.
                 configuration.setIncludeChildWindows(true);
             }
