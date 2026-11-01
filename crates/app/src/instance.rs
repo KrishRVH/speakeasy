@@ -11,6 +11,8 @@ use anyhow::{Context as _, bail, ensure};
 use async_channel::{Receiver, Sender};
 use speakeasy_platform::OwnedThread;
 
+use crate::control::{self, Call, Command, Reply};
+
 const LOCK_FILE: &str = "instance.lock";
 const PORT_FILE: &str = "instance.port";
 
@@ -25,6 +27,9 @@ const REVEAL_ATTEMPTS: u32 = 25;
 const REVEAL_RETRY: Duration = Duration::from_millis(20);
 
 const ACCEPT_RETRY: Duration = Duration::from_millis(10);
+const CONTROL: u8 = 3;
+const UNCONFIRMED: &str = "Speakeasy did not confirm the command. Check its state before trying again; no retry was sent.";
+const CONTROL_OUTDATED: &str = "Speakeasy closed without confirming the command. Restart Speakeasy to use this command, and check its state before trying again.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -45,8 +50,14 @@ impl Request {
     }
 }
 
+#[derive(Debug)]
+pub(crate) enum Event {
+    Legacy(Request),
+    Control(Call),
+}
+
 pub(crate) struct Instance {
-    requests: Sender<Request>,
+    requests: Sender<Event>,
     address: SocketAddr,
     _server: OwnedThread,
     _port_file: PortFile,
@@ -54,7 +65,7 @@ pub(crate) struct Instance {
 }
 
 impl Instance {
-    pub(crate) fn acquire(path: &Path) -> anyhow::Result<Option<(Self, Receiver<Request>)>> {
+    pub(crate) fn acquire(path: &Path) -> anyhow::Result<Option<(Self, Receiver<Event>)>> {
         let directory = path.parent().context("Settings path has no directory")?;
         fs::create_dir_all(directory)
             .with_context(|| format!("Cannot create {}", directory.display()))?;
@@ -96,6 +107,48 @@ impl Instance {
         let mut stream = connect(&path.with_file_name(PORT_FILE))?;
         stream.write_all(&[request as u8])?;
         Ok(())
+    }
+
+    pub(crate) fn control(path: &Path, command: Command) -> Reply {
+        let bytes = match command.encode() {
+            Ok(bytes) => bytes,
+            Err(reason) => return Reply::refused(reason),
+        };
+        let mut stream = match connect(&path.with_file_name(PORT_FILE)) {
+            Ok(stream) => stream,
+            Err(_) => {
+                return Reply::unknown(
+                    "Speakeasy is not running or could not be verified. Start or restart it before using this command.",
+                );
+            },
+        };
+        let sent = (|| {
+            stream.write_all(&[CONTROL])?;
+            write_frame(&mut stream, &bytes)
+        })();
+        if sent.is_err() {
+            return Reply::unknown(CONTROL_OUTDATED);
+        }
+        let mut caller = Caller {
+            stream: &mut stream,
+            accepted: Instant::now(),
+            timeout: control::TIMEOUT.saturating_add(IO_TIMEOUT),
+        };
+        match read_frame(&mut caller) {
+            Ok(bytes) => Reply::decode(&bytes).unwrap_or_else(|_| Reply::unknown(UNCONFIRMED)),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::UnexpectedEof
+                        | io::ErrorKind::ConnectionReset
+                        | io::ErrorKind::ConnectionAborted
+                        | io::ErrorKind::BrokenPipe
+                ) =>
+            {
+                Reply::unknown(CONTROL_OUTDATED)
+            },
+            Err(_) => Reply::unknown(UNCONFIRMED),
+        }
     }
 }
 
@@ -173,11 +226,14 @@ fn reveal_running(path: &Path) -> anyhow::Result<()> {
     bail!("Speakeasy is already running. Open Settings from its {icon} icon.");
 }
 
-fn serve(
-    mut accept: impl FnMut() -> io::Result<TcpStream>,
-    nonce: u128,
-    requests: &Sender<Request>,
-) {
+fn serve(mut accept: impl FnMut() -> io::Result<TcpStream>, nonce: u128, requests: &Sender<Event>) {
+    let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    else {
+        requests.close();
+        return;
+    };
     loop {
         let accepted = accept();
         if requests.is_closed() {
@@ -191,17 +247,34 @@ fn serve(
             continue;
         };
 
-        if requests.send_blocking(request).is_err() {
-            break;
+        match request {
+            Incoming::Legacy(request) => {
+                if requests.send_blocking(Event::Legacy(request)).is_err() {
+                    break;
+                }
+            },
+            Incoming::Control(command) => {
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "A caller may disconnect at any point; its failure closes only this control connection"
+                )]
+                let _ = runtime.block_on(serve_control(stream, command, requests));
+            },
         }
     }
 }
 
-fn handshake(stream: &mut TcpStream, nonce: u128) -> io::Result<Option<Request>> {
+enum Incoming {
+    Legacy(Request),
+    Control(Result<Command, &'static str>),
+}
+
+fn handshake(stream: &mut TcpStream, nonce: u128) -> io::Result<Option<Incoming>> {
     stream.set_write_timeout(Some(IO_TIMEOUT))?;
     let mut caller = Caller {
         stream,
         accepted: Instant::now(),
+        timeout: IO_TIMEOUT,
     };
     let mut presented = [0; size_of::<u128>()];
     caller.read_exact(&mut presented)?;
@@ -212,23 +285,114 @@ fn handshake(stream: &mut TcpStream, nonce: u128) -> io::Result<Option<Request>>
     let mut request = [0];
     caller.read_exact(&mut request)?;
     let [byte] = request;
-    Ok(Request::from_byte(byte))
+    if byte == CONTROL {
+        return match read_frame(&mut caller) {
+            Ok(bytes) => Ok(Some(Incoming::Control(Command::decode(&bytes)))),
+            Err(error) if error.kind() == io::ErrorKind::InvalidData => Ok(Some(
+                Incoming::Control(Err("The control command exceeds its size limit.")),
+            )),
+            Err(error) => Err(error),
+        };
+    }
+    Ok(Request::from_byte(byte).map(Incoming::Legacy))
 }
 
 struct Caller<'stream> {
     stream: &'stream mut TcpStream,
     accepted: Instant,
+    timeout: Duration,
 }
 
 impl Read for Caller<'_> {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        let remaining = IO_TIMEOUT
+        let remaining = self
+            .timeout
             .checked_sub(self.accepted.elapsed())
             .filter(|remaining| !remaining.is_zero())
             .ok_or(io::ErrorKind::TimedOut)?;
         self.stream.set_read_timeout(Some(remaining))?;
         self.stream.read(buffer)
     }
+}
+
+fn read_frame(reader: &mut impl Read) -> io::Result<Vec<u8>> {
+    let mut length = [0; 2];
+    reader.read_exact(&mut length)?;
+    let length = usize::from(u16::from_be_bytes(length));
+    if length > control::MAX_BYTES {
+        return Err(io::ErrorKind::InvalidData.into());
+    }
+    let mut bytes = vec![0; length];
+    reader.read_exact(&mut bytes)?;
+    Ok(bytes)
+}
+
+fn write_frame(writer: &mut impl io::Write, bytes: &[u8]) -> io::Result<()> {
+    let length = u16::try_from(bytes.len()).map_err(|_| io::ErrorKind::InvalidData)?;
+    writer.write_all(&length.to_be_bytes())?;
+    writer.write_all(bytes)
+}
+
+async fn serve_control(
+    stream: TcpStream,
+    command: Result<Command, &'static str>,
+    requests: &Sender<Event>,
+) -> io::Result<()> {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    stream.set_nonblocking(true)?;
+    match stream.peek(&mut [0]) {
+        Ok(_) => return Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {},
+        Err(error) => return Err(error),
+    }
+    let mut stream = tokio::net::TcpStream::from_std(stream)?;
+    let (reply, deadline) = match command {
+        Ok(command) => {
+            let (call, receipt) = Call::new(command);
+            let deadline = call.deadline;
+            let reply = match requests.try_send(Event::Control(call)) {
+                Ok(()) => {
+                    let mut extra = [0];
+                    let received = tokio::select! {
+                        biased;
+                        _ = stream.read(&mut extra) => return Ok(()),
+                        result = tokio::time::timeout_at(deadline.into(), receipt.recv()) => result,
+                    };
+                    match received {
+                        Ok(Ok(reply)) => reply,
+                        Ok(Err(_)) | Err(_) => return Ok(()),
+                    }
+                },
+                Err(async_channel::TrySendError::Full(_)) => Reply::refused(
+                    "Speakeasy is busy. Try again when the current command finishes.",
+                ),
+                Err(async_channel::TrySendError::Closed(_)) => {
+                    Reply::refused("Speakeasy is stopping.")
+                },
+            };
+            (reply, deadline)
+        },
+        Err(reason) => {
+            let now = Instant::now();
+            (
+                Reply::refused(reason),
+                now.checked_add(IO_TIMEOUT).unwrap_or(now),
+            )
+        },
+    };
+    let bytes = reply
+        .encode()
+        .or_else(|_| Reply::unknown(UNCONFIRMED).encode())
+        .map_err(|_| io::ErrorKind::InvalidData)?;
+    let length = u16::try_from(bytes.len()).map_err(|_| io::ErrorKind::InvalidData)?;
+    let write = async {
+        stream.write_all(&length.to_be_bytes()).await?;
+        stream.write_all(&bytes).await
+    };
+    tokio::time::timeout_at(deadline.into(), write)
+        .await
+        .map_err(|_| io::ErrorKind::TimedOut)?
 }
 
 fn connect(port_file: &Path) -> anyhow::Result<TcpStream> {
@@ -250,206 +414,4 @@ fn connect(port_file: &Path) -> anyhow::Result<TcpStream> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::testing::PATIENCE;
-
-    fn next_request(requests: &Receiver<Request>) -> anyhow::Result<Request> {
-        let started = Instant::now();
-        loop {
-            if let Ok(request) = requests.try_recv() {
-                return Ok(request);
-            }
-            ensure!(
-                started.elapsed() < PATIENCE,
-                "Instance request was not delivered"
-            );
-            thread::sleep(Duration::from_millis(5));
-        }
-    }
-
-    fn occupy_server_with_pending_requests(instance: &Instance, path: &Path) -> anyhow::Result<()> {
-        Instance::send(path, Request::Toggle)?;
-        Instance::send(path, Request::Cancel)?;
-        let endpoint = Endpoint::read(&path.with_file_name(PORT_FILE))?;
-        let mut next = TcpStream::connect_timeout(&instance.address, PATIENCE)?;
-        next.set_read_timeout(Some(IO_TIMEOUT))?;
-        next.write_all(&endpoint.nonce.to_le_bytes())?;
-        assert!(next.read_exact(&mut [0]).is_err());
-        Ok(())
-    }
-
-    #[test]
-    fn relaunch_requests_settings_and_shutdown_releases_the_lock() -> anyhow::Result<()> {
-        let directory = tempfile::tempdir()?;
-        let path = directory.path().join("settings.json");
-        let (instance, requests) = Instance::acquire(&path)?.context("First owner missing")?;
-        assert!(Instance::acquire(&path)?.is_none());
-        assert_eq!(next_request(&requests)?, Request::Reveal);
-        for request in [Request::Toggle, Request::Cancel] {
-            Instance::send(&path, request)?;
-            assert_eq!(next_request(&requests)?, request);
-        }
-        drop(instance);
-        assert!(requests.is_closed());
-        assert!(!directory.path().join(PORT_FILE).exists());
-        assert!(Instance::acquire(&path)?.is_some());
-        Ok(())
-    }
-
-    #[test]
-    fn requests_without_the_secret_are_never_delivered() -> anyhow::Result<()> {
-        let directory = tempfile::tempdir()?;
-        let path = directory.path().join("settings.json");
-        let (instance, requests) = Instance::acquire(&path)?.context("First owner missing")?;
-        let endpoint = Endpoint::read(&path.with_file_name(PORT_FILE))?;
-        let mut forged = TcpStream::connect_timeout(&instance.address, PATIENCE)?;
-        forged.set_read_timeout(Some(PATIENCE))?;
-        forged.write_all(&(endpoint.nonce ^ 1).to_le_bytes())?;
-        forged.write_all(&[Request::Cancel as u8])?;
-        assert!(
-            forged.read_exact(&mut [0]).is_err(),
-            "A wrong secret was acknowledged"
-        );
-        Instance::send(&path, Request::Toggle)?;
-        assert_eq!(next_request(&requests)?, Request::Toggle);
-        Ok(())
-    }
-
-    #[test]
-    fn a_secret_trickled_past_the_timeout_is_never_acknowledged() -> anyhow::Result<()> {
-        let directory = tempfile::tempdir()?;
-        let path = directory.path().join("settings.json");
-        let (instance, _requests) = Instance::acquire(&path)?.context("First owner missing")?;
-        let endpoint = Endpoint::read(&path.with_file_name(PORT_FILE))?;
-        let mut slow = TcpStream::connect_timeout(&instance.address, PATIENCE)?;
-
-        slow.set_nodelay(true)?;
-        slow.set_read_timeout(Some(PATIENCE))?;
-
-        for byte in endpoint.nonce.to_le_bytes() {
-            if slow.write_all(&[byte]).is_err() {
-                break;
-            }
-            thread::sleep(Duration::from_millis(20));
-        }
-        assert!(
-            slow.read_exact(&mut [0]).is_err(),
-            "A trickled secret held the server past its timeout"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn unreachable_instances_name_their_remedy() -> anyhow::Result<()> {
-        let directory = tempfile::tempdir()?;
-        let path = directory.path().join("settings.json");
-        let stale = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?
-            .local_addr()?
-            .port();
-        for (published, remedy) in [
-            (format!("{stale} {:032x}", 1), NOT_RUNNING),
-            (stale.to_string(), OUTDATED),
-        ] {
-            fs::write(directory.path().join(PORT_FILE), published)?;
-            let error = Instance::send(&path, Request::Toggle)
-                .err()
-                .context("An unreachable instance accepted a request")?;
-            assert!(format!("{error:#}").starts_with(remedy), "{error:#}");
-        }
-        Ok(())
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn only_the_owner_can_read_the_published_secret() -> anyhow::Result<()> {
-        use std::os::unix::fs::PermissionsExt as _;
-
-        let directory = tempfile::tempdir()?;
-        let path = directory.path().join("settings.json");
-        let _owner = Instance::acquire(&path)?.context("First owner missing")?;
-        let mode = fs::metadata(directory.path().join(PORT_FILE))?
-            .permissions()
-            .mode();
-        assert_eq!(mode & 0o777, 0o600);
-        Ok(())
-    }
-
-    #[test]
-    fn pending_commands_wait_for_the_ui_instead_of_disappearing() -> anyhow::Result<()> {
-        let directory = tempfile::tempdir()?;
-        let path = directory.path().join("settings.json");
-        let (instance, requests) = Instance::acquire(&path)?.context("First owner missing")?;
-        occupy_server_with_pending_requests(&instance, &path)?;
-        for expected in [Request::Toggle, Request::Cancel] {
-            assert_eq!(next_request(&requests)?, expected);
-        }
-        drop(instance);
-        assert!(requests.is_closed());
-        Ok(())
-    }
-
-    #[test]
-    fn failed_accepts_are_retried_until_shutdown() -> anyhow::Result<()> {
-        let directory = tempfile::tempdir()?;
-        let path = directory.path().join("settings.json");
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
-        let (Endpoint { nonce, .. }, _port_file) =
-            Endpoint::publish(listener.local_addr()?.port(), directory.path())?;
-        let (failure, failures) = std::sync::mpsc::channel();
-        let mut reaches_listener = [false, true].into_iter();
-        let accept = move || {
-            if reaches_listener.next() == Some(true) {
-                return listener.accept().map(|(stream, _)| stream);
-            }
-            failure.send(()).unwrap();
-            Err(io::ErrorKind::ConnectionAborted.into())
-        };
-        let (requests, received) = async_channel::bounded(1);
-        let started = Instant::now();
-        let server = OwnedThread::spawn("instance-server", {
-            let requests = requests.clone();
-            move || serve(accept, nonce, &requests)
-        })?;
-
-        let delivered =
-            Instance::send(&path, Request::Toggle).and_then(|()| next_request(&received));
-        thread::sleep(ACCEPT_RETRY * 5);
-        requests.close();
-        let (finished, completion) = std::sync::mpsc::channel();
-        let cleanup = thread::spawn(move || {
-            drop(server);
-            finished.send(()).unwrap();
-        });
-        let stopped = completion.recv_timeout(PATIENCE);
-        let elapsed = started.elapsed();
-        assert_eq!(delivered?, Request::Toggle);
-        stopped.context("A server whose accepts kept failing outlived shutdown")?;
-
-        let most = elapsed.as_millis() / ACCEPT_RETRY.as_millis() + 2;
-        let retried = failures.try_iter().count();
-        assert!(
-            retried <= usize::try_from(most)?,
-            "{retried} failed accepts in {elapsed:?}"
-        );
-        cleanup.join().unwrap();
-        Ok(())
-    }
-
-    #[test]
-    fn shutdown_wakes_a_server_waiting_for_the_ui() -> anyhow::Result<()> {
-        let directory = tempfile::tempdir()?;
-        let path = directory.path().join("settings.json");
-        let (instance, _requests) = Instance::acquire(&path)?.context("First owner missing")?;
-        occupy_server_with_pending_requests(&instance, &path)?;
-        let (finished, completion) = std::sync::mpsc::channel();
-        let cleanup = thread::spawn(move || {
-            drop(instance);
-            finished.send(()).unwrap();
-        });
-        completion.recv_timeout(PATIENCE)?;
-        cleanup.join().unwrap();
-        assert!(Instance::acquire(&path)?.is_some());
-        Ok(())
-    }
-}
+mod tests;
