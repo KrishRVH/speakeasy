@@ -167,7 +167,7 @@ fn record(
                 let _ = events.try_send(ScreenEvent::Frame(frame));
             }
         }
-        if last_frame.map_or_else(|| started.elapsed(), |at| at.elapsed()) >= PATIENCE {
+        if last_frame.is_none() && started.elapsed() >= PATIENCE {
             return Err(Failure::Stalled);
         }
         movie_failed |= !movie.poll(Instant::now(), stopping);
