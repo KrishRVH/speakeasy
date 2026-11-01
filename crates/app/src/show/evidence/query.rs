@@ -3,7 +3,7 @@ use serde::Serialize;
 use speakeasy_show::{Manifest, Moment, Span, locate::Focus};
 
 #[derive(PartialEq, Eq)]
-pub(super) enum Query {
+pub(in crate::show) enum Query {
     At(Moment),
     Mark(usize),
     Phrase(String),
@@ -12,7 +12,7 @@ pub(super) enum Query {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct Found {
+pub(in crate::show) struct Found {
     pub kind: &'static str,
     pub number: Option<usize>,
     #[serde(rename = "match")]
@@ -25,7 +25,7 @@ pub(super) struct Found {
 }
 
 impl Query {
-    pub(super) fn resolve(&self, manifest: &Manifest) -> anyhow::Result<Found> {
+    pub(in crate::show) fn resolve(&self, manifest: &Manifest) -> anyhow::Result<Found> {
         let (focus, kind, number, occurrence) = match self {
             Self::At(at) => (Focus::At(*at), "time", None, None),
             Self::Mark(number) => (Focus::Mark(*number), "mark", Some(*number), None),
@@ -62,7 +62,7 @@ impl Query {
     }
 }
 
-pub(super) fn time(value: &str) -> anyhow::Result<Moment> {
+pub(in crate::show) fn time(value: &str) -> anyhow::Result<Moment> {
     let number = |part: &str| -> anyhow::Result<u64> {
         anyhow::ensure!(
             !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()),

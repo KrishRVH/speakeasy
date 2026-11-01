@@ -1,5 +1,5 @@
 mod output;
-mod query;
+use super::evidence::query;
 mod source;
 mod video;
 
