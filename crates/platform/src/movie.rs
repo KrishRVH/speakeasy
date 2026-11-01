@@ -1,4 +1,4 @@
-#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[cfg(any(test, target_os = "windows", target_os = "macos"))]
 pub(crate) mod canvas;
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 pub(crate) mod encode;

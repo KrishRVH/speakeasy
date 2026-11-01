@@ -1,4 +1,8 @@
-use std::{path::Path, process::Stdio, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    process::Stdio,
+    time::Duration,
+};
 
 use anyhow::Context as _;
 use speakeasy_show::{Annotations, Image, Typeface};
@@ -16,6 +20,28 @@ use crate::{
 pub(super) struct Stats {
     pub unpainted: u64,
     pub omitted: usize,
+}
+
+fn ffmpeg() -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        let on_path = std::env::var_os("PATH").is_some_and(|paths| {
+            std::env::split_paths(&paths).any(|path| path.join("ffmpeg").is_file())
+        });
+        if !on_path
+            && let Some(path) = [
+                "/opt/homebrew/bin/ffmpeg",
+                "/usr/local/bin/ffmpeg",
+                "/opt/local/bin/ffmpeg",
+            ]
+            .into_iter()
+            .map(PathBuf::from)
+            .find(|path| path.is_file())
+        {
+            return path;
+        }
+    }
+    PathBuf::from("ffmpeg")
 }
 
 pub(super) struct Inputs<'a> {
@@ -42,7 +68,8 @@ pub(super) async fn run(
         captions,
     } = inputs;
     let [width, height] = movie.metadata.size;
-    let mut decode = hidden_command("ffmpeg");
+    let program = ffmpeg();
+    let mut decode = hidden_command(&program);
     decode
         .args(["-v", "error", "-nostdin", "-threads", "1", "-i"])
         .arg(work.join("source.mp4"))
@@ -58,8 +85,8 @@ pub(super) async fn run(
             "pipe:1",
         ])
         .stdout(Stdio::piped());
-    let mut decoder = decode.spawn().context("Cannot start FFmpeg. Install FFmpeg with H.264 and AAC support, make ffmpeg available on PATH, then try Export video again")?;
-    let mut command = hidden_command("ffmpeg");
+    let mut decoder = decode.spawn().context("Cannot start FFmpeg. Install FFmpeg 5.1 or newer with H.264 and AAC support, make ffmpeg available on PATH, then restart Speakeasy")?;
+    let mut command = hidden_command(&program);
     command
         .args([
             "-v",
@@ -73,7 +100,9 @@ pub(super) async fn run(
             "-video_size",
         ])
         .arg(format!("{width}x{height}"))
-        .args(["-framerate", "30", "-i", "pipe:0"]);
+        .arg("-framerate")
+        .arg(super::timeline::FPS.to_string())
+        .args(["-i", "pipe:0"]);
     if let Some(rate) = rate {
         command
             .args(["-f", "s16le", "-ar"])
@@ -82,7 +111,9 @@ pub(super) async fn run(
             .arg(work.join("voice.pcm"));
     }
     if captions {
-        command.arg("-i").arg(work.join("captions.srt"));
+        command
+            .args(["-c:s", "text", "-keep_ass_markup", "1", "-i"])
+            .arg(work.join("captions.srt"));
     }
     command.args(["-map", "0:v:0"]);
     if rate.is_some() {
@@ -195,7 +226,7 @@ async fn frames(
         {
             let sample = samples.next().context("Video sample index changed")?;
             input.read_exact(&mut pixels).await.context(
-                "FFmpeg decoded fewer frames than the saved video; the original Show is unchanged",
+                "FFmpeg decoded fewer frames than the saved video; check that FFmpeg is version 5.1 or newer. The original Show is unchanged",
             )?;
             current = Some(sample.at);
         }

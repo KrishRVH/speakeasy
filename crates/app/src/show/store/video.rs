@@ -61,6 +61,22 @@ pub(crate) fn write(
     options: Options,
     cancelled: impl Fn() -> bool + Sync,
 ) -> anyhow::Result<Exported> {
+    write_with(
+        directory,
+        destination,
+        options,
+        cancelled,
+        super::private_directory,
+    )
+}
+
+fn write_with(
+    directory: &Path,
+    destination: &Path,
+    options: Options,
+    cancelled: impl Fn() -> bool + Sync,
+    scratch: impl FnOnce() -> anyhow::Result<PathBuf>,
+) -> anyhow::Result<Exported> {
     let directory = directory
         .canonicalize()
         .context("Cannot open the Show to export")?;
@@ -85,31 +101,27 @@ pub(crate) fn write(
         recall::MANIFEST_LIMIT,
     )?)?;
     let mut reading = movie::Reading::open(&directory, manifest.recording().duration)?;
-    let (voice, audio) = voice::read(&directory, SystemTime::now())?;
-    let timing = timeline::Timing::new(&reading.movie, options.span, audio.as_ref())?;
+    let voice = voice::read(&directory, SystemTime::now())?;
+    let audio = voice.audio();
+    let timing = timeline::Timing::new(&reading.movie, options.span, audio)?;
     let scene = Annotations::new(manifest.recording(), manifest.marks())?;
-    let mut builder = tempfile::Builder::new();
-    builder.prefix(".speakeasy-video-");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        builder.permissions(std::fs::Permissions::from_mode(0o700));
-    }
-    let work = builder
-        .tempdir_in(parent)
-        .context("Cannot create a private video export; check destination space and permissions")?;
+    let work = super::staging(&scratch()?).context(
+        "Cannot create private video scratch space; check the Shows folder's space and permissions",
+    )?;
     let mut source = File::create_new(work.path().join("source.mp4"))?;
-    reading.copy_to(&mut source, 1 << 30)?;
+    reading.copy_to(&mut source, speakeasy_show::MoviePrefix::FILE_LIMIT)?;
     source.flush()?;
     anyhow::ensure!(!cancelled(), "Video export cancelled");
-    let rate = audio.as_ref().map(|audio| audio.rate);
+    let rate = audio.map(|audio| audio.rate);
     if let Some(audio) = audio {
         timeline::audio(
-            &audio,
+            audio,
             &timing,
             &mut File::create_new(work.path().join("voice.pcm"))?,
         )?;
     }
+    let voice_status = voice.status();
+    drop(voice);
     let captions = if options.captions {
         timeline::captions(
             manifest.recording(),
@@ -151,7 +163,7 @@ pub(crate) fn write(
         start_ms: timing.start_ms,
         end_ms: timing.end_ms,
         frames: timing.frames,
-        voice,
+        voice: voice_status,
         captions,
         frames_without_annotations: stats.unpainted,
         omitted_annotations: stats.omitted,

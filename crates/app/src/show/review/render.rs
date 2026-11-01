@@ -6,7 +6,7 @@ use gpui::{
 };
 
 use super::{
-    Action, CopyKind, ImageState, Kind, Mode, Pane, Review, Source,
+    Action, CopyKind, ExportKind, ImageState, Kind, Mode, Pane, Review, Source,
     narration::Narration,
     navigation::{Origin, Stamp},
 };
@@ -20,8 +20,8 @@ const RETRY_NARRATION: &str = "Transcribe the kept audio with your configured lo
     language. This saves a narrated copy; your existing Show and edits stay unchanged.";
 const RECOVER_SHOW: &str = "Recover the frames, ink, marks, and audio that reached the checkpoint. Narration \
     uses your configured local engine and the original language.";
-const RECOVERY_AUDIO: &str = "Recovery leaves your clipboard alone. Audio is deleted after successful \
-    transcription and is never added to a saved Show bundle.";
+const RECOVERY_AUDIO: &str = "Recovery leaves your clipboard alone. Recovered voice stays private for video \
+    export and expires seven days after the original recording, even if you keep the Show.";
 const RECOVERY_PREFIX: &str = "A crash or a slow or full disk can leave a shorter recording. Recovery preserves \
     the original expiry date.";
 
@@ -826,7 +826,7 @@ impl Review {
                     bar.child(button(Action::Movie, palette, true, false, cx).child("Play video"))
                         .child(
                             button(
-                                Action::ExportVideo,
+                                Action::Export(ExportKind::Video),
                                 palette,
                                 self.exporting.is_none(),
                                 false,
@@ -843,7 +843,7 @@ impl Review {
             })
             .child(
                 button(
-                    Action::Export,
+                    Action::Export(ExportKind::Archive),
                     palette,
                     self.exporting.is_none() && self.detail.is_some(),
                     false,
@@ -924,8 +924,8 @@ fn button(
         Action::Clause(index) => SharedString::from(format!("show-clause-{index}")).into(),
         Action::Folder => "shows-folder".into(),
         Action::Movie => "shows-movie".into(),
-        Action::Export => "shows-export".into(),
-        Action::ExportVideo => "shows-export-video".into(),
+        Action::Export(ExportKind::Archive) => "shows-export".into(),
+        Action::Export(ExportKind::Video) => "shows-export-video".into(),
         Action::CancelExport => "shows-cancel-export".into(),
         Action::Show(index) => SharedString::from(format!("show-{index}")).into(),
         Action::Frame(index) => SharedString::from(format!("frame-{index}")).into(),

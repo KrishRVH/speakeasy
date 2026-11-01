@@ -26,7 +26,7 @@ async fn with_audio(parent: &Path) -> anyhow::Result<Checkpoint> {
 }
 
 #[tokio::test]
-async fn narration_survives_a_failed_save_before_audio_is_erased() -> anyhow::Result<()> {
+async fn failed_save_keeps_durable_narration_and_original_voice() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let checkpoint = with_audio(root.path()).await?;
     let captured = narrated(

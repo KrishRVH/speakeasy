@@ -22,23 +22,6 @@ impl crate::movie::encode::Observer for Receipts {
 }
 
 #[test]
-fn content_rectangles_equal_painted_pixels_after_odd_and_tiny_resizes() -> anyhow::Result<()> {
-    let mut canvas = canvas::Canvas::new([8, 6])?;
-    for [width, height] in [[8, 6], [3, 5], [7, 3], [1, 1], [13, 17], [2560, 1]] {
-        canvas.paint(&frame(width, height, 150))?;
-        let [left, top, width, height] = canvas.content();
-        assert!(width > 0 && height > 0);
-        for (index, pixel) in canvas.held().as_chunks::<4>().0.iter().enumerate() {
-            let x = u32::try_from(index % 8)?;
-            let y = u32::try_from(index / 8)?;
-            let inside = (left..left + width).contains(&x) && (top..top + height).contains(&y);
-            assert_eq!(*pixel, if inside { [150, 150, 150, 255] } else { [0; 4] });
-        }
-    }
-    Ok(())
-}
-
-#[test]
 #[ignore = "Opt in: native encoder/decoder with synthetic resizing pixels; no capture or input"]
 fn receipts_describe_presented_layouts_and_exclude_superseded_inputs() -> anyhow::Result<()> {
     let directory = PathBuf::from(

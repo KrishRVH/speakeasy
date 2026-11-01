@@ -7,7 +7,9 @@ use anyhow::{Context as _, anyhow};
 use speakeasy_platform::InsertPermit;
 use speakeasy_show::{Journal, NarrationLoss, Recording, Typeface, compose, select};
 
-use super::{Checkpoint, Interrupted, SavedShow, recorder::NOTHING_RECORDED, store};
+use super::{
+    Checkpoint, Interrupted, SavedShow, recorder::NOTHING_RECORDED, store, store::checkpoint,
+};
 use crate::runtime::ports::{Footage, PUBLISH_STOPPED, Preservation, Published};
 
 pub(crate) struct Publication {
@@ -80,11 +82,15 @@ fn publish_with(
     let Footage { recording, journal } = footage;
     let ending = recording.ending;
     let lost = recording.narration_lost;
-    let transcribed = !matches!(
-        lost,
-        Some(NarrationLoss::AudioStopped | NarrationLoss::NotTranscribed)
-    );
-    if transcribed && let Some(checkpoint) = &checkpoint {
+    let completion = match lost {
+        Some(NarrationLoss::AudioStopped | NarrationLoss::NotTranscribed) => {
+            checkpoint::Publication::Pending
+        },
+        Some(NarrationLoss::Incomplete) | None => checkpoint::Publication::Narrated,
+    };
+    if completion == checkpoint::Publication::Narrated
+        && let Some(checkpoint) = &checkpoint
+    {
         #[expect(
             clippy::let_underscore_must_use,
             reason = "A failed checkpoint write keeps recovery audio; this bundle still carries the narration"
@@ -97,12 +103,14 @@ fn publish_with(
     if !permit.active() {
         return Ok(Published::Cancelled);
     }
-    if matches!(origin, Origin::Recovered { pending: true }) && !transcribed {
+    if matches!(origin, Origin::Recovered { pending: true })
+        && completion == checkpoint::Publication::Pending
+    {
         anyhow::bail!(
             "Narration could not be transcribed. The saved Show is unchanged; its audio remains available in Shows until its original expiry."
         );
     }
-    let audio_kept = !transcribed
+    let audio_kept = completion == checkpoint::Publication::Pending
         && checkpoint
             .as_ref()
             .is_some_and(|checkpoint| checkpoint.has_audio().unwrap_or(true));
@@ -111,6 +119,7 @@ fn publish_with(
         recording,
         journal,
         checkpoint.as_ref(),
+        completion,
         permit,
         parent,
     );
@@ -221,6 +230,7 @@ fn persist(
     recording: Recording,
     journal: Journal,
     checkpoint: Option<&Checkpoint>,
+    completion: checkpoint::Publication,
     permit: &InsertPermit,
     parent: impl FnOnce() -> anyhow::Result<PathBuf>,
 ) -> anyhow::Result<Option<Persisted>> {
@@ -229,10 +239,6 @@ fn persist(
         return Ok(None);
     }
     let duration = recording.duration;
-    let retain_voice = !matches!(
-        recording.narration_lost,
-        Some(NarrationLoss::AudioStopped | NarrationLoss::NotTranscribed)
-    );
     let selection = select(&recording, journal.samples()).context(NOTHING_RECORDED)?;
     let typeface = Typeface::parse(crate::BRAND_FONT_FILE)?;
     let bundle = compose(
@@ -269,7 +275,9 @@ fn persist(
         Some(checkpoint) => checkpoint.retain_movie(&mut staged, duration)?,
         None => false,
     };
-    if retain_voice && let Some(checkpoint) = checkpoint {
+    if completion == checkpoint::Publication::Narrated
+        && let Some(checkpoint) = checkpoint
+    {
         checkpoint.retain_voice(&staged)?;
     }
     let source_lost = staged.source_lost;
@@ -278,7 +286,7 @@ fn persist(
         return Ok(None);
     }
     if let Some(checkpoint) = checkpoint {
-        checkpoint.commit(&staged, retain_voice)?;
+        checkpoint.commit(&staged, completion)?;
     }
     let (show, summary) = staged.persist()?;
     Ok(Some(Persisted {

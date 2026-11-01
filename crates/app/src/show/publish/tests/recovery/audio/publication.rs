@@ -16,6 +16,7 @@ async fn durable_voiced_publication_retires_checkpoint_after_a_crash_before_disc
         captured.recording,
         captured.journal,
         Some(&checkpoint),
+        checkpoint::Publication::Narrated,
         &active,
         || Ok(root.path().to_owned()),
     )?
@@ -27,9 +28,9 @@ async fn durable_voiced_publication_retires_checkpoint_after_a_crash_before_disc
         store::checkpoint::list(root.path(), SystemTime::now()).shows,
         []
     );
-    let (status, voice) = store::voice::read(saved.show.directory(), SystemTime::now())?;
-    assert!(matches!(status, store::voice::Status::Available));
-    assert_eq!(voice.unwrap().pcm.len(), 16_000);
+    let voice = store::voice::read(saved.show.directory(), SystemTime::now())?;
+    assert!(matches!(voice.status(), store::voice::Status::Available));
+    assert_eq!(voice.audio().unwrap().pcm.len(), 16_000);
     store::sweep(root.path(), SystemTime::now())?;
     assert!(!path.exists());
     assert!(saved.show.directory().join("voice.log").exists());
@@ -104,7 +105,7 @@ async fn failed_or_cancelled_narrated_copy_keeps_new_narration_recoverable() -> 
 }
 
 #[tokio::test]
-async fn a_saved_narrated_bundle_retires_audio_even_if_checkpoint_narration_cannot_be_written()
+async fn durable_bundle_retires_checkpoint_even_when_narration_checkpoint_write_fails()
 -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let interrupted = with_audio(root.path()).await?.interrupted()?;

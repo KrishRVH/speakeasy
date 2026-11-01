@@ -11,6 +11,8 @@ use zeroize::Zeroizing;
 use super::*;
 use crate::show::store::checkpoint::KeptAudio;
 
+const CAPTION: &str = r"Q&A <demo> {\i1}back\slash \N \n {\r} &amp;.";
+
 fn audio(start: u64) -> KeptAudio {
     KeptAudio {
         rate: 30,
@@ -61,7 +63,7 @@ fn voice_alignment_preserves_leading_silence_and_trims_at_clip_origin() -> anyho
 }
 
 #[test]
-fn captions_clip_and_rebase_word_times_without_exposing_markup() -> anyhow::Result<()> {
+fn captions_clip_and_rebase_word_times() -> anyhow::Result<()> {
     let recording = Recording {
         narration: Narration::Words(vec![Word {
             span: Span::new(Moment::from_millis(100), Moment::from_millis(800)),
@@ -78,7 +80,7 @@ fn captions_clip_and_rebase_word_times_without_exposing_markup() -> anyhow::Resu
     assert_eq!(timeline::captions(&recording, &timing, &mut output)?, 1);
     assert_eq!(
         String::from_utf8(output)?,
-        "1\n00:00:00,000 --> 00:00:00,400\n&lt;private&gt;\n\n"
+        "1\n00:00:00,000 --> 00:00:00,400\n<private>\n\n"
     );
     let recording = Recording {
         narration: Narration::Words(vec![
@@ -113,10 +115,16 @@ fn refusal_and_cancellation_never_replace_an_existing_file() -> anyhow::Result<(
     fs::create_dir(&show)?;
     let destination = root.path().join("kept.mp4");
     fs::write(&destination, b"existing user edit")?;
-    assert!(write(&show, &destination, Options::default(), || false).is_err());
+    let error = write(&show, &destination, Options::default(), || false)
+        .err()
+        .expect("An existing export must be refused");
+    assert!(error.to_string().contains("choose a new MP4 file"));
     assert_eq!(fs::read(&destination)?, b"existing user edit");
     let destination = root.path().join("cancelled.mp4");
-    assert!(write(&show, &destination, Options::default(), || true).is_err());
+    let error = write(&show, &destination, Options::default(), || true)
+        .err()
+        .expect("Cancellation must stop before opening private content");
+    assert_eq!(error.to_string(), "Video export cancelled");
     assert!(!destination.exists());
     Ok(())
 }
@@ -184,7 +192,7 @@ fn fixture(root: &Path) -> anyhow::Result<PathBuf> {
             "version": 2, "duration": 2250, "surface": {"width": 160, "height": 100},
         "strokes": [[[0.125, 0.5, 600], [0.875, 0.5, 900]]], "pins": [], "actions": [],
             "spaces": {"strokes": [{"generation": 1, "part": [0.0, 0.0, 1.0, 1.0]}], "pins": []},
-            "narration": {"words": [{"span": [750, 1500], "text": "Synthetic voice."}]},
+            "narration": {"words": [{"span": [750, 1500], "text": CAPTION}]},
             "marks": [], "keyframes": [{"index": 1, "at": 500, "reason": "middle", "event": "synthetic", "marks": [0, 0]}]
         }))?,
     )?;
@@ -220,9 +228,10 @@ fn fixture(root: &Path) -> anyhow::Result<PathBuf> {
 fn synthetic_ffmpeg_export_preserves_voice_ink_captions_and_clip_timing() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let directory = fixture(root.path())?;
+    let scratch = root.path().join("managed-shows");
     let original = fs::read(directory.join(movie::FILE))?;
     let destination = root.path().join("voiced.mp4");
-    let report = write(
+    let report = write_with(
         &directory,
         &destination,
         Options {
@@ -230,6 +239,7 @@ fn synthetic_ffmpeg_export_preserves_voice_ink_captions_and_clip_timing() -> any
             ..Options::default()
         },
         || false,
+        || Ok(scratch.clone()),
     )?;
     assert_eq!(
         (
@@ -255,6 +265,19 @@ fn synthetic_ffmpeg_export_preserves_voice_ink_captions_and_clip_timing() -> any
             .map(|stream| stream["codec_name"].as_str().unwrap())
             .collect::<Vec<_>>(),
         ["h264", "aac", "mov_text"]
+    );
+    let captions = Command::new("ffmpeg")
+        .args(["-v", "error", "-i"])
+        .arg(&destination)
+        .args(["-map", "0:s:0", "-c", "copy", "-f", "data", "pipe:1"])
+        .output()?;
+    assert!(captions.status.success());
+    assert!(
+        captions
+            .stdout
+            .windows(CAPTION.len())
+            .any(|bytes| bytes == CAPTION.as_bytes()),
+        "Caption punctuation or markup-like text was changed during encoding"
     );
     let pixels = Command::new("ffmpeg")
         .args(["-v", "error", "-i"])
@@ -293,7 +316,7 @@ fn synthetic_ffmpeg_export_preserves_voice_ink_captions_and_clip_timing() -> any
     assert!(samples[..3000].iter().all(|&sample| sample < 100));
     assert!(samples[5000..7000].iter().any(|&sample| sample > 2000));
     let clipped = root.path().join("clip.mp4");
-    let report = write(
+    let report = write_with(
         &directory,
         &clipped,
         Options {
@@ -304,6 +327,7 @@ fn synthetic_ffmpeg_export_preserves_voice_ink_captions_and_clip_timing() -> any
             captions: true,
         },
         || false,
+        || Ok(scratch.clone()),
     )?;
     assert_eq!(
         (
@@ -326,12 +350,32 @@ fn synthetic_ffmpeg_export_preserves_voice_ink_captions_and_clip_timing() -> any
     calls.send_blocking(())?;
     let cancelled = root.path().join("cancelled.mp4");
     assert!(
-        write(&directory, &cancelled, Options::default(), || {
-            checks.try_recv().is_err()
-        })
+        write_with(
+            &directory,
+            &cancelled,
+            Options::default(),
+            || {
+                if checks.try_recv().is_ok() {
+                    return false;
+                }
+                assert!(
+                    fs::read_dir(&scratch).unwrap().any(|entry| {
+                        entry
+                            .unwrap()
+                            .file_name()
+                            .to_string_lossy()
+                            .starts_with(super::super::STAGING_PREFIX)
+                    }),
+                    "Private intermediates must use managed, expiring staging"
+                );
+                true
+            },
+            || Ok(scratch.clone())
+        )
         .is_err()
     );
     assert!(!cancelled.exists());
+    assert_eq!(fs::read_dir(&scratch)?.count(), 0);
     assert!(!fs::read_dir(root.path())?.any(|entry| {
         entry
             .unwrap()

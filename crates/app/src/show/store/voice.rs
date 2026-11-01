@@ -29,6 +29,30 @@ pub(crate) enum Status {
     Expired,
 }
 
+pub(crate) enum Voice {
+    Kept(KeptAudio),
+    Absent,
+    Expired,
+}
+
+impl Voice {
+    pub(crate) const fn status(&self) -> Status {
+        match self {
+            Self::Kept(audio) if audio.complete => Status::Available,
+            Self::Kept(_) => Status::Incomplete,
+            Self::Absent => Status::Absent,
+            Self::Expired => Status::Expired,
+        }
+    }
+
+    pub(crate) const fn audio(&self) -> Option<&KeptAudio> {
+        match self {
+            Self::Kept(audio) => Some(audio),
+            Self::Absent | Self::Expired => None,
+        }
+    }
+}
+
 pub(super) fn retain(
     checkpoint: &Path,
     staged: &Staged,
@@ -80,32 +104,21 @@ fn deadline(directory: &Path) -> io::Result<Option<SystemTime>> {
         .ok_or_else(|| io::Error::other("Show voice expiry is out of range"))
 }
 
-pub(crate) fn read(
-    directory: &Path,
-    now: SystemTime,
-) -> anyhow::Result<(Status, Option<KeptAudio>)> {
+pub(crate) fn read(directory: &Path, now: SystemTime) -> anyhow::Result<Voice> {
     let Some(expires) = deadline(directory)? else {
         anyhow::ensure!(
             !directory.join(FILE).try_exists()?,
             "Show voice has no expiry; recover the original Show before exporting voice"
         );
-        return Ok((Status::Absent, None));
+        return Ok(Voice::Absent);
     };
     if now >= expires {
-        return Ok((Status::Expired, None));
+        return Ok(Voice::Expired);
     }
     recall::regular_file(directory, FILE, audio::FILE_LIMIT).context(
         "Cannot read this Show's voice; recover the original Show before exporting voice",
     )?;
-    let audio = audio::read(File::open(directory.join(FILE))?)?;
-    Ok((
-        if audio.complete {
-            Status::Available
-        } else {
-            Status::Incomplete
-        },
-        Some(audio),
-    ))
+    audio::read(File::open(directory.join(FILE))?).map(Voice::Kept)
 }
 
 pub(super) fn expire(directory: &Path, now: SystemTime) -> io::Result<()> {
@@ -131,9 +144,7 @@ mod tests {
         fs::write(directory.path().join(FILE), b"expired private audio")?;
         fs::write(directory.path().join(EXPIRY), 100_u64.to_le_bytes())?;
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(100);
-        let (status, audio) = read(directory.path(), now)?;
-        assert!(matches!(status, Status::Expired));
-        assert!(audio.is_none());
+        assert!(matches!(read(directory.path(), now)?, Voice::Expired));
         expire(directory.path(), now)?;
         assert!(!directory.path().join(FILE).exists());
         assert!(directory.path().join(super::super::PIN).exists());

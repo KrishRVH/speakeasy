@@ -142,3 +142,6 @@ fn axis(at: u32, output: u32, input: u32) -> (usize, usize, u32) {
         u32::try_from(position % 256).unwrap_or_default(),
     )
 }
+
+#[cfg(test)]
+mod tests;

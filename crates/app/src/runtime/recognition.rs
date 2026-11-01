@@ -53,6 +53,12 @@ enum Piece {
     Heard(Zeroizing<String>),
 }
 
+enum Early {
+    Segmented(Vec<Piece>),
+    Streaming(Stream),
+    Whole,
+}
+
 enum Audio {
     Whole,
     Tail(Range<usize>),
@@ -77,9 +83,7 @@ struct Final {
 
 pub(super) struct Recognition {
     id: SessionId,
-    pieces: Vec<Piece>,
-    segmented: bool,
-    stream: Option<Stream>,
+    early: Early,
     final_part: Option<Final>,
 }
 
@@ -87,40 +91,35 @@ impl Recognition {
     pub(super) const fn new(id: SessionId) -> Self {
         Self {
             id,
-            pieces: Vec::new(),
-            segmented: true,
-            stream: None,
+            early: Early::Segmented(Vec::new()),
             final_part: None,
         }
     }
 
     pub(super) fn stream(&mut self, audio: LiveAudio) {
-        if self.segmented && self.final_part.is_none() {
-            self.whole();
-            self.stream = Some(Stream::Queued(audio));
+        if matches!(self.early, Early::Segmented(_)) && self.final_part.is_none() {
+            self.early = Early::Streaming(Stream::Queued(audio));
         }
     }
 
     pub(super) fn piece(&mut self, number: u32, audio: Sealed) {
-        if !self.segmented || self.final_part.is_some() {
+        let Early::Segmented(pieces) = &mut self.early else {
+            return;
+        };
+        if self.final_part.is_some() {
             return;
         }
-        if usize::try_from(number).ok() != Some(self.pieces.len())
-            || self
-                .pieces
-                .iter()
-                .any(|part| matches!(part, Piece::Queued(_)))
+        if usize::try_from(number).ok() != Some(pieces.len())
+            || pieces.iter().any(|part| matches!(part, Piece::Queued(_)))
         {
             self.whole();
             return;
         }
-        self.pieces.push(Piece::Queued(audio));
+        pieces.push(Piece::Queued(audio));
     }
 
     pub(super) fn whole(&mut self) {
-        self.segmented = false;
-        self.pieces.clear();
-        self.stream = None;
+        self.early = Early::Whole;
         if let Some(final_part) = &mut self.final_part {
             final_part.mode = Audio::Whole;
         }
@@ -133,23 +132,18 @@ impl Recognition {
         language: Option<Box<str>>,
         detail: Detail,
     ) {
-        let mode = if detail == Detail::Text && self.stream.is_some() {
-            Audio::Whole
-        } else {
-            match audio.partition.take() {
-                Some(partition)
-                    if self.segmented
-                        && detail == Detail::Text
-                        && usize::try_from(partition.pieces).ok() == Some(self.pieces.len())
-                        && partition.pieces > 0 =>
-                {
-                    Audio::Tail(partition.tail)
-                },
-                _ => {
-                    self.whole();
-                    Audio::Whole
-                },
-            }
+        let mode = match (&self.early, detail, audio.partition.take()) {
+            (Early::Streaming(_), Detail::Text, _) => Audio::Whole,
+            (Early::Segmented(pieces), Detail::Text, Some(partition))
+                if usize::try_from(partition.pieces).ok() == Some(pieces.len())
+                    && partition.pieces > 0 =>
+            {
+                Audio::Tail(partition.tail)
+            },
+            _ => {
+                self.whole();
+                Audio::Whole
+            },
         };
         self.final_part = Some(Final {
             audio,
@@ -163,7 +157,7 @@ impl Recognition {
     }
 
     pub(super) fn request(&mut self) -> Option<Request> {
-        if let Some(stream) = &mut self.stream {
+        if let Early::Streaming(stream) = &mut self.early {
             if !matches!(stream, Stream::Queued(_)) {
                 return None;
             }
@@ -180,26 +174,28 @@ impl Recognition {
                 language: None,
             });
         }
-        for (index, piece) in self.pieces.iter_mut().enumerate() {
-            match piece {
-                Piece::Heard(_) => {},
-                Piece::Sent => return None,
-                Piece::Queued(_) => {
-                    let number = u32::try_from(index).ok()?;
-                    let Piece::Queued(audio) = mem::replace(piece, Piece::Sent) else {
-                        return None;
-                    };
-                    return Some(Request {
-                        ticket: Ticket {
-                            session: self.id,
-                            part: Part::Piece(number),
-                        },
-                        audio: Source::Wav(audio),
-                        detail: Detail::Text,
-                        language: None,
-                    });
-                },
+        if let Early::Segmented(pieces) = &mut self.early
+            && let Some((index, piece)) = pieces
+                .iter_mut()
+                .enumerate()
+                .find(|(_, piece)| !matches!(piece, Piece::Heard(_)))
+        {
+            if matches!(piece, Piece::Sent) {
+                return None;
             }
+            let number = u32::try_from(index).ok()?;
+            let Piece::Queued(audio) = mem::replace(piece, Piece::Sent) else {
+                return None;
+            };
+            return Some(Request {
+                ticket: Ticket {
+                    session: self.id,
+                    part: Part::Piece(number),
+                },
+                audio: Source::Wav(audio),
+                detail: Detail::Text,
+                language: None,
+            });
         }
         let final_part = self
             .final_part
@@ -212,8 +208,7 @@ impl Recognition {
                     wav
                 } else {
                     final_part.mode = Audio::Whole;
-                    self.segmented = false;
-                    self.pieces.clear();
+                    self.early = Early::Whole;
                     final_part.audio.wav.clone()
                 }
             },
@@ -238,11 +233,14 @@ impl Recognition {
     pub(super) fn accepts(&self, ticket: Ticket) -> bool {
         ticket.session == self.id
             && match ticket.part {
-                Part::Stream => matches!(self.stream, Some(Stream::Sent)),
-                Part::Piece(number) => usize::try_from(number)
-                    .ok()
-                    .and_then(|index| self.pieces.get(index))
-                    .is_some_and(|part| matches!(part, Piece::Sent)),
+                Part::Stream => matches!(self.early, Early::Streaming(Stream::Sent)),
+                Part::Piece(number) => match &self.early {
+                    Early::Segmented(pieces) => usize::try_from(number)
+                        .ok()
+                        .and_then(|index| pieces.get(index))
+                        .is_some_and(|part| matches!(part, Piece::Sent)),
+                    Early::Streaming(_) | Early::Whole => false,
+                },
                 Part::Final => self.in_flight(),
             }
     }
@@ -257,7 +255,7 @@ impl Recognition {
                     self.whole();
                     return None;
                 };
-                self.stream = Some(Stream::Heard(Zeroizing::new(text)));
+                self.early = Early::Streaming(Stream::Heard(Zeroizing::new(text)));
                 self.complete().map(Transcript::Text)
             },
             Part::Piece(number) => {
@@ -265,9 +263,12 @@ impl Recognition {
                     self.whole();
                     return None;
                 };
+                let Early::Segmented(pieces) = &mut self.early else {
+                    return None;
+                };
                 let part = usize::try_from(number)
                     .ok()
-                    .and_then(|index| self.pieces.get_mut(index))?;
+                    .and_then(|index| pieces.get_mut(index))?;
                 *part = Piece::Heard(Zeroizing::new(text));
                 self.complete().map(Transcript::Text)
             },
@@ -289,15 +290,15 @@ impl Recognition {
             .final_part
             .as_mut()
             .filter(|part| part.phase == Phase::Waiting)?;
-        if let Some(Stream::Heard(text)) = &mut self.stream {
+        if let Early::Streaming(Stream::Heard(text)) = &mut self.early {
             final_part.phase = Phase::Done;
             return Some(mem::take(&mut **text));
         }
+        let Early::Segmented(pieces) = &self.early else {
+            return None;
+        };
         if !matches!(&final_part.mode, Audio::Tail(range) if range.is_empty())
-            || self
-                .pieces
-                .iter()
-                .any(|part| !matches!(part, Piece::Heard(_)))
+            || pieces.iter().any(|part| !matches!(part, Piece::Heard(_)))
         {
             return None;
         }
@@ -307,9 +308,11 @@ impl Recognition {
 
     fn join(&mut self, tail: &str) -> String {
         let mut text = String::new();
-        for part in mem::take(&mut self.pieces) {
-            if let Piece::Heard(raw) = part {
-                append(&mut text, &raw);
+        if let Early::Segmented(pieces) = &mut self.early {
+            for part in mem::take(pieces) {
+                if let Piece::Heard(raw) = part {
+                    append(&mut text, &raw);
+                }
             }
         }
         append(&mut text, tail);

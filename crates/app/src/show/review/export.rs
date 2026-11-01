@@ -8,8 +8,14 @@ use crate::{
     show::edits::{Edit, Written},
 };
 
+#[derive(Clone, Copy)]
+pub(super) enum Kind {
+    Archive,
+    Video,
+}
+
 impl Review {
-    pub(super) fn export(&mut self, video: bool, cx: &mut Context<'_, Self>) {
+    pub(super) fn export(&mut self, kind: Kind, cx: &mut Context<'_, Self>) {
         if self.exporting.is_some() || self.detail.is_none() {
             return;
         }
@@ -21,7 +27,10 @@ impl Review {
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("speakeasy-show");
-        let extension = if video { "mp4" } else { "zip" };
+        let extension = match kind {
+            Kind::Archive => "zip",
+            Kind::Video => "mp4",
+        };
         let prompt = cx.prompt_for_new_path(
             directory.parent().unwrap_or(&directory),
             Some(&format!("{name}.{extension}")),
@@ -34,7 +43,7 @@ impl Review {
             view.update_if_alive(cx, |view, cx| {
                 view.exporting = None;
                 match result {
-                    Ok(Some(destination)) => view.export_to(directory, destination, video, cx),
+                    Ok(Some(destination)) => view.export_to(directory, destination, kind, cx),
                     Ok(None) => {},
                     Err(_) => view.notice = Some(
                         "Cannot open the export dialog. Try again, or use speakeasy show export."
@@ -51,25 +60,26 @@ impl Review {
         &mut self,
         directory: PathBuf,
         destination: PathBuf,
-        video: bool,
+        kind: Kind,
         cx: &mut Context<'_, Self>,
     ) {
         if !self.library.is_selected(&directory) || self.exporting.is_some() {
             return;
         }
-        let edit = if video {
-            let (cancel, receiver) = async_channel::bounded(1);
-            self.export_cancel = Some(cancel);
-            Edit::Video {
+        let edit = match kind {
+            Kind::Video => {
+                let (cancel, receiver) = async_channel::bounded(1);
+                self.export_cancel = Some(cancel);
+                Edit::Video {
+                    directory: directory.clone(),
+                    destination,
+                    cancel: receiver,
+                }
+            },
+            Kind::Archive => Edit::Export {
                 directory: directory.clone(),
                 destination,
-                cancel: receiver,
-            }
-        } else {
-            Edit::Export {
-                directory: directory.clone(),
-                destination,
-            }
+            },
         };
         let work = match (self.actions.edit)(edit, self.fixture.clone(), cx) {
             Ok(work) => work,
@@ -80,10 +90,11 @@ impl Review {
             },
         };
         self.notice = Some(
-            if video {
-                "Exporting video with annotations, available voice and timed captions…"
-            } else {
-                "Exporting saved images and narration…"
+            match kind {
+                Kind::Video => {
+                    "Exporting video with annotations, available voice and timed captions…"
+                },
+                Kind::Archive => "Exporting saved images and narration…",
             }
             .into(),
         );

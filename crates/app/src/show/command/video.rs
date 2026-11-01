@@ -160,7 +160,7 @@ async fn export(
             drop(cancel);
             let result = work.await.map_err(|_private_panic| anyhow::anyhow!("Video export stopped"))?;
             signal.context("Cannot listen for video export cancellation")?;
-            result
+            result.map_err(|_cancelled| anyhow::anyhow!("Video export cancelled"))
         },
     }
 }

@@ -221,15 +221,16 @@ manifest with narration, contact sheets, keyframes, and retained source samples 
 unchanged, including any old machine-local paths. Unzip the archive before opening its files on
 another machine. Recovery audio, retention markers, and unrelated files are excluded. Export does
 not upload anything, and exported copies do not expire automatically. Closing the window leaves an
-accepted export running; Quit waits for it.
+accepted ZIP export running; Quit waits for it.
 
 **Export video…** creates a new MP4 with timed ink, marks, original voice when available, and a
-selectable caption track when narration has word timings. Install FFmpeg with H.264 and AAC support
-and put `ffmpeg` on PATH to use this export. It runs locally on all platforms with retained video.
-The original recording stays unchanged. **Cancel export** or closing the window cancels the video
-export; Quit waits for cleanup. Voice expires seven days after recording even when you keep the
-Show. Older Shows without saved voice and Shows whose voice has expired export silently, with a
-notice. Explicitly exported videos do not expire automatically.
+selectable caption track when narration has word timings. Install FFmpeg 5.1 or newer with H.264 and
+AAC support, put `ffmpeg` on PATH, then restart Speakeasy. macOS also checks the standard Homebrew
+and MacPorts locations. Export runs locally on all platforms with retained video. The original
+recording stays unchanged. **Cancel export** or closing the window cancels the video export; Quit
+waits for cleanup. Voice expires seven days after recording even when you keep the Show. Older Shows
+without saved voice and Shows whose voice has expired export silently, with a notice. Explicitly
+exported videos do not expire automatically.
 
 An **Interrupted Show** offers **Recover Show** and **Discard**. Recovery restores checkpointed
 frames, ink, marks, and narration into a new bundle, using your configured local speech engine and
@@ -279,10 +280,10 @@ There is no implicit latest Show.
 `export` writes only a new ZIP outside the original bundle and leaves the original and its retention
 unchanged. It checks the manifest and expected file inventory without decoding image payloads.
 Missing, linked, or oversized files, invalid retained-source indexes, and mismatched timelines fail
-the export. Image and video payloads are copied unchanged. It streams at most 2 GiB of saved content
-into a private temporary file, then publishes the complete archive without overwriting an existing
-path. JSON output contains the export path, file count, byte count, and whether retained samples are
-included; it contains no private text.
+the export. Encoded image and video data are preserved; MP4 fragment headers are normalized for
+playback. It streams at most 2 GiB of saved content into a private temporary file, then publishes
+the complete archive without overwriting an existing path. JSON output contains the export path,
+file count, byte count, and whether retained samples are included; it contains no private text.
 
 ZIP exports include `recording.mp4`, `recording.json`, and relative playback links in the guide.
 They exclude saved voice. `show video` composes a separate 30 fps H.264 MP4 with AAC voice and

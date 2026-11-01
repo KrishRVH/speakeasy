@@ -20,6 +20,7 @@ use std::{
 };
 
 use anyhow::Context as _;
+use export::Kind as ExportKind;
 use gpui::{
     App, AppContext, Bounds, Context, FocusHandle, Subscription, Task, TitlebarOptions, Window,
     WindowBounds, WindowHandle, WindowOptions, px, size,
@@ -841,8 +842,7 @@ impl Review {
                 }
             },
             Action::Copy(kind) => self.copy(kind, cx),
-            Action::Export => self.export(false, cx),
-            Action::ExportVideo => self.export(true, cx),
+            Action::Export(kind) => self.export(kind, cx),
             Action::CancelExport => {
                 self.export_cancel = None;
                 self.notice = Some("Cancelling video export…".into());
@@ -907,8 +907,7 @@ enum Action {
     Show(usize),
     Frame(usize),
     Copy(CopyKind),
-    Export,
-    ExportVideo,
+    Export(ExportKind),
     CancelExport,
     Keep,
     Folder,

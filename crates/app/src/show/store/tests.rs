@@ -17,6 +17,70 @@ fn names(directory: &Path) -> io::Result<Vec<String>> {
 }
 
 #[test]
+fn abandoned_private_staging_expires_after_a_crash() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let work = staging(root.path())?;
+    fs::write(work.path().join("voice.pcm"), b"synthetic private voice")?;
+    fs::write(
+        work.path().join("captions.srt"),
+        b"synthetic private caption",
+    )?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        assert_eq!(work.path().metadata()?.permissions().mode() & 0o777, 0o700);
+    }
+    let abandoned = work.keep();
+    let now = SystemTime::now();
+    sweep(root.path(), now)?;
+    assert!(abandoned.exists(), "A live export must have time to finish");
+    sweep(root.path(), now + ABANDONED_AFTER + Duration::from_secs(1))?;
+    assert!(
+        !abandoned.exists(),
+        "Crash leftovers must not keep private voice indefinitely"
+    );
+    Ok(())
+}
+
+#[test]
+fn damaged_voice_expiry_cannot_keep_an_expired_show() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let now = SystemTime::now();
+    let expired = fresh_directory(root.path(), now - Duration::from_hours(8 * 24))?;
+    fs::create_dir(&expired)?;
+    fs::write(expired.join("voice.expires"), b"damaged")?;
+    fs::write(expired.join("voice.log"), b"synthetic private voice")?;
+    sweep(root.path(), now)?;
+    assert!(!expired.exists());
+    Ok(())
+}
+
+#[test]
+fn blocked_bundle_retirement_still_erases_expired_voice() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let now = SystemTime::now();
+    let name = utc_stamp(now - Duration::from_hours(8 * 24));
+    let expired = root.path().join(&name);
+    fs::create_dir(&expired)?;
+    fs::create_dir(root.path().join(format!("{EXPIRED_PREFIX}{name}")))?;
+    fs::write(expired.join("voice.expires"), 1_u64.to_le_bytes())?;
+    fs::write(expired.join("voice.log"), b"synthetic private voice")?;
+    let entry = fs::read_dir(root.path())?
+        .collect::<io::Result<Vec<_>>>()?
+        .into_iter()
+        .find(|entry| entry.path() == expired)
+        .unwrap();
+    let cutoff = utc_stamp(now - KEPT_FOR);
+    assert!(matches!(
+        retire_expired(root.path(), &entry, &cutoff, now)?,
+        Cleanup::Blocked
+    ));
+    assert!(expired.exists());
+    assert!(!expired.join("voice.log").exists());
+    Ok(())
+}
+
+#[test]
 fn a_week_old_show_expires_unless_pinned() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let parent = root.path();

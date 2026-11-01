@@ -32,41 +32,6 @@ fn frame(width: u32, height: u32, shade: u8) -> Frame {
 }
 
 #[test]
-fn resized_frames_clear_old_pixels_and_keep_aspect_ratio() -> anyhow::Result<()> {
-    let mut canvas = canvas::Canvas::new([4, 4])?;
-    canvas.paint(&frame(4, 4, 200))?;
-    let pixels = canvas.paint(&frame(4, 2, 100))?;
-    assert_eq!(&pixels[..16], &[0; 16]);
-    assert_eq!(&pixels[16..48], &[100, 100, 100, 255].repeat(8));
-    assert_eq!(&pixels[48..], &[0; 16]);
-    let pixels = canvas.paint(&frame(2, 4, 75))?;
-    for row in pixels.as_chunks::<16>().0 {
-        assert_eq!(&row[..4], &[0; 4]);
-        assert_eq!(&row[4..12], &[75, 75, 75, 255].repeat(2));
-        assert_eq!(&row[12..], &[0; 4]);
-    }
-    let mut invalid = frame(4, 4, 0);
-    invalid.bgra.pop();
-    assert!(canvas.paint(&invalid).is_err());
-    assert!(canvas::Canvas::new([u32::MAX, 1]).is_err());
-    let mut grid = frame(8, 8, 0);
-    for (index, pixel) in grid.bgra.as_chunks_mut::<4>().0.iter_mut().enumerate() {
-        let shade = if index % 2 == 0 { 0 } else { 255 };
-        *pixel = [shade, shade, shade, 255];
-    }
-    assert!(
-        canvas
-            .paint(&grid)?
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .all(|pixel| *pixel == [128, 128, 128, 255]),
-        "Downsampling aliases thin lines instead of blending them"
-    );
-    Ok(())
-}
-
-#[test]
 #[ignore = "Opt in: native Media Foundation encoder, synthetic pixels only; set SPEAKEASY_MOVIE_PROBE_DIRECTORY to an empty artifact directory"]
 fn encode_synthetic_movie_fragments() -> anyhow::Result<()> {
     let directory = PathBuf::from(

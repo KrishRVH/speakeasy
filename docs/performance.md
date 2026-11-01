@@ -35,13 +35,14 @@ when the full interaction remains correct.
   recording keeps, [audio/pcm.rs](../crates/app/src/audio/pcm.rs) trims to it, and
   [audio.rs](../crates/app/src/audio.rs) seals audio before driver teardown. WAV preparation reuses
   the PCM allocation, checks lengths, and rejects unsupported input.
-- A Show's recorder keeps per-frame work to a few milliseconds and its journal under a fixed cap.
-  Checkpoint writes use a bounded queue on an owned thread; storage pressure stops checkpointing at
-  a complete prefix while in-memory capture continues. Its overlay holds full-window path targets
-  only while ink shows; GPUI frees them after a frame without paths, and the window closes when the
-  Show ends. Publishing rebuilds, resamples, and encodes one contact-sheet page at a time on up to
-  one thread per frame in the page, bounded by the machine's cores. Only encoded output accumulates
-  across pages.
+- A Show's recorder keeps per-frame work to a few milliseconds. Its journal thins toward a
+  compressed storage budget while retaining at least two frames; this budget is not a
+  resident-memory cap. Checkpoint writes use a bounded queue on an owned thread; storage pressure
+  stops checkpointing at a complete prefix while in-memory capture continues. Its overlay holds
+  full-window path targets only while ink shows; GPUI frees them after a frame without paths, and
+  the window closes when the Show ends. Publishing rebuilds, resamples, and encodes one
+  contact-sheet page at a time on up to one thread per frame in the page, bounded by the machine's
+  cores. Only encoded output accumulates across pages.
 - Do not add an always-on microphone, worker pool, cache, resampler, or background service without a
   measured user benefit and explicit resource ownership.
 

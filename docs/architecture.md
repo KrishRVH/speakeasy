@@ -349,7 +349,7 @@ module unless a test file is named.
   [store/export.rs](../crates/app/src/show/store/export.rs) streams a format-owned inventory into a
   new ZIP, preserves the edited summary, and adds a relative-path guide. It excludes audio and
   retention markers, bounds input to 2 GiB, reports failed staging cleanup, and publishes with
-  `persist_noclobber` after flush. The CLI and review window use the same exporter; accepted GUI
+  `persist_noclobber` after flush. The CLI and review window use the same exporter; accepted GUI ZIP
   exports use the app's [edit owner](../crates/app/src/show/edits.rs), so closing review cannot
   cancel them. [export/tests.rs](../crates/app/src/show/store/export/tests.rs) checks portability,
   source retrieval after moving, exclusions, links, size limits, and failure cleanup.
@@ -358,11 +358,15 @@ module unless a test file is named.
   paints annotations at 30 Hz output ticks using each source frame's geometry, and aligns original
   PCM and optional subtitles to the selected session interval. Full exports preserve voice before
   screen promotion and after the last captured image by holding the boundary frame. Clipped captions
-  contain only intersecting words. Missing voice and annotation coverage are reported. CLI and
-  Review share this exporter; cancellation kills and reaps both FFmpeg children before staging is
-  removed. The CLI registers Ctrl-C before staging and awaits its blocking export worker on
-  cancellation. Review owns its cancel sender; closing cancels video export, while Quit drains the
-  edit owner. FFmpeg diagnostics are never exposed. Output is synced and published without
+  contain only intersecting words. The plain-text subtitle decoder receives neutral style resets
+  after braces and backslashes so markup-like narration stays literal through `mov_text` encoding.
+  Missing voice and annotation coverage are reported. CLI and Review share this exporter;
+  cancellation kills and reaps both FFmpeg children before staging is removed. Raw audio, captions,
+  and source copies use the managed Shows folder's private staging; the existing one-hour sweep
+  reclaims crash leftovers. Only the final MP4 stages beside its chosen destination for publication
+  without overwriting. The CLI registers Ctrl-C before staging and awaits its blocking export worker
+  on cancellation. Review owns its cancel sender; closing cancels video export, while Quit drains
+  the edit owner. FFmpeg diagnostics are never exposed. Output is synced and published without
   overwriting. [video/tests.rs](../crates/app/src/show/store/video/tests.rs) checks timing and
   refusal; its opt-in FFmpeg fixture verifies actual ink, voice and subtitle tracks without devices.
   [voice.rs](../crates/app/src/show/store/voice.rs) retains checksummed audio with an immutable

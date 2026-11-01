@@ -159,7 +159,11 @@ impl Checkpoint {
         })
     }
 
-    pub(in crate::show) fn commit(&self, staged: &Staged, narrated: bool) -> anyhow::Result<()> {
+    pub(in crate::show) fn commit(
+        &self,
+        staged: &Staged,
+        publication: Publication,
+    ) -> anyhow::Result<()> {
         let id = self
             .directory
             .file_name()
@@ -174,7 +178,7 @@ impl Checkpoint {
         sync_directory(staged.staging.path())?;
         let mut marker = tempfile::NamedTempFile::new_in(&self.directory)?;
         marker.write_all(target.as_bytes())?;
-        if narrated {
+        if publication == Publication::Narrated {
             marker.write_all(b"\nnarrated")?;
         }
         marker.as_file().sync_all()?;
@@ -485,7 +489,7 @@ fn retired(parent: &Path, checkpoint: &Checkpoint, now: SystemTime) -> anyhow::R
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Publication {
+pub(in crate::show) enum Publication {
     Pending,
     Narrated,
 }

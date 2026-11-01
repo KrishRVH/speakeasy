@@ -5,6 +5,8 @@ use speakeasy_show::{Narration, Recording, Span, timed_clauses};
 
 use crate::show::store::{checkpoint::KeptAudio, movie::Inspected};
 
+pub(super) const FPS: u64 = 30;
+
 pub(super) struct Timing {
     pub start_ms: u64,
     pub end_ms: u64,
@@ -17,6 +19,7 @@ impl Timing {
         span: Option<Span>,
         audio: Option<&KeptAudio>,
     ) -> anyhow::Result<Self> {
+        let limit = u64::try_from(speakeasy_core::gesture::RECORDING_LIMIT.as_millis())?;
         let origin = audio.map_or(movie.metadata.origin_ms, |audio| {
             movie
                 .metadata
@@ -38,7 +41,7 @@ impl Timing {
                         .saturating_mul(1000)
                         .div_ceil(u64::from(audio.rate.max(1))),
                 );
-            coverage.end_ms.max(audio_end).min(300_000)
+            coverage.end_ms.max(audio_end).min(limit)
         });
         let end_ms = span.map_or(end, |span| span.end().as_millis().min(end));
         anyhow::ensure!(
@@ -47,7 +50,7 @@ impl Timing {
         );
         let frames = end_ms
             .saturating_sub(start_ms)
-            .saturating_mul(30)
+            .saturating_mul(FPS)
             .div_ceil(1000);
         Ok(Self {
             start_ms,
@@ -58,12 +61,12 @@ impl Timing {
 
     pub(super) fn tick(&self, index: u64) -> Duration {
         Duration::from_millis(self.start_ms).saturating_add(Duration::from_nanos(
-            index.saturating_mul(1_000_000_000) / 30,
+            index.saturating_mul(1_000_000_000) / FPS,
         ))
     }
 
     pub(super) fn duration(&self) -> Duration {
-        Duration::from_nanos(self.frames.saturating_mul(1_000_000_000) / 30)
+        Duration::from_nanos(self.frames.saturating_mul(1_000_000_000) / FPS)
     }
 }
 
@@ -78,7 +81,7 @@ pub(super) fn audio(
         )?)
     };
     let start = Duration::from_millis(timing.start_ms);
-    let samples = usize::try_from(timing.frames.saturating_mul(u64::from(audio.rate)) / 30)?;
+    let samples = usize::try_from(timing.frames.saturating_mul(u64::from(audio.rate)) / FPS)?;
     let content = sample_at(Duration::from_millis(
         timing.end_ms.saturating_sub(timing.start_ms),
     ))?
@@ -143,20 +146,20 @@ pub(super) fn captions(
             continue;
         }
         count = count.saturating_add(1);
-        let text = clause
-            .text
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-            .replace('&', "&amp;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;");
+        let text = clause.text.split_whitespace().collect::<Vec<_>>().join(" ");
         writeln!(
             out,
-            "{count}\n{} --> {}\n{text}\n",
+            "{count}\n{} --> {}",
             timestamp(start.saturating_sub(timing.start_ms)),
             timestamp(end.saturating_sub(timing.start_ms))
         )?;
+        for character in text.chars() {
+            write!(out, "{character}")?;
+            if matches!(character, '{' | '\\') {
+                out.write_all(br"{\r}")?;
+            }
+        }
+        out.write_all(b"\n\n")?;
     }
     Ok(count)
 }

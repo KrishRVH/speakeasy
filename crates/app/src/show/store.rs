@@ -147,6 +147,18 @@ fn cannot_save(parent: &Path) -> impl FnOnce(io::Error) -> anyhow::Error {
     }
 }
 
+fn staging(parent: &Path) -> io::Result<tempfile::TempDir> {
+    fs::create_dir_all(parent)?;
+    let mut builder = tempfile::Builder::new();
+    builder.prefix(STAGING_PREFIX);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        builder.permissions(fs::Permissions::from_mode(0o700));
+    }
+    builder.tempdir_in(parent)
+}
+
 pub(super) fn stage(
     directory: &Path,
     bundle: Bundle,
@@ -160,15 +172,7 @@ pub(super) fn stage(
     let parent = directory
         .parent()
         .context("A Show's directory needs a parent")?;
-    fs::create_dir_all(parent).map_err(cannot_save(parent))?;
-    let mut builder = tempfile::Builder::new();
-    builder.prefix(STAGING_PREFIX);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        builder.permissions(fs::Permissions::from_mode(0o700));
-    }
-    let staging = builder.tempdir_in(parent).map_err(cannot_save(parent))?;
+    let staging = staging(parent).map_err(cannot_save(parent))?;
     let source_lost = retained.as_ref().is_some_and(|retained| {
         source::write(staging.path(), retained.journal, retained.duration).is_err()
     });
@@ -291,10 +295,10 @@ fn retire_expired(
     now: SystemTime,
 ) -> io::Result<Cleanup> {
     let _lock = retention::lock(parent)?;
-    if entry.file_type()?.is_dir() {
-        voice::expire(&entry.path(), now)?;
-    }
     if !expired(entry, cutoff, now)? {
+        if entry.file_type()?.is_dir() {
+            voice::expire(&entry.path(), now)?;
+        }
         return Ok(Cleanup::Keep);
     }
     let path = entry.path();
@@ -302,14 +306,20 @@ fn retire_expired(
     if name.to_str().is_some_and(|name| stamp(name).is_some()) {
         let destination = parent.join(format!("{EXPIRED_PREFIX}{}", name.to_string_lossy()));
         match fs::symlink_metadata(&destination) {
-            Ok(_) => return Ok(Cleanup::Blocked),
+            Ok(_) => {
+                voice::expire(&path, now)?;
+                return Ok(Cleanup::Blocked);
+            },
             Err(error) if error.kind() == ErrorKind::NotFound => {},
             Err(error) => return Err(error),
         }
         match fs::rename(path, &destination) {
             Ok(()) => Ok(Cleanup::Remove(destination)),
             Err(error) if error.kind() == ErrorKind::NotFound => Err(error),
-            Err(_blocked) => Ok(Cleanup::Blocked),
+            Err(_blocked) => {
+                voice::expire(&entry.path(), now)?;
+                Ok(Cleanup::Blocked)
+            },
         }
     } else {
         Ok(Cleanup::Remove(path))
