@@ -68,8 +68,9 @@ pub(super) fn capture(
     } else {
         interval.max(INTERVAL)
     };
-    let Place::Covers(part) = place(target)? else {
-        return Err(Failure::Stalled);
+    let part = match place(target)? {
+        Place::Covers(part) => part,
+        Place::Unknown => target.part(),
     };
     let mut stream = Stream::new(&source, part, cadence, window.map(|_| geometry.bounds))?;
     let outcome = stream.start().and_then(|()| {
@@ -129,7 +130,9 @@ fn record(
             match place(target)? {
                 Place::Covers(part) => stream.follow(source, part)?,
                 Place::Unknown => {
-                    if last_frame.is_none_or(|at: Instant| at.elapsed() >= PATIENCE) {
+                    if last_frame.map_or_else(|| started.elapsed(), |at: Instant| at.elapsed())
+                        >= PATIENCE
+                    {
                         return Err(Failure::Stalled);
                     }
                     thread::sleep(Duration::from_millis(10));

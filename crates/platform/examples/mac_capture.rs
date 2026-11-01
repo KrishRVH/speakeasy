@@ -178,6 +178,12 @@ mod native {
         window.setBackgroundColor(Some(&color([230, 30, 20])));
         window.orderFrontRegardless();
         window.display();
+        if moving {
+            NSApplication::sharedApplication(main).activate();
+        }
+        for _ in 0..5 {
+            pump();
+        }
         writeln!(std::io::stdout().lock(), "ready")?;
         std::io::stdout().lock().flush()?;
         let started = Instant::now();

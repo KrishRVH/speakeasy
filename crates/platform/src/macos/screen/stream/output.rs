@@ -150,10 +150,7 @@ impl Output {
             // queued before a crop update. No latest-window observation labels its pixels.
             let rectangle =
                 rectangle(&info, unsafe { SCStreamFrameInfoScreenRect }).ok_or(Failure::Stalled)?;
-            let Some(part) = captured_part(display, rectangle.into()) else {
-                return Ok(());
-            };
-            part
+            captured_part(display, rectangle.into()).ok_or(Failure::Stalled)?
         } else {
             if size != self.ivars().size {
                 return Err(Failure::DisplayLost);
