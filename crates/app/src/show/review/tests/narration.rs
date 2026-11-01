@@ -96,6 +96,7 @@ fn navigation_reports_exact_earlier_and_first_later_samples_and_never_infers_tex
     let (rows, _) = library::list(&root.directory).unwrap();
     let directory = &rows[0].directory;
     let mut detail = Detail::open(directory, Mode::Keyframes).unwrap();
+    detail.frames.truncate(4);
     for (frame, at) in detail.frames.iter_mut().zip([100, 700, 1_500, 30_000]) {
         frame.at = Moment::from_millis(at);
     }
