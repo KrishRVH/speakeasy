@@ -1,3 +1,5 @@
+mod control;
+
 use super::*;
 use crate::testing::PATIENCE;
 
@@ -211,5 +213,3 @@ fn shutdown_wakes_a_server_waiting_for_the_ui() -> anyhow::Result<()> {
     assert!(Instance::acquire(&path)?.is_some());
     Ok(())
 }
-
-mod control;

@@ -20,20 +20,18 @@ use crate::control::{self, Call, Command, Reply};
 
 const LOCK_FILE: &str = "instance.lock";
 const PORT_FILE: &str = "instance.port";
-
 const MAX_PORT_FILE_BYTES: u64 = 64;
 
 const ACKNOWLEDGED: u8 = 0x06;
-const NOT_RUNNING: &str = "Speakeasy is not running. Start it before using a desktop shortcut";
-
-const INVALID_ENDPOINT: &str = "Restart Speakeasy to use desktop shortcuts";
+const CONTROL: u8 = 3;
+const MAX_CONTROL_CALLS: usize = 8;
 const IO_TIMEOUT: Duration = Duration::from_millis(100);
+const ACCEPT_RETRY: Duration = Duration::from_millis(10);
 const REVEAL_ATTEMPTS: u32 = 25;
 const REVEAL_RETRY: Duration = Duration::from_millis(20);
 
-const ACCEPT_RETRY: Duration = Duration::from_millis(10);
-const MAX_CONTROL_CALLS: usize = 8;
-const CONTROL: u8 = 3;
+const NOT_RUNNING: &str = "Speakeasy is not running. Start it before using a desktop shortcut";
+const INVALID_ENDPOINT: &str = "Restart Speakeasy to use desktop shortcuts";
 const UNCONFIRMED: &str = "Speakeasy did not confirm the command. Check its state before trying again; no retry was sent.";
 const CONTROL_DISCONNECTED: &str = "Speakeasy closed without confirming the command. Restart Speakeasy to use this command, and check its state before trying again.";
 
