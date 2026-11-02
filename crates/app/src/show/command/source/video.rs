@@ -57,15 +57,11 @@ pub(super) fn write(
     let Output::Frame { destination, crop } = request.output else {
         anyhow::bail!("Video export needs show frame");
     };
-    let mut report = Report::new(&manifest, &found);
-    report.video = Some(Coverage {
-        span: Span::new(
-            Moment::from_millis(metadata.origin_ms),
-            Moment::from_millis(coverage.end_ms),
-        ),
-        annotations: Moment::from_millis(coverage.annotations_through_ms),
-        rendering: movie::AnnotationState::Off,
-    });
+    let span = Span::new(
+        Moment::from_millis(metadata.origin_ms),
+        Moment::from_millis(coverage.end_ms),
+    );
+    let annotations = Moment::from_millis(coverage.annotations_through_ms);
     let crop = if let Some(mark) = crop_mark(&manifest, crop)? {
         let part = manifest
             .recording()
@@ -89,9 +85,12 @@ pub(super) fn write(
         !request.annotated || served.annotations.painted(),
         "Annotations are unavailable at this video sample; export without --annotated"
     );
-    if let Some(video) = &mut report.video {
-        video.rendering = served.annotations;
-    }
+    let mut report = Report::new(&manifest, &found);
+    report.video = Some(Coverage {
+        span,
+        annotations,
+        rendering: served.annotations,
+    });
     let sampled_ms =
         u64::try_from(served.at.as_millis()).context("Video sample time is too large")?;
     report.requested_ms = Some(at.as_millis());
