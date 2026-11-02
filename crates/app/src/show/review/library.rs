@@ -321,9 +321,8 @@ impl Detail {
                             .enumerate()
                             .map(|(index, sample)| Frame {
                                 number: index.saturating_add(1),
-                                at: Moment::from_millis(metadata.origin_ms.saturating_add(
-                                    u64::try_from(sample.at.as_millis()).unwrap_or(u64::MAX),
-                                )),
+                                at: Moment::from_millis(metadata.origin_ms)
+                                    .saturating_add(sample.at),
                                 marker: String::new(),
                                 file: crate::show::preview::Content::Video {
                                     span: sample.at

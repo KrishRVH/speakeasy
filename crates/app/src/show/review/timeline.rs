@@ -1,7 +1,9 @@
+use std::time::Duration;
+
 use gpui::{
     Bounds, Context, MouseButton, Pixels, Window, canvas, div, prelude::*, px, relative, rgb,
 };
-use speakeasy_show::Moment;
+use speakeasy_show::{Moment, Span};
 
 use super::{Action, ImageState, Mode, Review, navigation::Stamp};
 use crate::{
@@ -18,24 +20,15 @@ pub(super) struct Timeline {
 
 impl Review {
     pub(super) fn timeline(&self, palette: &Palette, cx: &Context<'_, Self>) -> impl IntoElement {
-        let range = self
-            .detail
-            .as_ref()
-            .and_then(|detail| detail.movie.as_ref())
-            .and_then(|movie| {
-                movie
-                    .coverage
-                    .as_ref()
-                    .map(|coverage| [movie.origin_ms, coverage.end_ms])
-            })
-            .unwrap_or([0, 0]);
+        let covered = self.covered().unwrap_or_default();
+        let (start, end) = (covered.start(), covered.end());
         let selected = self
             .library
             .selected
             .as_ref()
             .and_then(|key| self.detail.as_ref()?.frames.get(key.frame))
-            .map_or(range[0], |frame| frame.at.as_millis());
-        let progress = fraction(selected, range);
+            .map_or(start, |frame| frame.at);
+        let progress = fraction(selected, covered);
         let view = cx.entity().downgrade();
         div()
             .flex()
@@ -95,11 +88,11 @@ impl Review {
                         self.detail
                             .iter()
                             .flat_map(|detail| &detail.marks)
-                            .filter(|(_, at)| (range[0]..=range[1]).contains(&at.as_millis()))
-                            .map(|(_, at)| {
+                            .filter(|&&(_, at)| covered.contains(at))
+                            .map(|&(_, at)| {
                                 div()
                                     .absolute()
-                                    .left(relative(fraction(at.as_millis(), range)))
+                                    .left(relative(fraction(at, covered)))
                                     .top(px(3.0))
                                     .w(px(2.0))
                                     .h(px(16.0))
@@ -132,37 +125,39 @@ impl Review {
                     .justify_between()
                     .text_size(px(12.0))
                     .text_color(rgb(palette.muted))
-                    .child(Stamp(Moment::from_millis(range[0])).to_string())
-                    .child(Stamp(Moment::from_millis(range[1])).to_string()),
+                    .child(Stamp(start).to_string())
+                    .child(Stamp(end).to_string()),
             )
+    }
+
+    fn covered(&self) -> Option<Span> {
+        let movie = self.detail.as_ref()?.movie.as_ref()?;
+        let coverage = movie.coverage.as_ref()?;
+        Some(Span::new(
+            Moment::from_millis(movie.origin_ms),
+            Moment::from_millis(coverage.end_ms),
+        ))
     }
 
     fn scrub(&mut self, x: Pixels, window: &mut Window, cx: &mut Context<'_, Self>) {
         if self.mode != Mode::Video || self.timeline.bounds.size.width <= px(0.0) {
             return;
         }
+        let Some(covered) = self.covered() else {
+            return;
+        };
         let fraction = (x - self.timeline.bounds.left()) / self.timeline.bounds.size.width;
-        if !fraction.is_finite() {
-            return;
-        }
-        let Some(detail) = &self.detail else {
-            return;
-        };
-        let Some(movie) = &detail.movie else {
-            return;
-        };
-        let Some(coverage) = &movie.coverage else {
-            return;
-        };
-        let duration =
-            std::time::Duration::from_millis(coverage.end_ms.saturating_sub(movie.origin_ms));
-        let Ok(offset) = std::time::Duration::try_from_secs_f64(
-            duration.as_secs_f64() * f64::from(fraction.clamp(0.0, 1.0)),
+        let Ok(offset) = Duration::try_from_secs_f64(
+            covered.end().since(covered.start()).as_secs_f64()
+                * f64::from(fraction.clamp(0.0, 1.0)),
         ) else {
             return;
         };
-        let at = Moment::from_millis(movie.origin_ms).saturating_add(offset);
-        if let Some((index, _)) = detail.locate(at) {
+        if let Some((index, _)) = self
+            .detail
+            .as_ref()
+            .and_then(|detail| detail.locate(covered.start().saturating_add(offset)))
+        {
             self.act(Action::Frame(index), window, cx);
         }
     }
@@ -187,9 +182,12 @@ impl Review {
     }
 }
 
-fn fraction(at: u64, [start, end]: [u64; 2]) -> f32 {
-    if end <= start {
+fn fraction(at: Moment, span: Span) -> f32 {
+    let length = span.end().since(span.start());
+    if length.is_zero() {
         return 0.0;
     }
-    (at.saturating_sub(start) as f32 / end.saturating_sub(start) as f32).clamp(0.0, 1.0)
+    at.since(span.start())
+        .div_duration_f32(length)
+        .clamp(0.0, 1.0)
 }

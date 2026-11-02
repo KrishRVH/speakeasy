@@ -1,8 +1,3 @@
-const DISCARD_AUDIO: &str = "This permanently removes the kept audio and its recovery checkpoint. \
-                            Your saved Show stays.";
-const DISCARD_SHOW: &str = "This permanently removes the interrupted Show's recovery data, \
-                           including kept audio. Any saved copies stay.";
-
 mod export;
 mod handoff;
 mod library;
@@ -17,7 +12,7 @@ use std::{
     io,
     path::{Path, PathBuf},
     sync::Arc,
-    time::SystemTime,
+    time::{Duration, SystemTime},
 };
 
 use anyhow::Context as _;
@@ -38,6 +33,13 @@ use crate::{
     runtime::Snapshot,
     theme::Theme,
 };
+
+const JUMP: Duration = Duration::from_secs(10);
+
+const DISCARD_AUDIO: &str = "This permanently removes the kept audio and its recovery checkpoint. \
+                            Your saved Show stays.";
+const DISCARD_SHOW: &str = "This permanently removes the interrupted Show's recovery data, \
+                           including kept audio. Any saved copies stay.";
 
 pub(crate) struct Actions {
     pub edit: fn(
@@ -833,13 +835,11 @@ impl Review {
                     self.detail.as_ref().zip(self.library.selected.as_ref())
                     && let Some(frame) = detail.frames.get(current.frame)
                 {
-                    let ms = match direction {
-                        Direction::Forward => frame.at.as_millis().saturating_add(10_000),
-                        Direction::Back => frame.at.as_millis().saturating_sub(10_000),
+                    let at = match direction {
+                        Direction::Forward => frame.at.saturating_add(JUMP),
+                        Direction::Back => frame.at.saturating_sub(JUMP),
                     };
-                    let target = detail
-                        .locate(speakeasy_show::Moment::from_millis(ms))
-                        .map_or(current.frame, |(index, _)| index);
+                    let target = detail.locate(at).map_or(current.frame, |(index, _)| index);
                     let index = match direction {
                         Direction::Forward => target.max(current.frame.saturating_add(1)),
                         Direction::Back => target.min(current.frame.saturating_sub(1)),
