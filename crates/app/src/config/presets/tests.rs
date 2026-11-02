@@ -2,7 +2,7 @@ use proptest::prelude::*;
 
 use super::*;
 use crate::{
-    config::{Change, TextDelivery, ValidConfig, valid_config},
+    config::{Change, Startup, TextDelivery, ValidConfig, valid_config},
     theme::Theme,
     transcript::vocabulary::Vocabulary,
 };
@@ -117,10 +117,7 @@ fn sparse_settings_need_no_presets_and_invalid_libraries_are_rejected_even_witho
         std::fs::write(&path, serde_json::to_vec(&invalid)?)?;
         let error = Config::read(&path).unwrap_err();
         assert!(!format!("{error:#}").contains("PRIVATE_NAME"));
-        assert!(matches!(
-            Config::load(&path).1,
-            super::super::Startup::Invalid(_)
-        ));
+        assert!(matches!(Config::load(&path).1, Startup::Invalid(_)));
         assert!(
             Config::save_changes(
                 &[&Config::default()],

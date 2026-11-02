@@ -1,3 +1,5 @@
+pub(crate) mod presets;
+
 use std::{
     fs,
     io::{self, ErrorKind, Write as _},
@@ -12,7 +14,7 @@ use serde_path_to_error::Segment;
 use speakeasy_platform::{Delivery, DesktopOptions, LinuxPaste, MacShortcut};
 
 use crate::{
-    models::Model,
+    models::{self, Model},
     recognition_terms::Terms,
     theme::Theme,
     transcript::{
@@ -21,7 +23,7 @@ use crate::{
     },
 };
 
-pub(crate) mod presets;
+const LINK_DEPTH: usize = 40;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -273,22 +275,23 @@ impl Config {
                     || self.use_gpu != *use_gpu,
                 Change::Engine,
             ),
-            (self.language != *language, Change::Session),
             (
-                self.microphone != *microphone
+                self.language != *language
+                    || self.microphone != *microphone
                     || self.recognition_terms != *recognition_terms
                     || self.remove_fillers != *remove_fillers
                     || self.vocabulary != *vocabulary
-                    || self.text_delivery != *text_delivery,
+                    || self.text_delivery != *text_delivery
+                    || self.play_sounds != *play_sounds,
                 Change::Session,
             ),
-            (self.play_sounds != *play_sounds, Change::Session),
             (
-                self.theme != *theme || self.reduced_motion != *reduced_motion,
+                self.theme != *theme
+                    || self.reduced_motion != *reduced_motion
+                    || self.start_at_login != *start_at_login
+                    || self.presets != *presets,
                 Change::Presentation,
             ),
-            (self.start_at_login != *start_at_login, Change::Presentation),
-            (self.presets != *presets, Change::Presentation),
         ]
         .into_iter()
         .filter_map(|(changed, tier)| changed.then_some(tier))
@@ -338,7 +341,7 @@ impl Config {
         self.recognition_terms.validate()?;
         if self.uses_nemotron() {
             ensure!(
-                crate::models::LANGUAGES
+                models::LANGUAGES
                     .iter()
                     .any(|(code, _)| *code == self.language),
                 "Choose a supported Nemotron language in Settings, or Detect automatically."
@@ -464,8 +467,6 @@ fn from_json<'de, T: Deserialize<'de>>(contents: &'de [u8]) -> anyhow::Result<T>
     json.end()?;
     Ok(value)
 }
-
-const LINK_DEPTH: usize = 40;
 
 fn link_target(path: &Path) -> io::Result<PathBuf> {
     let mut target = path.to_owned();

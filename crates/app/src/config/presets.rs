@@ -4,7 +4,11 @@ use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
 
 use super::{Config, Engine};
-use crate::{models::Model, recognition_terms::Terms, transcript::vocabulary::Correction};
+use crate::{
+    models::{self, Model},
+    recognition_terms::Terms,
+    transcript::vocabulary::Correction,
+};
 
 pub(crate) const LIMIT: usize = 16;
 const NAME_LIMIT: usize = 48;
@@ -104,9 +108,9 @@ impl Preset {
                 .unwrap_or("No model chosen"),
         };
         let languages = if self.engine == Engine::Whisper {
-            crate::models::WHISPER_LANGUAGES
+            models::WHISPER_LANGUAGES
         } else {
-            crate::models::LANGUAGES
+            models::LANGUAGES
         };
         let language = (self.language != "auto"
             && (self.engine == Engine::Whisper || self.nemo_model == Some(Model::Nemotron)))
@@ -122,15 +126,16 @@ impl Preset {
                 _ => format!("{amount} {noun}s"),
             })
         };
-        [Some(model.to_owned()), language]
-            .into_iter()
-            .chain([
-                count(self.vocabulary.len(), "correction"),
-                count(self.recognition_terms.phrases().len(), "hint"),
-            ])
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(" · ")
+        [
+            Some(model.to_owned()),
+            language,
+            count(self.vocabulary.len(), "correction"),
+            count(self.recognition_terms.phrases().len(), "hint"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ")
     }
 }
 
