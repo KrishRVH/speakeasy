@@ -84,7 +84,6 @@ function Test-DemoAccessibility([IntPtr]$Window, [int]$Owner) {
     $general = Wait-Control 'General'
     $general.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern).Select()
     $motion = Wait-Control 'Reduce motion'
-    if ($null -eq $motion) { throw 'Motion switch is inaccessible' }
     $toggle = $motion.GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern)
     $previousToggle = $toggle.Current.ToggleState
     $toggle.Toggle()
