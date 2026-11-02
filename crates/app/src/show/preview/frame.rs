@@ -1,11 +1,16 @@
-use std::sync::Arc;
+use std::{path::Path, sync::Arc, time::Duration};
 
+use anyhow::Context as _;
 use gpui::RenderImage;
+use image::RgbaImage;
+use speakeasy_show::{Annotations, Moment, Source};
 
 use super::{Content, Decoded, Request};
 use crate::show::store::{movie, recall, source};
 
 const LONGEST_EDGE: u32 = 4_096;
+
+const CANCELLED: &str = "Preview cancelled";
 
 pub(super) fn read(request: Request, cancelled: &dyn Fn() -> bool) -> Result<Decoded, String> {
     let Request {
@@ -16,84 +21,95 @@ pub(super) fn read(request: Request, cancelled: &dyn Fn() -> bool) -> Result<Dec
         fixture: _fixture,
     } = request;
     if cancelled() {
-        return Err("Preview cancelled".into());
+        return Err(CANCELLED.into());
     }
     let pixels = match content {
-        Content::Png(name) => {
-            let bytes = recall::read_file(&directory, &name, recall::IMAGE_LIMIT)
-                .map_err(|error| format!("Cannot open {name}: {error}"))?;
-            check_header(&bytes)?;
-            if cancelled() {
-                return Err("Preview cancelled".into());
-            }
-            let mut pixels = image::load_from_memory_with_format(&bytes, image::ImageFormat::Png)
-                .map_err(|_private_error| {
-                    "This frame could not be decoded as a PNG image.".to_owned()
-                })?
-                .into_rgba8();
-            for [red, _, blue, _] in pixels.as_flat_samples_mut().samples.as_chunks_mut::<4>().0 {
-                std::mem::swap(red, blue);
-            }
-            pixels
-        },
-        Content::Source { index } => {
-            let image = source::frame(&directory, &index, at)
-                .map_err(|error| format!("Cannot read source frame: {error:#}"))?
-                .image;
-            image::RgbaImage::from_raw(image.width(), image.height(), image.into_bgra())
-                .ok_or_else(|| "Cannot read source frame: invalid frame dimensions".to_owned())?
-        },
+        Content::Png(name) => png(&directory, &name, cancelled)?,
+        Content::Source { index } => retained(&directory, &index, at)?,
         Content::Video {
             span,
             annotations,
             scene,
         } => {
-            let decode = || -> anyhow::Result<Decoded> {
-                use anyhow::Context as _;
-                let reading = movie::Reading::open(&directory, annotations)?;
-                let frame = reading
-                    .sample(span.start, cancelled)?
-                    .context("Preview cancelled")?;
-                let at = frame.at;
-                let size = frame.size;
-                let (pixels, annotations) = if annotated {
-                    match scene {
-                        Some(scene) => {
-                            let rendered = frame
-                                .render(Some(&scene), None, cancelled)?
-                                .context("Preview cancelled")?;
-                            (rendered.image.into_bgra(), rendered.annotations)
-                        },
-                        None => (frame.bgra, movie::AnnotationState::Unavailable),
-                    }
-                } else {
-                    (frame.bgra, movie::AnnotationState::Off)
-                };
-                if cancelled() {
-                    anyhow::bail!("Preview cancelled");
-                }
-                let pixels = image::RgbaImage::from_raw(size[0], size[1], pixels)
-                    .context("Video frame dimensions are invalid")?;
-
-                let image = Arc::new(RenderImage::new([image::Frame::new(pixels)]));
-                Ok(Decoded {
-                    image,
-                    at,
-                    annotations,
-                })
-            };
-            return decode().map_err(|error| format!("Cannot read video frame: {error:#}"));
+            return video(
+                &directory,
+                span.start,
+                annotations,
+                annotated,
+                scene.as_deref(),
+                cancelled,
+            )
+            .map_err(|error| format!("Cannot read video frame: {error:#}"));
         },
     };
     if cancelled() {
-        return Err("Preview cancelled".into());
+        return Err(CANCELLED.into());
     }
-    let image = Arc::new(RenderImage::new([image::Frame::new(pixels)]));
     Ok(Decoded {
-        image,
-        at: at.since(speakeasy_show::Moment::START),
+        image: render(pixels),
+        at: at.since(Moment::START),
         annotations: movie::AnnotationState::Off,
     })
+}
+
+fn png(directory: &Path, name: &str, cancelled: &dyn Fn() -> bool) -> Result<RgbaImage, String> {
+    let bytes = recall::read_file(directory, name, recall::IMAGE_LIMIT)
+        .map_err(|error| format!("Cannot open {name}: {error}"))?;
+    check_header(&bytes)?;
+    if cancelled() {
+        return Err(CANCELLED.into());
+    }
+    let mut pixels = image::load_from_memory_with_format(&bytes, image::ImageFormat::Png)
+        .map_err(|_private_error| "This frame could not be decoded as a PNG image.".to_owned())?
+        .into_rgba8();
+    for [red, _, blue, _] in pixels.as_flat_samples_mut().samples.as_chunks_mut::<4>().0 {
+        std::mem::swap(red, blue);
+    }
+    Ok(pixels)
+}
+
+fn retained(directory: &Path, index: &Source, at: Moment) -> Result<RgbaImage, String> {
+    let image = source::frame(directory, index, at)
+        .map_err(|error| format!("Cannot read source frame: {error:#}"))?
+        .image;
+    RgbaImage::from_raw(image.width(), image.height(), image.into_bgra())
+        .ok_or_else(|| "Cannot read source frame: invalid frame dimensions".to_owned())
+}
+
+fn video(
+    directory: &Path,
+    at: Duration,
+    through: Moment,
+    annotated: bool,
+    scene: Option<&Annotations>,
+    cancelled: &dyn Fn() -> bool,
+) -> anyhow::Result<Decoded> {
+    let frame = movie::Reading::open(directory, through)?
+        .sample(at, cancelled)?
+        .context(CANCELLED)?;
+    let (at, [width, height]) = (frame.at, frame.size);
+    let (pixels, annotations) = match (annotated, scene) {
+        (false, _) => (frame.bgra, movie::AnnotationState::Off),
+        (true, None) => (frame.bgra, movie::AnnotationState::Unavailable),
+        (true, Some(scene)) => {
+            let rendered = frame
+                .render(Some(scene), None, cancelled)?
+                .context(CANCELLED)?;
+            (rendered.image.into_bgra(), rendered.annotations)
+        },
+    };
+    anyhow::ensure!(!cancelled(), CANCELLED);
+    let pixels =
+        RgbaImage::from_raw(width, height, pixels).context("Video frame dimensions are invalid")?;
+    Ok(Decoded {
+        image: render(pixels),
+        at,
+        annotations,
+    })
+}
+
+fn render(pixels: RgbaImage) -> Arc<RenderImage> {
+    Arc::new(RenderImage::new([image::Frame::new(pixels)]))
 }
 
 fn check_header(bytes: &[u8]) -> Result<(), String> {
