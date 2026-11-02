@@ -20,12 +20,12 @@ use std::{
 use anyhow::{Context as _, anyhow};
 use async_channel::{Receiver, Sender};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-#[cfg(test)]
-pub(crate) use pcm::wav_duration;
 use rtrb::{Consumer, RingBuffer};
 use speakeasy_core::gesture::RECORDING_LIMIT;
 use speakeasy_platform::OwnedThread;
 
+#[cfg(test)]
+pub(crate) use self::pcm::wav_duration;
 pub(crate) use self::{
     checkpoint::seal_kept,
     microphones::{InputDevice, MicrophoneScan},
