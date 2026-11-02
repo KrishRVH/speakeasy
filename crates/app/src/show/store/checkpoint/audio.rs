@@ -17,7 +17,7 @@ const LANGUAGE_BYTES: usize = 32;
 pub(in crate::show::store) const FILE: &str = "audio.log";
 pub(in crate::show::store) const FILE_LIMIT: u64 = 128 << 20;
 pub(super) const CHUNK_BYTES: usize = 1 << 20;
-const RECORD_LIMIT: usize = CHUNK_BYTES + 9;
+const PAYLOAD_LIMIT: usize = CHUNK_BYTES + 1;
 const DAMAGED: &str =
     "The kept Show audio is damaged or unsupported. Its frames can still be recovered.";
 
@@ -131,7 +131,7 @@ fn decode(mut file: impl io::Read, bytes: usize) -> anyhow::Result<KeptAudio> {
         rate,
         start: Duration::from_millis(start),
         language,
-        pcm: Zeroizing::new(Vec::with_capacity(bytes.min(limit.saturating_add(44)))),
+        pcm: Zeroizing::new(Vec::with_capacity(bytes.min(limit))),
         cues: Vec::new(),
         complete: false,
     };
@@ -185,7 +185,7 @@ fn next(file: &mut impl io::Read) -> anyhow::Result<Option<Zeroizing<Vec<u8>>>> 
         return Ok(None);
     }
     let length = usize::try_from(u32::from_le_bytes(length))?;
-    if !(1..=RECORD_LIMIT.saturating_sub(8)).contains(&length) {
+    if !(1..=PAYLOAD_LIMIT).contains(&length) {
         return Ok(None);
     }
     let mut bytes = Zeroizing::new(vec![0; length]);
