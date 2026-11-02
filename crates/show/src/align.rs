@@ -43,21 +43,19 @@ pub fn timed_clauses(words: &[Word]) -> Vec<TimedClause> {
     let mut boundary = false;
     for (index, word) in words.into_iter().enumerate() {
         boundary |= boundaries.next_if_eq(&index).is_some();
-        let text = word.text.trim();
-        let new_row = rows.last().is_none_or(|row| {
-            !attaches(text) && (boundary || word.span.start().since(row.at) >= LONGEST_ROW)
-        });
-        if !attaches(text) {
+        let (at, text) = (word.span.start(), word.text.trim());
+        let attached = attaches(text);
+        match rows.last_mut() {
+            Some(row) if attached || (!boundary && at.since(row.at) < LONGEST_ROW) => {
+                append(&mut row.text, text);
+            },
+            _ => rows.push(TimedClause {
+                at,
+                text: text.to_owned(),
+            }),
+        }
+        if !attached {
             boundary = false;
-        }
-        if new_row {
-            rows.push(TimedClause {
-                at: word.span.start(),
-                text: String::new(),
-            });
-        }
-        if let Some(row) = rows.last_mut() {
-            append(&mut row.text, text);
         }
     }
     rows

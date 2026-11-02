@@ -1,6 +1,6 @@
 use std::{borrow::Cow, fmt};
 
-use tiny_skia::{IntSize, Pixmap, PixmapMut, PixmapRef, PremultipliedColorU8};
+use tiny_skia::{IntRect, IntSize, Pixmap, PixmapMut, PixmapRef, PremultipliedColorU8};
 
 use crate::{Error, convert};
 
@@ -79,22 +79,17 @@ impl Image {
     }
 
     pub fn cropped(&self, left: u32, top: u32, width: u32, height: u32) -> Result<Self, Error> {
-        let rectangle = left
+        let inside = left
             .checked_add(width)
-            .filter(|right| *right <= self.width())
-            .zip(
-                top.checked_add(height)
-                    .filter(|bottom| *bottom <= self.height()),
-            )
-            .and_then(|_| {
-                tiny_skia::IntRect::from_xywh(
-                    i32::try_from(left).ok()?,
-                    i32::try_from(top).ok()?,
-                    width,
-                    height,
-                )
-            });
-        rectangle
+            .is_some_and(|right| right <= self.width())
+            && top
+                .checked_add(height)
+                .is_some_and(|bottom| bottom <= self.height());
+        i32::try_from(left)
+            .ok()
+            .zip(i32::try_from(top).ok())
+            .and_then(|(x, y)| IntRect::from_xywh(x, y, width, height))
+            .filter(|_| inside)
             .and_then(|rectangle| self.pixmap.clone_rect(rectangle))
             .map(|pixmap| Self { pixmap })
             .ok_or_else(|| Error::dimensions(width, height))
@@ -126,12 +121,7 @@ impl Image {
 
     #[must_use]
     pub fn into_bgra(self) -> Vec<u8> {
-        let mut bytes = if self
-            .pixmap
-            .pixels()
-            .iter()
-            .all(PremultipliedColorU8::is_opaque)
-        {
+        let mut bytes = if self.opaque() {
             self.pixmap.take()
         } else {
             self.straight_rgba().into_owned()
@@ -142,12 +132,19 @@ impl Image {
         bytes
     }
 
+    fn opaque(&self) -> bool {
+        self.pixmap
+            .pixels()
+            .iter()
+            .all(PremultipliedColorU8::is_opaque)
+    }
+
     fn straight_rgba(&self) -> Cow<'_, [u8]> {
-        let pixels = self.pixmap.pixels();
-        if pixels.iter().all(PremultipliedColorU8::is_opaque) {
+        if self.opaque() {
             Cow::Borrowed(self.pixmap.data())
         } else {
-            pixels
+            self.pixmap
+                .pixels()
                 .iter()
                 .flat_map(|pixel| {
                     let color = pixel.demultiply();
