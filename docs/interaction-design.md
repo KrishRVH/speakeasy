@@ -79,14 +79,19 @@ monitor/fullscreen acceptance is pending.
 
 Width, height, opacity, vertical entry, waveform presence, lid, and meter values use analytic
 critically damped springs. Changing the target preserves velocity, and meter bars rise faster than
-they fall. A new session interrupts the current transition. Once hidden, invisible geometry snaps to
-rest so idle time cannot be integrated into the next entrance. Presentation never imposes a minimum
-time on capture, inference, or insertion, and its timers belong to the view: they cannot change a
-recording or dismiss a later session.
+they fall. While recording, a bar covers most of each level before the next arrives, so the grille
+shows syllables and pauses instead of a smoothed outline; after recording, bars settle slowly. A new
+session interrupts the current transition. Once hidden, invisible geometry snaps to rest so idle
+time cannot be integrated into the next entrance. Presentation never imposes a minimum time on
+capture, inference, or insertion, and its timers belong to the view: they cannot change a recording
+or dismiss a later session.
 
 The audio envelope keeps 24 recent levels and paints the grille in one canvas, mirrored outward from
-the newest level; bars near the slot's rounded ends stay inside its curve. Capture supplies RMS
-summaries; the UI animates between them. Pill animation follows native display frames within the
+the newest level; bars near the slot's rounded ends stay inside its curve. Capture supplies a 32 ms
+RMS level squared on a decibel scale from a fixed −54 dBFS floor to a ceiling that jumps to each
+louder window and relaxes 6 dB per second, held between −30 and −10 dBFS. The loudest recent
+syllables reach full height on quiet and hot microphones alike; the UI animates between levels. Pill
+animation follows native display frames within the
 [frame budget](performance.md#implementation-constraints). Delayed frames skip expired deadlines,
 and springs advance by the actual elapsed time. Silence settles to short bars. Demo mode alone
 supplies simulated levels. Reduced motion, from Settings or the OS, snaps transitions, the lid, and

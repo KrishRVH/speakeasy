@@ -51,6 +51,26 @@ fn feedback_deadlines_expire_and_never_apply_to_recording_or_cancellation() {
     assert_eq!(feedback_remaining(Phase::Error, false, ERROR_FOR), None);
 }
 
+#[test]
+fn recording_bars_reach_each_level_before_the_next_meter_window() {
+    let window = Duration::from_millis(32);
+    let mut bar = Spring::new(0.0);
+    let mut follow = |target: f32| {
+        bar.target = target;
+        for _ in 0..2 {
+            bar.step(
+                window / 2,
+                meter_stiffness(Phase::Recording, bar.target > bar.value()),
+            );
+        }
+        bar.value()
+    };
+    let peak = follow(1.0);
+    assert!(peak > 0.9, "A syllable peaks at {peak}");
+    let pause = follow(0.0);
+    assert!(pause < 0.15, "A pause stays at {pause}");
+}
+
 fn recording(elapsed: Duration) -> Scene {
     Scene {
         phase: Phase::Recording,

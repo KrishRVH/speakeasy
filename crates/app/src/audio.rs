@@ -49,8 +49,10 @@ const INITIAL_RESERVATION: Duration = Duration::from_secs(10);
 const RING_CAPACITY: Duration = Duration::from_secs(1);
 const METER_INTERVAL: Duration = Duration::from_millis(32);
 const DRAIN_INTERVAL: Duration = Duration::from_millis(5);
-const METER_FLOOR_DBFS: f32 = -60.0;
-const METER_TOP_DBFS: f32 = -6.0;
+const METER_FLOOR_DBFS: f32 = -54.0;
+const QUIETEST_METER_CEILING_DBFS: f32 = -30.0;
+const LOUDEST_METER_CEILING_DBFS: f32 = -10.0;
+const METER_CEILING_RELEASE_DB_PER_SECOND: f32 = 6.0;
 const CAPTURE_STOPPED: &str = "Microphone stopped unexpectedly. Try recording again.";
 
 pub(crate) struct Capture {
@@ -469,6 +471,7 @@ struct LevelMeter {
     energy: f64,
     samples: u32,
     since: Instant,
+    scale: SpeechScale,
 }
 
 impl LevelMeter {
@@ -477,6 +480,7 @@ impl LevelMeter {
             energy: 0.0,
             samples: 0,
             since: Instant::now(),
+            scale: SpeechScale::default(),
         }
     }
 
@@ -486,7 +490,8 @@ impl LevelMeter {
     }
 
     fn take_level(&mut self) -> Option<f32> {
-        if self.since.elapsed() < METER_INTERVAL {
+        let elapsed = self.since.elapsed();
+        if elapsed < METER_INTERVAL {
             return None;
         }
         #[expect(
@@ -494,8 +499,36 @@ impl LevelMeter {
             reason = "The display meter intentionally converts bounded normalized RMS to f32; PCM remains independently encoded"
         )]
         let rms = (self.energy / f64::from(self.samples.max(1))).sqrt() as f32;
-        *self = Self::new();
-        Some(speech_meter_level(rms))
+        self.energy = 0.0;
+        self.samples = 0;
+        self.since = Instant::now();
+        Some(self.scale.level(rms, elapsed))
+    }
+}
+
+struct SpeechScale {
+    ceiling_dbfs: f32,
+}
+
+impl Default for SpeechScale {
+    fn default() -> Self {
+        Self {
+            ceiling_dbfs: QUIETEST_METER_CEILING_DBFS,
+        }
+    }
+}
+
+impl SpeechScale {
+    fn level(&mut self, rms: f32, elapsed: Duration) -> f32 {
+        let dbfs = 20.0 * rms.max(0.000_001).log10();
+        let released =
+            self.ceiling_dbfs - METER_CEILING_RELEASE_DB_PER_SECOND * elapsed.as_secs_f32();
+        self.ceiling_dbfs = dbfs
+            .max(released)
+            .clamp(QUIETEST_METER_CEILING_DBFS, LOUDEST_METER_CEILING_DBFS);
+        let loudness =
+            ((dbfs - METER_FLOOR_DBFS) / (self.ceiling_dbfs - METER_FLOOR_DBFS)).clamp(0.0, 1.0);
+        loudness * loudness
     }
 }
 
@@ -546,11 +579,6 @@ fn consume_pcm(ring: &mut Consumer<f32>, pcm: &mut Pcm16, meter: &mut LevelMeter
 
 fn abandoned(control: &Control, events: &Sender<CaptureEvent>) -> bool {
     control.mode() == Mode::Cancelled || events.is_closed()
-}
-
-fn speech_meter_level(rms: f32) -> f32 {
-    let above_floor = 20.0 * rms.max(0.000_001).log10() - METER_FLOOR_DBFS;
-    (above_floor / (METER_TOP_DBFS - METER_FLOOR_DBFS)).clamp(0.0, 1.0)
 }
 
 #[cfg(test)]

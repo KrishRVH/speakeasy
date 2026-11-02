@@ -241,11 +241,7 @@ impl Pill {
                 _ => 0.0,
             };
 
-            let omega = if spring.target > spring.value() {
-                48.0
-            } else {
-                20.0
-            };
+            let omega = meter_stiffness(scene.phase, spring.target > spring.value());
             moving |= advance(spring, omega);
         }
         moving
@@ -618,6 +614,14 @@ fn draw_hint_until(
         now.checked_add(DRAW_HINT_FOR)
     } else {
         until
+    }
+}
+
+const fn meter_stiffness(phase: Phase, rising: bool) -> f32 {
+    match phase {
+        Phase::Recording if rising => 160.0,
+        Phase::Recording => 120.0,
+        _ => 20.0,
     }
 }
 
