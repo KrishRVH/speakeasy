@@ -197,3 +197,25 @@ pub(crate) const WHISPER_LANGUAGES: &[(&str, &str)] = &[
     ("yi", "Yiddish"),
     ("yo", "Yoruba"),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_nemotron_language_survives_a_switch_to_whisper_and_back() {
+        for &(locale, _) in LANGUAGES {
+            let whisper = whisper_language(locale);
+            assert!(
+                WHISPER_LANGUAGES.iter().any(|&(code, _)| code == whisper),
+                "{locale} has no Whisper choice"
+            );
+            assert_eq!(
+                whisper_language(nemotron_language(whisper)),
+                whisper,
+                "{locale} changed language"
+            );
+        }
+        assert_eq!(nemotron_language("yo"), "auto");
+    }
+}
