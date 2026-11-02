@@ -1762,6 +1762,13 @@ impl WaylandWindowStatePtr {
                     let max_texture_size = renderer.max_texture_size() as i32;
                     toplevel.set_max_size(max_texture_size, max_texture_size);
                 }
+                // Speakeasy patch: a toplevel comes back maximized or fullscreen as it was hidden.
+                if state.maximized {
+                    toplevel.set_maximized();
+                }
+                if state.fullscreen {
+                    toplevel.set_fullscreen(None);
+                }
                 let decoration = state.globals.decoration_manager.as_ref().map(|manager| {
                     manager.get_toplevel_decoration(&toplevel, qh, state.surface.id())
                 });
@@ -2261,9 +2268,11 @@ impl PlatformWindow for WaylandWindow {
     fn draw(&self, scene: &Scene) {
         let mut state = self.borrow_mut();
         let state = &mut *state;
-        // Speakeasy patch: a window awaiting its configure, as every hidden one is, attaches no
+        // Speakeasy patch: a window awaiting its configure, or withdrawn while hidden, attaches no
         // buffer. One would forbid giving it a role again or precede the configure.
-        if self.0.frame_loop.get() == FrameLoop::Unconfigured {
+        if self.0.frame_loop.get() == FrameLoop::Unconfigured
+            || matches!(state.surface_state, WaylandSurfaceState::Withdrawn(_))
+        {
             return;
         }
         let Some(renderer) = &mut state.renderer else {
@@ -2427,8 +2436,12 @@ impl PlatformWindow for WaylandWindow {
 
     fn request_decorations(&self, decorations: WindowDecorations) {
         let mut state = self.borrow_mut();
-        // Speakeasy patch: a hidden toplevel asks for the same decorations when shown again.
+        // Speakeasy patch: a hidden toplevel asks for the same decorations when shown again, and
+        // until then has no decoration object to ask.
         state.requested_decorations = Some(decorations);
+        if matches!(state.surface_state, WaylandSurfaceState::Withdrawn(_)) {
+            return;
+        }
         match state.surface_state.decoration().as_ref() {
             Some(decoration) => {
                 decoration.set_mode(decorations.to_xdg());

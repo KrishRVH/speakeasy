@@ -48,7 +48,7 @@ closure, device pause, and disconnect invalidate usable state.
 
 Insertion follows the shared commit permit and cancellation rules in
 [cross-module invariants](architecture.md#cross-module-invariants). Immediately before submitting
-input, both paths refuse while GPUI reports one of Speakeasy's windows active, then follow
+input, both paths refuse while GPUI reports one of Speakeasy's windows active, and they follow
 X11/Xwayland focus ancestors to the first window that publishes `_NET_WM_PID`; when Speakeasy's own
 windows or a failed lookup hold focus, nothing is submitted. Paste leaves the text copied for manual
 paste, and typing reports the target unavailable with the clipboard untouched. Under Wayland, X

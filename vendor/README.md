@@ -83,10 +83,12 @@ app liveness for `AsyncApp`, and `App::shutdown` ordering.
   Qt do: it destroys its role objects, the decoration, toplevel, and xdg_surface or the layer
   surface, and commits a null buffer, so the compositor keeps nothing of it and the client
   discards a configure sent to those objects instead of acknowledging it. Showing gives the same
-  surface new role objects with the saved title, app ID, size limits, and decoration request, or
+  surface new role objects with the saved title, app ID, size limits, maximized or fullscreen
+  state, and decoration request, or
   the layer surface's options, which runtime exclusive-zone and edge changes keep current, on the
-  output the compositor chooses; the window draws on that new role's first configure. A hidden
-  window reports itself hidden, and a popup cannot open on one. Floating windows, dialogs, and
+  output the compositor chooses; the window draws on that new role's first configure. A withdrawn
+  window never draws, reports itself hidden, and takes decoration requests without a decoration
+  object to send them to; a popup cannot open on one. Floating windows, dialogs, and
   popups open shown and ignore it. On sway with two outputs, the `--demo-tray` pill shows its tray
   hint on the output focused when Settings closes, and under `WAYLAND_DEBUG=client` a configure
   that arrives after a hide is logged as discarded. Keeping the layer surface left the hint on the

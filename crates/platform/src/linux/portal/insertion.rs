@@ -234,7 +234,6 @@ impl<'a> Insertions<'a> {
     fn finish(&mut self, request: Insertion, external: bool, route: Route) -> anyhow::Result<()> {
         self.apply_queued_notices();
         self.bound.dispatch()?;
-        let external = external && !request.own_focus.held();
         let outcome = match route {
             Route::Direct => insert_direct(self.bound, &request, external),
             Route::Paste { owned } => finish_paste(
@@ -371,7 +370,7 @@ fn insert_direct(bound: &mut Bound, request: &Insertion, external: bool) -> Inse
     if !request.permit.active() {
         return Inserted::Cancelled;
     }
-    if let Some(outcome) = Delivery::Direct.check_focus(external) {
+    if let Some(outcome) = Delivery::Direct.check_focus(external && !request.own_focus.held()) {
         return outcome;
     }
     let Some(sender) = bound.sender_mut() else {
@@ -424,7 +423,7 @@ fn finish_paste(
     if !owned {
         return CLIPBOARD_CHANGED;
     }
-    if let Some(outcome) = Delivery::Paste.check_focus(external) {
+    if let Some(outcome) = Delivery::Paste.check_focus(external && !request.own_focus.held()) {
         return outcome;
     }
     if options.paste == LinuxPaste::Manual {
@@ -581,6 +580,48 @@ mod tests {
             Inserted::Cancelled,
             "A recording a newer one replaced reported a remedy"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn a_focused_speakeasy_window_never_receives_portal_input() -> anyhow::Result<()> {
+        let (events, _receiver) = async_channel::bounded(1);
+        let input = InputSender::new(events);
+        let permit = input.begin().context("Recording")?;
+        let report = FocusReport::default();
+        report.settle(7, true);
+        let request = |delivery| {
+            let (reply, _answer) = Reply::channel();
+            Insertion {
+                text: "fixture".into(),
+                permit: permit.clone(),
+                delivery,
+                own_focus: report.subscribe(),
+                reply,
+            }
+        };
+        assert_eq!(
+            Some(insert_direct(
+                &mut unbound(),
+                &request(Delivery::Direct),
+                true
+            )),
+            Delivery::Direct.check_focus(false),
+            "Direct input ignored Speakeasy's own focus"
+        );
+        assert_eq!(
+            Some(finish_paste(
+                &mut unbound(),
+                &request(Delivery::Paste),
+                &DesktopOptions::default(),
+                true,
+                true,
+                None,
+            )),
+            Delivery::Paste.check_focus(false),
+            "Paste ignored Speakeasy's own focus"
+        );
+        assert!(permit.commit(), "Refused input spent its authority");
         Ok(())
     }
 
