@@ -9,6 +9,7 @@ use crate::{
         ports::Ports,
         session::{Purpose, Session},
     },
+    status::ServiceState,
 };
 
 impl<P: Ports> Owner<P> {
@@ -132,7 +133,7 @@ impl<P: Ports> Owner<P> {
     fn control_status(&self) -> Status {
         Status {
             version: env!("CARGO_PKG_VERSION").into(),
-            service: "running".into(),
+            service: ServiceState::Running.name().into(),
             phase: self
                 .session
                 .as_ref()

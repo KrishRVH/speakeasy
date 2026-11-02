@@ -4,7 +4,6 @@ use super::{Services, lifecycle::ConfigEpoch};
 use crate::{
     config::{Change, Config, ValidConfig},
     control::{Call, Command, Disposition, Reply, Status},
-    status::ServiceState,
 };
 
 const UNACKNOWLEDGED: &str =
@@ -206,14 +205,7 @@ impl Services {
         let snapshot = self.output.borrow();
         Status {
             version: env!("CARGO_PKG_VERSION").into(),
-            service: match self.service_state() {
-                ServiceState::Running => "running",
-                ServiceState::Paused => "paused",
-                ServiceState::Pausing => "pausing",
-                ServiceState::Quitting => "quitting",
-                ServiceState::NotSetUp => "not_set_up",
-            }
-            .into(),
+            service: self.service_state().name().into(),
             phase: snapshot.phase.name().into(),
             model: snapshot.model.name().into(),
             desktop_ready: snapshot.desktop_ready,

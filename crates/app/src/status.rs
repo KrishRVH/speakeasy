@@ -20,6 +20,18 @@ pub(crate) enum ServiceState {
     NotSetUp,
 }
 
+impl ServiceState {
+    pub(crate) const fn name(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Pausing => "pausing",
+            Self::Quitting => "quitting",
+            Self::Paused => "paused",
+            Self::NotSetUp => "not_set_up",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Indicator {
     Ready,
