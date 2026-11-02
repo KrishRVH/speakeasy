@@ -276,12 +276,7 @@ impl Speech for LocalSpeech {
 
     async fn probe_with_silence(&mut self) -> anyhow::Result<()> {
         let silence = audio::silent_wav(16_000, Duration::from_secs(1))?;
-        self.transcribe(
-            silence,
-            if self.nemotron { "en-US" } else { "en" },
-            &Terms::default(),
-        )
-        .await?;
+        self.transcribe(silence, "en", &Terms::default()).await?;
         Ok(())
     }
 

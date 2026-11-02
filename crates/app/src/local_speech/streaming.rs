@@ -1,6 +1,6 @@
 use std::{mem, time::Duration};
 
-use anyhow::{anyhow, ensure};
+use anyhow::{Context as _, bail, ensure};
 use futures_util::{SinkExt as _, StreamExt as _};
 use serde::Deserialize;
 use tokio::{net::TcpStream, time::timeout};
@@ -33,36 +33,30 @@ pub(super) async fn transcribe(
         FAILED
     );
     speech.verify_listener().await?;
-    let address = (LOOPBACK, speech.port);
-    let connection = timeout(CONNECT_TIMEOUT, TcpStream::connect(address))
-        .await
-        .map_err(|_private| anyhow!(FAILED))?
-        .map_err(|_private| anyhow!(FAILED))?;
-    connection
-        .set_nodelay(true)
-        .map_err(|_private| anyhow!(FAILED))?;
+    let connection = within(CONNECT_TIMEOUT, TcpStream::connect((LOOPBACK, speech.port))).await?;
+    connection.set_nodelay(true).ok().context(FAILED)?;
     speech.verify_listener().await?;
     let mut request = format!(
         "ws://{LOOPBACK}:{}/v1/audio/transcriptions/realtime",
         speech.port
     )
     .into_client_request()
-    .map_err(|_private| anyhow!(FAILED))?;
+    .ok()
+    .context(FAILED)?;
     let mut authorization = HeaderValue::from_str(&format!("Bearer {}", speech.secret))
-        .map_err(|_private| anyhow!(FAILED))?;
+        .ok()
+        .context(FAILED)?;
     authorization.set_sensitive(true);
     request.headers_mut().insert("Authorization", authorization);
     let limits = WebSocketConfig::default()
         .max_message_size(Some(MAX_RESPONSE_BYTES))
         .max_frame_size(Some(MAX_RESPONSE_BYTES));
-    let (mut socket, _) = timeout(
+    let (mut socket, _) = within(
         CONNECT_TIMEOUT,
         client_async_with_config(request, connection, Some(limits)),
     )
-    .await
-    .map_err(|_private| anyhow!(FAILED))?
-    .map_err(|_private| anyhow!(FAILED))?;
-    timeout(CONNECT_TIMEOUT, async {
+    .await?;
+    within(CONNECT_TIMEOUT, async {
         expect(&mut socket, "session.created").await?;
         let session = serde_json::json!({
             "type": "session.update",
@@ -75,11 +69,8 @@ pub(super) async fn transcribe(
         send(&mut socket, Message::Text(session.to_string().into())).await?;
         expect(&mut socket, "session.updated").await
     })
-    .await
-    .map_err(|_private| anyhow!(FAILED))??;
-    timeout(INFERENCE_TIMEOUT, recognize(&mut socket, audio))
-        .await
-        .map_err(|_private| anyhow!(FAILED))?
+    .await?;
+    within(INFERENCE_TIMEOUT, recognize(&mut socket, audio)).await
 }
 
 async fn recognize(socket: &mut Socket, mut audio: LiveAudio) -> anyhow::Result<Option<String>> {
@@ -91,7 +82,7 @@ async fn recognize(socket: &mut Socket, mut audio: LiveAudio) -> anyhow::Result<
     tokio::pin!(deadline);
     loop {
         tokio::select! {
-            () = &mut deadline, if committed => return Err(anyhow!(FAILED)),
+            () = &mut deadline, if committed => bail!(FAILED),
             frame = audio.frames.recv(), if !committed => {
                 if let Some(mut bytes) = frame {
                     send(socket, Message::Binary(mem::take(&mut *bytes).into())).await?;
@@ -110,21 +101,20 @@ async fn recognize(socket: &mut Socket, mut audio: LiveAudio) -> anyhow::Result<
                     committed = true;
                     let end = tokio::time::Instant::now()
                         .checked_add(FINAL_TIMEOUT)
-                        .ok_or_else(|| anyhow!(FAILED))?;
+                        .context(FAILED)?;
                     deadline.as_mut().reset(end);
                 }
             },
             message = socket.next() => {
-                let message = message
-                    .ok_or_else(|| anyhow!(FAILED))?
-                    .map_err(|_private| anyhow!(FAILED))?;
+                let Some(Ok(message)) = message else {
+                    bail!(FAILED);
+                };
                 match message {
                     Message::Text(bytes) => {
                         let event = parse(&bytes)?;
                         match event.kind.as_str() {
                             "conversation.item.input_audio_transcription.completed" => {
-                                let words = event.transcript.as_deref()
-                                    .ok_or_else(|| anyhow!(FAILED))?.trim();
+                                let words = event.transcript.as_deref().context(FAILED)?.trim();
                                 ensure!(
                                     words.len().saturating_add(1)
                                         <= MAX_RESPONSE_BYTES.saturating_sub(text.len()),
@@ -140,17 +130,13 @@ async fn recognize(socket: &mut Socket, mut audio: LiveAudio) -> anyhow::Result<
                                 ensure!(committed && final_seen, FAILED);
                                 return Ok(Some(mem::take(&mut *text)));
                             },
-                            "error" => return Err(anyhow!(FAILED)),
+                            "error" => bail!(FAILED),
                             _ => {},
                         }
                     },
-                    Message::Ping(_) => {
-                        timeout(CONNECT_TIMEOUT, socket.flush()).await
-                            .map_err(|_private| anyhow!(FAILED))?
-                            .map_err(|_private| anyhow!(FAILED))?;
-                    },
+                    Message::Ping(_) => within(CONNECT_TIMEOUT, socket.flush()).await?,
                     Message::Pong(_) => {},
-                    _ => return Err(anyhow!(FAILED)),
+                    _ => bail!(FAILED),
                 }
             },
         }
@@ -166,27 +152,30 @@ struct Event {
 
 fn parse(text: &str) -> anyhow::Result<Event> {
     ensure!(text.len() <= MAX_RESPONSE_BYTES, FAILED);
-    serde_json::from_str(text).map_err(|_private| anyhow!(FAILED))
+    serde_json::from_str(text).ok().context(FAILED)
 }
 
 async fn expect(socket: &mut Socket, kind: &str) -> anyhow::Result<()> {
-    let message = socket
-        .next()
-        .await
-        .ok_or_else(|| anyhow!(FAILED))?
-        .map_err(|_private| anyhow!(FAILED))?;
-    let Message::Text(text) = message else {
-        return Err(anyhow!(FAILED));
+    let Some(Ok(Message::Text(text))) = socket.next().await else {
+        bail!(FAILED);
     };
     ensure!(parse(&text)?.kind == kind, FAILED);
     Ok(())
 }
 
 async fn send(socket: &mut Socket, message: Message) -> anyhow::Result<()> {
-    timeout(CONNECT_TIMEOUT, socket.send(message))
+    within(CONNECT_TIMEOUT, socket.send(message)).await
+}
+
+async fn within<T, E>(
+    limit: Duration,
+    work: impl Future<Output = Result<T, E>>,
+) -> anyhow::Result<T> {
+    timeout(limit, work)
         .await
-        .map_err(|_private| anyhow!(FAILED))?
-        .map_err(|_private| anyhow!(FAILED))
+        .ok()
+        .and_then(Result::ok)
+        .context(FAILED)
 }
 
 #[cfg(test)]
