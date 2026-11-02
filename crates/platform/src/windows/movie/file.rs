@@ -58,24 +58,47 @@ enum Access {
     Write,
 }
 
-#[expect(
-    clippy::disallowed_types,
-    reason = "Media Foundation reads and seeks on its own I/O threads; those callbacks must share the validated file's cursor"
-)]
 pub(super) fn read(mut file: File, limit: u64) -> anyhow::Result<ReadStream> {
     file.rewind()?;
+    let (native, closed) = byte_stream(file, limit, Access::Read)?;
+    Ok(ReadStream {
+        native,
+        _closed: closed,
+    })
+}
+
+pub(super) fn create(path: &Path, limit: u64) -> anyhow::Result<Stream> {
+    let file = OpenOptions::new()
+        .create_new(true)
+        .read(true)
+        .write(true)
+        .open(path)?;
+    let sync = file.try_clone()?;
+    let (native, closed) = byte_stream(file, limit, Access::Write)?;
+    Ok(Stream {
+        native,
+        sync,
+        _closed: closed,
+    })
+}
+
+#[expect(
+    clippy::disallowed_types,
+    reason = "Media Foundation reads, seeks and writes on its own I/O threads; each callback holds the file's one cursor and cap check across its operation"
+)]
+fn byte_stream(file: File, limit: u64, access: Access) -> anyhow::Result<(IMFByteStream, Closed)> {
     let (released, closed) = async_channel::bounded(1);
     let stream: IStream = CappedFile {
         file: Mutex::new(file),
         limit,
-        access: Access::Read,
+        access,
         _released: released,
     }
     .into();
-    Ok(ReadStream {
-        native: unsafe { MFCreateMFByteStreamOnStream(&stream) }?,
-        _closed: Closed(closed),
-    })
+    Ok((
+        unsafe { MFCreateMFByteStreamOnStream(&stream) }?,
+        Closed(closed),
+    ))
 }
 
 struct Closed(async_channel::Receiver<Infallible>);
@@ -84,33 +107,6 @@ impl Drop for Closed {
     fn drop(&mut self) {
         let Err(_closed) = self.0.recv_blocking();
     }
-}
-
-#[expect(
-    clippy::disallowed_types,
-    reason = "Native stream callbacks run on Media Foundation I/O threads; seek and capped write must share one atomic cursor operation"
-)]
-pub(super) fn create(path: &Path, limit: u64) -> anyhow::Result<Stream> {
-    let file = OpenOptions::new()
-        .create_new(true)
-        .read(true)
-        .write(true)
-        .open(path)?;
-    let sync = file.try_clone()?;
-    let (released, closed) = async_channel::bounded(1);
-    let stream: IStream = CappedFile {
-        file: Mutex::new(file),
-        limit,
-        access: Access::Write,
-        _released: released,
-    }
-    .into();
-
-    Ok(Stream {
-        native: unsafe { MFCreateMFByteStreamOnStream(&stream) }?,
-        sync,
-        _closed: Closed(closed),
-    })
 }
 
 #[expect(
