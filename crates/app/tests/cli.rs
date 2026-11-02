@@ -13,9 +13,10 @@ const CLI: &str = env!("CARGO_BIN_EXE_speakeasy-cli");
 const APP: &str = env!("CARGO_BIN_EXE_speakeasy");
 
 #[test]
-fn console_entry_waits_and_preserves_output_arguments_and_working_directory() {
-    let version = Command::new(CLI).arg("--version").output().unwrap();
-    let original = Command::new(APP).arg("--version").output().unwrap();
+fn console_entry_waits_and_preserves_output_arguments_and_working_directory() -> anyhow::Result<()>
+{
+    let version = Command::new(CLI).arg("--version").output()?;
+    let original = Command::new(APP).arg("--version").output()?;
     assert!(version.status.success());
     assert_eq!(version.stdout, original.stdout);
     assert_eq!(
@@ -23,67 +24,52 @@ fn console_entry_waits_and_preserves_output_arguments_and_working_directory() {
         format!("speakeasy {}\n", env!("CARGO_PKG_VERSION")).as_bytes()
     );
 
-    let root = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir()?;
     let name = "Show ü & %OS%";
     let saved = Command::new(CLI)
         .current_dir(root.path())
         .args(["show", "demo", "--out", name])
-        .output()
-        .unwrap();
+        .output()?;
     assert!(saved.status.success());
     assert_eq!(
         saved.stdout,
-        fs::read(root.path().join(name).join("summary.md")).unwrap()
+        fs::read(root.path().join(name).join("summary.md"))?
     );
     let inspected = Command::new(CLI)
         .current_dir(root.path())
         .args(["show", "inspect", name, "--json"])
-        .output()
-        .unwrap();
+        .output()?;
     assert!(inspected.status.success());
-    assert!(serde_json::from_slice::<serde_json::Value>(&inspected.stdout).is_ok());
+    serde_json::from_slice::<Value>(&inspected.stdout)?;
 
     let odd = "missing ü & %OS% \"quoted\" trailing\\";
     let refused = Command::new(CLI)
         .current_dir(root.path())
         .args(["show", "inspect", odd])
-        .output()
-        .unwrap();
+        .output()?;
     assert_eq!(refused.status.code(), Some(1));
-    assert!(String::from_utf8(refused.stderr).unwrap().contains(odd));
+    assert!(String::from_utf8(refused.stderr)?.contains(odd));
+    Ok(())
 }
 
 #[test]
-fn an_isolated_console_entry_never_launches_the_app_for_help_or_invalid_options() {
-    let root = tempfile::tempdir().unwrap();
+fn an_isolated_console_entry_never_launches_the_app_for_help_or_invalid_options()
+-> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
     let isolated = root.path().join(Path::new(CLI).file_name().unwrap());
-    fs::copy(CLI, &isolated).unwrap();
+    fs::copy(CLI, &isolated)?;
     for args in [vec![], vec!["--help"], vec!["-h"]] {
-        let help = Command::new(&isolated).args(args).output().unwrap();
+        let help = Command::new(&isolated).args(args).output()?;
         assert!(help.status.success());
-        assert!(
-            String::from_utf8(help.stdout)
-                .unwrap()
-                .contains("show --help")
-        );
+        assert!(String::from_utf8(help.stdout)?.contains("show --help"));
     }
-    let rejected = Command::new(&isolated).arg("--demo").output().unwrap();
+    let rejected = Command::new(&isolated).arg("--demo").output()?;
     assert_eq!(rejected.status.code(), Some(2));
-    assert!(
-        String::from_utf8(rejected.stderr)
-            .unwrap()
-            .contains("Use show")
-    );
-    let missing = Command::new(&isolated)
-        .args(["show", "list"])
-        .output()
-        .unwrap();
+    assert!(String::from_utf8(rejected.stderr)?.contains("Use show"));
+    let missing = Command::new(&isolated).args(["show", "list"]).output()?;
     assert_eq!(missing.status.code(), Some(1));
-    assert!(
-        String::from_utf8(missing.stderr)
-            .unwrap()
-            .contains("extract the whole package")
-    );
+    assert!(String::from_utf8(missing.stderr)?.contains("extract the whole package"));
+    Ok(())
 }
 
 #[test]
