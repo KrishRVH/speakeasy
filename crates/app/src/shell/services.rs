@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use anyhow::anyhow;
+use anyhow::{Context as _, anyhow};
 use gpui::{App, BorrowAppContext, Global, Task, WindowHandle};
 use speakeasy_platform::{Input, InputMonitor, OwnedThread};
 use tokio::sync::watch;
@@ -254,7 +254,7 @@ impl Services {
             while let Ok(request) = requests.recv().await {
                 cx.update(|cx| match request {
                     Event::Shortcut(request) => handle_request(request, cx),
-                    Event::Control(call) => cx.update_global::<Services, _>(|services, cx| {
+                    Event::Control(call) => cx.update_global::<Self, _>(|services, cx| {
                         services.control(call, cx);
                     }),
                 });
@@ -303,14 +303,15 @@ impl Services {
             self.can_copy_show(),
             "Finish the current operation before copying a Show."
         );
-        let input =
-            self.live_runtime()
-                .map(|runtime| {
-                    runtime.input.idle().ok_or_else(|| {
-                        anyhow!("Finish the current recording before copying a Show.")
-                    })
-                })
-                .transpose()?;
+        let input = self
+            .live_runtime()
+            .map(|runtime| {
+                runtime
+                    .input
+                    .idle()
+                    .context("Finish the current recording before copying a Show.")
+            })
+            .transpose()?;
         self.show_copies.submit(request, input)
     }
 
