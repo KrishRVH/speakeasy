@@ -10,7 +10,7 @@ use std::{
 use anyhow::Context as _;
 pub(crate) use frame::{AnnotationState, Crop, decoder_time};
 use serde::{Deserialize, Serialize};
-use speakeasy_show::{Moment, MoviePrefix};
+use speakeasy_show::{Moment, MovieError, MoviePrefix};
 
 use super::{checkpoint, recall};
 
@@ -257,8 +257,15 @@ pub(super) fn checkpoint(directory: &Path) -> anyhow::Result<CheckpointMovie> {
     match open(directory) {
         Ok(Some(movie)) => Ok(CheckpointMovie::Present(Box::new(movie))),
         Ok(None) => Ok(CheckpointMovie::Absent),
-        Err(error) if matches!(error.downcast_ref::<speakeasy_show::MovieError>(), Some(speakeasy_show::MovieError::NoFragment)) => Ok(CheckpointMovie::Unavailable),
-        Err(error) => Err(error.context(format!("Video cannot be recovered automatically. To save the stills, move recording.mp4, recording.json, and any recording.geometry out of {} into a private folder, then choose Recover again. Keep those files for repair.", directory.display()))),
+        Err(error) if matches!(error.downcast_ref(), Some(MovieError::NoFragment)) => {
+            Ok(CheckpointMovie::Unavailable)
+        },
+        Err(error) => Err(error.context(format!(
+            "Video cannot be recovered automatically. To save the stills, move recording.mp4, \
+             recording.json, and any recording.geometry out of {} into a private folder, then \
+             choose Recover again. Keep those files for repair.",
+            directory.display()
+        ))),
     }
 }
 
