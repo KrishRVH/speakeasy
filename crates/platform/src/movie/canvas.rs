@@ -3,6 +3,8 @@ use speakeasy_show::MAX_FRAME_EDGE;
 
 use crate::{Frame, Part};
 
+const _: () = assert!(MAX_FRAME_EDGE <= 2_560);
+
 pub(crate) struct Canvas {
     size: [u32; 2],
     pixels: Vec<u8>,
