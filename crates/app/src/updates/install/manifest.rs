@@ -7,6 +7,7 @@ use super::super::Version;
 pub(super) const NAME: &str = "speakeasy-windows-x64-setup.exe";
 pub(super) const MAX_INSTALLER: u64 = 512 * 1024 * 1024;
 pub(super) const MAX_MANIFEST: usize = 16 * 1024;
+pub(super) const SIGNATURE_LENGTH: usize = 64;
 const UNTRUSTED: &str = "This update could not be authenticated. Nothing was installed. Open the release page or try again later.";
 
 pub(super) struct Artifact {
@@ -41,7 +42,7 @@ pub(super) fn verify(
     installed: Version,
 ) -> anyhow::Result<Artifact> {
     ensure!(
-        bytes.len() <= MAX_MANIFEST && signature.len() == 64,
+        bytes.len() <= MAX_MANIFEST && signature.len() == SIGNATURE_LENGTH,
         UNTRUSTED
     );
     UnparsedPublicKey::new(&ED25519, key)

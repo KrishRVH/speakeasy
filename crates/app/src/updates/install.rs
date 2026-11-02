@@ -79,9 +79,13 @@ impl Download {
             )
             .await
             .context(DOWNLOAD_FAILED)?;
-            let signature = fetch(&client, &asset_url(version, "update.json.sig"), 64)
-                .await
-                .context(DOWNLOAD_FAILED)?;
+            let signature = fetch(
+                &client,
+                &asset_url(version, "update.json.sig"),
+                manifest::SIGNATURE_LENGTH,
+            )
+            .await
+            .context(DOWNLOAD_FAILED)?;
             let artifact = manifest::verify(&metadata, &signature, &key, version, installed)?;
             let payload = download(
                 &client,
@@ -221,7 +225,9 @@ fn open_verified(path: &Path) -> anyhow::Result<File> {
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::fs::OpenOptionsExt as _;
-        options.share_mode(1);
+
+        const FILE_SHARE_READ: u32 = 0x1;
+        options.share_mode(FILE_SHARE_READ);
     }
     options.open(path).context(DOWNLOAD_FAILED)
 }

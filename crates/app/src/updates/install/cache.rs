@@ -76,17 +76,25 @@ fn linked(metadata: &Metadata) -> bool {
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::fs::MetadataExt as _;
-        metadata.file_attributes() & 0x400 != 0
+
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
     }
     #[cfg(not(target_os = "windows"))]
     metadata.file_type().is_symlink()
 }
 
 fn retained(error: &io::Error) -> bool {
+    const ERROR_SHARING_VIOLATION: i32 = 32;
+    const ERROR_LOCK_VIOLATION: i32 = 33;
     matches!(
         error.kind(),
         io::ErrorKind::PermissionDenied | io::ErrorKind::NotFound | io::ErrorKind::WouldBlock
-    ) || cfg!(target_os = "windows") && matches!(error.raw_os_error(), Some(32 | 33))
+    ) || cfg!(target_os = "windows")
+        && matches!(
+            error.raw_os_error(),
+            Some(ERROR_SHARING_VIOLATION | ERROR_LOCK_VIOLATION)
+        )
 }
 
 #[cfg(test)]

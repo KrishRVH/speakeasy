@@ -9,6 +9,10 @@ use tokio::{
 
 use super::*;
 
+const INSTALLER_HEAD: &str = "HTTP/1.1 200 OK\r\nContent-Length: 9\r\nConnection: close\r\n\r\n";
+const CHUNKED_HEAD: &str =
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+
 fn version(text: &str) -> Version {
     Version::parse(text).unwrap()
 }
@@ -145,6 +149,13 @@ async fn serve(response: Vec<u8>) -> (String, tokio::task::JoinHandle<()>) {
     (url, task)
 }
 
+fn cache_entries(root: &Path) -> Vec<std::ffi::OsString> {
+    fs::read_dir(root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect()
+}
+
 fn progress() -> watch::Sender<Progress> {
     watch::channel(Progress {
         stage: "Test",
@@ -159,10 +170,7 @@ async fn verified_download_retains_the_file_until_its_owner_is_released() {
     let root = tempfile::tempdir().unwrap();
     let artifact = authenticate(&metadata(b"installer")).unwrap();
     let client = client(client_builder(Trust::Nobody).unwrap().no_proxy()).unwrap();
-    let (url, served) = serve(
-        b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\nConnection: close\r\n\r\ninstaller".to_vec(),
-    )
-    .await;
+    let (url, served) = serve(format!("{INSTALLER_HEAD}installer").into_bytes()).await;
     let observed = progress();
     let installer = download(&client, &url, &artifact, root.path(), &observed)
         .await
@@ -181,13 +189,7 @@ async fn verified_download_retains_the_file_until_its_owner_is_released() {
     }
     assert!(path.is_file());
     drop(installer);
-    assert_eq!(
-        fs::read_dir(root.path())
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name())
-            .collect::<Vec<_>>(),
-        [std::ffi::OsString::from(".lock")]
-    );
+    assert_eq!(cache_entries(root.path()), [".lock"]);
 }
 
 #[tokio::test]
@@ -196,14 +198,18 @@ async fn interrupted_oversized_and_corrupt_downloads_leave_no_installer() {
     let artifact = authenticate(&metadata(b"installer")).unwrap();
     let client = client(client_builder(Trust::Nobody).unwrap().no_proxy()).unwrap();
     for response in [
-        b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\nConnection: close\r\n\r\ninst".to_vec(),
-        b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\nConnection: close\r\n\r\ninstalleX".to_vec(),
-        b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\na\r\ninstallerX\r\n0\r\n\r\n".to_vec(),
+        format!("{INSTALLER_HEAD}inst"),
+        format!("{INSTALLER_HEAD}installeX"),
+        format!("{CHUNKED_HEAD}a\r\ninstallerX\r\n0\r\n\r\n"),
     ] {
-        let (url, served) = serve(response).await;
-        assert!(download(&client, &url, &artifact, root.path(), &progress()).await.is_err());
+        let (url, served) = serve(response.into_bytes()).await;
+        assert!(
+            download(&client, &url, &artifact, root.path(), &progress())
+                .await
+                .is_err()
+        );
         served.await.unwrap();
-        assert_eq!(fs::read_dir(root.path()).unwrap().map(|entry| entry.unwrap().file_name()).collect::<Vec<_>>(), [std::ffi::OsString::from(".lock")]);
+        assert_eq!(cache_entries(root.path()), [".lock"]);
     }
 }
 
@@ -257,7 +263,7 @@ async fn cancellation_closes_the_download_before_reporting_completion() {
         let mut request = [0; 2048];
         assert!(stream.read(&mut request).await.unwrap() > 0);
         stream
-            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\nConnection: close\r\n\r\ninst")
+            .write_all(format!("{INSTALLER_HEAD}inst").as_bytes())
             .await
             .unwrap();
         sent.send(()).await.unwrap();
@@ -294,11 +300,5 @@ async fn cancellation_closes_the_download_before_reporting_completion() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(
-        fs::read_dir(root.path())
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name())
-            .collect::<Vec<_>>(),
-        [std::ffi::OsString::from(".lock")]
-    );
+    assert_eq!(cache_entries(root.path()), [".lock"]);
 }

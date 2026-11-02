@@ -66,18 +66,19 @@ impl<T: Send + 'static> Job<T> {
     {
         let (completed, result) = async_channel::bounded(1);
         let thread = StoppableThread::spawn(name, move |cancelled| {
-            let result = (|| {
-                let runtime = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()?;
-                runtime.block_on(async {
-                    tokio::select! {
-                        biased;
-                        _ = cancelled.recv() => Ok(None),
-                        result = work() => result,
-                    }
-                })
-            })();
+            let result = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(anyhow::Error::from)
+                .and_then(|runtime| {
+                    runtime.block_on(async {
+                        tokio::select! {
+                            biased;
+                            _ = cancelled.recv() => Ok(None),
+                            result = work() => result,
+                        }
+                    })
+                });
             #[expect(
                 clippy::let_underscore_must_use,
                 reason = "Closing Settings can release the result while the owned update operation cancels"
