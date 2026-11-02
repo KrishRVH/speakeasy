@@ -23,6 +23,8 @@ impl ActivationHandler for InitialTree {
 
 const TEXT: &str = "Synthetic";
 
+const RUNS: [(LocalNodeId, &str); 2] = [(LocalNodeId(2), "Synth"), (LocalNodeId(3), "etic")];
+
 fn tree(with_field: bool) -> TreeUpdate {
     let mut root = NodeProvider::new(Role::Window);
     let mut nodes = Vec::new();
@@ -30,13 +32,21 @@ fn tree(with_field: bool) -> TreeUpdate {
         root.set_children(vec![LocalNodeId(1)]);
         let mut field = NodeProvider::new(Role::TextInput);
         field.set_label("Synthetic field");
-        field.set_children(vec![LocalNodeId(2)]);
-        let mut run = NodeProvider::new(Role::TextRun);
-        run.set_value(TEXT);
-        run.set_character_lengths(vec![1; TEXT.len()]);
-        run.set_text_direction(TextDirection::LeftToRight);
+        field.set_children(RUNS.iter().map(|(id, _)| *id).collect::<Vec<_>>());
         nodes.push((LocalNodeId(1), field));
-        nodes.push((LocalNodeId(2), run));
+        let [(first, _), (second, _)] = RUNS;
+        for (id, value) in RUNS {
+            let mut run = NodeProvider::new(Role::TextRun);
+            run.set_value(value);
+            run.set_character_lengths(vec![1; value.len()]);
+            run.set_text_direction(TextDirection::LeftToRight);
+            if id == first {
+                run.set_next_on_line(second);
+            } else {
+                run.set_previous_on_line(first);
+            }
+            nodes.push((id, run));
+        }
     }
     nodes.insert(0, (LocalNodeId(0), root));
     TreeUpdate {
@@ -141,15 +151,20 @@ fn scrolling_a_range_into_view_names_it_with_the_aligned_end_as_focus() {
         range.MoveEndpointByUnit(TextPatternRangeEndpoint_Start, TextUnit_Character, 2)
     }
     .unwrap();
-    let at = |character_index| TextPosition {
-        node: LocalNodeId(2),
-        character_index,
+    let [(first, _), (second, last)] = RUNS;
+    let start = TextPosition {
+        node: first,
+        character_index: 2,
     };
-    for (align_to_top, anchor, focus) in [(true, at(9), at(2)), (false, at(2), at(9))] {
+    let end = TextPosition {
+        node: second,
+        character_index: last.len(),
+    };
+    for (align_to_top, anchor, focus) in [(true, end, start), (false, start, end)] {
         unsafe { range.ScrollIntoView(align_to_top.into()) }.unwrap();
         let request = requests.try_recv().unwrap();
         assert_eq!(request.action, Action::ScrollIntoView);
-        assert_eq!(request.target_node, LocalNodeId(2));
+        assert_eq!(request.target_node, focus.node, "The request targets another run");
         assert_eq!(
             request.data,
             Some(ActionData::SetTextSelection(TextSelection { anchor, focus }))
