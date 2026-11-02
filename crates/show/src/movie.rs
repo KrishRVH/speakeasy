@@ -81,7 +81,6 @@ impl MoviePrefix {
             truncated: false,
         };
         let mut decoded = 0_u64;
-        let mut presented = 0_u64;
         let mut sequence = 1_u32;
         while position < length {
             let Some(atom) = input.atom(position, result.frames > 0)? else {
@@ -137,7 +136,6 @@ impl MoviePrefix {
                 .ok_or(MovieError::Invalid("Movie sample count overflows"))?;
             require(frames <= SAMPLE_LIMIT, "Movie has too many samples")?;
             decoded = fragment.decoded;
-            presented = presented.max(fragment.presented);
             result.frames = frames;
             if let Some(flag) = fragment.normalization {
                 result.normalization.headers.push(flag);
@@ -157,7 +155,7 @@ impl MoviePrefix {
         if result.frames == 0 {
             return Err(MovieError::NoFragment.into());
         }
-        result.duration = duration(presented, track.timescale)?;
+        result.duration = duration(decoded, track.timescale)?;
         Ok(result)
     }
 }
@@ -280,7 +278,6 @@ impl<E: From<MovieError>, F: FnMut(Range<u64>) -> Result<Vec<u8>, E>> Input<F> {
 struct Fragment {
     samples: u32,
     decoded: u64,
-    presented: u64,
     times: Vec<u64>,
     normalization: Option<u64>,
 }
@@ -348,7 +345,6 @@ fn fragment(
     let mut result = Fragment {
         samples: 0,
         decoded,
-        presented: decoded,
         times: Vec::new(),
         normalization: (flags == 1 && header.rest() == [0; 4]).then_some(
             payload
@@ -422,14 +418,12 @@ fn fragment(
             } else {
                 sample_flags
             };
-            let offset = if flags & 0x800 == 0 {
-                0
-            } else if flags & 0x0100_0000 != 0 {
-                i64::from(run.signed()?)
-            } else {
-                i64::from(run.word()?)
-            };
-            require(offset == 0, "Movie presentation reordering is unsupported")?;
+            if flags & 0x800 != 0 {
+                require(
+                    run.word()? == 0,
+                    "Movie presentation reordering is unsupported",
+                )?;
+            }
             require(duration > 0 && size > 0, "Movie sample is empty")?;
             if sequence == 1 && result.samples == 0 && index == 0 {
                 require(
@@ -437,24 +431,16 @@ fn fragment(
                     "Movie starts without a random-access sample",
                 )?;
             }
-            let at = result
-                .decoded
-                .checked_add_signed(offset)
-                .ok_or(MovieError::Invalid("Movie presentation time is invalid"))?;
-            let end = at
-                .checked_add(u64::from(duration))
-                .ok_or(MovieError::Invalid("Movie presentation time overflows"))?;
-            result.decoded = result
+            let end = result
                 .decoded
                 .checked_add(u64::from(duration))
                 .ok_or(MovieError::Invalid("Movie decode time overflows"))?;
             require(
-                end <= u64::from(track.timescale).saturating_mul(DURATION_LIMIT)
-                    && result.decoded <= u64::from(track.timescale).saturating_mul(DURATION_LIMIT),
+                end <= u64::from(track.timescale).saturating_mul(DURATION_LIMIT),
                 "Movie duration exceeds its limit",
             )?;
-            result.presented = result.presented.max(end);
-            result.times.push(at);
+            result.times.push(result.decoded);
+            result.decoded = end;
             next = next
                 .checked_add(u64::from(size))
                 .filter(|end| *end <= data.end)

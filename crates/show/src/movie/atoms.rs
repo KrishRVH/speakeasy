@@ -30,12 +30,15 @@ impl<'a> Fields<'a> {
     }
 
     pub(super) fn take(&mut self, length: usize) -> Result<&'a [u8], MovieError> {
-        let (value, rest) = self
-            .0
-            .split_at_checked(length)
-            .ok_or(MovieError::Invalid("Movie metadata is incomplete"))?;
+        let (value, rest) = self.0.split_at_checked(length).ok_or(INCOMPLETE)?;
         self.0 = rest;
         Ok(value)
+    }
+
+    fn array<const N: usize>(&mut self) -> Result<[u8; N], MovieError> {
+        let (value, rest) = self.0.split_first_chunk().ok_or(INCOMPLETE)?;
+        self.0 = rest;
+        Ok(*value)
     }
 
     pub(super) fn skip(&mut self, length: usize) -> Result<(), MovieError> {
@@ -43,38 +46,31 @@ impl<'a> Fields<'a> {
     }
 
     pub(super) fn kind(&mut self) -> Result<[u8; 4], MovieError> {
-        self.take(4)?
-            .try_into()
-            .map_err(|_length| MovieError::Invalid("Movie box type is incomplete"))
+        self.array()
     }
 
     pub(super) fn word(&mut self) -> Result<u32, MovieError> {
-        Ok(u32::from_be_bytes(self.kind()?))
+        self.array().map(u32::from_be_bytes)
     }
 
     pub(super) fn signed(&mut self) -> Result<i32, MovieError> {
-        Ok(i32::from_be_bytes(self.kind()?))
+        self.array().map(i32::from_be_bytes)
     }
 
     pub(super) fn wide(&mut self) -> Result<u64, MovieError> {
-        Ok(u64::from_be_bytes(self.take(8)?.try_into().map_err(
-            |_length| MovieError::Invalid("Movie wide field is incomplete"),
-        )?))
+        self.array().map(u64::from_be_bytes)
     }
 
     pub(super) fn short(&mut self) -> Result<u16, MovieError> {
-        Ok(u16::from_be_bytes(self.take(2)?.try_into().map_err(
-            |_length| MovieError::Invalid("Movie short field is incomplete"),
-        )?))
+        self.array().map(u16::from_be_bytes)
     }
 
     pub(super) fn byte(&mut self) -> Result<u8, MovieError> {
-        self.take(1)?
-            .first()
-            .copied()
-            .ok_or(MovieError::Invalid("Movie byte field is incomplete"))
+        self.array().map(|[byte]| byte)
     }
 }
+
+const INCOMPLETE: MovieError = MovieError::Invalid("Movie metadata is incomplete");
 
 pub(super) struct Child<'a> {
     pub kind: [u8; 4],

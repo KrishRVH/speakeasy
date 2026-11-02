@@ -132,9 +132,8 @@ pub(super) fn read(bytes: &[u8]) -> Result<Track, MovieError> {
     avc.skip(16)?;
     let size = [u32::from(avc.short()?), u32::from(avc.short()?)];
     require(
-        size.into_iter().all(|edge| {
-            (2..=super::super::MAX_FRAME_EDGE).contains(&edge) && edge.is_multiple_of(2)
-        }),
+        size.into_iter()
+            .all(|edge| (2..=crate::MAX_FRAME_EDGE).contains(&edge) && edge.is_multiple_of(2)),
         "Movie canvas is invalid",
     )?;
     let mut display = Fields::new(
