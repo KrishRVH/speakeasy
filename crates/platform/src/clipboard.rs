@@ -8,9 +8,9 @@ pub struct ClipboardContent {
 }
 
 pub(crate) struct Image {
-    pub(crate) png: Vec<u8>,
     #[cfg(any(target_os = "windows", test))]
     pub(crate) dib: Vec<u8>,
+    pub(crate) png: Vec<u8>,
 }
 
 impl std::fmt::Debug for ClipboardContent {
@@ -41,13 +41,8 @@ impl ClipboardContent {
         Ok(Self { text, image: None })
     }
 
-    pub fn moment(
-        text: String,
-        width: u32,
-        height: u32,
-        mut bgra: Vec<u8>,
-    ) -> anyhow::Result<Self> {
-        let mut content = Self::text(text)?;
+    pub fn moment(text: String, width: u32, height: u32, bgra: Vec<u8>) -> anyhow::Result<Self> {
+        let content = Self::text(text)?;
         ensure!(
             (1..=EDGE_LIMIT).contains(&width) && (1..=EDGE_LIMIT).contains(&height),
             "Clipboard images must be between 1 and 4096 pixels per side"
@@ -62,31 +57,15 @@ impl ClipboardContent {
             bgra.len() == bytes,
             "Clipboard image dimensions do not match its pixels"
         );
-        #[cfg(any(target_os = "windows", test))]
-        let dib = dib(width, height, &bgra)?;
-        for [blue, _, red, _] in bgra.as_chunks_mut::<4>().0 {
-            std::mem::swap(blue, red);
-        }
-        let mut png = Vec::new();
-        {
-            let mut encoder = png::Encoder::new(&mut png, width, height);
-            encoder.set_color(png::ColorType::Rgba);
-            encoder.set_depth(png::BitDepth::Eight);
-            encoder.set_compression(png::Compression::Fast);
-            let mut writer = encoder
-                .write_header()
-                .context("Cannot encode clipboard image")?;
-            writer
-                .write_image_data(&bgra)
-                .context("Cannot encode clipboard image")?;
-            writer.finish().context("Cannot finish clipboard image")?;
-        }
-        content.image = Some(Image {
-            png,
+        let image = Image {
             #[cfg(any(target_os = "windows", test))]
-            dib,
-        });
-        Ok(content)
+            dib: dib(width, height, &bgra)?,
+            png: png(width, height, bgra)?,
+        };
+        Ok(Self {
+            image: Some(image),
+            ..content
+        })
     }
 }
 
@@ -108,6 +87,25 @@ pub(crate) fn copy_when<L>(
     }
     write(lease)?;
     Ok(true)
+}
+
+fn png(width: u32, height: u32, mut pixels: Vec<u8>) -> anyhow::Result<Vec<u8>> {
+    for [blue, _, red, _] in pixels.as_chunks_mut::<4>().0 {
+        std::mem::swap(blue, red);
+    }
+    let mut png = Vec::new();
+    let mut encoder = png::Encoder::new(&mut png, width, height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder.set_compression(png::Compression::Fast);
+    let mut writer = encoder
+        .write_header()
+        .context("Cannot encode clipboard image")?;
+    writer
+        .write_image_data(&pixels)
+        .context("Cannot encode clipboard image")?;
+    writer.finish().context("Cannot finish clipboard image")?;
+    Ok(png)
 }
 
 #[cfg(any(target_os = "windows", test))]
