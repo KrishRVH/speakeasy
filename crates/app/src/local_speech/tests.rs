@@ -368,8 +368,7 @@ async fn audio_never_reaches_a_program_that_took_an_exited_engines_port() -> any
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn an_engine_that_died_while_idle_names_the_remedy_its_exit_proves() -> anyhow::Result<()> {
-    let listener = std::net::TcpListener::bind((LOOPBACK, 0))?;
-    let (_directory, mut speech) = shell_engine("kill -s ILL $$", listener).await?;
+    let (_directory, mut speech, _listener) = shell_engine("kill -s ILL $$").await?;
     speech.child.wait().await?;
     let wav = audio::silent_wav(16_000, Duration::from_secs(1))?;
     let transcribed = speech
@@ -451,12 +450,8 @@ async fn crashing_engine(
 )> {
     use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 
-    let held = std::net::TcpListener::bind((LOOPBACK, 0))?;
-    let listener = held.try_clone()?;
-    listener.set_nonblocking(true)?;
-    let listener = tokio::net::TcpListener::from_std(listener)?;
-    let (directory, mut speech) =
-        shell_engine(&format!("{script}read -r _ && kill -s ILL $$"), held).await?;
+    let (directory, mut speech, listener) =
+        shell_engine(&format!("{script}read -r _ && kill -s ILL $$")).await?;
     let leader = speech.child.id().context("The engine exited at once")?;
     let mut crash = speech
         .child
@@ -489,18 +484,25 @@ async fn crashing_engine(
 #[cfg(target_os = "linux")]
 async fn shell_engine(
     script: &str,
-    listener: std::net::TcpListener,
-) -> anyhow::Result<(tempfile::TempDir, LocalSpeech)> {
+) -> anyhow::Result<(tempfile::TempDir, LocalSpeech, tokio::net::TcpListener)> {
+    let held = std::net::TcpListener::bind((LOOPBACK, 0))?;
+    let listener = held.try_clone()?;
+    listener.set_nonblocking(true)?;
     let directory = tempfile::tempdir()?;
-    let port = listener.local_addr()?.port();
+    let port = held.local_addr()?.port();
     let mut command = hidden_command("sh");
     command
         .arg("-c")
         .arg(format!("ulimit -c 0; {script}"))
         .current_dir(directory.path())
         .stdin(std::process::Stdio::piped())
-        .stdout(std::os::fd::OwnedFd::from(listener));
-    Ok((directory, engine_from(command, port).await?))
+        .stdout(std::os::fd::OwnedFd::from(held));
+    let speech = engine_from(command, port).await?;
+    Ok((
+        directory,
+        speech,
+        tokio::net::TcpListener::from_std(listener)?,
+    ))
 }
 
 #[cfg(target_os = "linux")]
@@ -570,11 +572,7 @@ async fn streaming_authenticates_and_sends_per_request_language_and_hints() -> a
 
     use crate::runtime::ports::LiveAudio;
 
-    let held = std::net::TcpListener::bind((LOOPBACK, 0))?;
-    let listener = held.try_clone()?;
-    listener.set_nonblocking(true)?;
-    let listener = tokio::net::TcpListener::from_std(listener)?;
-    let (_directory, mut speech) = shell_engine("read -r _", held).await?;
+    let (_directory, mut speech, listener) = shell_engine("read -r _").await?;
     speech.engine = Engine::Nemo;
     speech.nemotron = true;
     let authorization = format!("Bearer {}", speech.secret);
@@ -768,11 +766,7 @@ async fn abandoned_and_failed_streams_probe_the_owned_engine_before_reuse() -> a
     use crate::runtime::ports::LiveAudio;
 
     for failed in [false, true] {
-        let held = std::net::TcpListener::bind((LOOPBACK, 0))?;
-        let listener = held.try_clone()?;
-        listener.set_nonblocking(true)?;
-        let listener = tokio::net::TcpListener::from_std(listener)?;
-        let (_directory, mut speech) = shell_engine("read -r _", held).await?;
+        let (_directory, mut speech, listener) = shell_engine("read -r _").await?;
         speech.engine = Engine::Nemo;
         speech.nemotron = true;
         let (frames, received) = tokio::sync::mpsc::channel(1);
