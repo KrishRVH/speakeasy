@@ -1,6 +1,7 @@
 use std::time::SystemTime;
 
 use anyhow::Context as _;
+use zeroize::Zeroizing;
 
 use super::*;
 use crate::{
@@ -65,8 +66,7 @@ async fn promotion_keeps_buffered_audio_and_cues_and_replays_the_live_speech_gat
         let audio = checkpoint.audio()?.unwrap();
         assert!(*audio.pcm == pcm, "Checkpoint changed synthetic PCM");
         assert!(audio.complete);
-        let live = crate::audio::pcm::Pcm16::from_kept(zeroize::Zeroizing::new(pcm))
-            .seal(speech, 48_000)?;
+        let live = Pcm16::from_kept(Zeroizing::new(pcm)).seal(speech, 48_000)?;
         let (recovered, start, language) = seal_kept(audio)?;
         assert_eq!(start, Duration::from_millis(125));
         assert_eq!(&*language, "fr");

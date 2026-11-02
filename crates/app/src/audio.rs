@@ -45,7 +45,6 @@ use crate::{
 };
 
 const INITIAL_RESERVATION: Duration = Duration::from_secs(10);
-
 const RING_CAPACITY: Duration = Duration::from_secs(1);
 const METER_INTERVAL: Duration = Duration::from_millis(32);
 const DRAIN_INTERVAL: Duration = Duration::from_millis(5);
@@ -269,20 +268,20 @@ impl Recorder {
         events: &Sender<CaptureEvent>,
         control: &Arc<Control>,
     ) -> Result<Self, Startup> {
-        let checkpoint = || {
+        let proceed = || {
             if control.mode() == Mode::Recording && !events.is_closed() {
                 Ok(())
             } else {
                 Err(Startup::Stopped)
             }
         };
-        checkpoint()?;
+        proceed()?;
         let host = cpal::default_host();
-        checkpoint()?;
-        let device = select_device(&host, microphone, checkpoint)?;
-        checkpoint()?;
+        proceed()?;
+        let device = select_device(&host, microphone, proceed)?;
+        proceed()?;
         let format = device.default_input_config().map_err(microphone_error)?;
-        checkpoint()?;
+        proceed()?;
         let (rate, channels) = rate_and_channels(&format)?;
         let (producer, ring) = RingBuffer::new(samples_in(RING_CAPACITY, rate));
         let (errors, stream_errors) = async_channel::bounded(1);
@@ -297,7 +296,7 @@ impl Recorder {
             limit,
         };
         let stream = build_stream(&device, &format, callbacks)?;
-        checkpoint()?;
+        proceed()?;
         stream.play().map_err(microphone_error)?;
         let device = LiveStream {
             _stream: stream,
@@ -324,6 +323,11 @@ impl<D> Recorder<D> {
         rate: u32,
         recognition: RecognitionMode,
     ) -> Self {
+        let (cuts, live) = match recognition {
+            RecognitionMode::Whole => (None, live::Feed::Abandoned),
+            RecognitionMode::Segmented => (Some(Cuts::new(rate)), live::Feed::Abandoned),
+            RecognitionMode::Streaming => (None, live::Feed::Waiting),
+        };
         Self {
             pcm: Pcm16::with_reservation(
                 samples_in(INITIAL_RESERVATION, rate),
@@ -335,12 +339,8 @@ impl<D> Recorder<D> {
             errors,
             started,
             rate,
-            cuts: (recognition == RecognitionMode::Segmented).then(|| Cuts::new(rate)),
-            live: if recognition == RecognitionMode::Streaming {
-                live::Feed::Waiting
-            } else {
-                live::Feed::Abandoned
-            },
+            cuts,
+            live,
             #[cfg(test)]
             profile: None,
         }
@@ -490,7 +490,8 @@ impl LevelMeter {
     }
 
     fn take_level(&mut self) -> Option<f32> {
-        let elapsed = self.since.elapsed();
+        let now = Instant::now();
+        let elapsed = now.saturating_duration_since(self.since);
         if elapsed < METER_INTERVAL {
             return None;
         }
@@ -501,7 +502,7 @@ impl LevelMeter {
         let rms = (self.energy / f64::from(self.samples.max(1))).sqrt() as f32;
         self.energy = 0.0;
         self.samples = 0;
-        self.since = Instant::now();
+        self.since = now;
         Some(self.scale.level(rms, elapsed))
     }
 }
@@ -535,7 +536,7 @@ impl SpeechScale {
 fn select_device(
     host: &cpal::Host,
     microphone: Option<&str>,
-    checkpoint: impl Fn() -> Result<(), Startup>,
+    proceed: impl Fn() -> Result<(), Startup>,
 ) -> Result<cpal::Device, Startup> {
     let Some(id) = microphone else {
         return Ok(host
@@ -543,12 +544,12 @@ fn select_device(
             .context("No microphone found. Connect one, then try again.")?);
     };
     for device in host.input_devices().map_err(microphone_error)? {
-        checkpoint()?;
+        proceed()?;
         if device.id().is_ok_and(|actual| actual.to_string() == id) {
             return Ok(device);
         }
     }
-    checkpoint()?;
+    proceed()?;
     Err(
         anyhow!("The selected microphone is disconnected. Reconnect it, or choose another microphone in Settings.")
             .into(),

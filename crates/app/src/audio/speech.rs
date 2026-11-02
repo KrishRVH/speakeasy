@@ -5,14 +5,11 @@ use crate::{lowpass::Lowpass, sounds::HEARD_FOR};
 
 const WINDOW: Duration = Duration::from_millis(20);
 const MINIMUM_AUDIBLE: Duration = Duration::from_millis(100);
-
 const QUIET_EDGE: Duration = Duration::from_secs(1);
-
 const PADDING: Duration = Duration::from_millis(500);
 const AUDIBLE_RMS: f64 = 0.0003;
 const CUE_VOICE_RMS: f64 = 0.003;
 const MINIMUM_VOICE_FRACTION: f64 = 0.01;
-
 const VOICE_BAND: f64 = 300.0;
 
 pub(super) struct Audibility {
@@ -29,13 +26,6 @@ pub(super) struct Audibility {
 }
 
 impl Audibility {
-    pub(super) fn paused(&self, length: usize) -> Option<Range<usize>> {
-        let speech = self.speech.as_ref()?;
-        (length.saturating_sub(speech.end) >= self.quiet_edge)
-            .then(|| self.retained(length))
-            .flatten()
-    }
-
     pub(super) fn new(rate: u32) -> Self {
         Self {
             window: bytes_in(samples_in(WINDOW, rate).max(1)),
@@ -71,7 +61,6 @@ impl Audibility {
 
     fn classify(&mut self, window: &[u8]) {
         let (mut whole, mut voice) = (0.0, 0.0);
-
         for pair in window.as_chunks::<SAMPLE_BYTES>().0 {
             let sample = f64::from(i16::from_le_bytes(*pair)) / 32_768.0;
             let low = self
@@ -95,6 +84,14 @@ impl Audibility {
             self.audible = self.audible.saturating_add(window.len());
         }
         self.scanned = end;
+    }
+
+    pub(super) fn paused(&self, length: usize) -> Option<Range<usize>> {
+        let speech = self.speech.as_ref()?;
+        if length.saturating_sub(speech.end) < self.quiet_edge {
+            return None;
+        }
+        self.retained(length)
     }
 
     pub(super) fn retained(&self, length: usize) -> Option<Range<usize>> {

@@ -10,6 +10,7 @@ use super::{
 use crate::runtime::ports::{CaptureEvent, LiveAudio, SessionId};
 
 const FRAME: Duration = Duration::from_millis(100);
+const QUEUED_FRAMES: usize = 20;
 
 pub(super) enum Feed {
     Waiting,
@@ -34,7 +35,7 @@ impl Feed {
             let Some(range) = speech.retained(audio.len()) else {
                 return;
             };
-            let (frames, receiver) = mpsc::channel(20);
+            let (frames, receiver) = mpsc::channel(QUEUED_FRAMES);
             let (ending, tail) = oneshot::channel();
             if events
                 .try_send(CaptureEvent::Streaming(

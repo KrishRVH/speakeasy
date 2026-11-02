@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use async_channel::{Receiver, Sender};
 
-use super::speech::Audibility;
+use super::{pcm::Pcm16, speech::Audibility};
 use crate::{
     runtime::ports::{CaptureEvent, Sealed, SessionId},
     show::{
@@ -103,12 +103,11 @@ pub(crate) fn seal_kept(audio: KeptAudio) -> anyhow::Result<(Option<Sealed>, Dur
         cues,
         complete: _,
     } = audio;
-    let pcm = super::pcm::Pcm16::from_kept(pcm);
+    let pcm = Pcm16::from_kept(pcm);
     let mut speech = Audibility::new(rate);
     for (before, at) in cues {
         if let (Some(previous), Some(prefix)) = (pcm.audio().get(..before), pcm.audio().get(..at)) {
             speech.extend(previous);
-
             speech.expect_cue(prefix);
             speech.extend(prefix);
         }

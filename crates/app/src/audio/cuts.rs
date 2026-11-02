@@ -6,6 +6,8 @@ use super::{
 };
 use crate::runtime::ports::Partition;
 
+const MINIMUM_PIECE: Duration = Duration::from_secs(20);
+
 pub(super) struct Cuts {
     minimum: usize,
     end: Option<usize>,
@@ -15,7 +17,7 @@ pub(super) struct Cuts {
 impl Cuts {
     pub(super) fn new(rate: u32) -> Self {
         Self {
-            minimum: bytes_in(samples_in(Duration::from_secs(20), rate)),
+            minimum: bytes_in(samples_in(MINIMUM_PIECE, rate)),
             end: None,
             pieces: 0,
         }

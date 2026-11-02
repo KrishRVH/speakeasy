@@ -51,29 +51,22 @@ fn speech_ceiling_relaxes_six_decibels_a_second_within_its_bounds() {
 }
 
 #[test]
-fn stopped_startup_returns_without_audio() -> anyhow::Result<()> {
-    let records_nothing =
-        |events: &Sender<CaptureEvent>, control: &Arc<Control>| -> anyhow::Result<bool> {
-            Ok(matches!(
-                Recorder::open(
-                    None,
-                    crate::runtime::ports::RecognitionMode::Whole,
-                    events,
-                    control
-                ),
-                Err(Startup::Stopped)
-            ))
-        };
+fn stopped_startup_returns_without_audio() {
+    let records_nothing = |events: &Sender<CaptureEvent>, control: &Arc<Control>| {
+        matches!(
+            Recorder::open(None, RecognitionMode::Whole, events, control),
+            Err(Startup::Stopped)
+        )
+    };
     for stop in [Control::finish, Control::cancel] {
         let control = Arc::new(Control::default());
         stop(&control);
         let (events, _audio) = async_channel::bounded(1);
-        assert!(records_nothing(&events, &control)?);
+        assert!(records_nothing(&events, &control));
     }
     let (events, _audio) = async_channel::bounded(1);
     events.close();
-    assert!(records_nothing(&events, &Arc::default())?);
-    Ok(())
+    assert!(records_nothing(&events, &Arc::default()));
 }
 
 async fn pending_until_released(
@@ -97,7 +90,6 @@ async fn sealed_audio_is_reported_before_device_teardown_and_retirement_waits() 
     impl Drop for Device {
         fn drop(&mut self) {
             self.entered.send_blocking(()).unwrap();
-
             self.release.recv_blocking().unwrap_or_default();
         }
     }
@@ -214,7 +206,6 @@ async fn consumer_wakes(cancel: bool, wake_before_park: bool) -> anyhow::Result<
         let woke = timeout(Duration::from_millis(400), retirement.as_mut())
             .await
             .is_ok();
-
         consumer.unpark();
         if !woke {
             timeout(PATIENCE, retirement).await?;
