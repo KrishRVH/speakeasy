@@ -108,9 +108,8 @@ fn tokens(text: &str) -> impl Iterator<Item = String> + '_ {
 
 #[must_use]
 pub fn window(span: Span, around: Duration, duration: Moment) -> Span {
-    let before = u64::try_from(around.as_millis()).unwrap_or(u64::MAX);
     Span::new(
-        Moment::from_millis(span.start().as_millis().saturating_sub(before)).min(duration),
+        span.start().saturating_sub(around).min(duration),
         span.end().saturating_add(around).min(duration),
     )
 }
@@ -147,7 +146,6 @@ pub fn pick(moments: &[Moment], window: Span, anchor: Moment, most: usize) -> Sa
         })
         .max()
         .unwrap_or_default();
-    let mut chosen = Vec::new();
     let limit = most.min(available.len());
     if limit == available.len() {
         return Samples {
@@ -156,6 +154,7 @@ pub fn pick(moments: &[Moment], window: Span, anchor: Moment, most: usize) -> Sa
             longest_gap,
         };
     }
+    let mut chosen = Vec::with_capacity(limit);
     if limit > 0 {
         chosen.push(
             available
