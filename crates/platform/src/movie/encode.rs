@@ -2,28 +2,43 @@ use std::{ops::ControlFlow, path::Path, time::Duration};
 
 use anyhow::ensure;
 
-use super::canvas::Canvas;
+use super::{RECORDING_LIMIT, canvas::Canvas};
 use crate::Frame;
 
-const FRAME_LIMIT: u32 = 9_000;
+pub(crate) const FRAME_LIMIT: u32 = 9_000;
+
 const CATCH_UP_LIMIT: u32 = 60;
 
 pub(crate) trait Codec: Sized {
     const CLOCK: Clock;
+
     fn open(path: &Path, size: [u32; 2], limit: u64) -> anyhow::Result<Self>;
+
     fn write(
         &mut self,
         pixels: &[u8],
         index: u32,
         cancelled: &mut dyn FnMut() -> bool,
     ) -> anyhow::Result<bool>;
+
     fn checkpoint(&mut self, at: Duration) -> anyhow::Result<()>;
+
     fn finish(self) -> anyhow::Result<()>;
 }
 
+#[derive(Clone, Copy)]
 pub(crate) enum End {
     Before(Duration),
     Through(Duration),
+}
+
+impl End {
+    fn admits(self, clock: Clock, sample: Duration) -> bool {
+        match self {
+            Self::Before(at) => sample < clock.quantize(at),
+            Self::Through(at) => sample <= clock.quantize(at),
+        }
+    }
 }
 
 pub(crate) trait Observer {
@@ -83,7 +98,7 @@ impl<C: Codec> Encoder<C> {
     ) -> anyhow::Result<ControlFlow<()>> {
         let at = C::CLOCK.quantize(at);
         ensure!(
-            at <= Duration::from_secs(300)
+            at <= RECORDING_LIMIT
                 && self
                     .capture
                     .map_or_else(|| at.is_zero(), |previous| at >= previous),
@@ -106,18 +121,9 @@ impl<C: Codec> Encoder<C> {
         let Some(capture) = self.capture else {
             return Ok(ControlFlow::Continue(()));
         };
-        let end = match end {
-            End::Before(at) => End::Before(C::CLOCK.quantize(at)),
-            End::Through(at) => End::Through(C::CLOCK.quantize(at)),
-        };
         let first = self.coverage.map_or(0, |coverage| coverage.frames);
         let mut index = first;
-        while index < FRAME_LIMIT
-            && match end {
-                End::Before(at) => C::CLOCK.time(index) < at,
-                End::Through(at) => C::CLOCK.time(index) <= at,
-            }
-        {
+        while index < FRAME_LIMIT && end.admits(C::CLOCK, C::CLOCK.time(index)) {
             if observer.cancelled() {
                 return Ok(ControlFlow::Break(()));
             }

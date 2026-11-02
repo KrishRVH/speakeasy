@@ -7,22 +7,26 @@ pub(crate) mod recording;
 
 use std::{
     convert::Infallible,
+    fmt,
+    fs::File,
     path::{Path, PathBuf},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use async_channel::{Receiver, Sender};
-use speakeasy_show::MoviePrefix;
+use speakeasy_show::{MAX_FRAME_EDGE, MoviePrefix};
+
+pub(crate) const RECORDING_LIMIT: Duration = Duration::from_secs(300);
 
 pub struct MovieFrame {
-    pub at: std::time::Duration,
+    pub at: Duration,
     pub size: [u32; 2],
     pub bgra: Vec<u8>,
 }
 
-impl std::fmt::Debug for MovieFrame {
-    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        out.debug_struct("MovieFrame")
+impl fmt::Debug for MovieFrame {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MovieFrame")
             .field("at", &self.at)
             .field("size", &self.size)
             .finish_non_exhaustive()
@@ -30,9 +34,9 @@ impl std::fmt::Debug for MovieFrame {
 }
 
 pub fn read_movie_frame(
-    file: std::fs::File,
+    file: File,
     prefix: &MoviePrefix,
-    at: std::time::Duration,
+    at: Duration,
     cancelled: impl Fn() -> bool,
 ) -> anyhow::Result<Option<MovieFrame>> {
     anyhow::ensure!(
@@ -41,12 +45,7 @@ pub fn read_movie_frame(
         "Movie changed; refresh the Show before reading it"
     );
     anyhow::ensure!(
-        prefix
-            .size
-            .into_iter()
-            .all(|edge| (2..=2560).contains(&edge) && edge.is_multiple_of(2))
-            && at <= prefix.duration
-            && at <= std::time::Duration::from_secs(300),
+        is_canvas(prefix.size) && at <= prefix.duration && at <= RECORDING_LIMIT,
         "Movie frame request is out of range"
     );
     if cancelled() {
@@ -80,6 +79,11 @@ pub fn read_movie_frame(
             "Video frame decoding is available on Windows and macOS. Open recording.mp4 in your system player."
         )
     }
+}
+
+pub(crate) fn is_canvas(size: [u32; 2]) -> bool {
+    size.into_iter()
+        .all(|edge| (2..=MAX_FRAME_EDGE).contains(&edge) && edge.is_multiple_of(2))
 }
 
 #[derive(Debug)]
@@ -116,9 +120,9 @@ pub struct MovieTarget {
     deadline: Instant,
 }
 
-impl std::fmt::Debug for MovieTarget {
-    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        out.debug_struct("MovieTarget").finish_non_exhaustive()
+impl fmt::Debug for MovieTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MovieTarget").finish_non_exhaustive()
     }
 }
 
@@ -283,7 +287,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(any(target_os = "windows", target_os = "macos"))]
-    pub(crate) fn prefix(file: &mut std::fs::File) -> anyhow::Result<MoviePrefix> {
+    pub(crate) fn prefix(file: &mut File) -> anyhow::Result<MoviePrefix> {
         use std::io::{Read as _, Seek as _, SeekFrom};
 
         let length = file.metadata()?.len();

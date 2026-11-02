@@ -1,8 +1,7 @@
 use anyhow::{Context as _, ensure};
+use speakeasy_show::MAX_FRAME_EDGE;
 
 use crate::{Frame, Part};
-
-const EDGE: u32 = 2_560;
 
 pub(crate) struct Canvas {
     size: [u32; 2],
@@ -14,7 +13,8 @@ pub(crate) struct Canvas {
 impl Canvas {
     pub(crate) fn new(size: [u32; 2]) -> anyhow::Result<Self> {
         ensure!(
-            size.into_iter().all(|edge| (1..=EDGE).contains(&edge)),
+            size.into_iter()
+                .all(|edge| (1..=MAX_FRAME_EDGE).contains(&edge)),
             "Invalid movie canvas"
         );
         let size = size.map(|edge| edge.saturating_add(1) & !1);
@@ -46,7 +46,9 @@ impl Canvas {
     pub(crate) fn paint(&mut self, frame: &Frame) -> anyhow::Result<()> {
         let source = [frame.width, frame.height];
         ensure!(
-            source.into_iter().all(|edge| (1..=EDGE).contains(&edge))
+            source
+                .into_iter()
+                .all(|edge| (1..=MAX_FRAME_EDGE).contains(&edge))
                 && length(source)? == frame.bgra.len(),
             "Invalid movie frame"
         );

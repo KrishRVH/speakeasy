@@ -17,6 +17,7 @@ use objc2_screen_capture_kit::{
     SCFrameStatus, SCStream, SCStreamDelegate, SCStreamFrameInfoDisplayTime,
     SCStreamFrameInfoStatus, SCStreamOutput, SCStreamOutputType,
 };
+use speakeasy_show::MAX_FRAME_EDGE;
 
 use super::super::{Failure, frame, refused};
 use crate::{Frame, Part};
@@ -74,7 +75,10 @@ impl Output {
         failures: Sender<Failure>,
         stopped: Sender<Infallible>,
     ) -> Result<Retained<Self>, Failure> {
-        if !size.into_iter().all(|edge| (1..=2560).contains(&edge)) {
+        if !size
+            .into_iter()
+            .all(|edge| (1..=MAX_FRAME_EDGE as usize).contains(&edge))
+        {
             return Err(Failure::DisplayLost);
         }
         let this = Self::alloc().set_ivars(State {

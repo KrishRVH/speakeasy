@@ -20,6 +20,8 @@ use objc2_core_video::{
     kCVReturnSuccess,
 };
 
+const BUDGET: usize = 64 << 20;
+
 pub(super) struct Buffers {
     pool: CFRetained<CVPixelBufferPool>,
     threshold: CFRetained<CFDictionary<CFString, CFNumber>>,
@@ -66,11 +68,11 @@ impl Buffers {
         };
         let bytes = CVPixelBufferGetDataSize(&buffer);
         ensure!(
-            (1..=64 << 20).contains(&bytes),
+            (1..=BUDGET).contains(&bytes),
             "Native video buffer exceeds its budget"
         );
         let count = CFNumber::new_i64(i64::try_from(
-            (64_usize << 20)
+            BUDGET
                 .checked_div(bytes)
                 .context("Native video buffer is empty")?,
         )?);
