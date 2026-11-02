@@ -58,7 +58,6 @@ enum Wake<W> {
     Input(Result<Input, RecvError>),
     Report(Report),
     Configuration,
-    Style,
     Command(Directive),
     Capture(CaptureEvent),
     Show(ShowEvent),
@@ -206,7 +205,6 @@ impl<P: Ports> Owner<P> {
             input = self.inputs.recv() => Wake::Input(input),
             report = self.reports.recv() => report.map_or(Wake::Stop, Wake::Report),
             change = self.changes.changed() => change.map_or(Wake::Stop, |()| Wake::Configuration),
-            Ok(()) = self.styles.changed() => Wake::Style,
             Ok(command) = self.commands.recv() => Wake::Command(command),
             Ok(event) = self.captures.recv() => Wake::Capture(event),
             Ok(event) = self.shows.recv() => Wake::Show(event),
@@ -234,7 +232,7 @@ impl<P: Ports> Owner<P> {
                 self.configure();
                 None
             },
-            Wake::Style | Wake::Retired => None,
+            Wake::Retired => None,
             Wake::Command(command) => return self.command(command),
             Wake::Capture(event) => {
                 self.handle_capture(event);
@@ -1066,7 +1064,6 @@ impl<P: Ports> Owner<P> {
             last_show: self.last_show.clone(),
             last_dictation: self.last_dictation.is_some(),
             style: self.latest.style,
-            next_style: *self.styles.borrow(),
             preset: self.preset.clone(),
             message: self.outcome.message(self.notice.as_ref()),
             model: self.worker.model(),

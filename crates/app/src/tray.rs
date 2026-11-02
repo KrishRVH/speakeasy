@@ -218,7 +218,10 @@ impl TrayCommand {
             Self::Cancel => shell::send(Input::Cancel, cx),
             Self::PasteLast => shell::send(Input::PasteLast, cx),
             #[cfg(any(target_os = "windows", target_os = "macos"))]
-            Self::Style(style) => cx.global::<Services>().select_style(style),
+            Self::Style(style) => {
+                use gpui::BorrowAppContext as _;
+                cx.update_global::<Services, _>(|services, _| services.select_style(style));
+            },
             #[cfg(any(target_os = "windows", target_os = "macos"))]
             Self::Preset(name) => Services::select_preset(name, cx),
             #[cfg(any(target_os = "windows", target_os = "macos"))]

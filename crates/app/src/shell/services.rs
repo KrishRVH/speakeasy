@@ -231,10 +231,12 @@ impl Services {
         *self.styles.borrow()
     }
 
-    pub(crate) fn select_style(&self, style: Style) {
+    #[expect(
+        clippy::needless_pass_by_ref_mut,
+        reason = "Taking Services mutably routes every caller through update_global, which tells the tray's observer"
+    )]
+    pub(crate) fn select_style(&mut self, style: Style) {
         self.styles.send_replace(style);
-        self.output
-            .send_modify(|snapshot| snapshot.next_style = style);
     }
 
     pub(super) fn runtime(&self) -> Option<&Runtime> {
