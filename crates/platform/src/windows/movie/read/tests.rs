@@ -1,9 +1,4 @@
-use std::{
-    fs::OpenOptions,
-    io::{Read as _, Seek as _},
-    os::windows::fs::OpenOptionsExt as _,
-    path::PathBuf,
-};
+use std::{fs::OpenOptions, os::windows::fs::OpenOptionsExt as _, path::PathBuf};
 
 use super::*;
 
@@ -49,14 +44,7 @@ fn recovered_movie_seeks_preserve_pixels_time_and_file_ownership() -> anyhow::Re
         let path = directory.join(name);
         let decode = |ms, cancelled: &dyn Fn() -> bool| {
             let mut file = File::open(&path)?;
-            let bytes = file.metadata()?.len();
-            let prefix = speakeasy_show::MoviePrefix::read::<anyhow::Error>(bytes, |range| {
-                file.seek(std::io::SeekFrom::Start(range.start))?;
-                let mut bytes =
-                    vec![0; usize::try_from(range.end.checked_sub(range.start).unwrap())?];
-                file.read_exact(&mut bytes)?;
-                Ok(bytes)
-            })?;
+            let prefix = crate::movie::tests::prefix(&mut file)?;
             crate::read_movie_frame(file, &prefix, Duration::from_millis(ms), cancelled)
         };
         for ms in [3500, 0, 1505, 3999] {

@@ -271,6 +271,19 @@ pub(crate) mod tests {
     use super::*;
 
     #[cfg(any(target_os = "windows", target_os = "macos"))]
+    pub(crate) fn prefix(file: &mut std::fs::File) -> anyhow::Result<MoviePrefix> {
+        use std::io::{Read as _, Seek as _, SeekFrom};
+
+        let length = file.metadata()?.len();
+        MoviePrefix::read::<anyhow::Error>(length, |range| {
+            file.seek(SeekFrom::Start(range.start))?;
+            let mut bytes = vec![0; usize::try_from(range.end.checked_sub(range.start).unwrap())?];
+            file.read_exact(&mut bytes)?;
+            Ok(bytes)
+        })
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     pub(crate) fn color_frame(index: usize, size: [u32; 2]) -> crate::Frame {
         assert!(matches!(size, [320, 240] | [1280, 720] | [2560, 1440]));
         let [width, height] = size.map(|edge| usize::try_from(edge).unwrap());

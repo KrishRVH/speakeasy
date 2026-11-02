@@ -1,12 +1,6 @@
 mod timing;
 
-use std::{
-    fs::File,
-    io::{Read as _, Seek as _},
-    mem::MaybeUninit,
-    os::unix::fs::MetadataExt as _,
-    time::Duration,
-};
+use std::{fs::File, mem::MaybeUninit, os::unix::fs::MetadataExt as _, time::Duration};
 
 use speakeasy_show::MoviePrefix;
 
@@ -122,14 +116,7 @@ fn native_mac_movie_encoding() -> anyhow::Result<()> {
 }
 
 fn inspect(path: &Path) -> anyhow::Result<MoviePrefix> {
-    let mut file = File::open(path)?;
-    let length = file.metadata()?.len();
-    MoviePrefix::read::<anyhow::Error>(length, |range| {
-        file.seek(std::io::SeekFrom::Start(range.start))?;
-        let mut bytes = vec![0; usize::try_from(range.end.checked_sub(range.start).unwrap())?];
-        file.read_exact(&mut bytes)?;
-        Ok(bytes)
-    })
+    crate::movie::tests::prefix(&mut File::open(path)?)
 }
 
 fn assert_closed((descriptor, previous): (std::os::fd::RawFd, std::fs::Metadata)) {

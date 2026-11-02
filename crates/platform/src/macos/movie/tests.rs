@@ -14,13 +14,7 @@ use crate::movie::tests::check_colors;
 
 fn validated(path: &Path) -> anyhow::Result<(File, MoviePrefix)> {
     let mut file = File::open(path)?;
-    let length = file.metadata()?.len();
-    let prefix = MoviePrefix::read::<anyhow::Error>(length, |range| {
-        file.seek(std::io::SeekFrom::Start(range.start))?;
-        let mut bytes = vec![0; usize::try_from(range.end.checked_sub(range.start).unwrap())?];
-        file.read_exact(&mut bytes)?;
-        Ok(bytes)
-    })?;
+    let prefix = crate::movie::tests::prefix(&mut file)?;
     Ok((file, prefix))
 }
 
