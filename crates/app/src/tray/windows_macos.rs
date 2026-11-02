@@ -92,8 +92,7 @@ impl Presenter {
         {
             while let Some((_, item)) = self.preset_items.last() {
                 self.presets.remove(item)?;
-                self.preset_items
-                    .truncate(self.preset_items.len().saturating_sub(1));
+                self.preset_items.pop();
             }
             for name in &state.presets {
                 let item =

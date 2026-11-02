@@ -14,12 +14,13 @@ use tokio::sync::watch;
 pub(crate) use self::linux::{Tray, install};
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 pub(crate) use self::windows_macos::{Tray, install};
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+use crate::transcript::style::Style;
 use crate::{
     runtime::{Phase, Snapshot},
     shell::{self, Services},
     status::{ServiceState, Status},
     theme::Theme,
-    transcript::style::Style,
 };
 
 #[derive(PartialEq, Eq)]
@@ -27,6 +28,7 @@ struct TrayState {
     status: Status,
     theme: Theme,
     menu: TrayMenu,
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     style: Style,
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     presets: Vec<String>,
@@ -43,6 +45,14 @@ impl TrayState {
         Self {
             status: services.status(snapshot),
             theme: services.config.theme,
+            menu: dictation_menu(
+                services.service_state(),
+                activity(snapshot),
+                snapshot.desktop_ready,
+                !services.mode.is_demo(),
+                snapshot.last_dictation,
+            ),
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
             style: services.style(),
             #[cfg(any(target_os = "windows", target_os = "macos"))]
             presets: services
@@ -53,13 +63,6 @@ impl TrayState {
                 .collect(),
             #[cfg(any(target_os = "windows", target_os = "macos"))]
             preset: services.preset_name().map(str::to_owned),
-            menu: dictation_menu(
-                services.service_state(),
-                activity(snapshot),
-                snapshot.desktop_ready,
-                !services.mode.is_demo(),
-                snapshot.last_dictation,
-            ),
             #[cfg(any(target_os = "windows", target_os = "macos"))]
             last_show: services.recallable_show(snapshot).is_some(),
             #[cfg(any(target_os = "windows", target_os = "macos"))]
