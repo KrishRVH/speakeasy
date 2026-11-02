@@ -57,21 +57,7 @@ pub fn read_movie_frame(
     }
     #[cfg(target_os = "macos")]
     {
-        use anyhow::Context as _;
-        let index = prefix
-            .samples()
-            .partition_point(|sample| sample.at <= at)
-            .saturating_sub(1);
-        let sample = prefix
-            .samples()
-            .get(index)
-            .context("Movie has no retained sample")?;
-        anyhow::ensure!(
-            (1..=1_000_000_000).contains(&prefix.timescale)
-                && sample.ticks <= u64::from(prefix.timescale).saturating_mul(360),
-            "Movie sample timestamp is out of range"
-        );
-        crate::macos::movie::frame(file, prefix, (sample.ticks, prefix.timescale), &cancelled)
+        crate::macos::movie::frame(file, prefix, at, &cancelled)
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {

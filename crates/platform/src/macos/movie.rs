@@ -24,15 +24,17 @@ use objc2_core_graphics::{
 };
 use objc2_core_media::{CMTime, CMTimeFlags};
 use objc2_foundation::NSError;
+use speakeasy_show::MoviePrefix;
 
 use crate::MovieFrame;
 
 pub(crate) fn frame(
     input: File,
-    prefix: &speakeasy_show::MoviePrefix,
-    sample: (u64, u32),
+    prefix: &MoviePrefix,
+    at: Duration,
     cancelled: &dyn Fn() -> bool,
 ) -> anyhow::Result<Option<MovieFrame>> {
+    let sample = Sample::at(prefix, at)?;
     autoreleasepool(|_| {
         let asset = file::Asset::new(input, prefix)?;
         if cancelled() {
@@ -67,6 +69,55 @@ pub(crate) fn frame(
     })
 }
 
+#[derive(Clone, Copy)]
+struct Sample {
+    ticks: u64,
+    timescale: u32,
+}
+
+impl Sample {
+    fn at(prefix: &MoviePrefix, at: Duration) -> anyhow::Result<Self> {
+        let samples = prefix.samples();
+        let index = samples
+            .partition_point(|sample| sample.at <= at)
+            .saturating_sub(1);
+        let sample = samples.get(index).context("Movie has no retained sample")?;
+        ensure!(
+            (1..=1_000_000_000).contains(&prefix.timescale)
+                && sample.ticks <= u64::from(prefix.timescale).saturating_mul(360),
+            "Movie sample timestamp is out of range"
+        );
+        Ok(Self {
+            ticks: sample.ticks,
+            timescale: prefix.timescale,
+        })
+    }
+
+    fn timestamp(self, time: CMTime) -> anyhow::Result<Duration> {
+        ensure!(
+            time.flags.contains(CMTimeFlags::Valid)
+                && !time.flags.intersects(CMTimeFlags::ImpliedValueFlagsMask)
+                && time.epoch == 0
+                && time.value >= 0
+                && time.timescale > 0,
+            "Video sample timestamp is invalid"
+        );
+        let ticks = u128::try_from(time.value)?;
+        let scale = u128::try_from(time.timescale)?;
+        ensure!(
+            ticks.checked_mul(u128::from(self.timescale))
+                == u128::from(self.ticks).checked_mul(scale),
+            "Video decoder returned a different sample"
+        );
+        Ok(Duration::from_nanos(u64::try_from(
+            ticks
+                .checked_mul(1_000_000_000)
+                .and_then(|nanos| nanos.checked_div(scale))
+                .context("Video timestamp overflowed")?,
+        )?))
+    }
+}
+
 struct Request {
     native: Retained<AVAssetImageGenerator>,
     reply: Receiver<anyhow::Result<MovieFrame>>,
@@ -74,8 +125,13 @@ struct Request {
 }
 
 impl Request {
-    fn start(asset: &AVAsset, size: [u32; 2], sample: (u64, u32)) -> anyhow::Result<Self> {
-        let time = unsafe { CMTime::new(i64::try_from(sample.0)?, i32::try_from(sample.1)?) };
+    fn start(asset: &AVAsset, size: [u32; 2], sample: Sample) -> anyhow::Result<Self> {
+        let time = unsafe {
+            CMTime::new(
+                i64::try_from(sample.ticks)?,
+                i32::try_from(sample.timescale)?,
+            )
+        };
         let (sender, reply) = mpsc::sync_channel(1);
         let handler = RcBlock::new(
             move |image: *mut CGImage, at: CMTime, error: *mut NSError| {
@@ -110,31 +166,6 @@ impl Request {
     }
 }
 
-fn decoded(
-    image: Option<&CGImage>,
-    at: CMTime,
-    error: Option<&NSError>,
-    size: [u32; 2],
-    sample: (u64, u32),
-) -> anyhow::Result<MovieFrame> {
-    let image = image.ok_or_else(|| {
-        let code = error.map(NSError::code);
-
-        let key = unsafe { objc2_foundation::NSUnderlyingErrorKey };
-        let underlying = error.and_then(|error| error.userInfo().objectForKey(key));
-        let detail = underlying
-            .as_ref()
-            .and_then(|object| object.downcast_ref::<NSError>())
-            .map(NSError::code);
-        anyhow::anyhow!("macOS could not decode this video ({code:?}, {detail:?})")
-    })?;
-    Ok(MovieFrame {
-        at: timestamp(at, sample)?,
-        size,
-        bgra: pixels(image, size)?,
-    })
-}
-
 impl Drop for Request {
     fn drop(&mut self) {
         if self.pending {
@@ -150,27 +181,29 @@ impl Drop for Request {
     }
 }
 
-fn timestamp(time: CMTime, expected: (u64, u32)) -> anyhow::Result<Duration> {
-    ensure!(
-        time.flags.contains(CMTimeFlags::Valid)
-            && !time.flags.intersects(CMTimeFlags::ImpliedValueFlagsMask)
-            && time.epoch == 0
-            && time.value >= 0
-            && time.timescale > 0,
-        "Video sample timestamp is invalid"
-    );
-    let ticks = u128::try_from(time.value)?;
-    let scale = u128::try_from(time.timescale)?;
-    ensure!(
-        ticks.checked_mul(u128::from(expected.1)) == u128::from(expected.0).checked_mul(scale),
-        "Video decoder returned a different sample"
-    );
-    Ok(Duration::from_nanos(u64::try_from(
-        ticks
-            .checked_mul(1_000_000_000)
-            .and_then(|nanos| nanos.checked_div(scale))
-            .context("Video timestamp overflowed")?,
-    )?))
+fn decoded(
+    image: Option<&CGImage>,
+    at: CMTime,
+    error: Option<&NSError>,
+    size: [u32; 2],
+    sample: Sample,
+) -> anyhow::Result<MovieFrame> {
+    let image = image.ok_or_else(|| {
+        let code = error.map(NSError::code);
+
+        let key = unsafe { objc2_foundation::NSUnderlyingErrorKey };
+        let underlying = error.and_then(|error| error.userInfo().objectForKey(key));
+        let detail = underlying
+            .as_ref()
+            .and_then(|object| object.downcast_ref::<NSError>())
+            .map(NSError::code);
+        anyhow::anyhow!("macOS could not decode this video ({code:?}, {detail:?})")
+    })?;
+    Ok(MovieFrame {
+        at: sample.timestamp(at)?,
+        size,
+        bgra: pixels(image, size)?,
+    })
 }
 
 fn pixels(image: &CGImage, size: [u32; 2]) -> anyhow::Result<Vec<u8>> {
