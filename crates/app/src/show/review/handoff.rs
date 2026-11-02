@@ -2,7 +2,13 @@ use anyhow::Context as _;
 use speakeasy_platform::ClipboardContent;
 use speakeasy_show::NarrationLoss;
 
-use super::{narration::Narration, navigation::Stamp};
+use super::{
+    narration::{Narration, excerpt},
+    navigation::Stamp,
+};
+
+const TOO_MUCH: &str = "Too much evidence context to copy. Export the Show instead.";
+const EXCERPT: &str = "\n\nSummary excerpt: the complete edited text is in summary.md.";
 
 pub(super) fn text(
     context: String,
@@ -10,50 +16,31 @@ pub(super) fn text(
     narration: &Narration,
 ) -> anyhow::Result<String> {
     let summary = summary.unwrap_or("The edited summary is unavailable.");
-    let (recorded, incomplete, truncated) = match narration {
-        Narration::Timed {
-            clauses,
-            incomplete,
-            truncated,
-        } => (
-            clauses
-                .iter()
-                .map(|clause| format!("[{}] {}", Stamp(clause.at), clause.text))
-                .collect::<Vec<_>>()
-                .join("\n"),
-            *incomplete,
-            *truncated,
-        ),
-        Narration::Untimed {
-            text,
-            incomplete,
-            truncated,
-        } => (
-            format!("No word timestamps are available.\n{text}"),
-            *incomplete,
-            *truncated,
-        ),
-        Narration::Silent => ("No recorded words.".into(), false, false),
-        Narration::Lost(loss) => (
-            match loss {
-                NarrationLoss::Incomplete => "The recording is incomplete; no words are available.",
-                NarrationLoss::AudioStopped => {
-                    "Audio capture stopped; no recorded words are available."
-                },
-                NarrationLoss::NotTranscribed => "Recorded speech was not transcribed.",
-            }
-            .into(),
-            false,
-            false,
-        ),
-        Narration::Unavailable => ("Recorded narration is unavailable.".into(), false, false),
+    let recorded = match narration {
+        Narration::Timed { clauses, .. } => clauses
+            .iter()
+            .map(|clause| format!("[{}] {}", Stamp(clause.at), clause.text))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Narration::Untimed { text, .. } => format!("No word timestamps are available.\n{text}"),
+        Narration::Silent => "No recorded words.".into(),
+        Narration::Lost(NarrationLoss::Incomplete) => {
+            "The recording is incomplete; no words are available.".into()
+        },
+        Narration::Lost(NarrationLoss::AudioStopped) => {
+            "Audio capture stopped; no recorded words are available.".into()
+        },
+        Narration::Lost(NarrationLoss::NotTranscribed) => {
+            "Recorded speech was not transcribed.".into()
+        },
+        Narration::Unavailable => "Recorded narration is unavailable.".into(),
     };
-    let incomplete = if incomplete {
+    let incomplete = if narration.incomplete() {
         "\nNarration is incomplete."
     } else {
         ""
     };
-    let truncated = if truncated {
+    let truncated = if narration.truncated() {
         "\nThis excerpt is truncated. The remaining recorded words are in show.json."
     } else {
         ""
@@ -63,17 +50,11 @@ pub(super) fn text(
     let available = ClipboardContent::MAX_TEXT_BYTES
         .checked_sub(text.len())
         .and_then(|bytes| bytes.checked_sub(suffix.len()))
-        .context("Too much evidence context to copy. Export the Show instead.")?;
+        .context(TOO_MUCH)?;
     if summary.len() > available {
-        let label = "\n\nSummary excerpt: the complete edited text is in summary.md.";
-        let end = available
-            .checked_sub(label.len())
-            .context("Too much evidence context to copy. Export the Show instead.")?;
-        let excerpt = summary
-            .get(..summary.floor_char_boundary(end))
-            .context("Cannot prepare the summary excerpt")?;
-        text.push_str(excerpt);
-        text.push_str(label);
+        let end = available.checked_sub(EXCERPT.len()).context(TOO_MUCH)?;
+        text.push_str(excerpt(summary, end));
+        text.push_str(EXCERPT);
     } else {
         text.push_str(summary);
     }

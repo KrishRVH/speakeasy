@@ -8,7 +8,7 @@ use gpui::{
 use super::{
     Action, CopyKind, Direction, ExportKind, ImageState, Kind, Mode, Pane, Review, Source,
     library::{Detail, Key, Row},
-    narration::Narration,
+    narration::{self, Narration},
     navigation::{Origin, Stamp},
 };
 use crate::{
@@ -675,10 +675,10 @@ impl Review {
         const REST: &str = "The rest is in summary.md. Copy summary includes the whole file.";
         let text = match self.detail.as_ref().map(|detail| &detail.summary) {
             Some(Ok(summary)) => {
-                let end = summary.floor_char_boundary(64 << 10);
+                let shown = narration::excerpt(summary, narration::MOST_TEXT);
                 div()
-                    .child(summary.get(..end).unwrap_or_default().to_owned())
-                    .when(end < summary.len(), |text| {
+                    .child(shown.to_owned())
+                    .when(shown.len() < summary.len(), |text| {
                         text.child(div().mt(px(8.0)).text_color(rgb(palette.warn)).child(REST))
                     })
             },
@@ -696,30 +696,8 @@ impl Review {
 
     fn narration(&self, palette: &Palette, cx: &Context<'_, Self>) -> Stateful<Div> {
         let narration = self.detail.as_ref().map(|detail| &detail.narration);
-        let incomplete = matches!(
-            narration,
-            Some(
-                Narration::Timed {
-                    incomplete: true,
-                    ..
-                } | Narration::Untimed {
-                    incomplete: true,
-                    ..
-                }
-            )
-        );
-        let truncated = matches!(
-            narration,
-            Some(
-                Narration::Timed {
-                    truncated: true,
-                    ..
-                } | Narration::Untimed {
-                    truncated: true,
-                    ..
-                }
-            )
-        );
+        let incomplete = narration.is_some_and(Narration::incomplete);
+        let truncated = narration.is_some_and(Narration::truncated);
         let text = match narration {
             Some(Narration::Timed { clauses, .. }) => {
                 div().flex().flex_col().gap(px(2.0)).children(
@@ -752,7 +730,11 @@ impl Review {
                 .child("Recorded narration is unavailable because show.json could not be read."),
             None => div()
                 .text_color(rgb(palette.muted))
-                .child("Loading narration…"),
+                .child(if self.opening.is_some() {
+                    "Loading narration…"
+                } else {
+                    "Narration unavailable. Try Refresh or Open folder."
+                }),
         };
         well(palette, "show-narration", px(180.0))
             .child(

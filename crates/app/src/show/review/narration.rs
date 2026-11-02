@@ -1,6 +1,6 @@
 use speakeasy_show::{NarrationLoss, Recording, TimedClause, timed_clauses};
 
-const MOST_TEXT: usize = 64 << 10;
+pub(super) const MOST_TEXT: usize = 64 << 10;
 const MOST_ROWS: usize = 512;
 
 pub(super) enum Narration {
@@ -48,11 +48,11 @@ impl Narration {
                 if text.trim().is_empty() {
                     return Self::empty(recording.narration_lost);
                 }
-                let end = text.floor_char_boundary(MOST_TEXT);
+                let shown = excerpt(text, MOST_TEXT);
                 Self::Untimed {
-                    text: text.get(..end).unwrap_or_default().to_owned(),
+                    text: shown.to_owned(),
                     incomplete,
-                    truncated: end < text.len(),
+                    truncated: shown.len() < text.len(),
                 }
             },
         }
@@ -68,4 +68,34 @@ impl Narration {
             _ => &[],
         }
     }
+
+    pub(super) const fn incomplete(&self) -> bool {
+        matches!(
+            self,
+            Self::Timed {
+                incomplete: true,
+                ..
+            } | Self::Untimed {
+                incomplete: true,
+                ..
+            }
+        )
+    }
+
+    pub(super) const fn truncated(&self) -> bool {
+        matches!(
+            self,
+            Self::Timed {
+                truncated: true,
+                ..
+            } | Self::Untimed {
+                truncated: true,
+                ..
+            }
+        )
+    }
+}
+
+pub(super) fn excerpt(text: &str, most: usize) -> &str {
+    text.split_at(text.floor_char_boundary(most)).0
 }
