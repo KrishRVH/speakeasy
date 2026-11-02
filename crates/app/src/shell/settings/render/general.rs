@@ -17,14 +17,11 @@ use crate::{
 impl Settings {
     pub(super) fn general_page(&self, ui: &Ui<'_>) -> Vec<AnyElement> {
         let startup = cfg!(target_os = "windows") && ui.cx.global::<Services>().default_settings;
-        #[cfg(target_os = "linux")]
-        let desktop = Some(self.desktop_section(ui).into_any_element());
-        #[cfg(not(target_os = "linux"))]
-        let desktop = None;
         [
             Some(self.look_section(ui).into_any_element()),
             startup.then(|| self.startup_section(ui).into_any_element()),
-            desktop,
+            #[cfg(target_os = "linux")]
+            Some(self.desktop_section(ui).into_any_element()),
             Some(self.privacy_section(ui).into_any_element()),
             Some(self.about_section(ui).into_any_element()),
             (!self.unreadable).then(|| self.start_over(ui).into_any_element()),
