@@ -52,6 +52,28 @@ fn feedback_deadlines_expire_and_never_apply_to_recording_or_cancellation() {
 }
 
 #[test]
+fn a_reopened_pill_finds_every_inherited_feedback_already_spent() {
+    let now = Instant::now();
+    let since_phase = now.duration_since(inherited_phase_at(now));
+    for phase in [
+        Phase::Done,
+        Phase::Copied,
+        Phase::Notice,
+        Phase::Empty,
+        Phase::Unchosen,
+        Phase::Error,
+    ] {
+        for labeled in [false, true] {
+            assert_eq!(
+                feedback_remaining(phase, labeled, since_phase),
+                None,
+                "A reopened pill replays {phase:?} feedback"
+            );
+        }
+    }
+}
+
+#[test]
 fn recording_bars_reach_each_level_before_the_next_meter_window() {
     let window = Duration::from_millis(32);
     let mut bar = Spring::new(0.0);

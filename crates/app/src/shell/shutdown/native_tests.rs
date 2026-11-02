@@ -27,8 +27,15 @@ fn handoff(force_native_quit: bool) -> anyhow::Result<()> {
         let (output, snapshots) = watch::channel(Snapshot::default());
         let (meter, levels) = watch::channel(Meter::default());
         let (canvas, _ink) = watch::channel(crate::show::Canvas::default());
-        let pill =
-            crate::pill::open(snapshots, levels, true, config.theme, cx).expect("owned pill");
+        let pill = crate::pill::open(
+            snapshots,
+            levels,
+            true,
+            config.theme,
+            crate::pill::Opening::Startup,
+            cx,
+        )
+        .expect("owned pill");
         let (instance, _requests) = acquired;
         cx.set_global(Services::new(
             configuration,

@@ -25,6 +25,12 @@ fn idle_native_pill_can_render_a_window_opened_after_launch() -> anyhow::Result<
     run_native(check_late_window)
 }
 
+#[test]
+#[ignore = "Opt-in native windows on the X11 display, never microphone, input, or clipboard"]
+fn reopened_native_pill_shows_an_active_session_but_never_replays_feedback() -> anyhow::Result<()> {
+    run_native(check_reopened_pill)
+}
+
 fn run_native(
     check: impl AsyncFnOnce(&AsyncApp) -> anyhow::Result<()> + 'static,
 ) -> anyhow::Result<()> {
@@ -46,7 +52,14 @@ fn run_native(
 fn check_idle_pill(cx: &mut App) -> anyhow::Result<()> {
     let (_publisher, updates) = watch::channel(Snapshot::default());
     let (_meter, levels) = watch::channel(Meter::default());
-    let pill = open(updates, levels, true, Theme::default(), cx)?;
+    let pill = open(
+        updates,
+        levels,
+        true,
+        Theme::default(),
+        Opening::Startup,
+        cx,
+    )?;
     let id = pill.update(cx, |_, window, _| x11_window(window))??;
     let (connection, _) = XCBConnection::connect(None)?;
     let attributes = connection.get_window_attributes(id)?.reply()?;
@@ -97,6 +110,46 @@ fn check_idle_pill(cx: &mut App) -> anyhow::Result<()> {
         connection.get_window_attributes(id)?.reply()?.map_state == MapState::UNMAPPED,
         "Pill did not become unmapped"
     );
+    Ok(())
+}
+
+#[expect(
+    clippy::future_not_send,
+    reason = "Native acceptance creates and observes GPUI windows on their owning UI thread"
+)]
+async fn check_reopened_pill(cx: &AsyncApp) -> anyhow::Result<()> {
+    let (connection, _) = XCBConnection::connect(None)?;
+    let failed = Snapshot {
+        phase: Phase::Error,
+        message: "Simulated failure".into(),
+        ..Snapshot::default()
+    };
+    let recording = Snapshot {
+        phase: Phase::Recording,
+        ..Snapshot::default()
+    };
+    for (opening, snapshot, shown) in [
+        (Opening::Startup, failed.clone(), true),
+        (Opening::Reopened, failed, false),
+        (Opening::Reopened, recording, true),
+    ] {
+        let phase = snapshot.phase;
+        let (_publisher, updates) = watch::channel(snapshot);
+        let (_meter, levels) = watch::channel(Meter::default());
+        let id = cx.update(|cx| {
+            let pill = open(updates, levels, true, Theme::default(), opening, cx)?;
+            pill.update(cx, |_, window, _| x11_window(window))?
+        })?;
+        cx.background_executor()
+            .timer(Duration::from_millis(300))
+            .await;
+        let viewable =
+            connection.get_window_attributes(id)?.reply()?.map_state == MapState::VIEWABLE;
+        ensure!(
+            viewable == shown,
+            "A pill opened at {opening:?} during {phase:?} is viewable: {viewable}"
+        );
+    }
     Ok(())
 }
 
@@ -151,7 +204,14 @@ async fn check_late_window(cx: &AsyncApp) -> anyhow::Result<()> {
     let id = cx.update(|cx| {
         let (_publisher, updates) = watch::channel(Snapshot::default());
         let (_meter, levels) = watch::channel(Meter::default());
-        let _pill = open(updates, levels, true, Theme::default(), cx)?;
+        let _pill = open(
+            updates,
+            levels,
+            true,
+            Theme::default(),
+            Opening::Startup,
+            cx,
+        )?;
         let colors = cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds::new(

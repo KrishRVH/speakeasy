@@ -37,6 +37,7 @@ const COPIED_FOR: Duration = Duration::from_millis(1600);
 const NOTICE_FOR: Duration = Duration::from_secs(6);
 const EMPTY_FOR: Duration = Duration::from_millis(1200);
 const ERROR_FOR: Duration = Duration::from_secs(8);
+const LONGEST_FEEDBACK: Duration = ERROR_FOR;
 const TRAY_HINT_FOR: Duration = Duration::from_secs(3);
 
 const DETAILS: &str = "Details in Settings";
@@ -99,23 +100,34 @@ pub(crate) struct Pill {
     _levels: Task<()>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Opening {
+    Startup,
+    Reopened,
+}
+
 impl Pill {
     fn new(
         updates: watch::Receiver<Snapshot>,
         levels: watch::Receiver<Meter>,
         reduced_motion: bool,
         theme: Theme,
+        opening: Opening,
         window: &Window,
         cx: &Context<'_, Self>,
     ) -> Self {
         let now = Instant::now();
+        let (snapshot, phase_at) = match opening {
+            Opening::Startup => (Snapshot::default(), now),
+            Opening::Reopened => (updates.borrow().clone(), inherited_phase_at(now)),
+        };
         Self {
-            snapshot: Snapshot::default(),
+            snapshot,
             capsule: Capsule::hidden(),
             meter: std::array::from_fn(|_| Spring::new(0.0)),
             history: [0.0; METER_BARS],
             window: window.window_handle(),
-            phase_at: now,
+            phase_at,
             tray_hint_until: None,
             draw_hint_until: None,
             frame_at: now,
@@ -548,6 +560,7 @@ pub(crate) fn open(
     levels: watch::Receiver<Meter>,
     reduced_motion: bool,
     theme: Theme,
+    opening: Opening,
     cx: &mut App,
 ) -> anyhow::Result<WindowHandle<Pill>> {
     let (kind, bounds) = placement(cx)?;
@@ -572,7 +585,7 @@ pub(crate) fn open(
 
             window.on_window_should_close(cx, |_, _| false);
             configured = configure(window);
-            cx.new(|cx| Pill::new(updates, levels, reduced_motion, theme, window, cx))
+            cx.new(|cx| Pill::new(updates, levels, reduced_motion, theme, opening, window, cx))
         },
     )?;
     configured?;
@@ -641,6 +654,10 @@ fn feedback_remaining(phase: Phase, labeled: bool, since_phase: Duration) -> Opt
     duration
         .checked_sub(since_phase)
         .filter(|left| !left.is_zero())
+}
+
+fn inherited_phase_at(now: Instant) -> Instant {
+    now.checked_sub(LONGEST_FEEDBACK).unwrap_or(now)
 }
 
 fn begins_feedback(previous: &Snapshot, snapshot: &Snapshot) -> bool {

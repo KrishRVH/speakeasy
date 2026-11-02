@@ -845,9 +845,10 @@ paused clock exercises gesture deadlines and the five-minute cap.
   private Xvfb display, checks rendered Settings and Shows, and checks that the preview shows and
   then hides the pill. It needs Xvfb, x11-utils, and a Vulkan driver.
   `bash scripts/check-rendering-linux.sh` runs, in an Ubuntu 26.04 Docker container with stock Mesa,
-  the opt-in `idle_native_pill_` tests of the pill's window hints, input shape, and visibility, the
-  Show review acceptance, the native rendering example, and that demo check on a release binary it
-  builds; `--packages` checks the AppImage and tar launchers that `package-linux.sh` builds instead.
+  the opt-in `native_pill_` tests of the pill's window hints, input shape, visibility, and
+  reopening, the Show review acceptance, the native rendering example, and that demo check on a
+  release binary it builds; `--packages` checks the AppImage and tar launchers that
+  `package-linux.sh` builds instead.
   [Linux implementation](docs/linux-implementation.md#setup-and-distribution) explains the Mesa
   requirement.
 - `cargo run --locked -p speakeasy --example check_native_rendering -- --native-gui` opens an owned

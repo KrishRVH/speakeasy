@@ -88,10 +88,14 @@ above the bottom of the output the compositor chooses, with no keyboard interact
 input region. It opens hidden and attaches a buffer only while shown, so the compositor has nothing
 of the idle pill to draw. Hiding it commits a null buffer, which unmaps the surface but keeps its
 layer surface, then commits again so the compositor configures it while hidden; showing it draws at
-once. Closing Settings with a tray host hides it as GTK and Qt hide a window: GPUI destroys the
-toplevel's roles and commits no buffer, which unmaps the surface while the window, its view, and any
-model or update download stay alive. Showing it gives the same surface a new toplevel with the saved
-title and decoration request, and the compositor's configure maps it again.
+once. When the compositor closes it, for example because its output went away, Speakeasy opens a new
+pill at once. The new pill shows an active session but not feedback that began before it opened, so
+a closed pill never repeats an old result or error. If that one closes too, the next one waits for a
+display change, so a compositor that refuses the pill cannot start a reopen loop. Closing Settings
+with a tray host hides it as GTK and Qt hide a window: GPUI destroys the toplevel's roles and
+commits no buffer, which unmaps the surface while the window, its view, and any model or update
+download stay alive. Showing it gives the same surface a new toplevel with the saved title and
+decoration request, and the compositor's configure maps it again.
 
 On X11 the pill is a pop-up: override-redirect, a notification window type, no keyboard focus, and
 an empty XShape input shape before mapping. It maps only while shown, and closing Settings with a
@@ -100,15 +104,15 @@ through GPUI's `Window::set_window_visible`, on GPUI's own display connection, s
 stays ordered with GPUI's other requests for that window. Stacking over fullscreen windows, mixed
 scaling, and focus need native acceptance on both servers.
 
-Private-Xvfb presentation checks exercise actual Settings rendering, pill startup visibility, input
-shape, and simulated show/hide without microphone, shortcuts, or clipboard access; on a layer-shell
-desktop, unset `WAYLAND_DISPLAY` so they use the private display. They cover queued XCB startup
-events, which must be drained even when checked requests leave no unread bytes in the socket. Opt-in
-X11 input tests start their own Xvfb display, then check there that shortcuts survive a keyboard
-switch, which X announces as a mapping change, that an actual remap stops them, that a chord another
-client already grabs stops them with an error naming the shortcut, and that a first copy owns the
-clipboard. Virtual-desktop checks do not establish compositor, desktop input, or editor
-compatibility.
+Private-Xvfb presentation checks exercise actual Settings rendering, pill startup and reopened
+visibility, input shape, and simulated show/hide without microphone, shortcuts, or clipboard access;
+on a layer-shell desktop, unset `WAYLAND_DISPLAY` so they use the private display. They cover queued
+XCB startup events, which must be drained even when checked requests leave no unread bytes in the
+socket. Opt-in X11 input tests start their own Xvfb display, then check there that shortcuts survive
+a keyboard switch, which X announces as a mapping change, that an actual remap stops them, that a
+chord another client already grabs stops them with an error naming the shortcut, and that a first
+copy owns the clipboard. Virtual-desktop checks do not establish compositor, desktop input, or
+editor compatibility.
 
 The StatusNotifier/DBusMenu adapter reuses shared tray states and menu policy, with subscriptions
 limited to relevant host changes. [Tray and Settings](interaction-design.md#tray-and-settings)

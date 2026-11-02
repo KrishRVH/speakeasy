@@ -4,8 +4,8 @@ use anyhow::anyhow;
 #[cfg(not(target_os = "windows"))]
 use gpui::PathPromptOptions;
 use gpui::{
-    App, AppContext, Bounds, Pixels, Size, TitlebarOptions, Window, WindowBounds, WindowHandle,
-    WindowOptions, px, size,
+    App, AppContext, Bounds, Global, Pixels, Size, Subscription, Task, TitlebarOptions, Window,
+    WindowBounds, WindowHandle, WindowOptions, px, size,
 };
 use speakeasy_platform::FileFilter;
 
@@ -80,6 +80,94 @@ pub(crate) fn reveal_shows(cx: &mut App) {
             .global::<Services>()
             .report(&anyhow!("Cannot open Shows: {error:#}")),
     }
+}
+
+struct PillPresence {
+    surface: PillSurface,
+    reopening: Option<Task<()>>,
+    _closed: Subscription,
+    _displays: Subscription,
+}
+
+impl Global for PillPresence {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PillSurface {
+    Shown,
+    Reopened,
+    Lost,
+}
+
+impl PillSurface {
+    fn closed(self) -> Self {
+        match self {
+            Self::Shown => Self::Reopened,
+            Self::Reopened | Self::Lost => Self::Lost,
+        }
+    }
+
+    fn displays_changed(self, any_display: bool) -> Self {
+        match self {
+            Self::Lost if any_display => Self::Reopened,
+            Self::Lost => Self::Lost,
+            Self::Shown | Self::Reopened => Self::Shown,
+        }
+    }
+}
+
+pub(crate) fn keep_pill_presented(cx: &mut App) {
+    let closed = cx.on_window_closed(|cx, window| {
+        if cx
+            .try_global::<Services>()
+            .is_some_and(|services| services.pill.window_id() == window)
+        {
+            settle_pill(PillSurface::closed, cx);
+        }
+    });
+    let displays = cx.observe_displays(|_, cx| {
+        let any_display = !cx.displays().is_empty();
+        settle_pill(|surface| surface.displays_changed(any_display), cx);
+    });
+    cx.set_global(PillPresence {
+        surface: PillSurface::Shown,
+        reopening: None,
+        _closed: closed,
+        _displays: displays,
+    });
+}
+
+fn settle_pill(step: impl FnOnce(PillSurface) -> PillSurface, cx: &mut App) {
+    let surface = step(cx.global::<PillPresence>().surface);
+    let reopening = (surface == PillSurface::Reopened).then(|| {
+        cx.spawn(async |cx| {
+            cx.update(|cx| {
+                if let Err(error) = reopen_pill(cx) {
+                    cx.global_mut::<PillPresence>().surface = PillSurface::Lost;
+                    cx.global::<Services>()
+                        .report(&anyhow!("Cannot reopen the pill: {error:#}"));
+                }
+            });
+        })
+    });
+    let presence = cx.global_mut::<PillPresence>();
+    presence.surface = surface;
+    if reopening.is_some() {
+        presence.reopening = reopening;
+    }
+}
+
+fn reopen_pill(cx: &mut App) -> anyhow::Result<()> {
+    let services = cx.global::<Services>();
+    let pill = crate::pill::open(
+        services.output.subscribe(),
+        services.meter.subscribe(),
+        services.config.prefers_reduced_motion(),
+        services.config.theme,
+        crate::pill::Opening::Reopened,
+        cx,
+    )?;
+    cx.global_mut::<Services>().pill = pill;
+    Ok(())
 }
 
 pub(crate) fn quit_after_settings(cx: &mut App) {
@@ -300,6 +388,33 @@ mod tests {
             tray_hint_marker(settings, LaunchMode::DemoTray),
             None,
             "A tray preview wrote beside the user's settings"
+        );
+    }
+
+    #[test]
+    fn a_closed_pill_reopens_once_until_the_displays_change() {
+        let reopened = PillSurface::Shown.closed();
+        assert_eq!(reopened, PillSurface::Reopened, "The pill stayed closed");
+        let lost = reopened.closed();
+        assert_eq!(
+            lost,
+            PillSurface::Lost,
+            "A compositor that keeps closing the pill made it reopen in a loop"
+        );
+        assert_eq!(
+            lost.displays_changed(false),
+            PillSurface::Lost,
+            "The pill reopened with no display to show it"
+        );
+        assert_eq!(
+            lost.displays_changed(true),
+            PillSurface::Reopened,
+            "The pill stayed closed after a display arrived"
+        );
+        assert_eq!(
+            reopened.displays_changed(true).closed(),
+            PillSurface::Reopened,
+            "A display change did not let the pill reopen again"
         );
     }
 }

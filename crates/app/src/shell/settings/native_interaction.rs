@@ -31,7 +31,14 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                 let (meter, levels) = watch::channel(Meter::default());
                 let (canvas, _) = watch::channel(Canvas::default());
                 let pill = cx.update(|cx| {
-                    crate::pill::open(updates.clone(), levels, true, config.theme, cx)
+                    crate::pill::open(
+                        updates.clone(),
+                        levels,
+                        true,
+                        config.theme,
+                        crate::pill::Opening::Startup,
+                        cx,
+                    )
                 })?;
                 cx.update(|cx| {
                     cx.set_global(Services::new(

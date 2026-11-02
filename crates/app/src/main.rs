@@ -195,6 +195,7 @@ fn launch(
             levels,
             config.prefers_reduced_motion(),
             config.theme,
+            pill::Opening::Startup,
             cx,
         ) {
             Ok(pill) => pill,
@@ -221,6 +222,7 @@ fn launch(
             instance,
             mode,
         ));
+        shell::keep_pill_presented(cx);
         if let Some(requests) = requests {
             cx.update_global::<Services, _>(|services, cx| {
                 services.listen_for_requests(requests, cx);

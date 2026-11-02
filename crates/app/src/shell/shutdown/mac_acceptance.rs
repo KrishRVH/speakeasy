@@ -108,7 +108,14 @@ fn start(mode: Mode, main: MainThreadMarker, cx: &mut App) -> anyhow::Result<()>
     let (output, snapshots) = watch::channel(Snapshot::default());
     let (meter, levels) = watch::channel(Meter::default());
     let (canvas, _ink) = watch::channel(crate::show::Canvas::default());
-    let pill = crate::pill::open(snapshots, levels, true, config.theme, cx)?;
+    let pill = crate::pill::open(
+        snapshots,
+        levels,
+        true,
+        config.theme,
+        crate::pill::Opening::Startup,
+        cx,
+    )?;
     pill.update(cx, |view, _, cx| {
         view.show_tray_hint(cx);
     })?;

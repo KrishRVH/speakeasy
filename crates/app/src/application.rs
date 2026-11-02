@@ -1,4 +1,4 @@
-use gpui::{Application, Global, Platform};
+use gpui::{Application, Global, Platform, QuitMode};
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Presentation {
@@ -42,6 +42,6 @@ pub(crate) fn new() -> anyhow::Result<(Application, Presentation)> {
         target_os = "macos" => std::rc::Rc::new(gpui_macos::MacPlatform::new(false)),
         target_os = "linux" => gpui_linux::linux_platform(presentation.windowing()),
     };
-    let application = Application::with_platform(platform);
+    let application = Application::with_platform(platform).with_quit_mode(QuitMode::Explicit);
     Ok((application, presentation))
 }

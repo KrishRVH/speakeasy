@@ -39,7 +39,7 @@ docker run --rm --volume "$PWD:$PWD:ro" --workdir "$PWD" ubuntu:26.04 \
         export VK_ICD_FILENAMES="${icd[0]}" LP_NUM_THREADS=4 XDG_SESSION_TYPE=x11
         for scale in 1 2; do
             GPUI_X11_SCALE_FACTOR="$scale" xvfb-run -a -s "-screen 0 1280x720x24" \
-                "$1" idle_native_pill_ --ignored --test-threads=1
+                "$1" native_pill_ --ignored --test-threads=1
         done
         GPUI_X11_SCALE_FACTOR=1 xvfb-run -a -s "-screen 0 1280x900x24" \
             "$1" native_show_review_ --ignored --test-threads=1

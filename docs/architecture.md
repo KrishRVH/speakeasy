@@ -239,9 +239,10 @@ module unless a test file is named.
   [shutdown.rs](../crates/app/src/shell/shutdown.rs), [save.rs](../crates/app/src/shell/save.rs),
   [window.rs](../crates/app/src/shell/window.rs), and [main.rs](../crates/app/src/main.rs). Mac
   native quit requests enter the same drain through GPUI's termination delegate. A pending request
-  cannot bypass cleanup by arriving again; only the drained owner approves termination. Requests
-  nested inside a foreground task or application borrow are canceled before draining, so their
-  native call can return. This can cancel a macOS logout request. The opt-in
+  cannot bypass cleanup by arriving again; only the drained owner approves termination. GPUI's quit
+  after the last window closes is off, so a compositor closing the pill cannot skip the drain.
+  Requests nested inside a foreground task or application borrow are canceled before draining, so
+  their native call can return. This can cancel a macOS logout request. The opt-in
   [Mac acceptance](../crates/app/src/shell/shutdown/mac_acceptance.rs) holds an accepted Show write
   across external, nested, repeated, and app-owned quit, checking foreground frames and instance
   release without devices or input. [save/tests.rs](../crates/app/src/shell/save/tests.rs) checks
