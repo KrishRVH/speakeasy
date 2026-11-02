@@ -118,18 +118,11 @@ impl Case {
 }
 
 fn push_cased(output: &mut String, character: char, uppercase: bool) {
+    let alphanumeric = |cased: &char| cased.is_alphanumeric();
     if uppercase {
-        output.extend(
-            character
-                .to_uppercase()
-                .filter(|character| character.is_alphanumeric()),
-        );
+        output.extend(character.to_uppercase().filter(alphanumeric));
     } else {
-        output.extend(
-            character
-                .to_lowercase()
-                .filter(|character| character.is_alphanumeric()),
-        );
+        output.extend(character.to_lowercase().filter(alphanumeric));
     }
 }
 

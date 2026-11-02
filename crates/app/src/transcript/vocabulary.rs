@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fmt};
+use std::{cmp::Reverse, collections::HashSet, fmt};
 
 use anyhow::ensure;
 use serde::{Deserialize, Serialize};
@@ -7,6 +7,9 @@ use speakeasy_show::{Narration, Word};
 pub(crate) const LIMIT: usize = 200;
 const PHRASE_LIMIT: usize = 64;
 const WORD_LIMIT: usize = 6;
+const PUNCTUATION: [char; 19] = [
+    '.', ',', '!', '?', ';', ':', '…', '(', ')', '[', ']', '{', '}', '"', '\'', '“', '”', '‘', '’',
+];
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -41,7 +44,7 @@ pub(crate) fn validate(rules: &[Correction]) -> anyhow::Result<()> {
         ensure!(
             rule.heard
                 .split_whitespace()
-                .all(|word| core(word) == word && !word.is_empty()),
+                .all(|word| word.trim_matches(PUNCTUATION) == word),
             "Correction {row}: omit surrounding punctuation from the phrase you say."
         );
         let heard: Vec<_> = rule
@@ -66,16 +69,16 @@ impl<'a> Vocabulary<'a> {
         let mut rules: Vec<_> = rules
             .iter()
             .map(|rule| {
-                (
-                    rule.heard
-                        .split_whitespace()
-                        .map(str::to_lowercase)
-                        .collect::<Vec<_>>(),
-                    rule.written.trim(),
-                )
+                let heard: Vec<_> = rule
+                    .heard
+                    .split_whitespace()
+                    .map(str::to_lowercase)
+                    .collect();
+                (heard, rule.written.trim())
             })
+            .filter(|(heard, _)| !heard.is_empty())
             .collect();
-        rules.sort_by_key(|(heard, _)| std::cmp::Reverse(heard.len()));
+        rules.sort_by_key(|(heard, _)| Reverse(heard.len()));
         Self { rules }
     }
 
@@ -84,18 +87,21 @@ impl<'a> Vocabulary<'a> {
             return text.to_owned();
         }
         let tokens: Vec<_> = text.split_whitespace().collect();
-        let mut output = Vec::new();
+        let mut output = String::with_capacity(text.len());
         let mut rest = tokens.as_slice();
         while let Some((first, tail)) = rest.split_first() {
+            if !output.is_empty() {
+                output.push(' ');
+            }
             if let Some((count, written)) = self.replacement(rest.iter().copied()) {
-                output.push(written);
+                output.push_str(&written);
                 rest = rest.get(count..).unwrap_or_default();
             } else {
-                output.push((*first).to_owned());
+                output.push_str(first);
                 rest = tail;
             }
         }
-        output.join(" ")
+        output
     }
 
     pub(crate) fn narration(&self, narration: Narration) -> Narration {
@@ -129,70 +135,32 @@ impl<'a> Vocabulary<'a> {
         &self,
         tokens: impl Iterator<Item = &'b str> + Clone,
     ) -> Option<(usize, String)> {
-        for (heard, written) in &self.rules {
+        self.rules.iter().find_map(|(heard, written)| {
+            let last = heard.len().saturating_sub(1);
             let mut words = tokens.clone();
-            let mut prefix = "";
-            let mut suffix = "";
-            let matches = heard.iter().enumerate().all(|(index, expected)| {
-                let Some(word) = words.next() else {
-                    return false;
-                };
-                let spoken = core(word);
-                if spoken.to_lowercase() != *expected {
-                    return false;
+            let (mut prefix, mut suffix) = ("", "");
+            for (index, expected) in heard.iter().enumerate() {
+                let word = words.next()?;
+                let rest = word.trim_start_matches(PUNCTUATION);
+                let spoken = rest.trim_end_matches(PUNCTUATION);
+                let before = word.strip_suffix(rest)?;
+                let after = rest.strip_prefix(spoken)?;
+                if spoken.to_lowercase() != *expected
+                    || (index > 0 && !before.is_empty())
+                    || (index < last && !after.is_empty())
+                {
+                    return None;
                 }
-                let leading = word
-                    .len()
-                    .saturating_sub(word.trim_start_matches(punctuation).len());
-                let trailing = leading.saturating_add(spoken.len());
-                let before = word.get(..leading).unwrap_or_default();
-                let after = word.get(trailing..).unwrap_or_default();
                 if index == 0 {
                     prefix = before;
-                } else if !before.is_empty() {
-                    return false;
                 }
-                if index.saturating_add(1) == heard.len() {
+                if index == last {
                     suffix = after;
-                } else if !after.is_empty() {
-                    return false;
                 }
-                true
-            });
-            if matches && !heard.is_empty() {
-                return Some((heard.len(), format!("{prefix}{written}{suffix}")));
             }
-        }
-        None
+            Some((heard.len(), format!("{prefix}{written}{suffix}")))
+        })
     }
-}
-
-fn core(word: &str) -> &str {
-    word.trim_matches(punctuation)
-}
-
-fn punctuation(ch: char) -> bool {
-    matches!(
-        ch,
-        '.' | ','
-            | '!'
-            | '?'
-            | ';'
-            | ':'
-            | '…'
-            | '('
-            | ')'
-            | '['
-            | ']'
-            | '{'
-            | '}'
-            | '"'
-            | '\''
-            | '“'
-            | '”'
-            | '‘'
-            | '’'
-    )
 }
 
 #[cfg(test)]
