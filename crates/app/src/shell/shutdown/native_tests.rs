@@ -19,69 +19,68 @@ fn handoff(force_native_quit: bool) -> anyhow::Result<()> {
     let (release, held) = async_channel::bounded(1);
     let configuration = settings.clone();
     let (handoff, ready) = mpsc::channel();
-    crate::application::new()
-        .unwrap()
-        .with_assets(crate::icons::Icons)
-        .run(move |cx| {
-            crate::load_brand_font(cx);
-            let config = Config::default();
-            let (output, snapshots) = watch::channel(Snapshot::default());
-            let (meter, levels) = watch::channel(Meter::default());
-            let (canvas, _ink) = watch::channel(crate::show::Canvas::default());
-            let pill =
-                crate::pill::open(snapshots, levels, true, config.theme, cx).expect("owned pill");
-            let (instance, _requests) = acquired;
-            cx.set_global(Services::new(
-                configuration,
-                false,
-                config,
-                output,
-                meter,
-                canvas,
-                pill,
-                Some(instance),
-                LaunchMode::DemoTray,
-            ));
-            let _accepted = cx
-                .global_mut::<Services>()
-                .show_edits
-                .held_until(held)
-                .expect("held Show write");
-            let on_quit = release.clone();
-            cx.on_app_quit(move |cx| {
-                if force_native_quit {
-                    on_quit.try_send(()).expect("release forced teardown");
-                }
-                crate::release_services(cx, handoff.clone())
+    let (application, presentation) = crate::application::new().unwrap();
+    application.with_assets(crate::icons::Icons).run(move |cx| {
+        cx.set_global(presentation);
+        crate::load_brand_font(cx);
+        let config = Config::default();
+        let (output, snapshots) = watch::channel(Snapshot::default());
+        let (meter, levels) = watch::channel(Meter::default());
+        let (canvas, _ink) = watch::channel(crate::show::Canvas::default());
+        let pill =
+            crate::pill::open(snapshots, levels, true, config.theme, cx).expect("owned pill");
+        let (instance, _requests) = acquired;
+        cx.set_global(Services::new(
+            configuration,
+            false,
+            config,
+            output,
+            meter,
+            canvas,
+            pill,
+            Some(instance),
+            LaunchMode::DemoTray,
+        ));
+        let _accepted = cx
+            .global_mut::<Services>()
+            .show_edits
+            .held_until(held)
+            .expect("held Show write");
+        let on_quit = release.clone();
+        cx.on_app_quit(move |cx| {
+            if force_native_quit {
+                on_quit.try_send(()).expect("release forced teardown");
+            }
+            crate::release_services(cx, handoff.clone())
+        })
+        .detach();
+        request_install(candidate, cx);
+        assert!(
+            matches!(
+                cx.global::<Services>().installation,
+                Some(Installation::Waiting(_))
+            ),
+            "installation cannot arm synchronously before cleanup"
+        );
+        if force_native_quit {
+            cx.quit();
+        } else {
+            request_quit(cx);
+            cx.spawn(async move |cx| {
+                cx.update(|cx| {
+                    assert!(
+                        matches!(
+                            cx.global::<Services>().installation,
+                            Some(Installation::Waiting(_))
+                        ),
+                        "accepted writes still block installation"
+                    );
+                });
+                release.try_send(()).expect("finish accepted write");
             })
             .detach();
-            request_install(candidate, cx);
-            assert!(
-                matches!(
-                    cx.global::<Services>().installation,
-                    Some(Installation::Waiting(_))
-                ),
-                "installation cannot arm synchronously before cleanup"
-            );
-            if force_native_quit {
-                cx.quit();
-            } else {
-                request_quit(cx);
-                cx.spawn(async move |cx| {
-                    cx.update(|cx| {
-                        assert!(
-                            matches!(
-                                cx.global::<Services>().installation,
-                                Some(Installation::Waiting(_))
-                            ),
-                            "accepted writes still block installation"
-                        );
-                    });
-                    release.try_send(()).expect("finish accepted write");
-                })
-                .detach();
-            }
-        });
+        }
+    });
     let replacement = Instance::acquire(&settings)?.expect("instance released before handoff");
     let received = ready.try_recv().ok();
     if force_native_quit {

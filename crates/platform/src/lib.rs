@@ -24,7 +24,9 @@ mod windows;
 #[cfg(target_os = "linux")]
 use self::linux as native;
 #[cfg(target_os = "linux")]
-pub use self::linux::{APPLICATION_ID, NativeTray, TrayAction, TrayPresentation};
+pub use self::linux::{
+    APPLICATION_ID, DisplayServer, NativeTray, TrayAction, TrayPresentation, display_server,
+};
 #[cfg(target_os = "macos")]
 use self::macos as native;
 #[cfg(target_os = "windows")]

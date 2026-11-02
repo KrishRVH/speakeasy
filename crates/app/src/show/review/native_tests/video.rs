@@ -13,17 +13,15 @@ fn native_show_video_review_scrubs_steps_and_releases_its_reader() -> anyhow::Re
         .build()?;
     let _entered = runtime.enter();
     let (completed, outcome) = std::sync::mpsc::channel();
-    crate::application::new()
-        .unwrap()
-        .with_assets(crate::icons::Icons)
-        .run(move |cx| {
-            crate::load_brand_font(cx);
-            cx.spawn(async move |cx| {
-                completed.send(exercise_video(cx).await).unwrap();
-                cx.update(|cx| cx.quit());
-            })
-            .detach();
-        });
+    let (application, _) = crate::application::new().unwrap();
+    application.with_assets(crate::icons::Icons).run(move |cx| {
+        crate::load_brand_font(cx);
+        cx.spawn(async move |cx| {
+            completed.send(exercise_video(cx).await).unwrap();
+            cx.update(|cx| cx.quit());
+        })
+        .detach();
+    });
     outcome
         .try_recv()
         .context("Video review acceptance did not complete")?

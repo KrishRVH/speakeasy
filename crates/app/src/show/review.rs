@@ -29,7 +29,7 @@ use tokio::sync::watch;
 
 use super::store::{recall, retention};
 use crate::{
-    gpui_ext::{EntityUpdate, defer_native, follow},
+    gpui_ext::{EntityUpdate, Presence, defer_presence, follow},
     runtime::Snapshot,
     theme::Theme,
 };
@@ -192,19 +192,7 @@ impl Review {
 
     pub(crate) fn reveal(&mut self, window: &Window, cx: &mut Context<'_, Self>) {
         self.refresh(cx);
-        let shows = window.window_handle();
-        self.visibility = Some(defer_native(shows, "Shows", cx, move |native, cx| {
-            native.set_window_visible(true);
-            cx.update(|cx| {
-                cx.activate(true);
-                #[cfg(target_os = "linux")]
-                #[expect(
-                    clippy::let_underscore_must_use,
-                    reason = "A Shows window that closed after mapping has nothing left to raise"
-                )]
-                let _ = cx.update_window(shows, |_, window, _| window.activate_window());
-            });
-        }));
+        self.visibility = Some(defer_presence(window.window_handle(), Presence::Raised, cx));
     }
 
     pub(crate) fn set_theme(&mut self, theme: Theme, cx: &mut Context<'_, Self>) {

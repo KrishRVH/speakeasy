@@ -30,18 +30,20 @@ app liveness for `AsyncApp`, and `App::shutdown` ordering.
 ## gpui-pre
 
 - `src/window.rs` maps a window only when `WindowOptions::show` asks for it and returns a failed
-  map as an error. Upstream maps every window and panics on failure. The hidden Linux pill must
+  map as an error. Upstream maps every window and panics on failure. The hidden X11 pill must
   receive its nonactivating hints and empty input shape before its first map;
   `idle_native_pill_starts_unmapped_and_can_show_and_hide` fails without this.
 - `src/app.rs` and `src/platform.rs` add the macOS-only `Application::on_quit_requested` and its
   platform hook. The handler runs once, outside any application borrow, and termination waits for,
   or defers to, its `App::quit`. The Mac quit acceptance in CI (`mac_updates`) covers it.
 - `src/window.rs` and `src/platform.rs` add `Window::set_window_visible` and its platform hook,
-  which hides a window without closing it. X11 and Wayland implement it. Upstream has no way to
-  hide a Wayland window, so closing Settings to the tray would drop its view and stop its
-  downloads. The Settings close and reopening rows of
+  which hides a window without closing it. X11 and Wayland implement it, and Speakeasy shows and
+  hides every Linux window through it. Upstream has no way to hide a Wayland window, so closing
+  Settings to the tray dropped its view and stopped its downloads, and the idle layer-shell pill
+  stayed mapped. `idle_native_pill_starts_unmapped_and_can_show_and_hide` covers X11; the Settings
+  close, idle pill, and reopening rows of
   [Linux native acceptance](../docs/linux-implementation.md#native-acceptance-still-required) cover
-  it.
+  Wayland.
 - `Cargo.toml` builds `image` with only the formats GPUI's `ImageFormat` names, dropping the dds,
   exr, ff, hdr, qoi, and tga decoders and rayon. This saves size; it is not a contract.
 
@@ -70,10 +72,12 @@ app liveness for `AsyncApp`, and `App::shutdown` ordering.
   fail, reads find nothing, deletes succeed) and drop system notifications, which removes the oo7
   keyring and notify-rust clients and about 30 crates. Speakeasy stores no credentials and posts
   no notifications. `src/linux/system_notifications.rs` is deleted.
-- `src/linux/platform.rs` compiles its pipe reader only with Wayland, so the X11-only build has no
-  dead code.
+- `src/linux/x11/window.rs` and `Cargo.toml` implement `set_input_region` with an XShape input
+  shape, as Wayland's input region already does; upstream X11 ignores it. The X11 pill passes
+  through every click; `idle_native_pill_starts_unmapped_and_can_show_and_hide` fails without this.
 - `src/linux/x11/window.rs` implements `PlatformWindow::set_visible` with MapWindow and UnmapWindow
   on GPUI's own connection; upstream X11 ignores it.
+  `idle_native_pill_starts_unmapped_and_can_show_and_hide` fails without this.
 - `src/linux/wayland/window.rs` implements `PlatformWindow::map_window` and `set_visible`. A window
   opens hidden and attaches a buffer only while shown; `map_window` shows one opened with `show`.
   Hiding a parentless toplevel does as GTK and Qt do: it destroys the decoration, toplevel, and
@@ -82,7 +86,8 @@ app liveness for `AsyncApp`, and `App::shutdown` ordering.
   configure. Hiding a layer surface commits a null buffer, which unmaps it but keeps its role
   object, then commits again so the compositor configures it while hidden; showing draws at once.
   A configure leaves a hidden window's visibility alone. Dialogs, child windows, and popups ignore
-  it.
+  it. Under `WAYLAND_DEBUG=client` on a layer-shell compositor such as sway, the idle `--demo` pill
+  attaches no null buffer without the layer surface case.
 
 ## gpui-pre-wgpu
 

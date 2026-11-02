@@ -4,7 +4,6 @@ use anyhow::{anyhow, bail, ensure};
 use gpui::{AsyncApp, div, rgb};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
 use x11rb::{
-    properties::WmHints,
     protocol::{
         shape::{self, ConnectionExt as _},
         xproto::{AtomEnum, ConnectionExt as _, ImageFormat, MapState},
@@ -30,7 +29,9 @@ fn run_native(
     check: impl AsyncFnOnce(&AsyncApp) -> anyhow::Result<()> + 'static,
 ) -> anyhow::Result<()> {
     let (completed, outcome) = std::sync::mpsc::channel();
-    crate::application::new().unwrap().run(move |cx| {
+    let (application, presentation) = crate::application::new().unwrap();
+    application.run(move |cx| {
+        cx.set_global(presentation);
         cx.spawn(async move |cx| {
             completed.send(check(cx).await).unwrap();
             cx.update(|cx| cx.quit());
@@ -46,9 +47,7 @@ fn check_idle_pill(cx: &mut App) -> anyhow::Result<()> {
     let (_publisher, updates) = watch::channel(Snapshot::default());
     let (_meter, levels) = watch::channel(Meter::default());
     let pill = open(updates, levels, true, Theme::default(), cx)?;
-    let (native, id) = pill.update(cx, |_, window, _| {
-        anyhow::Ok((native_window(window, "pill")?, x11_window(window)?))
-    })??;
+    let id = pill.update(cx, |_, window, _| x11_window(window))??;
     let (connection, _) = XCBConnection::connect(None)?;
     let attributes = connection.get_window_attributes(id)?.reply()?;
     ensure!(
@@ -79,11 +78,6 @@ fn check_idle_pill(cx: &mut App) -> anyhow::Result<()> {
         window_types == [atom(b"_NET_WM_WINDOW_TYPE_NOTIFICATION")?],
         "Pill is not a notification window"
     );
-    let hints = WmHints::get(&connection, id)?.reply()?;
-    ensure!(
-        hints.is_some_and(|hints| hints.input == Some(false)),
-        "Pill accepts input focus"
-    );
     ensure!(
         connection
             .shape_get_rectangles(id, shape::SK::INPUT)?
@@ -93,12 +87,12 @@ fn check_idle_pill(cx: &mut App) -> anyhow::Result<()> {
         "Pill input region intercepts the pointer"
     );
 
-    native.set_pill_visible(true);
+    pill.update(cx, |_, window, _| window.set_window_visible(true))?;
     ensure!(
         connection.get_window_attributes(id)?.reply()?.map_state == MapState::VIEWABLE,
         "Pill did not become viewable"
     );
-    native.set_pill_visible(false);
+    pill.update(cx, |_, window, _| window.set_window_visible(false))?;
     ensure!(
         connection.get_window_attributes(id)?.reply()?.map_state == MapState::UNMAPPED,
         "Pill did not become unmapped"

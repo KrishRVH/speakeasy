@@ -180,7 +180,8 @@ fn launch(
     let onboarding = !mode.is_demo() && shell::onboarding_pending(&path);
     let (output, updates) = watch::channel(snapshot);
     let (meter, levels) = watch::channel(Meter::default());
-    let application = application::new()?.with_assets(icons::Icons);
+    let (application, presentation) = application::new()?;
+    let application = application.with_assets(icons::Icons);
     application.on_reopen(shell::reveal);
     #[cfg(target_os = "macos")]
     application.on_quit_requested(shell::request_quit);
@@ -188,6 +189,7 @@ fn launch(
     let (handoff, ready) = std::sync::mpsc::channel();
     application.run(move |cx| {
         load_brand_font(cx);
+        cx.set_global(presentation);
         let pill = match pill::open(
             updates,
             levels,

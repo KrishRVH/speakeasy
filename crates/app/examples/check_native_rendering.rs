@@ -15,6 +15,7 @@ use gpui::{
     AppContext, AsyncApp, Bounds, PathBuilder, Pixels, Window, WindowBounds, WindowHandle,
     WindowKind, WindowOptions, canvas, div, point, prelude::*, px, rgb, size, svg,
 };
+#[cfg(not(target_os = "linux"))]
 use raw_window_handle::HasWindowHandle;
 
 const TIMEOUT: Duration = Duration::from_secs(3);
@@ -72,7 +73,8 @@ fn main() -> anyhow::Result<()> {
         "Pass --native-gui to opt into opening owned test windows"
     );
     let (completed, outcome) = std::sync::mpsc::channel();
-    application::new()?.with_assets(icons::Icons).run(move |cx| {
+    let (application, _) = application::new()?;
+    application.with_assets(icons::Icons).run(move |cx| {
         cx.spawn(async move |cx| {
             let result = exercise(cx).await;
             #[cfg(target_os = "macos")]
@@ -117,18 +119,14 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         },
         |_, cx| cx.new(|_| Scene::default()),
     )?;
-    let native = window.update(cx, |_, window, _| {
-        let handle = HasWindowHandle::window_handle(window)
-            .map_err(|error| anyhow::anyhow!("Native window handle: {error}"))?;
-        speakeasy_platform::NativeWindow::new(handle)
-    })??;
-    native.configure_pill()?;
+    #[cfg(not(target_os = "linux"))]
+    native(window, cx)?.configure_pill()?;
     #[cfg(target_os = "linux")]
     let sampler = window.update(cx, |_, window, _| linux::Sampler::of(window))??;
     for iteration in 0..CYCLES {
         let draws_path = iteration % 2 == 1;
         window.update(cx, |scene, _, _| scene.draws_path = draws_path)?;
-        native.set_pill_visible(true);
+        set_visible(window, true, cx)?;
         let preceding = window.read_with(cx, |scene, _| scene.renders)?;
         let width = if iteration % 3 == 0 { 64.0 } else { 96.0 };
         window.update(cx, |_, window, _| {
@@ -140,7 +138,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         sampler
             .wait_for_pixels(draws_path, cx.background_executor())
             .await?;
-        native.set_pill_visible(false);
+        set_visible(window, false, cx)?;
         cx.background_executor().timer(PRESENT_SETTLE).await;
     }
     let mut out = io::stdout().lock();
@@ -156,6 +154,37 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         )?;
     }
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn set_visible(
+    window: WindowHandle<Scene>,
+    visible: bool,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<()> {
+    window.update(cx, |_, window, _| window.set_window_visible(visible))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn set_visible(
+    window: WindowHandle<Scene>,
+    visible: bool,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<()> {
+    native(window, cx)?.set_pill_visible(visible);
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn native(
+    window: WindowHandle<Scene>,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<speakeasy_platform::NativeWindow> {
+    window.update(cx, |_, window, _| {
+        let handle = HasWindowHandle::window_handle(window)
+            .map_err(|error| anyhow::anyhow!("Native window handle: {error}"))?;
+        speakeasy_platform::NativeWindow::new(handle)
+    })?
 }
 
 #[expect(

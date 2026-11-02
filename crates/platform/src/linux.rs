@@ -1,3 +1,4 @@
+mod display_server;
 mod ei;
 mod portal;
 mod token;
@@ -19,9 +20,12 @@ use tokio::io::{Interest, unix::AsyncFd};
 use xkbcommon::xkb::Keysym;
 use zbus::MatchRule;
 
-pub use self::tray::{NativeTray, TrayAction, TrayPresentation};
+pub use self::{
+    display_server::{DisplayServer, display_server},
+    tray::{NativeTray, TrayAction, TrayPresentation},
+};
 use super::{
-    DesktopOptions, Input, InputSender, Inserted, Inserter, NativeWindow, OwnedThread,
+    DesktopOptions, Input, InputSender, Inserted, Inserter, OwnedThread,
     insertion::{Insertion, abandon_queued},
 };
 
@@ -230,32 +234,10 @@ fn owner_changes(name: &'static str) -> zbus::Result<MatchRule<'static>> {
         .build())
 }
 
-pub(crate) struct Window {
-    id: u32,
-}
-
-impl Window {
-    pub(crate) fn new(handle: WindowHandle<'_>) -> anyhow::Result<Self> {
-        let id = match handle.as_raw() {
-            RawWindowHandle::Xcb(handle) => handle.window.get(),
-            RawWindowHandle::Xlib(handle) => u32::try_from(handle.window)?,
-            _ => bail!("Linux windows require X11 or Xwayland"),
-        };
-        Ok(Self { id })
-    }
-}
-
-impl NativeWindow {
-    pub fn configure_pill(&self) -> anyhow::Result<()> {
-        x11::configure_pill(self.native.id)
-    }
-
-    pub fn set_pill_visible(&self, visible: bool) {
-        x11::set_visible(self.native.id, visible);
-    }
-
-    pub fn set_window_visible(&self, visible: bool) {
-        x11::set_visible(self.native.id, visible);
+pub(crate) fn check_window(handle: WindowHandle<'_>) -> anyhow::Result<()> {
+    match handle.as_raw() {
+        RawWindowHandle::Xcb(_) | RawWindowHandle::Xlib(_) | RawWindowHandle::Wayland(_) => Ok(()),
+        _ => bail!("Linux windows require Wayland or X11"),
     }
 }
 

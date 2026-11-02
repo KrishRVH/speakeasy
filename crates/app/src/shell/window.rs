@@ -13,10 +13,11 @@ use super::{LaunchMode, Services, settings::Settings};
 #[cfg(target_os = "windows")]
 use crate::gpui_ext::native_window;
 use crate::{
-    gpui_ext::{WindowUpdate, defer_native},
+    gpui_ext::{Presence, WindowUpdate, present},
     show::review::{self, Source},
 };
 
+#[cfg(target_os = "windows")]
 const WINDOW_NAME: &str = "Settings";
 
 pub(crate) fn reveal(cx: &mut App) {
@@ -145,12 +146,18 @@ const DISPLAY_CLEARANCE: Pixels = px(180.0);
 const MIN_HEIGHT: Pixels = px(360.0);
 
 fn window_options(cx: &App) -> WindowOptions {
-    let height = cx
-        .primary_display()
-        .map_or(SETTINGS_SIZE.height, |display| {
-            (display.bounds().size.height - DISPLAY_CLEARANCE)
-                .clamp(MIN_HEIGHT, SETTINGS_SIZE.height)
-        });
+    let display_height = cx.primary_display().map_or_else(
+        || {
+            cx.displays()
+                .iter()
+                .map(|display| display.bounds().size.height)
+                .min()
+        },
+        |display| Some(display.bounds().size.height),
+    );
+    let height = display_height.map_or(SETTINGS_SIZE.height, |display| {
+        (display - DISPLAY_CLEARANCE).clamp(MIN_HEIGHT, SETTINGS_SIZE.height)
+    });
     WindowOptions {
         #[cfg(target_os = "linux")]
         app_id: Some(speakeasy_platform::APPLICATION_ID.into()),
@@ -171,15 +178,16 @@ fn set_visible(settings: WindowHandle<Settings>, visible: bool, cx: &mut App) {
     if !visible {
         settings.update_if_open(cx, |view, _, cx| view.end_practice(cx));
     }
-    let task = defer_native(settings.into(), WINDOW_NAME, cx, move |native, cx| {
-        native.set_window_visible(visible);
-        if visible {
-            cx.update(|cx| cx.activate(true));
-        } else {
+    let presence = if visible {
+        Presence::Raised
+    } else {
+        Presence::Hidden
+    };
+    let task = cx.spawn(async move |cx| {
+        if present(settings.into(), presence, cx) && !visible {
             cx.update(show_tray_hint);
         }
     });
-
     cx.global_mut::<Services>().visibility = Some(task);
 }
 

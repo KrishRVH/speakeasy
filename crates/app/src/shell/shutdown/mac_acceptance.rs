@@ -77,7 +77,8 @@ pub(crate) fn native_quit_check() -> anyhow::Result<()> {
 
 fn exercise(mode: Mode) -> anyhow::Result<()> {
     let main = MainThreadMarker::new().context("Native quit requires the main thread")?;
-    let application = crate::application::new()?.with_assets(crate::icons::Icons);
+    let (application, presentation) = crate::application::new()?;
+    let application = application.with_assets(crate::icons::Icons);
     application.on_quit_requested(|cx| {
         let progress = cx.global_mut::<Progress>();
         if progress.requested {
@@ -87,6 +88,7 @@ fn exercise(mode: Mode) -> anyhow::Result<()> {
         request_quit(cx);
     });
     application.run(move |cx| {
+        cx.set_global(presentation);
         if let Err(error) = start(mode, main, cx) {
             report(Err(error));
             cx.quit();

@@ -103,3 +103,50 @@ pub(crate) fn defer_native(
         }
     })
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Presence {
+    Hidden,
+    Passive,
+    Raised,
+}
+
+pub(crate) fn defer_presence(window: AnyWindowHandle, presence: Presence, cx: &App) -> Task<()> {
+    cx.spawn(async move |cx| {
+        present(window, presence, cx);
+    })
+}
+
+pub(crate) fn present(window: AnyWindowHandle, presence: Presence, cx: &mut AsyncApp) -> bool {
+    let presented = set_presence(window, presence, cx);
+    if presented && presence == Presence::Raised {
+        cx.update(|cx| cx.activate(true));
+    }
+    presented
+}
+
+#[cfg(target_os = "linux")]
+fn set_presence(window: AnyWindowHandle, presence: Presence, cx: &mut AsyncApp) -> bool {
+    cx.update_window(window, |_, window, _| {
+        window.set_window_visible(presence != Presence::Hidden);
+        if presence == Presence::Raised {
+            window.activate_window();
+        }
+    })
+    .is_ok()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn set_presence(window: AnyWindowHandle, presence: Presence, cx: &mut AsyncApp) -> bool {
+    let Ok(Ok(native)) =
+        cx.update_window(window, |_, window, _| native_window(window, "Speakeasy"))
+    else {
+        return false;
+    };
+    match presence {
+        Presence::Hidden => native.set_window_visible(false),
+        Presence::Passive => native.set_pill_visible(true),
+        Presence::Raised => native.set_window_visible(true),
+    }
+    true
+}

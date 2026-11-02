@@ -99,13 +99,17 @@ impl Default for DesktopOptions {
 }
 
 pub struct NativeWindow {
+    #[cfg(not(target_os = "linux"))]
     pub(crate) native: native::Window,
     _ui_thread: PhantomData<*const ()>,
 }
 
 impl NativeWindow {
     pub fn new(handle: WindowHandle<'_>) -> anyhow::Result<Self> {
+        #[cfg(target_os = "linux")]
+        native::check_window(handle)?;
         Ok(Self {
+            #[cfg(not(target_os = "linux"))]
             native: native::Window::new(handle)?,
             _ui_thread: PhantomData,
         })

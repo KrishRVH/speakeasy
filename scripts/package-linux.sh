@@ -43,8 +43,8 @@ install -Dm644 crates/app/assets/JosefinSans-OFL.txt "$app_dir/usr/share/license
 install -Dm644 crates/show/NOTICE.md "$app_dir/usr/share/licenses/speakeasy/NOTICE.md"
 {
   printf 'Architecture: x86_64\nApplication glibc requirement: %s\n' "$required"
-  echo 'Rendering requires X11 or Xwayland and a working Vulkan driver.'
-  echo 'Desktop portals and libei are host services, not bundled.'
+  echo 'Rendering requires a Wayland compositor with layer shell, or X11 or Xwayland, and a working Vulkan driver.'
+  echo 'Desktop portals, libei, and libwayland-client are host services, not bundled.'
   echo 'Speech engines and models are downloaded separately or selected in Settings.'
 } > "$app_dir/BUILD.txt"
 if [[ "$native" == true ]]; then

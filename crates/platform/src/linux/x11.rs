@@ -10,15 +10,11 @@ use async_channel::Receiver;
 use x11rb::{
     connection::Connection,
     errors::ReplyError,
-    properties::WmHints,
     protocol::{
-        ErrorKind, Event, shape,
-        shape::ConnectionExt as _,
-        xinput,
-        xinput::ConnectionExt as _,
+        ErrorKind, Event,
+        xinput::{self, ConnectionExt as _},
         xproto::{self, Atom, ConnectionExt as _, Window},
     },
-    wrapper::ConnectionExt as _,
     xcb_ffi::XCBConnection,
 };
 use xkbcommon::xkb::{KEYSYM_CASE_INSENSITIVE, Keysym, keysym_from_name};
@@ -405,63 +401,6 @@ fn focus_is_external(
         window = next;
     }
     Ok(false)
-}
-
-pub(super) fn configure_pill(window: Window) -> anyhow::Result<()> {
-    let (connection, _) = connect()?;
-    let window_type = intern(&connection, b"_NET_WM_WINDOW_TYPE")?;
-    let notification = intern(&connection, b"_NET_WM_WINDOW_TYPE_NOTIFICATION")?;
-    connection
-        .change_property32(
-            xproto::PropMode::REPLACE,
-            window,
-            window_type,
-            xproto::AtomEnum::ATOM,
-            &[notification],
-        )?
-        .check()?;
-    connection
-        .change_window_attributes(
-            window,
-            &xproto::ChangeWindowAttributesAux::new().override_redirect(1),
-        )?
-        .check()?;
-    WmHints {
-        input: Some(false),
-        ..WmHints::default()
-    }
-    .set(&connection, window)?
-    .check()?;
-
-    connection
-        .shape_rectangles(
-            shape::SO::SET,
-            shape::SK::INPUT,
-            xproto::ClipOrdering::UNSORTED,
-            window,
-            0,
-            0,
-            &[],
-        )?
-        .check()?;
-    Ok(())
-}
-
-pub(super) fn set_visible(window: Window, visible: bool) {
-    let change = || -> anyhow::Result<()> {
-        let (connection, _) = connect()?;
-        if visible {
-            connection.map_window(window)?.check()?;
-        } else {
-            connection.unmap_window(window)?.check()?;
-        }
-        Ok(())
-    };
-    #[expect(
-        clippy::let_underscore_must_use,
-        reason = "The owned window may already be destroyed or its display disconnected during presentation teardown"
-    )]
-    let _ = change();
 }
 
 fn connect() -> anyhow::Result<(XCBConnection, usize)> {

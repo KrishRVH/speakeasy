@@ -572,9 +572,10 @@ sudo apt-get install libasound2-dev libfontconfig1-dev libfreetype6-dev libx11-d
 ## Linux (experimental)
 
 Download the x86_64 AppImage or tar archive from the release. The application targets glibc 2.35 or
-later and needs X11 or Xwayland, Vulkan, and desktop audio support. It shares audio, engines, the
-session owner, Settings and the pill with Windows and Mac. Native GNOME/KDE/X11 acceptance is
-pending; see [implementation and acceptance](docs/linux-implementation.md) for support limits.
+later and needs a Wayland compositor with layer shell (KDE Plasma, sway, Hyprland, niri) or X11 or
+Xwayland, plus Vulkan and desktop audio support. It shares audio, engines, the session owner,
+Settings and the pill with Windows and Mac. Native GNOME/KDE/X11 acceptance is pending; see
+[implementation and acceptance](docs/linux-implementation.md) for support limits.
 
 The defaults are **Ctrl+Super+Space** to hold or double-tap for hands-free and **Ctrl+Super+Escape**
 to cancel. Linux's cancel chord is reserved; bare Escape is not globally captured. Wayland requests
@@ -852,7 +853,8 @@ paused clock exercises gesture deadlines and the five-minute cap.
 - `cargo run --locked -p speakeasy --example check_native_rendering -- --native-gui` opens an owned
   non-activating window, renders an embedded SVG with alternating path and pathless frames, resizes,
   and repeats show/hide. It runs on the process main thread for AppKit. Linux needs a private
-  display, such as `xvfb-run -a`; Windows and Mac use their native desktop. It accesses no
+  display, such as `xvfb-run -a`, and on a layer-shell Wayland desktop `WAYLAND_DISPLAY` unset, as
+  for every Linux owned-window check below; Windows and Mac use their native desktop. It accesses no
   microphone, global hook, or clipboard.
 - `cargo test --locked -p speakeasy native_show_review_ -- --ignored --test-threads=1` on Windows,
   or with `xvfb-run -a` on Linux, checks synthetic Show navigation, damage, edited summaries,

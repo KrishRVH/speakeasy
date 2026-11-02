@@ -20,6 +20,8 @@ arboard.workspace = true
 zbus = { workspace = true, features = ["tokio"] }
 futures-util.workspace = true
 libloading.workspace = true
+# The same system libwayland GPUI loads, so the startup probe meets the compositor GPUI will.
+wayland-client = { workspace = true, features = ["dlopen", "system"] }
 x11rb = { workspace = true, features = ["allow-unsafe-code", "shape", "xinput", "xkb", "xtest"] }
 xkbcommon.workspace = true
 tempfile.workspace = true

@@ -15,7 +15,9 @@ const SETTLE: Duration = Duration::from_millis(100);
 #[ignore = "Opt-in owned windows; Linux requires a private X11 display. No microphone, input, or clipboard"]
 fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::Result<()> {
     let (completed, outcome) = std::sync::mpsc::channel();
-    crate::application::new().unwrap().run(move |cx| {
+    let (application, presentation) = crate::application::new().unwrap();
+    application.run(move |cx| {
+        cx.set_global(presentation);
         cx.spawn(async move |cx| {
             let result = async {
                 let directory = tempfile::tempdir()?;

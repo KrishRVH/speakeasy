@@ -21,6 +21,8 @@ use x11rb::{
     errors::ConnectionError,
     properties::{WmHints, WmSizeHints},
     protocol::{
+        // Speakeasy patch: XShape backs set_input_region.
+        shape::{self, ConnectionExt as _},
         sync,
         xinput::{self, ConnectionExt as _},
         xproto::{self, ClientMessageEvent, ConnectionExt, TranslateCoordinatesReply},
@@ -1837,6 +1839,46 @@ impl PlatformWindow for X11Window {
     fn start_window_resize(&self, edge: ResizeEdge) {
         self.send_moveresize(resize_edge_to_moveresize(edge))
             .log_err();
+    }
+
+    // Speakeasy patch: an XShape input shape restricts input as the Wayland input region does.
+    fn set_input_region(&self, region: Option<&[Bounds<Pixels>]>) {
+        let window = self.0.x_window;
+        let result = match region {
+            None => self.0.xcb.shape_mask(
+                shape::SO::SET,
+                shape::SK::INPUT,
+                window,
+                0,
+                0,
+                x11rb::NONE,
+            ),
+            Some(rects) => {
+                let scale_factor = self.0.state.borrow().scale_factor;
+                let rectangles = rects
+                    .iter()
+                    .map(|rect| {
+                        let rect = rect.to_device_pixels(scale_factor);
+                        xproto::Rectangle {
+                            x: rect.origin.x.0 as i16,
+                            y: rect.origin.y.0 as i16,
+                            width: rect.size.width.0 as u16,
+                            height: rect.size.height.0 as u16,
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                self.0.xcb.shape_rectangles(
+                    shape::SO::SET,
+                    shape::SK::INPUT,
+                    xproto::ClipOrdering::UNSORTED,
+                    window,
+                    0,
+                    0,
+                    &rectangles,
+                )
+            }
+        };
+        check_reply(|| "X11 shape of the input region failed.", result).log_err();
     }
 
     // Speakeasy patch: hiding unmaps the window without closing it, on GPUI's own connection.

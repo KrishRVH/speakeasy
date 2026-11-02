@@ -28,8 +28,8 @@ license = "MIT"
 publish = false
 
 [workspace.dependencies]
-# libloading, tiny-skia, x11rb, and zbus match the majors GPUI brings in, so each compiles once;
-# move them with GPUI.
+# libloading, tiny-skia, wayland-client, x11rb, and zbus match the majors GPUI brings in, so each
+# compiles once; move them with GPUI.
 anyhow = "1.0.104"
 # arboard claims the X11 clipboard through x11rb's pure-Rust resolver, which Speakeasy's own
 # connections avoid (linux/x11.rs `connect`). x11rb 0.13 tries the abstract socket WSLg serves; 0.14
@@ -92,6 +92,7 @@ windows-core = "0.62.2"
 windows-future = "0.3.2"
 windows-sys = "0.61.2"
 unicode-segmentation = "1.13.3"
+wayland-client = "0.31.11"
 x11rb = "0.13.2"
 # Ahead of GPUI's 0.8, which panics on a keymap that holds an interior NUL.
 xkbcommon = "0.9.0"

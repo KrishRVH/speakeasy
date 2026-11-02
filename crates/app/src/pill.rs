@@ -12,8 +12,9 @@ use std::{
 
 use anyhow::Context as _;
 use gpui::{
-    AnyWindowHandle, App, AppContext, Bounds, Size, Task, Window, WindowBackgroundAppearance,
-    WindowBounds, WindowHandle, WindowKind, WindowOptions, point, prelude::*, px, size,
+    AnyWindowHandle, App, AppContext, Bounds, Pixels, Size, Task, Window,
+    WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind, WindowOptions, point,
+    prelude::*, px, size,
 };
 use speakeasy_core::{gesture::RECORDING_LIMIT, motion::Spring};
 use speakeasy_platform::{PILL_HEIGHT, PILL_WIDTH};
@@ -21,7 +22,7 @@ use speakeasy_show::{Ending, NarrationLoss};
 use tokio::sync::watch;
 
 use crate::{
-    gpui_ext::{EntityUpdate, defer_native, follow, native_window},
+    gpui_ext::{EntityUpdate, Presence, defer_presence, follow},
     runtime::{Meter, Phase, Snapshot},
     theme::Theme,
 };
@@ -64,7 +65,9 @@ const _: () = assert!(
     "The capsule must fit the native pill window"
 );
 
-const BOTTOM_CLEARANCE: f32 = 50.0;
+const WINDOW_SIZE: Size<Pixels> = size(px(PILL_WIDTH as f32), px(PILL_HEIGHT as f32));
+
+const BOTTOM_CLEARANCE: Pixels = px(50.0);
 
 const LID_OPEN: f32 = 0.0;
 const LID_AJAR: f32 = 0.62;
@@ -258,9 +261,12 @@ impl Pill {
 
     fn set_visible(&mut self, visible: bool, cx: &App) {
         self.visible = visible;
-        self.visibility = Some(defer_native(self.window, "pill", cx, move |native, _| {
-            native.set_pill_visible(visible);
-        }));
+        let presence = if visible {
+            Presence::Passive
+        } else {
+            Presence::Hidden
+        };
+        self.visibility = Some(defer_presence(self.window, presence, cx));
     }
 
     fn request_deadline_frame(&mut self, window: &Window, cx: &Context<'_, Self>) {
@@ -544,16 +550,7 @@ pub(crate) fn open(
     theme: Theme,
     cx: &mut App,
 ) -> anyhow::Result<WindowHandle<Pill>> {
-    let display = cx.primary_display().context("No display available")?;
-    let screen = display.bounds();
-    let pill_size = size(px(f32::from(PILL_WIDTH)), px(f32::from(PILL_HEIGHT)));
-    let bounds = Bounds::new(
-        point(
-            screen.origin.x + (screen.size.width - pill_size.width) / 2.0,
-            screen.bottom() - pill_size.height - px(BOTTOM_CLEARANCE),
-        ),
-        pill_size,
-    );
+    let (kind, bounds) = placement(cx)?;
     let mut configured = Ok(());
     let pill = cx.open_window(
         WindowOptions {
@@ -563,7 +560,7 @@ pub(crate) fn open(
             titlebar: None,
             focus: false,
             show: false,
-            kind: WindowKind::PopUp,
+            kind,
             is_movable: false,
             is_resizable: false,
             is_minimizable: false,
@@ -574,12 +571,62 @@ pub(crate) fn open(
             window.set_window_title("Speakeasy pill");
 
             window.on_window_should_close(cx, |_, _| false);
-            configured = native_window(window, "pill").and_then(|native| native.configure_pill());
+            configured = configure(window);
             cx.new(|cx| Pill::new(updates, levels, reduced_motion, theme, window, cx))
         },
     )?;
     configured?;
     Ok(pill)
+}
+
+fn placement(cx: &App) -> anyhow::Result<(WindowKind, Bounds<Pixels>)> {
+    #[cfg(target_os = "linux")]
+    match cx
+        .try_global::<crate::application::Presentation>()
+        .context("Speakeasy chose no display server before opening the pill")?
+        .display_server
+    {
+        speakeasy_platform::DisplayServer::Wayland => {
+            use gpui::layer_shell::{Anchor, KeyboardInteractivity, Layer, LayerShellOptions};
+            let overlay = LayerShellOptions {
+                namespace: "speakeasy-pill".into(),
+                layer: Layer::Overlay,
+                anchor: Anchor::BOTTOM,
+                margin: Some((px(0.0), px(0.0), BOTTOM_CLEARANCE, px(0.0))),
+                keyboard_interactivity: KeyboardInteractivity::None,
+                ..LayerShellOptions::default()
+            };
+            return Ok((
+                WindowKind::LayerShell(overlay),
+                Bounds::new(point(px(0.0), px(0.0)), WINDOW_SIZE),
+            ));
+        },
+        speakeasy_platform::DisplayServer::X11 => {},
+    }
+    let screen = cx
+        .primary_display()
+        .context("No display available")?
+        .bounds();
+    let origin = point(
+        screen.origin.x + (screen.size.width - WINDOW_SIZE.width) / 2.0,
+        screen.bottom() - WINDOW_SIZE.height - BOTTOM_CLEARANCE,
+    );
+    Ok((WindowKind::PopUp, Bounds::new(origin, WINDOW_SIZE)))
+}
+
+#[cfg(target_os = "linux")]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "Windows' native pill configuration can fail; callers share one signature"
+)]
+fn configure(window: &Window) -> anyhow::Result<()> {
+    window.set_input_region(Some(&[]));
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn configure(window: &Window) -> anyhow::Result<()> {
+    crate::gpui_ext::native_window(window, "pill")?.configure_pill()
 }
 
 fn feedback_remaining(phase: Phase, labeled: bool, since_phase: Duration) -> Option<Duration> {

@@ -75,19 +75,40 @@ Speakeasy never infers it from the focused application.
 
 ## Presentation and lifecycle
 
-GPUI's X11 platform supplies Settings and the pill; [the vendor index](../vendor/README.md) records
-Speakeasy's patches to it. Wayland hosts need Xwayland for presentation. The pill uses notification
-hints, override-redirect, no keyboard focus, and an empty input shape before mapping. These hints
-need native acceptance for stacking, fullscreen, mixed scaling, and focus.
+GPUI's Wayland and X11 platforms supply Settings, Shows, and the pill;
+[the vendor index](../vendor/README.md) records Speakeasy's patches to them. Before opening a
+window, Speakeasy asks the compositor named by `WAYLAND_DISPLAY` for its globals. A compositor that
+offers `zwlr_layer_shell_v1`, such as KDE Plasma, sway, Hyprland, or niri, gets native Wayland
+windows. Otherwise Speakeasy uses the X server named by `DISPLAY`, which is Xwayland on GNOME and
+WSLg. A Wayland desktop with neither, or a session with neither variable, stops startup with an
+error that names the missing piece. The choice holds until Speakeasy quits.
+
+On Wayland the pill is an overlay layer surface in the `speakeasy-pill` namespace, anchored 50 px
+above the bottom of the output the compositor chooses, with no keyboard interactivity and an empty
+input region. It opens hidden and attaches a buffer only while shown, so the compositor has nothing
+of the idle pill to draw. Hiding it commits a null buffer, which unmaps the surface but keeps its
+layer surface, then commits again so the compositor configures it while hidden; showing it draws at
+once. Closing Settings with a tray host hides it as GTK and Qt hide a window: GPUI destroys the
+toplevel's roles and commits no buffer, which unmaps the surface while the window, its view, and any
+model or update download stay alive. Showing it gives the same surface a new toplevel with the saved
+title and decoration request, and the compositor's configure maps it again.
+
+On X11 the pill is a pop-up: override-redirect, a notification window type, no keyboard focus, and
+an empty XShape input shape before mapping. It maps only while shown, and closing Settings with a
+tray host unmaps that window. On both servers the pill, Settings, and Shows show and hide only
+through GPUI's `Window::set_window_visible`, on GPUI's own display connection, so a map or unmap
+stays ordered with GPUI's other requests for that window. Stacking over fullscreen windows, mixed
+scaling, and focus need native acceptance on both servers.
 
 Private-Xvfb presentation checks exercise actual Settings rendering, pill startup visibility, input
-shape, and simulated show/hide without microphone, shortcuts, or clipboard access. They cover queued
-XCB startup events, which must be drained even when checked requests leave no unread bytes in the
-socket. Opt-in X11 input tests start their own Xvfb display, then check there that shortcuts survive
-a keyboard switch, which X announces as a mapping change, that an actual remap stops them, that a
-chord another client already grabs stops them with an error naming the shortcut, and that a first
-copy owns the clipboard. Virtual-desktop checks do not establish compositor, desktop input, or
-editor compatibility.
+shape, and simulated show/hide without microphone, shortcuts, or clipboard access; on a layer-shell
+desktop, unset `WAYLAND_DISPLAY` so they use the private display. They cover queued XCB startup
+events, which must be drained even when checked requests leave no unread bytes in the socket. Opt-in
+X11 input tests start their own Xvfb display, then check there that shortcuts survive a keyboard
+switch, which X announces as a mapping change, that an actual remap stops them, that a chord another
+client already grabs stops them with an error naming the shortcut, and that a first copy owns the
+clipboard. Virtual-desktop checks do not establish compositor, desktop input, or editor
+compatibility.
 
 The StatusNotifier/DBusMenu adapter reuses shared tray states and menu policy, with subscriptions
 limited to relevant host changes. [Tray and Settings](interaction-design.md#tray-and-settings)
@@ -168,12 +189,18 @@ compositor or editor support. See
 [device keymaps](https://libinput.pages.freedesktop.org/libei/api/group__libei-device.html), and
 [sender lifetime](https://libinput.pages.freedesktop.org/libei/api/group__libei-sender.html).
 
-A Wayland surface keeps its first role for its lifetime, so a native Wayland pill must be created as
-a layer-shell surface rather than adapted after creation. GPUI's
-[`WindowKind::LayerShell`](https://docs.rs/crate/gpui-pre/0.3.11/source/src/platform/layer_shell.rs)
-creates one, but Speakeasy presents only through X11/Xwayland, where the pill's hints have native
-acceptance. See
-[Wayland roles](https://wayland.freedesktop.org/docs/html/apa.html#protocol-spec-wl_surface) and
+A Wayland surface keeps its first role for its lifetime, so the pill is created as a layer-shell
+surface through GPUI's
+[`WindowKind::LayerShell`](https://docs.rs/crate/gpui-pre/0.3.11/source/src/platform/layer_shell.rs),
+and the display server is chosen before any window opens: GPUI on X11 opens a layer-shell request as
+an ordinary window instead of failing. The compositor picks the layer surface's output and may close
+it at any time. A surface whose role object is destroyed keeps that role type and may take a new
+object of the same role, which is how a hidden toplevel comes back. A layer surface that commits a
+null buffer is unmapped and returns to its state right after creation; a commit without a buffer
+asks for its next configure, and the first buffer after that maps it again. See
+[Wayland roles](https://wayland.freedesktop.org/docs/html/apa.html#protocol-spec-wl_surface),
+[xdg-shell unmapping](https://gitlab.freedesktop.org/wayland/wayland-protocols/-/blob/main/stable/xdg-shell/xdg-shell.xml),
+and
 [layer-shell](https://raw.githubusercontent.com/swaywm/wlr-protocols/master/unstable/wlr-layer-shell-unstable-v1.xml).
 X11 pill hints follow [EWMH](https://specifications.freedesktop.org/wm/latest/ar01s05.html) and the
 [X Shape protocol](https://xorg.freedesktop.org/archive/X11R7.7/doc/xextproto/shape.html).
@@ -192,16 +219,17 @@ does not establish inference compatibility. Preserve the
 
 ## Native acceptance still required
 
-| Environment                      | Required checks                                                                                                                | Status  |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------- |
-| X11 desktop                      | Hold/double-tap, keymaps, clipboard-manager races, focus and click-through                                                     | Pending |
-| GNOME Wayland                    | Accepted bindings, EI modifier/text support, portal denial/revocation, no-tray behavior, focus loss to a native Wayland editor | Pending |
-| KDE Wayland                      | Accepted bindings, EI state, permission recovery, tray and fullscreen behavior, focus loss to a native Wayland editor          | Pending |
-| Desktop without suitable portals | Command bindings, manual paste, launcher reopening                                                                             | Pending |
-| Baseline distro and CPU          | Public-fixture inference, host driver requirements, engine instruction set                                                     | Pending |
+| Environment                      | Required checks                                                                                                                                                      | Status  |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| X11 desktop                      | Hold/double-tap, keymaps, clipboard-manager races, focus and click-through                                                                                           | Pending |
+| GNOME Wayland                    | Accepted bindings, EI modifier/text support, portal denial/revocation, no-tray behavior, focus loss to a native Wayland editor                                       | Pending |
+| KDE Wayland                      | Accepted bindings, EI state, permission recovery, layer-shell pill over fullscreen windows, Settings close and tray reopening, focus loss to a native Wayland editor | Pending |
+| sway, Hyprland, or niri          | Layer-shell pill placement, idle unmapping, and output hotplug, direct scanout of fullscreen windows beneath the idle pill, Settings close and reopening             | Pending |
+| Desktop without suitable portals | Command bindings, manual paste, launcher reopening                                                                                                                   | Pending |
+| Baseline distro and CPU          | Public-fixture inference, host driver requirements, engine instruction set                                                                                           | Pending |
 
-Also verify mixed-DPI placement, display removal, cancellation cleanup, native Wayland and X11
-editors, terminals, and memory/resource return after Pause and Quit. Measure startup, idle, capture,
-inference, and displayed frame pacing under competing load.
+Also verify mixed-DPI placement, display removal, idle pill unmapping on KDE, cancellation cleanup,
+native Wayland and X11 editors, terminals, and memory/resource return after Pause and Quit. Measure
+startup, idle, capture, inference, and displayed frame pacing under competing load.
 
 WSL checks do not establish desktop routing or native audio quality.

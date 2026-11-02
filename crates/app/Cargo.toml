@@ -51,7 +51,7 @@ tokio = { workspace = true, features = ["net", "test-util"] }
 embed-resource.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
-gpui_linux = { workspace = true, features = ["x11"] }
+gpui_linux = { workspace = true, features = ["wayland", "x11"] }
 # Setup downloads over rustls on ring with the system trust store; http.rs supplies the provider.
 reqwest = { workspace = true, features = ["rustls-no-provider"] }
 rustls.workspace = true

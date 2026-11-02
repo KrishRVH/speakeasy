@@ -11,7 +11,8 @@ use crate::{config::valid_config, theme::Theme};
 fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() -> anyhow::Result<()>
 {
     let (completed, outcome) = std::sync::mpsc::channel();
-    crate::application::new().unwrap().run(move |cx| {
+    let (application, _) = crate::application::new().unwrap();
+    application.run(move |cx| {
         cx.spawn(async move |cx| {
             let result = async {
                 let directory = tempfile::tempdir()?;
