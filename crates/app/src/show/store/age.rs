@@ -26,14 +26,11 @@ pub(crate) fn recorded_at(name: &str) -> Option<SystemTime> {
     if day == 0 || day > *months.get(month_index)? || hour > 23 || minute > 59 || second > 59 {
         return None;
     }
-    let preceding = year.checked_sub(1)?;
-    let leaps = (preceding / 4)
-        .saturating_sub(preceding / 100)
-        .saturating_add(preceding / 400);
-    let years = year.checked_sub(1_970)?;
-    let days = years
+    let leaps = leap_days_through(year.checked_sub(1)?).checked_sub(leap_days_through(1_969))?;
+    let days = year
+        .checked_sub(1_970)?
         .checked_mul(365)?
-        .checked_add(leaps.checked_sub(477)?)?
+        .checked_add(leaps)?
         .checked_add(months.get(..month_index)?.iter().sum::<u64>())?
         .checked_add(day.checked_sub(1)?)?;
     let seconds = days
@@ -42,6 +39,12 @@ pub(crate) fn recorded_at(name: &str) -> Option<SystemTime> {
         .checked_add(minute.checked_mul(60)?)?
         .checked_add(second)?;
     SystemTime::UNIX_EPOCH.checked_add(Duration::from_secs(seconds))
+}
+
+const fn leap_days_through(year: u64) -> u64 {
+    (year / 4)
+        .saturating_sub(year / 100)
+        .saturating_add(year / 400)
 }
 
 pub(crate) fn expires_at(name: &str) -> Option<SystemTime> {
