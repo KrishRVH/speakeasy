@@ -69,26 +69,20 @@ impl Request {
             Origin::Mark(number) => format!("Mark #{number}"),
         };
         let relation = Relation::between(self.at, sampled);
-        if mode == Mode::Video {
-            return format!(
-                "{origin} at {} · video sample at {}, {relation}",
-                Stamp(self.at),
-                Stamp(sampled.into())
-            );
-        }
-        let kind = match (mode, relation) {
-            (Mode::Keyframes, Relation::Later(_)) => "first keyframe",
-            (Mode::Source, Relation::Later(_)) => "first retained sample",
-            (Mode::Keyframes, _) => "keyframe",
-            (Mode::Source, _) => "retained sample",
-            (Mode::Video, _) => "video sample",
+        let first = if matches!(relation, Relation::Later(_)) {
+            "first "
+        } else {
+            ""
+        };
+        let sample = match mode {
+            Mode::Keyframes => format!("{first}keyframe #{}", frame.number),
+            Mode::Source => format!("{first}retained sample #{}", frame.number),
+            Mode::Video => "video sample".into(),
         };
         format!(
-            "{origin} at {} · {kind} #{} at {}, {}",
+            "{origin} at {} · {sample} at {}, {relation}",
             Stamp(self.at),
-            frame.number,
-            Stamp(sampled.into()),
-            relation
+            Stamp(sampled.into())
         )
     }
 }
@@ -101,26 +95,32 @@ pub(super) fn pointer(
     sampled: Duration,
     annotations: crate::show::store::movie::AnnotationState,
 ) -> String {
+    let at = Stamp(frame.at);
     let sample = match mode {
         Mode::Keyframes => format!(
-            "Keyframe #{} at {}: {}",
+            "Keyframe #{} at {at}: {}",
             frame.number,
-            Stamp(frame.at),
-            path(&directory.join(format!("frames/frame-{:02}.png", frame.number)))
+            code(&directory.join(format!("frames/frame-{:02}.png", frame.number)))
         ),
         Mode::Source => format!(
-            "Retained source sample #{} at {} (no annotations).\nUse the installed Speakeasy command (named in summary.md when available) with `show frame SHOW --at {} --out NEW.png --json`; pass this folder as SHOW.",
-            frame.number,
-            Stamp(frame.at),
-            Stamp(frame.at)
+            "Retained source sample #{} at {at} (no annotations).\nUse the installed Speakeasy \
+             command (named in summary.md when available) with `show frame SHOW --at {at} --out \
+             NEW.png --json`; pass this folder as SHOW.",
+            frame.number
         ),
         Mode::Video => {
-            let flag = if annotations.painted() {
-                " --annotated"
-            } else {
-                ""
-            };
-            let command = video_query(frame, sampled).map_or_else(String::new, |at| format!("\nUse the installed Speakeasy command with `show frame SHOW --video{flag} --at {} --out NEW.png --json`; pass this folder as SHOW.", Stamp(at)));
+            let command = video_query(frame, sampled).map_or_else(String::new, |at| {
+                let annotated = if annotations.painted() {
+                    " --annotated"
+                } else {
+                    ""
+                };
+                format!(
+                    "\nUse the installed Speakeasy command with `show frame SHOW \
+                     --video{annotated} --at {} --out NEW.png --json`; pass this folder as SHOW.",
+                    Stamp(at)
+                )
+            });
             format!(
                 "Video sample at {} · {}.{command}",
                 Stamp(sampled.into()),
@@ -132,8 +132,9 @@ pub(super) fn pointer(
         format!("{}\n", request.caption(frame, mode, sampled))
     });
     format!(
-        "Show folder: {}\n{sample}\n{request}A frame shows its own timestamp; nearby samples do not prove a missing moment.\n",
-        path(directory)
+        "Show folder: {}\n{sample}\n{request}A frame shows its own timestamp; nearby samples do \
+         not prove a missing moment.\n",
+        code(directory)
     )
 }
 
@@ -152,10 +153,9 @@ fn video_query(frame: &Frame, sampled: Duration) -> Option<Moment> {
     (requested < decoder_time(end)).then(|| requested.into())
 }
 
-fn path(path: &Path) -> String {
+fn code(path: &Path) -> String {
     let text = path.display().to_string();
     let longest = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
     let fence = "`".repeat(longest.saturating_add(1));
-
     format!("{fence} {text} {fence}")
 }
