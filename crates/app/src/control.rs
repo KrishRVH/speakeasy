@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{config::presets::validate_name, transcript::style::Style};
 
-pub(crate) const VERSION: u8 = 1;
+const VERSION: u8 = 1;
 pub(crate) const MAX_BYTES: usize = 4096;
 pub(crate) const TIMEOUT: Duration = Duration::from_secs(2);
 

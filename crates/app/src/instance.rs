@@ -123,12 +123,11 @@ impl Instance {
                 "Speakeasy is not running or could not be verified. Start or restart it before using this command.",
             );
         };
-        let sent = (|| {
-            let mut frame = vec![CONTROL];
-            write_frame(&mut frame, &bytes)?;
-            stream.write_all(&frame)
-        })();
-        if sent.is_err() {
+        let mut frame = vec![CONTROL];
+        if write_frame(&mut frame, &bytes)
+            .and_then(|()| stream.write_all(&frame))
+            .is_err()
+        {
             return Reply::unknown(CONTROL_DISCONNECTED);
         }
         let mut caller = Caller {
@@ -420,12 +419,9 @@ async fn serve_control(
         .encode()
         .or_else(|_| Reply::unknown(UNCONFIRMED).encode())
         .map_err(|_error| io::ErrorKind::InvalidData)?;
-    let length = u16::try_from(bytes.len()).map_err(|_error| io::ErrorKind::InvalidData)?;
-    let write = async {
-        stream.write_all(&length.to_be_bytes()).await?;
-        stream.write_all(&bytes).await
-    };
-    tokio::time::timeout(IO_TIMEOUT, write)
+    let mut frame = Vec::new();
+    write_frame(&mut frame, &bytes)?;
+    tokio::time::timeout(IO_TIMEOUT, stream.write_all(&frame))
         .await
         .map_err(|_error| io::ErrorKind::TimedOut)?
 }
