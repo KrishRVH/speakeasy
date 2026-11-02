@@ -42,7 +42,7 @@ use windows::{
 };
 use windows_future::{AsyncStatus, IAsyncOperation};
 use windows_sys::Win32::{
-    Foundation::{FALSE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
+    Foundation::{FALSE, HWND, POINT, RECT},
     Graphics::{
         Dwm::{DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute},
         Gdi::{GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint},
@@ -54,13 +54,11 @@ use windows_sys::Win32::{
     UI::{
         HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI},
         Input::KeyboardAndMouse::{VK_LBUTTON, VK_RBUTTON},
-        Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
         WindowsAndMessaging::{
             GA_ROOT, GWL_EXSTYLE, GetAncestor, GetClassNameW, GetCursorPos, GetSystemMetrics,
             HWND_TOPMOST, IsIconic, IsWindow, IsWindowVisible, SM_SWAPBUTTON, SW_HIDE,
             SW_SHOWNOACTIVATE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-            SetWindowPos, ShowWindow, WM_NCCALCSIZE, WM_NCDESTROY, WS_EX_TRANSPARENT,
-            WindowFromPoint,
+            SetWindowPos, ShowWindow, WS_EX_TRANSPARENT, WindowFromPoint,
         },
     },
 };
@@ -748,8 +746,6 @@ pub(crate) fn configure_overlay(window: &NativeWindow, display: Display) -> anyh
     exclude_always(hwnd)?;
 
     window.configure_pill()?;
-
-    ok_or_last_error(unsafe { SetWindowSubclass(hwnd, Some(edge_to_edge), 1, 0) })?;
     let [left, top, ..] = display.edges;
     let [width, height] = display.extent();
     let place = || {
@@ -774,26 +770,6 @@ pub(crate) fn configure_overlay(window: &NativeWindow, display: Display) -> anyh
         place()?;
     }
     Ok(())
-}
-
-unsafe extern "system" fn edge_to_edge(
-    hwnd: HWND,
-    message: u32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-    id: usize,
-    _: usize,
-) -> LRESULT {
-    unsafe {
-        match message {
-            WM_NCCALCSIZE if wparam != 0 => 0,
-            WM_NCDESTROY => {
-                RemoveWindowSubclass(hwnd, Some(edge_to_edge), id);
-                DefSubclassProc(hwnd, message, wparam, lparam)
-            },
-            _ => DefSubclassProc(hwnd, message, wparam, lparam),
-        }
-    }
 }
 
 pub(crate) fn set_overlay_input(window: &NativeWindow, takes_input: bool) {

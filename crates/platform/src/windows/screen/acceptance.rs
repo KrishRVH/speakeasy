@@ -75,10 +75,10 @@ const HANDWRITING_CANVAS: &str = "ShellHandwritingCanvas";
 const BACKDROP_CLASS: PCWSTR = w!("SpeakeasyCaptureBackdrop");
 const PATTERN_CLASS: PCWSTR = w!("SpeakeasyCapturePattern");
 const OVERLAY_CLASS: PCWSTR = w!("SpeakeasyCaptureOverlay");
-const RESCALING_CLASS: PCWSTR = w!("SpeakeasyRescalingOverlay");
+const GPUI_POPUP_CLASS: PCWSTR = w!("SpeakeasyGpuiPopup");
 const SUBJECT_CLASS: PCWSTR = w!("SpeakeasyCaptureSubject");
 
-const GPUI_INSETS: [i32; 4] = [8, 1, 8, 8];
+const GPUI_POPUP_STYLES: [u32; 2] = [0, WS_EX_TOOLWINDOW | WS_EX_TOPMOST];
 
 fn pattern(x: i32, y: i32) -> [u8; 3] {
     if y >= BAND_TOP {
@@ -389,11 +389,11 @@ fn overlay_covers_its_display_edge_to_edge_across_scales() -> anyhow::Result<()>
     per_monitor_aware()?;
     let displays = displays()?;
     let first = displays.first().context("No display")?;
-    let _class = Class::register(RESCALING_CLASS, Some(rescale_like_gpui), null_mut())?;
+    let _class = Class::register(GPUI_POPUP_CLASS, Some(popup_like_gpui), null_mut())?;
     let [left, top, ..] = first.native.edges;
-    let window = Popup::create(
-        RESCALING_CLASS,
-        WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+    let window = Popup::styled(
+        GPUI_POPUP_CLASS,
+        GPUI_POPUP_STYLES,
         [left, top, left.saturating_add(100), top.saturating_add(100)],
     )?;
 
@@ -465,7 +465,7 @@ fn displays() -> anyhow::Result<Vec<screen::Display>> {
     monitors.into_iter().map(describe).collect()
 }
 
-unsafe extern "system" fn rescale_like_gpui(
+unsafe extern "system" fn popup_like_gpui(
     hwnd: HWND,
     message: u32,
     wparam: WPARAM,
@@ -473,13 +473,14 @@ unsafe extern "system" fn rescale_like_gpui(
 ) -> LRESULT {
     match message {
         WM_NCCALCSIZE if wparam != 0 => {
-            let proposed = unsafe { &mut (*(lparam as *mut NCCALCSIZE_PARAMS)).rgrc[0] };
-            let [left, top, right, bottom] = GPUI_INSETS;
-            proposed.left = proposed.left.saturating_add(left);
-            proposed.top = proposed.top.saturating_add(top);
-            proposed.right = proposed.right.saturating_sub(right);
-            proposed.bottom = proposed.bottom.saturating_sub(bottom);
-            0
+            let proposed = lparam as *mut NCCALCSIZE_PARAMS;
+
+            unsafe {
+                let top = (*proposed).rgrc[0].top;
+                let result = DefWindowProcW(hwnd, message, wparam, lparam);
+                (*proposed).rgrc[0].top = top;
+                result
+            }
         },
         WM_DPICHANGED => {
             let [left, top, right, bottom] = edges(unsafe { *(lparam as *const RECT) });
@@ -889,11 +890,7 @@ fn paint_scene(
     set_affinity(backdrop.0, WDA_MONITOR)?;
     backdrop.show();
     replies.try_send(Ok(backdrop.0 as isize))?;
-    let overlay = Popup::create(
-        OVERLAY_CLASS,
-        WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-        [0, 0, 1, 1],
-    )?;
+    let overlay = Popup::styled(OVERLAY_CLASS, GPUI_POPUP_STYLES, [0, 0, 1, 1])?;
 
     let native = unsafe { native_window(overlay.0) }?;
     configure_overlay(&native, layout.overlay)?;
@@ -962,19 +959,23 @@ impl Drop for Class {
 struct Popup(HWND);
 
 impl Popup {
-    fn create(
+    fn create(class: PCWSTR, extended: u32, bounds: [i32; 4]) -> anyhow::Result<Self> {
+        Self::styled(class, [WS_POPUP, extended], bounds)
+    }
+
+    fn styled(
         class: PCWSTR,
-        styles: u32,
+        [style, extended]: [u32; 2],
         [left, top, right, bottom]: [i32; 4],
     ) -> anyhow::Result<Self> {
         let [width, height] = [right.saturating_sub(left), bottom.saturating_sub(top)];
 
         let hwnd = unsafe {
             CreateWindowExW(
-                styles,
+                extended,
                 class,
                 class,
-                WS_POPUP,
+                style,
                 left,
                 top,
                 width,

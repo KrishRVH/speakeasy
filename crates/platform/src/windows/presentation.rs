@@ -1,3 +1,5 @@
+use std::ptr::null_mut;
+
 use anyhow::bail;
 use async_channel::Sender;
 use windows_sys::Win32::{
@@ -18,10 +20,10 @@ use windows_sys::Win32::{
         WindowsAndMessaging::{
             GWL_EXSTYLE, GWL_STYLE, GetForegroundWindow, HWND_TOPMOST, IsWindowVisible, LWA_ALPHA,
             SC_MINIMIZE, SIZE_MINIMIZED, SW_HIDE, SW_RESTORE, SW_SHOWNOACTIVATE, SWP_FRAMECHANGED,
-            SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetForegroundWindow,
+            SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetForegroundWindow,
             SetLayeredWindowAttributes, SetWindowPos, ShowWindow, WM_NCDESTROY, WM_PAINT, WM_SIZE,
-            WM_SYSCOMMAND, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
-            WS_OVERLAPPEDWINDOW, WS_POPUP,
+            WM_SYSCOMMAND, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TRANSPARENT, WS_OVERLAPPEDWINDOW,
+            WS_POPUP,
         },
     },
 };
@@ -55,19 +57,19 @@ impl NativeWindow {
             );
         }
         window.restyle(GWL_EXSTYLE, |style| {
-            style | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT | WS_EX_LAYERED
+            style | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_LAYERED
         });
 
         unsafe {
             ok_or_last_error(SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA))?;
             ok_or_last_error(SetWindowPos(
                 hwnd,
-                HWND_TOPMOST,
+                null_mut(),
                 0,
                 0,
                 0,
                 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
             ))?;
             ok_or_last_error(SetWindowSubclass(hwnd, Some(pill_window), 1, 0))?;
         }
