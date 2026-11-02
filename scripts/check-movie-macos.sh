@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
-if [[ $(uname -s) != Darwin ]]; then
-  echo "This native movie check requires macOS." >&2
+cd "$(dirname "$0")/.."
+if [[ $(uname -s) != Darwin || $# -ne 0 ]]; then
+  echo "Run this native movie check on macOS without arguments." >&2
   exit 1
 fi
-
-command -v ffmpeg > /dev/null
-command -v ffprobe > /dev/null
+if ! command -v ffmpeg > /dev/null || ! command -v ffprobe > /dev/null; then
+  echo "Install FFmpeg, which provides ffmpeg and ffprobe, to generate the synthetic movies." >&2
+  exit 1
+fi
 mkdir -p artifacts
 fixtures=$(mktemp -d artifacts/macos-movie.XXXXXX)
 export SPEAKEASY_MOVIE_FIXTURES="$PWD/$fixtures"
