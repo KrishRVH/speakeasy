@@ -13,7 +13,7 @@ use gpui::{
 use viewport::Viewport;
 
 use crate::{
-    controls::{CORNER, HEIGHT, ring},
+    controls::{CONTROL_TEXT, CORNER, HEIGHT, ring},
     theme::{Theme, alpha},
 };
 
@@ -362,7 +362,7 @@ impl Render for TextField {
             })
             .bg(gpui::rgb(palette.raise))
             .text_color(gpui::rgb(palette.ink))
-            .text_size(px(13.0))
+            .text_size(CONTROL_TEXT)
             .rounded(CORNER)
             .px(px(10.0))
             .py(px(5.0))
@@ -420,7 +420,7 @@ impl Render for TextField {
                         let line =
                             window
                                 .text_system()
-                                .shape_line(text.into(), px(13.0), &runs, None);
+                                .shape_line(text.into(), CONTROL_TEXT, &runs, None);
                         let cursor = line.x_for_index(input.edit.cursor);
                         let range = input.edit.selection();
                         let anchor = if input.edit.reversed() {

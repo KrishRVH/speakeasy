@@ -135,7 +135,8 @@ impl Settings {
                 cfg!(target_os = "macos")
                     && self.config.mac_shortcut != speakeasy_platform::MacShortcut::Function,
                 |card| {
-                    card.child(kit.detail("Hold briefly before adding Space, S, W, or A. Quick combinations keep their usual action.").px(px(20.0)).pb(px(12.0)))
+                    let note = "Hold briefly before adding Space, S, W, or A. Quick combinations keep their usual action.";
+                    card.child(kit.detail(note).px(px(20.0)).pb(px(12.0)))
                 },
             )
             .child(self.practice_panel(ui))
@@ -598,14 +599,14 @@ impl Settings {
                 "Use nemo-speech from NeMo-Speech.cpp and a GGUF speech model.",
             ),
         };
-        let picking = self.file_picker.is_none();
+        let can_choose = self.file_picker.is_none();
         let row = |kind: &'static str, path: &Path, action: Action| {
             div()
                 .flex()
                 .items_center()
                 .gap(px(12.0))
                 .child(kit.label(kind, file_name(path)).flex_1())
-                .child(ui.button_if("Choose…", action, Weight::Secondary, picking))
+                .child(ui.button_if("Choose…", action, Weight::Secondary, can_choose))
         };
         div()
             .flex()

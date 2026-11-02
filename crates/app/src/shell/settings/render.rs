@@ -240,13 +240,12 @@ impl Settings {
 
     fn banner(&self, ui: &Ui<'_>) -> Option<Div> {
         let kit = ui.kit();
-        let actions = || div().flex();
         if self.unreadable {
             return Some(kit.banner(
                 Tone::Warn,
                 "Settings can't be read",
                 unreadable_text(ui.cx),
-                Some(self.reset_controls(ui, "Start fresh…")),
+                Some(self.reset_controls(ui)),
             ));
         }
         if is_demo(ui.cx) {
@@ -254,11 +253,7 @@ impl Settings {
                 Tone::Lamp,
                 "Preview",
                 "Simulated audio. Nothing is recorded or inserted.",
-                Some(actions().child(ui.button(
-                    "Replay preview",
-                    Action::Preview,
-                    Weight::Secondary,
-                ))),
+                Some(div().child(ui.button("Replay preview", Action::Preview, Weight::Secondary))),
             ));
         }
         if self.config.needs_engine() && !self.own_engine && !self.resetting() {
@@ -280,7 +275,7 @@ impl Settings {
                             .child(kit.detail(progress_text(progress)).flex_1())
                             .child(ui.button("Cancel", Action::Setup, Weight::Quiet)),
                     ),
-                None => actions().child(ui.button_if(
+                None => div().child(ui.button_if(
                     "Set up automatically",
                     Action::Setup,
                     Weight::Primary,
@@ -299,7 +294,7 @@ impl Settings {
                 Tone::Warn,
                 "Microphone access is off",
                 microphone_remedy(),
-                Some(actions().child(ui.button(
+                Some(div().child(ui.button(
                     permissions::OPEN,
                     Action::PermissionHelp(permissions::Help::Microphone),
                     Weight::Secondary,
@@ -317,7 +312,7 @@ impl Settings {
                         model.map_or("your model", crate::models::Model::label)
                     ),
                     Some(
-                        actions()
+                        div()
                             .when_some(model, |actions, model| {
                                 actions.child(ui.button(
                                     "Repair",
@@ -353,13 +348,16 @@ impl Settings {
         })
     }
 
-    pub(super) fn reset_controls(&self, ui: &Ui<'_>, label: &'static str) -> Div {
+    pub(super) fn reset_controls(&self, ui: &Ui<'_>) -> Div {
         let enabled = self.can_reset(ui.cx);
         let controls = div().flex().flex_wrap().items_center().gap(px(8.0));
         match self.reset {
-            Reset::Idle => {
-                controls.child(ui.button_if(label, Action::Reset, Weight::Destroy, enabled))
-            },
+            Reset::Idle => controls.child(ui.button_if(
+                "Start fresh…",
+                Action::Reset,
+                Weight::Destroy,
+                enabled,
+            )),
             Reset::Confirming => controls
                 .child(ui.button_if(
                     "Delete settings and downloads",

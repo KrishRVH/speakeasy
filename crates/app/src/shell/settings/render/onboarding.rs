@@ -1,6 +1,6 @@
 use gpui::{AnyElement, Div, FontWeight, SharedString, div, prelude::*, px, rgb};
 
-use super::{Action, Settings, Ui, cycle_focus, dictation::level, fraction, progress_text};
+use super::{Action, Settings, Ui, dictation::level, fraction, progress_text};
 use crate::{
     controls::{Tone, Weight, icon},
     icons,
@@ -48,7 +48,6 @@ impl Settings {
             .size_full()
             .flex()
             .flex_col()
-            .on_key_down(cycle_focus)
             .child(
                 div()
                     .flex_none()
@@ -198,7 +197,7 @@ impl Settings {
                 Tone::Warn,
                 "Settings can't be read",
                 super::unreadable_text(ui.cx),
-                Some(self.reset_controls(ui, "Start fresh…")),
+                Some(self.reset_controls(ui)),
             )
             .into_any_element()
         } else if needs_setup {
