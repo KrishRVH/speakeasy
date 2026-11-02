@@ -1,17 +1,18 @@
-use super::query;
 mod video;
 
 use std::{ffi::OsString, io, path::PathBuf, time::Duration};
 
 use anyhow::Context as _;
-use query::Query;
 use serde::Serialize;
 use speakeasy_show::{
     Manifest, Mark, Moment, Typeface,
     locate::{self, Evidence},
 };
 
-use crate::show::store::{self, address, recall, source};
+use crate::show::{
+    evidence::query::{self, Query},
+    store::{self, address, recall, source},
+};
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Command {

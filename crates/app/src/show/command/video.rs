@@ -3,11 +3,11 @@ use std::{ffi::OsString, io, path::PathBuf, time::Duration};
 use anyhow::Context as _;
 use speakeasy_show::{Moment, Span};
 
-use super::{
-    output,
-    query::{self, Query},
+use super::output;
+use crate::show::{
+    evidence::query::{self, Query},
+    store::{self, address, recall, video},
 };
-use crate::show::store::{self, address, recall, video};
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Command {
