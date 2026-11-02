@@ -77,6 +77,7 @@ fn image_returns_exact_saved_bytes_and_never_falls_back_from_missing_source() ->
         Tool::Image,
         json!({"show": "exact", "at": "0.75"}),
     ))?;
+    assert_eq!(source["location"]["kind"], "time");
     assert_eq!(source["sampleAtMs"], 100);
     assert_eq!(source["requestedAtMs"], 750);
     assert_eq!(source["annotations"], false);
@@ -85,6 +86,7 @@ fn image_returns_exact_saved_bytes_and_never_falls_back_from_missing_source() ->
         Tool::Image,
         json!({"show": "exact", "mark": 1}),
     ))?;
+    assert_eq!(mark["location"]["kind"], "mark");
     assert_eq!(mark["location"]["number"], 1);
     assert_eq!(mark["requestedAtMs"], 500);
     assert_eq!(
@@ -100,6 +102,8 @@ fn image_returns_exact_saved_bytes_and_never_falls_back_from_missing_source() ->
         Tool::Image,
         json!({"show": "exact", "phrase": "PRIVATE_NARRATION", "match": 2}),
     ))?;
+    assert_eq!(phrase["location"]["kind"], "phrase");
+    assert_eq!(phrase["location"]["match"], 2);
     assert_eq!(phrase["requestedAtMs"], 600);
     fs::remove_file(directory.join("source.frames"))?;
     assert_eq!(

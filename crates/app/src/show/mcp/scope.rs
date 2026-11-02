@@ -10,6 +10,8 @@ use crate::show::{
     store::{address::ShowId, recall::Entry},
 };
 
+pub(super) const PAGE: usize = 100;
+
 pub(super) struct Roots(Vec<Root>);
 
 struct Root {
@@ -26,19 +28,13 @@ impl Root {
             return Ok(None);
         };
         let mut inspected = self.directory.clone();
-        let parts = std::iter::once(None).chain(relative.components().map(Some));
-        for part in parts {
-            if let Some(part) = part {
-                if !matches!(part, Component::Normal(_) | Component::CurDir) {
-                    return Err("The Show path contains an invalid component");
-                }
-                inspected.push(part.as_os_str());
+        plain_directory(&inspected)?;
+        for part in relative.components() {
+            if !matches!(part, Component::Normal(_) | Component::CurDir) {
+                return Err("The Show path contains an invalid component");
             }
-            let metadata = fs::symlink_metadata(&inspected)
-                .map_err(|_private| "That exact Show is unavailable")?;
-            if !metadata.is_dir() || metadata.file_type().is_symlink() {
-                return Err("Show paths must stay in directories, without symlinks");
-            }
+            inspected.push(part);
+            plain_directory(&inspected)?;
         }
         let canonical = inspected
             .canonicalize()
@@ -169,9 +165,8 @@ impl Roots {
                 }
             }
         }
-        let truncated = paths.len() > 100;
-        paths.truncate(100);
-        let next = if truncated {
+        let next = if paths.len() > PAGE {
+            paths.truncate(PAGE);
             paths
                 .last()
                 .and_then(|path| path.to_str())
@@ -192,12 +187,21 @@ impl Roots {
     }
 }
 
+fn plain_directory(path: &Path) -> Result<(), &'static str> {
+    let metadata =
+        fs::symlink_metadata(path).map_err(|_private| "That exact Show is unavailable")?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err("Show paths must stay in directories, without symlinks");
+    }
+    Ok(())
+}
+
 fn retain(paths: &mut Vec<PathBuf>, path: PathBuf, after: Option<&Path>) {
     if after.is_none_or(|after| path.as_path() > after)
         && path.to_str().is_some()
         && let Err(position) = paths.binary_search(&path)
     {
         paths.insert(position, path);
-        paths.truncate(101);
+        paths.truncate(PAGE.saturating_add(1));
     }
 }

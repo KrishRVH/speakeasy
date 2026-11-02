@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use speakeasy_show::{Manifest, Narration};
 
-use super::{DISCLOSURE, Roots, protocol};
+use super::{DISCLOSURE, Roots, protocol, scope::PAGE};
 use crate::show::{
     evidence::{
         Inspection, Overview,
@@ -40,7 +40,7 @@ pub(super) fn definitions() -> Value {
     let phrase = json!({"type": "string", "minLength": 1, "maxLength": 2048, "description": "Phrase in recorded narration, requiring word timings; not edited summary text."});
     let annotations = json!({"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false});
     json!([
-        {"name": "show_list", "description": format!("List at most 100 saved Shows inside launch-time roots, with metadata only and a continuation cursor. {DISCLOSURE}"),
+        {"name": "show_list", "description": format!("List at most {PAGE} saved Shows inside launch-time roots, with metadata only and a continuation cursor. {DISCLOSURE}"),
          "inputSchema": {"type": "object", "properties": {"cursor": {"type": "string", "maxLength": 4096}}, "additionalProperties": false}, "annotations": annotations},
         {"name": "show_read", "description": format!("Read one exact Show's edited summary and metadata. Optionally include bounded recorded narration and one time, mark, or phrase lookup. Multiple phrase matches remain ambiguous unless match is given. Text truncation and missing or untimed narration are disclosed. {DISCLOSURE}"),
          "inputSchema": {"type": "object", "properties": {"show": show, "narration": {"type": "boolean", "default": false}, "at": at, "mark": positive, "phrase": phrase, "match": positive}, "required": ["show"], "additionalProperties": false}, "annotations": annotations},
@@ -160,7 +160,12 @@ fn narration(manifest: &Manifest) -> Value {
                     bytes <= TEXT_LIMIT
                 })
                 .collect();
-            json!({"kind": if words.is_empty() { if recording.narration_lost.is_some() { "lost" } else { "silent" } } else { "timed" }, "lost": recording.narration_lost, "words": selected, "totalWords": words.len(), "truncated": selected.len() < words.len()})
+            let kind = match (words.is_empty(), recording.narration_lost) {
+                (false, _) => "timed",
+                (true, Some(_)) => "lost",
+                (true, None) => "silent",
+            };
+            json!({"kind": kind, "lost": recording.narration_lost, "words": selected, "totalWords": words.len(), "truncated": selected.len() < words.len()})
         },
     }
 }
@@ -181,10 +186,11 @@ struct Image {
 fn image(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
     let request: Image = decode(arguments)?;
     let query = lookup(request.at, request.mark, request.phrase, request.occurrence)?;
-    if usize::from(request.sheet.is_some())
-        .saturating_add(usize::from(request.keyframe.is_some()))
-        .saturating_add(usize::from(query.is_some()))
-        != 1
+    if chosen([
+        request.sheet.is_some(),
+        request.keyframe.is_some(),
+        query.is_some(),
+    ]) != 1
     {
         return Err("Choose exactly one sheet, keyframe, time, mark or phrase".to_owned());
     }
@@ -277,10 +283,9 @@ fn lookup(
     phrase: Option<String>,
     occurrence: Option<usize>,
 ) -> Result<Option<Query>, String> {
-    let selectors = usize::from(at.is_some())
-        .saturating_add(usize::from(mark.is_some()))
-        .saturating_add(usize::from(phrase.is_some()));
-    if selectors > 1 || occurrence.is_some() && phrase.is_none() {
+    if chosen([at.is_some(), mark.is_some(), phrase.is_some()]) > 1
+        || occurrence.is_some() && phrase.is_none()
+    {
         return Err("Choose at most one time, mark or phrase; match requires phrase".to_owned());
     }
     if mark == Some(0) || occurrence == Some(0) {
@@ -301,6 +306,10 @@ fn lookup(
         Some(occurrence) => Query::Match { phrase, occurrence },
         None => Query::Phrase(phrase),
     }))
+}
+
+fn chosen(selectors: [bool; 3]) -> usize {
+    selectors.into_iter().filter(|&chosen| chosen).count()
 }
 
 fn decode<T: serde::de::DeserializeOwned>(arguments: Value) -> Result<T, String> {

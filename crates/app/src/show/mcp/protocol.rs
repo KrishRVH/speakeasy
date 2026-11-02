@@ -13,16 +13,11 @@ const LINE_LIMIT: usize = 64 << 10;
 const RESPONSE_LIMIT: usize = 12 << 20;
 
 #[derive(Default)]
-enum Phase {
+enum Protocol {
     #[default]
     New,
     Initializing,
     Ready,
-}
-
-#[derive(Default)]
-struct Protocol {
-    phase: Phase,
 }
 
 pub(super) fn serve(
@@ -125,26 +120,23 @@ impl Protocol {
         let valid_id = id.filter(|id| {
             id.as_str().is_some_and(|id| id.len() <= 1_024) || id.is_i64() || id.is_u64()
         });
-        let method = request.get("method").and_then(Value::as_str);
-        if request.get("jsonrpc").and_then(Value::as_str) != Some("2.0")
-            || method.is_none()
-            || id.is_some() && valid_id.is_none()
-        {
+        let Some(method) = request.get("method").and_then(Value::as_str).filter(|_| {
+            request.get("jsonrpc").and_then(Value::as_str) == Some("2.0")
+                && (id.is_none() || valid_id.is_some())
+        }) else {
             return Some(error(
                 valid_id.cloned().unwrap_or(Value::Null),
                 -32600,
                 "Invalid JSON-RPC request",
                 None,
             ));
-        }
-        let method = method?;
-        if id.is_none() {
-            if method == "notifications/initialized" && !matches!(self.phase, Phase::New) {
-                self.phase = Phase::Ready;
+        };
+        let Some(id) = valid_id.cloned() else {
+            if method == "notifications/initialized" && !matches!(self, Self::New) {
+                *self = Self::Ready;
             }
             return None;
-        }
-        let id = valid_id?.clone();
+        };
         let empty = Map::new();
         let params = match request.get("params") {
             None => &empty,
@@ -164,8 +156,8 @@ impl Protocol {
         let modern = params.get("_meta").is_some_and(|meta| {
             meta.get(VERSION_META).is_some() || meta.get(CAPABILITIES_META).is_some()
         });
-        if modern || !matches!(self.phase, Phase::Ready) || method == "server/discover" {
-            if method == "ping" && !matches!(self.phase, Phase::New) && !modern {
+        if modern || !matches!(self, Self::Ready) || method == "server/discover" {
+            if method == "ping" && !matches!(self, Self::New) && !modern {
                 return Some(success(id, json!({}), false));
             }
             if let Err(failure) = metadata(params) {
@@ -202,14 +194,14 @@ impl Protocol {
                     .unwrap_or_else(|| json!({}));
                 tools::call(roots, tool, arguments)
             },
-            "ping" if !modern && matches!(self.phase, Phase::Ready) => json!({}),
+            "ping" if !modern && matches!(self, Self::Ready) => json!({}),
             _ => return Some(error(id, -32601, "Method not found", None)),
         };
         Some(success(id, result, modern))
     }
 
     fn initialize(&mut self, id: Value, params: &Map<String, Value>) -> Value {
-        if !matches!(self.phase, Phase::New) {
+        if !matches!(self, Self::New) {
             return error(id, -32600, "MCP initialization is already complete", None);
         }
         if !params.get("protocolVersion").is_some_and(Value::is_string)
@@ -226,7 +218,7 @@ impl Protocol {
                 None,
             );
         }
-        self.phase = Phase::Initializing;
+        *self = Self::Initializing;
         success(
             id,
             json!({"protocolVersion": INITIALIZED_VERSION, "capabilities": {"tools": {}}, "serverInfo": server_info(), "instructions": DISCLOSURE}),

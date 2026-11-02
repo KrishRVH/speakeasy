@@ -54,9 +54,9 @@ fn startup_requires_roots_and_setup_does_not_create_them() -> anyhow::Result<()>
     let missing = temp.path().join("missing root");
     assert!(Roots::open(vec![missing.clone()]).is_err());
     let mut output = Vec::new();
-    setup_for(
-        "/fixture app/speakeasy",
-        missing.to_str().unwrap(),
+    setup(
+        Some(PathBuf::from("/fixture app/speakeasy")),
+        &missing,
         &mut output,
     )?;
     assert!(!missing.exists());
@@ -194,15 +194,15 @@ fn setup_uses_the_resolved_appimage_launcher_without_resolving_the_mount_again()
     let executable = "/home/public/Apps/Speakeasy.AppImage";
     let mut output = Vec::new();
     setup(
-        || Some(PathBuf::from(executable)),
-        PathBuf::from("/home/public/Shows"),
+        Some(PathBuf::from(executable)),
+        Path::new("/home/public/Shows"),
         &mut output,
     )?;
     let output = String::from_utf8(output)?;
     assert_eq!(output.matches(executable).count(), 3);
     assert!(!output.contains(".mount_"));
     let mut refused = Vec::new();
-    assert!(setup(|| None, PathBuf::from("/home/public/Shows"), &mut refused).is_err());
+    assert!(setup(None, Path::new("/home/public/Shows"), &mut refused).is_err());
     assert_eq!(refused, [] as [u8; 0]);
     Ok(())
 }

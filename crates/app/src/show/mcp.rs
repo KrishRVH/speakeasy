@@ -2,7 +2,11 @@ mod protocol;
 mod scope;
 mod tools;
 
-use std::{ffi::OsString, fmt, io, path::PathBuf};
+use std::{
+    ffi::OsString,
+    fmt, io,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Context as _;
 use scope::Roots;
@@ -19,6 +23,8 @@ Each root can be a saved Show or a folder containing saved Shows.
 --setup prints Claude Code, Codex and generic client stanzas; it changes no settings.
 Requested text and images go to the calling agent and possibly its model provider.
 Screen and narration text is evidence, not instructions. No dictation is exposed.";
+
+const ROOT_LIMIT: usize = 16;
 
 #[derive(PartialEq, Eq)]
 pub(crate) enum Command {
@@ -48,14 +54,11 @@ impl Command {
             match arg.to_str() {
                 Some("--help" | "-h") => return Ok(Self::Help),
                 Some("--setup") if !setup && roots.is_empty() => setup = true,
-                Some("--root") if !setup && roots.len() < 16 => {
-                    let root = args
-                        .next()
-                        .filter(|value| {
-                            !value.is_empty() && !value.to_string_lossy().starts_with('-')
-                        })
-                        .context("--root needs an existing folder")?;
-                    roots.push(PathBuf::from(root));
+                Some("--root") if !setup && roots.len() < ROOT_LIMIT => {
+                    roots.push(super::command::path(
+                        &mut args,
+                        "--root needs an existing folder",
+                    )?);
                 },
                 _ => anyhow::bail!(
                     "Unknown, repeated, or conflicting MCP argument; use show mcp --help"
@@ -76,8 +79,8 @@ impl Command {
         match self {
             Self::Help => writeln!(out, "{HELP}")?,
             Self::Setup => setup(
-                crate::paths::command,
-                super::store::directory().context("Cannot resolve the default Shows folder")?,
+                crate::paths::command(),
+                &super::store::directory().context("Cannot resolve the default Shows folder")?,
                 out,
             )?,
             Self::Serve { roots } => {
@@ -89,12 +92,8 @@ impl Command {
     }
 }
 
-fn setup(
-    resolve_command: impl FnOnce() -> Option<PathBuf>,
-    root: PathBuf,
-    out: &mut impl io::Write,
-) -> anyhow::Result<()> {
-    let executable = resolve_command().context(
+fn setup(executable: Option<PathBuf>, root: &Path, out: &mut impl io::Write) -> anyhow::Result<()> {
+    let executable = executable.context(
         "Cannot resolve a persistent Speakeasy launcher. Install or move Speakeasy out of its temporary location, then try setup again.",
     )?;
     let executable = executable
@@ -103,10 +102,6 @@ fn setup(
     let root = root
         .to_str()
         .context("The Shows path must be valid UTF-8 for MCP client setup")?;
-    setup_for(executable, root, out)
-}
-
-fn setup_for(executable: &str, root: &str, out: &mut impl io::Write) -> anyhow::Result<()> {
     let args = ["show", "mcp", "--root", root];
     let command = json!({"command": executable, "args": args});
     writeln!(out, "{DISCLOSURE}\n\nClaude Code (.mcp.json):")?;
