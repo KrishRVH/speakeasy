@@ -9,12 +9,14 @@ mod log;
 mod record;
 mod source;
 pub use log::{Log, Take, TakeEvent};
+use record::require;
 pub use source::{Source, SourceError, SourceFrame};
 
 const TILE: usize = 64;
 
 pub const MAX_FRAME_EDGE: u32 = 2_560;
 const PIXEL: usize = 4;
+const DURATION_LIMIT: Moment = Moment::from_millis(360_000);
 
 pub struct Journal {
     samples: Vec<Sample>,
@@ -85,7 +87,7 @@ impl Journal {
     }
 
     #[must_use]
-    pub const fn with_budget(budget: usize) -> Self {
+    pub(crate) const fn with_budget(budget: usize) -> Self {
         Self {
             samples: Vec::new(),
             segments: Vec::new(),
@@ -186,25 +188,12 @@ impl Admission<'_> {
             tiles: tiles(width, height)
                 .enumerate()
                 .filter(|(_, tile)| before.is_none_or(|before| changed(before, &frame, *tile)))
-                .map(|(index, tile)| (index, Version::of(0, &frame, tile).data))
+                .map(|(index, tile)| (index, encode_tile(&frame, tile)))
                 .collect(),
         };
         journal.push(at, &entry);
         journal.latest = Some(frame);
         entry
-    }
-
-    pub fn restore(self, at: Moment, entry: &Entry) -> Result<(), SourceError> {
-        let Self(journal) = self;
-        if !entry.reset
-            && !journal.segments.last().is_some_and(|segment| {
-                segment.width == entry.width && segment.height == entry.height
-            })
-        {
-            return Err(SourceError("checkpoint delta has no preceding frame"));
-        }
-        journal.push(at, entry);
-        Ok(())
     }
 }
 
@@ -228,7 +217,7 @@ impl fmt::Debug for Entry {
 
 impl Entry {
     #[must_use]
-    pub fn bytes(&self) -> usize {
+    pub(crate) fn bytes(&self) -> usize {
         self.tiles.iter().fold(
             9_280_usize.saturating_add(self.tiles.len().saturating_mul(32)),
             |bytes, (_, tile)| bytes.saturating_add(tile.len()),
@@ -237,6 +226,28 @@ impl Entry {
 }
 
 impl Journal {
+    fn restore(&mut self, at: Moment, entry: Option<&Entry>) -> Result<(), SourceError> {
+        if let Some(entry) = entry {
+            require(
+                self.arrived.is_multiple_of(self.stride),
+                "checkpoint frame disagrees with sampling",
+            )?;
+            require(
+                entry.reset
+                    || self.segments.last().is_some_and(|segment| {
+                        segment.width == entry.width && segment.height == entry.height
+                    }),
+                "checkpoint delta has no preceding frame",
+            )?;
+        }
+        if self.admit().is_some()
+            && let Some(entry) = entry
+        {
+            self.push(at, entry);
+        }
+        Ok(())
+    }
+
     fn push(&mut self, at: Moment, entry: &Entry) {
         let at = self.samples.last().map_or(at, |last| {
             at.max(last.at.saturating_add(Duration::from_millis(1)))
@@ -334,27 +345,22 @@ impl Segment {
     }
 }
 
-impl Version {
-    fn of(first: usize, frame: &Image, tile: Tile) -> Self {
-        let mut filtered =
-            Vec::with_capacity(tile.width.saturating_mul(tile.height).saturating_mul(PIXEL));
-        for row in tile_rows(frame, tile) {
-            let mut left = [0_u8; PIXEL];
-            for pixel in row.as_chunks::<PIXEL>().0 {
-                filtered.extend(
-                    pixel
-                        .iter()
-                        .zip(left)
-                        .map(|(byte, before)| byte.wrapping_sub(before)),
-                );
-                left = *pixel;
-            }
-        }
-        Self {
-            first,
-            data: fdeflate::compress_to_vec(&filtered).into(),
+fn encode_tile(frame: &Image, tile: Tile) -> Arc<[u8]> {
+    let mut filtered =
+        Vec::with_capacity(tile.width.saturating_mul(tile.height).saturating_mul(PIXEL));
+    for row in tile_rows(frame, tile) {
+        let mut left = [0_u8; PIXEL];
+        for pixel in row.as_chunks::<PIXEL>().0 {
+            filtered.extend(
+                pixel
+                    .iter()
+                    .zip(left)
+                    .map(|(byte, before)| byte.wrapping_sub(before)),
+            );
+            left = *pixel;
         }
     }
+    fdeflate::compress_to_vec(&filtered).into()
 }
 
 fn restore_tile(data: &[u8], tile: Tile, stride: usize, rgba: &mut [u8]) -> Option<()> {

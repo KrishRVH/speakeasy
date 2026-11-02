@@ -1,7 +1,7 @@
 use std::{fmt, ops::Range};
 
 use super::{
-    Journal, PIXEL,
+    DURATION_LIMIT, Journal, PIXEL,
     record::{Cursor, emit_record, payload, require},
     restore_tile, tiles,
 };
@@ -16,8 +16,6 @@ const FOOTER_BYTES: u64 = 16;
 const INDEX_LIMIT: usize = 64 << 20;
 const FRAME_LIMIT: usize = 4_096;
 const EDGE_LIMIT: u32 = super::MAX_FRAME_EDGE;
-
-const DURATION_LIMIT_MS: u64 = 360_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SourceError(pub(crate) &'static str);
@@ -98,7 +96,7 @@ impl Source {
             .ok_or(SourceError("source checksum is missing"))?;
         let duration = Moment::from_millis(index.wide()?);
         require(
-            duration.as_millis() <= DURATION_LIMIT_MS,
+            duration <= DURATION_LIMIT,
             "source duration exceeds the format limit",
         )?;
         let arrivals = index.wide()?;
@@ -297,7 +295,7 @@ impl Journal {
         require(
             !self.samples.is_empty()
                 && self.samples.len() <= FRAME_LIMIT
-                && duration.as_millis() <= DURATION_LIMIT_MS
+                && duration <= DURATION_LIMIT
                 && self
                     .samples
                     .last()

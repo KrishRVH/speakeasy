@@ -127,6 +127,7 @@ fn every_torn_tail_recovers_only_whole_events_and_keeps_an_honest_ending() {
 fn malformed_events_cannot_change_the_good_prefix_or_print_pixels() {
     let mut take = Take::new(0, surface());
     let mut bytes = Log::header(0, surface()).unwrap();
+    let mut arrivals = Vec::new();
     for n in 0..3_u64 {
         let event = take
             .arrive(Moment::from_millis(n * 100), || {
@@ -134,11 +135,18 @@ fn malformed_events_cannot_change_the_good_prefix_or_print_pixels() {
             })
             .unwrap();
         bytes.extend(Log::encode(&event).unwrap());
+        arrivals.push(event);
     }
     assert_eq!(
         replay(&bytes).unwrap().journal().samples().len(),
         take.journal().samples().len()
     );
+    let mut orphan = Take::new(0, surface());
+    assert!(
+        orphan.apply(&arrivals[1]).is_err(),
+        "A changed-tile frame needs the frame it changes"
+    );
+    assert!(orphan.journal().is_empty());
     let before = take.journal().samples().len();
     let mut fresh = Take::new(100, surface());
     let event = fresh

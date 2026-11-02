@@ -1,12 +1,11 @@
 use super::{
-    Entry, Journal, SourceError,
+    DURATION_LIMIT, Entry, Journal, SourceError,
     record::{Cursor, emit_record, payload, require},
     tiles,
 };
 use crate::{Ending, Image, Moment, Point, Recording, Rect, Signature, Size, Span, Tracker};
 
 const MAGIC: &[u8; 8] = b"SPKLOG02";
-const DURATION_MS: u64 = 360_000;
 const EDGE: usize = super::MAX_FRAME_EDGE as usize;
 
 #[derive(Clone, Debug)]
@@ -93,9 +92,7 @@ impl Take {
     }
 
     pub fn end(&mut self, at: Moment, ending: Ending) -> TakeEvent {
-        self.latest = self
-            .latest
-            .max(Moment::from_millis(at.as_millis().min(DURATION_MS)));
+        self.latest = self.latest.max(at.min(DURATION_LIMIT));
         self.ending = Some(ending);
         TakeEvent::End {
             at: self.latest,
@@ -138,25 +135,7 @@ impl Take {
             },
             TakeEvent::Arrival { at, entry } => {
                 valid_time(*at)?;
-
-                require(
-                    entry.is_none() || self.journal.arrived.is_multiple_of(self.journal.stride),
-                    "checkpoint frame disagrees with sampling",
-                )?;
-                if let Some(entry) = entry {
-                    require(
-                        entry.reset
-                            || self.journal.segments.last().is_some_and(|segment| {
-                                segment.width == entry.width && segment.height == entry.height
-                            }),
-                        "checkpoint delta has no preceding frame",
-                    )?;
-                }
-                if let Some(admission) = self.journal.admit()
-                    && let Some(entry) = entry
-                {
-                    admission.restore(*at, entry)?;
-                }
+                self.journal.restore(*at, entry.as_ref())?;
                 self.latest = self.latest.max(*at);
             },
             TakeEvent::End { at, ending } => {
@@ -407,7 +386,7 @@ impl Entry {
             (1..=EDGE).contains(&width) && (1..=EDGE).contains(&height),
             "checkpoint frame dimensions are invalid",
         )?;
-        let signature = Signature::from_bytes(data.data(9_216)?)
+        let signature = Signature::from_bytes(data.data(Signature::BYTES)?)
             .ok_or(SourceError("checkpoint signature is truncated"))?;
         let geometry: Vec<_> = tiles(width, height).collect();
         require(
@@ -462,10 +441,7 @@ fn boolean(data: &mut Cursor<'_>) -> Result<bool, SourceError> {
     }
 }
 fn valid_time(at: Moment) -> Result<(), SourceError> {
-    require(
-        at.as_millis() <= DURATION_MS,
-        "checkpoint time is out of range",
-    )
+    require(at <= DURATION_LIMIT, "checkpoint time is out of range")
 }
 fn valid_surface(size: Size) -> Result<(), SourceError> {
     require(
