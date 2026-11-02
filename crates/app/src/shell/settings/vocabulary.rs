@@ -8,7 +8,8 @@ use super::{
     text_field::{Submit, TextField},
 };
 use crate::{
-    theme::{Theme, alpha},
+    controls::{Kit, Weight},
+    theme::Theme,
     transcript::vocabulary::{self, Correction},
 };
 
@@ -154,23 +155,16 @@ impl Settings {
                 Edit::Cancel => "Cancel phrase correction edit".into(),
                 Edit::Add => label.into(),
             };
-            div()
-                .id(id)
-                .role(gpui::Role::Button)
+            Kit::new(palette)
+                .button(
+                    id,
+                    label,
+                    Weight::Secondary,
+                    Some(cx.listener(move |settings, _, window, cx| {
+                        settings.edit_correction(action, window, cx);
+                    })),
+                )
                 .aria_label(accessible)
-                .focusable()
-                .tab_stop(true)
-                .cursor_pointer()
-                .px(px(10.0))
-                .py(px(7.0))
-                .border_1()
-                .border_color(alpha(palette.lamp, 0.25))
-                .rounded(px(4.0))
-                .focus(|style| style.border_color(rgb(palette.lamp)))
-                .on_click(cx.listener(move |settings, _, window, cx| {
-                    settings.edit_correction(action, window, cx);
-                }))
-                .child(label)
         };
         let add_label = if self.vocabulary.editing.is_some() {
             "Update phrase"
@@ -183,7 +177,7 @@ impl Settings {
             .flex()
             .flex_col()
             .gap(px(8.0))
-            .child(div().child("Phrase corrections"))
+            .child(Kit::new(palette).eyebrow("Phrase corrections"))
             .child(
                 div()
                     .text_size(px(11.0))
@@ -198,14 +192,20 @@ impl Settings {
                         div()
                             .flex_1()
                             .min_w(px(0.0))
-                            .child("When I say")
+                            .flex()
+                            .flex_col()
+                            .gap(px(6.0))
+                            .child(Kit::new(palette).label("When I say"))
                             .child(self.vocabulary.heard.clone()),
                     )
                     .child(
                         div()
                             .flex_1()
                             .min_w(px(0.0))
-                            .child("Write")
+                            .flex()
+                            .flex_col()
+                            .gap(px(6.0))
+                            .child(Kit::new(palette).label("Write"))
                             .child(self.vocabulary.written.clone()),
                     ),
             )

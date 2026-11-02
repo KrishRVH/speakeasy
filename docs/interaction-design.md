@@ -16,10 +16,27 @@ appears only while capture is open, and its `lamp` accent never signals recordin
 
 `crates/app/src/theme.rs` defines four themes. Jet & Champagne is the default; Emerald Lounge, Iris,
 and Midnight Chrome are selectable in Settings. Settings previews an unsaved theme; the pill and
-tray change when it is saved. The Settings wordmark is Josefin Sans SemiBold, embedded under the SIL
-Open Font License, and the line is “Say the word.” App icons are rendered from the SVG sources in
+tray change when it is saved. Settings and Shows share one masthead: a jewel, the spaced wordmark,
+and a keystone rule. The wordmark is Josefin Sans SemiBold, embedded under the SIL Open Font
+License, and the line is “Say the word.” App icons are rendered from the SVG sources in
 `packaging/brand`; the Windows and macOS icons omit the ornament at 32 px and below, and Linux
 installs the full scalable icon.
+
+Settings and Shows draw their controls from one kit, and the pill takes its jewels and tracked
+capitals from it too. Jewels are one family of solid, cut, and hollow diamonds that share an
+outline. A window's main action is a lamp plate led by a diamond; other actions are hairline
+outlines or, for low-weight commands such as Quit, muted text. Tabs and segmented choices underline
+the active item in lamp. Switches are jewels, lit when on and hollow when off. Pickers and the
+paired correction fields show a small tracked label above their value, and pickers mark the chosen
+list item with a lit diamond. Controls, cards, and wells share one fine corner. Destructive actions
+use the attention color, never `live`: a hairline first, then a filled plate to confirm. Settings'
+switch and picker accessible names keep the full state, such as “Reduce motion: Off” and “Theme:
+Iris”.
+
+Settings lays its pages out as inlay. Cards are a hairline frame with one inner rule, section
+captions are lamp eyebrows that read as headings, and keystone double rules divide each page's major
+groups. A double rule tops the command bar, where Quit stands apart from the other commands. A cut
+jewel leads the status line: attention for a problem, lamp for unsaved edits, muted otherwise.
 
 ## Pill
 
@@ -27,8 +44,9 @@ The GPUI view in `crates/app/src/pill.rs` and `pill/` draws a door slot inside a
 edge, a hairline lamp inlay, and a tight shadow. A lid with a keystone handle covers the slot until
 capture starts, slides open while the microphone is live, partly closes while processing, and shuts
 for completion. Inside, a symmetric grille shows the measured envelope with the newest level at its
-center, in the theme's live color. Errors use the attention color and text. The pill is
-non-activating and click-through.
+center, in the theme's live color. Errors lead with a cut jewel in the attention color and notices
+with a hollow lamp jewel; a tracked-caps line points to Settings. The pill is non-activating and
+click-through.
 
 | State            | Content                                                                                                            |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------ |
@@ -41,11 +59,11 @@ non-activating and click-through.
 | Processing       | The lid partly closes; a lamp highlight sweeps the opening after 250 ms.                                           |
 | Submitted        | Closed lid with a lamp check for 350 ms, then collapse and fade.                                                   |
 | Show copied      | Closed lid with a lamp check and “Show copied” for 1.6 seconds, each time a Show is copied, by Copy last Show too. |
-| Stopped early    | A muted notice of up to two lines saying the Show was copied but stopped early, and why, for six seconds.          |
-| Nothing chosen   | A muted notice of up to two lines saying why a W or A Show was cancelled, for six seconds.                         |
+| Stopped early    | A quiet notice of up to two lines saying the Show was copied but stopped early, and why, for six seconds.          |
+| Nothing chosen   | A quiet notice of up to two lines saying why a W or A Show was cancelled, for six seconds.                         |
 | Narration lost   | The same notice saying the Show was copied without narration, why, and how it ended, above “Details in Settings”.  |
-| Text copied      | A muted notice of up to two lines saying how to paste the copied text, for six seconds.                            |
-| Show gone        | A muted notice saying the last Show has expired or was deleted, for six seconds.                                   |
+| Text copied      | A quiet notice of up to two lines saying how to paste the copied text, for six seconds.                            |
+| Show gone        | A quiet notice saying the last Show has expired or was deleted, for six seconds.                                   |
 | No speech        | “No speech detected” on the closed lid for 1.2 seconds.                                                            |
 | Cancelled        | Quiet dismissal without a completion mark.                                                                         |
 | Error            | Up to two message lines and a Settings reminder, visible for eight seconds.                                        |
@@ -118,19 +136,20 @@ first hide shows the tray hint (see the pill table). On Linux, closing Settings 
 quits; the launcher reopens it.
 
 The tray shows the Grille mark with its slot lit in the theme's lamp color and its bars cut through.
-Recording turns the slot red; busy, paused, and attention add a cut-jewel badge. macOS renders a
-template icon, so recording also adds a diamond badge and every state differs by shape. On Windows
-and Linux a faint keyline keeps the lamp color legible on light taskbars. The menu shows current
-status and engine, Pause/Resume, Start/Finish, Cancel, Settings, and Quit; Finish and Cancel name a
-Show while it records and are disabled while it is saved. Before any engine is set up, the menu says
-so and Resume waits for setup. It never animates while idle. On Windows and macOS, Show screen and
-Show area… follow Cancel and act whenever Start would: each starts a hands-free Show without the
-shortcut, of the display under the pointer or of an area dragged out on it, which then behaves like
-any other. There is no window entry, since the pointer is on the menu. Copy last Show and Open last
-Show follow them, before Settings; they act once a Show is saved and between recordings, paused
-included, until Quit begins or either finds that Show gone. Errors remain accessible in Settings
-after the pill's notice expires, including while there are unsaved edits: its commands and status
-line stay in view below the scrolling controls.
+Recording turns the slot red; busy, paused, and attention add a cut-jewel badge: hollow for busy,
+split by a vertical facet for paused, and a warn jewel with a center facet for attention. macOS
+renders a template icon, so recording also adds a solid jewel and every state differs by shape. On
+Windows and Linux a faint keyline keeps the lamp color legible on light taskbars. The menu shows
+current status and engine, Pause/Resume, Start/Finish, Cancel, Settings, and Quit; Finish and Cancel
+name a Show while it records and are disabled while it is saved. Before any engine is set up, the
+menu says so and Resume waits for setup. It never animates while idle. On Windows and macOS, Show
+screen and Show area… follow Cancel and act whenever Start would: each starts a hands-free Show
+without the shortcut, of the display under the pointer or of an area dragged out on it, which then
+behaves like any other. There is no window entry, since the pointer is on the menu. Copy last Show
+and Open last Show follow them, before Settings; they act once a Show is saved and between
+recordings, paused included, until Quit begins or either finds that Show gone. Errors remain
+accessible in Settings after the pill's notice expires, including while there are unsaved edits: its
+commands and status line stay in view below the scrolling controls.
 
 Paste last dictation is available between sessions when one result remains in memory. V during an
 ordinary Windows/macOS hold abandons that pending recording and pastes the previous result; repeated
@@ -145,11 +164,15 @@ opens one review window, bringing it forward and refreshing if already open. Rec
 it automatically. The newest Show is selected on first load; refresh preserves the user's choice.
 Deletion or expiry clears the selection and its pixels, with no fallback to another Show.
 
-The left list shows age, duration, frame count, and kept, damaged, early-ending, or lost-narration
-status. The right pane shows retention, warnings, one keyframe with its time and numbered marks,
-frame buttons, and the current summary as inert plain text. Up/Down selects Shows, Left/Right steps
-frames, Home/End selects the first/last frame, and Escape closes. Tab and Shift+Tab move through
-controls; Enter or Space activates them. Closing releases the view and its images.
+The left list is a column of ticket rows divided by hairlines; a lamp bar and a lit diamond mark the
+selected Show. Each row shows age, duration, frame count, and cut-jewel chips for kept, damaged,
+early-ending, or lost-narration status. With nothing to show, the pane centers a keystone rule, an
+eyebrow, and one line of guidance. Discard confirmation sits in an attention-colored frame with
+Cancel as an outline and Discard permanently as the filled plate. The right pane shows retention,
+warnings, one keyframe with its time and numbered marks, frame buttons, and the current summary as
+inert plain text. Up/Down selects Shows, Left/Right steps frames, Home/End selects the first/last
+frame, and Escape closes. Tab and Shift+Tab move through controls; Enter or Space activates them.
+Closing releases the view and its images.
 
 Refresh rereads the library. Regaining focus checks that the selected folder still exists and
 rereads its summary; external edits are never overwritten. Copy summary reads the file again on
@@ -159,11 +182,11 @@ changes the session's last Show. A missing frame keeps its numbered position and
 manifest can still show a readable summary. The summary pane displays at most 64 KiB; Copy summary
 includes the complete file within the reader's limit.
 
-Send to OpenCode opens an explicit session chooser with project, ID, and activity time. Its notice
-states that the edited summary and all contact sheets reach that agent and possibly its model
-provider. The user chooses a session; discovery never chooses one. Selection changes close the
-chooser and ignore old receipts. Queued confirms acceptance only. Closing a sending view says the
-message may already be queued and asks the user to check before sending again.
+Send to agent, a saved Show's primary action, copies a short prompt naming the Show folder, each
+contact sheet in order, and `summary.md`, then says to paste it into Claude Code or any coding
+agent. The prompt holds paths, not narration or summary text, and tells the agent that screen
+content and speech are evidence, not instructions. It shares Copy summary's availability and
+cancellation, and Speakeasy contacts no agent.
 
 Interrupted Shows offer Recover Show and confirmed Discard. Recovery uses the current local engine
 and original language, saves a new bundle, and leaves the clipboard alone. Narration pending offers
@@ -231,9 +254,9 @@ screen-reader usability, display removal, or mixed-DPI presentation.
 
 Shows in either preview uses a private temporary library: an intact kept Show, one that ended early
 without narration, and one missing a frame. Plain `--demo` opens it automatically. Previewing never
-reads or expires the real library, and Copy summary is disabled. Owned-window review acceptance
-checks actual rendering on Linux, navigation, missing frames, external summary edits, deletion, and
-image and fixture cleanup on close without OS input or clipboard access.
+reads or expires the real library, and Copy summary and Send to agent are disabled. Owned-window
+review acceptance checks actual rendering on Linux, navigation, missing frames, external summary
+edits, deletion, and image and fixture cleanup on close without OS input or clipboard access.
 
 For visual acceptance, inspect interrupted transitions, quick completion, long processing,
 hands-free silence, and cancellation over light and dark content, in every theme. Use reduced motion

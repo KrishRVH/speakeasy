@@ -3,14 +3,17 @@ use std::borrow::Cow;
 use gpui::{AssetSource, SharedString};
 
 pub(crate) const KEYSTONE: &str = "icons/keystone.svg";
+pub(crate) const JEWEL_HOLLOW: &str = "icons/jewel-hollow.svg";
+pub(crate) const JEWEL_CUT: &str = "icons/jewel-cut.svg";
 pub(crate) const MICROPHONE: &str = "icons/symbols/microphone.svg";
 pub(crate) const LOCK: &str = "icons/symbols/lock.svg";
 pub(crate) const SCREEN: &str = "icons/symbols/screen.svg";
 pub(crate) const CHECK: &str = "icons/symbols/check.svg";
-pub(crate) const ATTENTION: &str = "icons/symbols/attention.svg";
 
-const ASSETS: [(&str, &[u8]); 6] = [
+const ASSETS: [(&str, &[u8]); 7] = [
     (KEYSTONE, include_bytes!("../assets/keystone.svg")),
+    (JEWEL_HOLLOW, include_bytes!("../assets/jewel-hollow.svg")),
+    (JEWEL_CUT, include_bytes!("../assets/jewel-cut.svg")),
     (
         MICROPHONE,
         include_bytes!("../assets/symbols/microphone.svg"),
@@ -18,7 +21,6 @@ const ASSETS: [(&str, &[u8]); 6] = [
     (LOCK, include_bytes!("../assets/symbols/lock.svg")),
     (SCREEN, include_bytes!("../assets/symbols/screen.svg")),
     (CHECK, include_bytes!("../assets/symbols/check.svg")),
-    (ATTENTION, include_bytes!("../assets/symbols/attention.svg")),
 ];
 
 pub(crate) struct Icons;

@@ -1,8 +1,8 @@
 use std::time::SystemTime;
 
 use gpui::{
-    Context, Div, ElementId, FontWeight, KeyDownEvent, SharedString, Window, div, img, prelude::*,
-    px, rgb,
+    App, ClickEvent, Context, Div, ElementId, FontWeight, KeyDownEvent, SharedString, Window, div,
+    img, prelude::*, px, rgb,
 };
 
 use super::{
@@ -11,9 +11,9 @@ use super::{
     navigation::{Origin, Stamp},
 };
 use crate::{
-    BRAND_FONT,
+    controls::{CORNER, HEIGHT, Kit, Weight},
     show::store::{recall::Health, retention::Retention},
-    theme::{Palette, alpha, mix},
+    theme::{Palette, alpha},
 };
 
 const RETRY_NARRATION: &str = "Transcribe the kept audio with your configured local engine and the original \
@@ -38,97 +38,103 @@ impl Render for Review {
             .overflow_y_scroll()
             .border_r_1()
             .border_color(alpha(palette.lamp, 0.14))
-            .p(px(12.0))
+            .px(px(6.0))
+            .py(px(4.0))
             .flex()
             .flex_col()
-            .gap(px(8.0))
             .children(self.library.rows.iter().enumerate().map(|(index, row)| {
                 let current = selected.is_some_and(|key| key.directory == row.directory);
                 let description = row.duration.map_or_else(
                     || "Details unavailable".into(),
                     |duration| format!("{duration} · {} frames", row.frames),
                 );
-                button(Action::Show(index), palette, true, current, cx)
-                    .w_full()
-                    .py(px(14.0))
-                    .flex()
-                    .flex_col()
-                    .items_start()
-                    .gap(px(5.0))
-                    .child(
-                        div()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(row.recorded(now)),
-                    )
-                    .child(
-                        div()
-                            .text_color(rgb(palette.muted))
-                            .text_size(px(11.0))
-                            .child(description),
-                    )
-                    .when(row.pinned == Some(true), |row| {
-                        row.child(tag("Kept", palette.lamp))
-                    })
-                    .when_some(
-                        match &row.kind {
-                            Kind::Interrupted(show) => Some(show.narration_pending()),
-                            Kind::Saved => None,
+                let tags: Vec<_> = [
+                    (row.pinned == Some(true)).then_some(("Kept", palette.lamp)),
+                    match &row.kind {
+                        Kind::Interrupted(show) if show.narration_pending() => {
+                            Some(("Narration pending", palette.warn))
                         },
-                        |row, pending| {
-                            row.child(tag(
-                                if pending {
-                                    "Narration pending"
-                                } else {
-                                    "Interrupted"
-                                },
-                                palette.warn,
-                            ))
-                        },
-                    )
-                    .when_some(row.narration_lost, |row, lost| {
-                        row.child(tag(
+                        Kind::Interrupted(_) => Some(("Interrupted", palette.warn)),
+                        Kind::Saved => None,
+                    },
+                    row.narration_lost.map(|lost| {
+                        (
                             if lost == speakeasy_show::NarrationLoss::Incomplete {
                                 "Narration incomplete"
                             } else {
                                 "No narration"
                             },
                             palette.warn,
-                        ))
-                    })
-                    .when(row.early && matches!(row.kind, Kind::Saved), |row| {
-                        row.child(tag("Ended early", palette.warn))
-                    })
-                    .when(row.health != Health::Ok, |button| {
-                        button.child(tag(
-                            if row.health == Health::Unsupported {
-                                "Can't open"
-                            } else {
-                                "Damaged"
-                            },
-                            palette.warn,
-                        ))
+                        )
+                    }),
+                    (row.early && matches!(row.kind, Kind::Saved))
+                        .then_some(("Ended early", palette.warn)),
+                    (row.health != Health::Ok).then_some((
+                        if row.health == Health::Unsupported {
+                            "Can't open"
+                        } else {
+                            "Damaged"
+                        },
+                        palette.warn,
+                    )),
+                ]
+                .into_iter()
+                .flatten()
+                .collect();
+                Kit::new(palette)
+                    .ticket(
+                        id(&Action::Show(index)),
+                        div()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(row.recorded(now)),
+                        current,
+                        press(Action::Show(index), true, cx),
+                    )
+                    .w_full()
+                    .child(
+                        div()
+                            .text_color(rgb(palette.muted))
+                            .text_size(px(11.0))
+                            .child(description),
+                    )
+                    .when(!tags.is_empty(), |ticket| {
+                        ticket.child(
+                            div().pt(px(3.0)).flex().flex_wrap().gap(px(5.0)).children(
+                                tags.into_iter()
+                                    .map(|(label, color)| Kit::badge(label, color)),
+                            ),
+                        )
                     })
             }));
         let content = if let Some(key) = selected {
             self.detail_pane(key, palette, now, cx).into_any_element()
         } else {
-            let text = if self.library.gone {
-                "This Show was deleted or has expired. Choose another Show to continue."
+            let (eyebrow, text) = if self.library.gone {
+                (
+                    "Show gone",
+                    "This Show was deleted or has expired. Choose another Show to continue.",
+                )
             } else if self.listing.is_some() {
-                "Looking for Shows…"
+                ("Library", "Looking for Shows…")
             } else if !self.library.rows.is_empty() {
-                "Choose a Show to review."
+                ("Library", "Choose a Show to review.")
             } else if cfg!(target_os = "linux") {
-                "No saved Shows. Linux opens saved Shows but doesn't record them yet."
+                (
+                    "No Shows yet",
+                    "No saved Shows. Linux opens saved Shows but doesn't record them yet.",
+                )
             } else {
-                "No saved Shows. While holding the dictation shortcut, press S, W, or A to record one."
+                (
+                    "No Shows yet",
+                    "No saved Shows. While holding the dictation shortcut, press S, W, or A to record one.",
+                )
             };
             div()
                 .flex_1()
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(message(text, palette))
+                .child(Kit::new(palette).vacancy(eyebrow, text))
                 .into_any_element()
         };
         div()
@@ -143,42 +149,49 @@ impl Render for Review {
             .track_focus(&self.focus)
             .child(
                 div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
                     .px(px(24.0))
-                    .py(px(16.0))
-                    .border_b_1()
-                    .border_color(alpha(palette.lamp, 0.14))
+                    .pt(px(18.0))
+                    .pb(px(14.0))
+                    .flex()
+                    .flex_col()
+                    .gap(px(12.0))
                     .child(
                         div()
                             .flex()
-                            .items_baseline()
-                            .gap(px(14.0))
+                            .items_center()
+                            .justify_between()
+                            .gap(px(16.0))
                             .child(
                                 div()
-                                    .font_family(BRAND_FONT)
-                                    .text_size(px(28.0))
-                                    .child("Shows"),
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(18.0))
+                                    .child(Kit::new(palette).masthead(palette.lamp))
+                                    .child(Kit::new(palette).eyebrow("Shows")),
                             )
-                            .child(div().text_color(rgb(palette.muted)).child(
-                                if self.source == Source::Demo {
-                                    "Preview · synthetic recordings".into()
-                                } else {
-                                    format!("{} Shows", self.library.rows.len())
-                                },
-                            )),
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(14.0))
+                                    .child(div().text_color(rgb(palette.muted)).child(
+                                        if self.source == Source::Demo {
+                                            "Preview · synthetic recordings".into()
+                                        } else {
+                                            format!("{} Shows", self.library.rows.len())
+                                        },
+                                    ))
+                                    .child(command(
+                                        Action::Refresh,
+                                        "Refresh",
+                                        Weight::Secondary,
+                                        self.listing.is_none() && self.keeping.is_none(),
+                                        palette,
+                                        cx,
+                                    )),
+                            ),
                     )
-                    .child(
-                        button(
-                            Action::Refresh,
-                            palette,
-                            self.listing.is_none() && self.keeping.is_none(),
-                            false,
-                            cx,
-                        )
-                        .child("Refresh"),
-                    ),
+                    .child(Kit::new(palette).keystone_rule()),
             )
             .child(
                 div()
@@ -202,34 +215,6 @@ impl Render for Review {
 }
 
 impl Review {
-    fn handoff_panel(&self, palette: &Palette, cx: &Context<'_, Self>) -> Div {
-        use super::opencode::Handoff;
-        let panel = div().flex().flex_col().gap(px(8.0));
-        match &self.handoff {
-            Handoff::Closed => panel,
-            Handoff::Loading { .. } => panel
-                .child("Looking for sessions in the running OpenCode service…")
-                .child(button(Action::CloseOpenCode, palette, true, false, cx).child("Cancel lookup")),
-            Handoff::Sending { .. } => panel
-                .child("Waiting for OpenCode's queue receipt. Closing does not retract a submitted Show.")
-                .child(button(Action::CloseOpenCode, palette, true, false, cx).child("Close handoff")),
-            Handoff::Choosing { listing, .. } => panel
-                .child(format!("Send this Show to a session at {}", listing.endpoint))
-                .child(div().text_color(rgb(palette.muted)).child("The edited summary and every contact sheet will be sent. OpenCode's model provider may receive this Show. Your original stays private and keeps its expiry."))
-                .when(listing.sessions.is_empty(), |panel| panel.child("No active top-level sessions. Open a session in OpenCode, then try again."))
-                .child(div().id("opencode-sessions").max_h(px(220.0)).overflow_y_scroll().flex().flex_col().gap(px(8.0))
-                    .children(listing.sessions.iter().map(|session| {
-                        button(Action::SendOpenCode(session.id.clone()), palette, true, false, cx)
-                            .flex().flex_col().items_start().gap(px(3.0))
-                            .child(format!("Send to {}", session.title.as_deref().unwrap_or("Untitled session")))
-                            .child(div().text_color(rgb(palette.muted)).child(session.directory.clone()))
-                            .child(div().text_color(rgb(palette.muted)).child(format!("{} · {}", session.id, updated(session.updated))))
-                    })))
-                .when(listing.truncated, |panel| panel.child("Only the first 500 sessions are shown. Archive old sessions in OpenCode to narrow the list."))
-                .child(button(Action::CloseOpenCode, palette, true, false, cx).child("Cancel")),
-        }
-    }
-
     fn detail_pane(
         &self,
         key: &super::library::Key,
@@ -271,34 +256,43 @@ impl Review {
                     div()
                         .flex()
                         .gap(px(10.0))
-                        .child(button(Action::Recover, palette, !busy, false, cx).child(
+                        .child(command(
+                            Action::Recover,
                             if pending {
                                 "Transcribe narration"
                             } else {
                                 "Recover Show"
                             },
+                            Weight::Primary,
+                            !busy,
+                            palette,
+                            cx,
                         ))
-                        .child(
-                            button(
-                                Action::Discard,
-                                palette,
-                                !busy && !self.confirm_discard,
-                                false,
-                                cx,
-                            )
-                            .child(if pending {
-                                "Discard audio"
-                            } else {
-                                "Discard"
-                            }),
-                        ),
+                        .child(command(
+                            Action::Discard,
+                            if pending { "Discard audio" } else { "Discard" },
+                            Weight::Destroy,
+                            !busy && !self.confirm_discard,
+                            palette,
+                            cx,
+                        )),
                 )
                 .when(self.confirm_discard, |pane| {
                     pane.child(
                         div()
                             .flex()
                             .flex_col()
-                            .gap(px(10.0))
+                            .gap(px(12.0))
+                            .p(px(16.0))
+                            .rounded(CORNER)
+                            .border_1()
+                            .border_color(alpha(palette.warn, 0.45))
+                            .bg(alpha(palette.warn, 0.06))
+                            .child(
+                                div()
+                                    .flex()
+                                    .child(Kit::badge("Cannot be undone", palette.warn)),
+                            )
                             .child(if pending {
                                 super::DISCARD_AUDIO
                             } else {
@@ -308,14 +302,22 @@ impl Review {
                                 div()
                                     .flex()
                                     .gap(px(10.0))
-                                    .child(
-                                        button(Action::CancelDiscard, palette, !busy, false, cx)
-                                            .child("Cancel"),
-                                    )
-                                    .child(
-                                        button(Action::ConfirmDiscard, palette, !busy, false, cx)
-                                            .child("Discard permanently"),
-                                    ),
+                                    .child(command(
+                                        Action::CancelDiscard,
+                                        "Cancel",
+                                        Weight::Secondary,
+                                        !busy,
+                                        palette,
+                                        cx,
+                                    ))
+                                    .child(command(
+                                        Action::ConfirmDiscard,
+                                        "Discard permanently",
+                                        Weight::ConfirmDestroy,
+                                        !busy,
+                                        palette,
+                                        cx,
+                                    )),
                             ),
                     )
                 })
@@ -376,56 +378,51 @@ impl Review {
                 },
             )
             .when_some(self.detail.as_ref(), |body, detail| {
+                let mode = |mode: Mode, label: &'static str, enabled: bool| {
+                    tab(
+                        Action::Mode(mode),
+                        label,
+                        self.mode == mode,
+                        enabled,
+                        palette,
+                        cx,
+                    )
+                };
                 body.child(
                     div()
                         .flex()
+                        .items_end()
+                        .justify_between()
                         .gap(px(8.0))
                         .child(
-                            button(
-                                Action::Mode(Mode::Keyframes),
-                                palette,
-                                true,
-                                self.mode == Mode::Keyframes,
-                                cx,
-                            )
-                            .child("Keyframes"),
-                        )
-                        .child(
-                            button(
-                                Action::Mode(Mode::Source),
-                                palette,
-                                detail.source_available,
-                                self.mode == Mode::Source,
-                                cx,
-                            )
-                            .child("All retained frames"),
-                        )
-                        .when(
-                            cfg!(any(target_os = "windows", target_os = "macos")),
-                            |bar| {
-                                bar.child(
-                                    button(
-                                        Action::Mode(Mode::Video),
-                                        palette,
-                                        detail.movie.is_some(),
-                                        self.mode == Mode::Video,
-                                        cx,
-                                    )
-                                    .child("Video"),
-                                )
-                            },
+                            Kit::new(palette)
+                                .tab_bar("show-frame-modes", "Frames to review")
+                                .flex_1()
+                                .child(mode(Mode::Keyframes, "Keyframes", true))
+                                .child(mode(
+                                    Mode::Source,
+                                    "All retained frames",
+                                    detail.source_available,
+                                ))
+                                .when(
+                                    cfg!(any(target_os = "windows", target_os = "macos")),
+                                    |bar| {
+                                        bar.child(mode(
+                                            Mode::Video,
+                                            "Video",
+                                            detail.movie.is_some(),
+                                        ))
+                                    },
+                                ),
                         )
                         .when(self.mode == Mode::Video, |bar| {
-                            bar.child(
-                                button(
-                                    Action::Annotations,
-                                    palette,
-                                    !detail.frames.is_empty(),
-                                    self.annotated,
-                                    cx,
-                                )
-                                .child("Annotations"),
-                            )
+                            bar.child(Kit::new(palette).toggle(
+                                id(&Action::Annotations),
+                                "Annotations",
+                                "Annotations",
+                                self.annotated,
+                                press(Action::Annotations, !detail.frames.is_empty(), cx),
+                            ))
                         }),
                 )
                 .child(
@@ -472,16 +469,16 @@ impl Review {
                         .gap(px(6.0))
                         .children(self.detail.iter().flat_map(|detail| &detail.marks).map(
                             |&(number, _)| {
-                                button(
+                                command(
                                     Action::Mark(number),
-                                    palette,
+                                    format!("Mark #{number}"),
+                                    Weight::Secondary,
                                     self.detail
                                         .as_ref()
                                         .is_some_and(|detail| !detail.frames.is_empty()),
-                                    false,
+                                    palette,
                                     cx,
                                 )
-                                .child(format!("Mark #{number}"))
                             },
                         )),
                 )
@@ -493,36 +490,30 @@ impl Review {
                     .child("Page Up / Page Down: jump 10 seconds · Home / End: first / last frame"),
             )
             .child(
-                div()
-                    .flex()
-                    .gap(px(6.0))
-                    .child(
-                        button(
-                            Action::Pane(Pane::Summary),
-                            palette,
-                            true,
-                            self.pane == Pane::Summary,
-                            cx,
-                        )
-                        .child("Summary"),
-                    )
-                    .child(
-                        button(
-                            Action::Pane(Pane::Narration),
-                            palette,
-                            true,
-                            self.pane == Pane::Narration,
-                            cx,
-                        )
-                        .child("Narration"),
-                    ),
+                Kit::new(palette)
+                    .tab_bar("show-panes", "Show text")
+                    .child(tab(
+                        Action::Pane(Pane::Summary),
+                        "Summary",
+                        self.pane == Pane::Summary,
+                        true,
+                        palette,
+                        cx,
+                    ))
+                    .child(tab(
+                        Action::Pane(Pane::Narration),
+                        "Narration",
+                        self.pane == Pane::Narration,
+                        true,
+                        palette,
+                        cx,
+                    )),
             )
             .child(match self.pane {
                 Pane::Summary => self.summary(palette).into_any_element(),
                 Pane::Narration => self.narration(palette, cx).into_any_element(),
             })
             .child(self.commands(palette, now, cx))
-            .child(self.handoff_panel(palette, cx))
             .into_any_element()
     }
 
@@ -533,7 +524,7 @@ impl Review {
             .flex_1()
             .min_h(px(120.0))
             .overflow_hidden()
-            .rounded(px(6.0))
+            .rounded(CORNER)
             .bg(rgb(palette.room))
             .border_1()
             .border_color(alpha(palette.lamp, 0.12))
@@ -544,17 +535,18 @@ impl Review {
                 ImageState::Ready(decoded) => img(std::sync::Arc::clone(&decoded.image))
                     .size_full()
                     .into_any_element(),
-                ImageState::Loading => message("Loading frame…", palette).into_any_element(),
-                ImageState::Failed(error) => message(error.clone(), palette).into_any_element(),
-                ImageState::Empty => message(
-                    if self.opening.is_some() {
-                        "Opening Show…"
-                    } else {
-                        UNAVAILABLE
-                    },
-                    palette,
-                )
-                .into_any_element(),
+                ImageState::Loading => Kit::new(palette)
+                    .vacancy("Frame", "Loading frame…")
+                    .into_any_element(),
+                ImageState::Failed(error) => Kit::new(palette)
+                    .vacancy("Frame unavailable", error.clone())
+                    .into_any_element(),
+                ImageState::Empty if self.opening.is_some() => Kit::new(palette)
+                    .vacancy("Frame", "Opening Show…")
+                    .into_any_element(),
+                ImageState::Empty => Kit::new(palette)
+                    .vacancy("Frame unavailable", UNAVAILABLE)
+                    .into_any_element(),
             })
     }
 
@@ -595,10 +587,14 @@ impl Review {
                     .flex()
                     .items_center()
                     .gap(px(10.0))
-                    .child(
-                        button(Action::Previous, palette, index > 0 && count > 0, false, cx)
-                            .child("‹"),
-                    )
+                    .child(step(
+                        Action::Previous,
+                        "‹",
+                        "Previous frame",
+                        index > 0 && count > 0,
+                        palette,
+                        cx,
+                    ))
                     .child(
                         div()
                             .flex_1()
@@ -606,23 +602,19 @@ impl Review {
                             .text_size(px(12.0))
                             .child(caption),
                     )
-                    .child(
-                        button(
-                            Action::Next,
-                            palette,
-                            index.saturating_add(1) < count,
-                            false,
-                            cx,
-                        )
-                        .child("›"),
-                    ),
+                    .child(step(
+                        Action::Next,
+                        "›",
+                        "Next frame",
+                        index.saturating_add(1) < count,
+                        palette,
+                        cx,
+                    )),
             )
             .child(
-                div()
-                    .id("show-frame-numbers")
+                Kit::new(palette)
+                    .tab_bar("show-frame-numbers", "Frames")
                     .overflow_x_scroll()
-                    .flex()
-                    .gap(px(5.0))
                     .flex_none()
                     .children(
                         frames
@@ -631,15 +623,14 @@ impl Review {
                             .skip(index.saturating_sub(10))
                             .take(21)
                             .map(|(position, frame)| {
-                                button(
+                                tab(
                                     Action::Frame(position),
-                                    palette,
-                                    true,
+                                    format!("#{} {}", frame.number, frame.at),
                                     index == position,
+                                    true,
+                                    palette,
                                     cx,
                                 )
-                                .flex_none()
-                                .child(format!("#{} {}", frame.number, frame.at))
                             }),
                     ),
             )
@@ -669,7 +660,7 @@ impl Review {
             .flex_none()
             .overflow_y_scroll()
             .p(px(12.0))
-            .rounded(px(4.0))
+            .rounded(CORNER)
             .bg(rgb(palette.room))
             .text_size(px(12.0))
             .line_height(px(19.0))
@@ -708,27 +699,30 @@ impl Review {
                 .flex_col()
                 .gap(px(6.0))
                 .children(clauses.iter().enumerate().map(|(index, clause)| {
-                    button(
-                        Action::Clause(index),
-                        palette,
-                        self.detail
-                            .as_ref()
-                            .is_some_and(|detail| !detail.frames.is_empty()),
-                        self.request
-                            .is_some_and(|request| request.origin == Origin::Clause(index)),
-                        cx,
-                    )
-                    .w_full()
-                    .flex()
-                    .items_start()
-                    .gap(px(10.0))
-                    .child(
-                        div()
-                            .flex_none()
-                            .text_color(rgb(palette.muted))
-                            .child(Stamp(clause.at).to_string()),
-                    )
-                    .child(div().flex_1().min_w(px(0.0)).child(clause.text.clone()))
+                    Kit::new(palette)
+                        .item(
+                            id(&Action::Clause(index)),
+                            self.request
+                                .is_some_and(|request| request.origin == Origin::Clause(index)),
+                            press(
+                                Action::Clause(index),
+                                self.detail
+                                    .as_ref()
+                                    .is_some_and(|detail| !detail.frames.is_empty()),
+                                cx,
+                            ),
+                        )
+                        .w_full()
+                        .flex()
+                        .items_start()
+                        .gap(px(10.0))
+                        .child(
+                            div()
+                                .flex_none()
+                                .text_color(rgb(palette.muted))
+                                .child(Stamp(clause.at).to_string()),
+                        )
+                        .child(div().flex_1().min_w(px(0.0)).child(clause.text.clone()))
                 })),
             Some(Narration::Untimed { text, .. }) => div()
                 .child(
@@ -759,7 +753,7 @@ impl Review {
             .flex_none()
             .overflow_y_scroll()
             .p(px(12.0))
-            .rounded(px(4.0))
+            .rounded(CORNER)
             .bg(rgb(palette.room))
             .line_height(px(19.0))
             .child(
@@ -823,142 +817,107 @@ impl Review {
             .items_center()
             .gap(px(8.0))
             .when(!cfg!(target_os = "linux"), |bar| {
-                bar.child(
-                    button(
-                        Action::Copy(CopyKind::Summary),
-                        palette,
-                        can_copy,
-                        false,
-                        cx,
-                    )
-                    .child("Copy summary"),
-                )
-                .child(
-                    button(
-                        Action::Copy(CopyKind::Evidence),
-                        palette,
-                        can_copy
-                            && self.loading.is_none()
-                            && matches!(self.image, ImageState::Ready(_)),
-                        false,
-                        cx,
-                    )
-                    .child("Copy image + summary + narration"),
-                )
+                bar.child(command(
+                    Action::Copy(CopyKind::Agent),
+                    "Send to agent",
+                    Weight::Primary,
+                    can_copy,
+                    palette,
+                    cx,
+                ))
+                .child(command(
+                    Action::Copy(CopyKind::Summary),
+                    "Copy summary",
+                    Weight::Secondary,
+                    can_copy,
+                    palette,
+                    cx,
+                ))
+                .child(command(
+                    Action::Copy(CopyKind::Evidence),
+                    "Copy image + summary + narration",
+                    Weight::Secondary,
+                    can_copy
+                        && self.loading.is_none()
+                        && matches!(self.image, ImageState::Ready(_)),
+                    palette,
+                    cx,
+                ))
             })
-            .child(button(Action::Folder, palette, true, false, cx).child("Open folder"))
-            .when(self.source == Source::Saved, |bar| {
-                bar.child(
-                    button(
-                        Action::OpenCode,
-                        palette,
-                        matches!(self.handoff, super::opencode::Handoff::Closed),
-                        false,
-                        cx,
-                    )
-                    .child("Send to OpenCode…"),
-                )
-            })
+            .child(command(
+                Action::Folder,
+                "Open folder",
+                Weight::Secondary,
+                true,
+                palette,
+                cx,
+            ))
             .when(
                 self.detail
                     .as_ref()
                     .is_some_and(|detail| detail.movie.is_some()),
                 |bar| {
-                    bar.child(button(Action::Movie, palette, true, false, cx).child("Play video"))
-                        .child(
-                            button(
-                                Action::Export(ExportKind::Video),
-                                palette,
-                                self.exporting.is_none(),
-                                false,
-                                cx,
-                            )
-                            .child("Export video…"),
-                        )
+                    bar.child(command(
+                        Action::Movie,
+                        "Play video",
+                        Weight::Secondary,
+                        true,
+                        palette,
+                        cx,
+                    ))
+                    .child(command(
+                        Action::Export(ExportKind::Video),
+                        "Export video…",
+                        Weight::Secondary,
+                        self.exporting.is_none(),
+                        palette,
+                        cx,
+                    ))
                 },
             )
             .when(self.export_cancel.is_some(), |bar| {
-                bar.child(
-                    button(Action::CancelExport, palette, true, false, cx).child("Cancel export"),
-                )
-            })
-            .child(
-                button(
-                    Action::Export(ExportKind::Archive),
+                bar.child(command(
+                    Action::CancelExport,
+                    "Cancel export",
+                    Weight::Secondary,
+                    true,
                     palette,
-                    self.exporting.is_none() && self.detail.is_some(),
-                    false,
                     cx,
-                )
-                .child(if self.exporting.is_some() {
+                ))
+            })
+            .child(command(
+                Action::Export(ExportKind::Archive),
+                if self.exporting.is_some() {
                     "Exporting…"
                 } else {
                     "Export ZIP…"
-                }),
-            )
-            .child(
-                button(
-                    Action::Keep,
-                    palette,
-                    kept.is_some() && self.keeping.is_none() && self.listing.is_none(),
-                    false,
-                    cx,
-                )
-                .child(
-                    if self
-                        .keeping
-                        .as_ref()
-                        .is_some_and(|(directory, _)| self.library.is_selected(directory))
-                    {
-                        "Saving…"
-                    } else {
-                        label
-                    },
-                ),
-            )
+                },
+                Weight::Secondary,
+                self.exporting.is_none() && self.detail.is_some(),
+                palette,
+                cx,
+            ))
+            .child(command(
+                Action::Keep,
+                if self
+                    .keeping
+                    .as_ref()
+                    .is_some_and(|(directory, _)| self.library.is_selected(directory))
+                {
+                    "Saving…"
+                } else {
+                    label
+                },
+                Weight::Secondary,
+                kept.is_some() && self.keeping.is_none() && self.listing.is_none(),
+                palette,
+                cx,
+            ))
     }
 }
 
-fn updated(milliseconds: u64) -> String {
-    let now = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default();
-    let seconds = now.as_secs().saturating_sub(milliseconds / 1_000);
-    match seconds {
-        0..60 => "updated just now".into(),
-        60..3_600 => format!("updated {}m ago", seconds / 60),
-        3_600..86_400 => format!("updated {}h ago", seconds / 3_600),
-        _ => format!("updated {}d ago", seconds / 86_400),
-    }
-}
-
-fn tag(label: &'static str, color: u32) -> impl IntoElement {
-    div()
-        .text_size(px(10.0))
-        .text_color(rgb(color))
-        .child(label)
-}
-
-fn message(text: impl Into<SharedString>, palette: &Palette) -> impl IntoElement {
-    div()
-        .p(px(24.0))
-        .max_w(px(460.0))
-        .text_color(rgb(palette.muted))
-        .text_size(px(13.0))
-        .child(text.into())
-}
-
-fn button(
-    action: Action,
-    palette: &Palette,
-    enabled: bool,
-    selected: bool,
-    cx: &Context<'_, Review>,
-) -> gpui::Stateful<Div> {
-    let id: ElementId = match &action {
-        Action::OpenCode => "shows-opencode".into(),
-        Action::SendOpenCode(session) => SharedString::from(format!("shows-send-{session}")).into(),
-        Action::CloseOpenCode => "shows-close-opencode".into(),
+fn id(action: &Action) -> ElementId {
+    match action {
         Action::Mark(number) => SharedString::from(format!("show-mark-{number}")).into(),
         Action::Recover => "recover-show".into(),
         Action::Discard => "discard-show".into(),
@@ -974,6 +933,7 @@ fn button(
         Action::Previous => "previous-frame".into(),
         Action::Next => "next-frame".into(),
         Action::Refresh => "shows-refresh".into(),
+        Action::Copy(CopyKind::Agent) => "shows-send-agent".into(),
         Action::Copy(CopyKind::Summary) => "shows-copy".into(),
         Action::Copy(CopyKind::Evidence) => "shows-copy-evidence".into(),
         Action::Pane(Pane::Summary) => "show-summary-tab".into(),
@@ -986,37 +946,52 @@ fn button(
         Action::CancelExport => "shows-cancel-export".into(),
         Action::Show(index) => SharedString::from(format!("show-{index}")).into(),
         Action::Frame(index) => SharedString::from(format!("frame-{index}")).into(),
-    };
-    let accent = palette.lamp;
-    let hover = rgb(mix(palette.raise, palette.ink, 0.08));
-    div()
-        .id(id)
-        .focusable()
-        .tab_stop(enabled)
-        .px(px(10.0))
-        .py(px(7.0))
-        .rounded(px(4.0))
-        .border_1()
-        .border_color(if selected {
-            rgb(accent)
-        } else {
-            alpha(accent, 0.18)
-        })
-        .bg(rgb(if selected {
-            mix(palette.raise, accent, 0.12)
-        } else {
-            palette.raise
-        }))
-        .when(!enabled, |button| button.opacity(0.4))
-        .when(enabled, |button| {
-            button
-                .cursor_pointer()
-                .hover(move |style| style.bg(hover))
-                .focus(move |style| style.border_color(rgb(accent)))
-                .on_click(
-                    cx.listener(move |view, _, window, cx| view.act(action.clone(), window, cx)),
-                )
-        })
+    }
+}
+
+fn press(
+    action: Action,
+    enabled: bool,
+    cx: &Context<'_, Review>,
+) -> Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static> {
+    enabled.then(|| cx.listener(move |view, _, window, cx| view.act(action.clone(), window, cx)))
+}
+
+fn command(
+    action: Action,
+    label: impl Into<SharedString>,
+    weight: Weight,
+    enabled: bool,
+    palette: &Palette,
+    cx: &Context<'_, Review>,
+) -> gpui::Stateful<Div> {
+    Kit::new(palette).button(id(&action), label, weight, press(action, enabled, cx))
+}
+
+fn step(
+    action: Action,
+    glyph: &'static str,
+    name: &'static str,
+    enabled: bool,
+    palette: &Palette,
+    cx: &Context<'_, Review>,
+) -> gpui::Stateful<Div> {
+    command(action, glyph, Weight::Secondary, enabled, palette, cx)
+        .aria_label(name)
+        .w(HEIGHT)
+        .px_0()
+        .text_size(px(18.0))
+}
+
+fn tab(
+    action: Action,
+    label: impl Into<SharedString>,
+    selected: bool,
+    enabled: bool,
+    palette: &Palette,
+    cx: &Context<'_, Review>,
+) -> gpui::Stateful<Div> {
+    Kit::new(palette).tab(id(&action), label, selected, press(action, enabled, cx))
 }
 
 impl Review {

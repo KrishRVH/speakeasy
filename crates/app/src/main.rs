@@ -5,6 +5,7 @@ mod audio;
 mod child;
 mod config;
 mod control;
+mod controls;
 mod gpui_ext;
 mod http;
 mod icons;

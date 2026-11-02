@@ -8,7 +8,6 @@ pub(super) enum Symbol {
     Lock,
     Screen,
     Check,
-    Attention,
 }
 
 impl Symbol {
@@ -18,7 +17,6 @@ impl Symbol {
             Self::Lock => icons::LOCK,
             Self::Screen => icons::SCREEN,
             Self::Check => icons::CHECK,
-            Self::Attention => icons::ATTENTION,
         }
     }
 

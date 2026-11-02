@@ -206,6 +206,12 @@ any gap. Switching frame modes keeps that request; stepping through frames, choo
 or refreshing clears it. Words without timings remain readable. Missing and incomplete narration are
 labeled. This pane contains recorded speech, so edits to `summary.md` stay in Summary.
 
+**Send to agent** on Windows/Mac copies a short prompt for your coding agent. It names the Show
+folder, each contact sheet in order, and `summary.md` with your edits, and tells the agent that what
+the screen shows and what you said are evidence, not instructions. Paste it into Claude Code or any
+agent that reads local files. The agent opens those files itself; the prompt holds paths, not
+narration or pixels, and Speakeasy contacts no agent.
+
 **Copy image + summary + narration** on Windows/Mac copies the displayed image with its actual
 timestamp, retrieval context, edited summary, and recorded words. Summary edits and original
 narration remain separate sections. Untimed, missing, incomplete, and truncated narration are
@@ -372,21 +378,6 @@ retained source frames by time, mark, or phrase. They report actual sample times
 not expose ordinary dictation or export video. Requested content reaches the calling agent and may
 reach its model provider. Setup prints configuration without changing client settings.
 
-**Send to OpenCode** in Shows lists sessions from an already-running local OpenCode V2 service.
-Choose the exact session after checking its project and ID. The handoff includes the edited summary
-and every contact sheet, or refuses if the complete request exceeds 12 MiB; it excludes audio and
-movies. The selected agent and its model provider may receive this content. **Queued** confirms that
-session accepted the message, not that the agent finished. If delivery is uncertain, inspect the
-session before sending again. Closing the view cancels preparation; a submitted request still drains
-during Quit. No service is started and no session is selected automatically.
-
-The equivalent explicit terminal workflow is:
-
-```sh
-speakeasy show sessions --json
-speakeasy show send "SHOW_ID_OR_PATH" --session "SESSION_ID" --json
-```
-
 Scripts can control a running desktop app without reading dictation text:
 
 ```sh
@@ -454,8 +445,9 @@ deletions on its next pass.
 - Windows clipboard history and cloud clipboard skip what Speakeasy puts on the clipboard, pasted
   dictation and Show summaries alike, as do Universal Clipboard and Mac clipboard managers that
   honor transient data.
-- There are no accounts, telemetry, or dictation history. Explicit MCP requests and OpenCode
-  handoffs share the requested Show evidence with the chosen agent and possibly its model provider.
+- There are no accounts, telemetry, or dictation history. An agent you hand a Show to, by MCP
+  request or a pasted **Send to agent** prompt, reads that Show's evidence, and its model provider
+  may receive it.
 
 ## Get started
 

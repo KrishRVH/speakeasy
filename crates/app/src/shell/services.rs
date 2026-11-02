@@ -93,7 +93,6 @@ pub(crate) struct Services {
     pub config: Config,
     pub(super) styles: watch::Sender<Style>,
     pub(super) choices: super::choices::Choices,
-    pub(super) deliveries: crate::show::opencode::Deliveries,
     pub output: watch::Sender<Snapshot>,
     pub(super) meter: watch::Sender<Meter>,
     pub(super) canvas: watch::Sender<Canvas>,
@@ -143,7 +142,6 @@ impl Services {
             config,
             styles: watch::channel(Style::default()).0,
             choices: super::choices::Choices::default(),
-            deliveries: crate::show::opencode::Deliveries::default(),
             output,
             meter,
             canvas,
@@ -523,7 +521,6 @@ impl Services {
         self.show_copies.cancel();
         self.choices.cancel();
         self.show_previews.cancel();
-        self.deliveries.cancel();
         self.validation = None;
         self.requests = None;
         self.visibility = None;
@@ -538,12 +535,10 @@ impl Services {
         let edited = self.show_edits.drained();
         let copied = self.show_copies.drained();
         let previewed = self.show_previews.drained();
-        let delivered = self.deliveries.drained();
         Some(async move {
             edited.await;
             copied.await;
             previewed.await;
-            delivered.await;
             if let Some(stopped) = stopped {
                 stopped.await;
             }

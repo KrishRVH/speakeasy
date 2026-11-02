@@ -3,31 +3,30 @@ mod onboarding;
 use std::path::Path;
 
 use gpui::{
-    AnyElement, App, Context, Div, FontWeight, KeyDownEvent, Pixels, SharedString, Window, div,
-    prelude::*, px, relative, rgb, svg,
+    AnyElement, App, ClickEvent, Context, Div, KeyDownEvent, Pixels, SharedString, Window, div,
+    prelude::*, px, relative, rgb,
 };
 
 use super::{
     Action, EngineFile, Setting, Settings, is_demo, language, navigation::Page, permissions,
 };
 use crate::{
-    BRAND_FONT,
     config::{Engine, TextDelivery},
-    icons::KEYSTONE,
+    controls::{Kit, Weight, facet},
     models::Model,
     setup::Progress,
     shell::Services,
     status::{Indicator, ServiceState},
-    theme::{Palette, alpha, mix},
+    theme::{Palette, alpha},
 };
 
 const ROW_GAP: Pixels = px(8.0);
 
-const CONTROL_PAD_Y: Pixels = px(8.0);
-
 const TEXT: Pixels = px(12.0);
 
 const EDGE: Pixels = px(32.0);
+
+const STATUS_LINE: Pixels = px(18.0);
 
 impl Render for Settings {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
@@ -72,16 +71,20 @@ impl Render for Settings {
 
         let bar = div()
             .flex_none()
-            .px(EDGE)
-            .pt(px(16.0))
-            .pb(px(20.0))
             .flex()
             .flex_col()
-            .gap(px(12.0))
-            .border_t_1()
-            .border_color(alpha(palette.lamp, 0.14))
-            .child(self.commands(&ui, unsaved))
-            .child(self.status_line(palette, unsaved));
+            .child(ui.kit().double_rule())
+            .child(
+                div()
+                    .px(EDGE)
+                    .pt(px(14.0))
+                    .pb(px(20.0))
+                    .flex()
+                    .flex_col()
+                    .gap(px(12.0))
+                    .child(self.commands(&ui, unsaved))
+                    .child(self.status_line(palette, unsaved)),
+            );
         div()
             .on_key_down(cycle_focus)
             .size_full()
@@ -102,25 +105,23 @@ struct Ui<'a> {
 
 impl Settings {
     fn navigation(&self, ui: &Ui<'_>) -> impl IntoElement {
-        row()
-            .id("settings-tabs")
-            .role(gpui::Role::TabList)
-            .aria_label("Settings pages")
+        ui.kit()
+            .tab_bar("settings-tabs", "Settings pages")
             .children([Page::Dictation, Page::Words, Page::Advanced].map(|page| {
-                ui.button(page.label(), Action::Page(page))
-                    .role(gpui::Role::Tab)
-                    .aria_selected(self.navigation.page == page)
+                let action = Action::Page(page);
+                ui.kit()
+                    .tab(
+                        action.element_id(),
+                        page.label(),
+                        self.navigation.page == page,
+                        Some(ui.press(action)),
+                    )
                     .track_focus(self.navigation.focus(page))
-                    .when(self.navigation.page == page, |button| {
-                        button
-                            .border_color(rgb(ui.palette.lamp))
-                            .bg(rgb(ui.palette.panel))
-                    })
             }))
     }
 
     fn page(&self, ui: &Ui<'_>) -> impl IntoElement {
-        let page = div().flex().flex_col().gap(px(20.0));
+        let group = || div().flex().flex_col().gap(px(20.0));
         let model = if is_demo(ui.cx) {
             "Simulated model"
         } else if self.is_setting_up() {
@@ -132,51 +133,70 @@ impl Settings {
                 .model_choice()
                 .map_or_else(|| self.config.engine.label(), Model::label)
         };
-        match self.navigation.page {
-            Page::Dictation => page
-                .child(self.readiness_card(ui))
-                .child(self.gesture_hints(ui, false))
-                .child(self.microphone_section(ui))
-                .child(
-                    ui.section("LOCAL SPEECH")
+        let groups = match self.navigation.page {
+            Page::Dictation => [
+                Some(
+                    group()
+                        .child(self.readiness_card(ui))
+                        .child(self.gesture_hints(ui, false)),
+                ),
+                Some(
+                    group()
+                        .child(self.microphone_section(ui))
                         .child(
-                            row()
-                                .items_center()
-                                .justify_between()
-                                .child(model)
-                                .child(ui.button("Change model", Action::Page(Page::Advanced))),
+                            ui.section("Local speech")
+                                .child(
+                                    row().items_center().justify_between().child(model).child(
+                                        ui.button("Change model", Action::Page(Page::Advanced)),
+                                    ),
+                                )
+                                .when(!self.is_setting_up(), |section| {
+                                    section.child(self.language_control(ui))
+                                }),
                         )
-                        .when(!self.is_setting_up(), |section| {
-                            section.child(self.language_control(ui))
-                        }),
-                )
-                .child(self.presets_section(ui.cx))
-                .child(self.preferences_section(ui)),
-            Page::Words => page
-                .when(
-                    self.config.uses_nemotron()
-                        || !self.config.recognition_terms.phrases().is_empty(),
-                    |page| page.child(self.recognition_section(ui.cx)),
-                )
-                .child(self.vocabulary_section(ui.cx)),
-            Page::Advanced => page
-                .when(!self.is_setting_up(), |page| {
-                    page.child(self.engine_section(ui)).child(self.switch(
+                        .child(self.presets_section(ui.cx)),
+                ),
+                Some(group().child(self.preferences_section(ui))),
+            ],
+            Page::Words => [
+                (self.config.uses_nemotron()
+                    || !self.config.recognition_terms.phrases().is_empty())
+                .then(|| group().child(self.recognition_section(ui.cx))),
+                Some(group().child(self.vocabulary_section(ui.cx))),
+                None,
+            ],
+            Page::Advanced => [
+                (!self.is_setting_up()).then(|| {
+                    group().child(self.engine_section(ui)).child(self.switch(
                         ui,
                         "Prefer GPU",
                         Setting::PreferGpu,
                     ))
-                })
-                .when(cfg!(target_os = "linux"), |page| {
-                    page.child(self.linux_section(ui))
-                })
-                .child(self.gesture_hints(ui, true))
-                .child(self.update_section(ui))
-                .child(ui.button(
-                    "Replay setup",
-                    Action::Onboarding(super::onboarding::Action::Replay),
-                )),
-        }
+                }),
+                Some(
+                    group()
+                        .when(cfg!(target_os = "linux"), |group| {
+                            group.child(self.linux_section(ui))
+                        })
+                        .child(self.gesture_hints(ui, true)),
+                ),
+                Some(
+                    group()
+                        .child(self.update_section(ui))
+                        .child(row().child(ui.button(
+                            "Replay setup",
+                            Action::Onboarding(super::onboarding::Action::Replay),
+                        ))),
+                ),
+            ],
+        };
+        groups.into_iter().flatten().enumerate().fold(
+            div().flex().flex_col().gap(px(24.0)),
+            |page, (index, group)| {
+                page.when(index > 0, |page| page.child(ui.kit().keystone_rule()))
+                    .child(group)
+            },
+        )
     }
 
     fn update_section(&self, ui: &Ui<'_>) -> impl IntoElement {
@@ -205,7 +225,7 @@ impl Settings {
             },
             _ => controls,
         };
-        ui.section("UPDATES")
+        ui.section("Updates")
             .child(format!("Speakeasy {}", env!("CARGO_PKG_VERSION")))
             .child(controls)
             .child("Checks GitHub only when you ask. Installation stays in your control.")
@@ -221,12 +241,13 @@ impl Settings {
             "Permission status refreshes when you return here. Try dictation to check your microphone and shortcut. Screen capture starts only when you ask for a Show."
         };
         let delivery = "To check delivery, end practice and dictate into an editor. Practice clears when this window hides or loses focus.";
-        ui.panel()
+        ui.kit()
+            .inlay()
             .flex()
             .flex_col()
             .gap(ROW_GAP)
             .text_size(TEXT)
-            .child(ui.heading("DICTATION STATUS"))
+            .child(ui.kit().eyebrow("Dictation status"))
             .child(format!(
                 "Model: {} · Shortcut: {}",
                 readiness.model, readiness.shortcut
@@ -330,11 +351,12 @@ impl Settings {
         } else {
             ("Set up dictation", "Set up automatically")
         };
-        ui.panel()
+        ui.kit()
+            .inlay()
             .flex()
             .flex_col()
             .gap(px(10.0))
-            .child(div().text_size(px(13.0)).child(title))
+            .child(ui.kit().eyebrow(title))
             .child(
                 div()
                     .text_size(TEXT)
@@ -365,17 +387,19 @@ impl Settings {
         } else {
             "Add Space, or double-tap, for hands-free. Escape cancels.".into()
         };
-        ui.panel()
+        ui.kit()
+            .inlay()
             .text_size(px(13.0))
             .line_height(px(23.0))
             .child(hold_hint)
             .child(div().child(gesture_hint))
             .map(|panel| {
                 #[cfg(target_os = "macos")]
-                let panel = panel.child(ui.button(
-                    format!("Shortcut: {}", self.config.mac_shortcut.label()),
+                let panel = panel.child(row().child(ui.picker(
+                    "Shortcut",
+                    self.config.mac_shortcut.label(),
                     Action::MacShortcut,
-                ));
+                )));
                 panel
             })
             .when(
@@ -408,11 +432,8 @@ impl Settings {
                     .flex()
                     .items_center()
                     .justify_between()
-                    .child(ui.heading("LOCAL SPEECH"))
-                    .child(ui.button(
-                        format!("Engine: {}", self.config.engine.label()),
-                        Action::Engine,
-                    )),
+                    .child(ui.kit().eyebrow("Local speech"))
+                    .child(ui.picker("Engine", self.config.engine.label(), Action::Engine)),
             )
             .child(
                 row()
@@ -445,21 +466,22 @@ impl Settings {
         let command = &self.desktop_command;
         #[cfg(not(target_os = "linux"))]
         let command = "speakeasy";
-        ui.panel()
+        ui.kit()
+            .inlay()
             .flex()
             .flex_col()
             .gap(ROW_GAP)
-            .child(ui.heading("LINUX DESKTOP"))
+            .child(ui.kit().eyebrow("Linux desktop"))
             .child(div().text_size(TEXT).child(format!("Shortcut: {shortcut}")))
             .child(div().text_size(TEXT).child(format!("Cancel: {cancel_shortcut}")))
-            .child(ui.button(
-                if linux.external_shortcut {
-                    "Shortcuts: Desktop bindings"
+            .child({
+                let mode = if linux.external_shortcut {
+                    "Desktop bindings"
                 } else {
-                    "Shortcuts: Native desktop"
-                },
-                Action::Toggle(Setting::DesktopBindings),
-            ))
+                    "Native desktop"
+                };
+                row().child(ui.picker("Shortcuts", mode, Action::Toggle(Setting::DesktopBindings)))
+            })
             .child(div().text_size(TEXT).child(format!(
                 "Desktop bindings: assign {command} --toggle and {command} --cancel in your desktop's shortcut settings."
             )))
@@ -477,15 +499,15 @@ impl Settings {
     }
 
     fn microphone_section(&self, ui: &Ui<'_>) -> impl IntoElement {
-        ui.section("MICROPHONE").child(
+        ui.section("Microphone").child(
             row()
-                .child(ui.button(self.microphone_name(), Action::Microphone))
+                .child(ui.picker("Input device", self.microphone_name(), Action::Microphone))
                 .child(ui.button("Refresh", Action::Refresh)),
         )
     }
 
     fn preferences_section(&self, ui: &Ui<'_>) -> impl IntoElement {
-        ui.section("PREFERENCES")
+        ui.section("Preferences")
             .child(
                 row()
                     .child(self.delivery_control(ui))
@@ -495,10 +517,7 @@ impl Settings {
             .child(
                 row()
                     .child(self.switch(ui, "Remove um / uh", Setting::RemoveFillers))
-                    .child(ui.button(
-                        format!("Theme: {}", self.config.theme.name()),
-                        Action::Theme,
-                    )),
+                    .child(ui.picker("Theme", self.config.theme.name(), Action::Theme)),
             )
             .child(
                 div()
@@ -537,37 +556,28 @@ impl Settings {
             })
     }
 
-    fn switch(&self, ui: &Ui<'_>, label: &str, setting: Setting) -> impl IntoElement {
-        let state = if setting.is_on(&self.config) {
-            "On"
-        } else {
-            "Off"
-        };
-        ui.button(format!("{label}: {state}"), Action::Toggle(setting))
-            .role(gpui::Role::Switch)
-            .aria_toggled(if setting.is_on(&self.config) {
-                gpui::accesskit::Toggled::True
-            } else {
-                gpui::accesskit::Toggled::False
-            })
+    fn switch(&self, ui: &Ui<'_>, label: &'static str, setting: Setting) -> impl IntoElement {
+        ui.toggle(label, setting.is_on(&self.config), Action::Toggle(setting))
     }
 
+    #[cfg(not(target_os = "linux"))]
     fn delivery_control(&self, ui: &Ui<'_>) -> impl IntoElement {
-        let label = match self.config.text_delivery {
-            #[cfg(not(target_os = "linux"))]
-            TextDelivery::Paste => "Keep clipboard: Off",
-            #[cfg(not(target_os = "linux"))]
-            TextDelivery::Type => "Keep clipboard: On",
-            #[cfg(target_os = "linux")]
-            TextDelivery::Paste => "Insert: Paste (Ctrl+V)",
-            #[cfg(target_os = "linux")]
-            TextDelivery::TerminalPaste => "Insert: Paste (Ctrl+Shift+V)",
-            #[cfg(target_os = "linux")]
-            TextDelivery::Type => "Insert: Type (Keep clipboard)",
-            #[cfg(target_os = "linux")]
-            TextDelivery::Copy => "Insert: Copy for manual paste",
+        ui.toggle(
+            "Keep clipboard",
+            matches!(self.config.text_delivery, TextDelivery::Type),
+            Action::Delivery,
+        )
+    }
+
+    #[cfg(target_os = "linux")]
+    fn delivery_control(&self, ui: &Ui<'_>) -> impl IntoElement {
+        let method = match self.config.text_delivery {
+            TextDelivery::Paste => "Paste (Ctrl+V)",
+            TextDelivery::TerminalPaste => "Paste (Ctrl+Shift+V)",
+            TextDelivery::Type => "Type (Keep clipboard)",
+            TextDelivery::Copy => "Copy for manual paste",
         };
-        ui.button(label, Action::Delivery)
+        ui.picker("Insert", method, Action::Delivery)
     }
 
     fn language_control(&self, ui: &Ui<'_>) -> AnyElement {
@@ -578,10 +588,10 @@ impl Settings {
             .iter()
             .find_map(|&(language, name)| (language == code).then_some(name))
             .unwrap_or(code);
-        let label = if cleanup {
-            format!("Cleanup language: {name}")
+        let eyebrow = if cleanup {
+            "Cleanup language"
         } else {
-            format!("Language: {name}")
+            "Language"
         };
         div()
             .id("language-picker")
@@ -590,9 +600,10 @@ impl Settings {
             .on_key_up(ui.cx.listener(Self::language_release))
             .flex()
             .flex_col()
+            .items_start()
             .gap(ROW_GAP)
             .child(
-                ui.button(label, Action::Language)
+                ui.picker(eyebrow, name.to_owned(), Action::Language)
                     .track_focus(&self.language.button)
                     .on_click(|_, _, cx| cx.stop_propagation()),
             )
@@ -618,26 +629,13 @@ impl Settings {
                         .track_focus(&self.language.menu)
                         .children(languages.iter().enumerate().map(
                             |(index, &(language, name))| {
-                                div()
-                                    .id(SharedString::from(format!("language-option-{language}")))
-                                    .role(gpui::Role::ListBoxOption)
-                                    .aria_label(name)
-                                    .aria_selected(self.language.cursor == Some(index))
-                                    .px(px(12.0))
-                                    .py(CONTROL_PAD_Y)
-                                    .cursor_pointer()
-                                    .when(self.language.cursor == Some(index), |row| {
-                                        row.bg(rgb(ui.palette.raise))
-                                    })
-                                    .hover(|row| row.bg(rgb(ui.palette.raise)))
-                                    .on_click(ui.cx.listener(move |view, _, window, cx| {
-                                        view.act(Action::SelectLanguage(language), window, cx);
-                                    }))
-                                    .child(if language == code {
-                                        format!("✓ {name}")
-                                    } else {
-                                        name.to_owned()
-                                    })
+                                ui.kit().option(
+                                    SharedString::from(format!("language-option-{language}")),
+                                    name,
+                                    language == code,
+                                    self.language.cursor == Some(index),
+                                    ui.press(Action::SelectLanguage(language)),
+                                )
                             },
                         )),
                 )
@@ -655,7 +653,7 @@ impl Settings {
         };
         row()
             .when_some(primary, |row, (label, action)| {
-                row.child(ui.button(label, action))
+                row.child(ui.command(label, action, Weight::Primary))
             })
             .when(
                 unsaved && self.setup.is_none() && self.saving.is_none(),
@@ -663,13 +661,24 @@ impl Settings {
             )
             .when(running, |row| row.child(ui.button("Pause", Action::Pause)))
             .child(ui.button("Shows…", Action::Shows))
-            .child(ui.button("Quit", Action::Quit))
+            .child(div().flex_1())
+            .child(ui.command("Quit", Action::Quit, Weight::Quiet))
     }
 
     fn status_line(&self, palette: &'static Palette, unsaved: bool) -> impl IntoElement {
         let tone = |problem| rgb(if problem { palette.warn } else { palette.muted });
-        div()
-            .text_size(TEXT)
+        let attention = self.presentation.indicator == Indicator::Attention
+            || self.notice.as_ref().is_some_and(super::Notice::is_problem);
+        let marker = if attention {
+            palette.warn
+        } else if unsaved {
+            palette.lamp
+        } else {
+            palette.muted
+        };
+        let lines = div()
+            .flex_1()
+            .min_w(px(0.0))
             .child(
                 div()
                     .text_color(tone(self.presentation.indicator == Indicator::Attention))
@@ -684,55 +693,70 @@ impl Settings {
             })
             .when(unsaved, |status| {
                 status.child(div().text_color(tone(false)).child("Unsaved changes"))
-            })
+            });
+        row()
+            .gap(px(10.0))
+            .text_size(TEXT)
+            .line_height(STATUS_LINE)
+            .child(
+                div()
+                    .flex_none()
+                    .h(STATUS_LINE)
+                    .flex()
+                    .items_center()
+                    .child(facet(marker, 8.0)),
+            )
+            .child(lines)
     }
 }
 
 impl Ui<'_> {
-    fn button(&self, label: impl Into<SharedString>, action: Action) -> gpui::Stateful<Div> {
-        self.button_enabled(label, action, true)
+    fn kit(&self) -> Kit<'static> {
+        Kit::new(self.palette)
     }
 
-    fn button_enabled(
+    fn press(&self, action: Action) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
+        self.cx
+            .listener(move |view, _, window, cx| view.act(action, window, cx))
+    }
+
+    fn command(
         &self,
         label: impl Into<SharedString>,
         action: Action,
-        enabled: bool,
+        weight: Weight,
     ) -> gpui::Stateful<Div> {
-        let palette = self.palette;
-        let label = label.into();
-        div()
-            .id(action.element_id())
-            .role(gpui::Role::Button)
-            .aria_label(label.clone())
-            .focusable()
-            .tab_stop(enabled)
-            .aria_disabled(!enabled)
-            .px(px(12.0))
-            .max_w(px(390.0))
-            .overflow_hidden()
-            .text_ellipsis()
-            .py(CONTROL_PAD_Y)
-            .rounded(px(3.0))
-            .border_1()
-            .border_color(rgb(mix(palette.raise, palette.ink, 0.14)))
-            .bg(rgb(palette.raise))
-            .text_size(TEXT)
-            .when(enabled, |button| {
-                button.hover(|style| {
-                    style
-                        .bg(rgb(mix(palette.raise, palette.ink, 0.08)))
-                        .text_color(rgb(palette.ink))
-                })
-            })
-            .focus(|style| style.border_color(rgb(palette.lamp)))
-            .when(enabled, |button| {
-                button.cursor_pointer().on_click(
-                    self.cx
-                        .listener(move |view, _, window, cx| view.act(action, window, cx)),
-                )
-            })
-            .child(label)
+        self.kit()
+            .button(action.element_id(), label, weight, Some(self.press(action)))
+    }
+
+    fn button(&self, label: impl Into<SharedString>, action: Action) -> gpui::Stateful<Div> {
+        self.command(label, action, Weight::Secondary)
+    }
+
+    fn picker(
+        &self,
+        eyebrow: &'static str,
+        value: impl Into<SharedString>,
+        action: Action,
+    ) -> gpui::Stateful<Div> {
+        self.kit().picker(
+            action.element_id(),
+            eyebrow,
+            value,
+            Some(self.press(action)),
+        )
+    }
+
+    fn toggle(&self, label: &'static str, on: bool, action: Action) -> gpui::Stateful<Div> {
+        let state = if on { "On" } else { "Off" };
+        self.kit().toggle(
+            action.element_id(),
+            label,
+            format!("{label}: {state}"),
+            on,
+            Some(self.press(action)),
+        )
     }
 
     fn file_row(&self, path: &Path, label: &'static str, file: EngineFile) -> impl IntoElement {
@@ -749,28 +773,12 @@ impl Ui<'_> {
             .child(self.button(label, Action::Choose(file)))
     }
 
-    fn panel(&self) -> Div {
-        div()
-            .p(px(16.0))
-            .rounded(px(4.0))
-            .bg(rgb(self.palette.panel))
-            .border_1()
-            .border_color(alpha(self.palette.lamp, 0.14))
-    }
-
-    fn heading(&self, text: &'static str) -> impl IntoElement {
-        div()
-            .text_size(TEXT)
-            .text_color(rgb(self.palette.muted))
-            .child(text)
-    }
-
     fn section(&self, title: &'static str) -> Div {
         div()
             .flex()
             .flex_col()
             .gap(ROW_GAP)
-            .child(self.heading(title))
+            .child(self.kit().eyebrow(title))
     }
 }
 
@@ -837,14 +845,7 @@ fn header(indicator: Indicator, palette: &'static Palette, compact: bool) -> imp
         .flex()
         .flex_col()
         .gap(px(10.0))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(12.0))
-                .child(jewel(indicator_color, 10.0))
-                .child(wordmark(palette)),
-        )
+        .child(Kit::new(palette).masthead(indicator_color))
         .when(!compact, |header| {
             header
                 .child(
@@ -853,7 +854,7 @@ fn header(indicator: Indicator, palette: &'static Palette, compact: bool) -> imp
                         .text_color(rgb(palette.muted))
                         .child("Say the word."),
                 )
-                .child(keystone_rule(palette))
+                .child(Kit::new(palette).keystone_rule())
         })
 }
 
@@ -882,40 +883,6 @@ fn progress_bar(progress: Progress, palette: &'static Palette) -> impl IntoEleme
                     progress.done as f32 / progress.total.max(1) as f32,
                 )),
         )
-}
-
-fn jewel(color: u32, size: f32) -> impl IntoElement {
-    svg()
-        .path(KEYSTONE)
-        .size(px(size))
-        .text_color(rgb(color))
-        .flex_none()
-}
-
-fn wordmark(palette: &'static Palette) -> impl IntoElement {
-    div()
-        .flex()
-        .gap(px(5.0))
-        .font_family(BRAND_FONT)
-        .font_weight(FontWeight::SEMIBOLD)
-        .text_size(px(19.0))
-        .text_color(rgb(palette.ink))
-        .children(
-            "SPEAKEASY"
-                .chars()
-                .map(|letter| div().child(letter.to_string())),
-        )
-}
-
-fn keystone_rule(palette: &'static Palette) -> impl IntoElement {
-    let rule = || div().flex_1().h(px(1.0)).bg(alpha(palette.lamp, 0.3));
-    div()
-        .flex()
-        .items_center()
-        .gap(px(8.0))
-        .child(rule())
-        .child(jewel(palette.lamp, 6.0))
-        .child(rule())
 }
 
 #[cfg(test)]

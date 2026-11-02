@@ -8,6 +8,7 @@ use super::{
     grille::Grille, symbol::Symbol,
 };
 use crate::{
+    controls::{caps, facet, hollow},
     runtime::Phase,
     theme::{Palette, alpha},
 };
@@ -21,6 +22,8 @@ const SLOT_VERTICAL_INSET: f32 = 16.0;
 const TRAILING_INSET: f32 = 7.0;
 
 const LABEL_FADE_FROM: f32 = 0.6;
+
+const JEWEL: f32 = 14.0;
 
 const TRAY_HINT: &str = if cfg!(target_os = "macos") {
     "In the menu bar · Use Speakeasy’s menu to quit"
@@ -61,7 +64,7 @@ impl Pill {
                     }])
                     .overflow_hidden()
                     .opacity(self.capsule.opacity.value().clamp(0.0, 1.0))
-                    .when(content == Content::Slot, |capsule| {
+                    .when(content.is_inlaid(), |capsule| {
                         capsule.child(brass_inlay(height, palette))
                     })
                     .child(self.render_content(content, scene, palette)),
@@ -80,24 +83,30 @@ impl Pill {
                 .child(TRAY_HINT)
                 .into_any_element(),
             Content::Error => self
-                .render_message(palette.warn, scene.footer(), palette)
+                .render_message(facet(palette.warn, JEWEL), scene.footer(), palette)
                 .into_any_element(),
             Content::Notice => self
-                .render_message(palette.muted, scene.footer(), palette)
+                .render_message(hollow(palette.lamp, JEWEL), scene.footer(), palette)
                 .into_any_element(),
             Content::Slot => self.render_slot(scene, palette).into_any_element(),
             Content::Idle => idle_mark(palette).into_any_element(),
         }
     }
 
-    fn render_message(&self, color: u32, footer: Option<&'static str>, palette: &Palette) -> Div {
+    fn render_message(
+        &self,
+        jewel: gpui::Svg,
+        footer: Option<&'static str>,
+        palette: &Palette,
+    ) -> Div {
         div()
             .w_full()
-            .px(px(14.0))
+            .pl(px(19.0))
+            .pr(px(14.0))
             .flex()
             .items_center()
-            .gap(px(10.0))
-            .child(Symbol::Attention.element(color))
+            .gap(px(13.0))
+            .child(jewel)
             .child(
                 div()
                     .flex_1()
@@ -112,7 +121,13 @@ impl Pill {
                             .child(self.snapshot.message.clone()),
                     )
                     .when_some(footer, |message, footer| {
-                        message.child(div().text_color(rgb(palette.muted)).child(footer))
+                        message.child(
+                            caps(footer)
+                                .mt(px(3.0))
+                                .text_size(px(9.5))
+                                .line_height(px(12.5))
+                                .text_color(rgb(palette.muted)),
+                        )
                     }),
             )
     }

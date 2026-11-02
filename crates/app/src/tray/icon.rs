@@ -16,8 +16,8 @@ const BARS: [(f32, f32); 5] = [
 
 const LIGHT_BADGE: u32 = 0xE0_E0_E6;
 const BADGE_CENTER: f32 = 25.0;
-
-const RING_RADIUS: f32 = 4.2;
+const JEWEL: f32 = 6.0;
+const SETTING: f32 = 7.8;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum IconStyle {
@@ -72,13 +72,17 @@ impl Mark {
                 coverage(rounded_rect(x, y, bar, 1.0))
             })
             .fold(0.0, f32::max);
-        let (badge, cut) = match self.badge {
-            Some(badge) => (badge.distance(x, y), coverage(badge_diamond(x, y, 7.8))),
-            None => (f32::MAX, 0.0),
+        let (badge, silhouette, cut) = match self.badge {
+            Some(badge) => (
+                badge.distance(x, y),
+                badge_diamond(x, y, JEWEL),
+                coverage(badge_diamond(x, y, SETTING)),
+            ),
+            None => (f32::MAX, f32::MAX, 0.0),
         };
 
         let keyline = match self.style {
-            IconStyle::Color => coverage(slot.min(badge) - 1.0) * 0.45,
+            IconStyle::Color => coverage(slot.min(silhouette) - 1.0) * 0.45,
             IconStyle::Template => 0.0,
         };
         let (color, opacity) = composite([
@@ -111,27 +115,14 @@ enum Badge {
 
 impl Badge {
     fn distance(self, x: f32, y: f32) -> f32 {
+        let jewel = badge_diamond(x, y, JEWEL);
         match self {
-            Self::Recording => badge_diamond(x, y, 5.0),
-            Self::Busy => {
-                let (dx, dy) = (x - BADGE_CENTER, y - BADGE_CENTER);
-                let from_centerline = if dx < 0.0 && dy < 0.0 {
-                    dx.hypot(dy + RING_RADIUS).min((dx + RING_RADIUS).hypot(dy))
-                } else {
-                    (dx.hypot(dy) - RING_RADIUS).abs()
-                };
-                from_centerline - 0.95
-            },
-            Self::Paused => {
-                let left = rounded_rect(x, y, [21.9, 20.8, 24.2, 29.2], 0.6);
-                let right = rounded_rect(x, y, [25.8, 20.8, 28.1, 29.2], 0.6);
-                left.min(right)
-            },
-            Self::Attention => {
-                let stroke = rounded_rect(x, y, [23.85, 19.6, 26.15, 26.0], 1.15);
-                let dot = (x - BADGE_CENTER).hypot(y - 28.7) - 1.3;
-                stroke.min(dot)
-            },
+            Self::Recording => jewel,
+            Self::Busy => jewel.max(-badge_diamond(x, y, 3.3)),
+            Self::Paused => jewel.max(1.1 - (x - BADGE_CENTER).abs()),
+            Self::Attention => jewel
+                .max(-badge_diamond(x, y, 4.0))
+                .min(badge_diamond(x, y, 2.1)),
         }
     }
 }

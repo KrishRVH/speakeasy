@@ -50,22 +50,6 @@ pub(crate) fn reveal_shows(cx: &mut App) {
         services.config.theme,
         services.output.subscribe(),
         review::Actions {
-            sessions: |cx| {
-                let services = cx.global_mut::<Services>();
-                anyhow::ensure!(
-                    !services.is_quitting() && !services.mode.is_demo(),
-                    "OpenCode handoffs require the running app."
-                );
-                services.deliveries.list()
-            },
-            send: |request, cx| {
-                let services = cx.global_mut::<Services>();
-                anyhow::ensure!(
-                    !services.is_quitting() && !services.mode.is_demo(),
-                    "OpenCode handoffs require the running app."
-                );
-                services.deliveries.send(request)
-            },
             edit: |edit, fixture, cx| {
                 let services = cx.global_mut::<Services>();
                 anyhow::ensure!(!services.is_quitting(), "Speakeasy is quitting.");

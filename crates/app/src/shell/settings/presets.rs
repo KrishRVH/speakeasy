@@ -9,7 +9,8 @@ use super::{
 };
 use crate::{
     config::presets::{self, Preset},
-    theme::{Theme, alpha},
+    controls::{Kit, Weight},
+    theme::Theme,
 };
 
 pub(super) struct Editor {
@@ -192,28 +193,21 @@ impl Settings {
                 },
                 _ => label.into(),
             };
-            div()
-                .id(id)
-                .role(gpui::Role::Button)
+            Kit::new(palette)
+                .button(
+                    id,
+                    label,
+                    Weight::Secondary,
+                    (!busy).then(|| {
+                        cx.listener(move |settings, _, window, cx| {
+                            settings.edit_preset(action.clone(), window, cx);
+                        })
+                    }),
+                )
                 .aria_label(accessible)
-                .aria_disabled(busy)
-                .focusable()
-                .tab_stop(!busy)
-                .cursor_pointer()
-                .px(px(10.0))
-                .py(px(7.0))
-                .border_1()
-                .border_color(alpha(palette.lamp, 0.25))
-                .rounded(px(4.0))
-                .focus(|style| style.border_color(rgb(palette.lamp)))
-                .when(busy, |button| button.opacity(0.45).cursor_default())
-                .on_click(cx.listener(move |settings, _, window, cx| {
-                    settings.edit_preset(action.clone(), window, cx);
-                }))
-                .child(label)
         };
         div().flex().flex_col().gap(px(8.0))
-            .child("Dictation presets")
+            .child(Kit::new(palette).eyebrow("Dictation presets"))
             .when_some(cx.global::<Services>().preset_name(), |section, name| {
                 section.child(format!("Using preset {name} until dictation settings change or you restart."))
             })

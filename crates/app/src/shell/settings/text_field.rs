@@ -12,7 +12,10 @@ use gpui::{
 };
 use viewport::Viewport;
 
-use crate::theme::{Theme, alpha};
+use crate::{
+    controls::CORNER,
+    theme::{Theme, alpha},
+};
 
 pub(super) struct TextField {
     label: &'static str,
@@ -337,7 +340,7 @@ impl Render for TextField {
             .focus(|style| style.border_color(gpui::rgb(palette.lamp)))
             .bg(gpui::rgb(palette.room))
             .text_color(gpui::rgb(palette.ink))
-            .rounded(px(4.0))
+            .rounded(CORNER)
             .px(px(8.0))
             .py(px(5.0))
             .on_key_down(cx.listener(Self::key_down))

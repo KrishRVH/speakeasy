@@ -7,8 +7,9 @@ use super::{
     text_field::{Submit, TextField},
 };
 use crate::{
+    controls::{Kit, Weight},
     shell::Services,
-    theme::{Theme, alpha},
+    theme::Theme,
 };
 
 pub(super) struct Editor {
@@ -77,41 +78,34 @@ impl Settings {
                     || label.into(),
                     |phrase| format!("{label} hint {phrase}").into(),
                 );
-            div()
-                .id(id)
-                .role(gpui::Role::Button)
+            Kit::new(palette)
+                .button(
+                    id,
+                    label,
+                    Weight::Secondary,
+                    Some(cx.listener(move |settings, _, window, cx| {
+                        if cx.global::<Services>().is_quitting() {
+                            return;
+                        }
+                        match remove {
+                            Some(index) => {
+                                settings.config.recognition_terms.remove(index);
+                                settings
+                                    .recognition
+                                    .field
+                                    .read(cx)
+                                    .focus_handle(cx)
+                                    .focus(window);
+                                settings.edited();
+                                cx.notify();
+                            },
+                            None => {
+                                settings.add_recognition_term(cx);
+                            },
+                        }
+                    })),
+                )
                 .aria_label(accessible)
-                .focusable()
-                .tab_stop(true)
-                .cursor_pointer()
-                .px(px(10.0))
-                .py(px(7.0))
-                .border_1()
-                .border_color(alpha(palette.lamp, 0.25))
-                .rounded(px(4.0))
-                .focus(|style| style.border_color(rgb(palette.lamp)))
-                .on_click(cx.listener(move |settings, _, window, cx| {
-                    if cx.global::<Services>().is_quitting() {
-                        return;
-                    }
-                    match remove {
-                        Some(index) => {
-                            settings.config.recognition_terms.remove(index);
-                            settings
-                                .recognition
-                                .field
-                                .read(cx)
-                                .focus_handle(cx)
-                                .focus(window);
-                            settings.edited();
-                            cx.notify();
-                        },
-                        None => {
-                            settings.add_recognition_term(cx);
-                        },
-                    }
-                }))
-                .child(label)
         };
         let detail = if self.config.uses_nemotron() {
             "Help Nemotron recognize names and jargon. Hints improve recognition; they do not force a spelling or replace words."
@@ -122,7 +116,7 @@ impl Settings {
             .flex()
             .flex_col()
             .gap(px(8.0))
-            .child("Recognition hints")
+            .child(Kit::new(palette).eyebrow("Recognition hints"))
             .child(
                 div()
                     .text_size(px(11.0))

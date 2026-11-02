@@ -63,8 +63,6 @@ async fn exercise_video(cx: &mut AsyncApp) -> anyhow::Result<()> {
                     Theme::default(),
                     snapshots,
                     Actions {
-                        sessions: |_| anyhow::bail!("Synthetic review does not contact OpenCode"),
-                        send: |_, _| anyhow::bail!("Synthetic review does not send Shows"),
                         preview: |request, cx| cx.global_mut::<TestReads>().0.submit(request),
                         edit: |_, _, _| {
                             anyhow::bail!("Synthetic video review does not edit bundles")

@@ -8,7 +8,6 @@ mod handoff;
 mod library;
 mod narration;
 mod navigation;
-mod opencode;
 mod render;
 mod source;
 mod timeline;
@@ -40,8 +39,6 @@ use crate::{
 };
 
 pub(crate) struct Actions {
-    pub sessions: fn(&mut App) -> anyhow::Result<super::opencode::SessionReceipt>,
-    pub send: fn(super::opencode::Request, &mut App) -> anyhow::Result<super::opencode::Receipt>,
     pub edit: fn(
         super::edits::Edit,
         Option<Arc<tempfile::TempDir>>,
@@ -62,7 +59,6 @@ enum ImageState {
 }
 
 pub(crate) struct Review {
-    handoff: opencode::Handoff,
     focus: FocusHandle,
     source: Source,
     theme: Theme,
@@ -143,7 +139,6 @@ impl Review {
         window.focus(&focus);
         Self {
             focus,
-            handoff: opencode::Handoff::Closed,
             source,
             theme,
             actions,
@@ -357,7 +352,6 @@ impl Review {
     }
 
     fn clear_selection(&mut self, window: Option<&mut Window>, cx: &mut Context<'_, Self>) {
-        self.handoff = opencode::Handoff::Closed;
         self.opening = None;
         self.loading = None;
         self.copying = None;
@@ -565,6 +559,8 @@ impl Review {
                 text,
                 image: Arc::clone(&decoded.image),
             }
+        } else if kind == CopyKind::Agent {
+            super::copy::Request::Agent(key.directory.clone())
         } else {
             super::copy::Request::Summary(key.directory.clone())
         };
@@ -580,7 +576,7 @@ impl Review {
         self.copying = Some(cx.spawn(async move |view, cx| {
             let result = receipt.await;
             let notice = match result {
-                Ok(super::copy::Outcome::Copied) => format!("Copied {}.", kind.name()),
+                Ok(super::copy::Outcome::Copied) => kind.copied(),
                 Ok(super::copy::Outcome::Missing) => {
                     "This Show is no longer available. Refresh the library.".into()
                 },
@@ -847,9 +843,6 @@ impl Review {
             },
             Action::Copy(kind) => self.copy(kind, cx),
             Action::Export(kind) => self.export(kind, cx),
-            Action::OpenCode => self.open_handoff(cx),
-            Action::SendOpenCode(session) => self.send_handoff(session, cx),
-            Action::CloseOpenCode => self.close_handoff(cx),
             Action::CancelExport => {
                 self.export_cancel = None;
                 self.notice = Some("Cancelling video export…".into());
@@ -883,6 +876,7 @@ enum Pane {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CopyKind {
+    Agent,
     Summary,
     Evidence,
 }
@@ -890,8 +884,18 @@ enum CopyKind {
 impl CopyKind {
     fn name(self) -> &'static str {
         match self {
+            Self::Agent => "a prompt for your agent",
             Self::Summary => "summary",
             Self::Evidence => "image, summary, and narration",
+        }
+    }
+
+    fn copied(self) -> String {
+        match self {
+            Self::Agent => "Copied a prompt for your agent. Paste it into Claude Code or any \
+                            coding agent; it points to this Show's files."
+                .into(),
+            Self::Summary | Self::Evidence => format!("Copied {}.", self.name()),
         }
     }
 }
@@ -904,9 +908,6 @@ enum Direction {
 
 #[derive(Clone)]
 enum Action {
-    OpenCode,
-    SendOpenCode(String),
-    CloseOpenCode,
     Annotations,
     Pane(Pane),
     Clause(usize),

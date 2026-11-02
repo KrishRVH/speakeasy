@@ -509,6 +509,12 @@ enum Content {
     Idle,
 }
 
+impl Content {
+    const fn is_inlaid(self) -> bool {
+        matches!(self, Self::Error | Self::Notice | Self::Slot)
+    }
+}
+
 struct Clock {
     seconds: u64,
     near_limit: bool,

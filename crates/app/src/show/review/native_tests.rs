@@ -8,8 +8,6 @@ use gpui::{Application, AsyncApp, Render, RenderImage, Timer, div, prelude::*};
 
 use super::*;
 
-mod handoff;
-
 #[cfg(target_os = "windows")]
 mod video;
 
@@ -47,6 +45,7 @@ struct CopyProbe {
     summary: String,
     narration: String,
     received: bool,
+    agent: Option<std::path::PathBuf>,
 }
 impl gpui::Global for CopyProbe {}
 
@@ -93,8 +92,6 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
                     Theme::default(),
                     snapshots,
                     Actions {
-                        sessions: |_| anyhow::bail!("Synthetic review does not contact OpenCode"),
-                        send: |_, _| anyhow::bail!("Synthetic review does not send Shows"),
                         edit: |edit, fixture, cx| {
                             cx.global_mut::<TestEdits>().0.submit(edit, fixture)
                         },
@@ -127,7 +124,6 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     pixels(window, cx).await?;
     export_selected(window, cx).await?;
     copy_selected(window, cx).await?;
-    handoff::exercise(window, cx).await?;
 
     window.update(cx, |view, window, cx| {
         view.act(Action::Mode(Mode::Keyframes), window, cx);
@@ -732,6 +728,7 @@ async fn copy_selected(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyho
             summary,
             narration,
             received: false,
+            agent: None,
         });
 
         view.source = Source::Saved;
@@ -778,6 +775,38 @@ async fn copy_selected(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyho
         copied,
         "The review did not report the synthetic copy result"
     );
+
+    let selected = window.update(cx, |view, native, cx| {
+        view.source = Source::Saved;
+        view.actions.can_copy = |_| true;
+        view.actions.copy = |request, cx| {
+            let super::super::copy::Request::Agent(directory) = request else {
+                anyhow::bail!("Send to agent copied something other than its prompt");
+            };
+            cx.global_mut::<CopyProbe>().agent = Some(directory);
+            Ok(Box::pin(async { Ok(super::super::copy::Outcome::Copied) }))
+        };
+        view.act(Action::Copy(CopyKind::Agent), native, cx);
+        view.source = Source::Demo;
+        view.actions.can_copy = |_| false;
+        view.actions.copy = |_, _| anyhow::bail!("Synthetic review does not use the clipboard");
+        view.library
+            .selected
+            .as_ref()
+            .map(|key| key.directory.clone())
+    })?;
+    wait_for(window, |view| view.copying.is_none(), cx).await?;
+    let agent = cx.read_global::<CopyProbe, _>(|probe, _| probe.agent.clone())?;
+    ensure!(
+        agent.is_some() && agent == selected,
+        "Send to agent did not point at the selected Show"
+    );
+    let announced = window.read_with(cx, |view, _| {
+        view.notice
+            .as_deref()
+            .is_some_and(|notice| notice.starts_with("Copied a prompt for your agent."))
+    })?;
+    ensure!(announced, "Send to agent did not say what it copied");
     Ok(())
 }
 

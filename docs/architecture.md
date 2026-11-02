@@ -146,10 +146,12 @@ module unless a test file is named.
   [settings/render.rs](../crates/app/src/shell/settings/render.rs) edit a draft;
   [navigation.rs](../crates/app/src/shell/settings/navigation.rs) owns page selection and keyboard
   focus without changing that draft, and ends private practice when its page is hidden.
-  [config.rs](../crates/app/src/config.rs) and [paths.rs](../crates/app/src/paths.rs) own the file
-  contract and where it lives. Missing fields use the same NeMo/auto defaults as a new install.
-  Unsupported fields and values stop loading and saving without replacing the file; saves preserve
-  concurrent edits to current settings. One `text_delivery` choice controls insertion.
+  [controls.rs](../crates/app/src/controls.rs) draws the themed controls Settings and Shows share,
+  and the jewels and tracked capitals the pill borrows. [config.rs](../crates/app/src/config.rs) and
+  [paths.rs](../crates/app/src/paths.rs) own the file contract and where it lives. Missing fields
+  use the same NeMo/auto defaults as a new install. Unsupported fields and values stop loading and
+  saving without replacing the file; saves preserve concurrent edits to current settings. One
+  `text_delivery` choice controls insertion.
   [config/presets.rs](../crates/app/src/config/presets.rs) stores bounded named dictation choices,
   validates them without opening inactive model paths, and loads them into the draft. Its snapshot
   excludes microphone, delivery, shortcuts, sound, and presentation options.
@@ -284,21 +286,12 @@ module unless a test file is named.
   directory, and waits for its exit. [cli.rs](../crates/app/tests/cli.rs) checks the process
   boundary without opening devices or the app. Help and refused launch options never spawn a child.
   [check-package.sh](../scripts/check-package.sh) launches every release package before upload.
-- **Agent evidence and handoff**: [show/evidence.rs](../crates/app/src/show/evidence.rs) shares
-  inspection and temporal queries between CLI and [show/mcp.rs](../crates/app/src/show/mcp.rs). MCP
-  exposes three read-only tools within explicit launch roots, refuses child symlinks, bounds
-  lines/content/images, and reports actual source sample times. It serves the 2026-07-28 stateless
-  protocol and the 2025-11-25 initialized protocol used by current external clients. No tool
-  exports, sends, or reads ordinary dictation. Setup resolves the durable installed launcher and
-  only prints client stanzas. [show/opencode.rs](../crates/app/src/show/opencode.rs) owns explicit
-  discovery and submission to an already-running loopback V2 service. Review chooses a concrete
-  session; the CLI requires its ID. Submission rechecks the session and endpoint, preserves edited
-  summaries, and includes every manifest contact sheet within a 12 MiB request limit or refuses.
-  Audio and movies are excluded. Closing the receipt cancels preparation; after POST, the owner
-  drains the bounded response even if the view closes. Quit drains that owner. Only a matching
-  session/message queue receipt proves acceptance; ambiguous responses stay unknown and never
-  trigger automatic retries. Module tests use fake local servers and fixtures; no check contacts the
-  user's agent service.
+- **Agent evidence**: [show/evidence.rs](../crates/app/src/show/evidence.rs) shares inspection and
+  temporal queries between CLI and [show/mcp.rs](../crates/app/src/show/mcp.rs). MCP exposes three
+  read-only tools within explicit launch roots, refuses child symlinks, bounds lines/content/images,
+  and reports actual source sample times. It serves the 2026-07-28 stateless protocol and the
+  2025-11-25 initialized protocol used by current external clients. No tool exports, sends, or reads
+  ordinary dictation. Setup resolves the durable installed launcher and only prints client stanzas.
 - **Show recording and publication**: [show.rs](../crates/app/src/show.rs),
   [show/recorder.rs](../crates/app/src/show/recorder.rs),
   [show/publish.rs](../crates/app/src/show/publish.rs), and the session owner.
@@ -347,13 +340,14 @@ module unless a test file is named.
   thread and stay bound to their original Show; activation rereads the summary and pin. The shell
   supplies copy availability and routes accepted writes and recovery while the view owns result
   receipts. [copy.rs](../crates/app/src/show/copy.rs) owns explicit review/tray copies through
-  native cleanup. It retains the displayed image snapshot, reads or encodes off the UI thread, and
-  rejects dropped receipts, lifecycle cancellation, and any newer input generation before native
-  replacement. Copies made while paused are cancelled before an owner starts. Quit drains the
-  worker, and a replacement waits for its predecessor to finish.
-  [copy/tests.rs](../crates/app/src/show/copy/tests.rs) checks those races with fake native access;
-  the owned-window review test checks the actual visual request through an injected copy action
-  without touching the clipboard.
+  native cleanup, including the Send to agent prompt, which names the folder, each manifest contact
+  sheet in order, and `summary.md` but carries no Show text. It retains the displayed image
+  snapshot, reads or encodes off the UI thread, and rejects dropped receipts, lifecycle
+  cancellation, and any newer input generation before native replacement. Copies made while paused
+  are cancelled before an owner starts. Quit drains the worker, and a replacement waits for its
+  predecessor to finish. [copy/tests.rs](../crates/app/src/show/copy/tests.rs) checks those races
+  with fake native access; the owned-window review test checks the actual visual request through an
+  injected copy action without touching the clipboard.
 - **Show composition**: [crates/show/src](../crates/show/src), notably
   [locate.rs](../crates/show/src/locate.rs) resolves phrases and marks to exact recorded spans;
   [locate/evidence.rs](../crates/show/src/locate/evidence.rs) renders bounded source sheets and mark

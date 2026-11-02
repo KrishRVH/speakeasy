@@ -1,6 +1,8 @@
 use std::{fs, time::Duration};
 
+use serde_json::json;
 use speakeasy_platform::InputSender;
+use speakeasy_show::{Image, Manifest};
 
 use super::*;
 
@@ -138,5 +140,54 @@ async fn native_failure_reaches_the_requester_and_the_next_copy_can_run() -> any
         Outcome::Copied
     ));
     copies.drained().await;
+    Ok(())
+}
+
+#[test]
+fn an_agent_prompt_points_at_every_sheet_in_order_without_private_text() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let directory = root.path().join("2026-11-01_09-30-00");
+    fs::create_dir_all(directory.join("frames"))?;
+    let keyframes: Vec<_> = (1..=7)
+        .map(|index| {
+            json!({"index": index, "at": index * 100, "reason": "middle", "event": "PRIVATE_EVENT", "marks": [0, 0]})
+        })
+        .collect();
+    let manifest = serde_json::to_vec(&json!({
+        "version": 3, "duration": 1000, "surface": {"width": 2, "height": 2},
+        "strokes": [], "pins": [], "actions": [], "narration": {"text": "PRIVATE_NARRATION"},
+        "marks": [], "keyframes": keyframes
+    }))?;
+    let png = Image::from_bgra(2, 2, [40, 80, 120, 255].repeat(4))?.encode_png()?;
+    for name in Manifest::parse(&manifest)?.files() {
+        fs::write(directory.join(name), &png)?;
+    }
+    fs::write(directory.join(Manifest::FILE), &manifest)?;
+    fs::write(directory.join(Bundle::SUMMARY), "PRIVATE_SUMMARY")?;
+
+    let prompt = agent_prompt(&directory)?.context("An existing Show has a prompt")?;
+    let listed: Vec<&str> = prompt
+        .lines()
+        .filter_map(|line| line.strip_prefix("- "))
+        .collect();
+    let expected = ["contact-sheet.png", "contact-sheet-02.png"]
+        .map(|name| directory.join(name).display().to_string());
+    assert_eq!(
+        listed, expected,
+        "The prompt lost or reordered a contact sheet"
+    );
+    assert!(prompt.contains(&directory.join(Bundle::SUMMARY).display().to_string()));
+    assert!(
+        ["PRIVATE_SUMMARY", "PRIVATE_NARRATION", "PRIVATE_EVENT"]
+            .iter()
+            .all(|private| !prompt.contains(private)),
+        "The prompt carried private Show text instead of pointing at its files"
+    );
+    assert!(
+        Request::Agent(root.path().join("missing"))
+            .prepare()?
+            .is_none(),
+        "A missing Show produced a prompt for another folder"
+    );
     Ok(())
 }

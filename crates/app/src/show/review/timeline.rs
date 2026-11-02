@@ -5,6 +5,7 @@ use speakeasy_show::Moment;
 
 use super::{Action, ImageState, Mode, Review, navigation::Stamp};
 use crate::{
+    controls::CORNER,
     gpui_ext::EntityUpdate as _,
     theme::{Palette, alpha},
 };
@@ -46,7 +47,7 @@ impl Review {
                     .relative()
                     .w_full()
                     .h(px(24.0))
-                    .rounded(px(4.0))
+                    .rounded(CORNER)
                     .bg(rgb(palette.room))
                     .border_1()
                     .border_color(alpha(palette.lamp, 0.3))
