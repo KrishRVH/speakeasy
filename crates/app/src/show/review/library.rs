@@ -418,9 +418,15 @@ impl Library {
         self.selected.as_ref() == Some(key)
     }
 
-    pub(super) fn selected_row(&self) -> Option<&Row> {
+    pub(super) fn position(&self) -> Option<usize> {
         let key = self.selected.as_ref()?;
-        self.rows.iter().find(|row| row.directory == key.directory)
+        self.rows
+            .iter()
+            .position(|row| row.directory == key.directory)
+    }
+
+    pub(super) fn selected_row(&self) -> Option<&Row> {
+        self.rows.get(self.position()?)
     }
 
     pub(super) fn is_selected(&self, directory: &Path) -> bool {

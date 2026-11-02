@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::ensure;
-use gpui::{AsyncApp, Render, RenderImage, div, prelude::*};
+use gpui::{AsyncApp, Pixels, Render, RenderImage, Size, div, prelude::*};
 
 use super::*;
 
@@ -193,6 +193,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         );
     }
     more_actions(window, cx)?;
+    selection_in_view(window, cx).await?;
     window.update(cx, |view, _, cx| {
         view.act(Action::Frame(0), cx);
     })?;
@@ -710,6 +711,100 @@ fn more_actions(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyhow::Resu
         "Escape closed the window instead of the menu"
     );
     Ok(())
+}
+
+#[expect(
+    clippy::future_not_send,
+    reason = "The selection acceptance resizes the owned review window on its UI thread"
+)]
+async fn resize(
+    window: WindowHandle<Review>,
+    to: Size<Pixels>,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<()> {
+    cx.update_window(window.into(), |_, window, _| window.resize(to))?;
+    let start = Instant::now();
+    while cx.update_window(window.into(), |_, window, _| window.viewport_size())? != to {
+        ensure!(
+            start.elapsed() < Duration::from_secs(10),
+            "The review window did not resize"
+        );
+        cx.background_executor()
+            .timer(Duration::from_millis(10))
+            .await;
+    }
+    cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+}
+
+#[expect(
+    clippy::future_not_send,
+    reason = "The selection acceptance drives the owned GPUI review view on its UI thread"
+)]
+async fn select(
+    window: WindowHandle<Review>,
+    action: Action,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<()> {
+    window.update(cx, |view, _, cx| view.act(action, cx))?;
+    wait_for(
+        window,
+        |view| view.opening.is_none() && matches!(view.image, ImageState::Ready(_)),
+        cx,
+    )
+    .await?;
+    cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+}
+
+#[expect(
+    clippy::future_not_send,
+    reason = "The selection acceptance resizes the owned review window on its UI thread"
+)]
+async fn selection_in_view(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyhow::Result<()> {
+    for width in [px(640.0), px(1_100.0)] {
+        resize(window, size(width, px(640.0)), cx).await?;
+        let last = window.read_with(cx, |view, _| {
+            view.detail
+                .as_ref()
+                .map_or(0, |detail| detail.frames.len().saturating_sub(1))
+        })?;
+        select(window, Action::Frame(last), cx).await?;
+        let (strip, chip, offset) = window.read_with(cx, |view, _| {
+            (
+                view.frame_scroll.bounds(),
+                view.frame_scroll
+                    .bounds_for_item(last.min(render::NEARBY_FRAMES)),
+                view.frame_scroll.offset().x,
+            )
+        })?;
+        let chip = chip.context("The frame strip has no chip for the selected frame")?;
+        ensure!(
+            chip.left() + offset >= strip.left() && chip.right() + offset <= strip.right(),
+            "The selected frame chip at {width:?} lies outside the visible frame strip"
+        );
+    }
+    let (first, last) = window.read_with(cx, |view, _| {
+        (
+            view.library.position(),
+            view.library.rows.len().saturating_sub(1),
+        )
+    })?;
+    let first = first.context("The review selected a Show")?;
+    resize(window, size(px(1_100.0), px(320.0)), cx).await?;
+    select(window, Action::Show(last), cx).await?;
+    let (library, row, offset) = window.read_with(cx, |view, _| {
+        (
+            view.library_scroll.bounds(),
+            view.library_scroll.bounds_for_item(last),
+            view.library_scroll.offset().y,
+        )
+    })?;
+    let row = row.context("The library has no row for the selected Show")?;
+    ensure!(
+        row.top() + offset >= library.top() && row.bottom() + offset <= library.bottom(),
+        "The selected Show row lies outside the visible library"
+    );
+    resize(window, size(px(1_100.0), px(640.0)), cx).await?;
+    select(window, Action::Show(first), cx).await
 }
 
 #[expect(

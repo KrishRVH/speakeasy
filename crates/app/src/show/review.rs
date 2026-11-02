@@ -18,8 +18,8 @@ use std::{
 use anyhow::Context as _;
 use export::Kind as ExportKind;
 use gpui::{
-    App, AppContext, Bounds, Context, FocusHandle, Subscription, Task, TitlebarOptions, Window,
-    WindowBounds, WindowHandle, WindowOptions, px, size,
+    App, AppContext, Bounds, Context, FocusHandle, ScrollHandle, Subscription, Task,
+    TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, px, size,
 };
 use library::{Detail, Key, Kind, Library, Mode};
 use navigation::{Origin, Request};
@@ -67,6 +67,8 @@ pub(crate) struct Review {
     theme: Theme,
     actions: Actions,
     library: Library,
+    library_scroll: ScrollHandle,
+    frame_scroll: ScrollHandle,
     directory: Option<PathBuf>,
     detail: Option<Detail>,
     mode: Mode,
@@ -148,6 +150,8 @@ impl Review {
             theme,
             actions,
             library: Library::default(),
+            library_scroll: ScrollHandle::new(),
+            frame_scroll: ScrollHandle::new(),
             directory: None,
             detail: None,
             mode: Mode::Keyframes,
@@ -256,6 +260,9 @@ impl Review {
         cx: &mut Context<'_, Self>,
     ) {
         self.clear_selection(cx);
+        if let Some(position) = self.library.position() {
+            self.library_scroll.scroll_to_item(position);
+        }
         if self.interrupted().is_some() {
             cx.notify();
             return;
@@ -295,6 +302,8 @@ impl Review {
     }
 
     fn load_frame(&mut self, key: Key, cx: &mut Context<'_, Self>) {
+        self.frame_scroll
+            .scroll_to_item(key.frame.min(render::NEARBY_FRAMES));
         self.loading = None;
         if self.mode != Mode::Video || !matches!(self.image, ImageState::Ready(_)) {
             self.replace_image(ImageState::Loading, cx);

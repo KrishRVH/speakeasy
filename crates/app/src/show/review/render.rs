@@ -35,6 +35,9 @@ const RECORD_HINT: &str =
     "Hold your shortcut and press S, W, or A to record your screen, a window, or an area.";
 const KEYS_HINT: &str = "Page Up / Page Down: jump 10 seconds · Home / End: first / last frame";
 
+pub(super) const NEARBY_FRAMES: usize = 10;
+const SHOWN_FRAMES: usize = 2 * NEARBY_FRAMES + 1;
+
 const BODY_LINE: Pixels = px(20.0);
 const HEADING_TEXT: Pixels = px(16.0);
 
@@ -160,6 +163,7 @@ impl Review {
                     .flex_1()
                     .min_h(px(0.0))
                     .overflow_y_scroll()
+                    .track_scroll(&self.library_scroll)
                     .px(px(8.0))
                     .pb(px(8.0))
                     .flex()
@@ -632,12 +636,13 @@ impl Review {
                     .flex_none()
                     .gap(px(6.0))
                     .overflow_x_scroll()
+                    .track_scroll(&self.frame_scroll)
                     .children(
                         frames
                             .iter()
                             .enumerate()
-                            .skip(index.saturating_sub(10))
-                            .take(21)
+                            .skip(index.saturating_sub(NEARBY_FRAMES))
+                            .take(SHOWN_FRAMES)
                             .map(|(position, frame)| {
                                 chip(
                                     kit,
@@ -1211,14 +1216,8 @@ impl Review {
             cx.stop_propagation();
             return;
         }
-        let selected = self.library.selected.as_ref();
-        let row = selected.and_then(|key| {
-            self.library
-                .rows
-                .iter()
-                .position(|row| row.directory == key.directory)
-        });
-        let frame = selected.map_or(0, |key| key.frame);
+        let row = self.library.position();
+        let frame = self.library.selected.as_ref().map_or(0, |key| key.frame);
         let last = self
             .detail
             .as_ref()
