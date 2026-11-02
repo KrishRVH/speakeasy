@@ -35,13 +35,10 @@ impl Writing {
         match event {
             MovieEvent::Started { at, size, accepted } => {
                 let fresh = self.recording.is_none();
-                if self.recording.is_none() {
+                if fresh {
                     self.recording = Metadata::begin(directory, self.started, at, size).ok();
-                } else {
-                    self.stop();
                 }
-                let ready = fresh && self.recording.is_some();
-                if !ready || accepted.try_send(ready).is_err() {
+                if !fresh || self.recording.is_none() || accepted.try_send(true).is_err() {
                     self.stop();
                 }
             },
