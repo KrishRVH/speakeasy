@@ -7,11 +7,11 @@ use std::{
 };
 
 use serde::Serialize;
-use speakeasy_show::{Bundle, Ending, Manifest, NarrationLoss, Reason, Unreadable};
+use speakeasy_show::{Bundle, Ending, Manifest, NarrationLoss, Reason};
 
 use super::store::{
-    address,
-    recall::{Entry, Health, ReadError, ReadShow},
+    address, checkpoint,
+    recall::{Entry, FileProblem, Health, ReadError, ReadShow},
     retention::Retention,
 };
 
@@ -69,37 +69,17 @@ pub(super) struct Problem {
 
 impl Overview {
     pub(super) fn of(entry: &Entry, parent: Option<&Path>) -> Self {
-        let (status, problems) = match &entry.show {
-            Ok(show) => (
-                entry.health().into(),
-                show.problems
-                    .iter()
-                    .map(|problem| Problem {
-                        file: entry.file(&problem.name),
-                        reason: problem.reason.clone(),
-                    })
-                    .collect(),
-            ),
-            Err(error) => {
-                let (status, name, reason) = match error {
-                    ReadError::Manifest(Unreadable::Unsupported(_)) => {
-                        (Status::Unsupported, Manifest::FILE, error.to_string())
-                    },
-                    ReadError::Manifest(_) => (Status::Damaged, Manifest::FILE, error.to_string()),
-                    ReadError::File(problem) => (
-                        Status::Damaged,
-                        problem.name.as_str(),
-                        problem.reason.clone(),
-                    ),
-                };
-                (
-                    status,
-                    vec![Problem {
-                        file: entry.file(name),
-                        reason,
-                    }],
-                )
-            },
+        let file = |problem: &FileProblem| Problem {
+            file: entry.file(&problem.name),
+            reason: problem.reason.clone(),
+        };
+        let problems = match &entry.show {
+            Ok(show) => show.problems.iter().map(file).collect(),
+            Err(ReadError::File(problem)) => vec![file(problem)],
+            Err(error @ ReadError::Manifest(_)) => vec![Problem {
+                file: entry.file(Manifest::FILE),
+                reason: error.to_string(),
+            }],
         };
         let show = entry.show.as_ref().ok();
 
@@ -111,7 +91,7 @@ impl Overview {
         Self {
             id: id.map(|id| id.as_str().to_owned()),
             directory: entry.directory.clone(),
-            status,
+            status: entry.health().into(),
             pinned: show.map(|show| show.pinned),
             expires_at: retention.and_then(Retention::expires_at),
             duration_ms: show.map(|show| show.manifest.recording().duration.as_millis()),
@@ -243,46 +223,39 @@ pub(super) fn list(
     entries: impl Iterator<Item = io::Result<Entry>>,
     parent: Option<&Path>,
 ) -> io::Result<Vec<Overview>> {
-    let mut entries: Vec<_> = entries
-        .map(|entry| entry.map(|entry| Overview::of(&entry, parent)))
-        .collect::<io::Result<_>>()?;
-    if let Some(parent) = parent {
-        let found = crate::show::store::checkpoint::list(parent, SystemTime::now());
-        let mut interrupted: Vec<_> = found
-            .shows
-            .into_iter()
-            .map(|show| Overview {
-                id: Some(show.id()),
-                directory: show.directory().to_owned(),
-                status: if show.narration_pending() {
-                    Status::NarrationPending
-                } else {
-                    Status::Interrupted
-                },
-                expires_at: show.expires_at(),
-                pinned: Some(false),
-                duration_ms: None,
-                keyframes: None,
-                marks: None,
-                problems: Vec::new(),
-            })
-            .collect();
-        interrupted.extend(found.problems.into_iter().map(|problem| Overview {
-            id: None,
-            directory: problem.directory.clone(),
-            status: Status::Damaged,
-            expires_at: None,
-            pinned: None,
-            duration_ms: None,
-            keyframes: None,
-            marks: None,
-            problems: vec![Problem {
-                file: problem.directory,
-                reason: problem.message,
-            }],
-        }));
-        interrupted.append(&mut entries);
-        entries = interrupted;
-    }
-    Ok(entries)
+    let saved = entries.map(|entry| entry.map(|entry| Overview::of(&entry, parent)));
+    let Some(shows) = parent else {
+        return saved.collect();
+    };
+    let found = checkpoint::list(shows, SystemTime::now());
+    let interrupted = found.shows.into_iter().map(|show| Overview {
+        id: Some(show.id()),
+        directory: show.directory().to_owned(),
+        status: if show.narration_pending() {
+            Status::NarrationPending
+        } else {
+            Status::Interrupted
+        },
+        expires_at: show.expires_at(),
+        pinned: Some(false),
+        duration_ms: None,
+        keyframes: None,
+        marks: None,
+        problems: Vec::new(),
+    });
+    let unreadable = found.problems.into_iter().map(|problem| Overview {
+        id: None,
+        directory: problem.directory.clone(),
+        status: Status::Damaged,
+        expires_at: None,
+        pinned: None,
+        duration_ms: None,
+        keyframes: None,
+        marks: None,
+        problems: vec![Problem {
+            file: problem.directory,
+            reason: problem.message,
+        }],
+    });
+    interrupted.chain(unreadable).map(Ok).chain(saved).collect()
 }
