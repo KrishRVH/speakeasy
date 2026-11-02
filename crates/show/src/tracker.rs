@@ -114,7 +114,7 @@ impl Tracker {
         if drawing && pressed {
             self.use_shift(at);
         }
-        let inside = inside(point);
+        let inside = Rect::UNIT.contains(point);
         if drawing && inside {
             self.draw(InkPoint { point, at });
         } else {
@@ -170,7 +170,7 @@ impl Tracker {
                 point,
                 at: observed,
             }) = self.pointer
-            && inside(point)
+            && Rect::UNIT.contains(point)
         {
             self.pins.push(Pin {
                 at: taps.end(),
@@ -288,10 +288,6 @@ impl Tracker {
             }
         });
     }
-}
-
-fn inside(point: Point) -> bool {
-    (0.0..=1.0).contains(&point.x) && (0.0..=1.0).contains(&point.y)
 }
 
 fn pixels(surface: Size, one: Point, other: Point) -> f32 {

@@ -441,12 +441,7 @@ fn valid_time(at: Moment) -> Result<(), SourceError> {
 
 fn valid_surface(size: Size) -> Result<(), SourceError> {
     require(
-        size.width.is_finite()
-            && size.height.is_finite()
-            && size.width > 0.0
-            && size.height > 0.0
-            && size.width <= 65_536.0
-            && size.height <= 65_536.0,
+        size.width > 0.0 && size.height > 0.0 && size.width <= 65_536.0 && size.height <= 65_536.0,
         "checkpoint surface is invalid",
     )
 }

@@ -93,7 +93,7 @@ pub fn crop_image(image: Image, crop: Option<Rect>) -> Result<(Image, Option<Pix
     };
     if ![rect.left, rect.top, rect.right, rect.bottom]
         .iter()
-        .all(|edge| edge.is_finite() && (0.0..=1.0).contains(edge))
+        .all(|edge| (0.0..=1.0).contains(edge))
         || rect.left > rect.right
         || rect.top > rect.bottom
     {
