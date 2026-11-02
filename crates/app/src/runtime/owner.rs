@@ -202,6 +202,10 @@ impl Notice {
             | Self::MovieStopped => None,
         }
     }
+
+    const fn is_warning(&self) -> bool {
+        matches!(self, Self::CheckpointLost | Self::MovieStopped)
+    }
 }
 
 enum Wake<W> {
@@ -547,9 +551,7 @@ impl<P: Ports> Owner<P> {
                 }
             },
             CaptureEvent::Piece(_, number, audio) => session.piece(number, audio),
-            CaptureEvent::CheckpointLost(_) => {
-                self.checkpoint_lost();
-            },
+            CaptureEvent::CheckpointLost(_) => self.warn(Notice::CheckpointLost),
             CaptureEvent::Ready(_) => {
                 session.audio_ready(gesture, now());
 
@@ -713,23 +715,16 @@ impl<P: Ports> Owner<P> {
             return;
         }
         self.microphone.whole();
+        let recording = session.is_recording();
         let recorded = SystemTime::now()
             .checked_sub(now().saturating_duration_since(session.started))
             .unwrap_or(SystemTime::UNIX_EPOCH);
-        let lost = match self.ports.keep(recorded) {
-            Ok(Some(kept)) => {
-                session.keep(kept);
-                false
-            },
-            Ok(None) => false,
-            Err(_) => true,
-        };
-        let recording = session.is_recording();
-        if lost {
-            self.checkpoint_lost();
+        match self.ports.keep(recorded) {
+            Ok(Some(kept)) => session.keep(kept),
+            Ok(None) => {},
+            Err(_) => self.warn(Notice::CheckpointLost),
         }
         self.latest.show = true;
-
         if recording {
             self.cue_heard(Cue::Show);
         }
@@ -741,42 +736,33 @@ impl<P: Ports> Owner<P> {
             .session
             .as_mut()
             .filter(|session| session.id == event.session() && session.is_show())?;
-        let footage = match event {
+        match event {
             ShowEvent::CheckpointLost(_) => {
-                self.checkpoint_lost();
-                return None;
+                self.warn(Notice::CheckpointLost);
+                None
             },
             ShowEvent::MovieStopped(_) => {
-                if self
-                    .notice
-                    .as_ref()
-                    .is_none_or(|notice| notice.failure().is_none())
-                {
-                    self.notice = Some(Notice::MovieStopped);
-                }
-                return None;
+                self.warn(Notice::MovieStopped);
+                None
             },
-            ShowEvent::Finished(_, footage) => footage,
+            ShowEvent::Finished(_, Ok(footage)) => {
+                session.screen_recorded(footage);
+                self.screen.retire();
+                self.gesture.finish()
+            },
+            ShowEvent::Finished(_, Err(error)) => {
+                if !error.is::<Unwound>() {
+                    session.forfeit();
+                }
+                self.fail(format!("{error:#}"));
+                None
+            },
             ShowEvent::Unchosen(_, unchosen) => {
                 session.forfeit();
                 self.gesture.abandon();
                 self.discard();
                 self.cue(Cue::Cancel);
                 self.outcome = Outcome::Unchosen(unchosen);
-                return None;
-            },
-        };
-        match footage {
-            Ok(footage) => {
-                session.screen_recorded(footage);
-                self.screen.retire();
-                self.gesture.finish()
-            },
-            Err(error) => {
-                if !error.is::<Unwound>() {
-                    session.forfeit();
-                }
-                self.fail(format!("{error:#}"));
                 None
             },
         }
@@ -1055,12 +1041,7 @@ impl<P: Ports> Owner<P> {
             session.permit.revoke();
         }
         self.gesture.complete();
-        if matches!(
-            self.notice,
-            Some(Notice::CheckpointLost | Notice::MovieStopped)
-        ) {
-            self.notice = None;
-        }
+        self.clear_warning();
         self.outcome = outcome;
     }
 
@@ -1071,12 +1052,7 @@ impl<P: Ports> Owner<P> {
     }
 
     fn abandon(&mut self) {
-        if matches!(
-            self.notice,
-            Some(Notice::CheckpointLost | Notice::MovieStopped)
-        ) {
-            self.notice = None;
-        }
+        self.clear_warning();
         let Some(session) = self.session.take() else {
             return;
         };
@@ -1112,13 +1088,19 @@ impl<P: Ports> Owner<P> {
         self.start_publishing();
     }
 
-    fn checkpoint_lost(&mut self) {
+    fn warn(&mut self, warning: Notice) {
         if self
             .notice
             .as_ref()
             .is_none_or(|notice| notice.failure().is_none())
         {
-            self.notice = Some(Notice::CheckpointLost);
+            self.notice = Some(warning);
+        }
+    }
+
+    fn clear_warning(&mut self) {
+        if self.notice.as_ref().is_some_and(Notice::is_warning) {
+            self.notice = None;
         }
     }
 
@@ -1126,7 +1108,7 @@ impl<P: Ports> Owner<P> {
         if let Some((log, start)) = self.session.as_mut().and_then(Session::audio)
             && !self.microphone.keep(log, start, &self.config.language)
         {
-            self.checkpoint_lost();
+            self.warn(Notice::CheckpointLost);
         }
     }
 
