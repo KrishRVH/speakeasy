@@ -1,12 +1,21 @@
 use super::{
     DURATION_LIMIT, Entry, Journal, SourceError,
-    record::{Cursor, emit_record, payload, require},
+    record::{Cursor, RECORD_OVERHEAD, framed, payload, require},
     tiles,
 };
 use crate::{Ending, Image, Moment, Point, Recording, Rect, Signature, Size, Span, Tracker};
 
 const MAGIC: &[u8; 8] = b"SPKLOG02";
 const EDGE: usize = super::MAX_FRAME_EDGE as usize;
+const RECORD_LIMIT: usize = 40 << 20;
+
+const HEADER: u8 = 0;
+const SURFACE: u8 = 1;
+const PIN: u8 = 3;
+const ARRIVAL: u8 = 4;
+const END: u8 = 5;
+const POINTER_GAP: u8 = 6;
+const POINTER: u8 = 7;
 
 #[derive(Clone, Debug)]
 pub enum TakeEvent {
@@ -167,9 +176,9 @@ impl Take {
 pub struct Log;
 
 impl Log {
-    pub const HEADER_BYTES: usize = 33;
+    pub const HEADER_BYTES: usize =
+        MAGIC.len() + RECORD_OVERHEAD + size_of::<u64>() + 2 * size_of::<f32>();
     pub const MAX_BUDGET: usize = 384 << 20;
-    pub const RECORD_LIMIT: usize = 40 << 20;
 
     pub fn header(budget: usize, surface: Size) -> Result<Vec<u8>, SourceError> {
         require(
@@ -178,23 +187,21 @@ impl Log {
         )?;
         valid_surface(surface)?;
         let mut data = Vec::new();
-        data.extend_from_slice(&u64::try_from(budget).unwrap_or(u64::MAX).to_le_bytes());
+        data.extend_from_slice(&(budget as u64).to_le_bytes());
         data.extend_from_slice(&surface.width.to_le_bytes());
         data.extend_from_slice(&surface.height.to_le_bytes());
-        let mut bytes = MAGIC.to_vec();
-        emit_record(0, &data, &mut |chunk: &[u8]| {
-            bytes.extend_from_slice(chunk);
-            Ok::<_, SourceError>(())
-        })?;
-        Ok(bytes)
+        Ok([MAGIC.as_slice(), &framed(HEADER, &data)?].concat())
     }
 
     pub fn start(header: &[u8]) -> Result<Take, SourceError> {
         require(
-            header.len() == Self::HEADER_BYTES && header.get(..8) == Some(MAGIC),
+            header.len() == Self::HEADER_BYTES && header.get(..MAGIC.len()) == Some(MAGIC),
             "unsupported or truncated checkpoint header",
         )?;
-        let mut data = Cursor(payload(header.get(8..).unwrap_or_default(), 0)?);
+        let mut data = Cursor(payload(
+            header.get(MAGIC.len()..).unwrap_or_default(),
+            HEADER,
+        )?);
         let budget = usize::try_from(data.wide()?)
             .map_err(|_out_of_range| SourceError("checkpoint memory budget is too large"))?;
         require(
@@ -212,22 +219,19 @@ impl Log {
     pub fn record_size(header: &[u8]) -> Result<usize, SourceError> {
         let length = Cursor(header)
             .usize()?
-            .checked_add(9)
+            .checked_add(RECORD_OVERHEAD)
             .ok_or(SourceError("checkpoint record is too large"))?;
-        require(
-            length <= Self::RECORD_LIMIT,
-            "checkpoint record is too large",
-        )?;
+        require(length <= RECORD_LIMIT, "checkpoint record is too large")?;
         Ok(length)
     }
 
     pub fn encode(event: &TakeEvent) -> Result<Vec<u8>, SourceError> {
-        let mut data = vec![0; 5];
+        let mut data = Vec::new();
         let kind = match event {
             TakeEvent::Surface(size) => {
                 data.extend_from_slice(&size.width.to_le_bytes());
                 data.extend_from_slice(&size.height.to_le_bytes());
-                1
+                SURFACE
             },
             TakeEvent::Pointer {
                 at,
@@ -246,12 +250,12 @@ impl Log {
                         .into_iter()
                         .flat_map(f32::to_le_bytes),
                 );
-                7
+                POINTER
             },
             TakeEvent::Pin(span) => {
                 data.extend_from_slice(&span.start().as_millis().to_le_bytes());
                 data.extend_from_slice(&span.end().as_millis().to_le_bytes());
-                3
+                PIN
             },
             TakeEvent::Arrival { at, entry } => {
                 data.extend_from_slice(&at.as_millis().to_le_bytes());
@@ -259,7 +263,7 @@ impl Log {
                 if let Some(entry) = entry {
                     entry.encode(&mut data)?;
                 }
-                4
+                ARRIVAL
             },
             TakeEvent::End { at, ending } => {
                 data.extend_from_slice(&at.as_millis().to_le_bytes());
@@ -269,45 +273,35 @@ impl Log {
                     Ending::WindowClosed => 2,
                     Ending::WindowOffScreen => 3,
                 });
-                5
+                END
             },
             TakeEvent::PointerGap(at) => {
                 data.extend_from_slice(&at.as_millis().to_le_bytes());
-                6
+                POINTER_GAP
             },
         };
         require(
-            data.len().saturating_add(4) <= Self::RECORD_LIMIT,
+            data.len().saturating_add(RECORD_OVERHEAD) <= RECORD_LIMIT,
             "checkpoint record is too large",
         )?;
-        let length = u32::try_from(data.len().saturating_sub(5))
-            .map_err(|_out_of_range| SourceError("checkpoint record is too large"))?;
-        let prefix = data
-            .get_mut(..5)
-            .ok_or(SourceError("checkpoint record is truncated"))?;
-        let (length_bytes, kind_byte) = prefix.split_at_mut(4);
-        length_bytes.copy_from_slice(&length.to_le_bytes());
-        kind_byte.copy_from_slice(&[kind]);
-        let checksum = crc32fast::hash(data.get(4..).unwrap_or_default());
-        data.extend_from_slice(&checksum.to_le_bytes());
-        Ok(data)
+        framed(kind, &data)
     }
 
     pub fn decode(record: &[u8]) -> Result<TakeEvent, SourceError> {
         require(
-            record.len() <= Self::RECORD_LIMIT,
+            record.len() <= RECORD_LIMIT,
             "checkpoint record is too large",
         )?;
         let kind = *record
-            .get(4)
+            .get(size_of::<u32>())
             .ok_or(SourceError("checkpoint record is truncated"))?;
         let mut data = Cursor(payload(record, kind)?);
         let event = match kind {
-            1 => TakeEvent::Surface(Size {
+            SURFACE => TakeEvent::Surface(Size {
                 width: f32::from_le_bytes(data.take()?),
                 height: f32::from_le_bytes(data.take()?),
             }),
-            7 => TakeEvent::Pointer {
+            POINTER => TakeEvent::Pointer {
                 at: Moment::from_millis(data.wide()?),
                 point: Point::new(
                     f32::from_le_bytes(data.take()?),
@@ -322,11 +316,11 @@ impl Log {
                     f32::from_le_bytes(data.take()?),
                 ]),
             },
-            3 => TakeEvent::Pin(Span::new(
+            PIN => TakeEvent::Pin(Span::new(
                 Moment::from_millis(data.wide()?),
                 Moment::from_millis(data.wide()?),
             )),
-            4 => TakeEvent::Arrival {
+            ARRIVAL => TakeEvent::Arrival {
                 at: Moment::from_millis(data.wide()?),
                 entry: if boolean(&mut data)? {
                     Some(Entry::decode(&mut data)?)
@@ -334,7 +328,7 @@ impl Log {
                     None
                 },
             },
-            5 => TakeEvent::End {
+            END => TakeEvent::End {
                 at: Moment::from_millis(data.wide()?),
                 ending: match data.take::<1>()? {
                     [0] => Ending::Finished,
@@ -344,7 +338,7 @@ impl Log {
                     _ => return Err(SourceError("checkpoint ending is invalid")),
                 },
             },
-            6 => TakeEvent::PointerGap(Moment::from_millis(data.wide()?)),
+            POINTER_GAP => TakeEvent::PointerGap(Moment::from_millis(data.wide()?)),
             _ => return Err(SourceError("unsupported checkpoint event")),
         };
         require(data.0.is_empty(), "checkpoint record has trailing data")?;
@@ -433,6 +427,7 @@ fn put(bytes: &mut Vec<u8>, value: usize) -> Result<(), SourceError> {
     bytes.extend_from_slice(&value.to_le_bytes());
     Ok(())
 }
+
 fn boolean(data: &mut Cursor<'_>) -> Result<bool, SourceError> {
     match data.take::<1>()? {
         [0] => Ok(false),
@@ -440,9 +435,11 @@ fn boolean(data: &mut Cursor<'_>) -> Result<bool, SourceError> {
         _ => Err(SourceError("checkpoint flag is invalid")),
     }
 }
+
 fn valid_time(at: Moment) -> Result<(), SourceError> {
     require(at <= DURATION_LIMIT, "checkpoint time is out of range")
 }
+
 fn valid_surface(size: Size) -> Result<(), SourceError> {
     require(
         size.width.is_finite()

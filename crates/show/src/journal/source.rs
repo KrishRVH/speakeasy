@@ -1,18 +1,18 @@
 use std::{fmt, ops::Range};
 
 use super::{
-    DURATION_LIMIT, Journal, PIXEL,
-    record::{Cursor, emit_record, payload, require},
+    DURATION_LIMIT, Journal, PIXEL, Tile,
+    record::{Cursor, RECORD_OVERHEAD, emit_record, payload, require},
     restore_tile, tiles,
 };
-use crate::{Image, Moment, Span};
+use crate::{Image, Moment, Span, convert};
 
 const MAGIC: &[u8; 8] = b"SPKSRC01";
 const FOOTER: &[u8; 8] = b"SPKIDX01";
 const TILE_RECORD: u8 = 1;
 const INDEX_RECORD: u8 = 2;
-const RECORD_OVERHEAD: usize = 9;
 const FOOTER_BYTES: u64 = 16;
+const SMALLEST_FILE: u64 = (MAGIC.len() + RECORD_OVERHEAD) as u64 + FOOTER_BYTES;
 const INDEX_LIMIT: usize = 64 << 20;
 const FRAME_LIMIT: usize = 4_096;
 const EDGE_LIMIT: u32 = super::MAX_FRAME_EDGE;
@@ -67,28 +67,28 @@ impl Source {
         mut read: impl FnMut(Range<u64>) -> Result<Vec<u8>, E>,
     ) -> Result<Self, E> {
         require(
-            (33..=Self::FILE_LIMIT).contains(&length),
+            (SMALLEST_FILE..=Self::FILE_LIMIT).contains(&length),
             "source file size is invalid",
         )?;
-        require(read(0..8)?.as_slice() == MAGIC, "unsupported source format")?;
+        require(
+            read(0..MAGIC.len() as u64)?.as_slice() == MAGIC,
+            "unsupported source format",
+        )?;
         let footer = read(length.saturating_sub(FOOTER_BYTES)..length)?;
         let mut footer = Cursor(&footer);
         let size = footer.wide()?;
         require(footer.0 == FOOTER, "source index footer is invalid")?;
         require(
-            size <= u64::try_from(INDEX_LIMIT.saturating_add(RECORD_OVERHEAD)).unwrap_or(u64::MAX),
+            size <= (INDEX_LIMIT + RECORD_OVERHEAD) as u64,
             "source index is too large",
         )?;
         let end = length.saturating_sub(FOOTER_BYTES);
         let start = end
             .checked_sub(size)
-            .filter(|start| *start >= 8)
+            .filter(|start| *start >= MAGIC.len() as u64)
             .ok_or(SourceError("source index range is invalid"))?;
         let encoded = read(start..end)?;
-        require(
-            u64::try_from(encoded.len()).ok() == Some(size),
-            "source index is truncated",
-        )?;
+        require(encoded.len() as u64 == size, "source index is truncated")?;
         let mut index = Cursor(payload(&encoded, INDEX_RECORD)?);
         let index_checksum = encoded
             .get(encoded.len().saturating_sub(4)..)
@@ -107,7 +107,7 @@ impl Source {
         )?;
         let count = index.count(FRAME_LIMIT, 8)?;
         require(
-            count > 0 && u64::try_from(count).unwrap_or(u64::MAX) <= arrivals,
+            count > 0 && count as u64 <= arrivals,
             "source sample count is invalid",
         )?;
         let mut moments = Vec::with_capacity(count);
@@ -122,7 +122,7 @@ impl Source {
         let count = index.count(moments.len(), 16)?;
         require(count > 0, "source has no frame geometry")?;
         let mut segments = Vec::with_capacity(count);
-        let mut expected = 8;
+        let mut expected = MAGIC.len() as u64;
         for position in 0..count {
             let first = index.usize()?;
             require(
@@ -142,8 +142,7 @@ impl Source {
                 (1..=EDGE_LIMIT).contains(&width) && (1..=EDGE_LIMIT).contains(&height),
                 "source frame dimensions exceed the format limit",
             )?;
-            let geometry: Vec<_> =
-                tiles(crate::convert::count(width), crate::convert::count(height)).collect();
+            let geometry: Vec<_> = tiles(convert::count(width), convert::count(height)).collect();
             let count = index.count(geometry.len(), 4)?;
             require(count == geometry.len(), "source tile count is invalid")?;
             let locations = geometry
@@ -256,8 +255,8 @@ impl Source {
             .rev()
             .find(|segment| segment.first <= frame)
             .ok_or(SourceError("source frame geometry is missing"))?;
-        let width = crate::convert::count(segment.width);
-        let height = crate::convert::count(segment.height);
+        let width = convert::count(segment.width);
+        let height = convert::count(segment.height);
         let stride = width.saturating_mul(PIXEL);
         let mut rgba = vec![0; stride.saturating_mul(height)];
         for (tile, versions) in tiles(width, height).zip(&segment.tiles) {
@@ -268,8 +267,7 @@ impl Source {
                 .ok_or(SourceError("source tile is missing"))?;
             let encoded = read(location.record.clone())?;
             require(
-                u64::try_from(encoded.len()).ok()
-                    == Some(location.record.end.saturating_sub(location.record.start)),
+                encoded.len() as u64 == location.record.end.saturating_sub(location.record.start),
                 "source tile is truncated",
             )?;
             restore_tile(payload(&encoded, TILE_RECORD)?, tile, stride, &mut rgba)
@@ -304,12 +302,8 @@ impl Journal {
         )?;
         let mut index = Vec::new();
         index.extend_from_slice(&duration.as_millis().to_le_bytes());
-        index.extend_from_slice(
-            &u64::try_from(self.arrived)
-                .unwrap_or(u64::MAX)
-                .to_le_bytes(),
-        );
-        index.extend_from_slice(&u64::try_from(self.stride).unwrap_or(u64::MAX).to_le_bytes());
+        index.extend_from_slice(&(self.arrived as u64).to_le_bytes());
+        index.extend_from_slice(&(self.stride as u64).to_le_bytes());
         word(&mut index, self.samples.len())?;
         for sample in &self.samples {
             index.extend_from_slice(&sample.at.as_millis().to_le_bytes());
@@ -342,7 +336,7 @@ impl Journal {
                         .checked_add(length)
                         .ok_or(SourceError("source file is too large"))?;
                     require(
-                        u64::try_from(offset).unwrap_or(u64::MAX) < Source::FILE_LIMIT,
+                        (offset as u64) < Source::FILE_LIMIT,
                         "source file is too large",
                     )?;
                     emit_record(TILE_RECORD, &version.data, &mut emit)?;
@@ -351,12 +345,12 @@ impl Journal {
         }
         let index_size = index.len().saturating_add(RECORD_OVERHEAD);
         require(
-            u64::try_from(offset.saturating_add(index_size)).unwrap_or(u64::MAX)
+            (offset.saturating_add(index_size) as u64)
                 <= Source::FILE_LIMIT.saturating_sub(FOOTER_BYTES),
             "source file is too large",
         )?;
         emit_record(INDEX_RECORD, &index, &mut emit)?;
-        emit(&u64::try_from(index_size).unwrap_or(u64::MAX).to_le_bytes())?;
+        emit(&(index_size as u64).to_le_bytes())?;
         emit(FOOTER)
     }
 }
@@ -376,7 +370,7 @@ impl Cursor<'_> {
     fn versions(
         &mut self,
         frames: Range<usize>,
-        tile: super::Tile,
+        tile: Tile,
         expected: &mut u64,
         data_end: u64,
     ) -> Result<Vec<Location>, SourceError> {
@@ -401,11 +395,10 @@ impl Cursor<'_> {
             let end = offset
                 .checked_add(size)
                 .ok_or(SourceError("source tile range overflows"))?;
-            let limit = tile.encoded_limit();
             require(
                 offset == *expected
                     && size >= RECORD_OVERHEAD as u64
-                    && size <= u64::try_from(limit).unwrap_or(u64::MAX)
+                    && size <= tile.encoded_limit() as u64
                     && end <= data_end,
                 "source tile range is invalid",
             )?;

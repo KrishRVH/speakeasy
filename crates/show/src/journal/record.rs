@@ -1,5 +1,7 @@
 use super::SourceError;
 
+pub(super) const RECORD_OVERHEAD: usize = 9;
+
 pub(super) fn require(condition: bool, message: &'static str) -> Result<(), SourceError> {
     if condition {
         Ok(())
@@ -13,8 +15,8 @@ pub(super) fn emit_record<E: From<SourceError>>(
     data: &[u8],
     emit: &mut impl FnMut(&[u8]) -> Result<(), E>,
 ) -> Result<(), E> {
-    let length = u32::try_from(data.len())
-        .map_err(|_out_of_range| SourceError("source record is too large"))?;
+    let length =
+        u32::try_from(data.len()).map_err(|_out_of_range| SourceError("record is too large"))?;
     emit(&length.to_le_bytes())?;
     emit(&[kind])?;
     emit(data)?;
@@ -24,21 +26,30 @@ pub(super) fn emit_record<E: From<SourceError>>(
     emit(&crc.finalize().to_le_bytes())
 }
 
+pub(super) fn framed(kind: u8, data: &[u8]) -> Result<Vec<u8>, SourceError> {
+    let mut record = Vec::with_capacity(data.len().saturating_add(RECORD_OVERHEAD));
+    emit_record(kind, data, &mut |chunk: &[u8]| {
+        record.extend_from_slice(chunk);
+        Ok::<_, SourceError>(())
+    })?;
+    Ok(record)
+}
+
 pub(super) fn payload(record: &[u8], kind: u8) -> Result<&[u8], SourceError> {
     let mut cursor = Cursor(record);
     let length = cursor.usize()?;
     let actual = cursor.take::<1>()?;
-    require(actual == [kind], "unsupported source record")?;
+    require(actual == [kind], "record kind is unsupported")?;
     require(
         cursor.0.len() == length.saturating_add(4),
-        "source record length is invalid",
+        "record length is invalid",
     )?;
     let (data, checksum) = cursor.0.split_at(length);
     let expected = Cursor(checksum).word()?;
     let mut crc = crc32fast::Hasher::new();
     crc.update(&actual);
     crc.update(data);
-    require(crc.finalize() == expected, "source record checksum failed")?;
+    require(crc.finalize() == expected, "record checksum failed")?;
     Ok(data)
 }
 
@@ -49,7 +60,7 @@ impl<'a> Cursor<'a> {
         let (head, rest) = self
             .0
             .split_first_chunk::<N>()
-            .ok_or(SourceError("source index is truncated"))?;
+            .ok_or(SourceError("record is truncated"))?;
         self.0 = rest;
         Ok(*head)
     }
@@ -66,11 +77,11 @@ impl<'a> Cursor<'a> {
         self.word().map(crate::convert::count)
     }
 
-    pub(super) fn count(&mut self, limit: usize, minimum: usize) -> Result<usize, SourceError> {
+    pub(super) fn count(&mut self, limit: usize, item_bytes: usize) -> Result<usize, SourceError> {
         let count = self.usize()?;
         require(
-            count <= limit && count <= self.0.len().checked_div(minimum).unwrap_or(0),
-            "source index count is invalid",
+            count <= limit && count <= self.0.len().checked_div(item_bytes).unwrap_or(0),
+            "record count is invalid",
         )?;
         Ok(count)
     }
