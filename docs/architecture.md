@@ -271,8 +271,8 @@ module unless a test file is named.
   dictation, retires the runtime, and purges on an owned thread that Quit drains; nothing resumes
   until it exits, and a failed purge restores the previous settings. Settings refuses reset during
   setup, saves, or a held Windows update and refuses setup while settings are unreadable or a reset
-  runs. On success it adopts default settings as its saved baseline and starts automatic setup;
-  as on a new install, the first complete save enables dictation, even if it was paused.
+  runs. On success it adopts default settings as its saved baseline and starts automatic setup; as
+  on a new install, the first complete save enables dictation, even if it was paused.
   [reset/tests.rs](../crates/app/src/reset/tests.rs) covers what stays, refusals, failure order, and
   linked folders.
 - **Tray and status**: [tray.rs](../crates/app/src/tray.rs), [tray/](../crates/app/src/tray),
@@ -513,11 +513,11 @@ module unless a test file is named.
   producers stop; teardown adds no annotations. Checkpoint replay preserves these same gaps. Pointer
   events also carry their source display rectangle. The tracker retains one coordinate-space proof
   per stroke and pin: mixed strokes and groups across resizes or gaps have none. A delayed pin uses
-  the actual pointer point’s proof; stroke cuts preserve the carried joint’s proof. Older pointer
-  records remain readable with unknown provenance. Geometry, overlay timing, and the area drag run
-  on every host; native capture is opt-in, and window lookup and the picker's clicks need native
-  acceptance. On Windows, an opt-in acceptance test stops an owned window's capture as it hides,
-  minimizes, cloaks, moves away, and closes. The
+  the actual pointer point’s proof; stroke cuts preserve the carried joint’s proof. A recording
+  without spaces, such as the scripted demo, has unknown provenance. Geometry, overlay timing, and
+  the area drag run on every host; native capture is opt-in, and window lookup and the picker's
+  clicks need native acceptance. On Windows, an opt-in acceptance test stops an owned window's
+  capture as it hides, minimizes, cloaks, moves away, and closes. The
   [recording owner](../crates/platform/src/movie/recording.rs) writes silent H.264 fragments from
   admitted frames through the [Windows codec](../crates/platform/src/windows/movie/encoder.rs) or
   [Mac codec](../crates/platform/src/macos/movie/encode.rs). Its non-cloneable
