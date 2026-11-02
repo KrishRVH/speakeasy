@@ -2,7 +2,7 @@ use serde_json::json;
 
 use super::*;
 use crate::{
-    Action, InkPoint, Pin, Point, Reason, Rect, Sample, Shape, Size, Span, Stroke,
+    Action, InkPoint, Pin, Point, Reason, Rect, Sample, Shape, Size, Spaces, Span, Stroke,
     recording::tests::words, select, signature::tests::signature, typeface::tests::typeface,
 };
 
@@ -40,7 +40,7 @@ fn show_json_keeps_its_wire_format() {
             ],
             narration: words(&[(100, "Look"), (300, "here.")]),
             narration_lost: None,
-            spaces: crate::Spaces::default(),
+            spaces: Spaces::default(),
         },
         marks: vec![
             Mark {

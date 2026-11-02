@@ -67,11 +67,8 @@ pub(super) fn movie() -> MovieFixture {
     let initialized = bytes.len();
     let mut ends = Vec::new();
     for sequence in 1..=2 {
-        let fragment_header = atom(*b"tfhd", words(&[0x0002_0000, 1]));
-
-        let run = atom(*b"trun", words(&[0x0100_0F01, 1, 92, 1_000, 6, 0, 0]));
-        let mut fragment_track = fragment_header;
-        fragment_track.extend(run);
+        let mut fragment_track = atom(*b"tfhd", words(&[0x0002_0000, 1]));
+        fragment_track.extend(atom(*b"trun", words(&[0x0100_0F01, 1, 92, 1_000, 6, 0, 0])));
         let mut fragment = atom(*b"mfhd", words(&[0, sequence]));
         fragment.extend(atom(*b"traf", fragment_track));
         bytes.extend(atom(*b"moof", fragment));

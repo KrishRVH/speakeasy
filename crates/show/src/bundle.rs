@@ -256,12 +256,16 @@ impl fmt::Display for Summary<'_> {
         if let Some(Retrieval { command, id }) = retrieval {
             writeln!(
                 f,
-                "Screen samples between keyframes are retained. Local command: {} (a path, not shell syntax; quote it for your shell).",
+                "Screen samples between keyframes are retained. Local command: {} (a path, not \
+                 shell syntax; quote it for your shell).",
                 Code(command.display())
             )?;
             writeln!(
                 f,
-                "Use {inspect} to check this Show and {frames} for sample times; add --at M:SS.mmm, --phrase TEXT, or --mark N to focus. {skill} explains image exports and sampling gaps. If the ID does not resolve, pass the folder above as one SHOW argument. If the command has moved, read the bundle files directly.",
+                "Use {inspect} to check this Show and {frames} for sample times; add --at \
+                 M:SS.mmm, --phrase TEXT, or --mark N to focus. {skill} explains image exports \
+                 and sampling gaps. If the ID does not resolve, pass the folder above as one SHOW \
+                 argument. If the command has moved, read the bundle files directly.",
                 inspect = Code(format!("show inspect {id} --json")),
                 frames = Code(format!("show frames {id} --json")),
                 skill = Code("show skill"),

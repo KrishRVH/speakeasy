@@ -3,7 +3,7 @@ use std::fmt;
 use serde::Deserialize;
 
 use super::{Bundle, Manifest, sheet_file};
-use crate::{Keyframe, Mark, Reason, Recording, select::MOST_KEYFRAMES, sheet};
+use crate::{Keyframe, Mark, Moment, Reason, Recording, select::MOST_KEYFRAMES, sheet};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Unreadable {
@@ -116,7 +116,7 @@ impl Manifest {
             (1..=MOST_KEYFRAMES).contains(&self.keyframes.len()),
             "a Show needs between 1 and 36 keyframes",
         )?;
-        let mut previous_time = crate::Moment::START;
+        let mut previous_time = Moment::START;
         let mut previous_mark = 0;
         for (position, frame) in self.keyframes.iter().enumerate() {
             require(
