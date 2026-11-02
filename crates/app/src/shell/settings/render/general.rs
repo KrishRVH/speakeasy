@@ -146,32 +146,25 @@ impl Settings {
             let row = |name: &'static str, state: Permission, help: permissions::Help| {
                 permission_row(ui, name, state, help).into_any_element()
             };
-            let rows = vec![row(
-                "Microphone",
-                granted.microphone,
-                permissions::Help::Microphone,
-            )];
-            #[cfg(target_os = "macos")]
-            let rows = {
-                let mut rows = rows;
-                rows.push(row(
+            vec![
+                row(
+                    "Microphone",
+                    granted.microphone,
+                    permissions::Help::Microphone,
+                ),
+                #[cfg(target_os = "macos")]
+                row(
                     "Accessibility",
                     granted.accessibility,
                     permissions::Help::Accessibility,
-                ));
-                rows
-            };
-            #[cfg(any(target_os = "macos", target_os = "windows"))]
-            let rows = {
-                let mut rows = rows;
-                rows.push(row(
+                ),
+                #[cfg(any(target_os = "macos", target_os = "windows"))]
+                row(
                     "Screen, for Shows",
                     granted.screen,
                     permissions::Help::Screen,
-                ));
-                rows
-            };
-            rows
+                ),
+            ]
         });
         div()
             .flex()

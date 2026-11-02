@@ -465,10 +465,6 @@ const fn microphone_remedy() -> &'static str {
     }
 }
 
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "A progress bar needs only an approximate fraction of the download"
-)]
 pub(super) fn fraction(progress: Progress) -> f32 {
     progress.done as f32 / progress.total.max(1) as f32
 }

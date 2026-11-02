@@ -33,10 +33,10 @@ impl Settings {
     }
 
     pub(super) fn shortcut(&self) -> SharedString {
-        #[cfg(target_os = "macos")]
-        return self.config.mac_shortcut.label().into();
-        #[cfg(not(target_os = "macos"))]
-        self.presentation.shortcut.to_string().into()
+        cfg_select! {
+            target_os = "macos" => self.config.mac_shortcut.label().into(),
+            _ => self.presentation.shortcut.to_string().into(),
+        }
     }
 
     fn shortcut_card(&self, ui: &Ui<'_>) -> Div {
@@ -273,7 +273,7 @@ impl Settings {
         let word = |text: &'static str| div().text_color(rgb(palette.muted)).child(text);
         let key = |text: &'static str| kit.keycap(text, false);
         let keys = || kit.keys(&shortcut, false);
-        let line = |chord: Vec<AnyElement>, meaning: &'static str| {
+        let line = |chord: Vec<Div>, meaning: &'static str| {
             div()
                 .flex()
                 .items_center()
@@ -300,47 +300,22 @@ impl Settings {
             .when(self.shows_help, |section| {
                 section.child(kit.group(vec![
                     line(
-                        vec![
-                            keys().into_any_element(),
-                            word("+").into_any_element(),
-                            key("S").into_any_element(),
-                            key("W").into_any_element(),
-                            key("A").into_any_element(),
-                        ],
+                        vec![keys(), word("+"), key("S"), key("W"), key("A")],
                         "Record the screen, a window, or an area",
                     ),
                     line(
-                        vec![
-                            word("Hold").into_any_element(),
-                            key("Shift").into_any_element(),
-                            word("and move").into_any_element(),
-                        ],
+                        vec![word("Hold"), key("Shift"), word("and move")],
                         "Draw, without clicking",
                     ),
                     line(
-                        vec![
-                            key("Shift").into_any_element(),
-                            key("Shift").into_any_element(),
-                            word("twice").into_any_element(),
-                        ],
+                        vec![key("Shift"), key("Shift"), word("twice")],
                         "Pin what you drew",
                     ),
                     line(
-                        vec![
-                            word("Press").into_any_element(),
-                            keys().into_any_element(),
-                            word("again").into_any_element(),
-                        ],
+                        vec![word("Press"), keys(), word("again")],
                         "Finish the Show",
                     ),
-                    line(
-                        vec![
-                            keys().into_any_element(),
-                            word("+").into_any_element(),
-                            key("Esc").into_any_element(),
-                        ],
-                        "Cancel the Show",
-                    ),
+                    line(vec![keys(), word("+"), key("Esc")], "Cancel the Show"),
                 ]))
             })
     }
