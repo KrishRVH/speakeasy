@@ -298,7 +298,7 @@ fn monitor(input: &InputSender, stop: &StopEvent) {
             "Cannot watch the dictation shortcut ({error}). Resume dictation to try again."
         )));
     }
-    drop(HOOK.take());
+    HOOK.set(None);
     input.close();
 }
 
@@ -404,17 +404,17 @@ unsafe extern "system" fn lifecycle_window(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
-    if interrupts_recording(message, wparam)
-        && panic::catch_unwind(|| {
+    if interrupts_recording(message, wparam) {
+        let interrupted = panic::catch_unwind(|| {
             HOOK.with_borrow_mut(|slot| {
                 if let Some(state) = slot {
                     state.policy.interrupt(&state.input);
                 }
             });
-        })
-        .is_err()
-    {
-        close_input();
+        });
+        if interrupted.is_err() {
+            close_input();
+        }
     }
 
     unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
