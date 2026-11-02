@@ -122,6 +122,8 @@ fn a_retained_range_retires_with_its_provider_when_its_nodes_return() {
     assert!(retired(unsafe { old.Select() }));
     assert!(requests.try_recv().is_err(), "A retired range requested an action");
     assert!(retired(unsafe { old.GetEnclosingElement() }));
+    assert!(retired(unsafe { current.Compare(&old) }));
+    assert!(unsafe { current.Compare(&current) }.unwrap().as_bool());
     let endpoint = TextPatternRangeEndpoint_Start;
     assert!(retired(unsafe {
         current.CompareEndpoints(endpoint, &old, endpoint)

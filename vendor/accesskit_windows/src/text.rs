@@ -350,9 +350,15 @@ impl ITextRangeProvider_Impl for PlatformRange_Impl {
 
     fn Compare(&self, other: Ref<ITextRangeProvider>) -> Result<BOOL> {
         let other = unsafe { required_param(&other)?.as_impl() };
-        Ok((self.context.ptr_eq(&other.context)
-            && *self.state.read().unwrap() == *other.state.read().unwrap())
-        .into())
+        if !self.context.ptr_eq(&other.context) {
+            return Ok(false.into());
+        }
+        // Speakeasy patch: a retired range equals no range, even at the same positions.
+        self.with_tree_state_and_context(|_, context| {
+            other.require_current(context)?;
+            let state = self.state.read().unwrap().clone();
+            Ok((state == *other.state.read().unwrap()).into())
+        })
     }
 
     fn CompareEndpoints(
