@@ -19,7 +19,6 @@ public static class DemoWindows {
     [DllImport("user32")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
     [DllImport("user32")] public static extern bool PostMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
-    [DllImport("user32")] public static extern bool GetClientRect(IntPtr window, out Rect rect);
     [DllImport("user32")] public static extern bool ClientToScreen(IntPtr window, ref Point point);
     [DllImport("user32")] public static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
     [DllImport("user32")] public static extern bool ShowWindow(IntPtr window, int command);
@@ -129,18 +128,31 @@ function Test-DemoAccessibility([IntPtr]$Window, [int]$Owner) {
     $value.SetValue("line`nfeed")
     Start-Sleep -Milliseconds 200
     if ($value.Current.Value -ne $synthetic) { throw 'Accessible input bypassed the single-line limit' }
-    $null = [DemoWindows]::SetWindowPos($Window, [IntPtr]::Zero, 180, 120, 0, 0, 0x15)
-    Start-Sleep -Milliseconds 200
-    $client = New-Object DemoWindows+Rect
+    $frame = New-Object DemoWindows+Rect
     $origin = New-Object Drawing.Point 0, 0
-    if (![DemoWindows]::GetClientRect($Window, [ref]$client) -or ![DemoWindows]::ClientToScreen($Window, [ref]$origin)) {
-        throw 'Could not read owned client geometry'
+    if (![DemoWindows]::GetWindowRect($Window, [ref]$frame) -or ![DemoWindows]::ClientToScreen($Window, [ref]$origin)) {
+        throw 'Could not read owned window geometry'
     }
+    $fieldBefore = $heard.Current.BoundingRectangle
+    $originBefore = $origin
+    $null = [DemoWindows]::SetWindowPos($Window, [IntPtr]::Zero, $frame.Left + 48, $frame.Top + 32, 0, 0, 0x15)
+    Start-Sleep -Milliseconds 200
+    $origin = New-Object Drawing.Point 0, 0
+    if (![DemoWindows]::GetWindowRect($Window, [ref]$frame) -or ![DemoWindows]::ClientToScreen($Window, [ref]$origin)) {
+        throw 'Could not read owned window geometry'
+    }
+    if ($origin.X -eq $originBefore.X -and $origin.Y -eq $originBefore.Y) { throw 'Owned window did not move' }
     $bounds = $root.Current.BoundingRectangle
-    if ([Math]::Abs($bounds.X - $origin.X) -gt 1 -or [Math]::Abs($bounds.Y - $origin.Y) -gt 1 -or
-        [Math]::Abs($bounds.Width - ($client.Right - $client.Left)) -gt 1 -or
-        [Math]::Abs($bounds.Height - ($client.Bottom - $client.Top)) -gt 1) {
-        throw 'Accessibility bounds disagree with the moved native client'
+    if ([Math]::Abs($bounds.X - $frame.Left) -gt 1 -or [Math]::Abs($bounds.Y - $frame.Top) -gt 1 -or
+        [Math]::Abs($bounds.Width - ($frame.Right - $frame.Left)) -gt 1 -or
+        [Math]::Abs($bounds.Height - ($frame.Bottom - $frame.Top)) -gt 1) {
+        throw 'Accessibility bounds disagree with the moved native window'
+    }
+    $field = $heard.Current.BoundingRectangle
+    if ([Math]::Abs(($field.X - $fieldBefore.X) - ($origin.X - $originBefore.X)) -gt 1 -or
+        [Math]::Abs(($field.Y - $fieldBefore.Y) - ($origin.Y - $originBefore.Y)) -gt 1 -or
+        [Math]::Abs($field.Width - $fieldBefore.Width) -gt 1 -or [Math]::Abs($field.Height - $fieldBefore.Height) -gt 1) {
+        throw 'Field bounds did not follow the moved native client'
     }
     $null = [DemoWindows]::ShowWindow($Window, 0)
     Start-Sleep -Milliseconds 200
