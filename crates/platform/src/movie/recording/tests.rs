@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use super::*;
-use crate::Part;
+use crate::movie::tests::frame;
 
 #[tokio::test]
 async fn a_cancelled_pending_movie_releases_its_lease_without_a_frame() {
@@ -69,15 +69,4 @@ async fn a_cancelled_active_movie_releases_its_file_without_a_new_frame() -> any
     assert!(control.next().await.is_none());
     std::fs::rename(path, directory.path().join("closed.mp4"))?;
     Ok(())
-}
-
-fn frame(width: u32, height: u32, shade: u8) -> Frame {
-    Frame {
-        at: Instant::now(),
-        width,
-        height,
-        bgra: [shade, shade, shade, 255]
-            .repeat(usize::try_from(u64::from(width).saturating_mul(u64::from(height))).unwrap()),
-        part: Part::WHOLE,
-    }
 }

@@ -270,6 +270,18 @@ pub(crate) mod tests {
 
     use super::*;
 
+    pub(crate) fn frame(width: u32, height: u32, shade: u8) -> crate::Frame {
+        crate::Frame {
+            at: Instant::now(),
+            width,
+            height,
+            bgra: [shade, shade, shade, 255].repeat(
+                usize::try_from(u64::from(width).saturating_mul(u64::from(height))).unwrap(),
+            ),
+            part: crate::Part::WHOLE,
+        }
+    }
+
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     pub(crate) fn prefix(file: &mut std::fs::File) -> anyhow::Result<MoviePrefix> {
         use std::io::{Read as _, Seek as _, SeekFrom};

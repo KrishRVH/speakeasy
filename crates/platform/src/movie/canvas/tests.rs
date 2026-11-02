@@ -1,17 +1,5 @@
-use std::time::Instant;
-
 use super::*;
-
-fn frame(width: u32, height: u32, shade: u8) -> Frame {
-    Frame {
-        at: Instant::now(),
-        width,
-        height,
-        bgra: [shade, shade, shade, 255]
-            .repeat(usize::try_from(u64::from(width).saturating_mul(u64::from(height))).unwrap()),
-        part: Part::WHOLE,
-    }
-}
+use crate::movie::tests::frame;
 
 #[test]
 fn resized_frames_clear_old_pixels_and_keep_aspect_ratio() -> anyhow::Result<()> {
