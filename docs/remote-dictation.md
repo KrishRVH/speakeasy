@@ -10,9 +10,9 @@ permissions need acceptance with the chosen remote client.
 
 ## Route the microphone
 
-If your remote setup already exposes a host recording device, select it in Speakeasy **Settings ›
-Microphone**. Use **Refresh** after adding a device. Keep desktop playback out of this input so the
-app receives only the intended voice.
+If your remote setup already exposes a host recording device, select it in Speakeasy's **Dictation ›
+Speech › Microphone** menu, which lists the current devices each time it opens. Keep desktop
+playback out of this input so the app receives only the intended voice.
 
 For an existing Voicemeeter setup, a VBAN sender can send client microphone audio to an incoming
 host stream. Match the destination address, stream name, and port, then route that input strip to a
