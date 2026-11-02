@@ -105,27 +105,13 @@ pub(crate) fn replay(
                 drain.unpark();
             }
         })?;
-        let recorder = Recorder {
-            pcm: Pcm16::with_reservation(samples_in(INITIAL_RESERVATION, rate), limit),
-            speech: Audibility::new(rate),
-            device: producer,
-            ring,
-            errors: received,
-            started,
-            rate,
-            cuts: (recognition == RecognitionMode::Segmented).then(|| Cuts::new(rate)),
-            live: if recognition == RecognitionMode::Streaming {
-                live::Feed::Waiting
-            } else {
-                live::Feed::Abandoned
-            },
-            profile: Some(Profile {
-                polled: started,
-                metered: started,
-                stats: Statistics::default(),
-                report,
-            }),
-        };
+        let mut recorder = Recorder::new(producer, ring, received, started, rate, recognition);
+        recorder.profile = Some(Profile {
+            polled: started,
+            metered: started,
+            stats: Statistics::default(),
+            report,
+        });
         Ok(recorder.record(id, events, control, cues, keep, whole))
     })
 }

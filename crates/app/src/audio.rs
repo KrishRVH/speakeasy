@@ -288,21 +288,42 @@ impl Recorder {
             limit,
         };
         let stream = build_stream(&device, &format, callbacks)?;
-
-        let pcm = Pcm16::with_reservation(samples_in(INITIAL_RESERVATION, rate), limit);
-        let speech = Audibility::new(rate);
         checkpoint()?;
         stream.play().map_err(microphone_error)?;
-        Ok(Self {
-            pcm,
-            speech,
-            device: LiveStream {
-                _stream: stream,
-                _device: device,
-                _host: host,
-            },
+        let device = LiveStream {
+            _stream: stream,
+            _device: device,
+            _host: host,
+        };
+        Ok(Self::new(
+            device,
             ring,
-            errors: stream_errors,
+            stream_errors,
+            started,
+            rate,
+            recognition,
+        ))
+    }
+}
+
+impl<D> Recorder<D> {
+    fn new(
+        device: D,
+        ring: Consumer<f32>,
+        errors: Receiver<cpal::Error>,
+        started: Instant,
+        rate: u32,
+        recognition: RecognitionMode,
+    ) -> Self {
+        Self {
+            pcm: Pcm16::with_reservation(
+                samples_in(INITIAL_RESERVATION, rate),
+                samples_in(RECORDING_LIMIT, rate),
+            ),
+            speech: Audibility::new(rate),
+            device,
+            ring,
+            errors,
             started,
             rate,
             cuts: (recognition == RecognitionMode::Segmented).then(|| Cuts::new(rate)),
@@ -313,11 +334,9 @@ impl Recorder {
             },
             #[cfg(test)]
             profile: None,
-        })
+        }
     }
-}
 
-impl<D> Recorder<D> {
     fn record(
         mut self,
         id: SessionId,
