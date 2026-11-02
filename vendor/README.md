@@ -78,16 +78,20 @@ app liveness for `AsyncApp`, and `App::shutdown` ordering.
 - `src/linux/x11/window.rs` implements `PlatformWindow::set_visible` with MapWindow and UnmapWindow
   on GPUI's own connection; upstream X11 ignores it.
   `idle_native_pill_starts_unmapped_and_can_show_and_hide` fails without this.
-- `src/linux/wayland/window.rs` implements `PlatformWindow::map_window` and `set_visible`. A window
-  opens hidden and attaches a buffer only while shown; `map_window` shows one opened with `show`.
-  Hiding a parentless toplevel does as GTK and Qt do: it destroys the decoration, toplevel, and
-  xdg_surface and commits a null buffer; showing creates new role objects on the same surface with
-  the saved title, app ID, size limits, and decoration request, then maps on the compositor's
-  configure. Hiding a layer surface commits a null buffer, which unmaps it but keeps its role
-  object, then commits again so the compositor configures it while hidden; showing draws at once.
-  A configure leaves a hidden window's visibility alone. Dialogs, child windows, and popups ignore
-  it. Under `WAYLAND_DEBUG=client` on a layer-shell compositor such as sway, the idle `--demo` pill
-  attaches no null buffer without the layer surface case.
+- `src/linux/wayland/window.rs` implements `PlatformWindow::set_visible`. A toplevel or layer
+  surface opened without `show` has no role objects until it is shown. Hiding one does as GTK and
+  Qt do: it destroys its role objects, the decoration, toplevel, and xdg_surface or the layer
+  surface, and commits a null buffer, so the compositor keeps nothing of it and the client
+  discards a configure sent to those objects instead of acknowledging it. Showing gives the same
+  surface new role objects with the saved title, app ID, size limits, and decoration request, or
+  the layer surface's options, which runtime exclusive-zone and edge changes keep current, on the
+  output the compositor chooses; the window draws on that new role's first configure. A hidden
+  window reports itself hidden, and a popup cannot open on one. Floating windows, dialogs, and
+  popups open shown and ignore it. On sway with two outputs, the `--demo-tray` pill shows its tray
+  hint on the output focused when Settings closes, and under `WAYLAND_DEBUG=client` a configure
+  that arrives after a hide is logged as discarded. Keeping the layer surface left the hint on the
+  output where the pill first showed, and acknowledging such a configure ended the connection with
+  `wrong configure serial`.
 
 ## gpui-pre-wgpu
 

@@ -73,11 +73,11 @@ click-through.
 Windows places the pill at the bottom center of the foreground window's monitor work area. macOS
 uses the screen under the pointer. Both place the capsule about 28 DIP above the work area's bottom
 edge when shown. Position stays fixed while the pill remains visible; it does not follow the caret.
-On a native Wayland session, Linux anchors the pill to the bottom center of the output the
-compositor chooses, usually the focused one, and Settings' opening height follows the shortest
-output. On X11, Linux uses GPUI's display placement and passive X11 hints. GPUI's X11 display is the
-whole X screen, so with several monitors the pill and Settings' opening height follow all of them
-together. Native monitor/fullscreen acceptance is pending on both.
+On a native Wayland session, Linux anchors the pill each time it shows to the bottom center of the
+output the compositor chooses, usually the focused one, and Settings' opening height follows the
+shortest output. On X11, Linux uses GPUI's display placement and passive X11 hints. GPUI's X11
+display is the whole X screen, so with several monitors the pill and Settings' opening height follow
+all of them together. Native monitor/fullscreen acceptance is pending on both.
 
 Width, height, opacity, vertical entry, waveform presence, lid, and meter values use analytic
 critically damped springs. Changing the target preserves velocity, and meter bars rise faster than

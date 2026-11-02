@@ -87,17 +87,17 @@ error that names the missing piece. The choice holds until Speakeasy quits.
 
 On Wayland the pill is an overlay layer surface in the `speakeasy-pill` namespace, anchored 50 px
 above the bottom of the output the compositor chooses, with no keyboard interactivity and an empty
-input region. It opens hidden and attaches a buffer only while shown, so the compositor has nothing
-of the idle pill to draw. Hiding it commits a null buffer, which unmaps the surface but keeps its
-layer surface, then commits again so the compositor configures it while hidden; showing it draws at
-once. When the compositor closes it, for example because its output went away, Speakeasy opens a new
-pill at once. The new pill shows an active session but not feedback that began before it opened, so
-a closed pill never repeats an old result or error. If that one closes too, the next one waits for a
-display change, so a compositor that refuses the pill cannot start a reopen loop. Closing Settings
-with a tray host hides it as GTK and Qt hide a window: GPUI destroys the toplevel's roles and
-commits no buffer, which unmaps the surface while the window, its view, and any model or update
-download stay alive. Showing it gives the same surface a new toplevel with the saved title and
-decoration request, and the compositor's configure maps it again.
+input region. The layer surface exists only while the pill shows: GPUI creates it on each show and
+draws on its first configure, so the compositor picks the output each time. Hiding the pill destroys
+the layer surface and commits a null buffer, so the compositor has nothing of the idle pill to draw,
+configure, or close. When the compositor closes a shown pill, for example because its output went
+away, Speakeasy opens a new pill at once. The new pill shows an active session but not feedback that
+began before it opened, so a closed pill never repeats an old result or error. If that one closes
+too, the next one waits for a display change, so a compositor that refuses the pill cannot start a
+reopen loop. Closing Settings with a tray host hides it as GTK and Qt hide a window: GPUI destroys
+the toplevel's roles and commits a null buffer, which unmaps the surface while the window, its view,
+and any model or update download stay alive. Showing it gives the same surface a new toplevel with
+the saved title and decoration request, and the compositor's configure maps it again.
 
 On X11 the pill is a pop-up: override-redirect, a notification window type, no keyboard focus, and
 an empty XShape input shape before mapping. It maps only while shown, and closing Settings with a
@@ -199,11 +199,13 @@ A Wayland surface keeps its first role for its lifetime, so the pill is created 
 surface through GPUI's
 [`WindowKind::LayerShell`](https://docs.rs/crate/gpui-pre/0.3.11/source/src/platform/layer_shell.rs),
 and the display server is chosen before any window opens: GPUI on X11 opens a layer-shell request as
-an ordinary window instead of failing. The compositor picks the layer surface's output and may close
-it at any time. A surface whose role object is destroyed keeps that role type and may take a new
-object of the same role, which is how a hidden toplevel comes back. A layer surface that commits a
-null buffer is unmapped and returns to its state right after creation; a commit without a buffer
-asks for its next configure, and the first buffer after that maps it again. See
+an ordinary window instead of failing. The compositor picks a layer surface's output when it is
+created and may close it at any time. A surface whose role object is destroyed keeps that role type
+and may take a new object of the same role, which is how a hidden pill or toplevel comes back. A
+layer surface may only be created on a surface with no buffer attached or committed, and its first
+commit carries no buffer and asks for the configure that the first buffer must follow. Events the
+compositor sent to a destroyed object are discarded by the client, so a hidden window never
+acknowledges a configure meant for its previous role. See
 [Wayland roles](https://wayland.freedesktop.org/docs/html/apa.html#protocol-spec-wl_surface),
 [xdg-shell unmapping](https://gitlab.freedesktop.org/wayland/wayland-protocols/-/blob/main/stable/xdg-shell/xdg-shell.xml),
 and
