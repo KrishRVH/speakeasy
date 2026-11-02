@@ -47,20 +47,17 @@ impl Annotations {
         let point = |point: Point| {
             point.is_finite() && (0.0..=1.0).contains(&point.x) && (0.0..=1.0).contains(&point.y)
         };
-        let valid = recording.spaces.valid(
-            recording.strokes.len(),
-            recording.pins.len(),
-            recording.actions.len(),
-            recording.duration,
-        ) && recording.strokes.iter().all(|stroke| {
-            stroke
-                .points()
+        let valid = recording.spaces_valid()
+            && recording.strokes.iter().all(|stroke| {
+                stroke
+                    .points()
+                    .iter()
+                    .all(|ink| point(ink.point) && ink.at <= recording.duration)
+            })
+            && recording
+                .pins
                 .iter()
-                .all(|ink| point(ink.point) && ink.at <= recording.duration)
-        }) && recording
-            .pins
-            .iter()
-            .all(|pin| point(pin.point) && pin.at <= recording.duration)
+                .all(|pin| point(pin.point) && pin.at <= recording.duration)
             && recording.actions.iter().all(|action| {
                 action.span().end() <= recording.duration
                     && match action {

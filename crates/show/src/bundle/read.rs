@@ -109,12 +109,7 @@ impl Manifest {
             }
         };
         require(
-            self.recording.spaces.valid(
-                self.recording.strokes.len(),
-                self.recording.pins.len(),
-                self.recording.actions.len(),
-                self.recording.duration,
-            ),
+            self.recording.spaces_valid(),
             "pointer coordinate spaces are invalid",
         )?;
         require(

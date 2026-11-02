@@ -158,12 +158,7 @@ fn mixed_strokes_and_unbound_proof_vectors_never_supply_crop_coordinates()
     let mut recording = tracker.finish(ms(40));
     assert_eq!(recording.mark_part(&mark), None);
     recording.spaces.strokes.push(None);
-    assert!(!recording.spaces.valid(
-        recording.strokes.len(),
-        recording.pins.len(),
-        recording.actions.len(),
-        recording.duration
-    ));
+    assert!(!recording.spaces_valid());
     assert_eq!(recording.mark_part(&mark), None);
     let bad: Spaces = serde_json::from_value(
         serde_json::json!({"strokes":[{"generation":1,"part":[0,0,2,1]}],"pins":[],"actions":[]}),

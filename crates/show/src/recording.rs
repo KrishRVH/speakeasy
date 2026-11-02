@@ -2,7 +2,7 @@ use std::{fmt, time::Duration};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Moment, Point, Span};
+use crate::{Mark, Moment, Point, Rect, Span};
 
 pub(crate) mod spaces;
 pub use spaces::Spaces;
@@ -26,16 +26,21 @@ pub struct Recording {
 
 impl Recording {
     #[must_use]
-    pub fn mark_part(&self, mark: &crate::Mark) -> Option<crate::Rect> {
-        self.spaces
-            .valid(
-                self.strokes.len(),
-                self.pins.len(),
-                self.actions.len(),
-                self.duration,
-            )
-            .then_some(())?;
-        self.spaces.mark(mark, &self.pins)
+    pub fn mark_part(&self, mark: &Mark) -> Option<Rect> {
+        if self.spaces_valid() {
+            self.spaces.mark(mark, &self.pins)
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn spaces_valid(&self) -> bool {
+        self.spaces.valid(
+            self.strokes.len(),
+            self.pins.len(),
+            self.actions.len(),
+            self.duration,
+        )
     }
 }
 
