@@ -165,6 +165,14 @@ fn failed_or_repeated_exports_leave_destinations_and_originals_unchanged() -> an
     );
     assert!(write(&directory, &directory.join("nested.zip")).is_err());
     assert!(!directory.join("nested.zip").exists());
+    let unplaced = write(&directory, &root.path().join("missing/export.zip"))
+        .err()
+        .context("An export was written into a missing folder")?;
+    assert_eq!(
+        unplaced.to_string(),
+        "Cannot open the export folder; choose an existing folder"
+    );
+    assert!(!root.path().join("missing").exists());
     Ok(())
 }
 

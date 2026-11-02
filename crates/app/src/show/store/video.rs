@@ -3,7 +3,6 @@ mod timeline;
 
 use std::{
     fs::File,
-    io,
     path::{Path, PathBuf},
     time::{Duration, SystemTime},
 };
@@ -77,31 +76,16 @@ fn write_with(
     cancelled: impl Fn() -> bool + Sync,
     scratch: impl FnOnce() -> anyhow::Result<PathBuf>,
 ) -> anyhow::Result<Exported> {
-    let directory = directory
-        .canonicalize()
-        .context("Cannot open the Show to export")?;
-    let destination = std::path::absolute(destination)?;
-    anyhow::ensure!(
-        destination
-            .symlink_metadata()
-            .is_err_and(|error| error.kind() == io::ErrorKind::NotFound),
-        "The export path exists or cannot be inspected; choose a new MP4 file"
-    );
-    let parent = destination
-        .parent()
-        .context("Choose an MP4 file inside a folder")?;
-    anyhow::ensure!(
-        !parent.canonicalize()?.starts_with(&directory),
-        "Choose an export location outside the original Show"
-    );
+    let target = export::Target::new(directory, destination, "MP4")?;
     anyhow::ensure!(!cancelled(), "Video export cancelled");
+    let directory = target.show.as_path();
     let manifest = Manifest::parse(&recall::read_file(
-        &directory,
+        directory,
         Manifest::FILE,
         recall::MANIFEST_LIMIT,
     )?)?;
-    let mut reading = movie::Reading::open(&directory, manifest.recording().duration)?;
-    let voice = voice::read(&directory, SystemTime::now())?;
+    let mut reading = movie::Reading::open(directory, manifest.recording().duration)?;
+    let voice = voice::read(directory, SystemTime::now())?;
     let audio = voice.audio();
     let timing = timeline::Timing::new(&reading.movie, options.span, audio)?;
     let scene = Annotations::new(manifest.recording(), manifest.marks())?;
@@ -130,10 +114,7 @@ fn write_with(
     } else {
         0
     };
-    let staging = tempfile::Builder::new()
-        .prefix(".speakeasy-video-")
-        .tempfile_in(parent)?;
-    let result = (|| {
+    let (stats, bytes) = target.publish(".speakeasy-video-", |staging| {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
@@ -150,17 +131,10 @@ fn write_with(
             &cancelled,
         ))?;
         anyhow::ensure!(!cancelled(), "Video export cancelled");
-        staging.as_file().sync_all()?;
-        Ok((stats, staging.as_file().metadata()?.len()))
-    })();
-    let (stats, bytes) = export::complete(
-        staging,
-        &destination,
-        result,
-        "Cannot publish the video; choose a new MP4 path and check free space",
-    )?;
+        Ok(stats)
+    })?;
     Ok(Exported {
-        path: destination,
+        path: target.path,
         bytes,
         start_ms: timing.start_ms,
         end_ms: timing.end_ms,

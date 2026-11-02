@@ -25,68 +25,86 @@ pub(crate) struct Exported {
 }
 
 pub(crate) fn write(directory: &Path, destination: &Path) -> anyhow::Result<Exported> {
-    let directory = directory
-        .canonicalize()
-        .context("Cannot open the Show to export")?;
-    let destination = std::path::absolute(destination)?;
-    anyhow::ensure!(
-        destination
-            .symlink_metadata()
-            .is_err_and(|error| error.kind() == io::ErrorKind::NotFound),
-        "The export path exists or cannot be inspected; choose a new ZIP file"
-    );
-    let parent = destination
-        .parent()
-        .context("Choose a ZIP file inside a folder")?;
-    anyhow::ensure!(
-        !parent.canonicalize()?.starts_with(&directory),
-        "Choose an export location outside the original Show"
-    );
-    let mut staging = tempfile::Builder::new()
-        .prefix(".speakeasy-export-")
-        .tempfile_in(parent)
-        .context("Cannot create the export; check the destination folder and free space")?;
-    let result = archive(&directory, staging.as_file_mut()).and_then(|(files, retained)| {
-        staging
-            .as_file()
-            .sync_all()
-            .context("Cannot flush the Show export")?;
-        Ok((files, retained, staging.as_file().metadata()?.len()))
-    });
-    let (files, retained_frames, bytes) = complete(
-        staging,
-        &destination,
-        result,
-        "Cannot save the export; choose a new ZIP path and check free space",
-    )?;
+    let target = Target::new(directory, destination, "ZIP")?;
+    let ((files, retained_frames), bytes) = target.publish(".speakeasy-export-", |staging| {
+        archive(&target.show, staging.as_file_mut())
+    })?;
     Ok(Exported {
-        path: destination,
+        path: target.path,
         files,
         bytes,
         retained_frames,
     })
 }
 
-pub(super) fn complete<T>(
-    staging: tempfile::NamedTempFile,
-    destination: &Path,
-    result: anyhow::Result<T>,
-    publish_error: &'static str,
-) -> anyhow::Result<T> {
-    let result = match result {
-        Ok(result) => result,
-        Err(error) => return Err(failed(staging, error)),
-    };
-    let _published = match staging.persist_noclobber(destination) {
-        Ok(file) => file,
-        Err(error) => {
-            return Err(failed(
+pub(super) struct Target {
+    pub show: PathBuf,
+    pub path: PathBuf,
+    folder: PathBuf,
+    kind: &'static str,
+}
+
+impl Target {
+    pub(super) fn new(show: &Path, destination: &Path, kind: &'static str) -> anyhow::Result<Self> {
+        let show = show
+            .canonicalize()
+            .context("Cannot open the Show to export")?;
+        let path = std::path::absolute(destination)?;
+        anyhow::ensure!(
+            path.symlink_metadata()
+                .is_err_and(|error| error.kind() == io::ErrorKind::NotFound),
+            "The export path exists or cannot be inspected; choose a new {kind} file"
+        );
+        let folder = path
+            .parent()
+            .with_context(|| format!("Choose a new {kind} file inside a folder"))?
+            .to_owned();
+        anyhow::ensure!(
+            !folder
+                .canonicalize()
+                .context("Cannot open the export folder; choose an existing folder")?
+                .starts_with(&show),
+            "Choose an export location outside the original Show"
+        );
+        Ok(Self {
+            show,
+            path,
+            folder,
+            kind,
+        })
+    }
+
+    pub(super) fn publish<T>(
+        &self,
+        prefix: &str,
+        write: impl FnOnce(&mut tempfile::NamedTempFile) -> anyhow::Result<T>,
+    ) -> anyhow::Result<(T, u64)> {
+        let mut staging = tempfile::Builder::new()
+            .prefix(prefix)
+            .tempfile_in(&self.folder)
+            .context("Cannot create the export; check the destination folder and free space")?;
+        let written = write(&mut staging).and_then(|value| {
+            staging
+                .as_file()
+                .sync_all()
+                .context("Cannot flush the export")?;
+            Ok((value, staging.as_file().metadata()?.len()))
+        });
+        let written = match written {
+            Ok(written) => written,
+            Err(error) => return Err(failed(staging, error)),
+        };
+        match staging.persist_noclobber(&self.path) {
+            Ok(_published) => Ok(written),
+            Err(error) => Err(failed(
                 error.file,
-                anyhow::Error::from(error.error).context(publish_error),
-            ));
-        },
-    };
-    Ok(result)
+                anyhow::Error::from(error.error).context(format!(
+                    "Cannot save the export; choose a new {} path and check free space",
+                    self.kind
+                )),
+            )),
+        }
+    }
 }
 
 fn failed(staging: tempfile::NamedTempFile, error: anyhow::Error) -> anyhow::Error {
