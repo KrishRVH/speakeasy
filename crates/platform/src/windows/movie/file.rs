@@ -22,8 +22,8 @@ use windows::Win32::{
 use windows_core::{Error, HRESULT, Ref, Result};
 
 pub(super) struct Stream {
-    pub native: IMFByteStream,
-    pub sync: File,
+    pub(super) native: IMFByteStream,
+    pub(super) sync: File,
     _closed: Closed,
 }
 
@@ -38,7 +38,7 @@ impl Drop for Stream {
 }
 
 pub(super) struct ReadStream {
-    pub native: IMFByteStream,
+    pub(super) native: IMFByteStream,
     _closed: Closed,
 }
 

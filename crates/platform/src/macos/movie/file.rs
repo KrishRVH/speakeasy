@@ -143,7 +143,7 @@ impl Reader {
 }
 
 pub(super) struct Asset {
-    pub native: Retained<AVURLAsset>,
+    pub(super) native: Retained<AVURLAsset>,
     reader: Retained<Reader>,
     _queue: DispatchRetained<DispatchQueue>,
 }

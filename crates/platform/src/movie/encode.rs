@@ -50,9 +50,9 @@ impl<F: FnMut() -> bool> Observer for F {
 
 #[derive(Clone, Copy)]
 pub(crate) struct Coverage {
-    pub last: Duration,
-    pub at: Duration,
-    pub frames: u32,
+    pub(crate) last: Duration,
+    pub(crate) at: Duration,
+    pub(crate) frames: u32,
 }
 
 pub(crate) struct Encoder<C> {

@@ -110,7 +110,7 @@ pub struct MovieControl {
 }
 
 pub struct MovieTarget {
-    pub(crate) path: PathBuf,
+    path: PathBuf,
     cancelled: Receiver<Infallible>,
     events: Sender<MovieEvent>,
     deadline: Instant,
