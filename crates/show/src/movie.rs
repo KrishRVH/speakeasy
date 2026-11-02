@@ -12,6 +12,31 @@ const HEADER_LIMIT: u64 = 1 << 20;
 const SAMPLE_LIMIT: u32 = 10_801;
 const DURATION_LIMIT: u64 = 360;
 
+const NON_SYNC_SAMPLE: u32 = 0x0001_0000;
+
+mod tfhd {
+    pub(super) const BASE_OFFSET: u32 = 0x0000_0001;
+    pub(super) const DESCRIPTION: u32 = 0x0000_0002;
+    pub(super) const DURATION: u32 = 0x0000_0008;
+    pub(super) const SIZE: u32 = 0x0000_0010;
+    pub(super) const FLAGS: u32 = 0x0000_0020;
+    pub(super) const BASE_IS_MOOF: u32 = 0x0002_0000;
+    pub(super) const SUPPORTED: u32 =
+        BASE_OFFSET | DESCRIPTION | DURATION | SIZE | FLAGS | BASE_IS_MOOF;
+}
+
+mod trun {
+    pub(super) const OFFSET: u32 = 0x0000_0001;
+    pub(super) const FIRST_FLAGS: u32 = 0x0000_0004;
+    pub(super) const DURATION: u32 = 0x0000_0100;
+    pub(super) const SIZE: u32 = 0x0000_0200;
+    pub(super) const FLAGS: u32 = 0x0000_0400;
+    pub(super) const COMPOSITION: u32 = 0x0000_0800;
+    pub(super) const SIGNED_COMPOSITION: u32 = 0x0100_0000;
+    pub(super) const SUPPORTED: u32 =
+        OFFSET | FIRST_FLAGS | DURATION | SIZE | FLAGS | COMPOSITION | SIGNED_COMPOSITION;
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MovieError {
     Invalid(&'static str),
@@ -307,37 +332,33 @@ fn fragment(
     let mut header = Fields::new(header_box.bytes);
     let flags = header.word()?;
     require(
-        flags & !0x0002_003B == 0 && header.word()? == track.id,
+        flags & !tfhd::SUPPORTED == 0 && header.word()? == track.id,
         "Movie fragment track is invalid",
     )?;
-    let base = if flags & 1 != 0 {
+    let base = if flags & tfhd::BASE_OFFSET != 0 {
         header.wide()?
     } else {
-        require(flags & 0x0002_0000 != 0, "Movie fragment has no data base")?;
+        require(
+            flags & tfhd::BASE_IS_MOOF != 0,
+            "Movie fragment has no data base",
+        )?;
         start
     };
-    if flags & 2 != 0 {
-        require(
-            header.word()? == 1,
-            "Movie sample description is unsupported",
-        )?;
-    }
-    let duration = if flags & 8 != 0 {
-        header.word()?
-    } else {
-        track.duration
-    };
-    let size = if flags & 16 != 0 {
-        header.word()?
-    } else {
-        track.sample_size
-    };
-    let sample_flags = if flags & 32 != 0 {
-        header.word()?
-    } else {
-        track.flags
-    };
-
+    require(
+        header
+            .word_if(flags & tfhd::DESCRIPTION != 0)?
+            .is_none_or(|description| description == 1),
+        "Movie sample description is unsupported",
+    )?;
+    let duration = header
+        .word_if(flags & tfhd::DURATION != 0)?
+        .unwrap_or(track.duration);
+    let size = header
+        .word_if(flags & tfhd::SIZE != 0)?
+        .unwrap_or(track.sample_size);
+    let sample_flags = header
+        .word_if(flags & tfhd::FLAGS != 0)?
+        .unwrap_or(track.flags);
     require(
         header.rest().iter().all(|byte| *byte == 0) && header.rest().len() <= 4,
         "Movie fragment header has trailing data",
@@ -346,7 +367,7 @@ fn fragment(
         samples: 0,
         decoded,
         times: Vec::new(),
-        normalization: (flags == 1 && header.rest() == [0; 4]).then_some(
+        normalization: (flags == tfhd::BASE_OFFSET && header.rest() == [0; 4]).then_some(
             payload
                 .saturating_add(track_box.payload)
                 .saturating_add(header_box.payload)
@@ -370,11 +391,11 @@ fn fragment(
     for part in runs {
         let mut run = Fields::new(part.bytes);
         let flags = run.word()?;
-        if flags & 0x200 == 0 {
+        if flags & trun::SIZE == 0 {
             result.normalization = None;
         }
         require(
-            flags & !0x0100_0F05 == 0,
+            flags & !trun::SUPPORTED == 0,
             "Movie sample table flags are unsupported",
         )?;
         let samples = run.word()?;
@@ -382,7 +403,7 @@ fn fragment(
             samples > 0 && result.samples.saturating_add(samples) <= SAMPLE_LIMIT,
             "Movie sample table is too large",
         )?;
-        if flags & 1 != 0 {
+        if flags & trun::OFFSET != 0 {
             let offset = i64::from(run.signed()?);
             require(
                 base.checked_add_signed(offset) == Some(next),
@@ -391,43 +412,30 @@ fn fragment(
         } else if result.samples == 0 {
             require(base == next, "Movie implicit sample base misses its data")?;
         }
-        let first_flags = if flags & 4 != 0 {
-            Some(run.word()?)
-        } else {
-            None
-        };
+        let first_flags = run.word_if(flags & trun::FIRST_FLAGS != 0)?;
         require(
-            first_flags.is_none() || flags & 0x400 == 0,
+            first_flags.is_none() || flags & trun::FLAGS == 0,
             "Movie sample flags conflict",
         )?;
         for index in 0..samples {
-            let duration = if flags & 0x100 != 0 {
-                run.word()?
-            } else {
-                duration
+            let duration = run
+                .word_if(flags & trun::DURATION != 0)?
+                .unwrap_or(duration);
+            let size = run.word_if(flags & trun::SIZE != 0)?.unwrap_or(size);
+            let sample_flags = match run.word_if(flags & trun::FLAGS != 0)? {
+                Some(flags) => flags,
+                None if index == 0 => first_flags.unwrap_or(sample_flags),
+                None => sample_flags,
             };
-            let size = if flags & 0x200 != 0 {
-                run.word()?
-            } else {
-                size
-            };
-            let sample_flags = if flags & 0x400 != 0 {
-                run.word()?
-            } else if index == 0 {
-                first_flags.unwrap_or(sample_flags)
-            } else {
-                sample_flags
-            };
-            if flags & 0x800 != 0 {
-                require(
-                    run.word()? == 0,
-                    "Movie presentation reordering is unsupported",
-                )?;
-            }
+            require(
+                run.word_if(flags & trun::COMPOSITION != 0)?
+                    .is_none_or(|offset| offset == 0),
+                "Movie presentation reordering is unsupported",
+            )?;
             require(duration > 0 && size > 0, "Movie sample is empty")?;
             if sequence == 1 && result.samples == 0 && index == 0 {
                 require(
-                    sample_flags & 0x0001_0000 == 0,
+                    sample_flags & NON_SYNC_SAMPLE == 0,
                     "Movie starts without a random-access sample",
                 )?;
             }

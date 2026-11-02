@@ -35,7 +35,7 @@ impl<'a> Fields<'a> {
         Ok(value)
     }
 
-    fn array<const N: usize>(&mut self) -> Result<[u8; N], MovieError> {
+    pub(super) fn array<const N: usize>(&mut self) -> Result<[u8; N], MovieError> {
         let (value, rest) = self.0.split_first_chunk().ok_or(INCOMPLETE)?;
         self.0 = rest;
         Ok(*value)
@@ -51,6 +51,10 @@ impl<'a> Fields<'a> {
 
     pub(super) fn word(&mut self) -> Result<u32, MovieError> {
         self.array().map(u32::from_be_bytes)
+    }
+
+    pub(super) fn word_if(&mut self, present: bool) -> Result<Option<u32>, MovieError> {
+        present.then(|| self.word()).transpose()
     }
 
     pub(super) fn signed(&mut self) -> Result<i32, MovieError> {

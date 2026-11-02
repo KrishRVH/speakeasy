@@ -2,6 +2,7 @@ use super::{
     MovieError,
     atoms::{Fields, child, children, require},
 };
+use crate::MAX_FRAME_EDGE;
 
 pub(super) struct Track {
     pub id: u32,
@@ -14,13 +15,11 @@ pub(super) struct Track {
 
 pub(super) fn read(bytes: &[u8]) -> Result<Track, MovieError> {
     let boxes = children(bytes)?;
-    let mut movie = Fields::new(child(&boxes, *b"mvhd")?.bytes);
-    let version = movie.word()? >> 24;
-    require(
-        (version == 0 && movie.rest().len() == 96) || (version == 1 && movie.rest().len() == 108),
-        "Movie header size is invalid",
+    let mut movie = versioned(
+        child(&boxes, *b"mvhd")?.bytes,
+        [100, 112],
+        "Movie header is invalid",
     )?;
-    movie.skip(if version == 0 { 8 } else { 16 })?;
     require(movie.word()? != 0, "Movie header timescale is zero")?;
     require(
         boxes.iter().filter(|part| part.kind == *b"trak").count() == 1,
@@ -32,29 +31,7 @@ pub(super) fn read(bytes: &[u8]) -> Result<Track, MovieError> {
         "Movie edit lists are unsupported",
     )?;
     let track_header = child(&track, *b"tkhd")?.bytes;
-    let mut header = Fields::new(track_header);
-    match header.word()? >> 24 {
-        0 => {
-            require(
-                track_header.len() == 84,
-                "Movie track header size is invalid",
-            )?;
-            header.skip(8)?;
-        },
-        1 => {
-            require(
-                track_header.len() == 96,
-                "Movie track header size is invalid",
-            )?;
-            header.skip(16)?;
-        },
-        _ => {
-            return Err(MovieError::Invalid(
-                "Movie track header version is unsupported",
-            ));
-        },
-    }
-    let id = header.word()?;
+    let id = versioned(track_header, [84, 96], "Movie track header is invalid")?.word()?;
     require(id != 0, "Movie track identity is zero")?;
     let media = children(child(&track, *b"mdia")?.bytes)?;
     let mut handler = Fields::new(child(&media, *b"hdlr")?.bytes);
@@ -63,30 +40,12 @@ pub(super) fn read(bytes: &[u8]) -> Result<Track, MovieError> {
         handler.kind()? == *b"vide",
         "Movie contains a non-video track",
     )?;
-    let media_header = child(&media, *b"mdhd")?.bytes;
-    let mut header = Fields::new(media_header);
-    match header.word()? >> 24 {
-        0 => {
-            require(
-                media_header.len() == 24,
-                "Movie media header size is invalid",
-            )?;
-            header.skip(8)?;
-        },
-        1 => {
-            require(
-                media_header.len() == 36,
-                "Movie media header size is invalid",
-            )?;
-            header.skip(16)?;
-        },
-        _ => {
-            return Err(MovieError::Invalid(
-                "Movie media header version is unsupported",
-            ));
-        },
-    }
-    let timescale = header.word()?;
+    let timescale = versioned(
+        child(&media, *b"mdhd")?.bytes,
+        [24, 36],
+        "Movie media header is invalid",
+    )?
+    .word()?;
     require(
         (1..=1_000_000_000).contains(&timescale),
         "Movie timescale is invalid",
@@ -133,7 +92,7 @@ pub(super) fn read(bytes: &[u8]) -> Result<Track, MovieError> {
     let size = [u32::from(avc.short()?), u32::from(avc.short()?)];
     require(
         size.into_iter()
-            .all(|edge| (2..=crate::MAX_FRAME_EDGE).contains(&edge) && edge.is_multiple_of(2)),
+            .all(|edge| (2..=MAX_FRAME_EDGE).contains(&edge) && edge.is_multiple_of(2)),
         "Movie canvas is invalid",
     )?;
     let mut display = Fields::new(
@@ -147,8 +106,7 @@ pub(super) fn read(bytes: &[u8]) -> Result<Track, MovieError> {
     )?;
     avc.skip(50)?;
     let codec = children(avc.rest())?;
-    let config = child(&codec, *b"avcC")?.bytes;
-    configuration(config)?;
+    configuration(child(&codec, *b"avcC")?.bytes)?;
     let extends = children(child(&boxes, *b"mvex")?.bytes)?;
     require(
         extends.iter().filter(|part| part.kind == *b"trex").count() == 1,
@@ -174,35 +132,46 @@ pub(super) fn read(bytes: &[u8]) -> Result<Track, MovieError> {
     Ok(result)
 }
 
+fn versioned<'a>(
+    bytes: &'a [u8],
+    [short, long]: [usize; 2],
+    invalid: &'static str,
+) -> Result<Fields<'a>, MovieError> {
+    let mut fields = Fields::new(bytes);
+    let times = match fields.word()? >> 24 {
+        0 if bytes.len() == short => 8,
+        1 if bytes.len() == long => 16,
+        _ => return Err(MovieError::Invalid(invalid)),
+    };
+    fields.skip(times)?;
+    Ok(fields)
+}
+
 fn configuration(bytes: &[u8]) -> Result<(), MovieError> {
     let mut fields = Fields::new(bytes);
-    let header = fields.word()?;
+    let [version, profile, _compatibility, _level] = fields.array()?;
     require(
-        header >> 24 == 1,
+        version == 1,
         "Movie AVC configuration version is unsupported",
     )?;
-    let profile = (header >> 16) & 0xFF;
-    let counts = fields.short()?;
+    let [lengths, sequences] = fields.array()?;
     require(
-        counts & 0xFCE0 == 0xFCE0 && (counts >> 8) & 3 != 2,
+        lengths & 0xFC == 0xFC && lengths & 0x03 != 0x02 && sequences & 0xE0 == 0xE0,
         "Movie AVC configuration flags are invalid",
     )?;
-    parameters(&mut fields, usize::from(counts & 31))?;
+    parameters(&mut fields, sequences & 0x1F)?;
     let pictures = fields.byte()?;
-    parameters(&mut fields, usize::from(pictures))?;
+    parameters(&mut fields, pictures)?;
     if !fields.empty() {
         require(
             [100, 110, 122, 144].contains(&profile),
             "Movie AVC extension is unsupported",
         )?;
-        let chroma = fields.byte()?;
-        let luma = fields.byte()?;
-        let chroma_depth = fields.byte()?;
+        let [chroma, luma, chroma_depth, count] = fields.array()?;
         require(
             chroma & 0xFC == 0xFC && luma & 0xF8 == 0xF8 && chroma_depth & 0xF8 == 0xF8,
             "Movie AVC extension flags are invalid",
         )?;
-        let count = fields.byte()?;
         for _ in 0..count {
             parameter(&mut fields)?;
         }
@@ -210,7 +179,7 @@ fn configuration(bytes: &[u8]) -> Result<(), MovieError> {
     require(fields.empty(), "Movie AVC configuration has trailing bytes")
 }
 
-fn parameters(fields: &mut Fields<'_>, count: usize) -> Result<(), MovieError> {
+fn parameters(fields: &mut Fields<'_>, count: u8) -> Result<(), MovieError> {
     require(count > 0, "Movie AVC parameters are missing")?;
     for _ in 0..count {
         parameter(fields)?;

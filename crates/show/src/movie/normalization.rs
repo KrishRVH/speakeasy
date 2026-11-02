@@ -1,5 +1,8 @@
 use super::{MovieError, require};
 
+const UNDECLARED: u8 = 0x01;
+const DECLARED: u8 = 0x11;
+
 #[derive(Clone, Debug, Default)]
 pub struct MovieNormalization {
     pub(super) headers: Vec<u64>,
@@ -23,8 +26,11 @@ impl MovieNormalization {
             else {
                 break;
             };
-            require(matches!(*flag, 1 | 17), "Movie fragment header changed")?;
-            *flag |= 16;
+            require(
+                matches!(*flag, UNDECLARED | DECLARED),
+                "Movie fragment header changed",
+            )?;
+            *flag = DECLARED;
         }
         Ok(())
     }
