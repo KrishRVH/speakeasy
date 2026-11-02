@@ -1,6 +1,7 @@
 mod clipboard;
 pub(crate) mod movie;
 pub(crate) mod screen;
+
 use std::{
     cell::OnceCell,
     ffi::c_void,
@@ -15,7 +16,6 @@ use std::{
 
 use anyhow::{Context as _, anyhow, bail, ensure};
 use block2::RcBlock;
-pub(super) use clipboard::{copy_content, copy_text};
 use core_foundation::{
     base::{TCFType, kCFAllocatorDefault},
     mach_port::CFMachPort,
@@ -44,6 +44,7 @@ use objc2_foundation::{
 };
 use raw_window_handle::{RawWindowHandle, WindowHandle};
 
+pub(super) use self::clipboard::{copy_content, copy_text};
 use super::{
     CANCEL_SHORTCUT, DesktopOptions, Input, InputSender, Inserted, Inserter, MacShortcut,
     NativeWindow, OwnedThread, PILL_MARGIN, PILL_WIDTH, insertion,

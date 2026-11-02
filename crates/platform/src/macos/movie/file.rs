@@ -21,6 +21,10 @@ use objc2_foundation::{
 };
 use speakeasy_show::MoviePrefix;
 
+const RESOURCE: &str = "speakeasy-movie://local/recording.mp4";
+
+const READ_CHUNK: usize = 64 * 1024;
+
 struct Input {
     #[expect(
         clippy::disallowed_types,
@@ -92,8 +96,11 @@ impl Reader {
 
         unsafe {
             ensure!(
-                request.request().URL().and_then(|url| url.absoluteString())
-                    .is_some_and(|url| *url == *ns_string!("speakeasy-movie://local/recording.mp4")),
+                request
+                    .request()
+                    .URL()
+                    .and_then(|url| url.absoluteString())
+                    .is_some_and(|url| *url == *ns_string!(RESOURCE)),
                 "Video requested an unsupported resource"
             );
             if let Some(info) = request.contentInformationRequest() {
@@ -121,9 +128,9 @@ impl Reader {
                         .min(input.bytes)
                 };
                 ensure!(position >= start, "Video byte range moved backwards");
-                let mut buffer = vec![0; 64 * 1024];
+                let mut buffer = vec![0; READ_CHUNK];
                 while position < end && !request.isCancelled() {
-                    let count = usize::try_from(end.saturating_sub(position).min(64 * 1024))?;
+                    let count = usize::try_from(end.saturating_sub(position))?.min(READ_CHUNK);
                     let bytes = buffer
                         .get_mut(..count)
                         .context("Video read exceeded its buffer")?;
@@ -152,7 +159,7 @@ impl Asset {
     pub(super) fn new(file: File, prefix: &MoviePrefix) -> anyhow::Result<Self> {
         let reader = Reader::new(file, prefix);
         let queue = DispatchQueue::new("Speakeasy movie input", None);
-        let url = NSURL::URLWithString(ns_string!("speakeasy-movie://local/recording.mp4"))
+        let url = NSURL::URLWithString(ns_string!(RESOURCE))
             .context("Cannot create the local movie resource")?;
         let restrictions = NSNumber::new_usize(AVAssetReferenceRestrictions::ForbidAll.0);
 
