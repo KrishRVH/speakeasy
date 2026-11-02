@@ -2,13 +2,15 @@ use std::{path::PathBuf, time::Duration};
 
 use anyhow::Context as _;
 use speakeasy_platform::{Delivery, InsertPermit, Inserted, Taps};
+use speakeasy_show::Narration;
 use tokio::time::timeout;
 
 use super::{
-    ports::{Capturing, Listening, Pinning, Sealed, Speech},
+    ports::{Capturing, Listening, LiveAudio, Pinning, Sealed, Speech},
     *,
 };
 use crate::{
+    audio::{self, fixture::Statistics},
     local_speech::{self, LocalSpeech},
     recognition_terms::Terms,
 };
@@ -45,20 +47,20 @@ impl Ports for Fixture {
         &self,
         id: SessionId,
         _: Option<&str>,
-        recognition: crate::runtime::ports::RecognitionMode,
+        recognition: RecognitionMode,
         events: Sender<CaptureEvent>,
     ) -> anyhow::Result<FixtureDevice> {
         let capture = self
             .replay
             .as_ref()
             .map(|replay| {
-                crate::audio::fixture::replay(
+                audio::fixture::replay(
                     id,
                     &self.wav,
                     if replay.segmenting {
                         recognition
                     } else {
-                        crate::runtime::ports::RecognitionMode::Whole
+                        RecognitionMode::Whole
                     },
                     replay.speed,
                     events.clone(),
@@ -78,7 +80,7 @@ impl Ports for Fixture {
         })
     }
 
-    fn keep(&self, _: std::time::SystemTime) -> anyhow::Result<Option<crate::show::Kept>> {
+    fn keep(&self, _: SystemTime) -> anyhow::Result<Option<show::Kept>> {
         Ok(None)
     }
 
@@ -87,7 +89,7 @@ impl Ports for Fixture {
         _: SessionId,
         _: Instant,
         _: Scope,
-        _: Option<crate::show::FrameLog>,
+        _: Option<show::FrameLog>,
         _: Sender<ShowEvent>,
     ) -> anyhow::Result<FixtureDevice> {
         anyhow::bail!("The dictation fixture records no Shows")
@@ -95,14 +97,14 @@ impl Ports for Fixture {
 
     fn reopen(
         &self,
-        interrupted: crate::show::Interrupted,
-    ) -> impl Future<Output = anyhow::Result<crate::show::Reopened>> + Send + 'static {
-        crate::show::reopen(interrupted)
+        interrupted: Interrupted,
+    ) -> impl Future<Output = anyhow::Result<show::Reopened>> + Send + 'static {
+        show::reopen(interrupted)
     }
 
     fn publish(
         &self,
-        _: crate::show::Publication,
+        _: show::Publication,
         _: InsertPermit,
     ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static {
         std::future::ready(Err(anyhow::anyhow!(
@@ -184,7 +186,7 @@ async fn fake_insertion_accepts_unrelated_speech_but_never_a_cancelled_permit() 
 }
 
 struct FixtureDevice {
-    capture: Option<crate::audio::Capture>,
+    capture: Option<Capture>,
     id: SessionId,
     wav: Vec<u8>,
     events: Sender<CaptureEvent>,
@@ -223,7 +225,7 @@ impl Listening for FixtureDevice {
         }
     }
 
-    fn keep(&self, _: crate::show::AudioLog, _: Duration, _: &str) -> bool {
+    fn keep(&self, _: show::AudioLog, _: Duration, _: &str) -> bool {
         true
     }
 
@@ -321,7 +323,7 @@ struct Replay {
     speed: u32,
     segmenting: bool,
     finished: Sender<Instant>,
-    statistics: Sender<crate::audio::fixture::Statistics>,
+    statistics: Sender<Statistics>,
 }
 
 #[derive(serde::Serialize)]
@@ -339,7 +341,7 @@ struct MeasuredSpeech {
 impl Speech for MeasuredSpeech {
     async fn transcribe_stream(
         &mut self,
-        audio: crate::runtime::ports::LiveAudio,
+        audio: LiveAudio,
         language: &str,
         terms: &Terms,
     ) -> anyhow::Result<Option<String>> {
@@ -357,7 +359,7 @@ impl Speech for MeasuredSpeech {
             .as_ref()
             .map(|_| {
                 Ok::<_, anyhow::Error>((
-                    crate::audio::wav_duration(&wav)?.as_secs_f64() * 1000.0,
+                    audio::wav_duration(&wav)?.as_secs_f64() * 1000.0,
                     sha256(&wav),
                 ))
             })
@@ -379,7 +381,7 @@ impl Speech for MeasuredSpeech {
         wav: Vec<u8>,
         language: &str,
         terms: &Terms,
-    ) -> anyhow::Result<speakeasy_show::Narration> {
+    ) -> anyhow::Result<Narration> {
         self.worker.transcribe_words(wav, language, terms).await
     }
 
@@ -451,7 +453,7 @@ struct Report {
     wav_sha256: String,
     reference_sha256: String,
     requests: Vec<Inference>,
-    capture: crate::audio::fixture::Statistics,
+    capture: Statistics,
     #[serde(flatten)]
     score: Score,
     total_inference_ms: Option<f64>,

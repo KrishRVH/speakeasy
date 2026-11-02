@@ -1,5 +1,10 @@
 use super::*;
-use crate::{config::Engine, runtime::ports::Partition, transcript::vocabulary::Correction};
+use crate::{
+    audio::{silent_wav, wav_sample_rate},
+    config::Engine,
+    runtime::ports::Partition,
+    transcript::vocabulary::Correction,
+};
 
 fn config() -> Config {
     Config {
@@ -42,7 +47,7 @@ async fn segmentation_admits_only_nemo_dictation_regardless_of_language() -> any
 
 fn partitioned(pieces: u32) -> anyhow::Result<Sealed> {
     Ok(Sealed {
-        wav: crate::audio::silent_wav(16_000, Duration::from_secs(1))?,
+        wav: silent_wav(16_000, Duration::from_secs(1))?,
         trimmed: Duration::ZERO,
         partition: Some(Partition {
             pieces,
@@ -104,7 +109,7 @@ async fn a_nonempty_tail_keeps_every_piece_and_cleans_across_the_final_boundary(
         assert_eq!(receive(&requests).await?, sealed().wav);
     }
     assert!(still_pending(h.pasted.recv()).await);
-    let mut audio = crate::audio::silent_wav(16_000, Duration::from_secs(2))?;
+    let mut audio = silent_wav(16_000, Duration::from_secs(2))?;
     audio[44..32_044].fill(0x55);
     audio[32_044..].fill(0x2A);
     events
@@ -123,7 +128,7 @@ async fn a_nonempty_tail_keeps_every_piece_and_cleans_across_the_final_boundary(
     let (_, reply) = receive(&h.jobs).await?;
     let tail = receive(&requests).await?;
     assert_eq!(&tail[44..], &audio[32_044..]);
-    assert_eq!(crate::audio::wav_sample_rate(&tail)?, 16_000);
+    assert_eq!(wav_sample_rate(&tail)?, 16_000);
     assert!(still_pending(h.pasted.recv()).await);
     answer(reply, "control")?;
     assert_eq!(receive(&h.pasted).await?, "Ready. kubectl");

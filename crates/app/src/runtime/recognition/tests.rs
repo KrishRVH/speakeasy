@@ -1,3 +1,5 @@
+use tokio::sync::{mpsc, oneshot};
+
 use super::*;
 use crate::{audio::silent_wav, runtime::ports::Partition};
 
@@ -116,11 +118,11 @@ fn wav(request: &Request) -> &[u8] {
 }
 
 fn live() -> LiveAudio {
-    let (_, frames) = tokio::sync::mpsc::channel(1);
+    let (_, frames) = mpsc::channel(1);
     LiveAudio {
         rate: 16_000,
         frames,
-        tail: tokio::sync::oneshot::channel().1,
+        tail: oneshot::channel().1,
     }
 }
 

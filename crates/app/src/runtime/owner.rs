@@ -3,7 +3,7 @@ mod outcome;
 
 use std::{
     convert::Infallible,
-    future::poll_fn,
+    future::{pending, poll_fn},
     mem,
     ops::ControlFlow,
     pin::Pin,
@@ -19,6 +19,7 @@ use speakeasy_show::Ending;
 use tokio::{
     sync::{mpsc, watch},
     task::{JoinError, JoinHandle},
+    time::sleep_until,
 };
 use zeroize::Zeroizing;
 
@@ -192,11 +193,7 @@ impl<P: Ports> Owner<P> {
     }
 
     async fn wait(&mut self) -> Wake<P::Speech> {
-        let timer = or_pending(
-            self.gesture
-                .deadline()
-                .map(|at| tokio::time::sleep_until(at.into())),
-        );
+        let timer = or_pending(self.gesture.deadline().map(|at| sleep_until(at.into())));
         let idle = self.session.is_none();
         let practice_closed = or_pending(self.practice.as_ref().map(mpsc::Sender::closed));
         let delivered = or_pending(self.session.as_mut().map(Session::delivered));
@@ -1181,7 +1178,7 @@ fn next_finished<T>(
 async fn or_pending<F: Future>(future: Option<F>) -> F::Output {
     match future {
         Some(future) => future.await,
-        None => std::future::pending().await,
+        None => pending().await,
     }
 }
 

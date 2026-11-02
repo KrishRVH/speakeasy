@@ -71,7 +71,7 @@ impl Ports for ModelPorts {
         &self,
         id: SessionId,
         _: Option<&str>,
-        _: crate::runtime::ports::RecognitionMode,
+        _: RecognitionMode,
         events: Sender<CaptureEvent>,
     ) -> anyhow::Result<ModelDevice> {
         self.log
@@ -80,7 +80,7 @@ impl Ports for ModelPorts {
         Ok(self.device(Source::Microphone, id))
     }
 
-    fn keep(&self, _: std::time::SystemTime) -> anyhow::Result<Option<crate::show::Kept>> {
+    fn keep(&self, _: SystemTime) -> anyhow::Result<Option<show::Kept>> {
         Ok(None)
     }
 
@@ -89,7 +89,7 @@ impl Ports for ModelPorts {
         id: SessionId,
         _: Instant,
         _: Scope,
-        _: Option<crate::show::FrameLog>,
+        _: Option<show::FrameLog>,
         events: Sender<ShowEvent>,
     ) -> anyhow::Result<ModelDevice> {
         self.log.try_send(Log::ScreenOpened(id, events))?;
@@ -98,14 +98,14 @@ impl Ports for ModelPorts {
 
     fn reopen(
         &self,
-        interrupted: crate::show::Interrupted,
-    ) -> impl Future<Output = anyhow::Result<crate::show::Reopened>> + Send + 'static {
-        crate::show::reopen(interrupted)
+        interrupted: Interrupted,
+    ) -> impl Future<Output = anyhow::Result<show::Reopened>> + Send + 'static {
+        show::reopen(interrupted)
     }
 
     fn publish(
         &self,
-        publication: crate::show::Publication,
+        publication: show::Publication,
         permit: InsertPermit,
     ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static {
         let ending = publication.footage.recording.ending;
@@ -203,7 +203,7 @@ impl Capturing for ModelDevice {
 impl Listening for ModelDevice {
     fn whole(&self) {}
 
-    fn keep(&self, _: crate::show::AudioLog, _: Duration, _: &str) -> bool {
+    fn keep(&self, _: show::AudioLog, _: Duration, _: &str) -> bool {
         true
     }
 
@@ -239,7 +239,7 @@ impl Drop for ModelSpeech {
 impl Speech for ModelSpeech {
     fn transcribe_stream(
         &mut self,
-        _: crate::runtime::ports::LiveAudio,
+        _: LiveAudio,
         _: &str,
         _: &Terms,
     ) -> impl Future<Output = anyhow::Result<Option<String>>> + Send {

@@ -1,14 +1,15 @@
 use super::*;
+use crate::{config::Engine, transcript::vocabulary::Correction};
 
 #[tokio::test(start_paused = true)]
 async fn recovery_uses_original_language_and_current_cleanup_without_capture_or_paste()
 -> anyhow::Result<()> {
-    for engine in [crate::config::Engine::Whisper, crate::config::Engine::Nemo] {
+    for engine in [Engine::Whisper, Engine::Nemo] {
         let (_root, interrupted) = interrupted_with_audio(true).await?;
         let config = Config {
             engine,
             language: "en".into(),
-            vocabulary: vec![crate::transcript::vocabulary::Correction {
+            vocabulary: vec![Correction {
                 heard: "synthetic".into(),
                 written: "corrected".into(),
             }],
@@ -127,14 +128,14 @@ async fn a_finished_show_keeps_an_unwind_but_discards_capture_failures() -> anyh
         finish_show(&h);
 
         let error = if unwound {
-            anyhow!(crate::show::Unwound)
+            anyhow!(show::Unwound)
         } else {
             anyhow!("Synthetic screen permission failure")
         };
         events.try_send(ShowEvent::Finished(id, Err(error)))?;
         h.phase(Phase::Error).await?;
         h.close().await?;
-        let listing = crate::show::checkpoint::list(root.path(), std::time::SystemTime::now());
+        let listing = show::checkpoint::list(root.path(), SystemTime::now());
         assert_eq!(listing.shows.len(), usize::from(unwound));
     }
     Ok(())

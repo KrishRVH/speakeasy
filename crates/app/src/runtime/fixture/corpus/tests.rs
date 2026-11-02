@@ -1,4 +1,5 @@
 use super::*;
+use crate::audio::fixture::Statistics;
 
 fn report(reference: &str, text: &str, latency: Option<f64>, speed: u32) -> Report {
     Report {
@@ -11,7 +12,7 @@ fn report(reference: &str, text: &str, latency: Option<f64>, speed: u32) -> Repo
         wav_sha256: String::new(),
         reference_sha256: String::new(),
         requests: Vec::new(),
-        capture: crate::audio::fixture::Statistics::default(),
+        capture: Statistics::default(),
         score: Score::new(reference, text),
         total_inference_ms: Some(0.0),
     }

@@ -373,7 +373,7 @@ impl Session {
         !self.accepts(ticket) || self.recognition.failed(ticket)
     }
 
-    pub(super) fn narrate(&mut self, narration: Narration) {
+    fn narrate(&mut self, narration: Narration) {
         if self.is_recognizing()
             && let Some(start) = self.recognition.start()
         {
@@ -541,24 +541,28 @@ impl Session {
 
 #[cfg(test)]
 mod tests {
+    use std::time::SystemTime;
+
     use speakeasy_platform::InputSender;
-    use speakeasy_show::{Moment, Span, Word};
+    use speakeasy_show::{Journal, Moment, Recording, Span, Word};
+    use tokio::time::timeout;
 
     use super::*;
+    use crate::{runtime::recognition::Part, show::Keeper, testing::PATIENCE};
 
     #[tokio::test]
     async fn publication_closes_producers_before_waiting_for_checkpoint() -> anyhow::Result<()> {
         let root = tempfile::tempdir()?;
         let directory = root.path().to_owned();
-        let kept = crate::show::Keeper::start(move || Ok(directory), std::time::SystemTime::now())?;
+        let kept = Keeper::start(move || Ok(directory), SystemTime::now())?;
         let (sender, _inputs) = async_channel::bounded(1);
         let permit = InputSender::new(sender).begin().unwrap();
         let mut session = Session::new(SessionId::FIRST, permit, Instant::now());
         assert!(session.turn_into_show(Scope::Screen));
         session.keep(kept);
         session.screen_recorded(Box::new(Footage {
-            recording: speakeasy_show::Recording::default(),
-            journal: speakeasy_show::Journal::new(),
+            recording: Recording::default(),
+            journal: Journal::new(),
         }));
         session.stage = Stage::AwaitingFootage {
             narration: Narration::default(),
@@ -568,14 +572,14 @@ mod tests {
             publication.checkpoint.unwrap().close().await?;
             Ok(Published::Cancelled)
         });
-        let completed = tokio::time::timeout(crate::testing::PATIENCE, session.delivered()).await;
+        let completed = timeout(PATIENCE, session.delivered()).await;
         let finished = completed.is_ok();
         if let Some(show) = &mut session.show {
             show.audio = None;
             show.frames = None;
         }
         if !finished {
-            tokio::time::timeout(crate::testing::PATIENCE, session.delivered()).await??;
+            timeout(PATIENCE, session.delivered()).await??;
         }
         assert!(
             finished,
@@ -664,7 +668,7 @@ mod tests {
         assert!(!show.not_transcribed(), "Speech keeps its one retry");
         assert!(show.failed(Ticket {
             session: show.id,
-            part: super::super::recognition::Part::Final
+            part: Part::Final
         }));
         assert!(show.request().is_some());
         assert!(show.not_transcribed());

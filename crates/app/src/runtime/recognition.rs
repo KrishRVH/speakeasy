@@ -4,6 +4,7 @@ use speakeasy_show::Narration;
 use zeroize::Zeroizing;
 
 use super::ports::{LiveAudio, Sealed, SessionId};
+use crate::audio::wav_tail;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Ticket {
@@ -204,7 +205,7 @@ impl Recognition {
         let wav = match &final_part.mode {
             Audio::Tail(range) if range.is_empty() => return None,
             Audio::Tail(range) => {
-                if let Ok(wav) = crate::audio::wav_tail(&final_part.audio.wav, range.clone()) {
+                if let Ok(wav) = wav_tail(&final_part.audio.wav, range.clone()) {
                     wav
                 } else {
                     final_part.mode = Audio::Whole;

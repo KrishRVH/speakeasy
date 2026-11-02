@@ -1,4 +1,7 @@
-use std::time::{Duration, Instant};
+use std::{
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use anyhow::{anyhow, bail, ensure};
 use speakeasy_platform::{Delivery, InsertPermit, Inserted, Scope, Taps};
@@ -6,7 +9,9 @@ use speakeasy_show::{Image, Journal, Moment, Narration, NarrationLoss, Recording
 use tokio::{sync::oneshot, task::JoinHandle, time::timeout};
 
 use super::{
-    ports::{Capturing, Footage, Listening, Pinning, Preservation, Sealed, Speech, Unchosen},
+    ports::{
+        Capturing, Footage, Listening, LiveAudio, Pinning, Preservation, Sealed, Speech, Unchosen,
+    },
     *,
 };
 use crate::{
@@ -81,7 +86,7 @@ struct FakePorts {
     screen_retirement: Option<Gate<()>>,
     publication: Option<Gate<()>>,
     show_recovery: Option<Gate<InsertPermit>>,
-    checkpoint_root: Option<std::path::PathBuf>,
+    checkpoint_root: Option<PathBuf>,
     publish_error: Option<&'static str>,
     publish_panics: bool,
     saved: Option<Gate<()>>,
@@ -195,15 +200,14 @@ impl Ports for FakePorts {
         &self,
         id: SessionId,
         _: Option<&str>,
-        recognition: crate::runtime::ports::RecognitionMode,
+        recognition: RecognitionMode,
         events: Sender<CaptureEvent>,
     ) -> anyhow::Result<FakeMicrophone> {
         if let Some(error) = self.microphone_error {
             bail!(error);
         }
         if let Some(segmentation) = &self.segmentation {
-            segmentation
-                .try_send(recognition == crate::runtime::ports::RecognitionMode::Segmented)?;
+            segmentation.try_send(recognition == RecognitionMode::Segmented)?;
         }
         self.captures.try_send((id, events.clone()))?;
         events.try_send(CaptureEvent::Ready(id))?;
@@ -216,10 +220,10 @@ impl Ports for FakePorts {
         })
     }
 
-    fn keep(&self, recorded: std::time::SystemTime) -> anyhow::Result<Option<crate::show::Kept>> {
+    fn keep(&self, recorded: SystemTime) -> anyhow::Result<Option<show::Kept>> {
         self.checkpoint_root
             .clone()
-            .map(|parent| crate::show::Keeper::start(move || Ok(parent), recorded))
+            .map(|parent| show::Keeper::start(move || Ok(parent), recorded))
             .transpose()
     }
 
@@ -228,7 +232,7 @@ impl Ports for FakePorts {
         id: SessionId,
         _: Instant,
         scope: Scope,
-        _: Option<crate::show::FrameLog>,
+        _: Option<show::FrameLog>,
         events: Sender<ShowEvent>,
     ) -> anyhow::Result<FakeScreen> {
         if let Some(error) = self.screen_error {
@@ -246,17 +250,17 @@ impl Ports for FakePorts {
 
     fn reopen(
         &self,
-        interrupted: crate::show::Interrupted,
-    ) -> impl Future<Output = anyhow::Result<crate::show::Reopened>> + Send + 'static {
-        crate::show::reopen(interrupted)
+        interrupted: Interrupted,
+    ) -> impl Future<Output = anyhow::Result<show::Reopened>> + Send + 'static {
+        show::reopen(interrupted)
     }
 
     fn publish(
         &self,
-        publication: crate::show::Publication,
+        publication: show::Publication,
         permit: InsertPermit,
     ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static {
-        let crate::show::Publication {
+        let show::Publication {
             footage,
             checkpoint,
             origin,
@@ -274,7 +278,7 @@ impl Ports for FakePorts {
             if let Some(checkpoint) = checkpoint {
                 checkpoint.release(true, None).await?;
             }
-            if matches!(origin, crate::show::Origin::Recovered { .. }) {
+            if matches!(origin, show::Origin::Recovered { .. }) {
                 if let Some(gate) = recovery {
                     gate.pass(permit.clone()).await?;
                 }
@@ -412,7 +416,7 @@ impl Capturing for FakeMicrophone {
 impl Listening for FakeMicrophone {
     fn whole(&self) {}
 
-    fn keep(&self, _: crate::show::AudioLog, _: Duration, _: &str) -> bool {
+    fn keep(&self, _: show::AudioLog, _: Duration, _: &str) -> bool {
         true
     }
 
@@ -502,7 +506,7 @@ struct FakeSpeech {
 impl Speech for FakeSpeech {
     async fn transcribe_stream(
         &mut self,
-        mut audio: crate::runtime::ports::LiveAudio,
+        mut audio: LiveAudio,
         language: &str,
         terms: &Terms,
     ) -> anyhow::Result<Option<String>> {
@@ -799,7 +803,7 @@ async fn receive<T>(receiver: &Receiver<T>) -> anyhow::Result<T> {
 
 async fn arm_practice<Host: Sync>(
     h: &Harness<Host>,
-) -> anyhow::Result<tokio::sync::mpsc::Receiver<PracticeEvent>> {
+) -> anyhow::Result<mpsc::Receiver<PracticeEvent>> {
     let mut receipt = h.runtime.practice().map_err(anyhow::Error::msg)?;
     assert!(matches!(
         timeout(PATIENCE, receipt.recv()).await?,
@@ -809,7 +813,7 @@ async fn arm_practice<Host: Sync>(
 }
 
 async fn practice_text(
-    receipt: &mut tokio::sync::mpsc::Receiver<PracticeEvent>,
+    receipt: &mut mpsc::Receiver<PracticeEvent>,
 ) -> anyhow::Result<Zeroizing<String>> {
     let Some(PracticeEvent::Text(text)) = timeout(PATIENCE, receipt.recv()).await? else {
         bail!("Practice did not receive its transcript");
@@ -855,10 +859,9 @@ mod dictation;
 mod last_show;
 mod model;
 mod practice;
-mod replay;
-mod shows;
-mod styles;
-
 mod recognition;
 mod recovery;
+mod replay;
+mod shows;
 mod streaming;
+mod styles;

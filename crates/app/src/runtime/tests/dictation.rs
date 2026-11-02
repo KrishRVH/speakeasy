@@ -1,8 +1,9 @@
 use super::*;
 use crate::{
-    config::Engine,
+    config::{Engine, TextDelivery, presets::Preset},
     status::{PAUSED, PAUSING},
     theme::Theme,
+    transcript::vocabulary::Correction,
 };
 
 #[tokio::test(start_paused = true)]
@@ -334,7 +335,7 @@ async fn copied_text_is_a_notice_that_carries_its_remedy_until_the_next_paste() 
 async fn nemo_preserves_non_english_words_in_dictation_and_shows() -> anyhow::Result<()> {
     for language in ["de", "auto"] {
         let config = Config {
-            engine: crate::config::Engine::Nemo,
+            engine: Engine::Nemo,
             language: language.into(),
             ..Config::default()
         };
@@ -405,7 +406,7 @@ async fn dictation_inserts_once_and_request_preferences_keep_the_warm_worker() -
     h.phase(Phase::Done).await?;
     let config = Config {
         reduced_motion: true,
-        text_delivery: crate::config::TextDelivery::Type,
+        text_delivery: TextDelivery::Type,
         language: "auto".into(),
         ..Config::default()
     };
@@ -934,7 +935,7 @@ async fn phrase_corrections_follow_filler_cleanup_for_dictation_and_shows_withou
     h.phase(Phase::Done).await?;
     let config = Config {
         language: "en".into(),
-        vocabulary: vec![crate::transcript::vocabulary::Correction {
+        vocabulary: vec![Correction {
             heard: "cube control".into(),
             written: "kubectl".into(),
         }],
@@ -965,7 +966,7 @@ async fn preset_library_edits_keep_recording_but_loading_words_cancels_old_infer
     receive(&h.loads).await?;
     let mut library = Config::default();
     let choices = Config {
-        vocabulary: vec![crate::transcript::vocabulary::Correction {
+        vocabulary: vec![Correction {
             heard: "cube control".into(),
             written: "kubectl".into(),
         }],
@@ -973,10 +974,7 @@ async fn preset_library_edits_keep_recording_but_loading_words_cancels_old_infer
     };
     library
         .presets
-        .push(crate::config::presets::Preset::capture(
-            "Coding".into(),
-            &choices,
-        )?);
+        .push(Preset::capture("Coding".into(), &choices)?);
     h.start().await?;
     h.runtime.configure(ValidConfig::assume(library.clone()));
     h.finish_as("Original words.").await?;

@@ -1,11 +1,11 @@
 use zeroize::Zeroizing;
 
 use super::*;
-use crate::{models::Model, runtime::ports::LiveAudio};
+use crate::{config::Engine, models::Model, runtime::ports::LiveAudio};
 
 fn config() -> Config {
     Config {
-        engine: crate::config::Engine::Nemo,
+        engine: Engine::Nemo,
         nemo_model: Some(Model::Nemotron),
         model: Model::Nemotron.file_name().into(),
         use_gpu: false,
@@ -14,12 +14,12 @@ fn config() -> Config {
 }
 
 struct Feed {
-    frames: tokio::sync::mpsc::Sender<Zeroizing<Vec<u8>>>,
+    frames: mpsc::Sender<Zeroizing<Vec<u8>>>,
     ending: oneshot::Sender<Zeroizing<Vec<u8>>>,
 }
 
 fn live() -> (Feed, LiveAudio) {
-    let (frames, received) = tokio::sync::mpsc::channel(1);
+    let (frames, received) = mpsc::channel(1);
     let (ending, tail) = oneshot::channel();
     (
         Feed { frames, ending },

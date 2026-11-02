@@ -1,22 +1,23 @@
 use anyhow::Context as _;
+use speakeasy_show::Take;
 
 use super::*;
 
-async fn interrupted() -> anyhow::Result<(tempfile::TempDir, crate::show::Interrupted)> {
+async fn interrupted() -> anyhow::Result<(tempfile::TempDir, Interrupted)> {
     interrupted_with_audio(false).await
 }
 
 async fn interrupted_with_audio(
     keep_audio: bool,
-) -> anyhow::Result<(tempfile::TempDir, crate::show::Interrupted)> {
+) -> anyhow::Result<(tempfile::TempDir, Interrupted)> {
     let root = tempfile::tempdir()?;
-    let now = std::time::SystemTime::now();
+    let now = SystemTime::now();
     let parent = root.path().to_owned();
-    let crate::show::Kept {
+    let show::Kept {
         keeper,
         mut frames,
         mut audio,
-    } = crate::show::Keeper::start(move || Ok(parent), now)?;
+    } = show::Keeper::start(move || Ok(parent), now)?;
     assert!(frames.begin(
         1_000,
         Size {
@@ -30,15 +31,15 @@ async fn interrupted_with_audio(
     } else {
         drop(audio);
     }
-    let mut take = speakeasy_show::Take::new(
+    let mut take = Take::new(
         1_000,
         Size {
             width: 80.0,
             height: 60.0,
         },
     );
-    let event = take.arrive(speakeasy_show::Moment::from_millis(100), || {
-        Some(speakeasy_show::Image::from_bgra(2, 2, [3, 2, 1, 255].repeat(4)).unwrap())
+    let event = take.arrive(Moment::from_millis(100), || {
+        Some(Image::from_bgra(2, 2, [3, 2, 1, 255].repeat(4)).unwrap())
     })?;
     assert!(frames.send(event));
     assert!(frames.close().await);
@@ -123,7 +124,7 @@ async fn session_owns_checkpoint_cleanup_even_when_finish_reports_are_stale() ->
         events.try_send(ShowEvent::Finished(id, Ok(footage())))?;
         h.runtime.request_stop();
         h.close().await?;
-        let listing = crate::show::checkpoint::list(root.path(), std::time::SystemTime::now());
+        let listing = show::checkpoint::list(root.path(), SystemTime::now());
         assert!(listing.problems.is_empty());
         assert_eq!(listing.shows.len(), usize::from(finished));
         assert_eq!(
