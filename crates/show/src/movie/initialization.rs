@@ -15,12 +15,13 @@ pub(super) struct Track {
 
 pub(super) fn read(bytes: &[u8]) -> Result<Track, MovieError> {
     let boxes = children(bytes)?;
-    let mut movie = versioned(
+    let movie_timescale = versioned(
         child(&boxes, *b"mvhd")?.bytes,
         [100, 112],
         "Movie header is invalid",
-    )?;
-    require(movie.word()? != 0, "Movie header timescale is zero")?;
+    )?
+    .word()?;
+    require(movie_timescale != 0, "Movie header timescale is zero")?;
     require(
         boxes.iter().filter(|part| part.kind == *b"trak").count() == 1,
         "Movie must have one silent video track",
