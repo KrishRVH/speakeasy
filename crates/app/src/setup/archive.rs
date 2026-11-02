@@ -116,7 +116,10 @@ mod tests {
     use sha2::{Digest as _, Sha256};
 
     use super::*;
-    use crate::http::{Trust, client_builder};
+    use crate::{
+        http::{Trust, client_builder},
+        setup::download::hex_digest,
+    };
 
     #[test]
     fn archives_preserve_the_complete_runtime_layout() -> anyhow::Result<()> {
@@ -172,7 +175,7 @@ mod tests {
         let archive = Download {
             url: "http://127.0.0.1:0/fixture.tar.gz",
             size: 14,
-            sha256: &super::super::download::hex_digest(&Sha256::digest(b"unused archive")),
+            sha256: &hex_digest(&Sha256::digest(b"unused archive")),
         };
         let client = client_builder(Trust::Nobody)?.build()?;
         let failure = unpack(&client, &archive, root, &progress, &mut installation)
@@ -234,7 +237,7 @@ mod tests {
         let archive = Download {
             url: "http://127.0.0.1:0/fixture.tar",
             size: bytes.len() as u64,
-            sha256: &super::super::download::hex_digest(&Sha256::digest(&bytes)),
+            sha256: &hex_digest(&Sha256::digest(&bytes)),
         };
         let client = client_builder(Trust::Nobody)?.build()?;
         let engine = unpack(&client, &archive, root, &progress, &mut installation).await?;

@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::{Context as _, bail};
 use reqwest::{Client, StatusCode, header::RANGE};
-use sha2::{Digest, Sha256};
+use sha2::{Digest as _, Sha256};
 use tokio::{io::AsyncReadExt, sync::watch};
 
 use super::{Progress, file_error};
