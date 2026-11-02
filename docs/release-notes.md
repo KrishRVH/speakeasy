@@ -1,43 +1,33 @@
 # Release notes
 
-Speakeasy 0.9.0 brings Settings and Shows into one design, guides your first dictation through
-private practice, makes the speech model one plain choice, and hands Shows to any coding agent.
+Speakeasy 0.10.0 runs natively on Wayland desktops with layer shell, lets the pill's waveform follow
+your voice, and makes Settings and the Shows window easier to use with a keyboard or screen reader.
 
-**Breaking changes:** `speakeasy show sessions`, `speakeasy show send`, and **Send to OpenCode** in
-Shows are removed; **Send to agent** replaces them. Until 1.0.0, Speakeasy supports its current
-formats and settings only, with no migration or compatibility paths. A settings file this version
-cannot read offers **Start fresh…** instead.
+**Breaking change:** `speakeasy show frames` and `speakeasy show frame` refuse a focus value that
+begins with `-`, such as `--phrase --json`, instead of reading it as a phrase, as every other option
+already does. Until 1.0.0, Speakeasy supports its current formats and settings only, with no
+migration or compatibility paths.
 
-- **Send to agent.** A saved Show's primary action copies a short prompt that points Claude Code or
-  any coding agent that reads local files at the Show's folder, its contact sheets in order, and
-  `summary.md` with your edits. The prompt holds paths, not narration or pixels, and Speakeasy
-  contacts no agent. The bundled agent guide explains how to read it.
-- **A guided first dictation.** The first launch walks through local speech setup, dictation access,
-  and private practice that waits for recognized words before the ready screen. Practice never
-  pastes, copies, or saves. **Skip setup** keeps downloads running, unfinished setup opens again on
-  launch, and **General → Setup guide → Replay** brings the guide back.
-- **Settings that apply as you go.** Settings splits into Dictation, Words, and General and applies
-  each change as you make it. A change made while dictation is paused stays paused, and a failed
-  save returns the window to the settings actually in use. Presets show **In use**, apply with
-  **Use**, and update or delete from their **⋯** menu; corrections edit in place and recognition
-  hints appear as chips.
-- **One speech model choice.** **Dictation → Speech model** offers Parakeet v3, Nemotron 3.5, or
-  your own whisper.cpp or NeMo-Speech build, each saying what it is for and whether it is selected,
-  downloaded, or a download away. Choosing Parakeet or Nemotron downloads what is missing and
-  switches when it finishes; choosing the selected model again re-checks and repairs its files. Your
-  own engine switches once its program and model are chosen.
-- **Start over.** **General → Start over…** deletes downloaded engines, models, and updates, then
-  the settings file, keeps every Show, and sets up Parakeet again; as on a new install, finishing
-  that setup turns dictation on. It refuses while another copy is setting up or preparing an update,
-  and a failed reset keeps your settings.
-- **One design.** Settings, Shows, the pill, and the tray share one set of controls, with focus
-  rings that appear after keyboard use. The Shows window gains a library header, tagged rows, a
-  **More actions** menu, and a separate confirmation before discarding an interrupted Show.
-  Destructive actions use the attention color, and action menus are exposed to assistive technology
-  as menus.
-- **Fixes.** A control command that cannot find its settings folder now reports `unknown` with exit
-  status 2 instead of claiming the app refused it. The Mac setup guide shows the shortcut you chose
-  rather than Fn.
+- **Native Wayland.** On KDE Plasma, sway, Hyprland, niri, and other compositors with layer shell,
+  Speakeasy runs as a Wayland client. The pill appears at the bottom of the focused display, never
+  takes focus or clicks, leaves the screen entirely while idle, and comes back after its display is
+  unplugged. Closing Settings to the tray hides it without stopping a model or update download.
+  GNOME, WSLg, and other desktops without layer shell keep using X11 through Xwayland. With neither
+  available, Speakeasy stops with a message that says what to enable.
+- **A waveform that follows your voice.** The pill's bars rise with each syllable and fall in
+  pauses, scaled to how loudly you speak rather than to a fixed range.
+- **Screen readers.** On Windows, text ranges a screen reader held before Settings was hidden stop
+  working instead of reading the reopened window, a request to scroll text into view lands even if
+  the field resizes first, and closing a window disconnects it from UI Automation. In the Shows
+  window, the library is a list of selectable rows and each narration clause is a labeled button. On
+  macOS and Linux, Settings now publishes the same accessibility tree as on Windows.
+- **Shows window.** The selected Show and the selected frame stay scrolled into view. On Linux,
+  revealing an open Shows window raises it. A Show that cannot open says its narration is
+  unavailable instead of loading forever.
+- **Clearer errors.** Exporting into a missing folder, control commands with a bad session token,
+  preset name, or style, and `speakeasy show` options now say which rule was broken. On macOS,
+  Settings refuses an engine program without execute permission instead of failing when dictation
+  starts.
 
 Hold-to-talk, double-tap hands-free, and the five-minute recording limit remain. Recognition stays
 local, with no accounts, telemetry, dictation history, or automatic uploads. Managed Shows expire
