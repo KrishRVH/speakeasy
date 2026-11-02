@@ -17,6 +17,8 @@ use super::{checkpoint, recall};
 pub(crate) const FILE: &str = "recording.mp4";
 pub(crate) const HEADER: &str = "recording.json";
 pub(super) const HEADER_LIMIT: u64 = 4 << 20;
+const FRAME_SLACK_MS: u64 = 34;
+const SUBMITTED_LIMIT: u32 = 9_001;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -108,7 +110,7 @@ impl Metadata {
                 .as_millis(),
         )?;
         anyhow::ensure!(
-            last_ms >= self.origin_ms && last_ms <= through_ms && submitted <= 9_001,
+            last_ms >= self.origin_ms && last_ms <= through_ms && submitted <= SUBMITTED_LIMIT,
             "Movie completion is invalid"
         );
         self.finished = Some(Finished {
@@ -332,13 +334,14 @@ pub(super) fn open(directory: &Path) -> anyhow::Result<Option<Reading>> {
         .saturating_add(u64::try_from(prefix.duration.as_millis())?);
 
     anyhow::ensure!(
-        end_ms <= limit.saturating_add(34),
+        end_ms <= limit.saturating_add(FRAME_SLACK_MS),
         "Movie exceeds the session recording limit"
     );
     if let Some(finished) = &metadata.finished {
         anyhow::ensure!(
             finished.submitted > 0
-                && (!finished.finalized || end_ms <= finished.through_ms.saturating_add(34)),
+                && (!finished.finalized
+                    || end_ms <= finished.through_ms.saturating_add(FRAME_SLACK_MS)),
             "Movie fragments exceed the acknowledged capture end"
         );
         anyhow::ensure!(
@@ -348,7 +351,7 @@ pub(super) fn open(directory: &Path) -> anyhow::Result<Option<Reading>> {
         anyhow::ensure!(
             finished.last_ms <= finished.through_ms
                 && finished.through_ms <= limit
-                && finished.submitted <= 9_001,
+                && finished.submitted <= SUBMITTED_LIMIT,
             "Movie completion metadata is invalid"
         );
     }

@@ -3,7 +3,7 @@ use std::{path::Path, time::Instant};
 use anyhow::Context as _;
 use speakeasy_platform::{MovieControl, MovieEvent, MovieTarget};
 
-use super::super::super::movie::{FILE, Metadata, geometry};
+use crate::show::store::movie::{FILE, Metadata, geometry};
 
 pub(super) struct Writing {
     control: MovieControl,
@@ -146,9 +146,7 @@ mod tests {
             let started = Instant::now();
             let (mut writing, target) = Writing::new(directory.path(), started)?;
             let (accepted, answer) = async_channel::bounded(1);
-            let header = directory
-                .path()
-                .join(super::super::super::super::movie::HEADER);
+            let header = directory.path().join(crate::show::store::movie::HEADER);
             if refused {
                 std::fs::create_dir(&header)?;
             }
