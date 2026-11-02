@@ -411,13 +411,13 @@ impl Services {
     ) -> anyhow::Result<()> {
         #[cfg(target_os = "windows")]
         let start_at_login = config.start_at_login;
-        self.reset_choice_for(&config);
         let adopted = if self
             .lifecycle
             .save_may_enable(saved_at, |owners| owners.runtime.is_running())
         {
             self.apply(config, cx)
         } else {
+            self.reset_choice_for(&config);
             self.config = config.into_inner();
             Ok(())
         };
