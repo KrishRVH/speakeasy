@@ -541,7 +541,11 @@ impl<P: Ports> Owner<P> {
     fn handle_capture(&mut self, event: CaptureEvent) {
         let gesture = self.gesture.state();
         let stream_ready = matches!(self.worker, Worker::Ready(_));
-        let Some(session) = self.current_capture_mut(event.session()) else {
+        let Some(session) = self
+            .session
+            .as_mut()
+            .filter(|session| session.id == event.session() && session.is_capturing())
+        else {
             return;
         };
         match event {
@@ -587,12 +591,6 @@ impl<P: Ports> Owner<P> {
                 }
             },
         }
-    }
-
-    fn current_capture_mut(&mut self, id: SessionId) -> Option<&mut Session> {
-        self.session
-            .as_mut()
-            .filter(|session| session.id == id && session.is_capturing())
     }
 
     fn conclude_capture(&mut self) {
@@ -671,15 +669,7 @@ impl<P: Ports> Owner<P> {
             .is_some_and(|session| !session.awaits_worker())
     }
 
-    fn insert_transcript(&mut self, text: String) {
-        let Some(style) = self.session.as_ref().map(|session| session.style) else {
-            return;
-        };
-        let text = Vocabulary::new(&self.config.vocabulary).text(&transcript::for_insertion(
-            &text,
-            style.fillers(self.config.fillers(&self.config.language)),
-        ));
-        let text = style.apply(text);
+    fn insert_transcript(&mut self, heard: String) {
         let Some(session) = self
             .session
             .as_mut()
@@ -687,6 +677,13 @@ impl<P: Ports> Owner<P> {
         else {
             return;
         };
+        let fillers = session
+            .style
+            .fillers(self.config.fillers(&self.config.language));
+        let text = session.style.apply(
+            Vocabulary::new(&self.config.vocabulary)
+                .text(&transcript::for_insertion(&heard, fillers)),
+        );
         if text.is_empty() {
             self.end_session(Outcome::Empty);
         } else if let Purpose::Practice(receipt) = &session.purpose {
@@ -1247,10 +1244,8 @@ impl<P: Ports> Owner<P> {
 
     async fn shutdown(mut self) {
         self.permits.close();
-
         self.captures.close();
         self.shows.close();
-        while self.shows.try_recv().is_ok() {}
         self.abandon();
 
         let retiring = mem::take(&mut self.retiring);
