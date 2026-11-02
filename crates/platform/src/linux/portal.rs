@@ -729,7 +729,7 @@ fn deadline(started: Instant, wait: Duration) -> tokio::time::Sleep {
 }
 
 fn lose_selection(permit: InsertPermit, notify: &Sender<Notice>) -> anyhow::Result<()> {
-    let revoked = permit.forfeit();
+    let revoked = permit.revoke();
     notify.try_send(Notice::SelectionLost { permit, revoked })?;
     Ok(())
 }

@@ -142,19 +142,17 @@ impl InsertPermit {
         self.gate.is_same(&other.gate) && self.generation == other.generation
     }
 
-    pub fn revoke(&self) {
-        self.gate.revoke(self.generation);
+    #[expect(
+        clippy::must_use_candidate,
+        reason = "Ending a recording needs no answer; only a lost clipboard selection asks whether it ended the current one"
+    )]
+    pub fn revoke(&self) -> bool {
+        self.gate.revoke(self.generation)
     }
 
     #[must_use]
     pub fn shield(&self) -> bool {
         self.gate.shield(self.generation)
-    }
-
-    #[cfg(target_os = "linux")]
-    #[must_use]
-    pub(crate) fn forfeit(&self) -> bool {
-        self.gate.revoke(self.generation)
     }
 
     #[must_use]
@@ -329,7 +327,9 @@ mod tests {
         let (sender, _events) = async_channel::bounded(1);
         let input = InputSender::new(sender);
         let ends: [&dyn Fn(&InsertPermit); 4] = [
-            &|permit| permit.revoke(),
+            &|permit| {
+                permit.revoke();
+            },
             &|_| assert!(input.begin().is_some()),
             &|_| input.cancel(),
             &|_| input.close(),
