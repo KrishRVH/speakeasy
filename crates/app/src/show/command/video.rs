@@ -1,26 +1,17 @@
 use std::{ffi::OsString, io, path::PathBuf, time::Duration};
 
 use anyhow::Context as _;
-use speakeasy_show::{Moment, Span};
+use speakeasy_show::Span;
 
-use super::output;
-use crate::show::{
-    evidence::query::{self, Query},
-    store::{self, address, recall, video},
-};
-
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum Command {
-    Help,
-    Export(Request),
-}
+use super::{AROUND, output, query::Query};
+use crate::show::store::{recall, video};
 
 #[derive(PartialEq, Eq)]
 pub(crate) struct Request {
     directory: PathBuf,
     destination: PathBuf,
     focus: Option<Query>,
-    around: u64,
+    around: Duration,
     captions: bool,
     json: bool,
 }
@@ -31,109 +22,77 @@ impl std::fmt::Debug for Request {
     }
 }
 
-impl Command {
-    pub(super) fn parse(mut args: impl Iterator<Item = OsString>) -> anyhow::Result<Self> {
-        let (mut directory, mut destination, mut focus, mut occurrence, mut around) =
-            (None, None, None, None, None);
-        let (mut captions, mut json) = (false, false);
-        while let Some(arg) = args.next() {
-            match arg.to_str() {
-                Some("--help" | "-h") => return Ok(Self::Help),
-                Some("--json") if !json => json = true,
-                Some("--captions") if !captions => captions = true,
-                Some("--out") if destination.is_none() => {
-                    destination = Some(PathBuf::from(
-                        args.next()
-                            .filter(|arg| {
-                                !arg.is_empty() && !arg.to_string_lossy().starts_with('-')
-                            })
-                            .context("--out needs a new MP4 path")?,
-                    ));
-                },
-                Some("--at" | "--mark" | "--phrase") if focus.is_none() => {
-                    let value = value(&mut args)?;
-                    focus = Some(match arg.to_str() {
-                        Some("--at") => Query::At(query::time(&value)?),
-                        Some("--mark") => Query::Mark(positive(&value)?),
-                        _ => Query::Phrase(value),
-                    });
-                },
-                Some("--match") if occurrence.is_none() => {
-                    occurrence = Some(positive(&value(&mut args)?)?);
-                },
-                Some("--around") if around.is_none() => {
-                    let ms = value(&mut args)?
-                        .parse::<u64>()
-                        .context("--around needs milliseconds from 0 to 10000")?;
-                    anyhow::ensure!(ms <= 10_000, "--around accepts at most 10000 milliseconds");
-                    around = Some(ms);
-                },
-                _ if directory.is_none()
-                    && !arg.is_empty()
-                    && !arg.to_string_lossy().starts_with('-') =>
-                {
-                    directory = Some(PathBuf::from(arg));
-                },
-                _ => anyhow::bail!("Invalid video option; use speakeasy show video --help"),
-            }
+pub(super) fn parse(mut args: impl Iterator<Item = OsString>) -> anyhow::Result<super::Command> {
+    let (mut directory, mut destination, mut focus, mut occurrence, mut around) =
+        (None, None, None, None, None);
+    let (mut captions, mut json) = (false, false);
+    while let Some(arg) = args.next() {
+        match arg.to_str() {
+            Some("--help" | "-h") => return Ok(super::Command::Help),
+            Some("--json") if !json => json = true,
+            Some("--captions") if !captions => captions = true,
+            Some("--out") if destination.is_none() => {
+                destination = Some(super::path(&mut args, "--out needs a new MP4 path")?);
+            },
+            Some(option @ ("--at" | "--mark" | "--phrase")) if focus.is_none() => {
+                focus = Some(super::focus(option, &mut args)?);
+            },
+            Some("--match") if occurrence.is_none() => {
+                occurrence = Some(super::count("--match", &mut args)?);
+            },
+            Some("--around") if around.is_none() => around = Some(super::around(&mut args)?),
+            _ if directory.is_none() && super::operand(&arg) => {
+                directory = Some(PathBuf::from(arg));
+            },
+            _ => anyhow::bail!("Invalid video option; use speakeasy show video --help"),
         }
-        if let Some(occurrence) = occurrence {
-            focus = Some(match focus {
-                Some(Query::Phrase(phrase)) => Query::Match { phrase, occurrence },
-                _ => anyhow::bail!("--match requires --phrase"),
-            });
-        }
-        anyhow::ensure!(
-            around.is_none() || focus.is_some(),
-            "--around requires a focus"
-        );
-        Ok(Self::Export(Request {
-            directory: directory.context("video requires an explicit Show")?,
-            destination: destination.context("video requires --out NEW.mp4")?,
-            focus,
-            around: around.unwrap_or(1000),
-            captions,
-            json,
-        }))
     }
+    let focus = super::matching(focus, occurrence)?;
+    anyhow::ensure!(
+        around.is_none() || focus.is_some(),
+        "--around requires a focus"
+    );
+    Ok(super::Command::Video(Request {
+        directory: directory.context("video requires an explicit Show")?,
+        destination: destination.context("video requires --out NEW.mp4")?,
+        focus,
+        around: around.unwrap_or(AROUND),
+        captions,
+        json,
+    }))
+}
 
+impl Request {
     pub(super) fn write(self, out: &mut impl io::Write) -> anyhow::Result<()> {
-        let Self::Export(request) = self else {
-            return writeln!(out, "{}", super::HELP).map_err(Into::into);
-        };
-        let directory = address::resolve(&request.directory, || {
-            store::directory().map_err(io::Error::other)
-        })?;
-        let span = request
-            .focus
-            .map(|focus| {
-                let manifest = recall::Entry::open(&directory)?.show?.manifest;
-                let span = focus
-                    .resolve(&manifest)?
-                    .selected
-                    .context("Several phrases match; select one with --match K before exporting")?;
-                Ok::<_, anyhow::Error>(Span::new(
-                    Moment::from_millis(span.start().as_millis().saturating_sub(request.around)),
-                    span.end()
-                        .saturating_add(Duration::from_millis(request.around)),
-                ))
-            })
-            .transpose()?;
+        let directory = super::locate(&self.directory)?;
+        let span =
+            self.focus
+                .map(|focus| {
+                    let manifest = recall::Entry::open(&directory)?.show?.manifest;
+                    let span = focus.resolve(&manifest)?.selected.context(
+                        "Several phrases match; select one with --match K before exporting",
+                    )?;
+                    Ok::<_, anyhow::Error>(Span::new(
+                        span.start().saturating_sub(self.around),
+                        span.end().saturating_add(self.around),
+                    ))
+                })
+                .transpose()?;
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
-        let result = runtime.block_on(export(
+        let exported = runtime.block_on(export(
             directory,
-            request.destination,
+            self.destination,
             video::Options {
                 span,
-                captions: request.captions,
+                captions: self.captions,
             },
         ))?;
-        if request.json {
-            output::json(&result, out)?;
+        if self.json {
+            output::json(&exported, out)?;
         } else {
-            writeln!(out, "{}", result.note())?;
+            writeln!(out, "{}", exported.note())?;
         }
         Ok(())
     }
@@ -163,21 +122,6 @@ async fn export(
             result.map_err(|_cancelled| anyhow::anyhow!("Video export cancelled"))
         },
     }
-}
-
-fn value(args: &mut impl Iterator<Item = OsString>) -> anyhow::Result<String> {
-    args.next()
-        .and_then(|value| value.into_string().ok())
-        .filter(|value| !value.is_empty() && !value.starts_with('-'))
-        .context("The video option needs a value")
-}
-
-fn positive(value: &str) -> anyhow::Result<usize> {
-    value
-        .parse()
-        .ok()
-        .filter(|&value| value > 0)
-        .context("Mark and match numbers start at 1")
 }
 
 #[cfg(test)]

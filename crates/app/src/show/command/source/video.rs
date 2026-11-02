@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use speakeasy_show::{Annotations, Span};
 
 use super::*;
@@ -15,11 +13,13 @@ pub(super) struct Coverage {
     pub rendering: movie::AnnotationState,
 }
 
-pub(super) fn write(
-    request: Request,
+pub(super) fn frame(
     directory: &Path,
-    out: &mut impl io::Write,
-) -> anyhow::Result<()> {
+    focus: &Query,
+    destination: PathBuf,
+    crop: Option<usize>,
+    annotated: bool,
+) -> anyhow::Result<Report> {
     let manifest = recall::Entry::open(directory)?.show?.manifest;
     let reading = movie::Reading::open(directory, manifest.recording().duration)?;
     let metadata = &reading.movie.metadata;
@@ -27,11 +27,7 @@ pub(super) fn write(
         .coverage
         .as_ref()
         .context("Movie has no published coverage")?;
-    let query = request
-        .focus
-        .as_ref()
-        .context("Choose a video frame by time, mark, or phrase")?;
-    let found = match query {
+    let found = match focus {
         Query::At(at) => {
             anyhow::ensure!(
                 (metadata.origin_ms..=coverage.end_ms).contains(&at.as_millis()),
@@ -48,15 +44,12 @@ pub(super) fn write(
                 selected: Some(span),
             }
         },
-        _ => query.resolve(&manifest)?,
+        _ => focus.resolve(&manifest)?,
     };
     let at = found
         .selected
         .context("The phrase has several matches; choose --match N")?
         .start();
-    let Output::Frame { destination, crop } = request.output else {
-        anyhow::bail!("Video export needs show frame");
-    };
     let span = Span::new(
         Moment::from_millis(metadata.origin_ms),
         Moment::from_millis(coverage.end_ms),
@@ -74,25 +67,24 @@ pub(super) fn write(
     } else {
         None
     };
-    let scene = request
-        .annotated
+    let scene = annotated
         .then(|| Annotations::new(manifest.recording(), manifest.marks()))
         .transpose()?;
     let served = reading
         .frame(at, crop, scene.as_ref(), || false)?
         .context("Video frame export was cancelled")?;
     anyhow::ensure!(
-        !request.annotated || served.annotations.painted(),
+        !annotated || served.annotations.painted(),
         "Annotations are unavailable at this video sample; export without --annotated"
     );
-    let mut report = Report::new(&manifest, &found);
+    let sampled_ms =
+        u64::try_from(served.at.as_millis()).context("Video sample time is too large")?;
+    let mut report = Report::new(&manifest, found);
     report.video = Some(Coverage {
         span,
         annotations,
         rendering: served.annotations,
     });
-    let sampled_ms =
-        u64::try_from(served.at.as_millis()).context("Video sample time is too large")?;
     report.requested_ms = Some(at.as_millis());
     report.sampled_ms = Some(sampled_ms);
     report.cells.push(locate::Cell {
@@ -100,7 +92,7 @@ pub(super) fn write(
         crop_px: served.crop_px,
     });
     report.path = Some(export(destination, &served.image)?);
-    report.write(request.json, out)
+    Ok(report)
 }
 
 #[cfg(all(test, target_os = "windows"))]

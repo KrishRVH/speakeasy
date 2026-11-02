@@ -25,7 +25,7 @@ fn native_mark_crops_match_presented_pixels_and_refuse_incompatible_spaces() -> 
             "--json".into(),
         ];
         let mut report = Vec::new();
-        Command::parse(true, args.into_iter())?.write(&mut report)?;
+        parse(true, args.into_iter())?.write(&mut report)?;
         assert!(!String::from_utf8_lossy(&report).contains("PRIVATE"));
         Ok(serde_json::from_slice(&report)?)
     };
@@ -83,7 +83,7 @@ fn native_video_export_reports_real_samples_after_the_annotation_journal_ends() 
             output.into_os_string(),
             "--json".into(),
         ];
-        let command = Command::parse(true, args.into_iter())?;
+        let command = parse(true, args.into_iter())?;
         let mut report = Vec::new();
         command.write(&mut report)?;
         assert!(!String::from_utf8_lossy(&report).contains("PRIVATE"));

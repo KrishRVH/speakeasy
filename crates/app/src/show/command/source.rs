@@ -1,35 +1,30 @@
 mod video;
 
-use std::{ffi::OsString, io, path::PathBuf, time::Duration};
+use std::{
+    ffi::OsString,
+    io,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use anyhow::Context as _;
 use serde::Serialize;
 use speakeasy_show::{
-    Manifest, Mark, Moment, Typeface,
+    Manifest, Mark, Moment, Narration, Typeface,
     locate::{self, Evidence},
 };
 
-use crate::show::{
-    evidence::query::{self, Query},
-    store::{self, address, recall, source},
+use super::{
+    AROUND,
+    query::{self, Query},
 };
-
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum Command {
-    Help,
-    Read(Request),
-}
+use crate::show::store::{recall, source};
 
 #[derive(PartialEq, Eq)]
 pub(crate) struct Request {
     directory: PathBuf,
-    focus: Option<Query>,
-    around: u64,
-    most: usize,
-    output: Output,
+    read: Read,
     json: bool,
-    video: bool,
-    annotated: bool,
 }
 
 impl std::fmt::Debug for Request {
@@ -39,235 +34,237 @@ impl std::fmt::Debug for Request {
 }
 
 #[derive(PartialEq, Eq)]
+enum Read {
+    Source {
+        focus: Option<Query>,
+        around: Duration,
+        output: Output,
+    },
+    Video {
+        focus: Query,
+        destination: PathBuf,
+        crop: Option<usize>,
+        annotated: bool,
+    },
+}
+
+#[derive(PartialEq, Eq)]
 enum Output {
     List,
+    Sheet {
+        destination: PathBuf,
+        crop: Option<usize>,
+        most: usize,
+    },
     Frame {
         destination: PathBuf,
         crop: Option<usize>,
     },
-    Sheet {
-        destination: PathBuf,
-        crop: Option<usize>,
-    },
 }
 
-impl Command {
-    pub(super) fn parse(
-        single: bool,
-        mut args: impl Iterator<Item = OsString>,
-    ) -> anyhow::Result<Self> {
-        let (mut directory, mut focus, mut destination, mut json) = (None, None, None, false);
-        let (mut around, mut most, mut occurrence, mut crop) = (None, None, None, false);
-        let mut video = false;
-        let mut annotated = false;
-        while let Some(arg) = args.next() {
-            match arg.to_str() {
-                Some("--help" | "-h") => return Ok(Self::Help),
-                Some("--json") if !json => json = true,
-                Some("--video") if !video => video = true,
-                Some("--annotated") if !annotated => annotated = true,
-                Some("--at" | "--mark" | "--phrase") if focus.is_none() => {
-                    let value = value(&mut args)?;
-                    focus = Some(match arg.to_str() {
-                        Some("--at") => Query::At(query::time(&value)?),
-                        Some("--mark") => Query::Mark(positive(&value)?),
-                        _ => Query::Phrase(value),
-                    });
-                },
-                Some("--match") if occurrence.is_none() => {
-                    occurrence = Some(positive(&value(&mut args)?)?);
-                },
-                Some("--around") if !single && around.is_none() => {
-                    let parsed = value(&mut args)?
-                        .parse::<u64>()
-                        .context("--around needs milliseconds from 0 to 10000")?;
-                    anyhow::ensure!(
-                        parsed <= 10_000,
-                        "--around accepts at most 10000 milliseconds"
-                    );
-                    around = Some(parsed);
-                },
-                Some("--most") if !single && most.is_none() => {
-                    let parsed = positive(&value(&mut args)?)?;
-                    anyhow::ensure!(parsed <= 12, "--most accepts at most 12 frames");
-                    most = Some(parsed);
-                },
-                Some("--crop") if !crop => crop = true,
-                Some("--out") if destination.is_none() => {
-                    destination = Some(PathBuf::from(
-                        args.next()
-                            .filter(|arg| {
-                                !arg.is_empty() && !arg.to_string_lossy().starts_with('-')
-                            })
-                            .context("--out needs a new PNG path")?,
-                    ));
-                },
-                _ if directory.is_none()
-                    && !arg.is_empty()
-                    && !arg.to_string_lossy().starts_with('-') =>
-                {
-                    directory = Some(PathBuf::from(arg));
-                },
-                _ => anyhow::bail!(
-                    "Unknown, repeated, or conflicting source argument; see speakeasy show --help"
-                ),
-            }
-        }
-        anyhow::ensure!(!video || single, "--video supports show frame");
-        anyhow::ensure!(!annotated || video, "--annotated requires --video");
-        let focus = match (focus, occurrence) {
-            (Some(Query::Phrase(phrase)), Some(occurrence)) => {
-                Some(Query::Match { phrase, occurrence })
+pub(super) fn parse(
+    single: bool,
+    mut args: impl Iterator<Item = OsString>,
+) -> anyhow::Result<super::Command> {
+    let (mut directory, mut destination, mut focus, mut occurrence) = (None, None, None, None);
+    let (mut around, mut most) = (None, None);
+    let (mut json, mut crop, mut video, mut annotated) = (false, false, false, false);
+    while let Some(arg) = args.next() {
+        match arg.to_str() {
+            Some("--help" | "-h") => return Ok(super::Command::Help),
+            Some("--json") if !json => json = true,
+            Some("--video") if !video => video = true,
+            Some("--annotated") if !annotated => annotated = true,
+            Some("--crop") if !crop => crop = true,
+            Some(option @ ("--at" | "--mark" | "--phrase")) if focus.is_none() => {
+                focus = Some(super::focus(option, &mut args)?);
             },
-            (focus, None) => focus,
-            (_, Some(_)) => anyhow::bail!("--match requires --phrase"),
+            Some("--match") if occurrence.is_none() => {
+                occurrence = Some(super::count("--match", &mut args)?);
+            },
+            Some("--around") if !single && around.is_none() => {
+                around = Some(super::around(&mut args)?);
+            },
+            Some("--most") if !single && most.is_none() => {
+                let frames = super::count("--most", &mut args)?;
+                anyhow::ensure!(frames <= 12, "--most accepts at most 12 frames");
+                most = Some(frames);
+            },
+            Some("--out") if destination.is_none() => {
+                destination = Some(super::path(&mut args, "--out needs a new PNG path")?);
+            },
+            _ if directory.is_none() && super::operand(&arg) => {
+                directory = Some(PathBuf::from(arg));
+            },
+            _ => anyhow::bail!(
+                "Unknown, repeated, or conflicting source argument; see speakeasy show --help"
+            ),
+        }
+    }
+    anyhow::ensure!(!video || single, "--video supports show frame");
+    anyhow::ensure!(!annotated || video, "--annotated requires --video");
+    let focus = super::matching(focus, occurrence)?;
+    let crop = match (crop, &focus) {
+        (true, Some(Query::Mark(number))) => Some(*number),
+        (true, _) => anyhow::bail!("--crop requires --mark"),
+        (false, _) => None,
+    };
+    anyhow::ensure!(
+        focus.is_some() || (!single && destination.is_none() && around.is_none() && most.is_none()),
+        "Choose exactly one focus: --at, --mark, or --phrase"
+    );
+    anyhow::ensure!(
+        destination.is_some() || (most.is_none() && crop.is_none()),
+        "--most and --crop require --out NEW.png"
+    );
+    let read = if video {
+        let (Some(focus), Some(destination)) = (focus, destination) else {
+            anyhow::bail!("show frame needs a focus and --out NEW.png");
         };
-        let crop = match (crop, &focus) {
-            (true, Some(Query::Mark(number))) => Some(*number),
-            (true, _) => anyhow::bail!("--crop requires --mark"),
-            (false, _) => None,
-        };
-        anyhow::ensure!(
-            focus.is_some()
-                || (!single && destination.is_none() && around.is_none() && most.is_none()),
-            "Choose exactly one focus: --at, --mark, or --phrase"
-        );
-        anyhow::ensure!(
-            destination.is_some() || (most.is_none() && crop.is_none()),
-            "--most and --crop require --out NEW.png"
-        );
+        Read::Video {
+            focus,
+            destination,
+            crop,
+            annotated,
+        }
+    } else {
         let output = match (single, destination) {
             (true, Some(destination)) => Output::Frame { destination, crop },
-            (false, Some(destination)) => Output::Sheet { destination, crop },
+            (false, Some(destination)) => Output::Sheet {
+                destination,
+                crop,
+                most: most.unwrap_or(6),
+            },
             (false, None) => Output::List,
             (true, None) => anyhow::bail!("show frame needs a focus and --out NEW.png"),
         };
-        Ok(Self::Read(Request {
-            directory: directory.context("Source inspection needs an exact Show ID or path")?,
+        Read::Source {
             focus,
-            around: around.unwrap_or(1_000),
-            most: most.unwrap_or(6),
+            around: around.unwrap_or(AROUND),
             output,
-            json,
-            video,
-            annotated,
-        }))
-    }
-
-    pub(super) fn write(self, out: &mut impl io::Write) -> anyhow::Result<()> {
-        let Self::Read(request) = self else {
-            return super::Command::Help.write(out);
-        };
-        request.write(out)
-    }
-}
-
-fn value(args: &mut impl Iterator<Item = OsString>) -> anyhow::Result<String> {
-    args.next()
-        .and_then(|arg| arg.into_string().ok())
-        .filter(|arg| !arg.is_empty())
-        .context("The source option needs a nonempty UTF-8 value")
-}
-
-fn positive(value: &str) -> anyhow::Result<usize> {
-    value
-        .parse()
-        .ok()
-        .filter(|number| *number > 0)
-        .context("Use a positive whole number")
+        }
+    };
+    Ok(super::Command::Source(Request {
+        directory: directory.context("Source inspection needs an exact Show ID or path")?,
+        read,
+        json,
+    }))
 }
 
 impl Request {
-    fn write(self, out: &mut impl io::Write) -> anyhow::Result<()> {
-        let directory = address::resolve(&self.directory, || {
-            store::directory().map_err(io::Error::other)
-        })?;
-        if self.video {
-            return video::write(self, &directory, out);
-        }
-        anyhow::ensure!(
-            source::size(&directory)?.is_some(),
-            "This Show has no retained source frames. Its selected keyframes may still be available through show inspect."
-        );
-        let index = source::inspect(&directory)?;
-        let Some(query) = &self.focus else {
-            return coverage(&directory, &index, self.json, out);
-        };
-        let manifest = recall::Entry::open(&directory)?.show?.manifest;
-        anyhow::ensure!(
-            index.duration() == manifest.recording().duration,
-            "Source and Show timelines differ; inspect the bundle before exporting"
-        );
-        let found = query.resolve(&manifest)?;
-        let mut report = Report::new(&manifest, &found);
-        let Some(span) = found.selected else {
-            anyhow::ensure!(
-                matches!(self.output, Output::List),
-                "The phrase has several matches; list them with show frames, then choose --match N"
-            );
-            return report.write(self.json, out);
-        };
-        let window = locate::window(span, Duration::from_millis(self.around), index.duration());
-        let crop_window = match self.output {
-            Output::Frame { crop: Some(_), .. } => Some(span),
-            Output::Sheet { crop: Some(_), .. } => Some(window),
-            _ => None,
-        };
-        anyhow::ensure!(
-            crop_window.is_none_or(|window| index.stable_geometry(window)),
-            "The captured surface resized in this window; export uncropped frames instead"
-        );
-        let most = match self.output {
-            Output::Sheet { .. } => self.most,
-            Output::List | Output::Frame { .. } => index.moments().len(),
-        };
-        let samples = locate::pick(index.moments(), window, span.start(), most);
-        report.window_ms = Some([window.start().as_millis(), window.end().as_millis()]);
-        report.carried_in_ms = samples.carried_in.map(Moment::as_millis);
-        report.longest_gap_ms =
-            Some(u64::try_from(samples.longest_gap.as_millis()).unwrap_or(u64::MAX));
-        report.times_ms = samples.times.iter().map(|at| at.as_millis()).collect();
-        report.keyframes = manifest
-            .keyframes()
-            .iter()
-            .filter(|frame| window.contains(frame.at))
-            .map(|frame| frame.index)
-            .collect();
-        report.marks = manifest
-            .marks()
-            .iter()
-            .filter(|mark| mark.span.start() <= window.end() && mark.span.end() >= window.start())
-            .map(|mark| mark.number)
-            .collect();
-        match self.output {
-            Output::List => {},
-            Output::Frame { destination, crop } => {
-                let served = source::frame(&directory, &index, span.start())?;
-                let (image, crop_px) = locate::crop_image(
-                    served.image,
-                    crop_mark(&manifest, crop)?.map(|mark| mark.bounds),
-                )?;
-                report.requested_ms = Some(span.start().as_millis());
-                report.sampled_ms = Some(served.at.as_millis());
-                report.cells.push(locate::Cell {
-                    sampled_ms: served.at.as_millis(),
-                    crop_px,
-                });
-                report.path = Some(export(destination, &image)?);
+    pub(super) fn write(self, out: &mut impl io::Write) -> anyhow::Result<()> {
+        let directory = super::locate(&self.directory)?;
+        let report = match self.read {
+            Read::Video {
+                focus,
+                destination,
+                crop,
+                annotated,
+            } => video::frame(&directory, &focus, destination, crop, annotated)?,
+            Read::Source {
+                focus,
+                around,
+                output,
+            } => {
+                anyhow::ensure!(
+                    source::size(&directory)?.is_some(),
+                    "This Show has no retained source frames. Its selected keyframes may still be available through show inspect."
+                );
+                let index = source::inspect(&directory)?;
+                let Some(focus) = focus else {
+                    return coverage(&directory, &index, self.json, out);
+                };
+                retained(&directory, &index, &focus, around, output)?
             },
-            Output::Sheet { destination, crop } => {
-                let evidence = Evidence::compose(
-                    &samples.times,
-                    crop_mark(&manifest, crop)?.map(|mark| mark.bounds),
-                    |at| source::frame(&directory, &index, at),
-                    &Typeface::parse(crate::BRAND_FONT_FILE)?,
-                )?;
-                report.cells = evidence.cells;
-                report.path = Some(export(destination, &evidence.image)?);
-            },
-        }
+        };
         report.write(self.json, out)
     }
+}
+
+fn retained(
+    directory: &Path,
+    index: &speakeasy_show::Source,
+    focus: &Query,
+    around: Duration,
+    output: Output,
+) -> anyhow::Result<Report> {
+    let manifest = recall::Entry::open(directory)?.show?.manifest;
+    anyhow::ensure!(
+        index.duration() == manifest.recording().duration,
+        "Source and Show timelines differ; inspect the bundle before exporting"
+    );
+    let found = focus.resolve(&manifest)?;
+    let selected = found.selected;
+    let mut report = Report::new(&manifest, found);
+    let Some(span) = selected else {
+        anyhow::ensure!(
+            output == Output::List,
+            "The phrase has several matches; list them with show frames, then choose --match N"
+        );
+        return Ok(report);
+    };
+    let window = locate::window(span, around, index.duration());
+    let crop_window = match output {
+        Output::Frame { crop: Some(_), .. } => Some(span),
+        Output::Sheet { crop: Some(_), .. } => Some(window),
+        _ => None,
+    };
+    anyhow::ensure!(
+        crop_window.is_none_or(|window| index.stable_geometry(window)),
+        "The captured surface resized in this window; export uncropped frames instead"
+    );
+    let most = match output {
+        Output::Sheet { most, .. } => most,
+        Output::List | Output::Frame { .. } => index.moments().len(),
+    };
+    let samples = locate::pick(index.moments(), window, span.start(), most);
+    report.window_ms = Some([window.start().as_millis(), window.end().as_millis()]);
+    report.carried_in_ms = samples.carried_in.map(Moment::as_millis);
+    report.longest_gap_ms =
+        Some(u64::try_from(samples.longest_gap.as_millis()).unwrap_or(u64::MAX));
+    report.times_ms = samples.times.iter().map(|at| at.as_millis()).collect();
+    report.keyframes = manifest
+        .keyframes()
+        .iter()
+        .filter(|frame| window.contains(frame.at))
+        .map(|frame| frame.index)
+        .collect();
+    report.marks = manifest
+        .marks()
+        .iter()
+        .filter(|mark| mark.span.start() <= window.end() && mark.span.end() >= window.start())
+        .map(|mark| mark.number)
+        .collect();
+    match output {
+        Output::List => {},
+        Output::Frame { destination, crop } => {
+            let served = source::frame(directory, index, span.start())?;
+            let (image, crop_px) = locate::crop_image(
+                served.image,
+                crop_mark(&manifest, crop)?.map(|mark| mark.bounds),
+            )?;
+            report.requested_ms = Some(span.start().as_millis());
+            report.sampled_ms = Some(served.at.as_millis());
+            report.cells.push(locate::Cell {
+                sampled_ms: served.at.as_millis(),
+                crop_px,
+            });
+            report.path = Some(export(destination, &image)?);
+        },
+        Output::Sheet {
+            destination, crop, ..
+        } => {
+            let evidence = Evidence::compose(
+                &samples.times,
+                crop_mark(&manifest, crop)?.map(|mark| mark.bounds),
+                |at| source::frame(directory, index, at),
+                &Typeface::parse(crate::BRAND_FONT_FILE)?,
+            )?;
+            report.cells = evidence.cells;
+            report.path = Some(export(destination, &evidence.image)?);
+        },
+    }
+    Ok(report)
 }
 
 fn crop_mark(manifest: &Manifest, number: Option<usize>) -> anyhow::Result<Option<&Mark>> {
@@ -291,8 +288,8 @@ fn export(destination: PathBuf, image: &speakeasy_show::Image) -> anyhow::Result
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct Report<'a> {
-    focus: &'a query::Found,
+struct Report {
+    focus: query::Found,
     window_ms: Option<[u64; 2]>,
     carried_in_ms: Option<u64>,
     times_ms: Vec<u64>,
@@ -311,18 +308,14 @@ struct Report<'a> {
     video: Option<video::Coverage>,
 }
 
-impl<'a> Report<'a> {
-    fn new(manifest: &Manifest, focus: &'a query::Found) -> Self {
-        let narration = match &manifest.recording().narration {
-            speakeasy_show::Narration::Words(words) if words.is_empty() => "absent",
-            speakeasy_show::Narration::Words(_) => {
-                if manifest.recording().narration_lost.is_some() {
-                    "incomplete"
-                } else {
-                    "timed"
-                }
-            },
-            speakeasy_show::Narration::Text(_) => "untimed",
+impl Report {
+    fn new(manifest: &Manifest, focus: query::Found) -> Self {
+        let recording = manifest.recording();
+        let narration = match &recording.narration {
+            Narration::Words(words) if words.is_empty() => "absent",
+            Narration::Words(_) if recording.narration_lost.is_some() => "incomplete",
+            Narration::Words(_) => "timed",
+            Narration::Text(_) => "untimed",
         };
         Self {
             focus,
@@ -410,7 +403,7 @@ struct Coverage {
 }
 
 fn coverage(
-    directory: &std::path::Path,
+    directory: &Path,
     index: &speakeasy_show::Source,
     json: bool,
     out: &mut impl io::Write,

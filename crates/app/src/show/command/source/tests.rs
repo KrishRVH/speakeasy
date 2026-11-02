@@ -41,12 +41,12 @@ fn source_arguments_reject_ambiguous_times_and_missing_destinations() -> anyhow:
             "--annotated",
         ],
     ] {
-        assert!(Command::parse(true, args.into_iter().map(OsString::from)).is_err());
+        assert!(parse(true, args.into_iter().map(OsString::from)).is_err());
     }
-    assert!(Command::parse(false, ["show", "--at", "1"].into_iter().map(OsString::from)).is_ok());
+    assert!(parse(false, ["show", "--at", "1"].into_iter().map(OsString::from)).is_ok());
     let args = ["show", "--at", "1", "--out", "x", "--annotated", "--video"];
-    assert!(Command::parse(true, args.into_iter().map(OsString::from)).is_ok());
-    assert!(Command::parse(false, args.into_iter().map(OsString::from)).is_err());
+    assert!(parse(true, args.into_iter().map(OsString::from)).is_ok());
+    assert!(parse(false, args.into_iter().map(OsString::from)).is_err());
     Ok(())
 }
 
@@ -75,60 +75,45 @@ fn source_commands_report_samples_preserve_files_and_handle_closed_pipes() -> an
         Ok(())
     })?;
     fs::write(directory.join(source::FILE), encoded)?;
-    for focus in [None, Some(Query::At(Moment::from_millis(750)))] {
-        let command = Command::Read(Request {
-            directory: directory.clone(),
+    let read = |focus, output| Request {
+        directory: directory.clone(),
+        read: Read::Source {
             focus,
-            output: Output::List,
-            around: 1000,
-            most: 6,
-            json: true,
-            video: false,
-            annotated: false,
-        });
-        let error = command.write(&mut super::super::tests::Closed).unwrap_err();
+            around: AROUND,
+            output,
+        },
+        json: true,
+    };
+    for focus in [None, Some(Query::At(Moment::from_millis(750)))] {
+        let error = read(focus, Output::List)
+            .write(&mut super::super::tests::Closed)
+            .unwrap_err();
         assert_eq!(
             error.downcast_ref::<io::Error>().map(io::Error::kind),
             Some(io::ErrorKind::BrokenPipe)
         );
     }
     let destination = root.path().join("export.png");
-    let command = || {
-        Command::Read(Request {
-            directory: directory.clone(),
-            focus: Some(Query::At(Moment::from_millis(750))),
-            output: Output::Frame {
+    let frame = || {
+        read(
+            Some(Query::At(Moment::from_millis(750))),
+            Output::Frame {
                 destination: destination.clone(),
                 crop: None,
             },
-            around: 1000,
-            most: 6,
-            json: true,
-            video: false,
-            annotated: false,
-        })
+        )
     };
     let mut output = Vec::new();
-    command().write(&mut output)?;
+    frame().write(&mut output)?;
     let value: serde_json::Value = serde_json::from_slice(&output)?;
     assert_eq!(value["requestedMs"], 750);
     assert_eq!(value["sampledMs"], 100);
     let png = fs::read(&destination)?;
     assert!(png.starts_with(b"\x89PNG"));
-    assert!(command().write(&mut io::sink()).is_err());
+    assert!(frame().write(&mut io::sink()).is_err());
     assert_eq!(fs::read(destination)?, png);
     output.clear();
-    Command::Read(Request {
-        directory,
-        focus: None,
-        around: 1000,
-        most: 6,
-        output: Output::List,
-        json: true,
-        video: false,
-        annotated: false,
-    })
-    .write(&mut output)?;
+    read(None, Output::List).write(&mut output)?;
     let value: serde_json::Value = serde_json::from_slice(&output)?;
     assert_eq!(value["retained"], 1);
     assert_eq!(value["longestGapMs"], 900);
@@ -166,7 +151,7 @@ fn phrase_windows_require_an_explicit_match_and_export_honest_samples() -> anyho
     let run = |options: &[&str], single| -> anyhow::Result<serde_json::Value> {
         let args = std::iter::once(directory.as_os_str().to_owned())
             .chain(options.iter().map(OsString::from));
-        let command = Command::parse(single, args)?;
+        let command = parse(single, args)?;
         assert!(!format!("{command:?}").contains("PRIVATE"));
         let mut out = Vec::new();
         command.write(&mut out)?;
@@ -269,6 +254,7 @@ fn phrase_windows_require_an_explicit_match_and_export_honest_samples() -> anyho
 fn focus_options_reject_conflicts_and_unbounded_work() {
     for options in [
         vec!["--phrase", "PRIVATE", "--at", "1"],
+        vec!["--phrase", "--json"],
         vec!["--at", "1", "--crop", "--out", "x.png"],
         vec!["--at", "1", "--match", "1"],
         vec!["--at", "1", "--most", "13", "--out", "x.png"],
@@ -279,13 +265,13 @@ fn focus_options_reject_conflicts_and_unbounded_work() {
         vec!["--video", "--at", "1", "--out", "x.png"],
     ] {
         let args = std::iter::once("show").chain(options).map(OsString::from);
-        let error = Command::parse(false, args).unwrap_err();
+        let error = parse(false, args).unwrap_err();
         assert!(!format!("{error:#}").contains("PRIVATE"));
     }
     let repeated = ["show", "--video", "--video", "--at", "1", "--out", "x.png"];
-    assert!(Command::parse(true, repeated.into_iter().map(OsString::from)).is_err());
+    assert!(parse(true, repeated.into_iter().map(OsString::from)).is_err());
     assert!(
-        Command::parse(
+        parse(
             true,
             ["show", "--video", "--mark", "1", "--crop", "--out", "x.png"]
                 .into_iter()

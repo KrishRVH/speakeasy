@@ -1,7 +1,7 @@
-use super::*;
+use super::{super::Command, *};
 
-fn parse(args: &[&str]) -> anyhow::Result<Command> {
-    Command::parse(args.iter().map(OsString::from))
+fn read(args: &[&str]) -> anyhow::Result<Command> {
+    parse(args.iter().map(OsString::from))
 }
 
 #[test]
@@ -17,9 +17,9 @@ fn video_requires_explicit_output_and_unambiguous_focus_without_printing_the_que
             "show", "--out", "clip.mp4", "--phrase", "secret", "--around", "10001",
         ],
     ] {
-        assert!(parse(&args).is_err());
+        assert!(read(&args).is_err());
     }
-    let command = parse(&[
+    let command = read(&[
         "show",
         "--out",
         "clip.mp4",
@@ -33,7 +33,7 @@ fn video_requires_explicit_output_and_unambiguous_focus_without_printing_the_que
         "--json",
     ])?;
     assert!(!format!("{command:?}").contains("private phrase"));
-    let Command::Export(request) = command else {
+    let Command::Video(request) = command else {
         anyhow::bail!("Expected export");
     };
     assert!(matches!(
@@ -41,6 +41,6 @@ fn video_requires_explicit_output_and_unambiguous_focus_without_printing_the_que
         Some(Query::Match { occurrence: 2, .. })
     ));
     assert!(request.captions && request.json);
-    assert_eq!(request.around, 0);
+    assert_eq!(request.around, Duration::ZERO);
     Ok(())
 }

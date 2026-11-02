@@ -2,16 +2,26 @@ mod output;
 mod source;
 mod video;
 
-use std::{ffi::OsString, io, path::PathBuf, time::SystemTime};
+use std::{
+    ffi::{OsStr, OsString},
+    io::{self, Write as _},
+    path::{Path, PathBuf},
+    time::{Duration, SystemTime},
+};
 
 use anyhow::Context as _;
 use speakeasy_show::{Demo, Typeface};
 
-use super::store::{self, address, recall, retention};
+use super::{
+    evidence::query::{self, Query},
+    store::{self, address, recall, retention},
+};
 
 const SKILL: &str = include_str!("../../../../skills/speakeasy-show/SKILL.md");
 
 const DEMO_SIZE: (u32, u32) = (1_440, 900);
+
+const AROUND: Duration = Duration::from_secs(1);
 
 const HELP: &str = "speakeasy show list [--json]
 speakeasy show inspect SHOW [--json]
@@ -77,8 +87,8 @@ pub(crate) enum Command {
         directory: PathBuf,
         json: bool,
     },
-    Source(source::Command),
-    Video(video::Command),
+    Source(source::Request),
+    Video(video::Request),
     Mcp(super::mcp::Command),
     Export {
         directory: PathBuf,
@@ -107,101 +117,70 @@ impl Command {
         let Some(verb) = args.next() else {
             return Ok(Self::Help);
         };
-        if verb == "--help" || verb == "-h" {
-            return Ok(Self::Help);
+        let verb = verb.to_str().unwrap_or_default();
+        match verb {
+            "--help" | "-h" => return Ok(Self::Help),
+            "frames" => return source::parse(false, args),
+            "frame" => return source::parse(true, args),
+            "video" => return video::parse(args),
+            "mcp" => return super::mcp::Command::parse(args).map(Self::Mcp),
+            _ => {},
         }
-        if verb == "frames" || verb == "frame" {
-            return source::Command::parse(verb == "frame", args).map(Self::Source);
-        }
-        if verb == "video" {
-            return video::Command::parse(args).map(Self::Video);
-        }
-        if verb == "mcp" {
-            return super::mcp::Command::parse(args).map(Self::Mcp);
-        }
-        let mut json = false;
-        let mut off = false;
-        let mut path = None;
-        let mut destination = None;
+        let (mut show, mut destination, mut json, mut off) = (None, None, false, false);
         while let Some(arg) = args.next() {
-            match arg.to_str() {
-                Some("--help" | "-h") => return Ok(Self::Help),
-                Some("--json")
-                    if (verb == "list"
-                        || verb == "inspect"
-                        || verb == "keep"
-                        || verb == "export"
-                        || verb == "discard")
-                        && !json =>
-                {
+            match (verb, arg.to_str()) {
+                (_, Some("--help" | "-h")) => return Ok(Self::Help),
+                ("list" | "inspect" | "keep" | "export" | "discard", Some("--json")) if !json => {
                     json = true;
                 },
-                Some("--off") if verb == "keep" && !off => off = true,
-                Some("--install") if verb == "skill" && path.is_none() => {
-                    path = Some(PathBuf::from(
-                        args.next()
-                            .filter(|arg| {
-                                !arg.is_empty() && !arg.to_string_lossy().starts_with('-')
-                            })
-                            .context("--install needs the agent's skills directory")?,
-                    ));
+                ("keep", Some("--off")) if !off => off = true,
+                ("export", Some("--out")) if destination.is_none() => {
+                    destination = Some(path(&mut args, "--out needs a new ZIP file path")?);
                 },
-                Some("--out") if verb == "export" && destination.is_none() => {
-                    destination = Some(PathBuf::from(
-                        args.next()
-                            .filter(|path| {
-                                !path.is_empty() && !path.to_string_lossy().starts_with('-')
-                            })
-                            .context("--out needs a new ZIP file path")?,
-                    ));
+                ("demo", Some("--out")) if destination.is_none() => {
+                    destination = Some(path(&mut args, "--out needs a new directory")?);
                 },
-                Some("--out") if verb == "demo" && path.is_none() => {
-                    path = Some(PathBuf::from(
-                        args.next()
-                            .filter(|path| {
-                                !path.is_empty() && !path.to_string_lossy().starts_with('-')
-                            })
-                            .context("--out needs a new directory")?,
-                    ));
+                ("skill", Some("--install")) if destination.is_none() => {
+                    destination = Some(path(
+                        &mut args,
+                        "--install needs the agent's skills directory",
+                    )?);
                 },
-                _ if (verb == "inspect"
-                    || verb == "keep"
-                    || verb == "discard"
-                    || verb == "export")
-                    && path.is_none()
-                    && !arg.is_empty()
-                    && !arg.to_string_lossy().starts_with('-') =>
+                ("inspect" | "keep" | "export" | "discard", _)
+                    if show.is_none() && operand(&arg) =>
                 {
-                    path = Some(PathBuf::from(arg));
+                    show = Some(PathBuf::from(arg));
                 },
                 _ => anyhow::bail!(
                     "Unknown or repeated show argument; speakeasy show --help lists the commands"
                 ),
             }
         }
-        match verb.to_str() {
-            Some("list") => Ok(Self::List { json }),
-            Some("export") => Ok(Self::Export {
-                directory: path.context("show export needs an exact Show ID or path")?,
-                destination: destination.context("show export needs --out NEW.zip")?,
+        match verb {
+            "list" => Ok(Self::List { json }),
+            "inspect" => Ok(Self::Inspect {
+                directory: show.context("show inspect needs an exact Show ID or path")?,
                 json,
             }),
-            Some("inspect") => Ok(Self::Inspect {
-                directory: path.context("show inspect needs an exact Show ID or path")?,
-                json,
-            }),
-            Some("keep") => Ok(Self::Keep {
-                directory: path.context("show keep needs an exact Show ID or path")?,
+            "keep" => Ok(Self::Keep {
+                directory: show.context("show keep needs an exact Show ID or path")?,
                 kept: !off,
                 json,
             }),
-            Some("discard") => Ok(Self::Discard {
-                directory: path
+            "export" => Ok(Self::Export {
+                directory: show.context("show export needs an exact Show ID or path")?,
+                destination: destination.context("show export needs --out NEW.zip")?,
+                json,
+            }),
+            "discard" => Ok(Self::Discard {
+                directory: show
                     .context("show discard needs an explicit interrupted Show ID or path")?,
                 json,
             }),
-            Some("skill") => Ok(Self::Skill { install: path }),
-            Some("demo") => Ok(Self::Demo { out: path }),
+            "skill" => Ok(Self::Skill {
+                install: destination,
+            }),
+            "demo" => Ok(Self::Demo { out: destination }),
             _ => anyhow::bail!("Unknown show command; speakeasy show --help lists the commands"),
         }
     }
@@ -229,17 +208,15 @@ impl Command {
                 let path = install_skill(&directory)?;
                 writeln!(out, "Show skill available at {}", path.display())?;
             },
-            Self::Source(command) => command.write(out)?,
-            Self::Video(command) => command.write(out)?,
+            Self::Source(request) => request.write(out)?,
+            Self::Video(request) => request.write(out)?,
             Self::Mcp(command) => command.write(out)?,
             Self::Export {
                 directory,
                 destination,
                 json,
             } => {
-                let directory =
-                    address::resolve(&directory, || store::directory().map_err(io::Error::other))?;
-                let exported = store::export::write(&directory, &destination)?;
+                let exported = store::export::write(&locate(&directory)?, &destination)?;
                 if json {
                     output::json(&exported, out)?;
                 } else {
@@ -259,8 +236,7 @@ impl Command {
                 output::list(entries, Some(&directory), json, out)?;
             },
             Self::Inspect { directory, json } => {
-                let directory =
-                    address::resolve(&directory, || store::directory().map_err(io::Error::other))?;
+                let directory = locate(&directory)?;
                 let entry = recall::Entry::open(&directory)
                     .with_context(|| format!("Cannot open Show {}", directory.display()))?;
                 let healthy = entry
@@ -304,7 +280,69 @@ impl Command {
     }
 }
 
-fn install_skill(directory: &std::path::Path) -> anyhow::Result<PathBuf> {
+pub(super) fn operand(arg: &OsStr) -> bool {
+    !arg.is_empty() && !arg.as_encoded_bytes().starts_with(b"-")
+}
+
+pub(super) fn path(
+    args: &mut impl Iterator<Item = OsString>,
+    missing: &'static str,
+) -> anyhow::Result<PathBuf> {
+    args.next()
+        .filter(|arg| operand(arg))
+        .map(PathBuf::from)
+        .context(missing)
+}
+
+fn value(option: &str, args: &mut impl Iterator<Item = OsString>) -> anyhow::Result<String> {
+    args.next()
+        .filter(|arg| operand(arg))
+        .and_then(|arg| arg.into_string().ok())
+        .with_context(|| format!("{option} needs a value"))
+}
+
+fn count(option: &str, args: &mut impl Iterator<Item = OsString>) -> anyhow::Result<usize> {
+    value(option, args)?
+        .parse()
+        .ok()
+        .filter(|&count| count > 0)
+        .with_context(|| format!("{option} needs a positive whole number"))
+}
+
+fn focus(option: &str, args: &mut impl Iterator<Item = OsString>) -> anyhow::Result<Query> {
+    Ok(match option {
+        "--at" => Query::At(query::time(&value(option, args)?)?),
+        "--mark" => Query::Mark(count(option, args)?),
+        _ => Query::Phrase(value(option, args)?),
+    })
+}
+
+fn around(args: &mut impl Iterator<Item = OsString>) -> anyhow::Result<Duration> {
+    let millis = value("--around", args)?
+        .parse()
+        .ok()
+        .filter(|&millis| millis <= 10_000)
+        .context("--around needs milliseconds from 0 to 10000")?;
+    Ok(Duration::from_millis(millis))
+}
+
+fn matching(focus: Option<Query>, occurrence: Option<usize>) -> anyhow::Result<Option<Query>> {
+    match (focus, occurrence) {
+        (Some(Query::Phrase(phrase)), Some(occurrence)) => {
+            Ok(Some(Query::Match { phrase, occurrence }))
+        },
+        (_, Some(_)) => anyhow::bail!("--match requires --phrase"),
+        (focus, None) => Ok(focus),
+    }
+}
+
+fn locate(show: &Path) -> anyhow::Result<PathBuf> {
+    Ok(address::resolve(show, || {
+        store::directory().map_err(io::Error::other)
+    })?)
+}
+
+fn install_skill(directory: &Path) -> anyhow::Result<PathBuf> {
     let directory = std::path::absolute(directory)?.join("speakeasy-show");
     std::fs::create_dir_all(&directory).context("Cannot create the agent's skill directory")?;
     let path = directory.join("SKILL.md");
@@ -317,7 +355,7 @@ fn install_skill(directory: &std::path::Path) -> anyhow::Result<PathBuf> {
         Err(error) => return Err(error).context("Cannot read the existing Show skill"),
     }
     let mut file = tempfile::NamedTempFile::new_in(&directory)?;
-    io::Write::write_all(&mut file, SKILL.as_bytes())?;
+    file.write_all(SKILL.as_bytes())?;
     file.as_file().sync_all()?;
     let _installed = file
         .persist_noclobber(&path)
