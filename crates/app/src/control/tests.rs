@@ -120,14 +120,17 @@ fn forwarding_an_expired_call_cannot_renew_its_authority() {
 
 #[test]
 fn replies_are_one_content_free_json_line_with_distinct_exit_dispositions() -> anyhow::Result<()> {
-    for (reply, exit) in [
-        (Reply::ok(status()), 0),
-        (Reply::refused("busy"), 1),
-        (Reply::unknown("unconfirmed"), 2),
+    for (reply, delivered, undelivered) in [
+        (Reply::ok(status()), 0, 2),
+        (Reply::refused("busy"), 1, 1),
+        (Reply::unknown("unconfirmed"), 2, 2),
     ] {
         let mut output = Vec::new();
         reply.write(&mut output)?;
-        assert_eq!(reply.exit_code(), exit);
+        assert_eq!(
+            (reply.exit_code(true), reply.exit_code(false)),
+            (delivered, undelivered)
+        );
         assert_eq!(std::str::from_utf8(&output)?.lines().count(), 1);
         let parsed: serde_json::Value = serde_json::from_slice(&output)?;
         assert_eq!(parsed["v"], 1);
@@ -192,13 +195,19 @@ fn cli_parsing_keeps_config_separate_and_rejects_ambiguous_calls() -> anyhow::Re
     for arguments in [
         vec!["dictation", "stop"],
         vec!["dictation", "cancel", ""],
-        vec!["dictation", "start", "--style", "unknown"],
+        vec!["dictation", "stop", "private fixture"],
+        vec!["dictation", "start", "--style", "private fixture"],
+        vec!["style", "private fixture"],
+        vec!["preset", " private fixture "],
         vec!["status", "paste-last"],
         vec!["status", "--config"],
         vec!["status", "--config", "a", "--config", "b"],
         vec!["style", "snake", "--demo"],
     ] {
-        assert!(parse(&arguments).is_err());
+        let error = parse(&arguments)
+            .err()
+            .context("An ambiguous call parsed")?;
+        assert!(!format!("{error:#}").contains("private fixture"));
     }
     Ok(())
 }

@@ -6,11 +6,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{Context as _, bail, ensure};
+use anyhow::{Context as _, anyhow, bail, ensure};
 use async_channel::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
 
-use crate::{config::presets::validate_name, transcript::style::Style};
+use crate::{config::presets::validate_name, paths, transcript::style::Style};
 
 const VERSION: u8 = 1;
 pub(crate) const MAX_BYTES: usize = 4096;
@@ -135,11 +135,11 @@ impl Reply {
         }
     }
 
-    pub(crate) const fn exit_code(&self) -> u8 {
-        match self.result {
-            Disposition::Ok => 0,
-            Disposition::Refused => 1,
-            Disposition::Unknown => 2,
+    pub(crate) const fn exit_code(&self, delivered: bool) -> u8 {
+        match (self.result, delivered) {
+            (Disposition::Ok, true) => 0,
+            (Disposition::Refused, _) => 1,
+            (Disposition::Ok, false) | (Disposition::Unknown, _) => 2,
         }
     }
 
@@ -150,7 +150,7 @@ impl Reply {
         Ok(())
     }
 
-    pub(super) fn encode(&self) -> Result<Vec<u8>, &'static str> {
+    pub(crate) fn encode(&self) -> Result<Vec<u8>, &'static str> {
         let bytes =
             serde_json::to_vec(self).map_err(|_error| "Cannot encode the control reply.")?;
         if bytes.len() > MAX_BYTES {
@@ -159,7 +159,7 @@ impl Reply {
         Ok(bytes)
     }
 
-    pub(super) fn decode(bytes: &[u8]) -> Result<Self, &'static str> {
+    pub(crate) fn decode(bytes: &[u8]) -> Result<Self, &'static str> {
         let reply: Self =
             serde_json::from_slice(bytes).map_err(|_error| "Invalid control reply.")?;
         if reply.v != VERSION {
@@ -240,15 +240,7 @@ struct Incoming {
 }
 
 impl Command {
-    pub(super) fn encode(&self) -> Result<Vec<u8>, &'static str> {
-        let valid = match self {
-            Self::Stop { session } | Self::Cancel { session } => valid_token(session),
-            Self::Preset { name } => validate_name(name).is_ok(),
-            Self::Status | Self::Start { .. } | Self::PasteLast | Self::Style { .. } => true,
-        };
-        if !valid {
-            return Err("Invalid control command arguments.");
-        }
+    pub(crate) fn encode(&self) -> Result<Vec<u8>, &'static str> {
         let bytes = serde_json::to_vec(&Outgoing {
             v: VERSION,
             command: self,
@@ -260,7 +252,7 @@ impl Command {
         Ok(bytes)
     }
 
-    pub(super) fn decode(bytes: &[u8]) -> Result<Self, &'static str> {
+    pub(crate) fn decode(bytes: &[u8]) -> Result<Self, &'static str> {
         let request: Incoming =
             serde_json::from_slice(bytes).map_err(|_error| "Invalid control command.")?;
         if request.v != VERSION {
@@ -313,21 +305,16 @@ impl Invocation {
         )
     }
 
-    pub(crate) fn parse(arguments: impl Iterator<Item = OsString>) -> anyhow::Result<Self> {
+    pub(crate) fn parse(mut arguments: impl Iterator<Item = OsString>) -> anyhow::Result<Self> {
         let mut settings = None;
         let mut words = Vec::new();
-        let mut arguments = arguments;
         while let Some(argument) = arguments.next() {
             if argument == "--config" {
                 ensure!(settings.is_none(), "Use --config only once.");
-                let path = arguments.next().map(PathBuf::from);
-                settings = Some(
-                    path.filter(|path| path.file_name().is_some())
-                        .context("--config needs the path of a settings file.")?,
-                );
+                settings = Some(paths::settings_argument(arguments.next())?);
             } else {
                 words.push(argument.into_string().map_err(|_error| {
-                    anyhow::anyhow!("Control command arguments must be Unicode text.")
+                    anyhow!("Control command arguments must be Unicode text.")
                 })?);
             }
         }
@@ -336,27 +323,46 @@ impl Invocation {
             ["status"] => Command::Status,
             ["dictation", "start"] => Command::Start { style: None },
             ["dictation", "start", "--style", name] => Command::Start {
-                style: Some(Style::parse(name).context("Unknown dictation style.")?),
+                style: Some(style(name)?),
             },
-            ["dictation", "stop", token] if valid_token(token) => Command::Stop {
-                session: (*token).into(),
+            ["dictation", "stop", token] => Command::Stop {
+                session: session(token)?,
             },
-            ["dictation", "cancel", token] if valid_token(token) => Command::Cancel {
-                session: (*token).into(),
+            ["dictation", "cancel", token] => Command::Cancel {
+                session: session(token)?,
             },
             ["paste-last"] => Command::PasteLast,
-            ["style", name] => Command::Style {
-                name: Style::parse(name).context("Unknown dictation style.")?,
-            },
-            ["preset", name] if validate_name(name).is_ok() => Command::Preset {
-                name: (*name).into(),
+            ["style", name] => Command::Style { name: style(name)? },
+            ["preset", name] => {
+                validate_name(name)?;
+                Command::Preset {
+                    name: (*name).into(),
+                }
             },
             _ => bail!(
-                "Use status, dictation start [--style NAME], dictation stop TOKEN, dictation cancel TOKEN, paste-last, style NAME or preset NAME."
+                "Use status, dictation start [--style STYLE], dictation stop|cancel TOKEN, \
+                 paste-last, style STYLE, or preset NAME."
             ),
         };
         Ok(Self { settings, command })
     }
+}
+
+fn style(name: &str) -> anyhow::Result<Style> {
+    Style::parse(name).with_context(|| {
+        format!(
+            "Unknown dictation style. Styles: {}.",
+            Style::ALL.map(Style::name).join(", ")
+        )
+    })
+}
+
+fn session(token: &str) -> anyhow::Result<String> {
+    ensure!(
+        valid_token(token),
+        "Use the exact session token that dictation start returned."
+    );
+    Ok(token.into())
 }
 
 #[cfg(test)]

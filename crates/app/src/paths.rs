@@ -6,8 +6,19 @@ use std::{
 
 use anyhow::Context as _;
 
-pub(crate) fn settings_file() -> anyhow::Result<PathBuf> {
-    Ok(user_folder(UserFolder::Settings, std::env::var_os)?.join("settings.json"))
+pub(crate) fn settings_file(chosen: Option<PathBuf>) -> anyhow::Result<PathBuf> {
+    let file = match chosen {
+        Some(file) => file,
+        None => user_folder(UserFolder::Settings, std::env::var_os)?.join("settings.json"),
+    };
+    std::path::absolute(file).context("Cannot resolve the settings file from the current folder")
+}
+
+pub(crate) fn settings_argument(argument: Option<OsString>) -> anyhow::Result<PathBuf> {
+    argument
+        .map(PathBuf::from)
+        .filter(|file| file.file_name().is_some())
+        .context("--config needs the path of a settings file")
 }
 
 pub(crate) fn data_root() -> anyhow::Result<PathBuf> {

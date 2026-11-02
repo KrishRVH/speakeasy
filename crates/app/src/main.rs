@@ -39,7 +39,7 @@ use std::{
     process::ExitCode,
 };
 
-use anyhow::{Context as _, bail};
+use anyhow::bail;
 use gpui::{App, BorrowAppContext};
 use speakeasy_platform::{CANCEL_SHORTCUT, SHORTCUT};
 use tokio::sync::watch;
@@ -90,13 +90,7 @@ impl Invocation {
                     }
                 },
                 Some("--demo-tray") => mode = LaunchMode::DemoTray,
-                Some("--config") => {
-                    let file = args
-                        .next()
-                        .map(PathBuf::from)
-                        .filter(|file| file.file_name().is_some());
-                    settings = Some(file.context("--config needs the path of a settings file")?);
-                },
+                Some("--config") => settings = Some(paths::settings_argument(args.next())?),
                 Some("--toggle") => request = Some(Request::Toggle),
                 Some("--cancel") => request = Some(Request::Cancel),
                 Some("--help" | "-h") => return Ok(Self::Help),
@@ -137,32 +131,23 @@ fn main() -> ExitCode {
             Err(error) => Stop::Launch(error).report(terminal()),
         },
         Invocation::Send { request, settings } => {
-            in_terminal(|| Instance::send(&settings_file(settings)?, request))
+            in_terminal(|| Instance::send(&paths::settings_file(settings)?, request))
         },
         Invocation::Show(command) => in_terminal(|| command.run()),
-        Invocation::Control(invocation) => {
-            let reply = match settings_file(invocation.settings) {
-                Ok(path) => Instance::control(&path, invocation.command),
+        Invocation::Control(control::Invocation { settings, command }) => {
+            let reply = match paths::settings_file(settings) {
+                Ok(path) => Instance::control(&path, command),
                 Err(error) => control::Reply::unknown(format!("{error:#}")),
             };
-            let code = reply.exit_code();
-            let written = in_terminal(|| reply.write(&mut io::stdout().lock()));
-            if written != ExitCode::SUCCESS && reply.result != control::Disposition::Refused {
-                ExitCode::from(2)
-            } else {
-                ExitCode::from(code)
-            }
+            let delivered =
+                in_terminal(|| reply.write(&mut io::stdout().lock())) == ExitCode::SUCCESS;
+            ExitCode::from(reply.exit_code(delivered))
         },
     }
 }
 
-fn settings_file(settings: Option<PathBuf>) -> anyhow::Result<PathBuf> {
-    let file = settings.map_or_else(paths::settings_file, Ok)?;
-    Ok(std::path::absolute(file)?)
-}
-
 fn run(mode: LaunchMode, settings: Option<PathBuf>) -> anyhow::Result<()> {
-    let path = settings_file(settings)?;
+    let path = paths::settings_file(settings)?;
     let acquired = if mode.is_resident() {
         let Some(acquired) = Instance::acquire(&path)? else {
             return Ok(());
@@ -180,7 +165,7 @@ fn launch(
     acquired: Option<(Instance, async_channel::Receiver<Event>)>,
 ) -> anyhow::Result<()> {
     let (instance, requests) = acquired.unzip();
-    let default_settings = settings_file(None).is_ok_and(|default| default == path);
+    let default_settings = paths::settings_file(None).is_ok_and(|default| default == path);
 
     let (config, startup) = if mode.is_demo() {
         (Config::default(), Startup::Unconfigured)
@@ -460,6 +445,8 @@ fn release_services(
 
 #[cfg(test)]
 mod tests {
+    use anyhow::Context as _;
+
     use super::*;
 
     fn parse(args: &[&str]) -> anyhow::Result<Invocation> {
