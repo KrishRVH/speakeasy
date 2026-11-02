@@ -11,7 +11,7 @@ pub use read::Unreadable;
 use crate::{
     Ending, Error, Image, Keyframe, Mark, Moment, NarrationLoss, Recording, Selection, Typeface,
     describe::{Count, Marker},
-    draw::{self, Corner},
+    draw::{self, Badge, Corner},
     parallel, sheet,
 };
 
@@ -96,7 +96,10 @@ pub fn compose<E: From<Error> + Send>(
             contents: sheet::render(
                 &page
                     .iter()
-                    .map(|frame| (frame.index, frame.at.to_string()))
+                    .map(|frame| Badge {
+                        number: frame.index,
+                        time: frame.at.to_string(),
+                    })
                     .collect::<Vec<_>>(),
                 &annotated,
                 typeface,

@@ -39,6 +39,11 @@ pub(crate) enum Corner {
     Right,
 }
 
+pub(crate) struct Badge {
+    pub number: usize,
+    pub time: String,
+}
+
 pub(crate) fn annotate(
     image: &mut Image,
     keyframe: &Keyframe,
@@ -167,13 +172,12 @@ fn disc(canvas: &mut PixmapMut<'_>, center: Point, radius: f32, inner: f32) {
 pub(crate) fn badge(
     canvas: &mut PixmapMut<'_>,
     cell: Rect,
-    label: &(usize, String),
+    Badge { number, time }: &Badge,
     scale: f32,
     corner: Corner,
     typeface: &Typeface,
 ) {
-    let number = format!("#{}", label.0);
-    let time = &label.1;
+    let number = format!("#{number}");
     let (number_size, time_size) = (15.5 * scale, 12.5 * scale);
     let height = 28.0 * scale;
     let radius = 8.5 * scale;
@@ -253,7 +257,10 @@ pub(crate) fn badge_frame(
     badge(
         &mut image.as_mut(),
         whole,
-        &(keyframe.index, keyframe.at.to_string()),
+        &Badge {
+            number: keyframe.index,
+            time: keyframe.at.to_string(),
+        },
         scale,
         corner,
         typeface,

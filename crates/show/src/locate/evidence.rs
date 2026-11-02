@@ -1,6 +1,10 @@
 use serde::Serialize;
 
-use crate::{Error, Image, Moment, Rect, SourceFrame, Typeface, convert, draw::Corner, sheet};
+use crate::{
+    Error, Image, Moment, Rect, SourceFrame, Typeface, convert,
+    draw::{Badge, Corner},
+    sheet,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct PixelRect {
@@ -69,19 +73,19 @@ impl Evidence {
                 crop_px,
             });
         }
-        let labels = moments
+        let badges = moments
             .iter()
             .enumerate()
             .map(|(index, at)| {
                 let ms = at.as_millis();
-                (
-                    index.saturating_add(1),
-                    format!("{}:{:02}.{:03}", ms / 60_000, ms / 1_000 % 60, ms % 1_000),
-                )
+                Badge {
+                    number: index.saturating_add(1),
+                    time: format!("{}:{:02}.{:03}", ms / 60_000, ms / 1_000 % 60, ms % 1_000),
+                }
             })
             .collect::<Vec<_>>();
         Ok(Self {
-            image: sheet::render(&labels, &frames, typeface)?,
+            image: sheet::render(&badges, &frames, typeface)?,
             cells,
         })
     }

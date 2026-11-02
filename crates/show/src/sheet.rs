@@ -4,7 +4,7 @@ use tiny_skia::{PixmapPaint, Transform};
 
 use crate::{
     Error, Image, Point, Rect, Typeface, convert,
-    draw::{self, Corner},
+    draw::{self, Badge, Corner},
     parallel,
 };
 
@@ -87,7 +87,7 @@ pub(crate) fn pages<T>(keyframes: &[T]) -> impl Iterator<Item = &[T]> {
 }
 
 pub(crate) fn render(
-    labels: &[(usize, String)],
+    badges: &[Badge],
     frames: &[(Image, Corner)],
     typeface: &Typeface,
 ) -> Result<Image, Error> {
@@ -119,7 +119,7 @@ pub(crate) fn render(
         image.resized(*width, *height)
     });
     let mut canvas = sheet.as_mut();
-    for (((label, (_, corner)), cell), scaled) in labels.iter().zip(frames).zip(&cells).zip(scaled)
+    for (((badge, (_, corner)), cell), scaled) in badges.iter().zip(frames).zip(&cells).zip(scaled)
     {
         let scaled = scaled.ok_or_else(|| Error::evidence("Cannot scale a contact sheet frame"))?;
         let (left, top) = cell.centered_origin(scaled.width(), scaled.height());
@@ -134,7 +134,7 @@ pub(crate) fn render(
         draw::badge(
             &mut canvas,
             cell.bounds(),
-            label,
+            badge,
             badge_scale,
             *corner,
             typeface,
