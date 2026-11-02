@@ -77,15 +77,6 @@ impl MacShortcut {
             Self::RightCommand => "Right Command",
         }
     }
-
-    #[must_use]
-    pub const fn next(self) -> Self {
-        match self {
-            Self::Function => Self::RightOption,
-            Self::RightOption => Self::RightCommand,
-            Self::RightCommand => Self::Function,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

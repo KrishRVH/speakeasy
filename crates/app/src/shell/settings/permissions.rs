@@ -25,11 +25,17 @@ pub(super) const fn description(permission: Permission) -> &'static str {
     match permission {
         Permission::Unknown => "Checked when used",
         Permission::Granted => "Allowed",
-        Permission::NotGranted => "Not enabled",
+        Permission::NotGranted => "Blocked",
         Permission::NotRequested => "Not requested yet",
         Permission::Restricted => "Restricted by system policy",
     }
 }
+
+pub(super) const OPEN: &str = if cfg!(target_os = "linux") {
+    "Microphone help"
+} else {
+    "Open settings"
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Help {

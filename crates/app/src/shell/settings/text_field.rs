@@ -13,12 +13,13 @@ use gpui::{
 use viewport::Viewport;
 
 use crate::{
-    controls::CORNER,
+    controls::{CORNER, HEIGHT, ring},
     theme::{Theme, alpha},
 };
 
 pub(super) struct TextField {
     label: &'static str,
+    placeholder: &'static str,
     edit: Edit,
     viewport: Viewport,
     focus: FocusHandle,
@@ -35,6 +36,7 @@ impl TextField {
     pub(super) fn new(label: &'static str, theme: Theme, cx: &Context<'_, Self>) -> Self {
         Self {
             label,
+            placeholder: "",
             edit: Edit::default(),
             viewport: Viewport::default(),
             focus: cx.focus_handle().tab_stop(true),
@@ -42,6 +44,13 @@ impl TextField {
             layout: None,
             selecting: false,
             problem: None,
+        }
+    }
+
+    pub(super) fn placeholder(self, placeholder: &'static str) -> Self {
+        Self {
+            placeholder,
+            ..self
         }
     }
 
@@ -314,6 +323,9 @@ impl Render for TextField {
     fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let palette = self.theme.palette();
         let field = cx.entity();
+        let placeholder = (self.edit.text.is_empty() && self.edit.marked.is_none())
+            .then_some(self.placeholder)
+            .filter(|placeholder| !placeholder.is_empty());
         let set_value = cx.listener(|field, value: &str, _, cx| {
             let range = 0..field.edit.text.encode_utf16().count();
             field.replace(Some(range), value, Composition::Commit, cx);
@@ -333,15 +345,26 @@ impl Render for TextField {
             )
             .track_focus(&self.focus)
             .cursor_text()
+            .relative()
             .w_full()
             .min_w(px(0.0))
+            .min_h(HEIGHT)
+            .flex()
+            .flex_col()
+            .justify_center()
             .border_1()
-            .border_color(alpha(palette.lamp, 0.25))
-            .focus(|style| style.border_color(gpui::rgb(palette.lamp)))
-            .bg(gpui::rgb(palette.room))
+            .border_color(palette.edge())
+            .hover(|style| style.border_color(gpui::rgb(palette.muted)))
+            .focus(|style| {
+                style
+                    .border_color(gpui::rgb(palette.lamp))
+                    .shadow(ring(palette.lamp))
+            })
+            .bg(gpui::rgb(palette.raise))
             .text_color(gpui::rgb(palette.ink))
+            .text_size(px(13.0))
             .rounded(CORNER)
-            .px(px(8.0))
+            .px(px(10.0))
             .py(px(5.0))
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
@@ -397,7 +420,7 @@ impl Render for TextField {
                         let line =
                             window
                                 .text_system()
-                                .shape_line(text.into(), px(12.0), &runs, None);
+                                .shape_line(text.into(), px(13.0), &runs, None);
                         let cursor = line.x_for_index(input.edit.cursor);
                         let range = input.edit.selection();
                         let anchor = if input.edit.reversed() {
@@ -462,10 +485,24 @@ impl Render for TextField {
                 .w_full()
                 .h(px(20.0)),
             )
+            .when_some(placeholder, |body, placeholder| {
+                body.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .px(px(10.0))
+                        .flex()
+                        .items_center()
+                        .text_color(gpui::rgb(palette.muted))
+                        .whitespace_nowrap()
+                        .overflow_hidden()
+                        .child(placeholder),
+                )
+            })
             .when_some(self.problem, |body, problem| {
                 body.child(
                     div()
-                        .text_size(px(10.0))
+                        .text_size(px(11.0))
                         .text_color(gpui::rgb(palette.warn))
                         .child(problem),
                 )

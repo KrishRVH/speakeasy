@@ -1,33 +1,33 @@
 use gpui::{
-    App, BoxShadow, ClickEvent, Div, ElementId, FontWeight, Pixels, SharedString, Stateful, Window,
-    div, point, prelude::*, px, rgb, svg,
+    AnyElement, App, BoxShadow, ClickEvent, Corner, Div, ElementId, FontWeight, Pixels, Rgba,
+    SharedString, Stateful, Window, anchored, deferred, div, point, prelude::*, px, relative, rgb,
+    svg,
 };
 
 use crate::{
-    BRAND_FONT,
-    icons::{JEWEL_CUT, JEWEL_HOLLOW, KEYSTONE},
+    icons::{self, JEWEL_CUT, JEWEL_HOLLOW},
     theme::{Palette, alpha, mix},
 };
 
-const MONO_FONT: &str = if cfg!(target_os = "windows") {
-    "Consolas"
-} else if cfg!(target_os = "macos") {
-    "Menlo"
-} else {
-    "DejaVu Sans Mono"
-};
+pub(crate) const HEIGHT: Pixels = px(32.0);
 
-const LABEL: Pixels = px(11.0);
+pub(crate) const CORNER: Pixels = px(6.0);
+
+pub(crate) const PANEL_CORNER: Pixels = px(10.0);
+
+pub(crate) const CONTROL_TEXT: Pixels = px(13.0);
+
+pub(crate) const TITLE_TEXT: Pixels = px(14.0);
+
+pub(crate) const DETAIL_TEXT: Pixels = px(12.0);
+
+pub(crate) const DETAIL_LINE: Pixels = px(17.0);
+
+pub(crate) const DISABLED: f32 = 0.42;
 
 const TRACKING: Pixels = px(1.5);
 
 const WORD_SPACE: Pixels = px(7.0);
-
-pub(crate) const HEIGHT: Pixels = px(38.0);
-
-const MAX_WIDTH: Pixels = px(390.0);
-
-pub(crate) const CORNER: Pixels = px(2.0);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Weight {
@@ -38,14 +38,47 @@ pub(crate) enum Weight {
     ConfirmDestroy,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Tone {
+    Lamp,
+    Warn,
+    Muted,
+}
+
+impl Tone {
+    const fn color(self, palette: &Palette) -> u32 {
+        match self {
+            Self::Lamp => palette.lamp,
+            Self::Warn => palette.warn,
+            Self::Muted => palette.muted,
+        }
+    }
+
+    fn wash(self, palette: &Palette) -> Rgba {
+        match self {
+            Self::Lamp => alpha(palette.lamp, 0.13),
+            Self::Warn => alpha(palette.warn, 0.1),
+            Self::Muted => palette.hover(),
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct Kit<'a> {
     palette: &'a Palette,
+    keyboard: bool,
 }
 
 impl<'a> Kit<'a> {
     pub(crate) const fn new(palette: &'a Palette) -> Self {
-        Self { palette }
+        Self {
+            palette,
+            keyboard: false,
+        }
+    }
+
+    pub(crate) const fn keyboard(self, keyboard: bool) -> Self {
+        Self { keyboard, ..self }
     }
 
     pub(crate) fn button(
@@ -58,71 +91,257 @@ impl<'a> Kit<'a> {
         let palette = self.palette;
         let enabled = on_click.is_some();
         let label = label.into();
-        let (fill, edge, ink, hover, ring) = match weight {
-            Weight::Primary => (
-                alpha(palette.lamp, 1.0),
-                alpha(palette.lamp, 1.0),
-                palette.room,
-                alpha(mix(palette.lamp, palette.ink, 0.35), 1.0),
-                palette.lamp,
-            ),
-            Weight::Secondary => (
-                alpha(palette.lamp, 0.0),
-                alpha(palette.lamp, 0.38),
-                palette.ink,
-                alpha(palette.lamp, 0.1),
-                palette.lamp,
-            ),
-            Weight::Quiet => (
-                alpha(palette.lamp, 0.0),
-                alpha(palette.lamp, 0.0),
-                palette.muted,
-                alpha(palette.lamp, 0.06),
-                palette.lamp,
-            ),
-            Weight::Destroy => (
-                alpha(palette.warn, 0.0),
-                alpha(palette.warn, 0.6),
-                palette.warn,
-                alpha(palette.warn, 0.12),
-                palette.warn,
-            ),
-            Weight::ConfirmDestroy => (
-                alpha(palette.warn, 1.0),
-                alpha(palette.warn, 1.0),
-                palette.room,
-                alpha(mix(palette.warn, palette.ink, 0.35), 1.0),
-                palette.warn,
-            ),
+        let clear = alpha(palette.ink, 0.0);
+        let (fill, edge, ink) = match weight {
+            Weight::Primary => (rgb(palette.lamp), rgb(palette.lamp), palette.room),
+            Weight::Secondary => (rgb(palette.raise), palette.edge(), palette.ink),
+            Weight::Quiet => (clear, clear, palette.muted),
+            Weight::Destroy => (clear, alpha(palette.warn, 0.55), palette.warn),
+            Weight::ConfirmDestroy => (rgb(palette.warn), rgb(palette.warn), palette.room),
         };
-        let plate = matches!(weight, Weight::Primary | Weight::ConfirmDestroy);
-        self.pressable(id, label.clone(), gpui::Role::Button, ring, plate, on_click)
-            .justify_center()
-            .gap(px(8.0))
+        let filled = matches!(
+            weight,
+            Weight::Primary | Weight::Secondary | Weight::ConfirmDestroy
+        );
+        self.pressable(id, label.clone(), gpui::Role::Button, filled, on_click)
+            .h(HEIGHT)
             .px(px(14.0))
-            .max_w(MAX_WIDTH)
-            .overflow_hidden()
+            .justify_center()
+            .gap(px(6.0))
+            .rounded(CORNER)
+            .border_1()
             .border_color(edge)
             .bg(fill)
+            .text_size(CONTROL_TEXT)
+            .font_weight(FontWeight::MEDIUM)
             .text_color(rgb(ink))
-            .when(enabled, |control| {
-                control.hover(move |style| {
-                    let style = style.bg(hover);
-                    if matches!(weight, Weight::Secondary | Weight::Quiet) {
-                        style.text_color(rgb(palette.ink))
-                    } else {
-                        style
-                    }
+            .whitespace_nowrap()
+            .when(enabled, |button| {
+                button.hover(move |style| match weight {
+                    Weight::Primary => style.bg(rgb(mix(palette.lamp, palette.ink, 0.18))),
+                    Weight::ConfirmDestroy => style.bg(rgb(mix(palette.warn, palette.ink, 0.18))),
+                    Weight::Secondary => style.border_color(alpha(palette.ink, 0.28)),
+                    Weight::Quiet => style.bg(palette.hover()).text_color(rgb(palette.ink)),
+                    Weight::Destroy => style.bg(Tone::Warn.wash(palette)),
                 })
             })
-            .when(plate, |button| button.child(jewel(palette.room, 6.0)))
-            .map(|button| {
-                if weight == Weight::Quiet {
-                    button.text_size(px(12.0)).child(label)
-                } else {
-                    button.child(caps(&label))
-                }
+            .child(label)
+    }
+
+    pub(crate) fn icon_button(
+        self,
+        id: impl Into<ElementId>,
+        path: &'static str,
+        label: impl Into<SharedString>,
+        on_click: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+    ) -> Stateful<Div> {
+        let palette = self.palette;
+        let enabled = on_click.is_some();
+        self.pressable(id, label.into(), gpui::Role::Button, false, on_click)
+            .size(HEIGHT)
+            .justify_center()
+            .rounded(CORNER)
+            .border_1()
+            .border_color(alpha(palette.ink, 0.0))
+            .when(enabled, |button| {
+                button.hover(move |style| style.bg(palette.hover()))
             })
+            .child(icon(path, 16.0, palette.muted))
+    }
+
+    pub(crate) fn switch(
+        self,
+        id: impl Into<ElementId>,
+        label: impl Into<SharedString>,
+        on: bool,
+        on_click: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+    ) -> Stateful<Div> {
+        let palette = self.palette;
+        let enabled = on_click.is_some();
+        self.pressable(id, label.into(), gpui::Role::Switch, true, on_click)
+            .aria_toggled(if on {
+                gpui::Toggled::True
+            } else {
+                gpui::Toggled::False
+            })
+            .relative()
+            .w(px(40.0))
+            .h(px(22.0))
+            .rounded_full()
+            .border_1()
+            .border_color(if on {
+                rgb(palette.lamp)
+            } else {
+                alpha(palette.muted, 0.7)
+            })
+            .bg(alpha(palette.lamp, if on { 1.0 } else { 0.0 }))
+            .when(enabled && !on, |track| {
+                track.hover(move |style| style.border_color(rgb(palette.ink)))
+            })
+            .child(
+                div()
+                    .absolute()
+                    .top(px(3.0))
+                    .left(px(if on { 21.0 } else { 3.0 }))
+                    .size(px(14.0))
+                    .rounded_full()
+                    .bg(rgb(if on { palette.room } else { palette.muted })),
+            )
+    }
+
+    pub(crate) fn dropdown(
+        self,
+        id: impl Into<ElementId>,
+        label: &str,
+        value: impl Into<SharedString>,
+        expanded: bool,
+        on_click: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+    ) -> Stateful<Div> {
+        let palette = self.palette;
+        let enabled = on_click.is_some();
+        let value = value.into();
+        self.pressable(
+            id,
+            format!("{label}: {value}").into(),
+            gpui::Role::Button,
+            true,
+            on_click,
+        )
+        .w(px(200.0))
+        .max_w_full()
+        .h(HEIGHT)
+        .pl(px(10.0))
+        .pr(px(8.0))
+        .gap(px(8.0))
+        .rounded(CORNER)
+        .border_1()
+        .border_color(if expanded {
+            rgb(palette.lamp)
+        } else {
+            palette.edge()
+        })
+        .bg(rgb(palette.raise))
+        .text_size(CONTROL_TEXT)
+        .text_color(rgb(palette.ink))
+        .when(enabled && !expanded, |trigger| {
+            trigger.hover(move |style| style.border_color(alpha(palette.ink, 0.28)))
+        })
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.0))
+                .overflow_hidden()
+                .text_ellipsis()
+                .whitespace_nowrap()
+                .child(value),
+        )
+        .child(icon(icons::CHEVRON_DOWN, 14.0, palette.muted))
+    }
+
+    pub(crate) fn menu(self, id: impl Into<ElementId>, label: &'static str) -> Stateful<Div> {
+        let palette = self.palette;
+        div()
+            .id(id)
+            .role(gpui::Role::ListBox)
+            .aria_label(label)
+            .occlude()
+            .min_w(px(200.0))
+            .max_w(px(320.0))
+            .max_h(px(280.0))
+            .overflow_y_scroll()
+            .p(px(4.0))
+            .flex()
+            .flex_col()
+            .gap(px(1.0))
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(palette.edge())
+            .bg(rgb(palette.panel))
+            .shadow(vec![BoxShadow {
+                color: alpha(0, 0.45).into(),
+                offset: point(px(0.0), px(8.0)),
+                blur_radius: px(24.0),
+                spread_radius: px(0.0),
+            }])
+            .text_size(CONTROL_TEXT)
+            .text_color(rgb(palette.ink))
+    }
+
+    pub(crate) fn option(
+        self,
+        id: impl Into<ElementId>,
+        label: impl Into<SharedString>,
+        chosen: bool,
+        highlighted: bool,
+        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Stateful<Div> {
+        let palette = self.palette;
+        let label = label.into();
+        self.entry(id, label.clone(), gpui::Role::ListBoxOption, highlighted)
+            .aria_selected(highlighted)
+            .on_click(on_click)
+            .child(
+                div()
+                    .flex_none()
+                    .size(px(16.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .when(chosen, |slot| {
+                        slot.child(icon(icons::CHECK, 14.0, palette.lamp))
+                    }),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .whitespace_nowrap()
+                    .child(label),
+            )
+    }
+
+    pub(crate) fn menu_action(
+        self,
+        id: impl Into<ElementId>,
+        label: impl Into<SharedString>,
+        destructive: bool,
+        highlighted: bool,
+        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Stateful<Div> {
+        let label = label.into();
+        self.entry(id, label.clone(), gpui::Role::MenuItem, highlighted)
+            .px(px(10.0))
+            .when(destructive, |entry| {
+                entry.text_color(rgb(self.palette.warn))
+            })
+            .on_click(on_click)
+            .child(label)
+    }
+
+    fn entry(
+        self,
+        id: impl Into<ElementId>,
+        label: SharedString,
+        role: gpui::Role,
+        highlighted: bool,
+    ) -> Stateful<Div> {
+        let palette = self.palette;
+        div()
+            .id(id)
+            .role(role)
+            .aria_label(label)
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(8.0))
+            .h(HEIGHT)
+            .px(px(8.0))
+            .rounded(CORNER)
+            .cursor_pointer()
+            .when(highlighted, |entry| entry.bg(palette.hover()))
+            .hover(move |style| style.bg(palette.hover()))
     }
 
     pub(crate) fn tab_bar(self, id: impl Into<ElementId>, label: &'static str) -> Stateful<Div> {
@@ -132,9 +351,9 @@ impl<'a> Kit<'a> {
             .aria_label(label)
             .flex()
             .items_end()
-            .gap(px(6.0))
+            .gap(px(24.0))
             .border_b_1()
-            .border_color(alpha(self.palette.lamp, 0.16))
+            .border_color(self.palette.line())
     }
 
     pub(crate) fn tab(
@@ -147,365 +366,455 @@ impl<'a> Kit<'a> {
         let palette = self.palette;
         let enabled = on_click.is_some();
         let label = label.into();
-        self.pressable(
-            id,
-            label.clone(),
-            gpui::Role::Tab,
-            palette.lamp,
-            false,
-            on_click,
-        )
-        .aria_selected(selected)
-        .flex_none()
-        .flex_col()
-        .px(px(12.0))
-        .border_color(alpha(palette.lamp, 0.0))
-        .text_color(rgb(if selected { palette.ink } else { palette.muted }))
-        .when(enabled, |control| {
-            control.hover(move |style| style.text_color(rgb(palette.ink)))
-        })
-        .child(div().flex_1().flex().items_center().child(caps(&label)))
-        .child(
-            div()
-                .w_full()
-                .h(px(2.0))
-                .when(selected, |rule| rule.bg(rgb(palette.lamp))),
-        )
+        self.pressable(id, label.clone(), gpui::Role::Tab, false, on_click)
+            .aria_selected(selected)
+            .flex_col()
+            .h(px(40.0))
+            .mb(px(-1.0))
+            .rounded_t(CORNER)
+            .text_size(TITLE_TEXT)
+            .font_weight(if selected {
+                FontWeight::MEDIUM
+            } else {
+                FontWeight::NORMAL
+            })
+            .text_color(rgb(if selected { palette.ink } else { palette.muted }))
+            .when(enabled, |tab| {
+                tab.hover(move |style| style.text_color(rgb(palette.ink)))
+            })
+            .child(
+                div()
+                    .flex_1()
+                    .flex()
+                    .items_center()
+                    .px(px(2.0))
+                    .child(label),
+            )
+            .child(
+                div()
+                    .h(px(2.0))
+                    .rounded(px(1.0))
+                    .when(selected, |rule| rule.bg(rgb(palette.lamp))),
+            )
     }
 
-    pub(crate) fn toggle(
+    pub(crate) fn segmented(self, id: impl Into<ElementId>, label: &'static str) -> Stateful<Div> {
+        div()
+            .id(id)
+            .role(gpui::Role::TabList)
+            .aria_label(label)
+            .flex()
+            .flex_none()
+            .gap(px(2.0))
+            .p(px(2.0))
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(self.palette.edge())
+            .bg(rgb(self.palette.room))
+    }
+
+    pub(crate) fn segment(
         self,
         id: impl Into<ElementId>,
         label: impl Into<SharedString>,
-        accessible: impl Into<SharedString>,
-        on: bool,
-        on_click: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
-    ) -> Stateful<Div> {
-        let palette = self.palette;
-        let enabled = on_click.is_some();
-        self.pressable(
-            id,
-            accessible.into(),
-            gpui::Role::Switch,
-            palette.lamp,
-            false,
-            on_click,
-        )
-        .aria_toggled(if on {
-            gpui::accesskit::Toggled::True
-        } else {
-            gpui::accesskit::Toggled::False
-        })
-        .gap(px(9.0))
-        .px(px(10.0))
-        .border_color(alpha(palette.lamp, 0.0))
-        .text_size(px(12.0))
-        .text_color(rgb(if on { palette.ink } else { palette.muted }))
-        .when(enabled, |control| {
-            control.hover(move |style| {
-                style
-                    .bg(alpha(palette.lamp, 0.06))
-                    .text_color(rgb(palette.ink))
-            })
-        })
-        .child(if on {
-            jewel(palette.lamp, 9.0)
-        } else {
-            hollow(palette.muted, 9.0)
-        })
-        .child(label.into())
-    }
-
-    pub(crate) fn picker(
-        self,
-        id: impl Into<ElementId>,
-        eyebrow: &'static str,
-        value: impl Into<SharedString>,
-        on_click: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
-    ) -> Stateful<Div> {
-        let palette = self.palette;
-        let enabled = on_click.is_some();
-        let value = value.into();
-        self.pressable(
-            id,
-            format!("{eyebrow}: {value}").into(),
-            gpui::Role::Button,
-            palette.lamp,
-            false,
-            on_click,
-        )
-        .flex_col()
-        .items_start()
-        .justify_center()
-        .gap(px(2.0))
-        .px(px(12.0))
-        .py(px(5.0))
-        .max_w(MAX_WIDTH)
-        .min_w(px(0.0))
-        .overflow_hidden()
-        .border_color(alpha(palette.lamp, 0.24))
-        .when(enabled, |control| {
-            control.hover(move |style| style.bg(alpha(palette.lamp, 0.08)))
-        })
-        .child(self.label(eyebrow))
-        .child(
-            div()
-                .max_w_full()
-                .overflow_hidden()
-                .text_ellipsis()
-                .whitespace_nowrap()
-                .text_size(px(12.0))
-                .text_color(rgb(palette.ink))
-                .child(value),
-        )
-    }
-
-    pub(crate) fn option(
-        self,
-        id: impl Into<ElementId>,
-        label: &'static str,
-        chosen: bool,
-        highlighted: bool,
-        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    ) -> Stateful<Div> {
-        let palette = self.palette;
-        div()
-            .id(id)
-            .role(gpui::Role::ListBoxOption)
-            .aria_label(label)
-            .aria_selected(highlighted)
-            .flex()
-            .items_center()
-            .gap(px(10.0))
-            .px(px(12.0))
-            .py(px(8.0))
-            .cursor_pointer()
-            .text_color(rgb(if chosen { palette.lamp } else { palette.ink }))
-            .when(highlighted, |row| row.bg(rgb(palette.raise)))
-            .hover(|row| row.bg(rgb(palette.raise)))
-            .on_click(on_click)
-            .child(
-                div()
-                    .flex_none()
-                    .size(px(7.0))
-                    .when(chosen, |slot| slot.child(jewel(palette.lamp, 7.0))),
-            )
-            .child(label)
-    }
-
-    pub(crate) fn item(
-        self,
-        id: impl Into<ElementId>,
         selected: bool,
         on_click: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
     ) -> Stateful<Div> {
         let palette = self.palette;
         let enabled = on_click.is_some();
-        div()
-            .id(id)
-            .focusable()
-            .tab_stop(enabled)
-            .px(px(10.0))
-            .py(px(7.0))
+        let label = label.into();
+        self.pressable(id, label.clone(), gpui::Role::Tab, false, on_click)
+            .aria_selected(selected)
+            .h(px(26.0))
+            .px(px(12.0))
+            .justify_center()
             .rounded(CORNER)
             .border_1()
             .border_color(if selected {
-                rgb(palette.lamp)
+                palette.edge()
             } else {
-                alpha(palette.lamp, 0.16)
+                alpha(palette.ink, 0.0)
             })
-            .bg(rgb(if selected {
-                mix(palette.raise, palette.lamp, 0.12)
-            } else {
-                palette.raise
-            }))
-            .when(!enabled, |item| item.opacity(0.45))
-            .focus(move |style| {
-                style
-                    .border_color(rgb(palette.lamp))
-                    .shadow(ring(palette.lamp))
+            .when(selected, |segment| segment.bg(rgb(palette.raise)))
+            .text_size(CONTROL_TEXT)
+            .font_weight(FontWeight::MEDIUM)
+            .whitespace_nowrap()
+            .text_color(rgb(if selected { palette.ink } else { palette.muted }))
+            .when(enabled && !selected, |segment| {
+                segment.hover(move |style| style.text_color(rgb(palette.ink)))
             })
-            .when_some(on_click, |item, on_click| {
-                item.cursor_pointer()
-                    .hover(move |style| style.bg(rgb(mix(palette.raise, palette.ink, 0.08))))
-                    .on_click(on_click)
-            })
+            .child(label)
     }
 
-    pub(crate) fn ticket(
+    pub(crate) fn disclosure(
         self,
         id: impl Into<ElementId>,
-        title: impl IntoElement,
-        selected: bool,
+        label: &'static str,
+        open: bool,
         on_click: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
     ) -> Stateful<Div> {
         let palette = self.palette;
         let enabled = on_click.is_some();
-        div()
-            .id(id)
-            .focusable()
-            .tab_stop(enabled)
-            .relative()
-            .flex()
-            .flex_col()
-            .items_start()
-            .gap(px(5.0))
-            .pl(px(18.0))
-            .pr(px(12.0))
-            .py(px(14.0))
-            .border_b_1()
-            .border_color(alpha(palette.lamp, 0.12))
-            .when(selected, |ticket| {
-                ticket.bg(alpha(palette.lamp, 0.07)).child(
-                    div()
-                        .absolute()
-                        .left_0()
-                        .top_0()
-                        .bottom_0()
-                        .w(px(2.0))
-                        .bg(rgb(palette.lamp)),
-                )
+        self.pressable(id, label.into(), gpui::Role::Button, false, on_click)
+            .h(HEIGHT)
+            .pl(px(4.0))
+            .pr(px(8.0))
+            .gap(px(6.0))
+            .rounded(CORNER)
+            .border_1()
+            .border_color(alpha(palette.ink, 0.0))
+            .text_size(CONTROL_TEXT)
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(rgb(palette.muted))
+            .when(enabled, |disclosure| {
+                disclosure.hover(move |style| style.text_color(rgb(palette.ink)))
             })
-            .when(!enabled, |ticket| ticket.opacity(0.45))
-            .focus(move |style| {
-                style
-                    .bg(alpha(palette.lamp, 0.1))
-                    .shadow(ring(palette.lamp))
-            })
-            .when_some(on_click, |ticket, on_click| {
-                ticket
-                    .cursor_pointer()
-                    .hover(move |style| style.bg(alpha(palette.lamp, 0.1)))
-                    .on_click(on_click)
-            })
-            .child(
-                div().flex().items_center().gap(px(8.0)).child(title).child(
-                    div()
-                        .flex_none()
-                        .size(px(7.0))
-                        .when(selected, |slot| slot.child(jewel(palette.lamp, 7.0))),
-                ),
-            )
+            .child(icon(
+                if open {
+                    icons::CHEVRON_DOWN
+                } else {
+                    icons::CHEVRON_RIGHT
+                },
+                14.0,
+                palette.muted,
+            ))
+            .child(label)
     }
 
-    pub(crate) fn vacancy(self, eyebrow: &'static str, text: impl Into<SharedString>) -> Div {
-        div()
-            .w(px(360.0))
-            .max_w_full()
-            .p(px(16.0))
-            .flex()
-            .flex_col()
-            .items_center()
-            .gap(px(12.0))
-            .child(self.keystone_rule().w(px(180.0)))
-            .child(self.eyebrow(eyebrow))
-            .child(
-                div()
-                    .text_center()
-                    .text_size(px(13.0))
-                    .line_height(px(20.0))
-                    .text_color(rgb(self.palette.muted))
-                    .child(text.into()),
-            )
-    }
-
-    pub(crate) fn masthead(self, signal: u32) -> Div {
-        div()
-            .flex()
-            .items_center()
-            .gap(px(12.0))
-            .child(jewel(signal, 10.0))
-            .child(
-                div()
-                    .flex()
-                    .gap(px(5.0))
-                    .font_family(BRAND_FONT)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_size(px(19.0))
-                    .text_color(rgb(self.palette.ink))
-                    .children(
-                        "SPEAKEASY"
-                            .chars()
-                            .map(|letter| div().child(SharedString::from(letter.to_string()))),
-                    ),
-            )
-    }
-
-    pub(crate) fn label(self, text: &str) -> Div {
-        caps(text)
-            .font_family(MONO_FONT)
-            .text_size(px(9.0))
-            .text_color(rgb(self.palette.muted))
-    }
-
-    pub(crate) fn eyebrow(self, text: &'static str) -> Stateful<Div> {
+    pub(crate) fn heading(self, text: &'static str) -> Stateful<Div> {
         div()
             .id(text)
             .role(gpui::Role::Heading)
             .aria_label(text)
-            .flex()
-            .items_center()
-            .gap(px(8.0))
-            .text_color(rgb(self.palette.lamp))
-            .child(jewel(self.palette.lamp, 6.0))
-            .child(caps(text).font_family(MONO_FONT).text_size(px(10.0)))
+            .px(px(2.0))
+            .text_size(CONTROL_TEXT)
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(rgb(self.palette.muted))
+            .child(text)
     }
 
-    pub(crate) fn badge(label: &'static str, color: u32) -> Div {
-        div()
-            .flex()
-            .items_center()
-            .gap(px(5.0))
-            .px(px(6.0))
-            .py(px(3.0))
-            .rounded(CORNER)
-            .bg(alpha(color, 0.1))
-            .text_size(px(9.0))
-            .text_color(rgb(color))
-            .child(facet(color, 8.0))
-            .child(caps(label))
-    }
-
-    pub(crate) fn inlay(self) -> Div {
-        let lamp = self.palette.lamp;
-        div()
-            .relative()
-            .p(px(16.0))
-            .rounded(CORNER)
-            .bg(rgb(self.palette.panel))
-            .border_1()
-            .border_color(alpha(lamp, 0.24))
-            .child(
-                div()
-                    .absolute()
-                    .top(px(3.0))
-                    .left(px(3.0))
-                    .right(px(3.0))
-                    .bottom(px(3.0))
-                    .rounded(px(1.0))
-                    .border_1()
-                    .border_color(alpha(lamp, 0.1)),
-            )
-    }
-
-    pub(crate) fn double_rule(self) -> Div {
-        let lamp = self.palette.lamp;
+    pub(crate) fn section(self, title: &'static str, rows: Vec<AnyElement>) -> Div {
         div()
             .flex()
             .flex_col()
-            .gap(px(2.0))
-            .child(div().h(px(1.0)).bg(alpha(lamp, 0.3)))
-            .child(div().h(px(1.0)).bg(alpha(lamp, 0.14)))
+            .gap(px(8.0))
+            .child(self.heading(title))
+            .child(self.group(rows))
     }
 
-    pub(crate) fn keystone_rule(self) -> Div {
+    pub(crate) fn group(self, rows: Vec<AnyElement>) -> Div {
+        let line = self.palette.line();
+        div()
+            .flex()
+            .flex_col()
+            .rounded(PANEL_CORNER)
+            .border_1()
+            .border_color(line)
+            .bg(rgb(self.palette.panel))
+            .children(rows.into_iter().enumerate().map(move |(index, row)| {
+                div()
+                    .when(index > 0, |divided| divided.border_t_1().border_color(line))
+                    .child(row)
+            }))
+    }
+
+    pub(crate) fn setting(
+        self,
+        title: impl Into<SharedString>,
+        detail: Option<SharedString>,
+        control: impl IntoElement,
+    ) -> Div {
         div()
             .flex()
             .items_center()
-            .gap(px(8.0))
-            .child(self.double_rule().flex_1())
-            .child(jewel(self.palette.lamp, 6.0))
-            .child(self.double_rule().flex_1())
+            .gap(px(16.0))
+            .min_h(px(60.0))
+            .px(px(16.0))
+            .py(px(12.0))
+            .child(self.label(title, detail).flex_1())
+            .child(div().flex_none().child(control))
+    }
+
+    pub(crate) fn label(self, title: impl Into<SharedString>, detail: Option<SharedString>) -> Div {
+        div()
+            .min_w(px(0.0))
+            .flex()
+            .flex_col()
+            .gap(px(2.0))
+            .child(
+                div()
+                    .text_size(TITLE_TEXT)
+                    .text_color(rgb(self.palette.ink))
+                    .child(title.into()),
+            )
+            .when_some(detail, |label, detail| label.child(self.detail(detail)))
+    }
+
+    pub(crate) fn detail(self, text: impl Into<SharedString>) -> Div {
+        div()
+            .text_size(DETAIL_TEXT)
+            .line_height(DETAIL_LINE)
+            .text_color(rgb(self.palette.muted))
+            .child(text.into())
+    }
+
+    pub(crate) fn banner(
+        self,
+        tone: Tone,
+        title: impl Into<SharedString>,
+        detail: impl Into<SharedString>,
+        actions: Option<Div>,
+    ) -> Div {
+        let palette = self.palette;
+        div()
+            .flex()
+            .gap(px(12.0))
+            .p(px(14.0))
+            .rounded(PANEL_CORNER)
+            .border_1()
+            .border_color(alpha(tone.color(palette), 0.3))
+            .bg(tone.wash(palette))
+            .child(div().pt(px(4.0)).child(facet(tone.color(palette), 10.0)))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.0))
+                    .child(
+                        div()
+                            .text_size(TITLE_TEXT)
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(rgb(palette.ink))
+                            .child(title.into()),
+                    )
+                    .child(self.detail(detail))
+                    .when_some(actions, |column, actions| {
+                        column.child(actions.pt(px(6.0)).flex().flex_wrap().gap(px(8.0)))
+                    }),
+            )
+    }
+
+    pub(crate) fn keycap(self, label: impl Into<SharedString>, large: bool) -> Div {
+        let palette = self.palette;
+        let height = if large { 40.0 } else { 26.0 };
+        div()
+            .flex_none()
+            .h(px(height))
+            .min_w(px(height))
+            .px(px(if large { 14.0 } else { 8.0 }))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(CORNER)
+            .bg(rgb(palette.raise))
+            .border_1()
+            .border_b(px(if large { 3.0 } else { 2.0 }))
+            .border_color(palette.edge())
+            .text_size(px(if large { 16.0 } else { 12.0 }))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(rgb(palette.ink))
+            .whitespace_nowrap()
+            .child(label.into())
+    }
+
+    pub(crate) fn keys(self, shortcut: &str, large: bool) -> Div {
+        let palette = self.palette;
+        div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap(px(if large { 8.0 } else { 4.0 }))
+            .children(shortcut.split(" + ").enumerate().flat_map(|(index, key)| {
+                let joint = (index > 0).then(|| {
+                    div()
+                        .text_size(DETAIL_TEXT)
+                        .text_color(rgb(palette.muted))
+                        .child("+")
+                        .into_any_element()
+                });
+                joint
+                    .into_iter()
+                    .chain([self.keycap(key.to_owned(), large).into_any_element()])
+            }))
+    }
+
+    pub(crate) fn radio_card(
+        self,
+        id: impl Into<ElementId>,
+        label: impl Into<SharedString>,
+        chosen: bool,
+        on_click: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+    ) -> Stateful<Div> {
+        let palette = self.palette;
+        let enabled = on_click.is_some();
+        self.pressable(id, label.into(), gpui::Role::RadioButton, false, on_click)
+            .aria_toggled(if chosen {
+                gpui::Toggled::True
+            } else {
+                gpui::Toggled::False
+            })
+            .w_full()
+            .items_start()
+            .gap(px(12.0))
+            .p(px(12.0))
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(if chosen {
+                rgb(palette.lamp)
+            } else {
+                palette.edge()
+            })
+            .when(chosen, |card| {
+                card.opacity(1.0).bg(Tone::Lamp.wash(palette))
+            })
+            .when(enabled && !chosen, |card| {
+                card.hover(move |style| style.border_color(alpha(palette.ink, 0.28)))
+            })
+            .child(
+                div()
+                    .flex_none()
+                    .mt(px(2.0))
+                    .size(px(16.0))
+                    .rounded_full()
+                    .border_1()
+                    .border_color(rgb(if chosen { palette.lamp } else { palette.muted }))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .when(chosen, |dot| {
+                        dot.child(div().size(px(8.0)).rounded_full().bg(rgb(palette.lamp)))
+                    }),
+            )
+    }
+
+    pub(crate) fn chip(
+        self,
+        label: impl Into<SharedString>,
+        remove: impl Into<ElementId>,
+        remove_label: impl Into<SharedString>,
+        on_remove: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+    ) -> Div {
+        let palette = self.palette;
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(2.0))
+            .h(px(28.0))
+            .pl(px(10.0))
+            .pr(px(2.0))
+            .rounded(px(14.0))
+            .bg(rgb(palette.raise))
+            .border_1()
+            .border_color(palette.edge())
+            .text_size(CONTROL_TEXT)
+            .text_color(rgb(palette.ink))
+            .child(label.into())
+            .child(
+                self.icon_button(remove, icons::CLOSE, remove_label, on_remove)
+                    .size(px(22.0))
+                    .rounded_full(),
+            )
+    }
+
+    pub(crate) fn tag(self, label: impl Into<SharedString>, tone: Tone) -> Div {
+        div()
+            .flex_none()
+            .h(px(20.0))
+            .px(px(8.0))
+            .flex()
+            .items_center()
+            .rounded(px(10.0))
+            .bg(tone.wash(self.palette))
+            .text_size(px(11.0))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(rgb(tone.color(self.palette)))
+            .whitespace_nowrap()
+            .child(label.into())
+    }
+
+    pub(crate) fn progress(self, fraction: f32) -> Div {
+        div()
+            .h(px(4.0))
+            .w_full()
+            .rounded(px(2.0))
+            .bg(self.palette.line())
+            .child(
+                div()
+                    .h_full()
+                    .rounded(px(2.0))
+                    .bg(rgb(self.palette.lamp))
+                    .w(relative(fraction.clamp(0.0, 1.0))),
+            )
+    }
+
+    pub(crate) fn swatch(
+        self,
+        id: impl Into<ElementId>,
+        name: &'static str,
+        colors: &Palette,
+        chosen: bool,
+        on_click: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+    ) -> Stateful<Div> {
+        let palette = self.palette;
+        let keyboard = self.keyboard;
+        let enabled = on_click.is_some();
+        self.pressable(
+            id,
+            format!("Theme: {name}").into(),
+            gpui::Role::RadioButton,
+            true,
+            on_click,
+        )
+        .aria_toggled(if chosen {
+            gpui::Toggled::True
+        } else {
+            gpui::Toggled::False
+        })
+        .size(px(34.0))
+        .justify_center()
+        .rounded_full()
+        .border_2()
+        .border_color(if chosen {
+            rgb(palette.lamp)
+        } else {
+            alpha(palette.lamp, 0.0)
+        })
+        .when(enabled && !chosen, |swatch| {
+            swatch.hover(move |style| style.border_color(palette.edge()))
+        })
+        .when(keyboard, |swatch| {
+            swatch.focus(move |style| {
+                style.shadow(vec![
+                    BoxShadow {
+                        color: alpha(palette.lamp, 0.6).into(),
+                        offset: point(px(0.0), px(0.0)),
+                        blur_radius: px(0.0),
+                        spread_radius: px(4.0),
+                    },
+                    BoxShadow {
+                        color: rgb(palette.panel).into(),
+                        offset: point(px(0.0), px(0.0)),
+                        blur_radius: px(0.0),
+                        spread_radius: px(2.0),
+                    },
+                ])
+            })
+        })
+        .child(
+            div()
+                .size(px(26.0))
+                .rounded_full()
+                .bg(rgb(colors.room))
+                .border_1()
+                .border_color(palette.edge())
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(div().size(px(10.0)).rounded_full().bg(rgb(colors.lamp))),
+        )
     }
 
     fn pressable(
@@ -513,12 +822,11 @@ impl<'a> Kit<'a> {
         id: impl Into<ElementId>,
         label: SharedString,
         role: gpui::Role,
-        ring_color: u32,
-        plate: bool,
+        filled: bool,
         on_click: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
     ) -> Stateful<Div> {
         let enabled = on_click.is_some();
-        let room = self.palette.room;
+        let lamp = self.palette.lamp;
         div()
             .id(id)
             .role(role)
@@ -527,16 +835,18 @@ impl<'a> Kit<'a> {
             .focusable()
             .tab_stop(enabled)
             .flex()
+            .flex_none()
             .items_center()
-            .min_h(HEIGHT)
-            .rounded(CORNER)
-            .border_1()
-            .text_size(LABEL)
-            .when(!enabled, |control| control.opacity(0.45))
-            .focus(move |style| {
-                style
-                    .border_color(rgb(if plate { room } else { ring_color }))
-                    .shadow(ring(ring_color))
+            .when(!enabled, |control| control.opacity(DISABLED))
+            .when(self.keyboard, |control| {
+                control.focus(move |style| {
+                    let style = style.border_color(rgb(lamp));
+                    if filled {
+                        style.shadow(ring(lamp))
+                    } else {
+                        style.bg(alpha(lamp, 0.1))
+                    }
+                })
             })
             .when_some(on_click, |control, on_click| {
                 control.cursor_pointer().on_click(on_click)
@@ -544,19 +854,33 @@ impl<'a> Kit<'a> {
     }
 }
 
-pub(crate) fn jewel(color: u32, size: f32) -> gpui::Svg {
-    jewel_with(KEYSTONE, color, size)
+pub(crate) fn popover(menu: impl IntoElement, align_right: bool) -> Div {
+    div()
+        .absolute()
+        .top(HEIGHT + px(4.0))
+        .map(|anchor| {
+            if align_right {
+                anchor.right_0()
+            } else {
+                anchor.left_0()
+            }
+        })
+        .child(
+            deferred(
+                anchored()
+                    .anchor(if align_right {
+                        Corner::TopRight
+                    } else {
+                        Corner::TopLeft
+                    })
+                    .snap_to_window_with_margin(px(8.0))
+                    .child(menu),
+            )
+            .with_priority(1),
+        )
 }
 
-pub(crate) fn facet(color: u32, size: f32) -> gpui::Svg {
-    jewel_with(JEWEL_CUT, color, size)
-}
-
-pub(crate) fn hollow(color: u32, size: f32) -> gpui::Svg {
-    jewel_with(JEWEL_HOLLOW, color, size)
-}
-
-fn jewel_with(path: &'static str, color: u32, size: f32) -> gpui::Svg {
+pub(crate) fn icon(path: &'static str, size: f32, color: u32) -> gpui::Svg {
     svg()
         .path(path)
         .size(px(size))
@@ -564,12 +888,20 @@ fn jewel_with(path: &'static str, color: u32, size: f32) -> gpui::Svg {
         .flex_none()
 }
 
-fn ring(color: u32) -> Vec<BoxShadow> {
+pub(crate) fn facet(color: u32, size: f32) -> gpui::Svg {
+    icon(JEWEL_CUT, size, color)
+}
+
+pub(crate) fn hollow(color: u32, size: f32) -> gpui::Svg {
+    icon(JEWEL_HOLLOW, size, color)
+}
+
+pub(crate) fn ring(color: u32) -> Vec<BoxShadow> {
     vec![BoxShadow {
-        color: alpha(color, 0.55).into(),
+        color: alpha(color, 0.45).into(),
         offset: point(px(0.0), px(0.0)),
         blur_radius: px(0.0),
-        spread_radius: px(2.0),
+        spread_radius: px(3.0),
     }]
 }
 

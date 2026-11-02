@@ -1,18 +1,26 @@
-use std::time::SystemTime;
+use std::{sync::Arc, time::SystemTime};
 
 use gpui::{
-    App, ClickEvent, Context, Div, ElementId, FontWeight, KeyDownEvent, SharedString, Window, div,
-    img, prelude::*, px, rgb,
+    AnyElement, App, ClickEvent, Context, Div, ElementId, FontWeight, KeyDownEvent, MouseDownEvent,
+    Pixels, SharedString, Stateful, Window, div, img, prelude::*, px, rgb,
 };
 
 use super::{
     Action, CopyKind, Direction, ExportKind, ImageState, Kind, Mode, Pane, Review, Source,
+    library::{Detail, Key, Row},
     narration::Narration,
     navigation::{Origin, Stamp},
 };
 use crate::{
-    controls::{CORNER, HEIGHT, Kit, Weight},
-    show::store::{recall::Health, retention::Retention},
+    controls::{
+        CONTROL_TEXT, DETAIL_LINE, DETAIL_TEXT, DISABLED, Kit, PANEL_CORNER, TITLE_TEXT, Tone,
+        Weight,
+    },
+    icons,
+    show::{
+        Interrupted,
+        store::{recall::Health, retention::Retention},
+    },
     theme::{Palette, alpha},
 };
 
@@ -24,190 +32,58 @@ const RECOVERY_AUDIO: &str = "Recovery leaves your clipboard alone. Recovered vo
     export and expires seven days after the original recording, even if you keep the Show.";
 const RECOVERY_PREFIX: &str = "A crash or a slow or full disk can leave a shorter recording. Recovery preserves \
     the original expiry date.";
+const RECORD_HINT: &str =
+    "Hold your shortcut and press S, W, or A to record your screen, a window, or an area.";
+const KEYS_HINT: &str = "Page Up / Page Down: jump 10 seconds · Home / End: first / last frame";
+
+const BODY_LINE: Pixels = px(20.0);
+const HEADING_TEXT: Pixels = px(16.0);
 
 impl Render for Review {
     fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let palette = self.theme.palette();
+        let kit = Kit::new(palette).keyboard(self.keyboard);
         let now = SystemTime::now();
-        let selected = self.library.selected.as_ref();
-        let sidebar = div()
-            .id("show-library")
-            .w(px(230.0))
-            .flex_none()
-            .h_full()
-            .overflow_y_scroll()
-            .border_r_1()
-            .border_color(alpha(palette.lamp, 0.14))
-            .px(px(6.0))
-            .py(px(4.0))
-            .flex()
-            .flex_col()
-            .children(self.library.rows.iter().enumerate().map(|(index, row)| {
-                let current = selected.is_some_and(|key| key.directory == row.directory);
-                let description = row.duration.map_or_else(
-                    || "Details unavailable".into(),
-                    |duration| format!("{duration} · {} frames", row.frames),
-                );
-                let tags: Vec<_> = [
-                    (row.pinned == Some(true)).then_some(("Kept", palette.lamp)),
-                    match &row.kind {
-                        Kind::Interrupted(show) if show.narration_pending() => {
-                            Some(("Narration pending", palette.warn))
-                        },
-                        Kind::Interrupted(_) => Some(("Interrupted", palette.warn)),
-                        Kind::Saved => None,
-                    },
-                    row.narration_lost.map(|lost| {
-                        (
-                            if lost == speakeasy_show::NarrationLoss::Incomplete {
-                                "Narration incomplete"
-                            } else {
-                                "No narration"
-                            },
-                            palette.warn,
-                        )
-                    }),
-                    (row.early && matches!(row.kind, Kind::Saved))
-                        .then_some(("Ended early", palette.warn)),
-                    (row.health != Health::Ok).then_some((
-                        if row.health == Health::Unsupported {
-                            "Can't open"
-                        } else {
-                            "Damaged"
-                        },
-                        palette.warn,
-                    )),
-                ]
-                .into_iter()
-                .flatten()
-                .collect();
-                Kit::new(palette)
-                    .ticket(
-                        id(&Action::Show(index)),
-                        div()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(row.recorded(now)),
-                        current,
-                        press(Action::Show(index), true, cx),
-                    )
-                    .w_full()
-                    .child(
-                        div()
-                            .text_color(rgb(palette.muted))
-                            .text_size(px(11.0))
-                            .child(description),
-                    )
-                    .when(!tags.is_empty(), |ticket| {
-                        ticket.child(
-                            div().pt(px(3.0)).flex().flex_wrap().gap(px(5.0)).children(
-                                tags.into_iter()
-                                    .map(|(label, color)| Kit::badge(label, color)),
-                            ),
-                        )
-                    })
-            }));
-        let content = if let Some(key) = selected {
-            self.detail_pane(key, palette, now, cx).into_any_element()
-        } else {
-            let (eyebrow, text) = if self.library.gone {
-                (
-                    "Show gone",
-                    "This Show was deleted or has expired. Choose another Show to continue.",
-                )
-            } else if self.listing.is_some() {
-                ("Library", "Looking for Shows…")
-            } else if !self.library.rows.is_empty() {
-                ("Library", "Choose a Show to review.")
-            } else if cfg!(target_os = "linux") {
-                (
-                    "No Shows yet",
-                    "No saved Shows. Linux opens saved Shows but doesn't record them yet.",
-                )
-            } else {
-                (
-                    "No Shows yet",
-                    "No saved Shows. While holding the dictation shortcut, press S, W, or A to record one.",
-                )
-            };
-            div()
-                .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(Kit::new(palette).vacancy(eyebrow, text))
-                .into_any_element()
+        let content = match self.library.selected.as_ref() {
+            Some(key) => self.detail_pane(key, kit, palette, now, cx),
+            None => self.placeholder(kit, palette).into_any_element(),
         };
         div()
             .id("shows")
             .size_full()
-            .bg(rgb(palette.panel))
+            .bg(rgb(palette.room))
             .text_color(rgb(palette.ink))
-            .text_size(px(12.0))
+            .text_size(CONTROL_TEXT)
             .flex()
             .flex_col()
+            .capture_key_down(cx.listener(|view, _: &KeyDownEvent, _, cx| {
+                view.modality(true, cx);
+            }))
+            .capture_any_mouse_down(cx.listener(|view, _: &MouseDownEvent, _, cx| {
+                view.menu = view.menu.pointer();
+                view.modality(false, cx);
+            }))
+            .capture_key_up(cx.listener(Self::menu_key_up))
             .on_key_down(cx.listener(Self::key_down))
             .track_focus(&self.focus)
-            .child(
-                div()
-                    .px(px(24.0))
-                    .pt(px(18.0))
-                    .pb(px(14.0))
-                    .flex()
-                    .flex_col()
-                    .gap(px(12.0))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .gap(px(16.0))
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(18.0))
-                                    .child(Kit::new(palette).masthead(palette.lamp))
-                                    .child(Kit::new(palette).eyebrow("Shows")),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(14.0))
-                                    .child(div().text_color(rgb(palette.muted)).child(
-                                        if self.source == Source::Demo {
-                                            "Preview · synthetic recordings".into()
-                                        } else {
-                                            format!("{} Shows", self.library.rows.len())
-                                        },
-                                    ))
-                                    .child(command(
-                                        Action::Refresh,
-                                        "Refresh",
-                                        Weight::Secondary,
-                                        self.listing.is_none() && self.keeping.is_none(),
-                                        palette,
-                                        cx,
-                                    )),
-                            ),
-                    )
-                    .child(Kit::new(palette).keystone_rule()),
-            )
             .child(
                 div()
                     .flex_1()
                     .min_h(px(0.0))
                     .flex()
-                    .child(sidebar)
+                    .child(self.library_pane(kit, palette, now, cx))
                     .child(content),
             )
             .when_some(self.notice.clone(), |body, notice| {
                 body.child(
                     div()
-                        .px(px(24.0))
-                        .py(px(10.0))
+                        .flex_none()
+                        .px(px(20.0))
+                        .py(px(12.0))
                         .border_t_1()
-                        .border_color(alpha(palette.lamp, 0.14))
+                        .border_color(palette.line())
+                        .bg(rgb(palette.door))
+                        .line_height(BODY_LINE)
                         .child(notice),
                 )
             })
@@ -215,347 +91,491 @@ impl Render for Review {
 }
 
 impl Review {
-    fn detail_pane(
+    pub(super) fn modality(&mut self, keyboard: bool, cx: &mut Context<'_, Self>) {
+        if self.keyboard != keyboard {
+            self.keyboard = keyboard;
+            cx.notify();
+        }
+    }
+
+    pub(super) fn can_copy(&self, cx: &App) -> bool {
+        self.source != Source::Demo && (self.actions.can_copy)(cx) && self.copying.is_none()
+    }
+
+    fn library_pane(
         &self,
-        key: &super::library::Key,
+        kit: Kit<'_>,
         palette: &Palette,
         now: SystemTime,
         cx: &Context<'_, Self>,
-    ) -> impl IntoElement {
+    ) -> Div {
+        let selected = self.library.selected.as_ref();
+        div()
+            .w(px(260.0))
+            .flex_none()
+            .h_full()
+            .flex()
+            .flex_col()
+            .border_r_1()
+            .border_color(palette.line())
+            .child(
+                div()
+                    .flex_none()
+                    .h(px(56.0))
+                    .pl(px(20.0))
+                    .pr(px(12.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(
+                        div()
+                            .id("shows-title")
+                            .role(gpui::Role::Heading)
+                            .aria_label("Shows")
+                            .text_size(HEADING_TEXT)
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("Shows"),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_color(rgb(palette.muted))
+                            .child(self.library.rows.len().to_string()),
+                    )
+                    .child(command(
+                        kit,
+                        Action::Refresh,
+                        "Refresh",
+                        Weight::Quiet,
+                        self.listing.is_none() && self.keeping.is_none(),
+                        cx,
+                    )),
+            )
+            .when(self.source == Source::Demo, |pane| {
+                pane.child(
+                    kit.detail("Preview · synthetic recordings")
+                        .px(px(20.0))
+                        .pb(px(8.0)),
+                )
+            })
+            .child(
+                div()
+                    .id("show-library")
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .overflow_y_scroll()
+                    .px(px(8.0))
+                    .pb(px(8.0))
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.0))
+                    .children(self.library.rows.iter().enumerate().map(|(index, row)| {
+                        let current = selected.is_some_and(|key| key.directory == row.directory);
+                        self.show_row(index, row, current, kit, palette, now, cx)
+                    })),
+            )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "A library row reads its row, selection, kit, palette, clock, and view context"
+    )]
+    fn show_row(
+        &self,
+        index: usize,
+        row: &Row,
+        current: bool,
+        kit: Kit<'_>,
+        palette: &Palette,
+        now: SystemTime,
+        cx: &Context<'_, Self>,
+    ) -> Stateful<Div> {
+        let description = row.duration.map_or_else(
+            || "Details unavailable".into(),
+            |duration| format!("{duration} · {} frames", row.frames),
+        );
+        let tags: Vec<_> = (row.pinned == Some(true))
+            .then(|| kit.tag("Kept", Tone::Lamp))
+            .into_iter()
+            .chain(status(row).map(|(label, tone)| kit.tag(label, tone)))
+            .collect();
+        let hover = palette.hover();
+        self.pressable(
+            palette,
+            id(&Action::Show(index)),
+            press(Action::Show(index), true, cx),
+        )
+        .relative()
+        .w_full()
+        .flex()
+        .flex_col()
+        .items_start()
+        .gap(px(3.0))
+        .px(px(12.0))
+        .py(px(10.0))
+        .rounded(px(8.0))
+        .when(current, |item| item.bg(hover).child(bar(palette)))
+        .hover(move |style| style.bg(hover))
+        .child(
+            div()
+                .text_size(TITLE_TEXT)
+                .font_weight(FontWeight::MEDIUM)
+                .child(row.recorded(now)),
+        )
+        .child(kit.detail(description))
+        .when(!tags.is_empty(), |item| {
+            item.child(
+                div()
+                    .pt(px(4.0))
+                    .flex()
+                    .flex_wrap()
+                    .gap(px(4.0))
+                    .children(tags),
+            )
+        })
+    }
+
+    fn placeholder(&self, kit: Kit<'_>, palette: &Palette) -> Div {
+        let (title, text, keys) = if self.library.gone {
+            (
+                Some("Show gone"),
+                "This Show was deleted or has expired. Choose another Show to continue.",
+                false,
+            )
+        } else if self.listing.is_some() {
+            (None, "Looking for Shows…", false)
+        } else if !self.library.rows.is_empty() {
+            (None, "Choose a Show to review.", false)
+        } else if cfg!(target_os = "linux") {
+            (
+                Some("No Shows yet"),
+                "Linux opens saved Shows but doesn't record them yet.",
+                false,
+            )
+        } else {
+            (Some("No Shows yet"), RECORD_HINT, true)
+        };
+        div()
+            .flex_1()
+            .p(px(24.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .w(px(380.0))
+                    .max_w_full()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(8.0))
+                    .text_center()
+                    .when_some(title, |column, title| {
+                        column.child(
+                            div()
+                                .text_size(HEADING_TEXT)
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child(title),
+                        )
+                    })
+                    .child(
+                        div()
+                            .line_height(BODY_LINE)
+                            .text_color(rgb(palette.muted))
+                            .child(text),
+                    )
+                    .when(keys, |column| {
+                        column.child(
+                            div()
+                                .pt(px(8.0))
+                                .flex()
+                                .gap(px(6.0))
+                                .children(["S", "W", "A"].map(|key| kit.keycap(key, false))),
+                        )
+                    }),
+            )
+    }
+
+    fn detail_pane(
+        &self,
+        key: &Key,
+        kit: Kit<'_>,
+        palette: &Palette,
+        now: SystemTime,
+        cx: &Context<'_, Self>,
+    ) -> AnyElement {
         let row = self
             .library
             .rows
             .iter()
             .find(|row| row.directory == key.directory);
-        if let Some(Kind::Interrupted(interrupted)) = row.map(|row| &row.kind) {
-            let pending = interrupted.narration_pending();
-            let busy =
-                self.recovering.is_some() || self.discarding.is_some() || self.keeping.is_some();
-            return div()
-                .flex_1()
-                .p(px(24.0))
-                .flex()
-                .flex_col()
-                .gap(px(16.0))
-                .child(div().text_size(px(20.0)).child(if pending {
-                    "Narration pending"
-                } else {
-                    "Interrupted Show"
-                }))
-                .child(row.map_or_else(String::new, |row| {
-                    format!("{} · {}", row.recorded(now), row.retention(now))
-                }))
-                .child(if pending {
-                    RETRY_NARRATION
-                } else {
-                    RECOVER_SHOW
-                })
-                .child(RECOVERY_AUDIO)
-                .child(RECOVERY_PREFIX)
-                .child(
-                    div()
-                        .flex()
-                        .gap(px(10.0))
-                        .child(command(
-                            Action::Recover,
-                            if pending {
-                                "Transcribe narration"
-                            } else {
-                                "Recover Show"
-                            },
-                            Weight::Primary,
-                            !busy,
-                            palette,
-                            cx,
-                        ))
-                        .child(command(
-                            Action::Discard,
-                            if pending { "Discard audio" } else { "Discard" },
-                            Weight::Destroy,
-                            !busy && !self.confirm_discard,
-                            palette,
-                            cx,
-                        )),
-                )
-                .when(self.confirm_discard, |pane| {
-                    pane.child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(12.0))
-                            .p(px(16.0))
-                            .rounded(CORNER)
-                            .border_1()
-                            .border_color(alpha(palette.warn, 0.45))
-                            .bg(alpha(palette.warn, 0.06))
-                            .child(
-                                div()
-                                    .flex()
-                                    .child(Kit::badge("Cannot be undone", palette.warn)),
-                            )
-                            .child(if pending {
-                                super::DISCARD_AUDIO
-                            } else {
-                                super::DISCARD_SHOW
-                            })
-                            .child(
-                                div()
-                                    .flex()
-                                    .gap(px(10.0))
-                                    .child(command(
-                                        Action::CancelDiscard,
-                                        "Cancel",
-                                        Weight::Secondary,
-                                        !busy,
-                                        palette,
-                                        cx,
-                                    ))
-                                    .child(command(
-                                        Action::ConfirmDiscard,
-                                        "Discard permanently",
-                                        Weight::ConfirmDestroy,
-                                        !busy,
-                                        palette,
-                                        cx,
-                                    )),
-                            ),
-                    )
-                })
+        if let Some(row) = row
+            && let Kind::Interrupted(interrupted) = &row.kind
+        {
+            return self
+                .recovery(row, interrupted, kit, palette, now, cx)
                 .into_any_element();
         }
-        let heading = row.map_or_else(
-            || "Show".into(),
-            |row| {
-                let duration = row.duration.map_or_else(
-                    || "Duration unavailable".into(),
-                    |duration| duration.to_string(),
-                );
-                format!(
-                    "{} · {duration} · {} keyframes · {} marks",
-                    row.recorded(now),
-                    row.frames,
-                    row.marks
-                )
-            },
-        );
-        let retention = row.map_or_else(String::new, |row| row.retention(now));
+        let title = row.map_or_else(|| "Show".into(), |row| row.recorded(now));
+        let meta = row.map(|row| {
+            let duration = row.duration.map_or_else(
+                || "Duration unavailable".into(),
+                |duration| duration.to_string(),
+            );
+            format!(
+                "{duration} · {} keyframes · {} marks",
+                row.frames, row.marks
+            )
+        });
+        let tags = row.map_or_else(Vec::new, |row| {
+            let kept = row.pinned == Some(true);
+            std::iter::once(kit.tag(
+                row.retention(now),
+                if kept { Tone::Lamp } else { Tone::Muted },
+            ))
+            .chain(status(row).map(|(label, tone)| kit.tag(label, tone)))
+            .collect()
+        });
+        div()
+            .flex_1()
+            .min_w(px(0.0))
+            .flex()
+            .flex_col()
+            .child(
+                heading(kit, palette, title.into(), meta, tags)
+                    .child(self.actions(row, kit, palette, now, cx)),
+            )
+            .child(self.review(key.frame, kit, palette, cx))
+            .into_any_element()
+    }
+
+    fn actions(
+        &self,
+        row: Option<&Row>,
+        kit: Kit<'_>,
+        palette: &Palette,
+        now: SystemTime,
+        cx: &Context<'_, Self>,
+    ) -> Div {
+        let can_copy = self.can_copy(cx);
+        let kept = row.and_then(|row| row.pinned);
+        let keep = if self
+            .keeping
+            .as_ref()
+            .is_some_and(|(directory, _)| self.library.is_selected(directory))
+        {
+            "Saving…"
+        } else {
+            keep_label(row, now)
+        };
+        div()
+            .flex()
+            .flex_none()
+            .flex_wrap()
+            .items_center()
+            .gap(px(8.0))
+            .when(!cfg!(target_os = "linux"), |bar| {
+                bar.child(command(
+                    kit,
+                    Action::Copy(CopyKind::Agent),
+                    "Send to agent",
+                    Weight::Primary,
+                    can_copy,
+                    cx,
+                ))
+                .child(command(
+                    kit,
+                    Action::Copy(CopyKind::Summary),
+                    "Copy summary",
+                    Weight::Secondary,
+                    can_copy,
+                    cx,
+                ))
+            })
+            .when(self.export_cancel.is_some(), |bar| {
+                bar.child(command(
+                    kit,
+                    Action::CancelExport,
+                    "Cancel export",
+                    Weight::Quiet,
+                    true,
+                    cx,
+                ))
+            })
+            .child(command(
+                kit,
+                Action::Keep,
+                keep,
+                Weight::Quiet,
+                kept.is_some() && self.keeping.is_none() && self.listing.is_none(),
+                cx,
+            ))
+            .child(self.more(kit, palette, cx))
+    }
+
+    fn review(
+        &self,
+        frame: usize,
+        kit: Kit<'_>,
+        palette: &Palette,
+        cx: &Context<'_, Self>,
+    ) -> Stateful<Div> {
+        let caption = self.request.and_then(|request| {
+            let frame = self.detail.as_ref()?.frames.get(frame)?;
+            match &self.image {
+                ImageState::Ready(decoded) => Some(request.caption(frame, self.mode, decoded.at)),
+                _ => None,
+            }
+        });
         div()
             .id("show-detail")
             .flex_1()
-            .min_w(px(0.0))
             .min_h(px(0.0))
             .overflow_y_scroll()
-            .p(px(20.0))
+            .px(px(24.0))
+            .py(px(20.0))
             .flex()
             .flex_col()
-            .gap(px(10.0))
-            .child(div().font_weight(FontWeight::MEDIUM).child(heading))
-            .child(
-                div()
-                    .text_size(px(11.0))
-                    .text_color(rgb(palette.muted))
-                    .child(retention),
-            )
+            .gap(px(14.0))
             .when_some(
                 self.detail
                     .as_ref()
                     .filter(|detail| !detail.warnings.is_empty()),
-                |body, detail| {
-                    body.child(
-                        div()
-                            .id("show-warnings")
-                            .max_h(px(78.0))
-                            .overflow_y_scroll()
-                            .text_size(px(11.0))
-                            .text_color(rgb(palette.warn))
-                            .children(
-                                detail
-                                    .warnings
-                                    .iter()
-                                    .map(|warning| div().child(warning.clone())),
-                            ),
-                    )
-                },
+                |body, detail| body.child(warnings(detail, palette)),
             )
             .when_some(self.detail.as_ref(), |body, detail| {
-                let mode = |mode: Mode, label: &'static str, enabled: bool| {
-                    tab(
-                        Action::Mode(mode),
-                        label,
-                        self.mode == mode,
-                        enabled,
-                        palette,
-                        cx,
-                    )
-                };
-                body.child(
-                    div()
-                        .flex()
-                        .items_end()
-                        .justify_between()
-                        .gap(px(8.0))
-                        .child(
-                            Kit::new(palette)
-                                .tab_bar("show-frame-modes", "Frames to review")
-                                .flex_1()
-                                .child(mode(Mode::Keyframes, "Keyframes", true))
-                                .child(mode(
-                                    Mode::Source,
-                                    "All retained frames",
-                                    detail.source_available,
-                                ))
-                                .when(
-                                    cfg!(any(target_os = "windows", target_os = "macos")),
-                                    |bar| {
-                                        bar.child(mode(
-                                            Mode::Video,
-                                            "Video",
-                                            detail.movie.is_some(),
-                                        ))
-                                    },
-                                ),
-                        )
-                        .when(self.mode == Mode::Video, |bar| {
-                            bar.child(Kit::new(palette).toggle(
-                                id(&Action::Annotations),
-                                "Annotations",
-                                "Annotations",
-                                self.annotated,
-                                press(Action::Annotations, !detail.frames.is_empty(), cx),
-                            ))
-                        }),
-                )
-                .child(
-                    div()
-                        .text_size(px(11.0))
-                        .text_color(rgb(palette.muted))
-                        .child(detail.coverage.clone()),
-                )
+                body.child(self.modes(detail, kit, cx))
             })
-            .child(self.canvas(palette))
-            .when_some(
-                self.request.and_then(|request| {
-                    self.detail
-                        .as_ref()
-                        .and_then(|detail| detail.frames.get(key.frame))
-                        .and_then(|frame| match &self.image {
-                            ImageState::Ready(decoded) => {
-                                Some(request.caption(frame, self.mode, decoded.at))
-                            },
-                            _ => None,
-                        })
-                }),
-                |body, caption| {
-                    body.child(
-                        div()
-                            .text_size(px(11.0))
-                            .text_color(rgb(palette.muted))
-                            .child(caption),
-                    )
-                },
-            )
-            .child(self.navigation(key.frame, palette, cx))
+            .child(self.canvas(kit, palette))
+            .when_some(caption, |body, caption| body.child(kit.detail(caption)))
+            .child(self.navigation(frame, kit, palette, cx))
             .when(self.mode == Mode::Video, |body| {
                 body.child(self.timeline(palette, cx))
             })
             .when(matches!(self.mode, Mode::Source | Mode::Video), |body| {
-                body.child(
-                    div()
-                        .id("show-marks")
-                        .max_h(px(72.0))
-                        .overflow_y_scroll()
-                        .flex()
-                        .flex_wrap()
-                        .gap(px(6.0))
-                        .children(self.detail.iter().flat_map(|detail| &detail.marks).map(
-                            |&(number, _)| {
-                                command(
-                                    Action::Mark(number),
-                                    format!("Mark #{number}"),
-                                    Weight::Secondary,
-                                    self.detail
-                                        .as_ref()
-                                        .is_some_and(|detail| !detail.frames.is_empty()),
-                                    palette,
-                                    cx,
-                                )
-                            },
-                        )),
-                )
+                body.child(self.marks(kit, cx))
             })
+            .child(kit.detail(KEYS_HINT))
             .child(
-                div()
-                    .text_size(px(11.0))
-                    .text_color(rgb(palette.muted))
-                    .child("Page Up / Page Down: jump 10 seconds · Home / End: first / last frame"),
-            )
-            .child(
-                Kit::new(palette)
-                    .tab_bar("show-panes", "Show text")
-                    .child(tab(
-                        Action::Pane(Pane::Summary),
-                        "Summary",
-                        self.pane == Pane::Summary,
-                        true,
-                        palette,
-                        cx,
-                    ))
-                    .child(tab(
-                        Action::Pane(Pane::Narration),
-                        "Narration",
-                        self.pane == Pane::Narration,
-                        true,
-                        palette,
-                        cx,
-                    )),
+                div().flex().child(
+                    kit.segmented("show-panes", "Show text")
+                        .child(segment(
+                            kit,
+                            Action::Pane(Pane::Summary),
+                            "Summary",
+                            self.pane == Pane::Summary,
+                            true,
+                            cx,
+                        ))
+                        .child(segment(
+                            kit,
+                            Action::Pane(Pane::Narration),
+                            "Narration",
+                            self.pane == Pane::Narration,
+                            true,
+                            cx,
+                        )),
+                ),
             )
             .child(match self.pane {
                 Pane::Summary => self.summary(palette).into_any_element(),
                 Pane::Narration => self.narration(palette, cx).into_any_element(),
             })
-            .child(self.commands(palette, now, cx))
-            .into_any_element()
     }
 
-    fn canvas(&self, palette: &Palette) -> impl IntoElement {
+    fn modes(&self, detail: &Detail, kit: Kit<'_>, cx: &Context<'_, Self>) -> Div {
+        let mode = |mode: Mode, label: &'static str, enabled: bool| {
+            segment(
+                kit,
+                Action::Mode(mode),
+                label,
+                self.mode == mode,
+                enabled,
+                cx,
+            )
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(8.0))
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(12.0))
+                    .child(
+                        kit.segmented("show-frame-modes", "Frames to review")
+                            .child(mode(Mode::Keyframes, "Keyframes", true))
+                            .child(mode(
+                                Mode::Source,
+                                "All retained frames",
+                                detail.source_available,
+                            ))
+                            .when(
+                                cfg!(any(target_os = "windows", target_os = "macos")),
+                                |bar| bar.child(mode(Mode::Video, "Video", detail.movie.is_some())),
+                            ),
+                    )
+                    .when(self.mode == Mode::Video, |row| {
+                        row.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(10.0))
+                                .child(kit.switch(
+                                    id(&Action::Annotations),
+                                    "Annotations",
+                                    self.annotated,
+                                    press(Action::Annotations, !detail.frames.is_empty(), cx),
+                                ))
+                                .child("Annotations"),
+                        )
+                    }),
+            )
+            .child(kit.detail(detail.coverage.clone()))
+    }
+
+    fn canvas(&self, kit: Kit<'_>, palette: &Palette) -> Div {
         const UNAVAILABLE: &str =
             "Frame navigation is unavailable. The summary may still be readable.";
         div()
             .flex_1()
-            .min_h(px(120.0))
+            .min_h(px(200.0))
             .overflow_hidden()
-            .rounded(CORNER)
-            .bg(rgb(palette.room))
+            .rounded(PANEL_CORNER)
+            .bg(rgb(palette.panel))
             .border_1()
-            .border_color(alpha(palette.lamp, 0.12))
+            .border_color(palette.line())
             .flex()
             .items_center()
             .justify_center()
             .child(match &self.image {
-                ImageState::Ready(decoded) => img(std::sync::Arc::clone(&decoded.image))
+                ImageState::Ready(decoded) => img(Arc::clone(&decoded.image))
                     .size_full()
                     .into_any_element(),
-                ImageState::Loading => Kit::new(palette)
-                    .vacancy("Frame", "Loading frame…")
+                ImageState::Loading => quiet(palette, "Loading frame…").into_any_element(),
+                ImageState::Failed(error) => div()
+                    .w(px(452.0))
+                    .max_w_full()
+                    .p(px(16.0))
+                    .child(kit.banner(Tone::Warn, "Frame unavailable", error.clone(), None))
                     .into_any_element(),
-                ImageState::Failed(error) => Kit::new(palette)
-                    .vacancy("Frame unavailable", error.clone())
-                    .into_any_element(),
-                ImageState::Empty if self.opening.is_some() => Kit::new(palette)
-                    .vacancy("Frame", "Opening Show…")
-                    .into_any_element(),
-                ImageState::Empty => Kit::new(palette)
-                    .vacancy("Frame unavailable", UNAVAILABLE)
-                    .into_any_element(),
+                ImageState::Empty if self.opening.is_some() => {
+                    quiet(palette, "Opening Show…").into_any_element()
+                },
+                ImageState::Empty => quiet(palette, UNAVAILABLE).into_any_element(),
             })
     }
 
     fn navigation(
         &self,
         index: usize,
+        kit: Kit<'_>,
         palette: &Palette,
         cx: &Context<'_, Self>,
-    ) -> impl IntoElement {
+    ) -> Div {
         let frames = self
             .detail
             .as_ref()
@@ -586,36 +606,30 @@ impl Review {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(10.0))
-                    .child(step(
-                        Action::Previous,
-                        "‹",
+                    .gap(px(4.0))
+                    .child(div().flex_1().min_w(px(0.0)).child(caption))
+                    .child(kit.icon_button(
+                        id(&Action::Previous),
+                        icons::CHEVRON_LEFT,
                         "Previous frame",
-                        index > 0 && count > 0,
-                        palette,
-                        cx,
+                        press(Action::Previous, index > 0 && count > 0, cx),
                     ))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .text_size(px(12.0))
-                            .child(caption),
-                    )
-                    .child(step(
-                        Action::Next,
-                        "›",
+                    .child(kit.icon_button(
+                        id(&Action::Next),
+                        icons::CHEVRON_RIGHT,
                         "Next frame",
-                        index.saturating_add(1) < count,
-                        palette,
-                        cx,
+                        press(Action::Next, index.saturating_add(1) < count, cx),
                     )),
             )
             .child(
-                Kit::new(palette)
-                    .tab_bar("show-frame-numbers", "Frames")
-                    .overflow_x_scroll()
+                div()
+                    .id("show-frame-numbers")
+                    .role(gpui::Role::TabList)
+                    .aria_label("Frames")
+                    .flex()
                     .flex_none()
+                    .gap(px(6.0))
+                    .overflow_x_scroll()
                     .children(
                         frames
                             .iter()
@@ -623,12 +637,12 @@ impl Review {
                             .skip(index.saturating_sub(10))
                             .take(21)
                             .map(|(position, frame)| {
-                                tab(
+                                chip(
+                                    kit,
+                                    palette,
                                     Action::Frame(position),
                                     format!("#{} {}", frame.number, frame.at),
                                     index == position,
-                                    true,
-                                    palette,
                                     cx,
                                 )
                             }),
@@ -636,7 +650,36 @@ impl Review {
             )
     }
 
-    fn summary(&self, palette: &Palette) -> impl IntoElement {
+    fn marks(&self, kit: Kit<'_>, cx: &Context<'_, Self>) -> Stateful<Div> {
+        let enabled = self
+            .detail
+            .as_ref()
+            .is_some_and(|detail| !detail.frames.is_empty());
+        div()
+            .id("show-marks")
+            .max_h(px(72.0))
+            .overflow_y_scroll()
+            .flex()
+            .flex_wrap()
+            .gap(px(6.0))
+            .children(
+                self.detail
+                    .iter()
+                    .flat_map(|detail| &detail.marks)
+                    .map(|&(number, _)| {
+                        command(
+                            kit,
+                            Action::Mark(number),
+                            format!("Mark #{number}"),
+                            Weight::Secondary,
+                            enabled,
+                            cx,
+                        )
+                    }),
+            )
+    }
+
+    fn summary(&self, palette: &Palette) -> Stateful<Div> {
         const REST: &str = "The rest is in summary.md. Copy summary includes the whole file.";
         let text = match self.detail.as_ref().map(|detail| &detail.summary) {
             Some(Ok(summary)) => {
@@ -648,26 +691,18 @@ impl Review {
                     })
             },
             Some(Err(error)) => div().text_color(rgb(palette.warn)).child(error.clone()),
-            None => div().child(if self.opening.is_some() {
-                "Loading summary…"
-            } else {
-                "Summary unavailable. Try Refresh or Open folder."
-            }),
+            None => div()
+                .text_color(rgb(palette.muted))
+                .child(if self.opening.is_some() {
+                    "Loading summary…"
+                } else {
+                    "Summary unavailable. Try Refresh or Open folder."
+                }),
         };
-        div()
-            .id("show-summary")
-            .h(px(150.0))
-            .flex_none()
-            .overflow_y_scroll()
-            .p(px(12.0))
-            .rounded(CORNER)
-            .bg(rgb(palette.room))
-            .text_size(px(12.0))
-            .line_height(px(19.0))
-            .child(text)
+        well(palette, "show-summary", px(160.0)).child(text)
     }
 
-    fn narration(&self, palette: &Palette, cx: &Context<'_, Self>) -> impl IntoElement {
+    fn narration(&self, palette: &Palette, cx: &Context<'_, Self>) -> Stateful<Div> {
         let narration = self.detail.as_ref().map(|detail| &detail.narration);
         let incomplete = matches!(
             narration,
@@ -694,36 +729,14 @@ impl Review {
             )
         );
         let text = match narration {
-            Some(Narration::Timed { clauses, .. }) => div()
-                .flex()
-                .flex_col()
-                .gap(px(6.0))
-                .children(clauses.iter().enumerate().map(|(index, clause)| {
-                    Kit::new(palette)
-                        .item(
-                            id(&Action::Clause(index)),
-                            self.request
-                                .is_some_and(|request| request.origin == Origin::Clause(index)),
-                            press(
-                                Action::Clause(index),
-                                self.detail
-                                    .as_ref()
-                                    .is_some_and(|detail| !detail.frames.is_empty()),
-                                cx,
-                            ),
-                        )
-                        .w_full()
-                        .flex()
-                        .items_start()
-                        .gap(px(10.0))
-                        .child(
-                            div()
-                                .flex_none()
-                                .text_color(rgb(palette.muted))
-                                .child(Stamp(clause.at).to_string()),
-                        )
-                        .child(div().flex_1().min_w(px(0.0)).child(clause.text.clone()))
-                })),
+            Some(Narration::Timed { clauses, .. }) => {
+                div().flex().flex_col().gap(px(2.0)).children(
+                    clauses
+                        .iter()
+                        .enumerate()
+                        .map(|(index, clause)| self.clause(index, clause, palette, cx)),
+                )
+            },
             Some(Narration::Untimed { text, .. }) => div()
                 .child(
                     div()
@@ -745,20 +758,16 @@ impl Review {
             }),
             Some(Narration::Unavailable) => div()
                 .child("Recorded narration is unavailable because show.json could not be read."),
-            None => div().child("Loading narration…"),
+            None => div()
+                .text_color(rgb(palette.muted))
+                .child("Loading narration…"),
         };
-        div()
-            .id("show-narration")
-            .h(px(180.0))
-            .flex_none()
-            .overflow_y_scroll()
-            .p(px(12.0))
-            .rounded(CORNER)
-            .bg(rgb(palette.room))
-            .line_height(px(19.0))
+        well(palette, "show-narration", px(180.0))
             .child(
                 div()
                     .mb(px(8.0))
+                    .text_size(DETAIL_TEXT)
+                    .line_height(DETAIL_LINE)
                     .text_color(rgb(palette.muted))
                     .child("Recorded words; summary edits don't appear here."),
             )
@@ -781,142 +790,357 @@ impl Review {
             })
     }
 
-    fn commands(
+    fn clause(
         &self,
+        index: usize,
+        clause: &speakeasy_show::TimedClause,
+        palette: &Palette,
+        cx: &Context<'_, Self>,
+    ) -> Stateful<Div> {
+        let chosen = self
+            .request
+            .is_some_and(|request| request.origin == Origin::Clause(index));
+        let enabled = self
+            .detail
+            .as_ref()
+            .is_some_and(|detail| !detail.frames.is_empty());
+        let hover = palette.hover();
+        self.pressable(
+            palette,
+            id(&Action::Clause(index)),
+            press(Action::Clause(index), enabled, cx),
+        )
+        .w_full()
+        .flex()
+        .items_start()
+        .gap(px(12.0))
+        .px(px(8.0))
+        .py(px(4.0))
+        .rounded(px(6.0))
+        .when(chosen, |item| {
+            item.bg(hover).border_color(alpha(palette.lamp, 0.6))
+        })
+        .when(enabled, |item| item.hover(move |style| style.bg(hover)))
+        .child(
+            div()
+                .flex_none()
+                .text_color(rgb(palette.muted))
+                .child(Stamp(clause.at).to_string()),
+        )
+        .child(div().flex_1().min_w(px(0.0)).child(clause.text.clone()))
+    }
+
+    fn recovery(
+        &self,
+        row: &Row,
+        interrupted: &Interrupted,
+        kit: Kit<'_>,
         palette: &Palette,
         now: SystemTime,
         cx: &Context<'_, Self>,
-    ) -> impl IntoElement {
-        let can_copy =
-            self.source != Source::Demo && (self.actions.can_copy)(cx) && self.copying.is_none();
-        let row = self.library.selected.as_ref().and_then(|key| {
-            self.library
-                .rows
-                .iter()
-                .find(|row| row.directory == key.directory)
-        });
-        let kept = row.and_then(|row| row.pinned);
-        let label = if kept == Some(true) {
-            if row
-                .and_then(|row| row.directory.file_name())
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| {
-                    matches!(Retention::of(name, false), Retention::Expires(at) if at <= now)
-                })
-            {
-                "Allow cleanup"
-            } else {
-                "Allow expiry"
-            }
+    ) -> Div {
+        let pending = interrupted.narration_pending();
+        let busy = self.recovering.is_some() || self.discarding.is_some() || self.keeping.is_some();
+        let lead = if pending {
+            RETRY_NARRATION
         } else {
-            "Keep Show"
+            RECOVER_SHOW
         };
         div()
+            .flex_1()
+            .min_w(px(0.0))
             .flex()
-            .flex_wrap()
-            .items_center()
-            .gap(px(8.0))
-            .when(!cfg!(target_os = "linux"), |bar| {
-                bar.child(command(
-                    Action::Copy(CopyKind::Agent),
-                    "Send to agent",
+            .flex_col()
+            .child(
+                heading(
+                    kit,
+                    palette,
+                    if pending {
+                        "Narration pending"
+                    } else {
+                        "Interrupted Show"
+                    }
+                    .into(),
+                    Some(format!("{} · {}", row.recorded(now), row.retention(now))),
+                    Vec::new(),
+                )
+                .child(command(
+                    kit,
+                    Action::Recover,
+                    if pending {
+                        "Transcribe narration"
+                    } else {
+                        "Recover Show"
+                    },
                     Weight::Primary,
-                    can_copy,
-                    palette,
+                    !busy,
                     cx,
-                ))
-                .child(command(
-                    Action::Copy(CopyKind::Summary),
-                    "Copy summary",
-                    Weight::Secondary,
-                    can_copy,
-                    palette,
-                    cx,
-                ))
-                .child(command(
-                    Action::Copy(CopyKind::Evidence),
-                    "Copy image + summary + narration",
-                    Weight::Secondary,
-                    can_copy
-                        && self.loading.is_none()
-                        && matches!(self.image, ImageState::Ready(_)),
-                    palette,
-                    cx,
-                ))
-            })
-            .child(command(
-                Action::Folder,
-                "Open folder",
-                Weight::Secondary,
-                true,
-                palette,
-                cx,
-            ))
-            .when(
-                self.detail
-                    .as_ref()
-                    .is_some_and(|detail| detail.movie.is_some()),
-                |bar| {
-                    bar.child(command(
-                        Action::Movie,
-                        "Play video",
-                        Weight::Secondary,
-                        true,
-                        palette,
-                        cx,
-                    ))
-                    .child(command(
-                        Action::Export(ExportKind::Video),
-                        "Export video…",
-                        Weight::Secondary,
-                        self.exporting.is_none(),
-                        palette,
-                        cx,
-                    ))
-                },
+                )),
             )
-            .when(self.export_cancel.is_some(), |bar| {
-                bar.child(command(
-                    Action::CancelExport,
-                    "Cancel export",
-                    Weight::Secondary,
-                    true,
-                    palette,
-                    cx,
-                ))
+            .child(
+                div()
+                    .id("show-recovery")
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .overflow_y_scroll()
+                    .px(px(24.0))
+                    .py(px(20.0))
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .gap(px(16.0))
+                    .child(kit.group(vec![
+                            div()
+                                .max_w(px(640.0))
+                                .p(px(16.0))
+                                .flex()
+                                .flex_col()
+                                .gap(px(8.0))
+                                .child(div().line_height(BODY_LINE).child(lead))
+                                .child(kit.detail(RECOVERY_AUDIO))
+                                .child(kit.detail(RECOVERY_PREFIX))
+                                .into_any_element(),
+                        ]))
+                    .child(command(
+                        kit,
+                        Action::Discard,
+                        if pending { "Discard audio" } else { "Discard" },
+                        Weight::Destroy,
+                        !busy && !self.confirm_discard,
+                        cx,
+                    ))
+                    .when(self.confirm_discard, |pane| {
+                        pane.child(confirm(pending, busy, kit, palette, cx))
+                    }),
+            )
+    }
+
+    fn pressable(
+        &self,
+        palette: &Palette,
+        id: ElementId,
+        on_click: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+    ) -> Stateful<Div> {
+        let enabled = on_click.is_some();
+        let lamp = palette.lamp;
+        div()
+            .id(id)
+            .focusable()
+            .tab_stop(enabled)
+            .border_1()
+            .border_color(alpha(lamp, 0.0))
+            .when(!enabled, |item| item.opacity(DISABLED))
+            .when(self.keyboard, |item| {
+                item.focus(move |style| style.border_color(rgb(lamp)).bg(alpha(lamp, 0.1)))
             })
-            .child(command(
-                Action::Export(ExportKind::Archive),
-                if self.exporting.is_some() {
-                    "Exporting…"
-                } else {
-                    "Export ZIP…"
-                },
-                Weight::Secondary,
-                self.exporting.is_none() && self.detail.is_some(),
-                palette,
-                cx,
-            ))
-            .child(command(
-                Action::Keep,
-                if self
-                    .keeping
-                    .as_ref()
-                    .is_some_and(|(directory, _)| self.library.is_selected(directory))
-                {
-                    "Saving…"
-                } else {
-                    label
-                },
-                Weight::Secondary,
-                kept.is_some() && self.keeping.is_none() && self.listing.is_none(),
-                palette,
-                cx,
-            ))
+            .when_some(on_click, |item, on_click| {
+                item.cursor_pointer().on_click(on_click)
+            })
     }
 }
 
-fn id(action: &Action) -> ElementId {
+fn status(row: &Row) -> impl Iterator<Item = (&'static str, Tone)> {
+    [
+        match &row.kind {
+            Kind::Interrupted(show) if show.narration_pending() => {
+                Some(("Narration pending", Tone::Lamp))
+            },
+            Kind::Interrupted(_) => Some(("Interrupted", Tone::Warn)),
+            Kind::Saved => None,
+        },
+        row.narration_lost.map(|lost| {
+            (
+                if lost == speakeasy_show::NarrationLoss::Incomplete {
+                    "Narration incomplete"
+                } else {
+                    "No narration"
+                },
+                Tone::Muted,
+            )
+        }),
+        (row.early && matches!(row.kind, Kind::Saved)).then_some(("Ended early", Tone::Warn)),
+        (row.health != Health::Ok).then_some(if row.health == Health::Unsupported {
+            ("Can't open", Tone::Warn)
+        } else {
+            ("Damaged", Tone::Warn)
+        }),
+    ]
+    .into_iter()
+    .flatten()
+}
+
+fn keep_label(row: Option<&Row>, now: SystemTime) -> &'static str {
+    if row.and_then(|row| row.pinned) != Some(true) {
+        return "Keep Show";
+    }
+    let overdue = row
+        .and_then(|row| row.directory.file_name())
+        .and_then(|name| name.to_str())
+        .is_some_and(
+            |name| matches!(Retention::of(name, false), Retention::Expires(at) if at <= now),
+        );
+    if overdue {
+        "Allow cleanup"
+    } else {
+        "Allow expiry"
+    }
+}
+
+fn heading(
+    kit: Kit<'_>,
+    palette: &Palette,
+    title: SharedString,
+    meta: Option<String>,
+    tags: Vec<Div>,
+) -> Div {
+    div()
+        .flex_none()
+        .flex()
+        .flex_wrap()
+        .items_start()
+        .justify_between()
+        .gap(px(16.0))
+        .px(px(24.0))
+        .pt(px(18.0))
+        .pb(px(16.0))
+        .border_b_1()
+        .border_color(palette.line())
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(200.0))
+                .flex()
+                .flex_col()
+                .gap(px(4.0))
+                .child(
+                    div()
+                        .text_size(HEADING_TEXT)
+                        .line_height(px(24.0))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(title),
+                )
+                .when_some(meta, |column, meta| column.child(kit.detail(meta)))
+                .when(!tags.is_empty(), |column| {
+                    column.child(
+                        div()
+                            .pt(px(4.0))
+                            .flex()
+                            .flex_wrap()
+                            .gap(px(6.0))
+                            .children(tags),
+                    )
+                }),
+        )
+}
+
+fn warnings(detail: &Detail, palette: &Palette) -> Stateful<Div> {
+    div()
+        .id("show-warnings")
+        .flex_none()
+        .max_h(px(96.0))
+        .overflow_y_scroll()
+        .flex()
+        .flex_col()
+        .gap(px(4.0))
+        .px(px(14.0))
+        .py(px(10.0))
+        .rounded(PANEL_CORNER)
+        .border_1()
+        .border_color(alpha(palette.warn, 0.3))
+        .bg(alpha(palette.warn, 0.1))
+        .text_size(DETAIL_TEXT)
+        .line_height(DETAIL_LINE)
+        .children(
+            detail
+                .warnings
+                .iter()
+                .map(|warning| div().child(warning.clone())),
+        )
+}
+
+fn well(palette: &Palette, id: &'static str, height: Pixels) -> Stateful<Div> {
+    div()
+        .id(id)
+        .h(height)
+        .flex_none()
+        .overflow_y_scroll()
+        .px(px(14.0))
+        .py(px(12.0))
+        .rounded(PANEL_CORNER)
+        .bg(rgb(palette.panel))
+        .border_1()
+        .border_color(palette.line())
+        .line_height(BODY_LINE)
+}
+
+fn quiet(palette: &Palette, text: &'static str) -> Div {
+    div()
+        .max_w(px(420.0))
+        .px(px(16.0))
+        .text_center()
+        .line_height(BODY_LINE)
+        .text_color(rgb(palette.muted))
+        .child(text)
+}
+
+fn bar(palette: &Palette) -> Div {
+    div()
+        .absolute()
+        .left(px(-1.0))
+        .top(px(10.0))
+        .bottom(px(10.0))
+        .w(px(2.0))
+        .rounded(px(1.0))
+        .bg(rgb(palette.lamp))
+}
+
+fn confirm(
+    pending: bool,
+    busy: bool,
+    kit: Kit<'_>,
+    palette: &Palette,
+    cx: &Context<'_, Review>,
+) -> Div {
+    div()
+        .max_w(px(640.0))
+        .flex()
+        .flex_col()
+        .gap(px(12.0))
+        .p(px(16.0))
+        .rounded(PANEL_CORNER)
+        .border_1()
+        .border_color(alpha(palette.warn, 0.3))
+        .bg(alpha(palette.warn, 0.06))
+        .child(div().flex().child(kit.tag("Cannot be undone", Tone::Warn)))
+        .child(div().line_height(BODY_LINE).child(if pending {
+            super::DISCARD_AUDIO
+        } else {
+            super::DISCARD_SHOW
+        }))
+        .child(
+            div()
+                .flex()
+                .gap(px(8.0))
+                .child(command(
+                    kit,
+                    Action::CancelDiscard,
+                    "Cancel",
+                    Weight::Secondary,
+                    !busy,
+                    cx,
+                ))
+                .child(command(
+                    kit,
+                    Action::ConfirmDiscard,
+                    "Discard permanently",
+                    Weight::ConfirmDestroy,
+                    !busy,
+                    cx,
+                )),
+        )
+}
+
+pub(super) fn id(action: &Action) -> ElementId {
     match action {
         Action::Mark(number) => SharedString::from(format!("show-mark-{number}")).into(),
         Action::Recover => "recover-show".into(),
@@ -958,44 +1182,54 @@ fn press(
 }
 
 fn command(
+    kit: Kit<'_>,
     action: Action,
     label: impl Into<SharedString>,
     weight: Weight,
     enabled: bool,
-    palette: &Palette,
     cx: &Context<'_, Review>,
-) -> gpui::Stateful<Div> {
-    Kit::new(palette).button(id(&action), label, weight, press(action, enabled, cx))
+) -> Stateful<Div> {
+    kit.button(id(&action), label, weight, press(action, enabled, cx))
 }
 
-fn step(
+fn segment(
+    kit: Kit<'_>,
     action: Action,
-    glyph: &'static str,
-    name: &'static str,
-    enabled: bool,
-    palette: &Palette,
-    cx: &Context<'_, Review>,
-) -> gpui::Stateful<Div> {
-    command(action, glyph, Weight::Secondary, enabled, palette, cx)
-        .aria_label(name)
-        .w(HEIGHT)
-        .px_0()
-        .text_size(px(18.0))
-}
-
-fn tab(
-    action: Action,
-    label: impl Into<SharedString>,
+    label: &'static str,
     selected: bool,
     enabled: bool,
-    palette: &Palette,
     cx: &Context<'_, Review>,
-) -> gpui::Stateful<Div> {
-    Kit::new(palette).tab(id(&action), label, selected, press(action, enabled, cx))
+) -> Stateful<Div> {
+    kit.segment(id(&action), label, selected, press(action, enabled, cx))
+}
+
+fn chip(
+    kit: Kit<'_>,
+    palette: &Palette,
+    action: Action,
+    label: String,
+    selected: bool,
+    cx: &Context<'_, Review>,
+) -> Stateful<Div> {
+    kit.segment(id(&action), label, selected, press(action, true, cx))
+        .h(px(28.0))
+        .px(px(10.0))
+        .bg(rgb(palette.raise))
+        .border_color(if selected {
+            rgb(palette.lamp)
+        } else {
+            palette.edge()
+        })
+        .text_size(DETAIL_TEXT)
+        .text_color(rgb(if selected { palette.ink } else { palette.muted }))
 }
 
 impl Review {
     fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if self.menu.is_open() && self.menu_key(event.keystroke.key.as_str(), cx) {
+            cx.stop_propagation();
+            return;
+        }
         let selected = self.library.selected.as_ref();
         let row = selected.and_then(|key| {
             self.library

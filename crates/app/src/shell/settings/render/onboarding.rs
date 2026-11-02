@@ -1,24 +1,25 @@
-use gpui::{
-    InteractiveElement as _, SharedString, StatefulInteractiveElement as _,
-    prelude::FluentBuilder as _,
-};
+use gpui::{AnyElement, Div, FontWeight, SharedString, div, prelude::*, px, rgb};
 
-use super::{
-    Action, Div, EDGE, IntoElement as _, ParentElement as _, Settings, Styled as _, TEXT, Ui,
-    cycle_focus, div, header, is_demo, permissions, progress_bar, px, relative, rgb, row,
-    setup_detail, unreadable_text,
-};
+use super::{Action, Settings, Ui, cycle_focus, dictation::level, fraction, progress_text};
 use crate::{
-    controls::Weight,
+    controls::{Tone, Weight, icon},
+    icons,
     shell::{
         Services,
-        settings::onboarding::{Action as TourAction, Step},
+        settings::{
+            is_demo,
+            menu::Menu,
+            onboarding::{Action as TourAction, Step},
+            permissions,
+        },
     },
     status::Indicator,
 };
 
 impl Settings {
     pub(super) fn onboarding_view(&self, step: Step, ui: &Ui<'_>) -> Div {
+        let kit = ui.kit();
+        let palette = ui.palette;
         let page = match step {
             Step::Prepare => self.onboarding_prepare(ui),
             Step::Permissions => self.onboarding_permissions(ui),
@@ -26,35 +27,52 @@ impl Settings {
             Step::Ready => self.onboarding_ready(ui),
         };
         let (label, action, enabled) = self.onboarding_primary(step, ui);
+        let back = match step {
+            Step::Prepare if self.setup.is_some() => {
+                Some(ui.button("Cancel download", Action::Setup, Weight::Quiet))
+            },
+            Step::Prepare => None,
+            _ => Some(ui.button("Back", Action::Onboarding(TourAction::Back), Weight::Quiet)),
+        };
+        let note = if is_demo(ui.cx) {
+            Some((
+                SharedString::from("Preview only. Simulated speech, no microphone."),
+                false,
+            ))
+        } else {
+            self.notice
+                .as_ref()
+                .map(|notice| (notice.text(), notice.is_problem()))
+        };
         div()
             .size_full()
-            .bg(rgb(ui.palette.room))
-            .text_color(rgb(ui.palette.ink))
             .flex()
             .flex_col()
             .on_key_down(cycle_focus)
             .child(
                 div()
-                    .p(EDGE)
-                    .pb(px(20.0))
-                    .min_h(px(88.0))
                     .flex_none()
                     .flex()
-                    .justify_between()
                     .items_center()
-                    .child(header(
+                    .justify_between()
+                    .min_h(px(56.0))
+                    .px(px(24.0))
+                    .pt(px(12.0))
+                    .child(kit.detail(format!(
+                        "{} · Step {}",
                         if is_demo(ui.cx) {
-                            Indicator::Ready
+                            "Setup preview"
                         } else {
-                            self.presentation.indicator
+                            "Welcome to Speakeasy"
                         },
-                        ui.palette,
-                        true,
-                    ))
+                        step.position()
+                    )))
                     .when(step != Step::Ready, |top| {
-                        top.child(
-                            ui.quiet_button("Skip setup", Action::Onboarding(TourAction::Finish)),
-                        )
+                        top.child(ui.button(
+                            "Skip setup",
+                            Action::Onboarding(TourAction::Finish),
+                            Weight::Quiet,
+                        ))
                     }),
             )
             .child(
@@ -65,67 +83,59 @@ impl Settings {
                     .flex_1()
                     .min_h(px(0.0))
                     .overflow_y_scroll()
-                    .px(EDGE)
-                    .pb(px(16.0))
+                    .px(px(24.0))
+                    .pt(px(8.0))
+                    .pb(px(24.0))
                     .flex()
                     .flex_col()
                     .gap(px(20.0))
                     .child(
                         div()
-                            .text_size(TEXT)
-                            .text_color(rgb(ui.palette.muted))
-                            .child(format!(
-                                "{} · {}",
-                                if is_demo(ui.cx) {
-                                    "SETUP PREVIEW"
-                                } else {
-                                    "WELCOME TO SPEAKEASY"
-                                },
-                                step.position()
-                            )),
+                            .text_size(px(24.0))
+                            .line_height(px(30.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(step.heading()),
                     )
-                    .child(div().text_size(px(28.0)).child(step.heading()))
                     .child(page),
             )
             .child(
                 div()
-                    .px(EDGE)
-                    .py(px(20.0))
+                    .flex_none()
                     .flex()
-                    .flex_col()
-                    .gap(px(10.0))
+                    .items_center()
+                    .gap(px(12.0))
+                    .min_h(px(60.0))
+                    .px(px(16.0))
+                    .py(px(10.0))
+                    .border_t_1()
+                    .border_color(palette.line())
+                    .bg(rgb(palette.door))
+                    .children(back)
                     .child(
-                        row()
-                            .justify_between()
-                            .items_center()
-                            .child(
-                                row()
-                                    .when(step != Step::Prepare, |row| {
-                                        row.child(ui.quiet_button(
-                                            "Back",
-                                            Action::Onboarding(TourAction::Back),
-                                        ))
-                                    })
-                                    .when(step == Step::Prepare && self.is_setting_up(), |row| {
-                                        row.child(ui.quiet_button("Cancel", Action::Setup))
-                                    }),
-                            )
-                            .child(ui.primary_button(
-                                label,
-                                action,
-                                enabled && self.onboarding_completion.is_none(),
-                            )),
-                    )
-                    .child(div().min_h(px(36.0)).child(if is_demo(ui.cx) {
                         div()
-                            .text_size(TEXT)
-                            .text_color(rgb(ui.palette.muted))
-                            .child("Preview only · Simulated speech · No microphone access")
-                            .into_any_element()
-                    } else {
-                        self.status_line(ui.palette, self.unsaved(ui.cx))
-                            .into_any_element()
-                    })),
+                            .id("onboarding-status")
+                            .role(gpui::Role::Status)
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .text_size(px(12.0))
+                            .line_height(px(17.0))
+                            .when_some(note, |status, (text, problem)| {
+                                status
+                                    .aria_label(text.clone())
+                                    .text_color(rgb(if problem {
+                                        palette.warn
+                                    } else {
+                                        palette.muted
+                                    }))
+                                    .child(text)
+                            }),
+                    )
+                    .child(ui.button_if(
+                        label,
+                        action,
+                        Weight::Primary,
+                        enabled && self.onboarding_completion.is_none(),
+                    )),
             )
     }
 
@@ -134,14 +144,11 @@ impl Settings {
         let next = Action::Onboarding(TourAction::Next);
         let (label, action, enabled) = match step {
             Step::Prepare if self.unreadable || self.resetting() => ("Continue", next, false),
-            Step::Prepare if self.is_setting_up() => ("Setting up…", next, false),
+            Step::Prepare if self.setup.is_some() => ("Setting up…", next, false),
             Step::Prepare if self.retiring_setup.is_some() => ("Pausing download…", next, false),
             Step::Prepare | Step::Practice if self.saving.is_some() => ("Saving…", next, false),
             Step::Prepare if !is_demo(ui.cx) && self.config.needs_engine() => {
                 ("Set up automatically · 0.8 GB", Action::Setup, true)
-            },
-            Step::Prepare | Step::Practice if self.unsaved(ui.cx) => {
-                ("Save and continue", Action::Save, true)
             },
             Step::Permissions | Step::Practice if !running => {
                 ("Retry dictation", Action::Resume, true)
@@ -178,39 +185,65 @@ impl Settings {
     }
 
     fn onboarding_prepare(&self, ui: &Ui<'_>) -> Div {
+        let kit = ui.kit();
         let blocked = self.unreadable || self.resetting();
+        let installing = self
+            .setup
+            .as_ref()
+            .map(|installing| installing.setup.progress());
         let needs_setup =
-            !blocked && !is_demo(ui.cx) && (self.config.needs_engine() || self.is_setting_up());
-        let progress = self.setup.as_ref().map(|(setup, _, _)| setup.progress());
-        let card = ui.kit().inlay().flex().flex_col().gap(px(12.0));
-        let card = if blocked {
-            card.child(unreadable_text(ui.cx))
-                .child(self.reset_controls(ui, "Start fresh…"))
+            !blocked && !is_demo(ui.cx) && (self.config.needs_engine() || installing.is_some());
+        let state: AnyElement = if blocked {
+            kit.banner(
+                Tone::Warn,
+                "Settings can't be read",
+                super::unreadable_text(ui.cx),
+                Some(self.reset_controls(ui, "Start fresh…")),
+            )
+            .into_any_element()
+        } else if needs_setup {
+            kit.group(vec![
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(12.0))
+                    .p(px(16.0))
+                    .child(kit.label("Parakeet speech model", Some(super::setup_detail().into())))
+                    .when_some(installing, |row, progress| {
+                        row.child(kit.progress(fraction(progress)))
+                            .child(kit.detail(progress_text(progress)))
+                    })
+                    .into_any_element(),
+            ])
+            .into_any_element()
         } else {
-            card.child(if needs_setup {
-                setup_detail(progress)
-            } else {
-                "Local speech is installed. Let's try your shortcut.".into()
-            })
-            .when_some(progress, |card, progress| {
-                card.child(progress_bar(progress, ui.palette))
-            })
+            kit.group(vec![
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(12.0))
+                    .p(px(16.0))
+                    .child(icon(icons::CHECK, 16.0, ui.palette.lamp))
+                    .child(kit.label(
+                        "Local speech is ready",
+                        Some("Next, try your shortcut.".into()),
+                    ))
+                    .into_any_element(),
+            ])
+            .into_any_element()
         };
         div()
             .flex()
             .flex_col()
-            .gap(px(20.0))
-            .text_size(px(15.0))
-            .child(div().text_color(rgb(ui.palette.lamp)).child("Say the word."))
-            .child("Your voice becomes text on this computer. No account, no dictation history, no recording uploads.")
-            .child(card)
+            .gap(px(16.0))
+            .child(div().text_size(px(15.0)).line_height(px(22.0)).child(
+                "Your voice becomes text on this computer. No account, no dictation history, no uploads.",
+            ))
+            .child(state)
             .when(needs_setup, |page| {
-                page.child(
-                    div()
-                        .text_size(TEXT)
-                        .text_color(rgb(ui.palette.muted))
-                        .child("One download, then you can dictate offline. Skip returns to Settings without stopping an active download."),
-                )
+                page.child(ui.text(
+                    "One download, then you can dictate offline. Skip returns to Settings without stopping an active download.",
+                ))
             })
     }
 
@@ -222,110 +255,232 @@ impl Settings {
         )
     )]
     fn onboarding_permissions(&self, ui: &Ui<'_>) -> Div {
-        let page = div().flex().flex_col().gap(px(20.0)).text_size(px(15.0));
+        let kit = ui.kit();
+        let help = |label: &'static str, help: permissions::Help| {
+            ui.button(label, Action::PermissionHelp(help), Weight::Secondary)
+        };
+        let page = div().flex().flex_col().gap(px(16.0));
         #[cfg(target_os = "macos")]
         let page = {
             let observed = self.permissions.unwrap_or_default();
-            page.child("Let Speakeasy hear you and type for you.")
-                .child(ui.kit().inlay().flex().flex_col().gap(px(12.0))
-                    .child(format!("Microphone: {}", permissions::description(observed.microphone)))
-                    .child("Your first recording asks for microphone access. If you previously denied it, enable Speakeasy in System Settings.")
-                    .child(row().child(ui.quiet_button("Microphone settings", Action::PermissionHelp(permissions::Help::Microphone)))))
-                .child(ui.kit().inlay().flex().flex_col().gap(px(12.0))
-                    .child(format!("Accessibility: {}", permissions::description(observed.accessibility)))
-                    .child("Enable Speakeasy to use your shortcut and insert text. If macOS asks for a restart, quit and reopen Speakeasy.")
-                    .child(row().child(ui.quiet_button("Accessibility settings", Action::PermissionHelp(permissions::Help::Accessibility)))))
+            page.child(
+                div()
+                    .text_size(px(15.0))
+                    .child("Let Speakeasy hear you and type for you."),
+            )
+            .child(kit.group(vec![
+                kit.setting(
+                    format!(
+                        "Microphone · {}",
+                        permissions::description(observed.microphone)
+                    ),
+                    Some("Your first recording asks for access. If you denied it before, turn on Speakeasy in System Settings.".into()),
+                    help("Open settings", permissions::Help::Microphone),
+                )
+                .into_any_element(),
+                kit.setting(
+                    format!(
+                        "Accessibility · {}",
+                        permissions::description(observed.accessibility)
+                    ),
+                    Some("Lets your shortcut work and your words appear. If macOS asks, quit and reopen Speakeasy.".into()),
+                    help("Open settings", permissions::Help::Accessibility),
+                )
+                .into_any_element(),
+            ]))
         };
         #[cfg(not(target_os = "macos"))]
-        let page = page.child("Next, try a sentence in this window. Nothing records until you use your shortcut.")
-            .child(ui.kit().inlay().flex().flex_col().gap(px(12.0))
-                .child(if cfg!(target_os = "windows") {
-                    "If Windows blocks the microphone, enable microphone access for desktop apps."
-                } else {
-                    "If your desktop asks to allow the dictation shortcut, approve it. You can check your microphone in the next step."
-                })
-                .child(row().child(ui.quiet_button(if cfg!(target_os = "windows") { "Microphone settings" } else { "Microphone help" }, Action::PermissionHelp(permissions::Help::Microphone)))));
+        let page = page
+            .child(div().text_size(px(15.0)).child(
+                "Next, try a sentence in this window. Nothing records until you use your shortcut.",
+            ))
+            .child(kit.group(vec![
+                kit.setting(
+                    "Microphone",
+                    Some(
+                        if cfg!(target_os = "windows") {
+                            "If Windows blocks the microphone, turn on microphone access for desktop apps."
+                        } else {
+                            "If your desktop asks to allow the dictation shortcut, approve it."
+                        }
+                        .into(),
+                    ),
+                    help(permissions::OPEN, permissions::Help::Microphone),
+                )
+                .into_any_element(),
+            ]));
         page
     }
 
     fn onboarding_practice(&self, ui: &Ui<'_>) -> Div {
+        let kit = ui.kit();
+        let palette = ui.palette;
         let active = self.practice.task.is_some();
         let recognized = !self.practice.text.trim().is_empty();
         let recording = active && self.presentation.indicator == Indicator::Recording;
+        let external = cfg!(target_os = "linux") && self.config.linux.external_shortcut;
         let status = if recording {
             "Listening…"
         } else if active && self.presentation.indicator == Indicator::Busy {
             "Turning speech into text…"
         } else if recognized {
-            "Got it"
+            "That worked. Continue when you're ready."
         } else if self.practice.ready || is_demo(ui.cx) {
-            "Ready when you are"
+            if external {
+                "Press your shortcut, say a sentence, then press it again."
+            } else {
+                "Hold your shortcut, say a sentence, then release."
+            }
         } else if active {
-            "Preparing private practice…"
+            "Preparing practice…"
         } else {
-            "Practice paused"
+            "Practice is paused."
         };
-        div().flex().flex_col().gap(px(12.0)).text_size(px(15.0))
-            .child(ui.kit().inlay().flex().flex_col().gap(px(10.0))
-                .when(recognized, |card| card.border_color(rgb(ui.palette.lamp)))
-                .child(div().text_size(px(22.0)).child(self.presentation.shortcut.to_string()))
-                .child(div().text_size(TEXT).text_color(rgb(ui.palette.muted)).child(
-                    if cfg!(target_os = "linux") && self.config.linux.external_shortcut { "Press, say a sentence, then press again." } else { "Hold, say a sentence, release." }))
-                .child(div().text_size(TEXT).text_color(rgb(if recognized { ui.palette.lamp } else { ui.palette.muted })).child(status))
-                .child(div().h(px(4.0)).w_full().bg(rgb(ui.palette.raise))
-                    .child(div().h_full().w(relative(if recording { self.practice.level } else { 0.0 })).bg(rgb(ui.palette.live))))
-                .child(div().id("onboarding-transcript").min_h(px(48.0)).max_h(px(110.0)).overflow_y_scroll().text_size(px(18.0))
-                    .child(if recognized {
-                        div().child(gpui::text!(id = "onboarding-words", self.practice.text.to_string())).into_any_element()
-                    } else { div().text_color(rgb(ui.palette.muted)).child("Your words appear here.").into_any_element() }))
-                .when(recognized, |card| card.child(div().text_size(TEXT).text_color(rgb(ui.palette.lamp)).child("That worked. Continue when you're ready.")))
-                .when(active, |card| card.child(row().child(ui.quiet_button("Stop", Action::Practice)))))
-            .child(row().items_center().gap(px(32.0))
-                .child(ui.picker("Microphone", self.microphone_name(), Action::Microphone).flex_1().max_w_full().min_w(px(0.0)))
-                .child(ui.quiet_button("Refresh", Action::Refresh)))
-            .child(div().text_size(TEXT).text_color(rgb(ui.palette.muted)).child(if is_demo(ui.cx) {
+        let words = if recognized {
+            div()
+                .text_size(px(18.0))
+                .line_height(px(26.0))
+                .child(gpui::text!(
+                    id = "onboarding-words",
+                    self.practice.text.to_string()
+                ))
+        } else {
+            div()
+                .text_size(px(15.0))
+                .text_color(rgb(palette.muted))
+                .child("Your words appear here.")
+        };
+        let card = div()
+            .flex()
+            .flex_col()
+            .gap(px(14.0))
+            .p(px(20.0))
+            .rounded(px(12.0))
+            .border_1()
+            .border_color(if recognized {
+                rgb(palette.lamp)
+            } else {
+                palette.line()
+            })
+            .bg(rgb(palette.panel))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(16.0))
+                    .when(!external, |row| {
+                        row.child(kit.keys(&self.presentation.shortcut, true))
+                    })
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .items_center()
+                            .gap(px(10.0))
+                            .text_color(rgb(if recognized {
+                                palette.lamp
+                            } else {
+                                palette.muted
+                            }))
+                            .when(recording, |status| {
+                                status.child(level(palette.live, self.practice.level))
+                            })
+                            .child(status),
+                    ),
+            )
+            .child(
+                div()
+                    .id("onboarding-transcript")
+                    .min_h(px(64.0))
+                    .max_h(px(140.0))
+                    .overflow_y_scroll()
+                    .px(px(14.0))
+                    .py(px(12.0))
+                    .rounded(px(8.0))
+                    .bg(rgb(palette.room))
+                    .border_1()
+                    .border_color(palette.line())
+                    .child(words),
+            )
+            .when(active, |card| {
+                card.child(div().flex().child(ui.button(
+                    "Stop practice",
+                    Action::Practice,
+                    Weight::Quiet,
+                )))
+            });
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(16.0))
+            .child(card)
+            .child(kit.group(vec![
+                kit.setting(
+                    "Microphone",
+                    Some("Not hearing anything? Choose another input.".into()),
+                    self.dropdown(ui, Menu::Microphone, "Microphone", self.microphone_name()),
+                )
+                .into_any_element(),
+            ]))
+            .child(ui.text(if is_demo(ui.cx) {
                 "Demo words only. Your microphone is off."
-            } else { "Words stay here, never pasted or saved. Leaving this window clears practice." }))
-            .child(row().child(ui.quiet_button("Not hearing anything? Microphone help", Action::PermissionHelp(permissions::Help::Microphone))))
+            } else {
+                "Words stay here, never pasted or saved. Leaving this window clears practice."
+            }))
     }
 
     fn onboarding_ready(&self, ui: &Ui<'_>) -> Div {
+        let kit = ui.kit();
         let external = cfg!(target_os = "linux") && self.config.linux.external_shortcut;
-        div().flex().flex_col().gap(px(20.0)).text_size(px(15.0))
-            .child(if is_demo(ui.cx) { "Preview complete. Real dictation stays on this computer, too." } else { "That was all on this computer." })
-            .child(ui.kit().inlay().flex().flex_col().gap(px(16.0))
-                .child(ui.shortcut_row(self.presentation.shortcut.to_string(), if external { "start or finish" } else { "hold to speak" }))
-                .when(!external, |card| card.child(ui.shortcut_row("Double-tap", "hands-free; press again to finish")))
-                .child(ui.shortcut_row(self.presentation.cancel_shortcut.to_string(), "cancel without typing")))
-            .child("Practice kept your words here. Now try your shortcut in a note or a chat to see them arrive in another app.")
-            .child(div().text_size(TEXT).text_color(rgb(ui.palette.muted)).child("Come back any time: Settings → Advanced → Replay setup."))
-    }
-}
-
-impl Ui<'_> {
-    fn primary_button(
-        &self,
-        label: impl Into<SharedString>,
-        action: Action,
-        enabled: bool,
-    ) -> gpui::Stateful<Div> {
-        self.kit().button(
-            action.element_id(),
-            label,
-            Weight::Primary,
-            enabled.then(|| self.press(action)),
-        )
-    }
-
-    fn quiet_button(&self, label: impl Into<SharedString>, action: Action) -> gpui::Stateful<Div> {
-        self.command(label, action, Weight::Quiet).mx(px(-14.0))
-    }
-
-    fn shortcut_row(&self, keys: impl Into<SharedString>, meaning: &'static str) -> Div {
-        row()
-            .flex_wrap()
-            .justify_between()
-            .child(div().child(keys.into()))
-            .child(div().text_color(rgb(self.palette.muted)).child(meaning))
+        let cancel = self.presentation.cancel_shortcut.replace("Escape", "Esc");
+        let line = |keys: Div, meaning: &'static str| {
+            div()
+                .flex()
+                .items_center()
+                .gap(px(16.0))
+                .px(px(16.0))
+                .py(px(12.0))
+                .child(div().flex_1().child(keys))
+                .child(kit.detail(meaning))
+                .into_any_element()
+        };
+        let shortcut = if external {
+            div().child("Your desktop shortcut")
+        } else {
+            kit.keys(&self.presentation.shortcut, false)
+        };
+        let mut lines = vec![line(
+            shortcut,
+            if external {
+                "Start or finish"
+            } else {
+                "Hold to talk"
+            },
+        )];
+        if !external {
+            lines.push(line(
+                div().child("Double-tap"),
+                "Hands-free; press again to finish",
+            ));
+        }
+        lines.push(line(
+            if external {
+                div().child("Your desktop's cancel binding")
+            } else {
+                kit.keys(&cancel, false)
+            },
+            "Cancel without typing",
+        ));
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(16.0))
+            .child(div().text_size(px(15.0)).child(if is_demo(ui.cx) {
+                "Preview complete. Real dictation stays on this computer, too."
+            } else {
+                "That was all on this computer. Now try your shortcut in a note or a chat."
+            }))
+            .child(kit.group(lines))
+            .child(ui.text("Come back any time: Settings → General → Setup guide."))
     }
 }

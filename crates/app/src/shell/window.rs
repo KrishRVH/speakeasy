@@ -108,7 +108,7 @@ pub(super) fn open(cx: &mut App) -> anyhow::Result<()> {
             window.on_window_should_close(cx, hide_on_close);
         }
         cx.new(|cx| {
-            let mut view = Settings::new(config, updates, cx);
+            let mut view = Settings::new(config, updates, window, cx);
             Settings::watch_practice_focus(window, cx);
             if !mode.is_demo() {
                 view.follow_permissions(window, cx, speakeasy_platform::Permissions::read);

@@ -723,7 +723,7 @@ async fn presentation_settings_keep_the_active_session() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
     h.start().await?;
     h.runtime.configure(ValidConfig::assume(Config {
-        theme: Theme::default().next(),
+        theme: Theme::Emerald,
         reduced_motion: true,
         ..Config::default()
     }));

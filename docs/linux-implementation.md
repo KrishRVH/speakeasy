@@ -67,11 +67,11 @@ receiving input and cancellation, and a failed transfer fails only that paste; c
 through Xwayland run on a serialized, owned worker. A committed clipboard selection remains
 available until ownership changes or the service retires.
 
-Settings' **Insert** control offers **Paste (Ctrl+V)**, **Paste (Ctrl+Shift+V)** for terminals,
-**Type (Keep clipboard)**, and **Copy for manual paste**. The `text_delivery` setting stores one
-choice: `paste`, `terminal_paste`, `type`, or `copy`. Typing requires advertised EI text support on
-Wayland; X11 reports it as unavailable. The terminal chord is the user's choice; Speakeasy never
-infers it from the focused application.
+Settings' **Insert text by** control offers **Paste (Ctrl+V)**, **Paste (Ctrl+Shift+V)** for
+terminals, **Type (keeps clipboard)**, and **Copy for manual paste**. The `text_delivery` setting
+stores one choice: `paste`, `terminal_paste`, `type`, or `copy`. Typing requires advertised EI text
+support on Wayland; X11 reports it as unavailable. The terminal chord is the user's choice;
+Speakeasy never infers it from the focused application.
 
 ## Presentation and lifecycle
 

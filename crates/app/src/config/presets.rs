@@ -68,18 +68,69 @@ impl Preset {
         config.use_gpu = self.use_gpu;
     }
 
+    pub(crate) fn matches(&self, config: &Config) -> bool {
+        let Self {
+            name: _,
+            engine,
+            engine_executable,
+            model,
+            nemo_model,
+            language,
+            recognition_terms,
+            remove_fillers,
+            vocabulary,
+            threads,
+            use_gpu,
+        } = self;
+        *engine == config.engine
+            && *engine_executable == config.engine_executable
+            && *model == config.model
+            && *nemo_model == config.nemo_model
+            && *language == config.language
+            && *recognition_terms == config.recognition_terms
+            && *remove_fillers == config.remove_fillers
+            && *vocabulary == config.vocabulary
+            && *threads == config.threads
+            && *use_gpu == config.use_gpu
+    }
+
     pub(crate) fn description(&self) -> String {
-        let model = self
-            .model
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("Choose a model");
-        format!(
-            "{} · {model} · {} · {} corrections",
-            self.engine.label(),
-            self.language,
-            self.vocabulary.len()
-        )
+        let model = match self.nemo_model {
+            Some(model) => model.label(),
+            None => self
+                .model
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("No model chosen"),
+        };
+        let languages = if self.engine == Engine::Whisper {
+            crate::models::WHISPER_LANGUAGES
+        } else {
+            crate::models::LANGUAGES
+        };
+        let language = (self.language != "auto"
+            && (self.engine == Engine::Whisper || self.nemo_model == Some(Model::Nemotron)))
+        .then(|| {
+            languages
+                .iter()
+                .find_map(|&(code, name)| (code == self.language).then_some(name))
+                .map_or_else(|| self.language.clone(), str::to_owned)
+        });
+        let count = |amount: usize, noun: &str| {
+            (amount > 0).then(|| match amount {
+                1 => format!("1 {noun}"),
+                _ => format!("{amount} {noun}s"),
+            })
+        };
+        [Some(model.to_owned()), language]
+            .into_iter()
+            .chain([
+                count(self.vocabulary.len(), "correction"),
+                count(self.recognition_terms.phrases().len(), "hint"),
+            ])
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" · ")
     }
 }
 

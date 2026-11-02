@@ -51,12 +51,6 @@ impl Settings {
             self.end_practice(cx);
             return;
         }
-        if self.unsaved(cx) {
-            self.notice = Some(Notice::Note(
-                "Save your changes before trying dictation here.".into(),
-            ));
-            return;
-        }
         let receipt = cx.global::<Services>().practice();
         let mut receipt = match receipt {
             Ok(receipt) => receipt,
@@ -73,9 +67,7 @@ impl Settings {
             |meter| meter.level.clamp(0.0, 1.0),
             |view, level, cx| {
                 view.practice.level = level;
-                if view.onboarding.is_some() {
-                    cx.notify();
-                }
+                cx.notify();
             },
         ));
         self.practice.task = Some(cx.spawn(async move |this, cx| {

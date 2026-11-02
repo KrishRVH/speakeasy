@@ -71,8 +71,21 @@ function Test-DemoAccessibility([IntPtr]$Window, [int]$Owner) {
         throw 'Settings tab has no selection pattern'
     }
     if (!$selected.Current.IsSelected) { throw 'Current page is not exposed as selected' }
-    $motion = Find-Control 'Reduce motion: Off'
-    if ($null -eq $motion) { $motion = Find-Control 'Reduce motion: On' }
+    $microphone = Wait-Control 'Microphone: System default'
+    Invoke-Control $microphone
+    $list = New-Object Windows.Automation.AndCondition (
+        (New-Object Windows.Automation.PropertyCondition ([Windows.Automation.AutomationElement]::ControlTypeProperty), ([Windows.Automation.ControlType]::List)),
+        (New-Object Windows.Automation.PropertyCondition ([Windows.Automation.AutomationElement]::NameProperty), 'Microphone'))
+    $deadline = [DateTime]::UtcNow.AddSeconds(5)
+    do { $menu = $root.FindFirst([Windows.Automation.TreeScope]::Descendants, $list) } while ($null -eq $menu -and [DateTime]::UtcNow -lt $deadline)
+    if ($null -eq $menu) { throw 'Accessible invocation did not open the microphone menu' }
+    Invoke-Control $microphone
+    $deadline = [DateTime]::UtcNow.AddSeconds(5)
+    while ($null -ne $root.FindFirst([Windows.Automation.TreeScope]::Descendants, $list) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 50 }
+    Assert-Removed $menu
+    $general = Wait-Control 'General'
+    $general.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern).Select()
+    $motion = Wait-Control 'Reduce motion'
     if ($null -eq $motion) { throw 'Motion switch is inaccessible' }
     $toggle = $motion.GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern)
     $previousToggle = $toggle.Current.ToggleState
@@ -80,15 +93,18 @@ function Test-DemoAccessibility([IntPtr]$Window, [int]$Owner) {
     $deadline = [DateTime]::UtcNow.AddSeconds(5)
     while ($toggle.Current.ToggleState -eq $previousToggle -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 50 }
     if ($toggle.Current.ToggleState -eq $previousToggle) { throw 'Accessible switch did not toggle' }
-    $buttons = $root.FindAll([Windows.Automation.TreeScope]::Descendants,
-        (New-Object Windows.Automation.PropertyCondition ([Windows.Automation.AutomationElement]::ControlTypeProperty), ([Windows.Automation.ControlType]::Button)))
-    $theme = $buttons | Where-Object { $_.Current.Name.StartsWith('Theme: ') } | Select-Object -First 1
-    if ($null -eq $theme) { throw 'Theme button is inaccessible' }
-    $previous = $theme.Current.Name
-    Invoke-Control $theme
+    $radios = $root.FindAll([Windows.Automation.TreeScope]::Descendants,
+        (New-Object Windows.Automation.PropertyCondition ([Windows.Automation.AutomationElement]::ControlTypeProperty), ([Windows.Automation.ControlType]::RadioButton)))
+    $theme = $radios | Where-Object {
+        $_.Current.Name.StartsWith('Theme: ') -and
+            !$_.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern).Current.IsSelected
+    } | Select-Object -First 1
+    if ($null -eq $theme) { throw 'Theme choices are inaccessible' }
+    $choice = $theme.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern)
+    $choice.Select()
     $deadline = [DateTime]::UtcNow.AddSeconds(5)
-    while ($theme.Current.Name -eq $previous -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 50 }
-    if ($theme.Current.Name -eq $previous) { throw 'Accessible invocation did not change theme' }
+    while (!$choice.Current.IsSelected -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 50 }
+    if (!$choice.Current.IsSelected) { throw 'Accessible selection did not change theme' }
     $words = Wait-Control 'Words'
     $selectWords = $words.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern)
     $selectWords.Select()
@@ -252,7 +268,7 @@ public sealed class TextEventCounts : IDisposable {
         if ($rectangles.Count -ne 1) { throw 'One scrolled line must have one visible rectangle' }
         $scale = [DemoWindows]::GetDpiForWindow($Window) / 96.0
         $control = $Field.Current.BoundingRectangle
-        $viewport = New-Object Windows.Rect ($control.Left + 9 * $scale), ($control.Top + 6 * $scale), ($control.Width - 18 * $scale), (20 * $scale)
+        $viewport = New-Object Windows.Rect ($control.Left + 11 * $scale), ($control.Top + 6 * $scale), ($control.Width - 22 * $scale), (20 * $scale)
         $rect = $rectangles[0]
         if ([Math]::Abs($rect.Left - $viewport.Left) -gt 1 -or $rect.Right -gt $viewport.Right + 1 -or $rect.Top -lt $viewport.Top - 1 -or $rect.Bottom -gt $viewport.Bottom + 1) { throw 'Text geometry escaped or did not reach the actual paint clip' }
         $hidden = $document.Clone()

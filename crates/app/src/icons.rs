@@ -9,8 +9,16 @@ pub(crate) const MICROPHONE: &str = "icons/symbols/microphone.svg";
 pub(crate) const LOCK: &str = "icons/symbols/lock.svg";
 pub(crate) const SCREEN: &str = "icons/symbols/screen.svg";
 pub(crate) const CHECK: &str = "icons/symbols/check.svg";
+pub(crate) const CHEVRON_DOWN: &str = "icons/symbols/chevron-down.svg";
+pub(crate) const CHEVRON_RIGHT: &str = "icons/symbols/chevron-right.svg";
+pub(crate) const CHEVRON_LEFT: &str = "icons/symbols/chevron-left.svg";
+pub(crate) const CLOSE: &str = "icons/symbols/close.svg";
+pub(crate) const PLUS: &str = "icons/symbols/plus.svg";
+pub(crate) const MORE: &str = "icons/symbols/more.svg";
+pub(crate) const ARROW_RIGHT: &str = "icons/symbols/arrow-right.svg";
+pub(crate) const INFO: &str = "icons/symbols/info.svg";
 
-const ASSETS: [(&str, &[u8]); 7] = [
+const ASSETS: [(&str, &[u8]); 15] = [
     (KEYSTONE, include_bytes!("../assets/keystone.svg")),
     (JEWEL_HOLLOW, include_bytes!("../assets/jewel-hollow.svg")),
     (JEWEL_CUT, include_bytes!("../assets/jewel-cut.svg")),
@@ -21,6 +29,26 @@ const ASSETS: [(&str, &[u8]); 7] = [
     (LOCK, include_bytes!("../assets/symbols/lock.svg")),
     (SCREEN, include_bytes!("../assets/symbols/screen.svg")),
     (CHECK, include_bytes!("../assets/symbols/check.svg")),
+    (
+        CHEVRON_DOWN,
+        include_bytes!("../assets/symbols/chevron-down.svg"),
+    ),
+    (
+        CHEVRON_RIGHT,
+        include_bytes!("../assets/symbols/chevron-right.svg"),
+    ),
+    (
+        CHEVRON_LEFT,
+        include_bytes!("../assets/symbols/chevron-left.svg"),
+    ),
+    (CLOSE, include_bytes!("../assets/symbols/close.svg")),
+    (PLUS, include_bytes!("../assets/symbols/plus.svg")),
+    (MORE, include_bytes!("../assets/symbols/more.svg")),
+    (
+        ARROW_RIGHT,
+        include_bytes!("../assets/symbols/arrow-right.svg"),
+    ),
+    (INFO, include_bytes!("../assets/symbols/info.svg")),
 ];
 
 pub(crate) struct Icons;

@@ -41,11 +41,11 @@ a quarter-second before adding Space, S, W, A, or V; quick combinations keep the
 Left Option and Left Command remain ordinary modifiers.
 
 For Fn, set **System Settings › Keyboard › Press 🌐 key to** to **Do Nothing** so Fn only dictates.
-**Remove um / uh** removes standalone English hesitation words locally when English is selected.
-Automatic and other languages preserve words. For Parakeet, choose **Cleanup language** in Settings;
-speech recognition still detects the language automatically. New installations start with Automatic.
-Turn the switch off for literal English transcription. Speech containing only removed fillers sends
-nothing.
+**Remove um and uh** removes standalone English hesitation words locally. With Nemotron or Whisper
+it applies, and starts on, once English is the chosen language; other languages keep every word.
+Parakeet detects the language as you speak, so the switch starts off and turning it on tells it to
+clean up English; leave it off if you also dictate in a language where "um" is a word. Speech
+containing only removed fillers sends nothing.
 
 **Paste last dictation** in the tray, or V during the shortcut hold on Windows and Mac, inserts
 exactly the last completed text again. It can recover text when insertion failed. Speakeasy keeps
@@ -491,39 +491,40 @@ about 0.8 GB in all, and turns dictation on:
 The guide shows your configured shortcut and microphone activity, then waits for recognized words
 before offering the ready screen. Practice stays private; the final screen explains how to check
 text delivery in your own editor. **Skip setup** returns to Settings without stopping an active
-download. Unfinished setup opens again on launch; **Advanced → Replay setup** brings the guide back
-without resetting your settings. In `--demo`, replay uses simulated words and never opens a
-microphone.
+download. Unfinished setup opens again on launch; **General → Setup guide → Replay** brings the
+guide back without resetting your settings. In `--demo`, replay uses simulated words and never opens
+a microphone.
 
 Then hold <kbd>Ctrl</kbd> + <kbd>Win</kbd> (Windows), <kbd>Fn</kbd> (Mac), or <kbd>Ctrl</kbd> +
 <kbd>Super</kbd> + <kbd>Space</kbd> (Linux) in an editor and speak.
 
-Settings opens on **Dictation**, with microphone, language, delivery, and practice controls.
-**Words** holds recognition hints and phrase corrections. **Advanced** holds model downloads, engine
-paths, GPU preference, desktop bindings, Show shortcuts, and updates. Changing pages keeps unsaved
-edits; leaving Dictation ends private practice and clears its text.
+Settings opens on **Dictation**: your shortcut with a private practice area, the Show shortcuts on
+Windows and Mac, the speech model, language, microphone, writing options, and presets. **Words**
+holds phrase corrections and recognition hints. **General** holds the theme, motion and sounds,
+permissions, updates, the setup guide, and **Start over…**. Leaving Dictation ends private practice
+and clears its text.
 
-Dictation shows whether the local model and shortcut are ready. It also shows macOS microphone,
-Accessibility, and screen permissions without prompting or capturing anything. Permission status
-refreshes when Settings comes to the front; **Open settings** opens the matching system page on
-macOS and Windows. Linux's **Microphone help** opens the setup guide. Windows and Linux access stays
-**Checked when used**, because a privacy setting alone cannot prove access. An allowed permission
-does not prove the hardware or another app works. **Try dictation here** lets you use the real
-shortcut and microphone while your words appear only in Settings. Nothing is pasted, copied, or
-saved, and practice cannot record a Show. **End practice**, hiding the window, losing focus, or
-changing settings ends practice and clears its text. To check delivery, end practice and dictate
-into an editor; practice does not verify another app's input or clipboard behavior.
+**General → Privacy** shows microphone access, and on macOS Accessibility and screen permission,
+without prompting or capturing anything. Permission status refreshes when Settings comes to the
+front; **Open settings** opens the matching system page on macOS and Windows. Linux's **Microphone
+help** opens the setup guide. Windows and Linux access stays **Checked when used**, because a
+privacy setting alone cannot prove access. An allowed permission does not prove the hardware or
+another app works. **Start practice** under your shortcut lets you use the real shortcut and
+microphone while your words appear only in Settings. Nothing is pasted, copied, or saved, and
+practice cannot record a Show. **End practice**, hiding the window, losing focus, or changing
+settings ends practice and clears its text. To check delivery, end practice and dictate into an
+editor; practice does not verify another app's input or clipboard behavior.
 
-**Check for updates** under Advanced contacts the repository's latest-release endpoint on GitHub
-only when clicked. It sends no recordings, settings, or device details. **Open release** opens that
+**Check for updates** under General contacts the repository's latest-release endpoint on GitHub only
+when clicked. It sends no recordings, settings, or device details. **Release notes** opens that
 version's official download page; checking never installs or runs an update.
 
-Windows builds with a configured update signing key also offer **Download update** for an installed
-copy. The download verifies the signed version and installer bytes before offering **Install and
-restart**. Save settings and finish or cancel recording first; installation waits for pending work
-and accepted saves to finish. It preserves the installation folder and selected settings file.
-Portable or moved copies use the release page. Downloading and installing always require separate
-actions. Builds without an embedded signing key offer the release page only.
+Windows builds with a configured update signing key also offer **Download** for an installed copy.
+The download verifies the signed version and installer bytes before offering **Install and
+restart**. Finish or cancel recording first; installation waits for pending work and settings saves
+to finish. It preserves the installation folder and selected settings file. Portable or moved copies
+use the release page. Downloading and installing always require separate actions. Builds without an
+embedded signing key offer the release page only.
 
 Downloads come from pinned GitHub and Hugging Face URLs and are checked against their SHA-256 before
 use. They live in `%LOCALAPPDATA%\speakeasy` on Windows and
@@ -595,20 +596,21 @@ desktop file from `usr/share/applications` inside that directory. For AppImage, 
 link its absolute path as `speakeasy`, and install the desktop file from this repository or its
 `--appimage-extract` output. The executable stays in the chosen location. On Wayland, automatic
 paste needs compositor modifier feedback and libei, and typing needs EI direct text support; X11
-pastes through XTest and cannot type. Settings' **Insert** control chooses **Paste (Ctrl+V)**,
-**Paste (Ctrl+Shift+V)** for terminals, **Type (Keep clipboard)**, or **Copy for manual paste** if
-automatic insertion is unavailable. X11 automatic paste needs the first keyboard layout active and
-an unshifted V key in it; otherwise Speakeasy copies the text and explains how to paste it.
+pastes through XTest and cannot type. Settings' **Insert text by** control chooses **Paste
+(Ctrl+V)**, **Paste (Ctrl+Shift+V)** for terminals, **Type (keeps clipboard)**, or **Copy for manual
+paste** if automatic insertion is unavailable. X11 automatic paste needs the first keyboard layout
+active and an unshifted V key in it; otherwise Speakeasy copies the text and explains how to paste
+it.
 
-For a desktop without suitable shortcut permissions, choose **Shortcuts: Desktop bindings** and
-assign the two commands Settings shows in your desktop's shortcut settings: `speakeasy --toggle` and
-`speakeasy --cancel`, with `--config` when you use another settings file. This mode starts/finishes
-hands-free. Choose **Insert: Copy for manual paste** as well to avoid requesting keyboard-control
-access. The optional `linux` settings object holds the `shortcut` and `cancel` chords in portal
-syntax, such as `CTRL+LOGO+space`: X11 grabs them, and Wayland requests them as preferred triggers.
-It also holds `external_shortcut`, which Shortcuts sets. The top-level `text_delivery` setting holds
-Insert's choice: `paste`, `terminal_paste`, `type`, or `copy`. Save and resume after changing
-bindings or keyboard maps.
+For a desktop without suitable shortcut permissions, set **General › Desktop › Shortcuts** to
+**Desktop bindings** and assign the two commands Settings shows in your desktop's shortcut settings:
+`speakeasy --toggle` and `speakeasy --cancel`, with `--config` when you use another settings file.
+This mode starts/finishes hands-free. Set **Insert text by** to **Copy for manual paste** as well to
+avoid requesting keyboard-control access. The optional `linux` settings object holds the `shortcut`
+and `cancel` chords in portal syntax, such as `CTRL+LOGO+space`: X11 grabs them, and Wayland
+requests them as preferred triggers. It also holds `external_shortcut`, which Shortcuts sets. The
+top-level `text_delivery` setting holds the **Insert text by** choice: `paste`, `terminal_paste`,
+`type`, or `copy`. Pause and resume dictation after changing bindings or keyboard maps.
 
 A tray host is optional: without one, closing Settings quits and the launcher reopens the app.
 Configuration lives under `$XDG_CONFIG_HOME/speakeasy`, downloads under `$XDG_DATA_HOME/speakeasy`,
@@ -629,22 +631,24 @@ Long Parakeet dictation starts recognition at pauses while you keep speaking, re
 after release. Text still arrives once, when you finish, with phrase corrections applied across the
 whole dictation.
 
-**Nemotron** is an optional 742 MB download under **Advanced → Speech model**. NVIDIA's Nemotron 3.5
-ASR Streaming 0.6B supports 32 locales, including Hindi, Japanese, Korean, and Mandarin. Choose a
-language or automatic detection. It performs continuous inference during ordinary dictation and
+**Nemotron** is an optional 742 MB download under **Dictation → Speech model**. NVIDIA's Nemotron
+3.5 ASR Streaming 0.6B supports 32 locales, including Hindi, Japanese, Korean, and Mandarin. Choose
+a language or automatic detection. It performs continuous inference during ordinary dictation and
 practice; final text arrives once, after release. If continuous recognition fails, Speakeasy retries
-the complete recording with the same model. Parakeet remains the default; download, then save to
-switch. Whisper and Show narration use whole-recording recognition.
+the complete recording with the same model. Parakeet remains the default; choosing Nemotron
+downloads what is missing and switches when the download finishes. Whisper and Show narration use
+whole-recording recognition.
 
 **Recognition hints** under Words helps Nemotron recognize names and jargon without forcing
-replacement text. Add a name or phrase, then save. Up to 100 hints are stored locally; each allows
-six words and 64 characters. They remain saved when another model is selected, but only Nemotron
-uses them. Use **Phrase corrections** when you want a deterministic replacement.
+replacement text. Add a name or phrase; it applies right away. Up to 100 hints are stored locally;
+each allows six words and 64 characters. They remain saved when another model is selected, but only
+Nemotron uses them. Use **Corrections** when you want a deterministic replacement.
 
-**Your own engine**, under **Advanced → Speech model**, runs a whisper.cpp or NeMo-Speech.cpp build
-you installed. Choose **Whisper** or **NeMo**, then the program and model file for that engine, and
-save; switching engines clears the other engine's files, and switching is always explicit.
-**Whisper** runs a local whisper.cpp server with a GGML model. The known-good Windows build is
+**Your own engine**, under **Dictation → Speech model**, runs a whisper.cpp or NeMo-Speech.cpp build
+you installed. Choose **whisper.cpp** or **NeMo-Speech**, then the program and model file for that
+engine; Speakeasy switches once both are chosen. Switching engines clears the other engine's files,
+and switching is always explicit. **Whisper** runs a local whisper.cpp server with a GGML model. The
+known-good Windows build is
 [whisper.cpp b5130](https://github.com/ggml-org/whisper.cpp/releases/tag/b5130): extract the
 complete runtime and choose `Release/whisper-server.exe`. Turn off **Prefer GPU** for a CPU-only
 build. The `threads` setting applies to Whisper and defaults to four. On shared Linux machines,
@@ -664,11 +668,12 @@ settings file.
 
 ### Settings
 
-Settings shows the shortcuts and the engine and model in use, and lets you choose the microphone,
-speech or cleanup language, recognition hints, GPU use, filler removal, how text is delivered,
-reduced motion, sounds, theme, phrase corrections, and on Windows whether Speakeasy starts at login.
-The buttons and the status line stay at the bottom while the rest scrolls. The status says whether
-dictation is ready, or shows the latest error or notice; problems show in the attention color.
+Settings shows your shortcuts and the speech model in use, and lets you choose the microphone,
+language, recognition hints, GPU use, filler removal, how text is delivered, reduced motion, sounds,
+theme, phrase corrections, and on Windows whether Speakeasy starts at login. Changes apply as you
+make them. **Pause** or **Resume**, **Shows**, **Quit**, and the status line stay at the bottom
+while the rest scrolls. The status says whether dictation is ready, confirms **Saved**, or shows the
+latest error or notice; problems show in the attention color.
 
 On Windows, assistive tools can read and operate the main Settings buttons, page tabs, switches, and
 phrase-correction and recognition-hint fields. Native acceptance checks their values, focus,
@@ -678,36 +683,33 @@ selection is unavailable during active IME composition. Scrolling the Settings p
 screen-reader navigation remain unfinished; macOS and Linux do not yet publish an accessibility
 tree.
 
-**Phrase corrections** replaces recurring recognition mistakes in dictation and Show narration.
-Enter what the engine hears and the spelling you want, then save. Matching is case-insensitive, uses
-whole words, and prefers the longest phrase; replacements do not trigger other rules. Timed
-narration retains the original word span. This changes recognized text, not the speech model, and
-does not provide live transcription. Up to 200 rules are stored locally in `vocabulary`, for example
-`[{"heard": "speak easy", "written": "Speakeasy"}]`. Each side allows up to six words and 64
-characters.
+**Corrections** under Words replaces recurring recognition mistakes in dictation and Show narration.
+Enter what the engine hears and the spelling you want, then choose **Add**; **Edit** changes one in
+place. Matching is case-insensitive, uses whole words, and prefers the longest phrase; replacements
+do not trigger other rules. Timed narration retains the original word span. This changes recognized
+text, not the speech model, and does not provide live transcription. Up to 200 rules are stored
+locally in `vocabulary`, for example `[{"heard": "speak easy", "written": "Speakeasy"}]`. Each side
+allows up to six words and 64 characters.
 
-**Dictation presets** on the Dictation page keep named combinations of engine, model, language,
-recognition hints, phrase corrections, filler cleanup, thread count, and GPU preference. Enter a
-name and choose **Store current**, then **Save changes** to keep it. Storing includes unfinished
-phrase and hint edits when they are valid. **Load** puts a preset into the draft; **Save changes**
-applies it through the normal settings flow. Finish or cancel unfinished edits before loading.
-**Replace from draft** updates a saved preset's choices, and **Delete** removes its saved entry.
-Both take effect on disk when you save. Up to 16 presets are stored locally in `presets`, with
-distinct names of up to 48 characters. An unavailable model can remain in a saved preset; loading it
-requires choosing valid files before the settings can apply.
+**Presets** on the Dictation page keep named combinations of engine, model, language, recognition
+hints, phrase corrections, filler cleanup, thread count, and GPU preference. **Save current settings
+as a preset** names the current choices. **Use** applies a preset and keeps it; the matching preset
+shows **In use**. Its **⋯** menu offers **Update with current settings** and **Delete**. Up to 16
+presets are stored locally in `presets`, with distinct names of up to 48 characters. An unavailable
+model can remain in a preset; using it reports what to fix and leaves dictation as it was.
 
-**Use saved** applies an already-saved preset immediately while idle, preserving the Settings draft.
-The Windows/Mac tray's **Preset** menu and `speakeasy preset "NAME"` do the same. The selected
-preset survives Pause but resets on restart or a saved dictation-settings change. Model choices
-reload the engine only when needed; text-only choices reuse it. An unavailable preset leaves the
-current configuration intact.
+The Windows/Mac tray's **Preset** menu and `speakeasy preset "NAME"` apply a preset for the current
+session while idle, without changing your settings; Settings marks it **In use**. That selection
+survives Pause but resets on restart or a dictation-settings change. Model choices reload the engine
+only when needed; text-only choices reuse it. An unavailable preset leaves the current configuration
+intact.
 
-Changes apply when you save. Preset-library, theme, reduced-motion, and Start at login changes keep
-a recording running; microphone, language, filler removal, recognition hints, phrase correction,
-delivery, and sound changes end it but keep the model loaded. Changing the Mac shortcut, Linux
-Shortcuts, or most Linux Insert settings restarts dictation, which reloads the model. Saving stays
-responsive and preserves edits made while the save is running. Pausing during a save keeps dictation
-paused; Quit finishes requested saves.
+Preset-library, theme, reduced-motion, and Start at login changes keep a recording running;
+microphone, language, filler removal, recognition hints, phrase correction, delivery, and sound
+changes end it but keep the model loaded. Changing the Mac shortcut, Linux Shortcuts, or most Linux
+**Insert text by** choices restarts dictation, which reloads the model. Saving stays responsive and
+preserves edits made while the save is running. Changes made while dictation is paused are saved
+without resuming it, and pausing during a save keeps it paused; Quit finishes requested saves.
 
 <p align="center">
   <img src="docs/assets/themes.png"
@@ -720,7 +722,7 @@ The theme colors Settings, the pill, and the Windows and Linux tray icon: **Jet 
 On Windows, **Start at login** opens Speakeasy in the tray when you sign in; it is off by default.
 While it is on, each launch registers the copy you run, so a moved or updated Speakeasy keeps
 starting; turn it off before you delete Speakeasy. If Windows' Startup apps page, in Settings or
-Task Manager, has turned Speakeasy off, Settings says so beside the switch: turn it on there. Start
+Task Manager, has turned Speakeasy off, Settings says so under the switch: turn it on there. Start
 at login belongs to the default settings file, which sign-in opens, so a launch with `--config`
 neither shows nor changes it.
 
@@ -729,13 +731,13 @@ Settings live in `%APPDATA%\speakeasy\settings.json` on Windows and
 `settings.example.json`, the settings a first launch starts from; pass `--config <path>` to use
 another file. Saving writes only the settings you changed, so edits you make to the file by hand
 stay. When a settings file from another Speakeasy version cannot be read, Settings and the setup
-guide offer **Start fresh…**; **Advanced → Reset Speakeasy…** does the same at any time. After you
+guide offer **Start fresh…**; **General → Start over…** does the same at any time. After you
 confirm, it deletes the downloaded engines, models, and updates and then the settings file, with its
 phrase corrections, hints, and presets, and downloads Parakeet again. Every Show stays. If something
 cannot be removed, the settings stay and Speakeasy says what to close or fix. On Windows and Mac,
 configured launches go straight to the tray or menu bar; Linux opens Settings at startup. Closing
-Settings hides it and keeps unsaved edits; Windows minimize also hides it. Reopening Speakeasy or
-choosing **Settings…** in the tray brings it back.
+Settings hides it; Windows minimize also hides it. Reopening Speakeasy or choosing **Settings…** in
+the tray brings it back.
 
 ### Tray
 

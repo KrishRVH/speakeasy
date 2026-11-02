@@ -50,7 +50,7 @@ pub(crate) fn nemotron_language(language: &str) -> &str {
 }
 
 pub(crate) const LANGUAGES: &[(&str, &str)] = &[
-    ("auto", "Automatic"),
+    ("auto", "Detect automatically"),
     ("en-US", "English (US)"),
     ("en-GB", "English (UK)"),
     ("es-US", "Spanish (US)"),
@@ -95,7 +95,7 @@ pub(crate) fn whisper_language(locale: &str) -> &str {
 }
 
 pub(crate) const WHISPER_LANGUAGES: &[(&str, &str)] = &[
-    ("auto", "Automatic"),
+    ("auto", "Detect automatically"),
     ("af", "Afrikaans"),
     ("sq", "Albanian"),
     ("am", "Amharic"),

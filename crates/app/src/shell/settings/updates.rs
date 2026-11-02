@@ -176,7 +176,7 @@ impl Settings {
                 view.notice = Some(match result {
                     Ok(Some(installer)) => {
                         view.update = Update::Ready(installer);
-                        Notice::Note("Update verified. Save your changes, then choose Install and restart.".into())
+                        Notice::Note("Update verified. Installing restarts Speakeasy.".into())
                     },
                     Ok(None) => Notice::Note("Update download cancelled.".into()),
                     Err(error) => Notice::Problem(error.to_string().into()),
@@ -198,9 +198,9 @@ impl Settings {
         if is_demo(cx) || cx.global::<Services>().is_quitting() {
             return;
         }
-        if self.unsaved(cx) || !self.saves.is_idle() {
-            self.notice = Some(Notice::Problem(
-                "Save your settings before installing the update.".into(),
+        if !self.saves.is_idle() {
+            self.notice = Some(Notice::Note(
+                "Speakeasy is still saving your settings. Try again in a moment.".into(),
             ));
             return;
         }

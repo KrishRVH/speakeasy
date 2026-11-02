@@ -22,6 +22,10 @@ impl Speech {
     }
 }
 
+pub(super) fn detects_language(config: &Config) -> bool {
+    config.engine == Engine::Nemo && !config.uses_nemotron()
+}
+
 pub(super) fn use_own_engine(config: &mut Config) {
     if config.model_choice().is_some() {
         config.nemo_model = None;

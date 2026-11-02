@@ -100,20 +100,7 @@ impl Settings {
             return;
         }
         let next = match (self.onboarding, action) {
-            (_, Action::Replay) => {
-                if self.saves.needs_save(&self.config)
-                    || self.vocabulary.pending(cx)
-                    || self.recognition.pending(cx)
-                    || self.presets.pending(cx)
-                {
-                    self.notice = Some(Notice::Note(
-                        "Save or revert your changes before replaying setup.".into(),
-                    ));
-                    return;
-                }
-                self.close_language(window);
-                Step::Prepare
-            },
+            (_, Action::Replay) => Step::Prepare,
             (Some(step), Action::Next) => {
                 let next = self.onboarding_next(step, cx);
                 if next == step {

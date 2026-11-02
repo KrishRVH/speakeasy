@@ -15,28 +15,29 @@ only voice level, processing, and submission move. Red means on air: each theme'
 appears only while capture is open, and its `lamp` accent never signals recording.
 
 `crates/app/src/theme.rs` defines four themes. Jet & Champagne is the default; Emerald Lounge, Iris,
-and Midnight Chrome are selectable in Settings. Settings previews an unsaved theme; the pill and
-tray change when it is saved. Settings and Shows share one masthead: a jewel, the spaced wordmark,
-and a keystone rule. The wordmark is Josefin Sans SemiBold, embedded under the SIL Open Font
-License, and the line is “Say the word.” App icons are rendered from the SVG sources in
-`packaging/brand`; the Windows and macOS icons omit the ornament at 32 px and below, and Linux
-installs the full scalable icon.
+and Midnight Chrome are selectable in Settings, and choosing one recolors Settings, the pill, and
+the tray at once. The wordmark is Josefin Sans SemiBold, embedded under the SIL Open Font License,
+and the line is “Say the word.” App icons are rendered from the SVG sources in `packaging/brand`;
+the Windows and macOS icons omit the ornament at 32 px and below, and Linux installs the full
+scalable icon.
 
-Settings and Shows draw their controls from one kit, and the pill takes its jewels and tracked
-capitals from it too. Jewels are one family of solid, cut, and hollow diamonds that share an
-outline. A window's main action is a lamp plate led by a diamond; other actions are hairline
-outlines or, for low-weight commands such as Quit, muted text. Tabs and segmented choices underline
-the active item in lamp. Switches are jewels, lit when on and hollow when off. Pickers and the
-paired correction fields show a small tracked label above their value, and pickers mark the chosen
-list item with a lit diamond. Controls, cards, and wells share one fine corner. Destructive actions
-use the attention color, never `live`: a hairline first, then a filled plate to confirm. Settings'
-switch and picker accessible names keep the full state, such as “Reduce motion: Off” and “Theme:
-Iris”.
+Inside the windows the ornament recedes: the icon, the pill, and the jewels carry the Deco, while
+Settings and Shows read as calm panels. Both draw their controls from one kit in
+`crates/app/src/controls.rs`, and the pill takes its jewels from it. Jewels are one family of solid,
+cut, and hollow diamonds that share an outline; status lines and banners lead with them. Controls
+are 32 px tall with a 6 px corner. A window's main action is a filled lamp button; secondary actions
+are raised outlines, and low-weight commands such as Quit are muted text. Destructive actions use
+the attention color, never `live`: an outline first, then a filled button to confirm. Switches are
+tracks lit in lamp. Dropdowns open a menu under their trigger, check the chosen item, and follow the
+arrow keys, Home, End, Enter, Space, Escape, and Tab. Tabs and segmented choices mark the active
+item in lamp. Focus rings appear only after keyboard use, so pointer clicks stay quiet. Accessible
+names stay plain and the state lives in accessible properties: a switch named “Reduce motion”
+reports on or off, and a swatch radio is named “Theme: Iris”.
 
-Settings lays its pages out as inlay. Cards are a hairline frame with one inner rule, section
-captions are lamp eyebrows that read as headings, and keystone double rules divide each page's major
-groups. A double rule tops the command bar, where Quit stands apart from the other commands. A cut
-jewel leads the status line: attention for a problem, lamp for unsaved edits, muted otherwise.
+Settings groups each page into captioned panels of rows: a title, an optional muted detail, and one
+control at the right. Changes apply as they are made. A jewel leads the footer status line: lamp
+while dictation is ready, `live` while it records, attention for a problem, hollow otherwise; after
+each save the line reads “Saved” with a check.
 
 ## Pill
 
@@ -119,37 +120,48 @@ and cancel cues follow the end of capture and are never recorded.
 ## Tray and Settings
 
 Configured native launches stay in the tray/menu bar. First setup and invalid configuration open
-Settings. A fresh install sets itself up there: a card names each step with its progress, **Cancel**
-pauses and later resumes, and completion enables dictation. The speech model controls stay hidden
-while setup runs. Linux opens Settings at startup to expose desktop permissions and tray state.
+Settings. A fresh install sets itself up there: a banner names each step with its progress,
+**Cancel** pauses and later resumes, and completion enables dictation. Linux opens Settings at
+startup to expose desktop permissions and tray state.
 
-Advanced lists the speech model as three tickets: Parakeet v3, marked recommended, Nemotron 3.5, and
-Your own engine. Each says what the model is for and shows Selected, Downloaded, or its download
-size. Choosing a managed model downloads only what is missing and puts it in the draft; choosing the
-selected one again re-checks and repairs its files. Your own engine opens a panel with Whisper and
-NeMo tabs and only the active engine's program and model pickers; changing tabs clears the other
-engine's files.
+Settings has three pages. Dictation leads with the shortcut card: the keys, what they do, hands-free
+and cancel, and private practice. Below it come the Show shortcuts behind a disclosure on Windows
+and macOS, then Speech, Writing, and Presets. Words holds corrections and recognition hints. General
+holds look and feel, startup on Windows, desktop shortcuts on Linux, privacy, about and updates, the
+setup guide, and Start over.
 
-A settings file this version cannot read replaces the setup card, and the guide's automatic setup,
-with a card that names the file and offers **Start fresh…**; the status line keeps the exact error
-for anyone who would rather fix the file. Otherwise Advanced offers **Reset Speakeasy…**. Both
-confirm in place with **Delete settings and downloads** beside Cancel. Reset pauses dictation,
-deletes the downloaded engines, models, and updates and then the settings file, keeps every Show and
-the finished-guide marker, and starts automatic setup. It is unavailable during setup, saves, or a
-Windows update download, and setup and update downloads are unavailable while it runs. A failed
-reset keeps the previous settings and explains what stopped it. Quit waits for a running reset.
+Speech names the model in use with a one-line summary; **Change** opens three radio cards: Parakeet
+v3, marked recommended, Nemotron 3.5, and Your own engine. Each says what the model is for and tags
+In use, Downloaded, its download size, or its download percentage. Choosing a managed model
+downloads only what is missing and switches when it finishes. Your own engine opens a panel with
+whisper.cpp and NeMo-Speech segments and only the active engine's program and model choosers;
+changing engines clears the other engine's files, and the switch happens once both files are chosen.
+The language row appears only for models that follow a chosen language; Parakeet detects it, so its
+**Remove um and uh** switch sets English cleanup instead.
+
+A preset row shows **In use** when the current settings match it or the tray selected it, and
+**Use** otherwise; its ⋯ menu updates it from the current settings or deletes it.
+
+A banner reports a settings file this version cannot read, names the file, and offers **Start
+fresh…**; the status line keeps the exact error for anyone who would rather fix the file. Otherwise
+General offers **Start over…**. Both confirm in place with **Delete settings and downloads** beside
+Cancel. Reset pauses dictation, deletes the downloaded engines, models, and updates and then the
+settings file, keeps every Show and the finished-guide marker, and starts automatic setup. It is
+unavailable during setup, saves, or a Windows update download, and setup and update downloads are
+unavailable while it runs. A failed reset keeps the previous settings and explains what stopped it.
+Quit waits for a running reset.
 
 On Windows, Start at login, off by default, belongs to the default settings file, which the sign-in
 entry opens. Each live launch with those settings registers the running executable to start at
 sign-in, or removes that entry, as the setting says, and so does each save. Demos never touch the
 entry, a launch with `--config` neither shows the switch nor touches the entry, and settings that
 need repair leave it as it was, so sign-in still opens them. While Windows' Startup apps page holds
-the entry off, Settings says so beside the switch and tells the user to turn it on there.
+the entry off, Settings says so under the switch and tells the user to turn it on there.
 
-Close hides the existing window, preserving edits; Windows minimize also hides it. macOS minimize
-retains normal Dock behavior. Relaunch and the tray's Settings action reveal the same window. The
-first hide shows the tray hint (see the pill table). On Linux, closing Settings without a tray host
-quits; the launcher reopens it.
+Close hides the existing window; Windows minimize also hides it. macOS minimize retains normal Dock
+behavior. Relaunch and the tray's Settings action reveal the same window. The first hide shows the
+tray hint (see the pill table). On Linux, closing Settings without a tray host quits; the launcher
+reopens it.
 
 The tray shows the Grille mark with its slot lit in the theme's lamp color and its bars cut through.
 Recording turns the slot red; busy, paused, and attention add a cut-jewel badge: hollow for busy,
@@ -164,14 +176,14 @@ without the shortcut, of the display under the pointer or of an area dragged out
 behaves like any other. There is no window entry, since the pointer is on the menu. Copy last Show
 and Open last Show follow them, before Settings; they act once a Show is saved and between
 recordings, paused included, until Quit begins or either finds that Show gone. Errors remain
-accessible in Settings after the pill's notice expires, including while there are unsaved edits: its
-commands and status line stay in view below the scrolling controls.
+accessible in Settings after the pill's notice expires: its commands and status line stay in view
+below the scrolling controls.
 
 Paste last dictation is available between sessions when one result remains in memory. V during an
 ordinary Windows/macOS hold abandons that pending recording and pastes the previous result; repeated
 keydown events do not repeat insertion. Windows/macOS also offer Style and saved Preset submenus.
 Style selects the next recording and appears in the pill when non-Prose. Preset choices require idle
-dictation and leave unsaved Settings edits intact.
+dictation and last for the session without changing saved settings.
 
 ## Reviewing Shows
 
@@ -180,15 +192,21 @@ opens one review window, bringing it forward and refreshing if already open. Rec
 it automatically. The newest Show is selected on first load; refresh preserves the user's choice.
 Deletion or expiry clears the selection and its pixels, with no fallback to another Show.
 
-The left list is a column of ticket rows divided by hairlines; a lamp bar and a lit diamond mark the
-selected Show. Each row shows age, duration, frame count, and cut-jewel chips for kept, damaged,
-early-ending, or lost-narration status. With nothing to show, the pane centers a keystone rule, an
-eyebrow, and one line of guidance. Discard confirmation sits in an attention-colored frame with
-Cancel as an outline and Discard permanently as the filled plate. The right pane shows retention,
-warnings, one keyframe with its time and numbered marks, frame buttons, and the current summary as
-inert plain text. Up/Down selects Shows, Left/Right steps frames, Home/End selects the first/last
-frame, and Escape closes. Tab and Shift+Tab move through controls; Enter or Space activates them.
-Closing releases the view and its images.
+The window uses the shared kit in sentence case. The left list sits under a slim header with the
+Show count and Refresh; each row shows age, duration, and frame count, with tags for kept,
+interrupted, pending or lost narration, early-ending, and damaged status. A soft fill and a lamp bar
+mark the selected Show. With no Shows, Windows and macOS explain how to record one, with S, W, and A
+as keycaps. The selected Show's header carries its retention and status tags, Send to agent as the
+main action, Copy summary, Keep Show or Allow expiry, and a More actions menu for the image copy,
+Open folder, video, and export commands; the menu dims actions that are unavailable. Below the
+header come warnings, a segmented switch for the frame source, one keyframe with its time and
+numbered marks, frame chips, and a Summary or Narration switch over the current summary as inert
+plain text. An interrupted Show leads with its recovery action; Discard stays apart as a destructive
+outline, and its confirmation adds a Cannot be undone tag, Cancel, and a filled Discard permanently.
+Focus rings appear only after keyboard input. Up/Down selects Shows, Left/Right steps frames,
+Home/End selects the first/last frame, and Escape closes. While the menu is open, Up/Down move
+through its available actions and Escape closes only the menu. Tab and Shift+Tab move through
+controls; Enter or Space activates them. Closing releases the view and its images.
 
 Refresh rereads the library. Regaining focus checks that the selected folder still exists and
 rereads its summary; external edits are never overwritten. Copy summary reads the file again on

@@ -1,4 +1,4 @@
-mod language;
+mod menu;
 mod navigation;
 pub(super) mod onboarding;
 mod permissions;
@@ -14,7 +14,7 @@ mod vocabulary;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use async_channel::Receiver;
-use gpui::{App, BorrowAppContext, Context, SharedString, Task, Timer, Window};
+use gpui::{App, BorrowAppContext, Context, ElementId, SharedString, Task, Timer, Window};
 use speakeasy_platform::{FileFilter, Permissions};
 use tokio::sync::watch;
 use updates::Update;
@@ -28,16 +28,23 @@ use super::{
 };
 use crate::{
     audio::{InputDevice, MicrophoneScan},
-    config::{Config, Engine},
+    config::{Config, Engine, TextDelivery},
     gpui_ext::{EntityUpdate, WindowUpdate, follow},
     models::Model,
-    runtime::Snapshot,
+    runtime::{ModelState, Snapshot},
     setup::{Installed, Setup},
-    status::{Indicator, Readiness},
+    status::Indicator,
+    theme::Theme,
 };
 
 const PROGRESS_THROTTLE: Duration = Duration::from_millis(100);
 
+const SAVED_FLASH: Duration = Duration::from_millis(1_600);
+
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "Settings owns independent window flags: file readability, disclosures, input modality, and the Windows startup approval it observes"
+)]
 pub(super) struct Settings {
     config: Config,
     presentation: Presentation,
@@ -47,14 +54,15 @@ pub(super) struct Settings {
     file_picker: Option<Task<()>>,
     microphone_listing: Option<Task<()>>,
     preview: Option<Task<()>>,
-    setup: Option<(Setup, Task<()>, Config)>,
+    setup: Option<Installing>,
     retiring_setup: Option<(Setup, Task<()>)>,
     saving: Option<Task<()>>,
     saves: SaveQueue,
+    saved: Option<Task<()>>,
     vocabulary: vocabulary::Editor,
     recognition: recognition::Editor,
     presets: presets::Editor,
-    language: language::Picker,
+    menus: menu::Menus,
     navigation: navigation::Navigation,
     practice: practice::Practice,
     onboarding: Option<onboarding::Step>,
@@ -66,6 +74,9 @@ pub(super) struct Settings {
     reset: Reset,
     downloaded: Vec<Model>,
     own_engine: bool,
+    choosing_model: bool,
+    shows_help: bool,
+    keyboard: bool,
     startup_apps_off: bool,
     #[cfg(target_os = "linux")]
     desktop_command: SharedString,
@@ -73,10 +84,17 @@ pub(super) struct Settings {
     pub(super) minimize_to_tray: Option<Task<()>>,
 }
 
+struct Installing {
+    model: Model,
+    setup: Setup,
+    _follow: Task<()>,
+}
+
 impl Settings {
     pub(super) fn new(
         config: Config,
         mut updates: watch::Receiver<Snapshot>,
+        window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> Self {
         let services = cx.global::<Services>();
@@ -87,9 +105,9 @@ impl Settings {
         let onboarding = (!services.mode.is_demo() && onboarding::pending(&services.path))
             .then_some(onboarding::Step::Prepare);
         let unreadable = !services.mode.is_demo() && Config::is_unreadable(&services.path);
-        let vocabulary = vocabulary::Editor::new(config.theme, cx);
-        let recognition = recognition::Editor::new(config.theme, cx);
-        let presets = presets::Editor::new(config.theme, cx);
+        let vocabulary = vocabulary::Editor::new(config.theme, window, cx);
+        let recognition = recognition::Editor::new(config.theme, window, cx);
+        let presets = presets::Editor::new(config.theme, window, cx);
         let mut view = Self {
             config,
             presentation,
@@ -103,10 +121,11 @@ impl Settings {
             retiring_setup: None,
             saving: None,
             saves,
+            saved: None,
             vocabulary,
             recognition,
             presets,
-            language: language::Picker::new(cx),
+            menus: menu::Menus::new(cx),
             navigation: navigation::Navigation::new(cx),
             practice: practice::Practice::default(),
             onboarding,
@@ -120,6 +139,9 @@ impl Settings {
             reset: Reset::Idle,
             downloaded: crate::setup::downloaded(),
             own_engine: false,
+            choosing_model: false,
+            shows_help: false,
+            keyboard: false,
             startup_apps_off: false,
             #[cfg(target_os = "linux")]
             desktop_command,
@@ -165,13 +187,23 @@ impl Settings {
         ) {
             self.practice.stop();
         }
+        if !matches!(action, Action::Menu(_)) {
+            self.close_menu(window);
+        }
         match action {
             Action::Onboarding(action) => self.onboarding_action(action, window, cx),
             Action::Page(page) => self.open_page(page, window),
+            Action::Menu(menu) => self.toggle_menu(menu, window, cx),
             Action::Setup => self.toggle_setup(cx),
             Action::Install(model) => self.install_model(model, cx),
-            Action::OwnEngine => self.use_own_engine(),
-            Action::Engine(engine) => self.switch_engine(engine),
+            Action::Models => self.choosing_model = !self.choosing_model,
+            Action::ChooseModel => {
+                self.choosing_model = true;
+                self.open_page(navigation::Page::Dictation, window);
+            },
+            Action::ShowsHelp => self.shows_help = !self.shows_help,
+            Action::OwnEngine => self.use_own_engine(cx),
+            Action::Engine(engine) => self.switch_engine(engine, cx),
             Action::Reset => {
                 if self.can_reset(cx) {
                     self.reset = Reset::Confirming;
@@ -184,9 +216,19 @@ impl Settings {
                 }
             },
             Action::Choose(file) => self.choose(file, window, cx),
-            Action::Refresh => self.refresh_microphones(cx),
-            Action::Microphone => self.cycle_microphone(),
-            Action::Language => self.toggle_language(window, cx),
+            Action::SelectMicrophone(index) => {
+                let chosen = match index {
+                    None => Some(None),
+                    Some(index) => self
+                        .microphones
+                        .get(index)
+                        .map(|device| Some(device.id.clone())),
+                };
+                if let Some(microphone) = chosen {
+                    self.config.microphone = microphone;
+                    self.edited(cx);
+                }
+            },
             Action::SelectLanguage(language) => {
                 self.config.language = if self.config.engine == Engine::Whisper {
                     crate::models::whisper_language(language)
@@ -194,29 +236,27 @@ impl Settings {
                     language
                 }
                 .into();
-                self.close_language(window);
-                self.edited();
+                self.edited(cx);
             },
-            Action::Delivery => self.cycle_delivery(),
+            Action::SelectDelivery(delivery) => {
+                self.config.text_delivery = delivery;
+                self.edited(cx);
+            },
             #[cfg(target_os = "macos")]
-            Action::MacShortcut => {
-                self.config.mac_shortcut = self.config.mac_shortcut.next();
-                self.edited();
+            Action::SelectShortcut(shortcut) => {
+                self.config.mac_shortcut = shortcut;
+                self.edited(cx);
+            },
+            #[cfg(target_os = "linux")]
+            Action::SelectBindings(external) => {
+                self.config.linux.external_shortcut = external;
+                self.edited(cx);
             },
             Action::Toggle(setting) => self.toggle(setting, cx),
-            Action::Theme => self.cycle_theme(cx),
-            Action::Save => self.save(cx),
-            Action::Revert => {
-                if self.setup.is_none() && self.saving.is_none() {
-                    self.config = cx.global::<Services>().config.clone();
-                    self.vocabulary.clear(cx);
-                    self.recognition.clear(cx);
-                    self.presets.clear(cx);
-                    self.language.cursor = None;
-                    self.own_engine = false;
-                    self.edited();
-                }
-            },
+            Action::Theme(theme) => self.choose_theme(theme, cx),
+            Action::Preset(edit) => self.edit_preset(edit, window, cx),
+            Action::Correction(edit) => self.edit_correction(edit, window, cx),
+            Action::Hint(edit) => self.edit_hint(edit, window, cx),
             Action::Resume => {
                 cx.update_global::<Services, _>(|services, cx| services.resume(cx));
                 self.notice = None;
@@ -256,16 +296,15 @@ impl Settings {
         cx.notify();
     }
 
-    fn use_own_engine(&mut self) {
+    fn use_own_engine(&mut self, cx: &mut Context<'_, Self>) {
         speech::use_own_engine(&mut self.config);
         self.own_engine = true;
-        self.edited();
+        self.edited(cx);
     }
 
-    fn switch_engine(&mut self, engine: Engine) {
+    fn switch_engine(&mut self, engine: Engine, cx: &mut Context<'_, Self>) {
         if speech::switch_engine(&mut self.config, engine) {
-            self.language.cursor = None;
-            self.edited();
+            self.edited(cx);
         }
     }
 
@@ -319,8 +358,8 @@ impl Settings {
                 self.vocabulary.clear(cx);
                 self.recognition.clear(cx);
                 self.presets.clear(cx);
-                self.language.cursor = None;
                 self.own_engine = false;
+                self.choosing_model = false;
                 self.file_picker = None;
                 show_motion(self.config.prefers_reduced_motion(), cx);
                 show_theme(cx);
@@ -331,42 +370,52 @@ impl Settings {
         cx.notify();
     }
 
-    fn edited(&mut self) {
+    fn edited(&mut self, cx: &mut Context<'_, Self>) {
         self.practice.stop();
         self.notice = None;
+        self.commit(cx);
+    }
+
+    fn commit(&mut self, cx: &mut Context<'_, Self>) {
+        let services = cx.global::<Services>();
+        if services.is_quitting()
+            || services.mode.is_demo()
+            || self.unreadable
+            || self.resetting()
+            || !self.config_complete()
+            || !self.saves.needs_save(&self.config)
+        {
+            return;
+        }
+        let epoch = services.config_epoch();
+        if let Some(progress) = self.saves.submit(self.config.clone(), epoch) {
+            self.advance_save(progress, cx);
+        }
+    }
+
+    fn config_complete(&self) -> bool {
+        !self.config.needs_engine() && !self.config.model.as_os_str().is_empty()
     }
 
     fn unsaved(&self, cx: &App) -> bool {
-        !is_demo(cx)
-            && (self.saves.needs_save(&self.config)
-                || self.vocabulary.pending(cx)
-                || self.recognition.pending(cx)
-                || self.presets.pending(cx))
+        !is_demo(cx) && self.saves.needs_save(&self.config)
     }
 
-    fn cycle_microphone(&mut self) {
-        self.config.microphone =
-            next_microphone(&self.microphones, self.config.microphone.as_deref());
-        self.edited();
-    }
-
-    fn cycle_delivery(&mut self) {
-        self.config.text_delivery = self.config.text_delivery.next();
-        self.edited();
-    }
-
-    fn toggle(&mut self, setting: Setting, cx: &mut App) {
-        let flag = setting.flag(&mut self.config);
-        *flag = !*flag;
-        self.edited();
+    fn toggle(&mut self, setting: Setting, cx: &mut Context<'_, Self>) {
+        let on = !setting.is_on(&self.config);
+        *setting.flag(&mut self.config) = on;
+        if setting == Setting::RemoveFillers && speech::detects_language(&self.config) {
+            self.config.language = if on { "en" } else { "auto" }.into();
+        }
+        self.edited(cx);
         if is_demo(cx) && setting == Setting::ReduceMotion {
             show_motion(self.config.prefers_reduced_motion(), cx);
         }
     }
 
-    fn cycle_theme(&mut self, cx: &mut App) {
-        self.config.theme = self.config.theme.next();
-        self.edited();
+    fn choose_theme(&mut self, theme: Theme, cx: &mut Context<'_, Self>) {
+        self.config.theme = theme;
+        self.edited(cx);
         if is_demo(cx) {
             cx.global_mut::<Services>().config.theme = self.config.theme;
             show_theme(cx);
@@ -433,6 +482,7 @@ impl Settings {
         file: EngineFile,
         cx: &mut Context<'_, Self>,
     ) {
+        self.file_picker = None;
         match result {
             Ok(Some(path)) => {
                 match file {
@@ -446,7 +496,7 @@ impl Settings {
                         }
                     },
                 }
-                self.edited();
+                self.edited(cx);
             },
             Ok(None) => {},
             Err(_) => {
@@ -455,7 +505,6 @@ impl Settings {
                 ));
             },
         }
-        self.file_picker = None;
         cx.notify();
     }
 
@@ -471,7 +520,7 @@ impl Settings {
 
     fn toggle_setup(&mut self, cx: &Context<'_, Self>) {
         match self.setup.take() {
-            Some(setup) => self.pause_setup(setup, cx),
+            Some(Installing { setup, .. }) => self.pause_setup(setup, cx),
             None => self.start_setup(cx),
         }
     }
@@ -491,7 +540,6 @@ impl Settings {
             return;
         }
         self.practice.stop();
-        self.language.cursor = None;
         let setup = match Setup::start(model) {
             Ok(setup) => setup,
             Err(error) => {
@@ -512,15 +560,14 @@ impl Settings {
             let outcome = outcome.await;
             this.update_if_alive(cx, |view, cx| view.finish_setup(outcome, cx));
         });
-        self.setup = Some((setup, follow_setup, self.config.clone()));
+        self.setup = Some(Installing {
+            model,
+            setup,
+            _follow: follow_setup,
+        });
     }
 
-    fn pause_setup(
-        &mut self,
-        (setup, follow_setup, _): (Setup, Task<()>, Config),
-        cx: &Context<'_, Self>,
-    ) {
-        drop(follow_setup);
+    fn pause_setup(&mut self, setup: Setup, cx: &Context<'_, Self>) {
         setup.request_stop();
         let stopped = setup.stopped();
         let retirement = cx.spawn(async move |this, cx| {
@@ -532,7 +579,7 @@ impl Settings {
         });
         self.retiring_setup = Some((setup, retirement));
         self.notice = Some(Notice::Note(
-            "Setup paused. Downloads resume where they stopped.".into(),
+            "Download paused. It resumes where it stopped.".into(),
         ));
     }
 
@@ -541,26 +588,13 @@ impl Settings {
         outcome: Option<anyhow::Result<Installed>>,
         cx: &mut Context<'_, Self>,
     ) {
-        let auto_apply = self.setup.take().is_some_and(|(_, _, started)| {
-            started.needs_engine()
-                && started == self.config
-                && !self.vocabulary.pending(cx)
-                && !self.recognition.pending(cx)
-                && !self.presets.pending(cx)
-        });
+        self.setup = None;
         self.downloaded = crate::setup::downloaded();
         match outcome {
             Some(Ok(installed)) => {
                 installed.apply_to(&mut self.config);
                 self.own_engine = false;
-                if auto_apply {
-                    self.save(cx);
-                } else {
-                    self.notice = Some(Notice::Note(
-                        "Model ready. Save to use it. Your other changes remain in this draft."
-                            .into(),
-                    ));
-                }
+                self.edited(cx);
             },
             Some(Err(error)) => self.notice = Some(Notice::Problem(error.to_string().into())),
             None => {
@@ -573,36 +607,12 @@ impl Settings {
     }
 
     fn request_setup_stops(&self) {
-        if let Some((setup, _, _)) = &self.setup {
-            setup.request_stop();
+        if let Some(installing) = &self.setup {
+            installing.setup.request_stop();
         }
         if let Some((setup, _)) = &self.retiring_setup {
             setup.request_stop();
         }
-    }
-
-    fn save(&mut self, cx: &mut Context<'_, Self>) {
-        self.practice.stop();
-        if self.vocabulary.pending(cx) && !self.add_correction(cx) {
-            return;
-        }
-        if self.recognition.pending(cx) && !self.add_recognition_term(cx) {
-            return;
-        }
-        if self.presets.pending(cx) && !self.capture_preset(None, cx) {
-            return;
-        }
-        let services = cx.global::<Services>();
-
-        if services.is_quitting() || services.mode.is_demo() {
-            return;
-        }
-        let epoch = services.config_epoch();
-        self.notice = Some(Notice::Note("Saving changes…".into()));
-        if let Some(progress) = self.saves.submit(self.config.clone(), epoch) {
-            self.advance_save(progress, cx);
-        }
-        cx.notify();
     }
 
     fn advance_save(&mut self, progress: SaveProgress, cx: &mut Context<'_, Self>) {
@@ -626,7 +636,7 @@ impl Settings {
         cx.spawn(async move |this, cx| {
             let completed = result.recv().await.unwrap_or_else(|_| {
                 Err(anyhow::anyhow!(
-                    "Saving settings stopped unexpectedly. Try saving again."
+                    "Saving settings stopped unexpectedly. Change the setting again to retry."
                 ))
             });
             this.update_if_alive(cx, |view, cx| {
@@ -644,19 +654,39 @@ impl Settings {
         epoch: ConfigEpoch,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(saved) = saved else {
-            self.notice = error.map(|error| Notice::Problem(error.into()));
-            return;
-        };
-        saved.update_draft(&mut self.config);
-        let applied = cx.update_global::<Services, _>(|services, cx| {
-            services.adopt_saved(saved.validated, epoch, cx)
+        let applied = saved.map(|saved| {
+            saved.update_draft(&mut self.config);
+            cx.update_global::<Services, _>(|services, cx| {
+                services.adopt_saved(saved.validated, epoch, cx)
+            })
         });
+        if error.is_some() {
+            let restored = cx.global::<Services>().config.clone();
+            if restored.presets != self.config.presets {
+                self.menus.dismiss_presets();
+            }
+            self.config = restored;
+            self.own_engine = false;
+            self.vocabulary.stop_revising();
+        }
         self.notice = error
-            .or_else(|| applied.err().map(|error| error.to_string()))
+            .or_else(|| applied?.err().map(|error| error.to_string()))
             .map(|error| Notice::Problem(error.into()));
+        if self.notice.is_none() {
+            self.flash_saved(cx);
+        }
         show_motion(cx.global::<Services>().config.prefers_reduced_motion(), cx);
         show_theme(cx);
+    }
+
+    fn flash_saved(&mut self, cx: &Context<'_, Self>) {
+        self.saved = Some(cx.spawn(async move |this, cx| {
+            Timer::after(SAVED_FLASH).await;
+            this.update_if_alive(cx, |view, cx| {
+                view.saved = None;
+                cx.notify();
+            });
+        }));
     }
 
     pub(super) fn cancel_background_work(&mut self) {
@@ -673,7 +703,7 @@ impl Settings {
         self.setup = self
             .setup
             .take()
-            .filter(|(setup, _, _)| !setup.is_finished());
+            .filter(|installing| !installing.setup.is_finished());
         self.retiring_setup = self
             .retiring_setup
             .take()
@@ -707,16 +737,16 @@ enum Reset {
 }
 
 fn update_notice(version: Option<crate::updates::Version>) -> Notice {
-    let action = "Open release";
+    let action = "Release notes";
     #[cfg(target_os = "windows")]
     let action = if crate::updates::Download::available() {
-        "Download update"
+        "Download"
     } else {
         action
     };
     let message = match version {
         Some(version) => format!("Speakeasy {version} is available. Choose {action}."),
-        None => "No newer release is available.".into(),
+        None => "Speakeasy is up to date.".into(),
     };
     Notice::Note(message.into())
 }
@@ -739,7 +769,7 @@ struct Presentation {
     shortcut: Arc<str>,
     cancel_shortcut: Arc<str>,
     message: String,
-    readiness: Readiness,
+    model: Option<ModelState>,
 }
 
 impl Presentation {
@@ -747,7 +777,7 @@ impl Presentation {
         let status = services.status(snapshot);
         Self {
             indicator: status.indicator,
-            readiness: Readiness::new(snapshot, services.service_state()),
+            model: services.is_running().then_some(snapshot.model),
             shortcut: Arc::clone(&snapshot.shortcut),
             cancel_shortcut: Arc::clone(&snapshot.cancel_shortcut),
             message: if snapshot.message.is_empty() {
@@ -763,11 +793,27 @@ impl Presentation {
 enum Action {
     Onboarding(onboarding::Action),
     Page(navigation::Page),
-    Revert,
-    #[cfg(target_os = "macos")]
-    MacShortcut,
+    Menu(menu::Menu),
+    Setup,
     Install(Model),
+    Models,
+    ChooseModel,
+    ShowsHelp,
+    OwnEngine,
+    Engine(Engine),
+    Choose(EngineFile),
     SelectLanguage(&'static str),
+    SelectMicrophone(Option<usize>),
+    SelectDelivery(TextDelivery),
+    #[cfg(target_os = "macos")]
+    SelectShortcut(speakeasy_platform::MacShortcut),
+    #[cfg(target_os = "linux")]
+    SelectBindings(bool),
+    Toggle(Setting),
+    Theme(Theme),
+    Preset(presets::Edit),
+    Correction(vocabulary::Edit),
+    Hint(recognition::Edit),
     CheckUpdates,
     OpenUpdate,
     #[cfg(target_os = "windows")]
@@ -778,83 +824,19 @@ enum Action {
     InstallUpdate,
     Practice,
     PermissionHelp(permissions::Help),
-    Shows,
-    Setup,
-    OwnEngine,
-    Engine(Engine),
-    Choose(EngineFile),
     Reset,
     ConfirmReset,
     CancelReset,
-    Microphone,
-    Refresh,
-    Language,
-    Delivery,
-    Toggle(Setting),
-    Theme,
-    Save,
     Resume,
     Pause,
     Preview,
+    Shows,
     Quit,
 }
 
 impl Action {
-    const fn element_id(self) -> &'static str {
-        match self {
-            Self::Onboarding(onboarding::Action::Replay) => "replay-setup",
-            Self::Onboarding(onboarding::Action::Next) => "onboarding-next",
-            Self::Onboarding(onboarding::Action::Back) => "onboarding-back",
-            Self::Onboarding(onboarding::Action::Finish) => "onboarding-finish",
-            Self::Page(navigation::Page::Dictation) => "page-dictation",
-            Self::Page(navigation::Page::Words) => "page-words",
-            Self::Page(navigation::Page::Advanced) => "page-advanced",
-            Self::Revert => "revert",
-            #[cfg(target_os = "macos")]
-            Self::MacShortcut => "mac-shortcut",
-            Self::Install(Model::Parakeet) => "install-parakeet",
-            Self::Install(Model::Nemotron) => "install-nemotron",
-            Self::SelectLanguage(code) => code,
-            Self::CheckUpdates => "check-updates",
-            Self::OpenUpdate => "open-update",
-            #[cfg(target_os = "windows")]
-            Self::DownloadUpdate => "download-update",
-            #[cfg(target_os = "windows")]
-            Self::CancelUpdate => "cancel-update",
-            #[cfg(target_os = "windows")]
-            Self::InstallUpdate => "install-update",
-            Self::Practice => "practice",
-            Self::PermissionHelp(permissions::Help::Microphone) => "microphone-help",
-            #[cfg(target_os = "macos")]
-            Self::PermissionHelp(permissions::Help::Accessibility) => "accessibility-help",
-            #[cfg(any(target_os = "macos", target_os = "windows"))]
-            Self::PermissionHelp(permissions::Help::Screen) => "screen-help",
-            Self::Shows => "shows",
-            Self::Setup => "setup",
-            Self::OwnEngine => "own-engine",
-            Self::Engine(Engine::Whisper) => "engine-whisper",
-            Self::Engine(Engine::Nemo) => "engine-nemo",
-            Self::Reset => "reset",
-            Self::ConfirmReset => "confirm-reset",
-            Self::CancelReset => "cancel-reset",
-            Self::Choose(EngineFile::Executable) => "choose-executable",
-            Self::Choose(EngineFile::Model) => "choose-model",
-            Self::Microphone => "microphone",
-            Self::Refresh => "refresh",
-            Self::Language => "language",
-            Self::Delivery => "delivery",
-            Self::Toggle(Setting::PreferGpu) => "prefer-gpu",
-            Self::Toggle(Setting::ReduceMotion) => "reduce-motion",
-            Self::Toggle(Setting::RemoveFillers) => "remove-fillers",
-            Self::Toggle(Setting::PlaySounds) => "play-sounds",
-            Self::Toggle(Setting::DesktopBindings) => "desktop-bindings",
-            Self::Toggle(Setting::StartAtLogin) => "start-at-login",
-            Self::Theme => "theme",
-            Self::Save | Self::Resume => "primary",
-            Self::Pause => "pause",
-            Self::Preview => "preview",
-            Self::Quit => "quit",
-        }
+    fn element_id(self) -> ElementId {
+        SharedString::from(format!("{self:?}")).into()
     }
 }
 
@@ -870,7 +852,6 @@ enum Setting {
     ReduceMotion,
     RemoveFillers,
     PlaySounds,
-    DesktopBindings,
     StartAtLogin,
 }
 
@@ -881,7 +862,6 @@ impl Setting {
             Self::ReduceMotion => &mut config.reduced_motion,
             Self::RemoveFillers => &mut config.remove_fillers,
             Self::PlaySounds => &mut config.play_sounds,
-            Self::DesktopBindings => &mut config.linux.external_shortcut,
             Self::StartAtLogin => &mut config.start_at_login,
         }
     }
@@ -890,9 +870,10 @@ impl Setting {
         match self {
             Self::PreferGpu => config.use_gpu,
             Self::ReduceMotion => config.reduced_motion,
-            Self::RemoveFillers => config.remove_fillers,
+            Self::RemoveFillers => {
+                config.fillers(&config.language) == crate::transcript::Fillers::Remove
+            },
             Self::PlaySounds => config.play_sounds,
-            Self::DesktopBindings => config.linux.external_shortcut,
             Self::StartAtLogin => config.start_at_login,
         }
     }
@@ -909,17 +890,6 @@ fn desktop_command(path: &std::path::Path, default: bool) -> String {
 
 fn is_demo(cx: &App) -> bool {
     cx.global::<Services>().mode.is_demo()
-}
-
-fn next_microphone(microphones: &[InputDevice], current: Option<&str>) -> Option<String> {
-    let next = match current {
-        None => microphones.first(),
-        Some(current) => microphones
-            .iter()
-            .skip_while(|device| device.id != current)
-            .nth(1),
-    };
-    next.map(|device| device.id.clone())
 }
 
 fn show_theme(cx: &mut App) {
@@ -945,27 +915,6 @@ mod tests {
     use std::path::Path;
 
     use super::*;
-
-    fn microphones(ids: &[&str]) -> Vec<InputDevice> {
-        ids.iter()
-            .map(|id| InputDevice {
-                id: (*id).to_owned(),
-                name: String::new(),
-            })
-            .collect()
-    }
-
-    #[test]
-    fn microphone_choice_cycles_through_devices_then_back_to_the_default() {
-        let listed = microphones(&["first", "second"]);
-        assert_eq!(next_microphone(&listed, None).as_deref(), Some("first"));
-        assert_eq!(
-            next_microphone(&listed, Some("first")).as_deref(),
-            Some("second")
-        );
-        assert_eq!(next_microphone(&listed, Some("second")), None);
-        assert_eq!(next_microphone(&listed, Some("unplugged")), None);
-    }
 
     #[test]
     fn desktop_commands_name_only_a_settings_file_other_than_the_default() {

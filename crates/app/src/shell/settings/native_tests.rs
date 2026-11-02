@@ -39,55 +39,6 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                         .is_none(),
                     "The pending settings save started before the first finished"
                 );
-                let view = cx.new(|cx| Settings {
-                    vocabulary: vocabulary::Editor::new(config.theme, cx),
-                    recognition: recognition::Editor::new(config.theme, cx),
-                    presets: presets::Editor::new(config.theme, cx),
-                    language: language::Picker::new(cx),
-                    navigation: navigation::Navigation::new(cx),
-                    practice: practice::Practice::default(),
-                    onboarding: None,
-                    onboarding_focus: cx.focus_handle(),
-                    onboarding_completion: None,
-                    permissions: None,
-                    update: Update::Idle,
-                    config,
-                    presentation: Presentation {
-                        indicator: Indicator::Paused,
-                        shortcut: Arc::from(""),
-                        cancel_shortcut: Arc::from(""),
-                        message: String::new(),
-                        readiness: Readiness::new(
-                            &Snapshot::default(),
-                            crate::status::ServiceState::Paused,
-                        ),
-                    },
-                    notice: None,
-                    microphones: Vec::new(),
-                    file_picker: None,
-                    microphone_listing: None,
-                    preview: None,
-                    setup: None,
-                    retiring_setup: None,
-                    saving: None,
-                    saves,
-                    _updates: Task::ready(()),
-                    unreadable: false,
-                    reset: super::Reset::Idle,
-                    downloaded: Vec::new(),
-                    own_engine: false,
-                    startup_apps_off: false,
-                    #[cfg(target_os = "linux")]
-                    desktop_command: SharedString::default(),
-                    #[cfg(target_os = "windows")]
-                    minimize_to_tray: None,
-                })?;
-                drop(view);
-                cx.update(|_| {})?;
-                ensure!(
-                    Config::read(&path)?.threads == 8,
-                    "Settings drop lost the queued save"
-                );
                 let input = cx.new(|cx| {
                     text_field::TextField::new("Synthetic field", Theme::default(), cx)
                 })?;
@@ -101,6 +52,58 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                     },
                     |_, _| input,
                 )?;
+                let view = window.update(cx, |_, window, cx| {
+                    cx.new(|cx| Settings {
+                        vocabulary: vocabulary::Editor::new(config.theme, window, cx),
+                        recognition: recognition::Editor::new(config.theme, window, cx),
+                        presets: presets::Editor::new(config.theme, window, cx),
+                        menus: menu::Menus::new(cx),
+                        navigation: navigation::Navigation::new(cx),
+                        practice: practice::Practice::default(),
+                        onboarding: None,
+                        onboarding_focus: cx.focus_handle(),
+                        onboarding_completion: None,
+                        permissions: None,
+                        update: Update::Idle,
+                        config,
+                        presentation: Presentation {
+                            indicator: Indicator::Paused,
+                            shortcut: Arc::from(""),
+                            cancel_shortcut: Arc::from(""),
+                            message: String::new(),
+                            model: None,
+                        },
+                        notice: None,
+                        microphones: Vec::new(),
+                        file_picker: None,
+                        microphone_listing: None,
+                        preview: None,
+                        setup: None,
+                        retiring_setup: None,
+                        saving: None,
+                        saves,
+                        saved: None,
+                        _updates: Task::ready(()),
+                        unreadable: false,
+                        reset: super::Reset::Idle,
+                        downloaded: Vec::new(),
+                        own_engine: false,
+                        choosing_model: false,
+                        shows_help: false,
+                        keyboard: false,
+                        startup_apps_off: false,
+                        #[cfg(target_os = "linux")]
+                        desktop_command: SharedString::default(),
+                        #[cfg(target_os = "windows")]
+                        minimize_to_tray: None,
+                    })
+                })?;
+                drop(view);
+                cx.update(|_| {})?;
+                ensure!(
+                    Config::read(&path)?.threads == 8,
+                    "Settings drop lost the queued save"
+                );
                 window.update(cx, |field, window, cx| {
                     field.set("🦀 café ".into(), cx);
                     field.replace_and_mark_text_in_range(None, "日本", Some(1..2), window, cx);

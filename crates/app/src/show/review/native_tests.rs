@@ -149,7 +149,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
             .library
             .rows
             .len()
-            .checked_add(3)
+            .checked_add(5)
             .and_then(|tabs| tabs.checked_add(usize::from(detail.source_available)))
             .and_then(|tabs| {
                 tabs.checked_add(usize::from(
@@ -182,13 +182,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
             frame == Some(before),
             "Key-down activated Next before key-up"
         );
-        let keystroke = gpui::Keystroke::parse(stroke)?;
-        cx.update_window(window.into(), |_, window, cx| {
-            window.dispatch_event(
-                gpui::PlatformInput::KeyUp(gpui::KeyUpEvent { keystroke }),
-                cx,
-            );
-        })?;
+        release(window, stroke, cx)?;
         let frame = window.read_with(cx, |view, _| {
             view.library.selected.as_ref().map(|key| key.frame)
         })?;
@@ -197,6 +191,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
             "Next did not activate exactly once on key-up"
         );
     }
+    more_actions(window, cx)?;
     window.update(cx, |view, window, cx| {
         view.act(Action::Frame(0), window, cx);
     })?;
@@ -656,6 +651,56 @@ fn key(window: WindowHandle<Review>, stroke: &str, cx: &mut AsyncApp) -> anyhow:
     cx.update_window(window.into(), |_, window, cx| {
         window.dispatch_keystroke(keystroke, cx);
     })
+}
+
+fn release(window: WindowHandle<Review>, stroke: &str, cx: &mut AsyncApp) -> anyhow::Result<()> {
+    let keystroke = gpui::Keystroke::parse(stroke)?;
+    cx.update_window(window.into(), |_, window, cx| {
+        window.dispatch_event(
+            gpui::PlatformInput::KeyUp(gpui::KeyUpEvent { keystroke }),
+            cx,
+        );
+    })
+}
+
+fn more_actions(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyhow::Result<()> {
+    let shown = window.update(cx, |view, window, _| {
+        let stops = view
+            .library
+            .rows
+            .len()
+            .checked_add(3)
+            .context("The fixture's tab stops fit usize")?;
+        view.focus.focus(window);
+        for _ in 0..stops {
+            window.focus_next();
+        }
+        anyhow::Ok(view.library.selected.clone())
+    })??;
+    cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear())?;
+    key(window, "enter", cx)?;
+    release(window, "enter", cx)?;
+    let opened = window.read_with(cx, |view, _| view.menu)?;
+    ensure!(
+        matches!(opened, menu::Menu::Open(Some(_))),
+        "Enter on More actions did not open its menu at an available action"
+    );
+    cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear())?;
+    key(window, "down", cx)?;
+    let (moved, selected) =
+        window.read_with(cx, |view, _| (view.menu, view.library.selected.clone()))?;
+    ensure!(
+        moved != opened && moved.is_open(),
+        "Down did not move within the open menu"
+    );
+    ensure!(selected == shown, "Down in the open menu changed the Show");
+    key(window, "escape", cx)?;
+    let closed = window.read_with(cx, |view, _| view.menu)?;
+    ensure!(
+        closed == menu::Menu::Closed,
+        "Escape closed the window instead of the menu"
+    );
+    Ok(())
 }
 
 #[expect(

@@ -11,21 +11,14 @@ pub(crate) enum Theme {
 }
 
 impl Theme {
+    pub(crate) const ALL: [Self; 4] = [Self::Jet, Self::Emerald, Self::Iris, Self::Chrome];
+
     pub(crate) fn name(self) -> &'static str {
         match self {
             Self::Jet => "Jet & Champagne",
             Self::Emerald => "Emerald Lounge",
             Self::Iris => "Iris",
             Self::Chrome => "Midnight Chrome",
-        }
-    }
-
-    pub(crate) fn next(self) -> Self {
-        match self {
-            Self::Jet => Self::Emerald,
-            Self::Emerald => Self::Iris,
-            Self::Iris => Self::Chrome,
-            Self::Chrome => Self::Jet,
         }
     }
 
@@ -92,8 +85,16 @@ pub(crate) struct Palette {
 }
 
 impl Palette {
-    pub(crate) fn faint(&self) -> u32 {
-        mix(self.room, self.muted, 0.6)
+    pub(crate) fn line(&self) -> gpui::Rgba {
+        alpha(self.ink, 0.09)
+    }
+
+    pub(crate) fn edge(&self) -> gpui::Rgba {
+        alpha(self.ink, 0.16)
+    }
+
+    pub(crate) fn hover(&self) -> gpui::Rgba {
+        alpha(self.ink, 0.07)
     }
 }
 

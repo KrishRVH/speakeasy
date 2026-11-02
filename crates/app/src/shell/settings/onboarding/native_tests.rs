@@ -93,8 +93,11 @@ pub(in crate::shell::settings) async fn exercise(
         );
         view.config.threads = 17;
         view.act(SettingsAction::Onboarding(Action::Replay), window, cx);
-        ensure!(view.onboarding.is_none(), "Replay hid pending edits");
-        ensure!(view.config.threads == 17, "Replay discarded pending edits");
+        ensure!(
+            view.onboarding == Some(Step::Prepare) && view.config.threads == 17,
+            "Replay refused or discarded current settings"
+        );
+        view.act(SettingsAction::Onboarding(Action::Finish), window, cx);
         view.config = original;
         view.notice = None;
         cx.notify();

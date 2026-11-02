@@ -1,8 +1,12 @@
 use anyhow::ensure;
 use gpui::{AsyncApp, Task, Timer, WindowHandle};
 
-use super::*;
-use crate::{recognition_terms::Terms, transcript::vocabulary::Vocabulary};
+use super::{super::vocabulary, *};
+use crate::{
+    config::Config,
+    recognition_terms::Terms,
+    transcript::vocabulary::{Correction, Vocabulary},
+};
 
 #[expect(
     clippy::future_not_send,
@@ -13,22 +17,37 @@ pub(in crate::shell::settings) async fn exercise(
     cx: &mut AsyncApp,
 ) -> anyhow::Result<()> {
     let original = settings.read_with(cx, |view, _| view.config.clone())?;
-    settings.update(cx, |view, _, cx| {
-        view.presets
-            .name
-            .update(cx, |field, cx| field.set("Coding".into(), cx));
-        view.vocabulary.enter("cube control", "kubectl", cx);
-        view.recognition.enter("Kubernetes", cx);
+    settings.update(cx, |view, window, cx| {
+        view.config.language = "fr".into();
+        view.config.vocabulary = vec![Correction {
+            heard: "cube control".into(),
+            written: "kubectl".into(),
+        }];
+        view.config.recognition_terms.add("Kubernetes")?;
+        view.presets.enter("Coding", cx);
+        view.edit_preset(Edit::Save, window, cx);
         ensure!(
-            view.capture_preset(None, cx),
-            "The named preset was not captured"
+            view.config.presets.len() == 1 && !view.presets.naming,
+            "Saving a named preset did not store it"
         );
         ensure!(
-            !view.vocabulary.pending(cx)
-                && !view.recognition.pending(cx)
-                && !view.presets.pending(cx),
-            "Preset capture left pending input behind"
+            view.config
+                .presets
+                .first()
+                .is_some_and(|preset| preset.matches(&view.config)),
+            "A new preset is not shown as in use"
         );
+        view.presets.enter("Coding", cx);
+        view.edit_preset(Edit::Save, window, cx);
+        ensure!(
+            view.config.presets.len() == 1
+                && view.presets.naming
+                && view.notice.as_ref().is_some_and(Notice::is_problem),
+            "A duplicate preset name was stored or silently dropped"
+        );
+        view.presets.clear(cx);
+        view.notice = None;
+        view.config.language = "en".into();
         view.config.vocabulary.clear();
         view.config.recognition_terms = Terms::default();
         anyhow::Ok(())
@@ -36,105 +55,62 @@ pub(in crate::shell::settings) async fn exercise(
     Timer::after(std::time::Duration::from_millis(100)).await;
     settings.update(cx, |view, window, cx| {
         let unmodified = view.config.clone();
-        view.vocabulary.enter("unfinished", "", cx);
-        view.edit_preset(Edit::Load("Coding".into()), window, cx);
-        ensure!(
-            view.config == unmodified && view.vocabulary.pending(cx),
-            "Loading discarded an unfinished correction"
-        );
-        view.vocabulary.clear(cx);
-        view.recognition.enter("Unfinished hint", cx);
-        view.edit_preset(Edit::Load("Coding".into()), window, cx);
-        ensure!(
-            view.config == unmodified && view.recognition.pending(cx),
-            "Loading discarded an unfinished hint"
-        );
-        view.recognition.clear(cx);
-        view.presets
-            .name
-            .update(cx, |field, cx| field.set("Other preset".into(), cx));
-        view.edit_preset(Edit::Load("Coding".into()), window, cx);
-        ensure!(
-            view.config == unmodified && view.presets.pending(cx),
-            "Loading discarded an unfinished name"
-        );
-        view.presets.clear(cx);
         view.file_picker = Some(Task::ready(()));
-        view.edit_preset(Edit::Load("Coding".into()), window, cx);
+        view.edit_preset(Edit::Use(0), window, cx);
         ensure!(
             view.config == unmodified,
-            "Loading raced an outstanding file picker"
+            "Using a preset raced an outstanding file picker"
         );
         view.finish_choice(Ok(None), super::super::EngineFile::Model, cx);
-        view.saving = Some(Task::ready(()));
-        view.edit_preset(Edit::Load("Coding".into()), window, cx);
-        ensure!(
-            view.config == unmodified,
-            "Loading raced an earlier settings save"
-        );
-        view.saving = None;
-        view.edit_preset(Edit::Load("Coding".into()), window, cx);
-        ensure!(
-            Vocabulary::new(&view.config.vocabulary).text("Use cube control.") == "Use kubectl.",
-            "Loading omitted a pending correction captured with the preset"
-        );
-        ensure!(
-            view.config.recognition_terms.phrases() == ["Kubernetes"],
-            "Loading omitted a pending recognition hint"
-        );
-        anyhow::Ok(())
-    })??;
-    Timer::after(std::time::Duration::from_millis(100)).await;
-    settings.update(cx, |view, window, cx| {
-        view.config.language = "fr".into();
-        view.vocabulary.enter("post grass", "Postgres", cx);
-        view.edit_preset(Edit::Replace("Coding".into()), window, cx);
-        view.config.vocabulary.clear();
-        view.config.language = "en".into();
-        view.edit_preset(Edit::Load("Coding".into()), window, cx);
+        view.config.vocabulary = vec![Correction {
+            heard: "x ray".into(),
+            written: "X-ray".into(),
+        }];
+        view.edit_correction(vocabulary::Edit::Revise(0), window, cx);
+        view.edit_preset(Edit::Use(0), window, cx);
+        view.edit_correction(vocabulary::Edit::Save, window, cx);
         ensure!(
             view.config.language == "fr"
-                && Vocabulary::new(&view.config.vocabulary).text("Use post grass.")
-                    == "Use Postgres.",
-            "Replacing a preset omitted current choices or pending corrections"
+                && Vocabulary::new(&view.config.vocabulary).text("Use cube control.")
+                    == "Use kubectl."
+                && view.config.recognition_terms.phrases() == ["Kubernetes"],
+            "Using a preset did not apply its language, corrections, and hints, or a correction being revised overwrote them"
         );
-        let active = view.config.vocabulary.clone();
-        let stale_actions = [
-            Edit::Load("Coding".into()),
-            Edit::Replace("Coding".into()),
-            Edit::Remove("Coding".into()),
-        ];
-        view.config.language = "en".into();
+        view.config.language = "de".into();
+        view.edit_preset(Edit::Update(0), window, cx);
+        ensure!(
+            view.config.presets.len() == 1
+                && view.config.presets.first().is_some_and(|preset| {
+                    preset.name() == "Coding" && preset.matches(&view.config)
+                }),
+            "Updating a preset renamed it or kept its old choices"
+        );
+        let english = Config {
+            language: "en".into(),
+            ..view.config.clone()
+        };
         view.config
             .presets
-            .push(Preset::capture("Other".into(), &view.config)?);
-        view.edit_preset(Edit::Remove("Coding".into()), window, cx);
-        view.config.language = "de".into();
+            .push(Preset::capture("Other".into(), &english)?);
+        view.edit_preset(Edit::Delete(0), window, cx);
         let after_removal = view.config.clone();
-        for action in stale_actions {
-            view.edit_preset(action, window, cx);
+        ensure!(
+            after_removal.language == "de"
+                && after_removal.presets.len() == 1
+                && after_removal.presets.first().map(Preset::name) == Some("Other"),
+            "Deleting a preset changed dictation choices or another preset"
+        );
+        for stale in [Edit::Use(1), Edit::Update(1), Edit::Delete(1)] {
+            view.edit_preset(stale, window, cx);
             ensure!(
                 view.config == after_removal,
-                "A stale preset action changed another preset"
+                "An out-of-range preset action changed settings"
             );
         }
-        view.edit_preset(Edit::Load("Other".into()), window, cx);
+        view.edit_preset(Edit::Use(0), window, cx);
         ensure!(
             view.config.language == "en",
             "The surviving preset was not usable"
-        );
-        view.edit_preset(Edit::Remove("Other".into()), window, cx);
-        ensure!(
-            view.config.presets.is_empty() && view.config.vocabulary == active,
-            "Deleting a saved preset changed active dictation choices"
-        );
-        view.presets
-            .name
-            .update(cx, |field, cx| field.set("Discarded draft".into(), cx));
-        view.act(super::super::Action::Revert, window, cx);
-        ensure!(
-            !view.presets.pending(cx),
-            "Revert retained an unfinished preset name"
         );
         view.config = original;
         view.notice = None;

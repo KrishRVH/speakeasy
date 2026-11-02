@@ -12,6 +12,7 @@ impl ConfigEpoch {
 pub(super) struct Lifecycle<Owners, Restart> {
     state: State<Owners, Restart>,
     epoch: ConfigEpoch,
+    held: bool,
 }
 
 #[derive(Default)]
@@ -32,6 +33,7 @@ impl<Owners, Restart> Default for Lifecycle<Owners, Restart> {
         Self {
             state: State::Disabled,
             epoch: ConfigEpoch::default(),
+            held: false,
         }
     }
 }
@@ -54,7 +56,7 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
         saved_at: ConfigEpoch,
         live: impl FnOnce(&Owners) -> bool,
     ) -> bool {
-        saved_at == self.epoch || self.is_running(live) || self.has_pending()
+        (!self.held && saved_at == self.epoch) || self.is_running(live) || self.has_pending()
     }
 
     pub(super) fn reconfigure(&mut self) -> bool {
@@ -71,6 +73,7 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
         }
         self.epoch = self.epoch.next();
         self.state = State::Validating(self.epoch);
+        self.held = false;
         Some(self.epoch)
     }
 
@@ -125,6 +128,7 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
     pub(super) fn queue(&mut self, restart: Restart) -> bool {
         if let State::Stopping { pending, .. } = &mut self.state {
             *pending = Some(restart);
+            self.held = false;
             true
         } else {
             false
@@ -169,6 +173,7 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
         };
         self.state = state;
         self.epoch = self.epoch.next();
+        self.held = true;
         started
     }
 
@@ -304,6 +309,10 @@ mod tests {
             !lifecycle.save_may_enable(saved_at, |()| true),
             "A save requested before Pause would enable dictation after it"
         );
+        assert!(
+            !lifecycle.save_may_enable(lifecycle.epoch(), |()| true),
+            "A setting changed while paused would resume dictation"
+        );
         lifecycle.validate().unwrap();
         assert!(
             lifecycle.save_may_enable(saved_at, |()| true),
@@ -314,6 +323,20 @@ mod tests {
         let saved_at = lifecycle.epoch();
         assert!(!lifecycle.pause());
         assert!(!lifecycle.save_may_enable(saved_at, |()| true));
+        assert!(!lifecycle.save_may_enable(lifecycle.epoch(), |()| true));
+        lifecycle = Lifecycle::default();
+        assert!(
+            lifecycle.save_may_enable(lifecycle.epoch(), |()| false),
+            "Saving the first complete settings must enable dictation"
+        );
+        lifecycle = live(());
+        assert!(lifecycle.pause());
+        assert!(lifecycle.queue(()));
+        assert_eq!(lifecycle.retired(), Some(()));
+        assert!(
+            lifecycle.save_may_enable(lifecycle.epoch(), |()| false),
+            "A restart that applies settings is not a user pause"
+        );
     }
 
     #[test]

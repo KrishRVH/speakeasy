@@ -6,6 +6,7 @@ const DISCARD_SHOW: &str = "This permanently removes the interrupted Show's reco
 mod export;
 mod handoff;
 mod library;
+mod menu;
 mod narration;
 mod navigation;
 mod render;
@@ -84,6 +85,8 @@ pub(crate) struct Review {
     recovering: Option<Task<()>>,
     discarding: Option<Task<()>>,
     confirm_discard: bool,
+    keyboard: bool,
+    menu: menu::Menu,
     visibility: Option<Task<()>>,
     _updates: Task<()>,
     _activation: Subscription,
@@ -163,6 +166,8 @@ impl Review {
             recovering: None,
             discarding: None,
             confirm_discard: false,
+            keyboard: false,
+            menu: menu::Menu::Closed,
             visibility: None,
             _updates: follow(
                 snapshots,
@@ -359,6 +364,7 @@ impl Review {
         self.detail = None;
         self.request = None;
         self.confirm_discard = false;
+        self.menu = menu::Menu::Closed;
         self.timeline = timeline::Timeline::default();
         self.notice = None;
         self.replace_image(ImageState::Empty, window, cx);
@@ -709,6 +715,7 @@ impl Review {
     }
 
     fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.menu = menu::Menu::Closed;
         match action {
             Action::Annotations => {
                 if self.mode == Mode::Video

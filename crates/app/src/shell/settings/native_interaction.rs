@@ -6,7 +6,7 @@ use gpui::{
     WindowHandle, WindowOptions,
 };
 
-use super::*;
+use super::{menu::Menu, *};
 use crate::{gpui_ext::AppUpdate as _, runtime::Meter, shell::LaunchMode, show::Canvas};
 
 #[test]
@@ -19,6 +19,8 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                 let directory = tempfile::tempdir()?;
                 let config = Config {
                     engine: Engine::Whisper,
+                    engine_executable: "whisper-server".into(),
+                    model: "ggml-base.bin".into(),
                     ..Config::default()
                 };
                 let (output, updates) = watch::channel(Snapshot::default());
@@ -40,17 +42,38 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                         LaunchMode::DemoTray,
                     ));
                 })?;
-                let settings = cx.open_window(WindowOptions::default(), |_, cx| {
-                    cx.new(|cx| Settings::new(config, updates, cx))
+                let settings = cx.open_window(WindowOptions::default(), |window, cx| {
+                    cx.new(|cx| Settings::new(config, updates, window, cx))
                 })?;
                 cx.update(|cx| cx.global_mut::<Services>().settings = Some(settings))?;
                 onboarding::native_tests::exercise(settings, cx).await?;
                 presets::native_tests::exercise(settings, cx).await?;
-                parakeet_cleanup_language(settings, cx).await?;
-                settings.update(cx, |view, window, _| view.language.button.focus(window))?;
+                settings.update(cx, |view, _, cx| {
+                    let applied = cx.global::<Services>().config.language.clone();
+                    view.config.language = "de".into();
+                    view.own_engine = true;
+                    view.finish_save(
+                        None,
+                        Some("Synthetic save failure".into()),
+                        ConfigEpoch::default(),
+                        cx,
+                    );
+                    ensure!(
+                        view.config.language == applied
+                            && !view.own_engine
+                            && view.notice.as_ref().is_some_and(Notice::is_problem),
+                        "A failed save kept settings that were never applied"
+                    );
+                    view.notice = None;
+                    anyhow::Ok(())
+                })??;
+                parakeet_cleanup_language(settings, cx)?;
+                settings.update(cx, |view, window, _| {
+                    view.menus.trigger(Menu::Language).focus(window);
+                })?;
                 key(settings, "enter", cx)?;
                 ensure!(
-                    settings.read_with(cx, |view, _| view.language.cursor.is_some())?,
+                    settings.read_with(cx, |view, _| view.menus.open == Some(Menu::Language))?,
                     "The toggle's release immediately selected a language"
                 );
                 Timer::after(Duration::from_millis(100)).await;
@@ -58,7 +81,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                 Timer::after(Duration::from_millis(100)).await;
                 settings.update(cx, |view, _, _| {
                     ensure!(
-                        view.language.scroll.offset().y < gpui::px(0.0),
+                        view.menus.scroll.offset().y < gpui::px(0.0),
                         "The last language remained off screen"
                     );
                     anyhow::Ok(())
@@ -69,40 +92,34 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                         view.config.language == "yo",
                         "Keyboard selection missed the last language"
                     );
+                    ensure!(view.menus.open.is_none(), "Key release reopened the picker");
                     ensure!(
-                        view.language.cursor.is_none(),
-                        "Key release reopened the picker"
-                    );
-                    ensure!(
-                        view.language.button.is_focused(window),
+                        view.menus.trigger(Menu::Language).is_focused(window),
                         "Selection lost focus"
                     );
-                    view.toggle_language(window, cx);
+                    view.toggle_menu(Menu::Language, window, cx);
                     cx.notify();
                     anyhow::Ok(())
                 })??;
                 key(settings, "space", cx)?;
                 settings.update(cx, |view, window, cx| {
                     ensure!(
-                        view.language.cursor.is_none(),
+                        view.menus.open.is_none(),
                         "Space release reopened the picker"
                     );
-                    view.toggle_language(window, cx);
+                    view.toggle_menu(Menu::Language, window, cx);
                     cx.notify();
                     anyhow::Ok(())
                 })??;
                 key(settings, "escape", cx)?;
                 settings.update(cx, |view, window, cx| {
+                    ensure!(view.menus.open.is_none(), "Escape left the picker open");
                     ensure!(
-                        view.language.cursor.is_none(),
-                        "Escape left the picker open"
-                    );
-                    ensure!(
-                        view.language.button.is_focused(window),
+                        view.menus.trigger(Menu::Language).is_focused(window),
                         "Escape lost picker focus"
                     );
                     window.activate_window();
-                    view.toggle_language(window, cx);
+                    view.toggle_menu(Menu::Language, window, cx);
                     cx.notify();
                     anyhow::Ok(())
                 })??;
@@ -112,30 +129,30 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                         window.is_window_active(),
                         "The owned focus fixture did not activate"
                     );
-                    view.language.button.focus(window);
+                    view.menus.trigger(Menu::Language).focus(window);
                     anyhow::Ok(())
                 })??;
                 Timer::after(Duration::from_millis(100)).await;
                 key(settings, "space", cx)?;
                 settings.update(cx, |view, window, cx| {
                     ensure!(
-                        view.language.cursor.is_none(),
+                        view.menus.open.is_none(),
                         "Returning to the toggle reopened the picker"
                     );
-                    view.toggle_language(window, cx);
+                    view.toggle_menu(Menu::Language, window, cx);
                     cx.notify();
                     anyhow::Ok(())
                 })??;
                 Timer::after(Duration::from_millis(100)).await;
-                settings.update(cx, |view, window, _| view.language.group.focus(window))?;
+                settings.update(cx, |view, window, _| view.menus.group.focus(window))?;
                 key(settings, "home", cx)?;
                 key(settings, "enter", cx)?;
                 settings.update(cx, |view, window, cx| {
                     ensure!(
-                        view.config.language == "auto" && view.language.cursor.is_none(),
+                        view.config.language == "auto" && view.menus.open.is_none(),
                         "The picker group ignored keyboard navigation"
                     );
-                    view.toggle_language(window, cx);
+                    view.toggle_menu(Menu::Language, window, cx);
                     cx.notify();
                     anyhow::Ok(())
                 })??;
@@ -144,10 +161,10 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                 Timer::after(Duration::from_millis(100)).await;
                 settings.update(cx, |view, window, cx| {
                     ensure!(
-                        view.language.cursor.is_none(),
+                        view.menus.open.is_none(),
                         "Losing focus left the picker open"
                     );
-                    view.toggle_language(window, cx);
+                    view.toggle_menu(Menu::Language, window, cx);
                     cx.notify();
                     anyhow::Ok(())
                 })??;
@@ -164,14 +181,14 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                         "The second owned window did not activate"
                     );
                     ensure!(
-                        view.language.cursor.is_none(),
+                        view.menus.open.is_none(),
                         "Deactivation left the picker open"
                     );
                     view.follow_permissions(window, cx, grant_microphone_on_return());
                     ensure!(
                         view.permissions
                             .map(|snapshot| permissions::description(snapshot.microphone))
-                            == Some("Not enabled"),
+                            == Some("Blocked"),
                         "A denied microphone permission was presented as allowed"
                     );
                     window.activate_window();
@@ -180,7 +197,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                 Timer::after(Duration::from_millis(100)).await;
                 settings.update(cx, |view, window, _| {
                     ensure!(
-                        view.language.button.is_focused(window),
+                        view.menus.trigger(Menu::Language).is_focused(window),
                         "Reactivation lost picker focus"
                     );
                     ensure!(
@@ -191,7 +208,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     );
                     ensure!(
                         view.config.language == "auto",
-                        "Refreshing permission lost an unsaved language edit"
+                        "Refreshing permission lost a language edit"
                     );
                     view.practice.text =
                         zeroize::Zeroizing::new("Synthetic private practice".into());
@@ -228,73 +245,34 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
         .context("Native interaction acceptance did not complete")?
 }
 
-#[expect(
-    clippy::future_not_send,
-    reason = "Owned Settings keyboard events run on GPUI's UI thread"
-)]
-async fn parakeet_cleanup_language(
+fn parakeet_cleanup_language(
     settings: WindowHandle<Settings>,
     cx: &mut AsyncApp,
 ) -> anyhow::Result<()> {
     let original = settings.read_with(cx, |view, _| view.config.clone())?;
-    settings.update(cx, |view, _, cx| {
+    settings.update(cx, |view, window, cx| {
         view.config.engine = Engine::Nemo;
         view.config.language = "de-DE".into();
-        cx.notify();
-    })?;
-    Timer::after(Duration::from_millis(100)).await;
-    settings.update(cx, |view, window, _| view.language.button.focus(window))?;
-    key(settings, "enter", cx)?;
-    let english = settings.read_with(cx, |view, _| {
         ensure!(
-            view.language.cursor.is_some(),
-            "Parakeet has no cleanup picker"
+            speech::detects_language(&view.config),
+            "Parakeet offered a language choice instead of detecting it"
         );
         ensure!(
-            view.config.language == "de-DE",
-            "Opening rewrote the saved language"
+            !Setting::RemoveFillers.is_on(&view.config),
+            "A German locale presented um and uh removal as on"
         );
+        view.act(Action::Toggle(Setting::RemoveFillers), window, cx);
         ensure!(
-            language::selected(&view.config) == "de",
-            "The saved locale has no display selection"
+            view.config.language == "en"
+                && view.config.fillers(&view.config.language) == crate::transcript::Fillers::Remove,
+            "Turning on um and uh removal left Parakeet without English cleanup"
         );
-        language::options(&view.config)
-            .iter()
-            .position(|&(code, _)| code == "en")
-            .context("The cleanup picker has no English choice")
-    })??;
-    key(settings, "home", cx)?;
-    for _ in 0..english {
-        key(settings, "down", cx)?;
-    }
-    key(settings, "enter", cx)?;
-    settings.update(cx, |view, window, cx| {
+        view.act(Action::Toggle(Setting::RemoveFillers), window, cx);
         ensure!(
-            view.config.language == "en",
-            "Keyboard selection missed English cleanup"
-        );
-        ensure!(
-            view.config.fillers(&view.config.language) == crate::transcript::Fillers::Remove,
-            "English cleanup remains disabled"
-        );
-        view.toggle_language(window, cx);
-        cx.notify();
-        anyhow::Ok(())
-    })??;
-    key(settings, "home", cx)?;
-    key(settings, "enter", cx)?;
-    settings.update(cx, |view, window, cx| {
-        ensure!(
-            view.config.language == "auto",
-            "Keyboard selection missed automatic cleanup"
-        );
-        ensure!(
-            view.config.fillers(&view.config.language) == crate::transcript::Fillers::Preserve,
-            "Automatic cleanup still removes words"
-        );
-        ensure!(
-            view.language.cursor.is_none() && view.language.button.is_focused(window),
-            "Cleanup selection lost picker focus"
+            view.config.language == "auto"
+                && view.config.fillers(&view.config.language)
+                    == crate::transcript::Fillers::Preserve,
+            "Turning off um and uh removal kept removing words"
         );
         view.config = original;
         cx.notify();
@@ -311,7 +289,7 @@ async fn navigate(settings: WindowHandle<Settings>, cx: &mut AsyncApp) -> anyhow
     use super::navigation::Page;
 
     for (page, activation) in [
-        (Page::Advanced, "enter"),
+        (Page::General, "enter"),
         (Page::Words, "space"),
         (Page::Dictation, "enter"),
     ] {
@@ -338,7 +316,7 @@ async fn navigate(settings: WindowHandle<Settings>, cx: &mut AsyncApp) -> anyhow
             );
             ensure!(
                 view.config.language == "auto",
-                "Changing pages lost an unsaved edit"
+                "Changing pages lost a language edit"
             );
             anyhow::Ok(())
         })??;

@@ -45,6 +45,7 @@ impl Services {
             .map(|choice| choice.name.as_str())
     }
 
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     pub(crate) fn select_preset(name: String, cx: &mut App) {
         let (call, receipt) = Call::new(Command::Preset { name });
         cx.update_global::<Self, _>(|services, cx| services.control(call, cx));

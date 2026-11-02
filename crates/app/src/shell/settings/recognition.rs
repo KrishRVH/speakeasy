@@ -1,13 +1,15 @@
-use gpui::{
-    App, AppContext as _, Context, Entity, Focusable as _, IntoElement, div, prelude::*, px, rgb,
-};
+use gpui::{AppContext as _, Context, Div, Entity, Focusable as _, Window, div, prelude::*, px};
 
 use super::{
-    Notice, Settings,
+    Action, Notice, Settings,
+    render::Ui,
+    speech::Speech,
     text_field::{Submit, TextField},
 };
 use crate::{
-    controls::{Kit, Weight},
+    controls::{Weight, icon},
+    icons,
+    models::Model,
     shell::Services,
     theme::Theme,
 };
@@ -16,30 +18,28 @@ pub(super) struct Editor {
     field: Entity<TextField>,
 }
 
-impl Editor {
-    #[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
-    pub(super) fn enter(&self, text: &str, cx: &mut Context<'_, Settings>) {
-        self.field
-            .update(cx, |field, cx| field.set(text.into(), cx));
-    }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Edit {
+    Add,
+    Remove(usize),
+}
 
+impl Editor {
     pub(super) fn clear(&self, cx: &mut Context<'_, Settings>) {
         self.field
             .update(cx, |field, cx| field.set(String::new(), cx));
     }
 
-    pub(super) fn new(theme: Theme, cx: &mut Context<'_, Settings>) -> Self {
-        let field = cx.new(|cx| TextField::new("Recognition hints", theme, cx));
+    pub(super) fn new(theme: Theme, window: &Window, cx: &mut Context<'_, Settings>) -> Self {
+        let field = cx.new(|cx| {
+            TextField::new("New recognition hint", theme, cx).placeholder("Add a name or term")
+        });
         cx.observe(&field, |_, _, cx| cx.notify()).detach();
-        cx.subscribe(&field, |settings, _, _: &Submit, cx| {
-            settings.add_recognition_term(cx);
+        cx.subscribe_in(&field, window, |settings, _, _: &Submit, window, cx| {
+            settings.edit_hint(Edit::Add, window, cx);
         })
         .detach();
         Self { field }
-    }
-
-    pub(super) fn pending(&self, cx: &App) -> bool {
-        !self.field.read(cx).text().is_empty()
     }
 
     pub(super) fn theme(&self, theme: Theme, cx: &mut Context<'_, Settings>) {
@@ -48,120 +48,125 @@ impl Editor {
 }
 
 impl Settings {
-    pub(super) fn add_recognition_term(&mut self, cx: &mut Context<'_, Self>) -> bool {
+    pub(super) fn edit_hint(
+        &mut self,
+        edit: Edit,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         if cx.global::<Services>().is_quitting() {
-            return false;
+            return;
         }
-        if let Err(error) = self
-            .config
-            .recognition_terms
-            .add(self.recognition.field.read(cx).text())
-        {
-            self.notice = Some(Notice::Problem(error.to_string().into()));
-            cx.notify();
-            return false;
+        match edit {
+            Edit::Add => {
+                let added = self
+                    .config
+                    .recognition_terms
+                    .add(self.recognition.field.read(cx).text());
+                match added {
+                    Ok(()) => {
+                        self.recognition.clear(cx);
+                        self.edited(cx);
+                    },
+                    Err(error) => self.notice = Some(Notice::Problem(error.to_string().into())),
+                }
+            },
+            Edit::Remove(index) => {
+                if index < self.config.recognition_terms.phrases().len() {
+                    self.config.recognition_terms.remove(index);
+                    self.edited(cx);
+                }
+            },
         }
         self.recognition
             .field
-            .update(cx, |field, cx| field.set(String::new(), cx));
-        self.edited();
+            .read(cx)
+            .focus_handle(cx)
+            .focus(window);
         cx.notify();
-        true
     }
 
-    pub(super) fn recognition_section(&self, cx: &Context<'_, Self>) -> impl IntoElement {
-        let palette = self.config.theme.palette();
-        let button = |id: gpui::SharedString, label: &'static str, remove: Option<usize>| {
-            let accessible: gpui::SharedString = remove
-                .and_then(|index| self.config.recognition_terms.phrases().get(index))
-                .map_or_else(
-                    || label.into(),
-                    |phrase| format!("{label} hint {phrase}").into(),
-                );
-            Kit::new(palette)
-                .button(
-                    id,
-                    label,
-                    Weight::Secondary,
-                    Some(cx.listener(move |settings, _, window, cx| {
-                        if cx.global::<Services>().is_quitting() {
-                            return;
-                        }
-                        match remove {
-                            Some(index) => {
-                                settings.config.recognition_terms.remove(index);
-                                settings
-                                    .recognition
-                                    .field
-                                    .read(cx)
-                                    .focus_handle(cx)
-                                    .focus(window);
-                                settings.edited();
-                                cx.notify();
-                            },
-                            None => {
-                                settings.add_recognition_term(cx);
-                            },
-                        }
-                    })),
+    pub(super) fn shows_hints(&self) -> bool {
+        self.config.uses_nemotron() || !self.config.recognition_terms.phrases().is_empty()
+    }
+
+    pub(super) fn recognition_section(&self, ui: &Ui<'_>) -> Div {
+        let kit = ui.kit();
+        let palette = ui.palette;
+        let phrases = self.config.recognition_terms.phrases();
+        let entry = div()
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .child(self.recognition.field.clone()),
+            )
+            .child(ui.button_if(
+                "Add",
+                Action::Hint(Edit::Add),
+                Weight::Secondary,
+                !self.recognition.field.read(ui.cx).text().trim().is_empty(),
+            ));
+        let chips = div()
+            .flex()
+            .flex_wrap()
+            .gap(px(6.0))
+            .children(phrases.iter().enumerate().map(|(index, phrase)| {
+                let remove = Action::Hint(Edit::Remove(index));
+                kit.chip(
+                    phrase.clone(),
+                    remove.element_id(),
+                    format!("Remove hint {phrase}"),
+                    Some(ui.press(remove)),
                 )
-                .aria_label(accessible)
-        };
-        let detail = if self.config.uses_nemotron() {
-            "Help Nemotron recognize names and jargon. Hints improve recognition; they do not force a spelling or replace words."
-        } else {
-            "Recognition hints are saved for Nemotron. The selected model does not use them; phrase corrections below still work."
-        };
+            }));
+        let unused = (!self.config.uses_nemotron()).then(|| {
+            let model = match Speech::of(&self.config, self.own_engine) {
+                Some(Speech::Managed(Model::Parakeet)) => "Parakeet",
+                _ => "your own engine",
+            };
+            div()
+                .flex()
+                .items_start()
+                .gap(px(8.0))
+                .px(px(12.0))
+                .py(px(10.0))
+                .rounded(px(8.0))
+                .bg(palette.hover())
+                .child(div().pt(px(2.0)).child(icon(icons::INFO, 14.0, palette.muted)))
+                .child(kit.detail(format!(
+                    "Only Nemotron 3.5 uses hints, so {model} ignores these. Corrections still apply."
+                )))
+        });
         div()
             .flex()
             .flex_col()
             .gap(px(8.0))
-            .child(Kit::new(palette).eyebrow("Recognition hints"))
             .child(
                 div()
-                    .text_size(px(11.0))
-                    .text_color(rgb(palette.muted))
-                    .child(detail),
-            )
-            .child(
-                div()
-                    .flex()
-                    .gap(px(8.0))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .child(self.recognition.field.clone()),
-                    )
-                    .child(button("recognition-add".into(), "Add hint", None)),
-            )
-            .child(
-                div()
-                    .id("recognition-list")
-                    .max_h(px(140.0))
-                    .overflow_y_scroll()
                     .flex()
                     .flex_col()
-                    .gap(px(6.0))
-                    .children(
-                        self.config
-                            .recognition_terms
-                            .phrases()
-                            .iter()
-                            .enumerate()
-                            .map(|(index, phrase)| {
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(8.0))
-                                    .child(div().flex_1().min_w(px(0.0)).child(phrase.clone()))
-                                    .child(button(
-                                        format!("recognition-remove-{index}").into(),
-                                        "Remove",
-                                        Some(index),
-                                    ))
-                            }),
-                    ),
+                    .gap(px(2.0))
+                    .child(kit.heading("Recognition hints"))
+                    .child(ui.text(
+                        "Names and terms Nemotron should listen for. Hints help it hear them; they don't force a spelling.",
+                    )),
+            )
+            .children(unused)
+            .child(
+                kit.group(vec![
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(12.0))
+                        .p(px(16.0))
+                        .child(entry)
+                        .when(!phrases.is_empty(), |body| body.child(chips))
+                        .into_any_element(),
+                ]),
             )
     }
 }

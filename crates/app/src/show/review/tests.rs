@@ -55,6 +55,34 @@ fn refresh_preserves_the_explicit_path_but_never_substitutes_for_a_deleted_show(
     assert!(library.selected.is_none());
 }
 
+#[test]
+fn the_more_menu_opens_once_per_press_and_keyboard_skips_unavailable_actions() {
+    use menu::Menu;
+    let enabled = [false, true, false, true];
+    let open = Menu::Closed.pressed(false, &enabled);
+    assert_eq!(open, Menu::Open(None));
+    assert_eq!(
+        open.dismissed().pressed(false, &enabled),
+        Menu::Closed,
+        "Pressing the trigger of an open menu reopened it"
+    );
+    assert_eq!(
+        open.dismissed().pointer().pressed(false, &enabled),
+        Menu::Open(None),
+        "A later press on the trigger did not open a menu dismissed elsewhere"
+    );
+    let keyed = Menu::Dismissed.pressed(true, &enabled);
+    assert_eq!(keyed, Menu::Open(Some(1)));
+    assert_eq!(keyed.step(&enabled, true), Menu::Open(Some(3)));
+    assert_eq!(
+        keyed.step(&enabled, true).step(&enabled, true),
+        Menu::Open(Some(1))
+    );
+    assert_eq!(keyed.step(&enabled, false), Menu::Open(Some(3)));
+    assert_eq!(Menu::Open(None).step(&[false], true), Menu::Open(None));
+    assert_eq!(Menu::Closed.step(&enabled, true), Menu::Closed);
+}
+
 #[tokio::test]
 async fn the_demo_is_isolated_and_damage_does_not_hide_the_current_summary() -> anyhow::Result<()> {
     let root = Source::Demo.load()?;

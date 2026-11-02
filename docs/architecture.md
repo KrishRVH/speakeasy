@@ -60,10 +60,11 @@ module unless a test file is named.
   [transcript/style.rs](../crates/app/src/transcript/style.rs) applies deterministic local casing
   after corrections, while Verbatim bypasses filler removal. Show narration keeps its own policy.
   [shell/choices.rs](../crates/app/src/shell/choices.rs) owns transient style and saved-preset
-  selection. Presets validate off the UI thread, preserve the draft, and require owner confirmation
-  while idle. Generation, saved-configuration epoch, session counter, and caller lifetime reject
-  stale results. The runtime keeps its saved configuration baseline separate from effective preset
-  choices, including after Resume. Text-only choices reuse the worker; engine changes reload it.
+  selection. Tray and command presets validate off the UI thread, leave saved settings unchanged,
+  and require owner confirmation while idle. Generation, saved-configuration epoch, session counter,
+  and caller lifetime reject stale results. The runtime keeps its saved configuration baseline
+  separate from effective preset choices, including after Resume. Text-only choices reuse the
+  worker; engine changes reload it.
 - **Audio capture**: [audio.rs](../crates/app/src/audio.rs) with
   [control.rs](../crates/app/src/audio/control.rs), [stream.rs](../crates/app/src/audio/stream.rs),
   [pcm.rs](../crates/app/src/audio/pcm.rs), [speech.rs](../crates/app/src/audio/speech.rs), and
@@ -142,31 +143,35 @@ module unless a test file is named.
   preview. [pill/native_tests.rs](../crates/app/src/pill/native_tests.rs) is opt-in on a private
   display, and the [check_native_rendering](../crates/app/examples/check_native_rendering.rs)
   example checks owned-window rendering on each platform.
-- **Settings and the settings file**: [shell/settings.rs](../crates/app/src/shell/settings.rs) and
-  [settings/render.rs](../crates/app/src/shell/settings/render.rs) edit a draft;
-  [navigation.rs](../crates/app/src/shell/settings/navigation.rs) owns page selection and keyboard
-  focus without changing that draft, and ends private practice when its page is hidden.
-  [controls.rs](../crates/app/src/controls.rs) draws the themed controls Settings and Shows share,
-  and the jewels and tracked capitals the pill borrows. [config.rs](../crates/app/src/config.rs) and
-  [paths.rs](../crates/app/src/paths.rs) own the file contract and where it lives. Missing fields
-  use the same NeMo/auto defaults as a new install. Unsupported fields and values stop loading and
-  saving without replacing the file; saves preserve concurrent edits to current settings. One
-  `text_delivery` choice controls insertion.
-  [settings/speech.rs](../crates/app/src/shell/settings/speech.rs) reads the draft as a managed
+- **Settings and the settings file**: [shell/settings.rs](../crates/app/src/shell/settings.rs)
+  applies each change as it is made: once the speech files are chosen, an edit enters the save
+  queue, and a validated save updates the running services.
+  [settings/render.rs](../crates/app/src/shell/settings/render.rs) and its page modules present
+  Dictation, Words, and General; [navigation.rs](../crates/app/src/shell/settings/navigation.rs)
+  owns page selection and keyboard focus and ends private practice when its page is hidden.
+  [settings/menu.rs](../crates/app/src/shell/settings/menu.rs) owns the one open dropdown, its
+  keyboard cursor, and focus return to its trigger. [controls.rs](../crates/app/src/controls.rs)
+  draws the themed controls Settings and Shows share, and the jewels and tracked capitals the pill
+  borrows. [config.rs](../crates/app/src/config.rs) and [paths.rs](../crates/app/src/paths.rs) own
+  the file contract and where it lives. Missing fields use the same NeMo/auto defaults as a new
+  install. Unsupported fields and values stop loading and saving without replacing the file; saves
+  preserve concurrent edits to current settings. One `text_delivery` choice controls insertion.
+  [settings/speech.rs](../crates/app/src/shell/settings/speech.rs) reads the settings as a managed
   model or the user's own engine, and switching engines clears the inactive engine's files.
   [config/presets.rs](../crates/app/src/config/presets.rs) stores bounded named dictation choices,
-  validates them without opening inactive model paths, and loads them into the draft. Its snapshot
-  excludes microphone, delivery, shortcuts, sound, and presentation options.
-  [settings/presets.rs](../crates/app/src/shell/settings/presets.rs) commits pending phrase and hint
-  edits when capturing a preset and blocks loading during unfinished edits, model setup, file
-  selection, or saves. The existing save queue applies loaded choices; library-only changes leave
-  sessions running. [text_field.rs](../crates/app/src/shell/settings/text_field.rs) owns native
-  selection and IME composition; its pure edit state tests Unicode boundaries, and
+  validates them without opening inactive model paths, loads them into the settings, and matches
+  them against the current settings. Its snapshot excludes microphone, delivery, shortcuts, sound,
+  and presentation options. [settings/presets.rs](../crates/app/src/shell/settings/presets.rs) uses,
+  updates, and stores presets by position, and ignores those changes during model setup or file
+  selection. The save queue applies used choices; library-only changes leave sessions running.
+  [text_field.rs](../crates/app/src/shell/settings/text_field.rs) owns native selection and IME
+  composition; its pure edit state tests Unicode boundaries, and
   [native_tests.rs](../crates/app/src/shell/settings/native_tests.rs) checks owned-window
   composition and save draining. The
-  [native interaction test](../crates/app/src/shell/settings/native_interaction.rs) checks language
-  navigation, focus restoration, and private practice cleanup through the borrowed-window close
-  callback. [config/tests.rs](../crates/app/src/config/tests.rs) pins the file contract.
+  [native interaction test](../crates/app/src/shell/settings/native_interaction.rs) checks dropdown
+  keyboard navigation, focus restoration, Parakeet's English cleanup switch, presets, and private
+  practice cleanup through the borrowed-window close callback.
+  [config/tests.rs](../crates/app/src/config/tests.rs) pins the file contract.
 - **Accessibility**: Settings owns accessible names, roles, switch/page state, and bounded field
   edits. The [GPUI accessibility owner](../vendor/gpui/src/window/a11y.rs) builds each active tree
   with physical client bounds, preserves semantic parents through deferred rendering, and rolls back
@@ -201,12 +206,12 @@ module unless a test file is named.
   insertion. Closing the receipt cancels its recording, and hiding or deactivating Settings clears
   the receipt and text. [runtime/tests/practice.rs](../crates/app/src/runtime/tests/practice.rs)
   covers private delivery, cancellation, configuration, and Show exclusion.
-  [status.rs](../crates/app/src/status.rs) derives readiness from observed resources without probing
+  [status.rs](../crates/app/src/status.rs) derives status from observed resources without probing
   devices or claiming external delivery.
   [platform/src/permissions.rs](../crates/platform/src/permissions.rs) reads macOS consent without
   prompting; [settings/permissions.rs](../crates/app/src/shell/settings/permissions.rs) refreshes
   that separate observation on window activation. The native interaction test uses fake observations
-  to check permission changes and preservation of unsaved settings.
+  to check permission changes without disturbing settings.
 - **Updates**: [updates.rs](../crates/app/src/updates.rs) owns cancellable discovery and Windows
   preparation. Discovery uses system TLS, a deadline, no redirects, and bounded input; only a
   numeric release version forms a repository link.
@@ -252,10 +257,10 @@ module unless a test file is named.
   write an empty `.onboarded` marker beside the selected settings file on an owned worker, without
   saving or replacing settings. Failed writes remain visible and retryable; shutdown drains an
   accepted write. Startup opens an unfinished guide even after automatic model setup saved a valid
-  configuration. Replay preserves settings and requires pending edits to be saved or reverted. Demo
-  replay uses synthetic text without microphone access or a completion write. State and file tests
-  cover blocked transitions and marker failures; the Settings native interaction test walks the
-  simulated guide and checks text cleanup and preservation of edits.
+  configuration. Replay preserves settings. Demo replay uses synthetic text without microphone
+  access or a completion write. State and file tests cover blocked transitions and marker failures;
+  the Settings native interaction test walks the simulated guide and checks text cleanup and
+  preservation of edits.
 - **Setup**: [setup.rs](../crates/app/src/setup.rs) and [setup/](../crates/app/src/setup) choose,
   download, verify, and unpack engines and report which managed models are already downloaded; a
   full install is opt-in.
@@ -360,7 +365,11 @@ module unless a test file is named.
   are cancelled before an owner starts. Quit drains the worker, and a replacement waits for its
   predecessor to finish. [copy/tests.rs](../crates/app/src/show/copy/tests.rs) checks those races
   with fake native access; the owned-window review test checks the actual visual request through an
-  injected copy action without touching the clipboard.
+  injected copy action without touching the clipboard, and keyboard routing in the More actions
+  menu, where Escape closes the menu rather than the window. That menu relies on GPUI's dispatch
+  order: the root's capture-phase mouse-down runs before the popover's mouse-down-out, so pressing
+  the trigger of an open menu closes it, and a capture-phase key-up activates the highlighted action
+  and stops propagation before the focused trigger's keyboard click.
 - **Show composition**: [crates/show/src](../crates/show/src), notably
   [locate.rs](../crates/show/src/locate.rs) resolves phrases and marks to exact recorded spans;
   [locate/evidence.rs](../crates/show/src/locate/evidence.rs) renders bounded source sheets and mark

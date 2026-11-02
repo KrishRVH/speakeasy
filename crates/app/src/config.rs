@@ -141,21 +141,6 @@ impl TextDelivery {
             Self::Copy => LinuxPaste::Manual,
         }
     }
-
-    pub(crate) const fn next(self) -> Self {
-        #[cfg(target_os = "linux")]
-        match self {
-            Self::Paste => Self::TerminalPaste,
-            Self::TerminalPaste => Self::Type,
-            Self::Type => Self::Copy,
-            Self::Copy => Self::Paste,
-        }
-        #[cfg(not(target_os = "linux"))]
-        match self {
-            Self::Paste => Self::Type,
-            Self::Type => Self::Paste,
-        }
-    }
 }
 
 impl Config {
@@ -356,7 +341,7 @@ impl Config {
                 crate::models::LANGUAGES
                     .iter()
                     .any(|(code, _)| *code == self.language),
-                "Choose a supported Nemotron language in Settings, or Automatic."
+                "Choose a supported Nemotron language in Settings, or Detect automatically."
             );
         }
         ensure!(

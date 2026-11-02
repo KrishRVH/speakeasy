@@ -6,15 +6,17 @@ use super::Settings;
 pub(super) enum Page {
     Dictation,
     Words,
-    Advanced,
+    General,
 }
 
 impl Page {
+    pub(super) const ALL: [Self; 3] = [Self::Dictation, Self::Words, Self::General];
+
     pub(super) const fn label(self) -> &'static str {
         match self {
             Self::Dictation => "Dictation",
             Self::Words => "Words",
-            Self::Advanced => "Advanced",
+            Self::General => "General",
         }
     }
 }
@@ -22,9 +24,7 @@ impl Page {
 pub(super) struct Navigation {
     pub(super) page: Page,
     pub(super) scroll: ScrollHandle,
-    dictation: FocusHandle,
-    words: FocusHandle,
-    advanced: FocusHandle,
+    tabs: [FocusHandle; 3],
 }
 
 impl Navigation {
@@ -32,17 +32,15 @@ impl Navigation {
         Self {
             page: Page::Dictation,
             scroll: ScrollHandle::new(),
-            dictation: cx.focus_handle().tab_stop(true),
-            words: cx.focus_handle().tab_stop(true),
-            advanced: cx.focus_handle().tab_stop(true),
+            tabs: Page::ALL.map(|_| cx.focus_handle().tab_stop(true)),
         }
     }
 
     pub(super) const fn focus(&self, page: Page) -> &FocusHandle {
         match page {
-            Page::Dictation => &self.dictation,
-            Page::Words => &self.words,
-            Page::Advanced => &self.advanced,
+            Page::Dictation => &self.tabs[0],
+            Page::Words => &self.tabs[1],
+            Page::General => &self.tabs[2],
         }
     }
 }
@@ -51,7 +49,6 @@ impl Settings {
     pub(super) fn open_page(&mut self, page: Page, window: &mut Window) {
         if self.navigation.page != page {
             self.practice.stop();
-            self.close_language(window);
             self.navigation.page = page;
             self.navigation.scroll.set_offset(point(px(0.0), px(0.0)));
         }

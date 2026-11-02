@@ -48,12 +48,16 @@ impl Review {
                     .w_full()
                     .h(px(24.0))
                     .rounded(CORNER)
-                    .bg(rgb(palette.room))
+                    .bg(rgb(palette.panel))
                     .border_1()
-                    .border_color(alpha(palette.lamp, 0.3))
+                    .border_color(palette.edge())
                     .cursor_pointer()
                     .focusable()
                     .tab_stop(true)
+                    .when(self.keyboard, |track| {
+                        let lamp = palette.lamp;
+                        track.focus(move |style| style.border_color(rgb(lamp)))
+                    })
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|view, event: &gpui::MouseDownEvent, window, cx| {
@@ -85,7 +89,7 @@ impl Review {
                             .top_0()
                             .h_full()
                             .w(relative(progress))
-                            .bg(alpha(palette.lamp, 0.2)),
+                            .bg(alpha(palette.lamp, 0.16)),
                     )
                     .children(
                         self.detail
@@ -107,7 +111,7 @@ impl Review {
                             .absolute()
                             .left(relative(progress))
                             .top_0()
-                            .w(px(3.0))
+                            .w(px(2.0))
                             .h_full()
                             .bg(rgb(palette.lamp)),
                     )
@@ -126,7 +130,7 @@ impl Review {
                 div()
                     .flex()
                     .justify_between()
-                    .text_size(px(10.0))
+                    .text_size(px(12.0))
                     .text_color(rgb(palette.muted))
                     .child(Stamp(Moment::from_millis(range[0])).to_string())
                     .child(Stamp(Moment::from_millis(range[1])).to_string()),
