@@ -321,7 +321,7 @@ impl Config {
                 file.display()
             );
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt as _;
             let engine = &config.engine_executable;

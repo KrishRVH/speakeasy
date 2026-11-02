@@ -456,7 +456,7 @@ fn a_save_that_cannot_write_names_the_file_and_what_to_do() -> anyhow::Result<()
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 #[test]
 fn validation_requires_an_executable_engine() -> anyhow::Result<()> {
     use std::os::unix::fs::PermissionsExt as _;
