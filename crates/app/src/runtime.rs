@@ -334,11 +334,9 @@ impl<Host> Runtime<Host> {
             saved,
             styles,
         } = configuration;
+        let incarnation = getrandom::u64()?;
         let (configuration, changes) = watch::channel(saved);
-        let mut incarnation = [0_u8; 8];
-        getrandom::fill(&mut incarnation)?;
         let (commands, directed) = async_channel::bounded(8);
-
         let (reports, reported) = async_channel::unbounded();
         let (stop, stopping) = async_channel::bounded(1);
         let (recoveries, recovering) = async_channel::bounded(1);
@@ -348,7 +346,7 @@ impl<Host> Runtime<Host> {
             changes,
             styles,
             commands: directed,
-            incarnation: u64::from_le_bytes(incarnation),
+            incarnation,
             inputs,
             reports: reported,
             recoveries: recovering,
