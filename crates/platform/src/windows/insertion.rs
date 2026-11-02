@@ -16,9 +16,7 @@ use crate::{ClipboardContent, Inserted, clipboard, insertion::NativeInsert};
 const PRIVATE_FORMATS: [&str; 2] = ["CanIncludeInClipboardHistory", "CanUploadToCloudClipboard"];
 
 pub(crate) fn copy_text(text: &str) -> anyhow::Result<()> {
-    let mut insert = Insert;
-    let lease = insert.acquire()?;
-    insert.write(lease, text)
+    write_clipboard(open_clipboard()?, text, None)
 }
 
 pub(crate) fn copy_content(
@@ -31,7 +29,7 @@ pub(crate) fn copy_content(
 }
 
 fn write_clipboard(
-    lease: clipboard_win::Clipboard,
+    _lease: clipboard_win::Clipboard,
     text: &str,
     image: Option<&clipboard::Image>,
 ) -> anyhow::Result<()> {
@@ -58,17 +56,11 @@ fn write_clipboard(
         )?;
         Ok(())
     };
-    let result = match write() {
-        Ok(()) => Ok(()),
-        Err(error) => match clipboard_win::raw::empty() {
-            Ok(()) => Err(error),
-            Err(_) => Err(error.context(
-                "The clipboard may contain an incomplete copy; clear it before trying again",
-            )),
-        },
-    };
-    drop(lease);
-    result
+    write().map_err(|error| match clipboard_win::raw::empty() {
+        Ok(()) => error,
+        Err(_) => error
+            .context("The clipboard may contain an incomplete copy; clear it before trying again"),
+    })
 }
 
 pub(crate) struct Insert;
