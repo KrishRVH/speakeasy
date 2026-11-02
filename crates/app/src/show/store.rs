@@ -240,7 +240,7 @@ pub(super) fn sweep(parent: &Path, now: SystemTime) -> anyhow::Result<()> {
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
         entries => entries.with_context(|| format!("Cannot read {}", parent.display()))?,
     };
-    let checkpoint_error = checkpoint::sweep(parent, now).err();
+    let checkpoints = checkpoint::sweep(parent, now);
     let cutoff = utc_stamp(now.checked_sub(KEPT_FOR).unwrap_or(SystemTime::UNIX_EPOCH));
     let mut unchecked = None;
     let mut stuck = false;
@@ -274,10 +274,7 @@ pub(super) fn sweep(parent: &Path, now: SystemTime) -> anyhow::Result<()> {
             crate::paths::remedy(&error)
         );
     }
-    if let Some(error) = checkpoint_error {
-        return Err(error);
-    }
-    Ok(())
+    checkpoints
 }
 
 enum Cleanup {
@@ -293,34 +290,30 @@ fn retire_expired(
     now: SystemTime,
 ) -> io::Result<Cleanup> {
     let _lock = retention::lock(parent)?;
+    let path = entry.path();
     if !expired(entry, cutoff, now)? {
         if entry.file_type()?.is_dir() {
-            voice::expire(&entry.path(), now)?;
+            voice::expire(&path, now)?;
         }
         return Ok(Cleanup::Keep);
     }
-    let path = entry.path();
     let name = entry.file_name();
-    if name.to_str().is_some_and(|name| stamp(name).is_some()) {
-        let destination = parent.join(format!("{EXPIRED_PREFIX}{}", name.to_string_lossy()));
-        match fs::symlink_metadata(&destination) {
-            Ok(_) => {
-                voice::expire(&path, now)?;
-                return Ok(Cleanup::Blocked);
-            },
-            Err(error) if error.kind() == ErrorKind::NotFound => {},
-            Err(error) => return Err(error),
-        }
-        match fs::rename(path, &destination) {
-            Ok(()) => Ok(Cleanup::Remove(destination)),
-            Err(error) if error.kind() == ErrorKind::NotFound => Err(error),
-            Err(_blocked) => {
-                voice::expire(&entry.path(), now)?;
-                Ok(Cleanup::Blocked)
-            },
-        }
-    } else {
-        Ok(Cleanup::Remove(path))
+    let Some(name) = name.to_str().filter(|name| stamp(name).is_some()) else {
+        return Ok(Cleanup::Remove(path));
+    };
+    let destination = parent.join(format!("{EXPIRED_PREFIX}{name}"));
+    let retired = match fs::symlink_metadata(&destination) {
+        Ok(_) => Err(ErrorKind::AlreadyExists.into()),
+        Err(error) if error.kind() == ErrorKind::NotFound => fs::rename(&path, &destination),
+        Err(error) => return Err(error),
+    };
+    match retired {
+        Ok(()) => Ok(Cleanup::Remove(destination)),
+        Err(error) if error.kind() == ErrorKind::NotFound => Err(error),
+        Err(_blocked) => {
+            voice::expire(&path, now)?;
+            Ok(Cleanup::Blocked)
+        },
     }
 }
 
