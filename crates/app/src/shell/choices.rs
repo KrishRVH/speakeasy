@@ -1,4 +1,4 @@
-use gpui::{App, BorrowAppContext as _, Task};
+use gpui::{App, Task};
 
 use super::{Services, lifecycle::ConfigEpoch};
 use crate::{
@@ -49,9 +49,11 @@ impl Services {
 
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     pub(crate) fn select_preset(name: String, cx: &mut App) {
+        use gpui::BorrowAppContext as _;
+
         let (call, receipt) = Call::new(Command::Preset { name });
         cx.update_global::<Self, _>(|services, cx| services.control(call, cx));
-        let generation = cx.global::<Services>().choices.generation;
+        let generation = cx.global::<Self>().choices.generation;
         cx.spawn(async move |cx| {
             let Ok(reply) = receipt.recv().await else {
                 return;
@@ -60,7 +62,7 @@ impl Services {
                 return;
             };
             cx.update(|cx| {
-                let services = cx.global::<Services>();
+                let services = cx.global::<Self>();
                 if services.choices.generation == generation {
                     services.report(crate::runtime::Report::Failed(reason));
                 }
@@ -136,10 +138,8 @@ impl Services {
             .spawn(async move { candidate.validated(&path) });
         self.choices.task = Some(cx.spawn(async move |cx| {
             let result = validation.await;
-            let admission = cx.update(|cx| {
-                cx.update_global::<Self, _>(|services, _| {
-                    services.admit_preset(selection, result, &call)
-                })
+            let admission = cx.update_global::<Self, _>(|services, _| {
+                services.admit_preset(selection, result, &call)
             });
             let (selected, receipt) = match admission {
                 Ok(admission) => admission,
@@ -152,10 +152,8 @@ impl Services {
                 .recv()
                 .await
                 .unwrap_or_else(|_| Reply::unknown(UNACKNOWLEDGED));
-            cx.update(|cx| {
-                cx.update_global::<Self, _>(|services, _| {
-                    services.confirm_preset(generation, selected, &reply);
-                });
+            cx.update_global::<Self, _>(|services, _| {
+                services.confirm_preset(generation, selected, &reply);
             });
             call.respond(reply);
         }));

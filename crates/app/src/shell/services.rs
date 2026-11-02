@@ -241,6 +241,10 @@ impl Services {
         self.lifecycle.active().map(|owners| &owners.runtime)
     }
 
+    fn live_runtime(&self) -> Option<&Runtime> {
+        self.runtime().filter(|runtime| runtime.is_running())
+    }
+
     pub(crate) fn listen_for_requests(
         &mut self,
         requests: async_channel::Receiver<Event>,
@@ -270,8 +274,7 @@ impl Services {
         if self.mode.is_demo() || self.is_quitting() {
             return Err("Recovery is unavailable in this preview or while quitting.");
         }
-        self.runtime()
-            .filter(|runtime| runtime.is_running())
+        self.live_runtime()
             .ok_or("Resume Speakeasy to recover this Show.")?
             .recover(interrupted)
     }
@@ -282,8 +285,7 @@ impl Services {
         if self.mode.is_demo() || self.is_quitting() {
             return Err("Practice is unavailable in this preview or while quitting.");
         }
-        self.runtime()
-            .filter(|runtime| runtime.is_running())
+        self.live_runtime()
             .ok_or("Resume dictation to try it here.")?
             .practice()
     }
@@ -302,8 +304,7 @@ impl Services {
             "Finish the current operation before copying a Show."
         );
         let input =
-            self.runtime()
-                .filter(|runtime| runtime.is_running())
+            self.live_runtime()
                 .map(|runtime| {
                     runtime.input.idle().ok_or_else(|| {
                         anyhow!("Finish the current recording before copying a Show.")
@@ -315,7 +316,7 @@ impl Services {
 
     pub(crate) fn report(&self, report: impl Into<Report>) {
         let report = report.into();
-        let unsent = match self.runtime().filter(|runtime| runtime.is_running()) {
+        let unsent = match self.live_runtime() {
             Some(runtime) => runtime.report(report),
             None => Err(report),
         };
@@ -503,9 +504,7 @@ impl Services {
         };
         self.retirement = Some(cx.spawn(async move |cx| {
             stopped.await;
-            cx.update(|cx| {
-                cx.update_global::<Self, _>(|services, cx| services.retired(cx));
-            });
+            cx.update_global::<Self, _>(|services, cx| services.retired(cx));
         }));
     }
 
@@ -587,9 +586,7 @@ impl Services {
                 Err("The reset stopped unexpectedly. Check your settings, then try again.".into())
             });
             exited.await;
-            cx.update(|cx| {
-                cx.update_global::<Self, _>(|services, _| services.purged(before, result, &done));
-            });
+            cx.update_global::<Self, _>(|services, _| services.purged(before, result, &done));
         });
         self.purging = Some((thread, finished));
     }
