@@ -8,7 +8,8 @@ APIs also require these thread, buffer, and callback lifetime rules.
 ## Owned threads and insertion authority
 
 Owners: `crates/platform/src/owned_thread.rs`, `input.rs`, `insertion.rs`, `insertion/commit.rs`,
-`clipboard.rs`, `monitor.rs`.
+`clipboard.rs`, `monitor.rs`; `crates/app/src/show/recorder.rs` and `instance.rs` hold the app's
+recorder and instance-listener threads.
 
 `OwnedThread` owns exactly one join handle. Its exit lane closes after the body returns or unwinds;
 thread-local destructors can still run afterward. Async join therefore performs the final OS join on
@@ -236,8 +237,8 @@ closing the sink. The checkpoint lease outlives those resources.
 ## GPUI and vendored adapters
 
 Owners: the [vendor index](../vendor/README.md) lists each patched vendor file;
-`crates/app/src/application.rs`, `shell/shutdown.rs`, and `shell/settings/text_field/accessible.rs`
-hold the app side.
+`crates/app/src/application.rs`, `main.rs`, `shell/shutdown.rs`, and
+`shell/settings/text_field/accessible.rs` hold the app side.
 
 GPUI's `AsyncApp::update` panics if the app is gone or already borrowed. Every `AsyncApp` Speakeasy
 uses comes from `cx.spawn`, and foreground tasks run only from the platform loop while
