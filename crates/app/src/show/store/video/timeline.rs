@@ -1,4 +1,7 @@
-use std::{io::Write, time::Duration};
+use std::{
+    io::{self, Read as _, Write},
+    time::Duration,
+};
 
 use anyhow::Context as _;
 use speakeasy_show::{Narration, Recording, Span, timed_clauses};
@@ -102,13 +105,8 @@ pub(super) fn audio(
     Ok(())
 }
 
-fn zeros(out: &mut impl Write, mut bytes: usize) -> std::io::Result<()> {
-    let silence = [0; 8192];
-    while bytes > 0 {
-        let chunk = silence.get(..bytes.min(silence.len())).unwrap_or_default();
-        out.write_all(chunk)?;
-        bytes = bytes.saturating_sub(chunk.len());
-    }
+fn zeros(out: &mut impl Write, bytes: usize) -> anyhow::Result<()> {
+    io::copy(&mut io::repeat(0).take(u64::try_from(bytes)?), out)?;
     Ok(())
 }
 
