@@ -120,7 +120,7 @@ impl Take {
                 valid_time(*at)?;
                 require(point.is_finite(), "checkpoint pointer is not finite")?;
                 require(
-                    self.tracker.locate(Some(*part)),
+                    self.tracker.locate(*part),
                     "checkpoint pointer geometry is invalid",
                 )?;
                 self.latest = self.latest.max(*at);

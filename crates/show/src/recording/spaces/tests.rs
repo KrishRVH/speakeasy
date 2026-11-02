@@ -28,9 +28,9 @@ fn tracker() -> Tracker {
 #[test]
 fn delayed_pins_follow_the_point_used_instead_of_the_tap_timestamp() {
     let mut tracker = tracker();
-    assert!(tracker.locate(Some(WHOLE)));
+    assert!(tracker.locate(WHOLE));
     tracker.observe(ms(50), Point::new(0.2, 0.3), false, false);
-    assert!(tracker.locate(Some(RESIZED)));
+    assert!(tracker.locate(RESIZED));
     tracker.observe(ms(120), Point::new(0.6, 0.7), false, false);
     assert!(tracker.pin(Span::new(ms(80), ms(100))));
     let mark = tracker.marks().remove(0);
@@ -63,9 +63,9 @@ fn pin_proofs_require_observation_and_complete_lane_vectors() {
 fn actions_include_the_release_space_but_finalization_uses_the_stored_endpoint() {
     for release in [true, false] {
         let mut tracker = tracker();
-        assert!(tracker.locate(Some(WHOLE)));
+        assert!(tracker.locate(WHOLE));
         tracker.observe(ms(10), Point::new(0.2, 0.3), false, true);
-        assert!(tracker.locate(Some(RESIZED)));
+        assert!(tracker.locate(RESIZED));
         if release {
             tracker.observe(ms(20), Point::new(0.6, 0.7), false, false);
         }
@@ -77,11 +77,11 @@ fn actions_include_the_release_space_but_finalization_uses_the_stored_endpoint()
         );
     }
     let mut tracker = tracker();
-    assert!(tracker.locate(Some(WHOLE)));
+    assert!(tracker.locate(WHOLE));
     tracker.observe(ms(10), Point::new(0.2, 0.3), false, true);
-    assert!(tracker.locate(Some(RESIZED)));
+    assert!(tracker.locate(RESIZED));
     tracker.observe(ms(20), Point::new(0.4, 0.3), false, true);
-    assert!(tracker.locate(Some(WHOLE)));
+    assert!(tracker.locate(WHOLE));
     tracker.observe(ms(30), Point::new(0.6, 0.3), false, false);
     assert_eq!(tracker.finish(ms(40)).spaces.actions, [None]);
 }
@@ -90,25 +90,23 @@ fn actions_include_the_release_space_but_finalization_uses_the_stored_endpoint()
 fn grouped_marks_cannot_cross_resizes_gaps_or_unknown_samples() {
     for mode in 0..4 {
         let mut tracker = tracker();
-        assert!(tracker.locate(Some(WHOLE)));
+        assert!(tracker.locate(WHOLE));
         tracker.observe(ms(0), Point::new(0.1, 0.2), true, false);
         tracker.observe(ms(10), Point::new(0.5, 0.2), true, false);
         tracker.observe(ms(20), Point::new(0.5, 0.2), false, false);
         match mode {
             0 => {
-                assert!(tracker.locate(Some(RESIZED)));
+                assert!(tracker.locate(RESIZED));
             },
             1 => {
-                assert!(tracker.locate(Some(RESIZED)));
-                assert!(tracker.locate(Some(WHOLE)));
+                assert!(tracker.locate(RESIZED));
+                assert!(tracker.locate(WHOLE));
             },
             2 => {
                 tracker.gap(ms(25));
-                assert!(tracker.locate(Some(WHOLE)));
+                assert!(tracker.locate(WHOLE));
             },
-            _ => {
-                assert!(tracker.locate(None));
-            },
+            _ => tracker.gap(ms(25)),
         }
         tracker.observe(ms(30), Point::new(0.1, 0.4), true, false);
         tracker.observe(ms(40), Point::new(0.5, 0.4), true, false);
@@ -123,10 +121,10 @@ fn grouped_marks_cannot_cross_resizes_gaps_or_unknown_samples() {
 #[test]
 fn a_cut_preserves_the_carried_points_space_before_folding_the_new_point() {
     let mut tracker = tracker();
-    assert!(tracker.locate(Some(WHOLE)));
+    assert!(tracker.locate(WHOLE));
     for index in 0..4800 {
         if index == 2400 {
-            assert!(tracker.locate(Some(RESIZED)));
+            assert!(tracker.locate(RESIZED));
         }
         tracker.observe(
             ms(index),
@@ -150,10 +148,10 @@ fn a_cut_preserves_the_carried_points_space_before_folding_the_new_point() {
 fn mixed_strokes_and_unbound_proof_vectors_never_supply_crop_coordinates()
 -> Result<(), serde_json::Error> {
     let mut tracker = tracker();
-    assert!(tracker.locate(Some(WHOLE)));
+    assert!(tracker.locate(WHOLE));
     tracker.observe(ms(0), Point::new(0.1, 0.2), true, false);
     tracker.observe(ms(10), Point::new(0.3, 0.2), true, false);
-    assert!(tracker.locate(Some(RESIZED)));
+    assert!(tracker.locate(RESIZED));
     tracker.observe(ms(20), Point::new(0.6, 0.2), true, false);
     tracker.observe(ms(30), Point::new(0.6, 0.2), false, false);
     let mark = tracker.marks().remove(0);

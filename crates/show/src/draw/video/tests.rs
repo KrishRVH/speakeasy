@@ -125,7 +125,7 @@ fn labels_wait_for_the_complete_mark() {
         width: 1000.0,
         height: 1000.0,
     });
-    assert!(tracker.locate(Some(WHOLE)));
+    assert!(tracker.locate(WHOLE));
     tracker.observe(ms(100), Point::new(0.2, 0.5), true, false);
     tracker.observe(ms(200), Point::new(0.8, 0.5), true, false);
     tracker.observe(ms(210), Point::new(0.8, 0.5), false, false);
@@ -146,7 +146,7 @@ fn delayed_pins_wait_for_observation_and_unknown_geometry_is_omitted() {
         width: 1000.0,
         height: 1000.0,
     });
-    assert!(tracker.locate(Some(WHOLE)));
+    assert!(tracker.locate(WHOLE));
     tracker.observe(ms(120), Point::new(0.5, 0.5), false, false);
     assert!(tracker.pin(Span::new(ms(80), ms(100))));
     let marks = tracker.marks();
@@ -184,7 +184,7 @@ fn actions_wait_for_release_and_incompatible_coordinates_are_omitted() {
         width: 1000.0,
         height: 1000.0,
     });
-    assert!(tracker.locate(Some(WHOLE)));
+    assert!(tracker.locate(WHOLE));
     tracker.observe(ms(100), Point::new(0.2, 0.5), false, true);
     tracker.observe(ms(200), Point::new(0.8, 0.5), false, false);
     let mut recording = tracker.finish(ms(1000));
@@ -226,7 +226,7 @@ fn releasing_outside_the_target_does_not_disable_valid_ink() {
         width: 1000.0,
         height: 1000.0,
     });
-    assert!(tracker.locate(Some(WHOLE)));
+    assert!(tracker.locate(WHOLE));
     tracker.observe(ms(10), Point::new(0.2, 0.5), true, false);
     tracker.observe(ms(20), Point::new(0.8, 0.5), true, false);
     tracker.observe(ms(30), Point::new(0.8, 0.5), false, false);

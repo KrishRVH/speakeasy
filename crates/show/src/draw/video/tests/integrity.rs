@@ -24,7 +24,7 @@ fn a_mark_cannot_declare_completion_before_its_referenced_strokes() {
         width: 1000.0,
         height: 1000.0,
     });
-    assert!(tracker.locate(Some(WHOLE)));
+    assert!(tracker.locate(WHOLE));
     tracker.observe(ms(100), Point::new(0.2, 0.5), true, false);
     tracker.observe(ms(200), Point::new(0.8, 0.5), true, false);
     tracker.observe(ms(210), Point::new(0.8, 0.5), false, false);
@@ -71,7 +71,7 @@ fn ambiguous_pin_identity_cannot_acquire_a_timing_proof() {
         width: 1000.0,
         height: 1000.0,
     });
-    assert!(tracker.locate(Some(WHOLE)));
+    assert!(tracker.locate(WHOLE));
     tracker.observe(ms(90), Point::new(0.0, 0.5), false, false);
     assert!(tracker.pin(Span::new(ms(80), ms(100))));
     let marks = tracker.marks();

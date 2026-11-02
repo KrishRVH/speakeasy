@@ -1,6 +1,9 @@
 use std::mem;
 
-use crate::{Action, InkPoint, Mark, Moment, Pin, Point, Recording, Size, Span, Stroke, marks};
+use crate::{
+    Action, InkPoint, Mark, Moment, Pin, Point, Recording, Rect, Size, Spaces, Span, Stroke, marks,
+    recording::spaces::{self, PinSpace, Space},
+};
 
 const DRAG_PIXELS: f32 = 12.0;
 
@@ -13,11 +16,11 @@ const MOST_STROKE_POINTS: usize = 2_400;
 #[derive(Debug)]
 pub struct Tracker {
     surface: Size,
-    space: Option<crate::recording::spaces::Space>,
+    space: Option<Space>,
     generation: Option<u64>,
-    drawn_space: Option<crate::recording::spaces::Space>,
-    last_drawn_space: Option<crate::recording::spaces::Space>,
-    spaces: crate::Spaces,
+    drawn_space: Option<Space>,
+    last_drawn_space: Option<Space>,
+    spaces: Spaces,
     pointer: Option<InkPoint>,
     drawing: Vec<InkPoint>,
     deliberate: bool,
@@ -35,7 +38,7 @@ struct Press {
     at: Moment,
     from: Point,
     to: Point,
-    space: Option<crate::recording::spaces::Space>,
+    space: Option<Space>,
     reach: f32,
     drawing: bool,
 }
@@ -56,7 +59,7 @@ impl Tracker {
             generation: Some(0),
             drawn_space: None,
             last_drawn_space: None,
-            spaces: crate::Spaces {
+            spaces: Spaces {
                 strokes: Vec::new(),
                 pins: Vec::new(),
                 actions: Vec::new(),
@@ -78,17 +81,15 @@ impl Tracker {
         self.surface = surface;
     }
 
-    pub(crate) fn locate(&mut self, part: Option<crate::Rect>) -> bool {
-        if part.is_some_and(|part| !crate::recording::spaces::valid(part)) {
+    pub(crate) fn locate(&mut self, part: Rect) -> bool {
+        if !spaces::valid(part) {
             return false;
         }
-        if self.space.map(|space| space.part) != part {
+        if self.space.is_none_or(|space| space.part != part) {
             self.generation = self
                 .generation
                 .and_then(|generation| generation.checked_add(1));
-            self.space = part
-                .zip(self.generation)
-                .map(|(part, generation)| crate::recording::spaces::Space { generation, part });
+            self.space = self.generation.map(|generation| Space { generation, part });
         }
         true
     }
@@ -175,10 +176,9 @@ impl Tracker {
                 at: taps.end(),
                 point,
             });
-            self.spaces.pins.push(
-                self.space
-                    .map(|space| crate::recording::spaces::PinSpace { space, observed }),
-            );
+            self.spaces
+                .pins
+                .push(self.space.map(|space| PinSpace { space, observed }));
             true
         } else {
             false
@@ -264,12 +264,7 @@ impl Tracker {
         }
     }
 
-    fn release(
-        &mut self,
-        at: Moment,
-        point: Point,
-        space: Option<crate::recording::spaces::Space>,
-    ) {
+    fn release(&mut self, at: Moment, point: Point, space: Option<Space>) {
         let Button::Down(press) = mem::replace(&mut self.press, Button::Up) else {
             return;
         };
