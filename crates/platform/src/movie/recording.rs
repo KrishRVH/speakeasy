@@ -7,17 +7,19 @@ use std::{
     time::{Duration, Instant},
 };
 
+use async_channel::Receiver;
+
 use super::{
-    canvas,
+    RECORDING_LIMIT, canvas,
     encode::{Encoder as Timeline, End, Observer},
 };
 #[cfg(target_os = "macos")]
 use crate::macos::movie::encode::Codec;
 #[cfg(target_os = "windows")]
 use crate::windows::movie::encoder::Codec;
-type Encoder = Timeline<Codec>;
+use crate::{Frame, MovieTarget, Part};
 
-use crate::{Frame, MovieTarget};
+type Encoder = Timeline<Codec>;
 
 pub(crate) const INTERVAL: Duration = Duration::from_nanos(33_333_334);
 
@@ -40,7 +42,7 @@ pub(crate) struct Recording {
 
 struct Publication<'a> {
     target: &'a MovieTarget,
-    stopping: &'a async_channel::Receiver<Infallible>,
+    stopping: &'a Receiver<Infallible>,
 }
 
 impl Observer for Publication<'_> {
@@ -48,12 +50,7 @@ impl Observer for Publication<'_> {
         self.target.cancelled() || self.stopping.is_closed()
     }
 
-    fn geometry(
-        &mut self,
-        sample: u32,
-        content: [u32; 4],
-        part: crate::Part,
-    ) -> anyhow::Result<bool> {
+    fn geometry(&mut self, sample: u32, content: [u32; 4], part: Part) -> anyhow::Result<bool> {
         self.target.geometry(sample, content, part, self.stopping)
     }
 }
@@ -67,11 +64,7 @@ impl Movie {
         !matches!(self, Self::Stopped)
     }
 
-    pub(crate) fn poll(
-        &mut self,
-        now: Instant,
-        stopping: &async_channel::Receiver<Infallible>,
-    ) -> bool {
+    pub(crate) fn poll(&mut self, now: Instant, stopping: &Receiver<Infallible>) -> bool {
         let target = match self {
             Self::Pending(target) => target,
             Self::Active(recording) => &recording.target,
@@ -82,18 +75,11 @@ impl Movie {
             self.stop(ending);
             return true;
         }
-        if let Self::Active(recording) = self {
-            match recording.advance(now, stopping) {
-                Ok(true) => {},
-                Ok(false) => self.stop(now),
-                Err(_private_native_error) => {
-                    recording.failed = true;
-                    *self = Self::Stopped;
-                    return false;
-                },
-            }
-        }
-        true
+        let Self::Active(recording) = self else {
+            return true;
+        };
+        let advanced = recording.advance(now, stopping);
+        self.settle(advanced, now)
     }
 
     pub(crate) fn stop(&mut self, at: Instant) {
@@ -103,38 +89,42 @@ impl Movie {
         *self = Self::Stopped;
     }
 
-    pub(crate) fn frame(
-        &mut self,
-        frame: &Frame,
-        stopping: &async_channel::Receiver<Infallible>,
-    ) -> bool {
-        if matches!(self, Self::Pending(_)) {
-            let Self::Pending(target) = mem::replace(self, Self::Stopped) else {
-                return true;
-            };
-            match Recording::begin(target, frame, stopping) {
-                Ok(Some(recording)) => *self = Self::Active(Box::new(recording)),
+    pub(crate) fn frame(&mut self, frame: &Frame, stopping: &Receiver<Infallible>) -> bool {
+        *self = match mem::replace(self, Self::Stopped) {
+            Self::Pending(target) => match Recording::begin(target, frame, stopping) {
+                Ok(Some(recording)) => Self::Active(Box::new(recording)),
                 Ok(None) => return true,
                 Err(_private_native_error) => return false,
-            }
+            },
+            movie => movie,
+        };
+        let Self::Active(recording) = self else {
+            return true;
+        };
+        if recording.target.cancelled() || stopping.is_closed() {
+            let ending = Instant::now().min(recording.target.deadline());
+            self.stop(ending);
+            return true;
         }
-        if let Self::Active(recording) = self {
-            if recording.target.cancelled() || stopping.is_closed() {
-                let end = Instant::now().min(recording.target.deadline());
-                self.stop(end);
-            } else {
-                match recording.frame(frame, stopping) {
-                    Ok(true) => {},
-                    Ok(false) => self.stop(Instant::now()),
-                    Err(_private_native_error) => {
-                        recording.failed = true;
-                        *self = Self::Stopped;
-                        return false;
-                    },
+        let written = recording.frame(frame, stopping);
+        self.settle(written, Instant::now())
+    }
+
+    fn settle(&mut self, outcome: anyhow::Result<bool>, now: Instant) -> bool {
+        match outcome {
+            Ok(true) => true,
+            Ok(false) => {
+                self.stop(now);
+                true
+            },
+            Err(_private_native_error) => {
+                if let Self::Active(recording) = self {
+                    recording.failed = true;
                 }
-            }
+                *self = Self::Stopped;
+                false
+            },
         }
-        true
     }
 }
 
@@ -142,7 +132,7 @@ impl Recording {
     fn begin(
         target: MovieTarget,
         frame: &Frame,
-        stopping: &async_channel::Receiver<Infallible>,
+        stopping: &Receiver<Infallible>,
     ) -> anyhow::Result<Option<Self>> {
         let canvas = canvas::Canvas::new([frame.width, frame.height])?;
         if target.cancelled() || !target.begin(frame.at, canvas.size(), stopping) {
@@ -159,14 +149,10 @@ impl Recording {
         }))
     }
 
-    fn frame(
-        &mut self,
-        frame: &Frame,
-        stopping: &async_channel::Receiver<Infallible>,
-    ) -> anyhow::Result<bool> {
+    fn frame(&mut self, frame: &Frame, stopping: &Receiver<Infallible>) -> anyhow::Result<bool> {
         let at = frame.at.saturating_duration_since(self.first);
         anyhow::ensure!(
-            frame.at < self.target.deadline() && at <= Duration::from_secs(300),
+            frame.at < self.target.deadline() && at <= RECORDING_LIMIT,
             "The Show movie reached its recording limit"
         );
         if self
@@ -194,11 +180,7 @@ impl Recording {
         Ok(true)
     }
 
-    fn advance(
-        &mut self,
-        now: Instant,
-        stopping: &async_channel::Receiver<Infallible>,
-    ) -> anyhow::Result<bool> {
+    fn advance(&mut self, now: Instant, stopping: &Receiver<Infallible>) -> anyhow::Result<bool> {
         let target = &self.target;
         if let Some(encoder) = &mut self.encoder {
             return Ok(encoder
