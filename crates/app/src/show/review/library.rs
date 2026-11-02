@@ -418,6 +418,11 @@ impl Library {
         self.selected.as_ref() == Some(key)
     }
 
+    pub(super) fn selected_row(&self) -> Option<&Row> {
+        let key = self.selected.as_ref()?;
+        self.rows.iter().find(|row| row.directory == key.directory)
+    }
+
     pub(super) fn is_selected(&self, directory: &Path) -> bool {
         self.selected
             .as_ref()

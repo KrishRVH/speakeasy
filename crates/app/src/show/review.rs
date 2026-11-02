@@ -437,13 +437,7 @@ impl Review {
         let Some((parent, key)) = self.directory.clone().zip(self.library.selected.clone()) else {
             return;
         };
-        let Some(kept) = self
-            .library
-            .rows
-            .iter()
-            .find(|row| row.directory == key.directory)
-            .and_then(|row| row.pinned)
-        else {
+        let Some(kept) = self.library.selected_row().and_then(|row| row.pinned) else {
             return;
         };
 
@@ -520,56 +514,23 @@ impl Review {
         }
     }
 
+    pub(super) fn can_copy(&self, cx: &App) -> bool {
+        self.source != Source::Demo && (self.actions.can_copy)(cx) && self.copying.is_none()
+    }
+
     fn copy(&mut self, kind: CopyKind, cx: &mut Context<'_, Self>) {
-        if self.source == Source::Demo
-            || !(self.actions.can_copy)(cx)
-            || self.copying.is_some()
-            || (kind == CopyKind::Evidence && self.loading.is_some())
-        {
-            return;
-        }
-        let Some(key) = self.library.selected.clone() else {
+        let Some(key) = self.library.selected.clone().filter(|_| self.can_copy(cx)) else {
             return;
         };
-        let request = if kind == CopyKind::Evidence {
-            let Some(detail) = &self.detail else {
-                return;
-            };
-            let Some(frame) = detail.frames.get(key.frame) else {
-                return;
-            };
-            let ImageState::Ready(decoded) = &self.image else {
-                return;
-            };
-            let text = match handoff::text(
-                navigation::pointer(
-                    &key.directory,
-                    frame,
-                    self.mode,
-                    self.request,
-                    decoded.at,
-                    decoded.annotations,
-                ),
-                detail.summary.as_deref().ok(),
-                &detail.narration,
-            ) {
-                Ok(text) => text,
-                Err(error) => {
-                    self.notice = Some(format!("Cannot copy this Show: {error:#}"));
-                    cx.notify();
-                    return;
-                },
-            };
-            super::copy::Request::Moment {
-                text,
-                image: Arc::clone(&decoded.image),
-            }
-        } else if kind == CopyKind::Agent {
-            super::copy::Request::Agent(key.directory.clone())
-        } else {
-            super::copy::Request::Summary(key.directory.clone())
+        let request = match kind {
+            CopyKind::Agent => Ok(super::copy::Request::Agent(key.directory.clone())),
+            CopyKind::Summary => Ok(super::copy::Request::Summary(key.directory.clone())),
+            CopyKind::Evidence => match self.moment(&key) {
+                Some(request) => request,
+                None => return,
+            },
         };
-        let receipt = match (self.actions.copy)(request, cx) {
+        let receipt = match request.and_then(|request| (self.actions.copy)(request, cx)) {
             Ok(receipt) => receipt,
             Err(error) => {
                 self.notice = Some(format!("Cannot copy this Show: {error:#}"));
@@ -598,22 +559,42 @@ impl Review {
         cx.notify();
     }
 
+    fn moment(&self, key: &Key) -> Option<anyhow::Result<super::copy::Request>> {
+        let detail = self.detail.as_ref()?;
+        let frame = detail.frames.get(key.frame)?;
+        let ImageState::Ready(decoded) = &self.image else {
+            return None;
+        };
+        if self.loading.is_some() {
+            return None;
+        }
+        let pointer = navigation::pointer(
+            &key.directory,
+            frame,
+            self.mode,
+            self.request,
+            decoded.at,
+            decoded.annotations,
+        );
+        Some(
+            handoff::text(pointer, detail.summary.as_deref().ok(), &detail.narration).map(|text| {
+                super::copy::Request::Moment {
+                    text,
+                    image: Arc::clone(&decoded.image),
+                }
+            }),
+        )
+    }
+
     fn update_summary(&mut self, summary: io::Result<String>) {
         if let Some(detail) = &mut self.detail {
             detail.summary = summary.map_err(|error| format!("Cannot read summary.md: {error}"));
         }
     }
 
-    fn interrupted(&self) -> Option<crate::show::Interrupted> {
-        let key = self.library.selected.as_ref()?;
-        match &self
-            .library
-            .rows
-            .iter()
-            .find(|row| row.directory == key.directory)?
-            .kind
-        {
-            Kind::Interrupted(show) => Some(show.clone()),
+    fn interrupted(&self) -> Option<&crate::show::Interrupted> {
+        match &self.library.selected_row()?.kind {
+            Kind::Interrupted(show) => Some(show),
             Kind::Saved => None,
         }
     }
@@ -622,7 +603,7 @@ impl Review {
         if self.recovering.is_some() || self.discarding.is_some() || self.keeping.is_some() {
             return;
         }
-        let Some(interrupted) = self.interrupted() else {
+        let Some(interrupted) = self.interrupted().cloned() else {
             return;
         };
         let key = self.library.selected.clone();
@@ -663,7 +644,7 @@ impl Review {
         if self.recovering.is_some() || self.discarding.is_some() || self.keeping.is_some() {
             return;
         }
-        let Some(interrupted) = self.interrupted() else {
+        let Some(interrupted) = self.interrupted().cloned() else {
             return;
         };
         if !self.confirm_discard {
@@ -812,7 +793,7 @@ impl Review {
                 self.confirm_discard = true;
                 let message = if self
                     .interrupted()
-                    .is_some_and(|show| show.narration_pending())
+                    .is_some_and(crate::show::Interrupted::narration_pending)
                 {
                     DISCARD_AUDIO
                 } else {
@@ -876,7 +857,7 @@ enum Pane {
     Narration,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 enum CopyKind {
     Agent,
     Summary,
@@ -908,7 +889,7 @@ enum Direction {
     Forward,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 enum Action {
     Annotations,
     Pane(Pane),

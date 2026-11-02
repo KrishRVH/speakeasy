@@ -222,7 +222,7 @@ fn entry(kit: Kit<'_>, item: Item, highlighted: bool, cx: &Context<'_, Review>) 
     } = item;
     if !enabled {
         return div()
-            .id(id(&action))
+            .id(id(action))
             .role(gpui::Role::MenuItem)
             .aria_label(label)
             .aria_disabled(true)
@@ -236,12 +236,12 @@ fn entry(kit: Kit<'_>, item: Item, highlighted: bool, cx: &Context<'_, Review>) 
             .child(label);
     }
     kit.menu_action(
-        id(&action),
+        id(action),
         label,
         false,
         highlighted,
         cx.listener(move |view, _: &ClickEvent, _, cx| {
-            view.act(action.clone(), cx);
+            view.act(action, cx);
         }),
     )
 }

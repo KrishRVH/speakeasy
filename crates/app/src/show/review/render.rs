@@ -98,10 +98,6 @@ impl Review {
         }
     }
 
-    pub(super) fn can_copy(&self, cx: &App) -> bool {
-        self.source != Source::Demo && (self.actions.can_copy)(cx) && self.copying.is_none()
-    }
-
     fn library_pane(
         &self,
         kit: Kit<'_>,
@@ -202,7 +198,7 @@ impl Review {
         let hover = palette.hover();
         self.pressable(
             palette,
-            id(&Action::Show(index)),
+            id(Action::Show(index)),
             press(Action::Show(index), true, cx),
         )
         .relative()
@@ -304,11 +300,7 @@ impl Review {
         now: SystemTime,
         cx: &Context<'_, Self>,
     ) -> AnyElement {
-        let row = self
-            .library
-            .rows
-            .iter()
-            .find(|row| row.directory == key.directory);
+        let row = self.library.selected_row();
         if let Some(row) = row
             && let Kind::Interrupted(interrupted) = &row.kind
         {
@@ -525,7 +517,7 @@ impl Review {
                                 .items_center()
                                 .gap(px(10.0))
                                 .child(kit.switch(
-                                    id(&Action::Annotations),
+                                    id(Action::Annotations),
                                     "Annotations",
                                     self.annotated,
                                     press(Action::Annotations, !detail.frames.is_empty(), cx),
@@ -609,13 +601,13 @@ impl Review {
                     .gap(px(4.0))
                     .child(div().flex_1().min_w(px(0.0)).child(caption))
                     .child(kit.icon_button(
-                        id(&Action::Previous),
+                        id(Action::Previous),
                         icons::CHEVRON_LEFT,
                         "Previous frame",
                         press(Action::Previous, index > 0 && count > 0, cx),
                     ))
                     .child(kit.icon_button(
-                        id(&Action::Next),
+                        id(Action::Next),
                         icons::CHEVRON_RIGHT,
                         "Next frame",
                         press(Action::Next, index.saturating_add(1) < count, cx),
@@ -807,7 +799,7 @@ impl Review {
         let hover = palette.hover();
         self.pressable(
             palette,
-            id(&Action::Clause(index)),
+            id(Action::Clause(index)),
             press(Action::Clause(index), enabled, cx),
         )
         .w_full()
@@ -1140,9 +1132,9 @@ fn confirm(
         )
 }
 
-pub(super) fn id(action: &Action) -> ElementId {
+pub(super) fn id(action: Action) -> ElementId {
     match action {
-        Action::Mark(number) => SharedString::from(format!("show-mark-{number}")).into(),
+        Action::Mark(number) => ("show-mark", number).into(),
         Action::Recover => "recover-show".into(),
         Action::Discard => "discard-show".into(),
         Action::ConfirmDiscard => "confirm-discard-show".into(),
@@ -1162,14 +1154,14 @@ pub(super) fn id(action: &Action) -> ElementId {
         Action::Copy(CopyKind::Evidence) => "shows-copy-evidence".into(),
         Action::Pane(Pane::Summary) => "show-summary-tab".into(),
         Action::Pane(Pane::Narration) => "show-narration-tab".into(),
-        Action::Clause(index) => SharedString::from(format!("show-clause-{index}")).into(),
+        Action::Clause(index) => ("show-clause", index).into(),
         Action::Folder => "shows-folder".into(),
         Action::Movie => "shows-movie".into(),
         Action::Export(ExportKind::Archive) => "shows-export".into(),
         Action::Export(ExportKind::Video) => "shows-export-video".into(),
         Action::CancelExport => "shows-cancel-export".into(),
-        Action::Show(index) => SharedString::from(format!("show-{index}")).into(),
-        Action::Frame(index) => SharedString::from(format!("frame-{index}")).into(),
+        Action::Show(index) => ("show", index).into(),
+        Action::Frame(index) => ("frame", index).into(),
     }
 }
 
@@ -1178,7 +1170,7 @@ fn press(
     enabled: bool,
     cx: &Context<'_, Review>,
 ) -> Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static> {
-    enabled.then(|| cx.listener(move |view, _, _, cx| view.act(action.clone(), cx)))
+    enabled.then(|| cx.listener(move |view, _, _, cx| view.act(action, cx)))
 }
 
 fn command(
@@ -1189,7 +1181,7 @@ fn command(
     enabled: bool,
     cx: &Context<'_, Review>,
 ) -> Stateful<Div> {
-    kit.button(id(&action), label, weight, press(action, enabled, cx))
+    kit.button(id(action), label, weight, press(action, enabled, cx))
 }
 
 fn segment(
@@ -1200,7 +1192,7 @@ fn segment(
     enabled: bool,
     cx: &Context<'_, Review>,
 ) -> Stateful<Div> {
-    kit.segment(id(&action), label, selected, press(action, enabled, cx))
+    kit.segment(id(action), label, selected, press(action, enabled, cx))
 }
 
 fn chip(
@@ -1211,7 +1203,7 @@ fn chip(
     selected: bool,
     cx: &Context<'_, Review>,
 ) -> Stateful<Div> {
-    kit.segment(id(&action), label, selected, press(action, true, cx))
+    kit.segment(id(action), label, selected, press(action, true, cx))
         .h(px(28.0))
         .px(px(10.0))
         .bg(rgb(palette.raise))
