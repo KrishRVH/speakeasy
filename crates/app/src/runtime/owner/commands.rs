@@ -1,52 +1,63 @@
-use super::{
-    Call, Change, Command, ControlFlow, Directive, ModelState, Owner, Ports, Purpose, Reply,
-    Session, Status, now,
+use std::ops::ControlFlow;
+
+use super::Owner;
+use crate::{
+    config::{Change, Config, ValidConfig},
+    control::{Command, Reply, Status},
+    runtime::{
+        Directive, ModelState, now,
+        ports::Ports,
+        session::{Purpose, Session},
+    },
 };
 
 impl<P: Ports> Owner<P> {
     pub(super) fn command(&mut self, directive: Directive) -> ControlFlow<()> {
-        match directive {
-            Directive::Control(call) => self.control(call),
+        let (call, refused) = match directive {
+            Directive::Control(call) if call.is_live() => {
+                let refused = self.control(&call.command)?;
+                (call, refused)
+            },
             Directive::Preset {
                 name,
                 config,
                 baseline,
                 session,
                 call,
-            } => {
-                if !call.is_live() {
-                    return ControlFlow::Continue(());
-                }
-                if self.session.is_some() || self.practice.is_some() {
-                    call.respond(Reply::refused(
-                        "Finish dictation or practice before choosing a preset.",
-                    ));
-                    return ControlFlow::Continue(());
-                }
-                if u64::from(self.latest.id) != session
-                    || self.changes.borrow().change_to(&baseline) >= Change::Session
-                {
-                    call.respond(Reply::refused("Dictation or settings changed while the preset was being checked. Choose it again."));
-                    return ControlFlow::Continue(());
-                }
-                let reload = self.config.change_to(&config) >= Change::Engine;
-                self.config = config.into_inner();
-                self.preset = Some(name);
-                if reload {
-                    self.worker.reload(&self.ports, &self.config);
-                }
-                self.apply_settings();
-                call.respond(Reply::ok(self.control_status()));
-                ControlFlow::Continue(())
+            } if call.is_live() => {
+                let refused = self.adopt_preset(name, *config, &baseline, session);
+                (call, refused)
             },
-        }
+            Directive::Control(_) | Directive::Preset { .. } => return ControlFlow::Continue(()),
+        };
+        call.respond(refused.map_or_else(|| Reply::ok(self.control_status()), Reply::refused));
+        ControlFlow::Continue(())
     }
 
-    fn control(&mut self, call: Call) -> ControlFlow<()> {
-        if !call.is_live() {
-            return ControlFlow::Continue(());
+    fn adopt_preset(
+        &mut self,
+        name: String,
+        config: ValidConfig,
+        baseline: &Config,
+        session: u64,
+    ) -> Option<&'static str> {
+        if self.session.is_some() || self.practice.is_some() {
+            return Some("Finish dictation or practice before choosing a preset.");
         }
-        let refused = match &call.command {
+        if u64::from(self.latest.id) != session
+            || self.changes.borrow().change_to(baseline) >= Change::Session
+        {
+            return Some(
+                "Dictation or settings changed while the preset was being checked. Choose it again.",
+            );
+        }
+        self.apply_settings(config.into_inner());
+        self.preset = Some(name);
+        None
+    }
+
+    fn control(&mut self, command: &Command) -> ControlFlow<(), Option<&'static str>> {
+        let refused = match command {
             Command::Status => None,
             Command::Start { style } => {
                 if self.session.is_some() || self.practice.is_some() {
@@ -62,7 +73,9 @@ impl<P: Ports> Owner<P> {
                         session.style = *style;
                         self.latest.style = *style;
                     }
-                    self.control_token().is_none().then_some("Dictation could not start because desktop control stopped. Resume Speakeasy before trying again.")
+                    self.control_token().is_none().then_some(
+                        "Dictation could not start because desktop control stopped. Resume Speakeasy before trying again.",
+                    )
                 }
             },
             Command::Stop { session } | Command::Cancel { session }
@@ -78,9 +91,6 @@ impl<P: Ports> Owner<P> {
                 None
             },
             Command::Cancel { .. } => {
-                if let Some(session) = &self.session {
-                    session.permit.revoke();
-                }
                 let action = self.gesture.cancel();
                 self.handle_action(action)?;
                 None
@@ -96,16 +106,20 @@ impl<P: Ports> Owner<P> {
                     Some("No dictation to paste yet.")
                 } else {
                     self.paste_last()?;
-                    (!self.session.as_ref().is_some_and(|session| matches!(session.purpose, Purpose::Replay)))
-                        .then_some("The last dictation could not be submitted because desktop control stopped. Resume Speakeasy before trying again.")
+                    let replaying = self
+                        .session
+                        .as_ref()
+                        .is_some_and(|session| matches!(session.purpose, Purpose::Replay));
+                    (!replaying).then_some(
+                        "The last dictation could not be submitted because desktop control stopped. Resume Speakeasy before trying again.",
+                    )
                 }
             },
             Command::Style { .. } | Command::Preset { .. } => {
                 Some("Choose a style or saved preset through the desktop command interface.")
             },
         };
-        call.respond(refused.map_or_else(|| Reply::ok(self.control_status()), Reply::refused));
-        ControlFlow::Continue(())
+        ControlFlow::Continue(refused)
     }
 
     fn control_token(&self) -> Option<String> {

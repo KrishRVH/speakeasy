@@ -35,7 +35,6 @@ use super::{
 };
 use crate::{
     config::{Change, Config, Engine},
-    control::{Call, Command, Reply, Status},
     show::{SavedShow, Unwound},
     sounds::Cue,
     transcript::{self, style::Style, vocabulary::Vocabulary},
@@ -509,15 +508,9 @@ impl<P: Ports> Owner<P> {
     fn configure(&mut self) {
         self.practice = None;
         self.preset = None;
-        let next = self.changes.borrow_and_update().clone();
-        let reload = self.config.change_to(&next) >= Change::Engine;
-        self.config = next;
         let cancelled = self.gesture.abandon().is_some();
-        if reload {
-            self.worker.reload(&self.ports, &self.config);
-        }
-        self.abandon();
-        self.apply_settings();
+        let config = self.changes.borrow_and_update().clone();
+        self.apply_settings(config);
         self.outcome = if cancelled {
             self.cue(Cue::Cancel);
             Outcome::Cancelled
@@ -526,7 +519,13 @@ impl<P: Ports> Owner<P> {
         };
     }
 
-    fn apply_settings(&mut self) {
+    fn apply_settings(&mut self, config: Config) {
+        let reload = self.config.change_to(&config) >= Change::Engine;
+        self.config = config;
+        if reload {
+            self.worker.reload(&self.ports, &self.config);
+        }
+        self.abandon();
         self.worker.revive(&self.ports, &self.config);
         self.notice = Some(if self.worker.model() == ModelState::Ready {
             Notice::SettingsApplied
