@@ -83,14 +83,11 @@ pub(super) fn write(directory: &Path, journal: &Journal, duration: Moment) -> an
     staging
         .persist_noclobber(directory.join(FILE))
         .map_err(|error| error.error)?;
-    #[cfg(unix)]
-    {
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "The complete sidecar is already visible; a directory sync failure must not report it as lost"
-        )]
-        let _ = File::open(directory).and_then(|file| file.sync_all());
-    }
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "The complete sidecar is already visible; a directory sync failure must not report it as lost"
+    )]
+    let _ = super::sync_directory(directory);
     Ok(())
 }
 

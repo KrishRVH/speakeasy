@@ -10,11 +10,8 @@ use serde::Serialize;
 
 use super::{
     KEPT_FOR, Staged,
-    checkpoint::{
-        self,
-        audio::{self, KeptAudio},
-    },
-    recall,
+    checkpoint::audio::{self, KeptAudio},
+    recall, sync_directory,
 };
 
 const FILE: &str = "voice.log";
@@ -85,7 +82,7 @@ pub(super) fn retain(
             .to_le_bytes(),
     )?;
     expiry.sync_all()?;
-    checkpoint::sync_directory(staged.staging.path())?;
+    sync_directory(staged.staging.path())?;
     Ok(())
 }
 

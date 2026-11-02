@@ -119,8 +119,7 @@ pub(crate) fn set_kept(parent: &Path, directory: &Path, kept: bool) -> io::Resul
             Err(error) => return Err(error),
         }
     }
-    #[cfg(unix)]
-    File::open(directory)?.sync_all()?;
+    super::sync_directory(directory)?;
     Retention::read(directory)
 }
 

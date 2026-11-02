@@ -13,7 +13,7 @@ pub(crate) use audio::{KeptAudio, MAX_CUES};
 pub(crate) use keeper::{AudioLog, FrameLog, Keeper, Kept};
 use speakeasy_show::{Log, Narration, Take};
 
-use super::{Staged, age, recall};
+use super::{Staged, age, recall, sync_directory};
 
 const ROOT: &str = ".checkpoints";
 const LOG: &str = "take.log";
@@ -619,20 +619,6 @@ fn read_complete(file: &mut File, bytes: &mut [u8]) -> io::Result<bool> {
         Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => Ok(false),
         Err(error) => Err(error),
     }
-}
-
-#[cfg(unix)]
-pub(super) fn sync_directory(directory: &Path) -> io::Result<()> {
-    File::open(directory)?.sync_all()
-}
-
-#[cfg(not(unix))]
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "Callers share Unix's fallible contract; portable Rust cannot sync a Windows directory handle"
-)]
-pub(super) const fn sync_directory(_: &Path) -> io::Result<()> {
-    Ok(())
 }
 
 #[cfg(test)]

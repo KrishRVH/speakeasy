@@ -97,7 +97,7 @@ impl Staged {
             .open(summary)?;
         file.write_all(self.summary.as_bytes())?;
         file.sync_all()?;
-        checkpoint::sync_directory(self.staging.path())?;
+        sync_directory(self.staging.path())?;
         Ok(lost)
     }
 
@@ -105,14 +105,11 @@ impl Staged {
         let parent = self.directory.parent().unwrap_or(&self.directory);
         fs::rename(self.staging.path(), &self.directory).map_err(cannot_save(parent))?;
         self.staging.disable_cleanup(true);
-        #[cfg(unix)]
-        {
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "Rename already made the complete bundle visible; a failed directory sync cannot turn that saved Show into a failed publication"
-            )]
-            let _ = fs::File::open(parent).and_then(|file| file.sync_all());
-        }
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "Rename already made the complete bundle visible; a failed directory sync cannot turn that saved Show into a failed publication"
+        )]
+        let _ = sync_directory(parent);
         Ok((SavedShow(self.directory.into()), self.summary))
     }
 }
@@ -207,6 +204,20 @@ pub(super) fn stage(
         summary,
         source_lost,
     })
+}
+
+#[cfg(unix)]
+fn sync_directory(directory: &Path) -> io::Result<()> {
+    fs::File::open(directory)?.sync_all()
+}
+
+#[cfg(not(unix))]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "Callers share Unix's fallible contract; portable Rust cannot sync a Windows directory handle"
+)]
+const fn sync_directory(_: &Path) -> io::Result<()> {
+    Ok(())
 }
 
 fn write_flushed(path: &Path, contents: &[u8]) -> io::Result<()> {

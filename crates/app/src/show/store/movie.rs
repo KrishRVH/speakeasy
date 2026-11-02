@@ -12,7 +12,7 @@ pub(crate) use frame::{AnnotationState, Crop, decoder_time};
 use serde::{Deserialize, Serialize};
 use speakeasy_show::{Moment, MovieError, MoviePrefix};
 
-use super::{checkpoint, recall};
+use super::{recall, sync_directory};
 
 pub(crate) const FILE: &str = "recording.mp4";
 pub(crate) const HEADER: &str = "recording.json";
@@ -89,7 +89,7 @@ impl Metadata {
         let mut file = File::create_new(directory.join(HEADER))?;
         file.write_all(&bytes)?;
         file.sync_all()?;
-        checkpoint::sync_directory(directory)?;
+        sync_directory(directory)?;
         Ok((metadata, geometry))
     }
 
@@ -134,7 +134,7 @@ impl Metadata {
         staging
             .persist(directory.join(HEADER))
             .map_err(|error| error.error)?;
-        checkpoint::sync_directory(directory)?;
+        sync_directory(directory)?;
         Ok(())
     }
 
