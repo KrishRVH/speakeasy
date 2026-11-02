@@ -93,12 +93,10 @@ impl WindowsWindowInner {
 
     pub(crate) fn disconnect_accessibility(&self) {
         let a11y = self.state.a11y.borrow_mut().take();
-        if let Some(mut a11y) = a11y {
+        if let Some(a11y) = a11y {
             // Publishing waits for providers that are reading the tree while the HWND is
             // still valid. Providers that keep the context afterwards see only an empty root.
-            if let Some(events) = a11y.adapter.update_if_active(empty_tree) {
-                events.raise();
-            }
+            a11y.adapter.disconnect(empty_tree);
         }
     }
 }

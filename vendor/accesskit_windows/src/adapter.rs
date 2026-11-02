@@ -673,6 +673,26 @@ impl QueuedEvents {
 // contained types. This is safe because we're not using COM threading.
 unsafe impl Send for QueuedEvents {}
 
+// Speakeasy patch: a destroyed window lets UI Automation drop its entries.
+impl Adapter {
+    /// Publishes `final_update`, then tells UI Automation that it may drop
+    /// every entry for the window, as Microsoft recommends for `WM_DESTROY`.
+    ///
+    /// Call this while the window is still valid. Raising events may send
+    /// `WM_GETOBJECT` to the window, so the caller must not hold locks that
+    /// the window procedure needs.
+    pub fn disconnect(mut self, final_update: impl FnOnce() -> TreeUpdate) {
+        if let Some(events) = self.update_if_active(final_update) {
+            events.raise();
+        }
+        let hwnd = match &self.state {
+            State::Inactive { hwnd, .. } => *hwnd,
+            State::Placeholder(context) | State::Active(context) => context.hwnd,
+        };
+        unsafe { UiaReturnRawElementProvider(hwnd.0, WPARAM(0), LPARAM(0), None) };
+    }
+}
+
 // Speakeasy patch: regressions for provider and range retirement.
 #[cfg(test)]
 mod tests;
