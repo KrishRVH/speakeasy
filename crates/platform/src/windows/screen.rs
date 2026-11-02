@@ -276,6 +276,10 @@ fn describe(
     })
 }
 
+fn is_current(display: screen::Display) -> bool {
+    describe(display.native.handle().0).is_ok_and(|current| current == display)
+}
+
 pub(crate) fn pointer(target: Target, _: crate::MacShortcut) -> Option<PointerSample> {
     let display = target.display.native;
     let part = pointer_part(target)?;
@@ -291,7 +295,7 @@ pub(crate) fn pointer(target: Target, _: crate::MacShortcut) -> Option<PointerSa
 }
 
 fn pointer_part(target: Target) -> Option<Part> {
-    if describe(target.display.native.handle().0).ok()? != target.display {
+    if !is_current(target.display) {
         return None;
     }
     let part = match target.region {
@@ -370,15 +374,7 @@ fn record(
             {
                 movie_failed = !movie.frame(&frame, stopping);
                 if moving {
-                    let elapsed = now
-                        .saturating_duration_since(motion)
-                        .as_nanos()
-                        .checked_div(movie::INTERVAL.as_nanos())
-                        .unwrap_or_default();
-                    let intervals = u32::try_from(elapsed).unwrap_or(u32::MAX).saturating_add(1);
-                    motion = motion
-                        .checked_add(movie::INTERVAL.saturating_mul(intervals))
-                        .unwrap_or(now);
+                    motion = next_motion(motion, now);
                 }
                 if still && events.try_send(ScreenEvent::Frame(frame)).is_ok() {
                     pacer.sent(now);
@@ -398,6 +394,18 @@ fn record(
     })();
     movie.stop(Instant::now());
     outcome
+}
+
+fn next_motion(motion: Instant, now: Instant) -> Instant {
+    let elapsed = now
+        .saturating_duration_since(motion)
+        .as_nanos()
+        .checked_div(movie::INTERVAL.as_nanos())
+        .unwrap_or_default();
+    let intervals = u32::try_from(elapsed).unwrap_or(u32::MAX).saturating_add(1);
+    motion
+        .checked_add(movie::INTERVAL.saturating_mul(intervals))
+        .unwrap_or(now)
 }
 
 fn clean_after_now() -> Instant {
@@ -520,7 +528,7 @@ impl Capture {
         if self.item_closed.is_closed() {
             return Err(Failure::DisplayLost);
         }
-        if !describe(self.display.native.handle().0).is_ok_and(|current| current == self.display) {
+        if !is_current(self.display) {
             return Err(Failure::DisplayChanged);
         }
 
