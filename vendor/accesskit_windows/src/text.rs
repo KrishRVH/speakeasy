@@ -5,23 +5,20 @@
 
 #![allow(non_upper_case_globals)]
 
-use accesskit::{Action, ActionData, ActionRequest, VerticalOffset};
+use accesskit::{Action, ActionData, ActionRequest, ScrollHint, VerticalOffset};
 use accesskit_consumer::{
     Node, TextPosition as Position, TextRange as Range, Tree, TreeState, WeakTextRange as WeakRange,
 };
 use std::sync::{Arc, RwLock, Weak};
 use windows::{
-    core::*,
     Win32::{
         System::{Com::*, Variant::*},
         UI::Accessibility::*,
     },
+    core::*,
 };
 
-use crate::{context::Context, node::PlatformNode, util::*};
-
-pub(crate) mod geometry;
-mod scroll;
+use crate::{context::Context, util::*};
 
 fn upgrade_range<'a>(weak: &WeakRange, tree_state: &'a TreeState) -> Result<Range<'a>> {
     if let Some(range) = weak.upgrade(tree_state) {
@@ -247,16 +244,6 @@ impl PlatformRange {
         upgrade_range_node(&state, tree_state)
     }
 
-    fn with_node<F, T>(&self, f: F) -> Result<T>
-    where
-        F: FnOnce(Node) -> Result<T>,
-    {
-        self.with_tree_state(|tree_state| {
-            let node = self.upgrade_node(tree_state)?;
-            f(node)
-        })
-    }
-
     fn upgrade_for_read<'a>(&self, tree_state: &'a TreeState) -> Result<Range<'a>> {
         let state = self.state.read().unwrap();
         upgrade_range(&state, tree_state)
@@ -294,12 +281,12 @@ impl PlatformRange {
 
     fn do_action<F>(&self, f: F) -> Result<()>
     where
-        for<'a> F: FnOnce(Range<'a>, &Tree) -> Result<ActionRequest>,
+        for<'a> F: FnOnce(Range<'a>, &Tree) -> ActionRequest,
     {
         let context = self.upgrade_context()?;
         let tree = context.read_tree();
         let range = self.upgrade_for_read(tree.state())?;
-        let request = f(range, &tree)?;
+        let request = f(range, &tree);
         drop(tree);
         context.do_action(request);
         Ok(())
@@ -448,7 +435,13 @@ impl ITextRangeProvider_Impl for PlatformRange_Impl {
                 Ok(value.0.into())
             }
             UIA_CultureAttributeId => Ok(Variant::from(range.language().map(LocaleName)).into()),
-            UIA_FontNameAttributeId => Ok(Variant::from(range.font_family()).into()),
+            UIA_FontNameAttributeId => {
+                let mut buffer = StringBuffer::acquire();
+                Ok(
+                    Variant::from(range.font_family().map(|s| StrWrapper::new(s, &mut buffer)))
+                        .into(),
+                )
+            }
             UIA_FontSizeAttributeId => {
                 Ok(Variant::from(range.font_size().map(|value| value as f64)).into())
             }
@@ -499,7 +492,7 @@ impl ITextRangeProvider_Impl for PlatformRange_Impl {
 
     fn GetBoundingRectangles(&self) -> Result<*mut SAFEARRAY> {
         self.read_with_context(|range, context| {
-            let rects = geometry::bounding_rectangles(&range);
+            let rects = range.bounding_boxes();
             if rects.is_empty() {
                 return Ok(std::ptr::null_mut());
             }
@@ -516,21 +509,19 @@ impl ITextRangeProvider_Impl for PlatformRange_Impl {
     }
 
     fn GetEnclosingElement(&self) -> Result<IRawElementProviderSimple> {
-        self.with_node(|node| {
-            // Revisit this if we eventually support embedded objects.
-            Ok(PlatformNode {
-                context: self.context.clone(),
-                node_id: Some(node.id()),
-            }
-            .into())
-        })
+        // Revisit this if we eventually support embedded objects.
+        let context = self.upgrade_context()?;
+        let tree = context.read_tree();
+        let id = self.upgrade_node(tree.state())?.id();
+        Ok(context.get_or_create_platform_node(id).into_interface())
     }
 
     fn GetText(&self, _max_length: i32) -> Result<BSTR> {
         // The Microsoft docs imply that the provider isn't _required_
         // to truncate text at the max length, so we just ignore it.
         self.read(|range| {
-            let mut result = WideString::default();
+            let mut buffer = StringBuffer::acquire();
+            let mut result = WideString::new(&mut buffer);
             range.write_text(&mut result).unwrap();
             Ok(result.into())
         })
@@ -601,16 +592,13 @@ impl ITextRangeProvider_Impl for PlatformRange_Impl {
 
     fn Select(&self) -> Result<()> {
         self.do_action(|range, tree| {
-            let (target_node, target_tree) = tree
-                .state()
-                .locate_node(range.node().id())
-                .ok_or_else(element_not_available)?;
-            Ok(ActionRequest {
+            let (target_node, target_tree) = tree.state().locate_node(range.node().id()).unwrap();
+            ActionRequest {
                 action: Action::SetTextSelection,
                 target_tree,
                 target_node,
                 data: Some(ActionData::SetTextSelection(range.to_text_selection())),
-            })
+            }
         })
     }
 
@@ -626,17 +614,25 @@ impl ITextRangeProvider_Impl for PlatformRange_Impl {
 
     fn ScrollIntoView(&self, align_to_top: BOOL) -> Result<()> {
         self.do_action(|range, tree| {
-            let request = scroll::reveal(&range, align_to_top.into()).ok_or_else(not_supported)?;
+            let position = if align_to_top.into() {
+                range.start()
+            } else {
+                range.end()
+            };
             let (target_node, target_tree) = tree
                 .state()
-                .locate_node(request.target)
-                .ok_or_else(element_not_available)?;
-            Ok(ActionRequest {
-                action: Action::SetScrollOffset,
+                .locate_node(position.inner_node().id())
+                .unwrap();
+            ActionRequest {
+                action: Action::ScrollIntoView,
                 target_tree,
                 target_node,
-                data: Some(ActionData::SetScrollOffset(request.point)),
-            })
+                data: Some(ActionData::ScrollHint(if align_to_top.into() {
+                    ScrollHint::TopEdge
+                } else {
+                    ScrollHint::BottomEdge
+                })),
+            }
         })
     }
 

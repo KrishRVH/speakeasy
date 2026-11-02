@@ -38,6 +38,59 @@
     * accesskit bumped from 0.16.2 to 0.16.3
     * accesskit_consumer bumped from 0.24.2 to 0.24.3
 
+## [0.34.0](https://github.com/AccessKit/accesskit/compare/accesskit_windows-v0.33.1...accesskit_windows-v0.34.0) (2026-07-14)
+
+
+### Features
+
+* Cache Windows node COM objects ([#725](https://github.com/AccessKit/accesskit/issues/725)) ([d7480d9](https://github.com/AccessKit/accesskit/commit/d7480d91212b5ef35203c9cddc962e08d762548b))
+
+
+### Bug Fixes
+
+* Avoid spurious wakeups in the Windows adapter test harness ([#722](https://github.com/AccessKit/accesskit/issues/722)) ([b3c109e](https://github.com/AccessKit/accesskit/commit/b3c109ed9271dace83cd5611b0c62af39e3de73d))
+* Update Tree::toolkit_name call sites in the adapters ([27734d8](https://github.com/AccessKit/accesskit/commit/27734d8409d9e03f51caefe1c13ae4ff74e3c6b2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * accesskit_consumer bumped from 0.37.0 to 0.38.0
+
+## [0.33.1](https://github.com/AccessKit/accesskit/compare/accesskit_windows-v0.33.0...accesskit_windows-v0.33.1) (2026-06-12)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * accesskit bumped from 0.24.0 to 0.24.1
+    * accesskit_consumer bumped from 0.36.0 to 0.37.0
+
+## [0.33.0](https://github.com/AccessKit/accesskit/compare/accesskit_windows-v0.32.1...accesskit_windows-v0.33.0) (2026-05-11)
+
+
+### ⚠ BREAKING CHANGES
+
+* Prepare consumer crate and Windows adapter for 2024 edition
+
+### Features
+
+* Support tree views on Windows ([#698](https://github.com/AccessKit/accesskit/issues/698)) ([1d3b189](https://github.com/AccessKit/accesskit/commit/1d3b18912ea5f4b0abd37ddb0a771768155fbd7b))
+
+
+### Code Refactoring
+
+* Prepare consumer crate and Windows adapter for 2024 edition ([258b2e6](https://github.com/AccessKit/accesskit/commit/258b2e66b741b142c84563ef00f70bf6bc8da9d8))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * accesskit_consumer bumped from 0.35.0 to 0.36.0
+
 ## [0.32.1](https://github.com/AccessKit/accesskit/compare/accesskit_windows-v0.32.0...accesskit_windows-v0.32.1) (2026-03-04)
 
 

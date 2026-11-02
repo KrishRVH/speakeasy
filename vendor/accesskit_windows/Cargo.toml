@@ -10,10 +10,10 @@
 # See Cargo.toml.orig for the original contents.
 
 [package]
-edition = "2021"
+edition = "2024"
 rust-version = "1.85"
 name = "accesskit_windows"
-version = "0.32.1"
+version = "0.34.0"
 authors = ["The AccessKit contributors"]
 build = false
 autolib = false
@@ -29,8 +29,9 @@ keywords = [
     "accessibility",
 ]
 categories = ["gui"]
-license = "(MIT OR Apache-2.0) AND BSD-3-Clause"
+license = "MIT OR Apache-2.0"
 repository = "https://github.com/AccessKit/accesskit"
+resolver = "2"
 
 [package.metadata.docs.rs]
 default-target = "x86_64-pc-windows-msvc"
@@ -45,10 +46,10 @@ name = "hello_world"
 path = "examples/hello_world.rs"
 
 [dependencies.accesskit]
-version = "0.24.0"
+version = "0.24.1"
 
 [dependencies.accesskit_consumer]
-version = "0.35.0"
+version = "0.38.0"
 
 [dependencies.hashbrown]
 version = "0.16"
