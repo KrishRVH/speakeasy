@@ -115,7 +115,11 @@ module unless a test file is named.
   [macos.rs](../crates/platform/src/macos.rs), [linux/x11/](../crates/platform/src/linux/x11),
   [linux/portal/](../crates/platform/src/linux/portal), and
   [linux/ei.rs](../crates/platform/src/linux/ei.rs) own delivery, the permit commit, and clipboard
-  checks. On Windows and macOS, `copy_text` writes a Show's summary through the paste's own
+  checks. Settings and Shows report their activation through `report_focus` in
+  [shell/window.rs](../crates/app/src/shell/window.rs) to a `FocusReport`, and every platform
+  refuses input while its `OwnFocus` is held, before asking the OS who has focus; on a layer-shell
+  Wayland desktop that report is the only way to tell Speakeasy's windows from another
+  application's. On Windows and macOS, `copy_text` writes a Show's summary through the paste's own
   clipboard write, so both carry the same private markers.
   [clipboard.rs](../crates/platform/src/clipboard.rs) prepares bounded PNG/bitmap representations
   from the displayed BGRA pixels and checks copy authorization after native acquisition.

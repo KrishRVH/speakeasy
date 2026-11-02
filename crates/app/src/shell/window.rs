@@ -4,8 +4,8 @@ use anyhow::anyhow;
 #[cfg(not(target_os = "windows"))]
 use gpui::PathPromptOptions;
 use gpui::{
-    App, AppContext, Bounds, Global, Pixels, Size, Subscription, Task, TitlebarOptions, Window,
-    WindowBounds, WindowHandle, WindowOptions, px, size,
+    App, AppContext, Bounds, Context, Global, Pixels, Size, Subscription, Task, TitlebarOptions,
+    Window, WindowBounds, WindowHandle, WindowOptions, px, size,
 };
 use speakeasy_platform::FileFilter;
 
@@ -79,6 +79,22 @@ pub(crate) fn reveal_shows(cx: &mut App) {
         Err(error) => cx
             .global::<Services>()
             .report(&anyhow!("Cannot open Shows: {error:#}")),
+    }
+}
+
+pub(crate) fn report_focus<V: 'static>(window: &mut Window, cx: &Context<'_, V>) {
+    let id = window.window_handle().window_id().as_u64();
+    cx.observe_window_activation(window, move |_, window, cx| {
+        settle_focus(id, window.is_window_active(), cx);
+    })
+    .detach();
+    cx.on_release(move |_, cx| settle_focus(id, false, cx))
+        .detach();
+}
+
+fn settle_focus(window: u64, focused: bool, cx: &App) {
+    if let Some(services) = cx.try_global::<Services>() {
+        services.focus.settle(window, focused);
     }
 }
 

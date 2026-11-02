@@ -6,7 +6,7 @@ use super::{CLIPBOARD_CHANGED, CLIPBOARD_CHANGED_BEFORE_PASTE, NativeInsert, Wor
 use crate::{
     InputSender, InsertPermit, PATIENCE,
     insertion::{
-        Delivery, INSERTION_STOPPED, Inserted,
+        Delivery, FocusReport, INSERTION_STOPPED, Inserted, OwnFocus,
         tests::{DELIVERIES, EXTERNAL_FOCUS, OWN_FOCUS, RELEASED},
     },
 };
@@ -113,6 +113,10 @@ impl NativeInsert for Fake {
     }
 }
 
+fn unfocused() -> OwnFocus {
+    FocusReport::default().subscribe()
+}
+
 fn permit() -> anyhow::Result<InsertPermit> {
     let (events, _receiver) = async_channel::bounded(1);
     InputSender::new(events).begin().context("Recording")
@@ -123,7 +127,7 @@ fn paste_checks_the_clipboard_again_after_focus_and_sends_once() -> anyhow::Resu
     let permit = permit()?;
     let mut native = Fake::new();
     assert_eq!(
-        insert(&mut native, "text", &permit, Delivery::Paste)?,
+        insert(&mut native, "text", &permit, Delivery::Paste, &unfocused())?,
         Inserted::Sent
     );
     assert_eq!(
@@ -149,7 +153,7 @@ fn direct_input_never_touches_the_clipboard() -> anyhow::Result<()> {
     let permit = permit()?;
     let mut native = Fake::new();
     assert_eq!(
-        insert(&mut native, "text", &permit, Delivery::Direct)?,
+        insert(&mut native, "text", &permit, Delivery::Direct, &unfocused())?,
         Inserted::Sent
     );
     assert_eq!(
@@ -173,7 +177,7 @@ fn escape_while_another_app_holds_the_clipboard_prevents_the_write() -> anyhow::
         ..Fake::new()
     };
     assert_eq!(
-        insert(&mut native, "text", &permit, Delivery::Paste)?,
+        insert(&mut native, "text", &permit, Delivery::Paste, &unfocused())?,
         Inserted::Cancelled
     );
     assert_eq!(native.steps, [Step::Acquire]);
@@ -188,7 +192,7 @@ fn a_clipboard_that_lost_the_text_is_never_pasted() -> anyhow::Result<()> {
         ..Fake::new()
     };
     assert_eq!(
-        insert(&mut native, "text", &permit, Delivery::Paste)?,
+        insert(&mut native, "text", &permit, Delivery::Paste, &unfocused())?,
         CLIPBOARD_CHANGED
     );
     assert!(!native.sent());
@@ -204,7 +208,7 @@ fn a_clipboard_change_during_the_final_checks_is_never_pasted() -> anyhow::Resul
         ..Fake::new()
     };
     assert_eq!(
-        insert(&mut native, "text", &permit, Delivery::Paste)?,
+        insert(&mut native, "text", &permit, Delivery::Paste, &unfocused())?,
         CLIPBOARD_CHANGED_BEFORE_PASTE
     );
     assert!(!native.sent());
@@ -220,11 +224,35 @@ fn own_focus_leaves_the_text_copied_without_spending_authority() -> anyhow::Resu
         ..Fake::new()
     };
     assert!(matches!(
-        insert(&mut native, "text", &permit, Delivery::Paste)?,
+        insert(&mut native, "text", &permit, Delivery::Paste, &unfocused())?,
         Inserted::Copied(_)
     ));
     assert!(!native.sent());
     assert!(permit.commit(), "A copied result spent its authority");
+    Ok(())
+}
+
+#[test]
+fn a_focused_speakeasy_window_never_receives_input() -> anyhow::Result<()> {
+    let report = FocusReport::default();
+    report.settle(7, true);
+    for delivery in DELIVERIES {
+        let permit = permit()?;
+        let mut native = Fake::new();
+        assert_eq!(
+            Some(insert(
+                &mut native,
+                "text",
+                &permit,
+                delivery,
+                &report.subscribe()
+            )?),
+            delivery.check_focus(OWN_FOCUS),
+            "{delivery:?} input ignored Speakeasy's own focus"
+        );
+        assert!(!native.sent(), "{delivery:?} input reached Speakeasy");
+        assert!(permit.commit(), "Refused input spent its authority");
+    }
     Ok(())
 }
 
@@ -237,7 +265,7 @@ fn escape_during_the_final_checks_prevents_input() -> anyhow::Result<()> {
             ..Fake::new()
         };
         assert_eq!(
-            insert(&mut native, "text", &permit, delivery)?,
+            insert(&mut native, "text", &permit, delivery, &unfocused())?,
             Inserted::Cancelled
         );
         assert!(!native.sent(), "{delivery:?} input outlived its revocation");
@@ -249,7 +277,7 @@ fn escape_during_the_final_checks_prevents_input() -> anyhow::Result<()> {
 async fn a_stopped_worker_exits_while_inserters_outlive_it() -> anyhow::Result<()> {
     let (events, _receiver) = async_channel::bounded(1);
     let input = InputSender::new(events);
-    let (worker, inserter) = Worker::spawn(input.clone(), |_| Ok(Inserted::Sent))?;
+    let (worker, inserter) = Worker::spawn(input.clone(), unfocused(), |_| Ok(Inserted::Sent))?;
     worker.request_stop();
     tokio::time::timeout(PATIENCE, worker.stopped())
         .await
@@ -267,7 +295,7 @@ async fn a_stopped_worker_exits_while_inserters_outlive_it() -> anyhow::Result<(
 #[tokio::test]
 async fn a_panic_answers_a_fixed_message_and_the_next_request_is_served() -> anyhow::Result<()> {
     let (events, _receiver) = async_channel::bounded(1);
-    let (_worker, inserter) = Worker::spawn(InputSender::new(events), |request| {
+    let (_worker, inserter) = Worker::spawn(InputSender::new(events), unfocused(), |request| {
         if request.text == "panics" {
             panic::resume_unwind(Box::new("private payload"));
         }

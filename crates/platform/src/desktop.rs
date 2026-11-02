@@ -2,7 +2,7 @@ use std::{fmt, marker::PhantomData};
 
 use raw_window_handle::WindowHandle;
 
-use crate::{InputSender, Inserter, OwnedThread, native};
+use crate::{InputSender, Inserter, OwnFocus, OwnedThread, native};
 
 pub struct InputMonitor {
     thread: OwnedThread,
@@ -40,8 +40,9 @@ impl Drop for InputMonitor {
 pub fn prepare(
     input: InputSender,
     options: DesktopOptions,
+    own_focus: OwnFocus,
 ) -> anyhow::Result<(InputMonitor, Inserter)> {
-    let (thread, native, inserter) = native::start(input, options)?;
+    let (thread, native, inserter) = native::start(input, options, own_focus)?;
     let monitor = InputMonitor {
         thread,
         native,

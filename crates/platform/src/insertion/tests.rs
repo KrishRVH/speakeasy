@@ -1,6 +1,6 @@
 use anyhow::Context as _;
 
-use super::{Delivery, Inserted, utf16_chunks, wait_for_released_modifiers};
+use super::{Delivery, FocusReport, Inserted, utf16_chunks, wait_for_released_modifiers};
 use crate::InputSender;
 
 pub(super) const DELIVERIES: [Delivery; 2] = [Delivery::Paste, Delivery::Direct];
@@ -18,6 +18,26 @@ fn own_focus_outranks_a_held_shortcut() {
         assert_eq!(delivery.preflight(OWN_FOCUS, RELEASED), own_focus);
         assert_ne!(delivery.preflight(EXTERNAL_FOCUS, HELD), own_focus);
     }
+}
+
+#[test]
+fn only_the_window_holding_focus_releases_it() {
+    let report = FocusReport::default();
+    let focus = report.subscribe();
+    report.settle(1, true);
+    report.settle(2, false);
+    assert!(focus.held(), "Another window's deactivation released focus");
+    report.settle(2, true);
+    report.settle(1, false);
+    assert!(
+        focus.held(),
+        "A late deactivation released the newly focused window"
+    );
+    report.settle(2, false);
+    assert!(
+        !focus.held(),
+        "Speakeasy kept focus after its window let go"
+    );
 }
 
 #[test]

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context as _, anyhow};
 use gpui::{App, BorrowAppContext, Global, Task, WindowHandle};
-use speakeasy_platform::{Input, InputMonitor, OwnedThread};
+use speakeasy_platform::{FocusReport, Input, InputMonitor, OwnedThread};
 use tokio::sync::watch;
 
 use super::{
@@ -111,6 +111,7 @@ pub(crate) struct Services {
     pub output: watch::Sender<Snapshot>,
     pub(super) meter: watch::Sender<Meter>,
     pub(super) canvas: watch::Sender<Canvas>,
+    pub(super) focus: FocusReport,
     pub(super) pill: WindowHandle<Pill>,
     pub(super) settings: Option<WindowHandle<Settings>>,
     pub(super) shows: Option<WindowHandle<Review>>,
@@ -161,6 +162,7 @@ impl Services {
             output,
             meter,
             canvas,
+            focus: FocusReport::default(),
             pill,
             settings: None,
             shows: None,
@@ -379,6 +381,7 @@ impl Services {
             meter,
             canvas,
             styles,
+            focus,
             ..
         } = self;
         let started = lifecycle.start(|| {
@@ -391,6 +394,7 @@ impl Services {
                 output.clone(),
                 meter.clone(),
                 canvas.clone(),
+                focus.subscribe(),
             )?;
             anyhow::Ok(Owners { runtime, monitor })
         });

@@ -5,7 +5,7 @@ use async_channel::Receiver;
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 use super::wait_for_released_modifiers;
-use super::{Delivery, INSERTION_STOPPED, Inserted, Inserter, Insertion};
+use super::{Delivery, INSERTION_STOPPED, Inserted, Inserter, Insertion, OwnFocus};
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 use crate::native;
 use crate::{InputSender, InsertPermit, OwnedThread};
@@ -18,17 +18,21 @@ pub(crate) struct Worker {
 
 impl Worker {
     #[cfg(any(target_os = "windows", target_os = "macos"))]
-    pub(crate) fn start(input: InputSender) -> std::io::Result<(Self, Inserter)> {
+    pub(crate) fn start(
+        input: InputSender,
+        own_focus: OwnFocus,
+    ) -> std::io::Result<(Self, Inserter)> {
         #[cfg(target_os = "macos")]
         let deliver = |request: &Insertion| objc2::rc::autoreleasepool(|_| deliver(request));
-        Self::spawn(input, deliver)
+        Self::spawn(input, own_focus, deliver)
     }
 
     fn spawn(
         input: InputSender,
+        own_focus: OwnFocus,
         serve_one: impl Fn(&Insertion) -> anyhow::Result<Inserted> + Send + 'static,
     ) -> std::io::Result<(Self, Inserter)> {
-        let (inserter, requests) = Inserter::lane();
+        let (inserter, requests) = Inserter::lane(own_focus);
         let thread = OwnedThread::spawn("insertion", {
             let requests = requests.clone();
             move || serve(&requests, serve_one)
@@ -76,6 +80,7 @@ fn deliver(request: &Insertion) -> anyhow::Result<Inserted> {
         &request.text,
         &request.permit,
         request.delivery,
+        &request.own_focus,
     )
 }
 
@@ -117,6 +122,7 @@ pub(crate) fn insert<N: NativeInsert>(
     text: &str,
     permit: &InsertPermit,
     delivery: Delivery,
+    own_focus: &OwnFocus,
 ) -> anyhow::Result<Inserted> {
     if !permit.active() {
         return Ok(Inserted::Cancelled);
@@ -134,9 +140,10 @@ pub(crate) fn insert<N: NativeInsert>(
                 return Ok(CLIPBOARD_CHANGED);
             }
             let keys = native.paste_keys()?;
-            if let Some(outcome) =
-                delivery.preflight(native.external_focus(), native.shortcut_released())
-            {
+            if let Some(outcome) = delivery.preflight(
+                !own_focus.held() && native.external_focus(),
+                native.shortcut_released(),
+            ) {
                 return Ok(outcome);
             }
             if native.mark() != mark {
@@ -146,9 +153,10 @@ pub(crate) fn insert<N: NativeInsert>(
         },
         Delivery::Direct => {
             let keys = native.text_keys(text)?;
-            if let Some(outcome) =
-                delivery.preflight(native.external_focus(), native.shortcut_released())
-            {
+            if let Some(outcome) = delivery.preflight(
+                !own_focus.held() && native.external_focus(),
+                native.shortcut_released(),
+            ) {
                 return Ok(outcome);
             }
             keys

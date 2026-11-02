@@ -14,8 +14,8 @@ use std::{
 
 use async_channel::{Receiver, Sender, TrySendError};
 use speakeasy_platform::{
-    Delivery, Input, InputMonitor, InputSender, InsertPermit, Inserted, Inserter, OwnedThread,
-    Scope,
+    Delivery, Input, InputMonitor, InputSender, InsertPermit, Inserted, Inserter, OwnFocus,
+    OwnedThread, Scope,
 };
 use speakeasy_show::{Ending, NarrationLoss};
 use tokio::{
@@ -254,10 +254,11 @@ impl Runtime {
         snapshots: watch::Sender<Snapshot>,
         meter: watch::Sender<Meter>,
         canvas: watch::Sender<Canvas>,
+        own_focus: OwnFocus,
     ) -> anyhow::Result<(Self, InputMonitor)> {
         let (input, inputs) = input_lane();
         let (monitor, inserter) =
-            speakeasy_platform::prepare(input.clone(), config.desktop_options())?;
+            speakeasy_platform::prepare(input.clone(), config.desktop_options(), own_focus)?;
         let ports = Desktop {
             inserter,
             canvas,

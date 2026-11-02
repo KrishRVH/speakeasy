@@ -25,7 +25,7 @@ pub use self::{
     tray::{NativeTray, TrayAction, TrayPresentation},
 };
 use super::{
-    DesktopOptions, Input, InputSender, Inserted, Inserter, OwnedThread,
+    DesktopOptions, Input, InputSender, Inserted, Inserter, OwnFocus, OwnedThread,
     insertion::{Insertion, abandon_queued},
 };
 
@@ -149,13 +149,15 @@ impl ShortcutLabels {
 pub(crate) fn start(
     input: InputSender,
     options: DesktopOptions,
+    own_focus: OwnFocus,
 ) -> anyhow::Result<(OwnedThread, Monitor, Inserter)> {
-    spawn(input, options, serve_desktop)
+    spawn(input, options, own_focus, serve_desktop)
 }
 
 fn spawn(
     input: InputSender,
     options: DesktopOptions,
+    own_focus: OwnFocus,
     serve: impl FnOnce(
         &InputSender,
         &DesktopOptions,
@@ -165,7 +167,7 @@ fn spawn(
     + Send
     + 'static,
 ) -> anyhow::Result<(OwnedThread, Monitor, Inserter)> {
-    let (inserter, incoming) = Inserter::lane();
+    let (inserter, incoming) = Inserter::lane(own_focus);
     let (stop, stopping) = async_channel::bounded(1);
     let thread = OwnedThread::spawn("desktop-access", move || {
         let lane = incoming.clone();
@@ -291,7 +293,12 @@ mod tests {
             released.recv_timeout(PATIENCE)?;
             Ok(())
         };
-        let (_thread, _monitor, inserter) = spawn(input.clone(), DesktopOptions::default(), serve)?;
+        let (_thread, _monitor, inserter) = spawn(
+            input.clone(),
+            DesktopOptions::default(),
+            crate::FocusReport::default().subscribe(),
+            serve,
+        )?;
         let permit = input.begin().context("Recording")?;
         let in_hand = inserter.insert("fixture".into(), permit.clone(), Delivery::Paste);
         let mut in_hand = Box::pin(in_hand);
@@ -315,7 +322,12 @@ mod tests {
         let input = InputSender::new(events);
 
         let serve = |_: &_, _: &_, _, _: &_| panic::resume_unwind(Box::new("private payload"));
-        let (thread, _monitor, _inserter) = spawn(input.clone(), DesktopOptions::default(), serve)?;
+        let (thread, _monitor, _inserter) = spawn(
+            input.clone(),
+            DesktopOptions::default(),
+            crate::FocusReport::default().subscribe(),
+            serve,
+        )?;
         tokio::time::timeout(PATIENCE, thread.exited()).await?;
         match received.try_recv() {
             Ok(Input::Unavailable(reason)) => assert_eq!(reason, DESKTOP_STOPPED),

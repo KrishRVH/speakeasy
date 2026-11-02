@@ -31,8 +31,11 @@ async fn a_keyboard_switch_keeps_shortcuts_and_a_remap_stops_them() -> anyhow::R
         return Ok(());
     }
     let (events, received) = async_channel::bounded(8);
-    let (_desktop, _monitor, _inserter) =
-        crate::linux::start(InputSender::new(events), DesktopOptions::default())?;
+    let (_desktop, _monitor, _inserter) = crate::linux::start(
+        InputSender::new(events),
+        DesktopOptions::default(),
+        crate::FocusReport::default().subscribe(),
+    )?;
     let next = async || {
         tokio::time::timeout(Duration::from_secs(3), received.recv())
             .await?
@@ -123,7 +126,11 @@ async fn a_shortcut_another_app_holds_stops_input_naming_the_shortcut() -> anyho
         )?
         .check()?;
     let (events, received) = async_channel::bounded(8);
-    let (_desktop, _monitor, _inserter) = crate::linux::start(InputSender::new(events), options)?;
+    let (_desktop, _monitor, _inserter) = crate::linux::start(
+        InputSender::new(events),
+        options,
+        crate::FocusReport::default().subscribe(),
+    )?;
     let stopped = tokio::time::timeout(Duration::from_secs(3), received.recv())
         .await?
         .context("Desktop input closed")?;

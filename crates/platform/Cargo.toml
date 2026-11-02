@@ -13,7 +13,7 @@ raw-window-handle.workspace = true
 png.workspace = true
 serde = { workspace = true, features = ["derive"] }
 speakeasy-show = { path = "../show" }
-tokio = { workspace = true, features = ["macros", "process", "rt", "time"] }
+tokio = { workspace = true, features = ["macros", "process", "rt", "sync", "time"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 arboard.workspace = true

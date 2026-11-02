@@ -194,10 +194,11 @@ impl Paster {
         if !self.clipboard.owns(owner)? {
             return Ok(CLIPBOARD_CHANGED);
         }
-        let external = self
-            .clipboard
-            .external_target(HostSession::X11)
-            .unwrap_or(false);
+        let external = !request.own_focus.held()
+            && self
+                .clipboard
+                .external_target(HostSession::X11)
+                .unwrap_or(false);
 
         let released = !self.modifiers_held()?;
         if let Some(outcome) = Delivery::Paste.preflight(external, released) {
@@ -408,7 +409,7 @@ mod tests {
     -> anyhow::Result<()> {
         let (events, received) = async_channel::bounded(4);
         let input = InputSender::new(events);
-        let (inserter, requests) = crate::Inserter::lane();
+        let (inserter, requests) = crate::Inserter::lane(crate::FocusReport::default().subscribe());
         let (entered, opening) = async_channel::bounded(1);
         let (release, released) = mpsc::channel();
         let worker = InsertionWorker::spawn(
@@ -454,7 +455,7 @@ mod tests {
     -> anyhow::Result<()> {
         let (events, received) = async_channel::bounded(4);
         let input = InputSender::new(events);
-        let (inserter, requests) = crate::Inserter::lane();
+        let (inserter, requests) = crate::Inserter::lane(crate::FocusReport::default().subscribe());
         let (taken, holding) = async_channel::bounded(1);
         let (release, released) = mpsc::channel();
         let worker = InsertionWorker::spawn(

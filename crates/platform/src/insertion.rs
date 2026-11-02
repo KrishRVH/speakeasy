@@ -8,6 +8,7 @@ use std::{
 
 use anyhow::{anyhow, bail};
 use async_channel::{Receiver, Sender};
+use tokio::sync::watch;
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 pub(crate) use self::commit::{NativeInsert, Worker};
@@ -22,15 +23,59 @@ const INSERTION_STOPPED: &str = "Text insertion stopped unexpectedly";
 pub(crate) const PASTE_AFTER_RELEASE: Inserted =
     Inserted::Copied("Text copied. Release your shortcut keys and paste into your editor.");
 
+#[derive(Debug)]
+pub struct FocusReport(watch::Sender<Option<u64>>);
+
+impl Default for FocusReport {
+    fn default() -> Self {
+        Self(watch::channel(None).0)
+    }
+}
+
+impl FocusReport {
+    pub fn settle(&self, window: u64, focused: bool) {
+        self.0.send_if_modified(|holder| {
+            let next = if focused {
+                Some(window)
+            } else {
+                holder.filter(|held| *held != window)
+            };
+            next != std::mem::replace(holder, next)
+        });
+    }
+
+    #[must_use]
+    pub fn subscribe(&self) -> OwnFocus {
+        OwnFocus(self.0.subscribe())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct OwnFocus(watch::Receiver<Option<u64>>);
+
+impl OwnFocus {
+    #[must_use]
+    pub fn held(&self) -> bool {
+        self.0.borrow().is_some()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Inserter {
     requests: Sender<Insertion>,
+    own_focus: OwnFocus,
 }
 
 impl Inserter {
-    pub(crate) fn lane() -> (Self, Receiver<Insertion>) {
+    pub(crate) fn lane(own_focus: OwnFocus) -> (Self, Receiver<Insertion>) {
         let (requests, incoming) = async_channel::bounded(1);
-        (Self { requests }, incoming)
+        (
+            Self {
+                requests,
+                own_focus,
+            },
+            incoming,
+        )
     }
 
     pub async fn insert(
@@ -47,6 +92,7 @@ impl Inserter {
             text,
             permit,
             delivery,
+            own_focus: self.own_focus.clone(),
             reply,
         };
         if self.requests.send(request).await.is_err() {
@@ -63,6 +109,7 @@ pub(crate) struct Insertion {
     pub(crate) text: String,
     pub(crate) permit: InsertPermit,
     pub(crate) delivery: Delivery,
+    pub(crate) own_focus: OwnFocus,
     pub(crate) reply: Reply<anyhow::Result<Inserted>>,
 }
 

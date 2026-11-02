@@ -45,7 +45,7 @@ use windows_sys::{
 
 use super::{OWN_INPUT, is_key_down, press, release, send_input, take_handle};
 use crate::{
-    CANCEL_SHORTCUT, DesktopOptions, Input, InputSender, Inserter, OwnedThread, SHORTCUT,
+    CANCEL_SHORTCUT, DesktopOptions, Input, InputSender, Inserter, OwnFocus, OwnedThread, SHORTCUT,
     insertion, keyboard,
 };
 
@@ -80,8 +80,9 @@ impl Monitor {
 pub(crate) fn start(
     input: InputSender,
     _: DesktopOptions,
+    own_focus: OwnFocus,
 ) -> anyhow::Result<(OwnedThread, Monitor, Inserter)> {
-    let (insertion, inserter) = insertion::Worker::start(input.clone())?;
+    let (insertion, inserter) = insertion::Worker::start(input.clone(), own_focus)?;
     let stop = Arc::new(StopEvent::new()?);
     let thread = OwnedThread::spawn("input-monitor", {
         let stop = Arc::clone(&stop);

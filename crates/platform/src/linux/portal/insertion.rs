@@ -234,6 +234,7 @@ impl<'a> Insertions<'a> {
     fn finish(&mut self, request: Insertion, external: bool, route: Route) -> anyhow::Result<()> {
         self.apply_queued_notices();
         self.bound.dispatch()?;
+        let external = external && !request.own_focus.held();
         let outcome = match route {
             Route::Direct => insert_direct(self.bound, &request, external),
             Route::Paste { owned } => finish_paste(
@@ -493,7 +494,7 @@ mod tests {
         },
         *,
     };
-    use crate::{Input, InputSender, linux::ShortcutLabels};
+    use crate::{FocusReport, Input, InputSender, linux::ShortcutLabels};
 
     fn unbound() -> Bound {
         Bound {
@@ -517,6 +518,7 @@ mod tests {
             text: "fixture".into(),
             permit: permit.clone(),
             delivery: Delivery::Paste,
+            own_focus: FocusReport::default().subscribe(),
             reply,
         };
         finish_paste(
@@ -596,6 +598,7 @@ mod tests {
                     text: text.into(),
                     permit: permit.clone(),
                     delivery: Delivery::Direct,
+                    own_focus: FocusReport::default().subscribe(),
                     reply,
                 };
                 assert_eq!(

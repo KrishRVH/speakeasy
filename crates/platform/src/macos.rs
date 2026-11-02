@@ -47,7 +47,7 @@ use raw_window_handle::{RawWindowHandle, WindowHandle};
 pub(super) use self::clipboard::{copy_content, copy_text};
 use super::{
     CANCEL_SHORTCUT, DesktopOptions, Input, InputSender, Inserted, Inserter, MacShortcut,
-    NativeWindow, OwnedThread, PILL_MARGIN, PILL_WIDTH, insertion,
+    NativeWindow, OwnFocus, OwnedThread, PILL_MARGIN, PILL_WIDTH, insertion,
     keyboard::{self, MacEvent, Modifiers},
     monitor::MonitorControl,
     screen::geometry::Bounds,
@@ -77,8 +77,9 @@ impl Monitor {
 pub(super) fn start(
     input: InputSender,
     options: DesktopOptions,
+    own_focus: OwnFocus,
 ) -> anyhow::Result<(OwnedThread, Monitor, Inserter)> {
-    let (insertion, inserter) = insertion::Worker::start(input.clone())?;
+    let (insertion, inserter) = insertion::Worker::start(input.clone(), own_focus)?;
     #[expect(
         clippy::disallowed_types,
         reason = "The event tap and AppKit lifecycle callbacks share the same narrowly locked policy; see SharedPolicy"

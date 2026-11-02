@@ -144,6 +144,7 @@ impl Review {
     ) -> Self {
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
+        crate::shell::report_focus(window, cx);
         Self {
             focus,
             source,

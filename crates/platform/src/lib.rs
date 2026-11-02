@@ -42,7 +42,7 @@ pub use self::{
         attach_stdio, copy_text, prepare, reduced_motion, show_startup_error,
     },
     input::{IdleInput, Input, InputSender, InsertPermit, Taps},
-    insertion::{Delivery, Inserted, Inserter},
+    insertion::{Delivery, FocusReport, Inserted, Inserter, OwnFocus},
     movie::{MovieControl, MovieEvent, MovieFrame, MovieTarget, read_movie_frame},
     owned_thread::{OwnedThread, StoppableThread},
     permissions::{Permission, Permissions},

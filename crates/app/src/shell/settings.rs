@@ -94,7 +94,7 @@ impl Settings {
     pub(super) fn new(
         config: Config,
         mut updates: watch::Receiver<Snapshot>,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> Self {
         let services = cx.global::<Services>();
@@ -149,6 +149,7 @@ impl Settings {
             minimize_to_tray: None,
         };
         view.refresh_microphones(cx);
+        super::report_focus(window, cx);
         view
     }
 

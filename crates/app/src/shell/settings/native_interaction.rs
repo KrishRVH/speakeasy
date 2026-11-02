@@ -140,6 +140,10 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                         window.is_window_active(),
                         "The owned focus fixture did not activate"
                     );
+                    ensure!(
+                        cx.global::<Services>().focus.subscribe().held(),
+                        "Active Settings left insertion free to type into it"
+                    );
                     view.menus.trigger(Menu::Language).focus(window, cx);
                     anyhow::Ok(())
                 })??;
@@ -190,6 +194,10 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     ensure!(
                         !window.is_window_active(),
                         "The second owned window did not activate"
+                    );
+                    ensure!(
+                        !cx.global::<Services>().focus.subscribe().held(),
+                        "Inactive Settings still blocked insertion"
                     );
                     ensure!(
                         view.menus.open.is_none(),
