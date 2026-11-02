@@ -6,12 +6,16 @@ use serde::Deserialize;
 use tokio::{net::TcpStream, time::timeout};
 use tokio_tungstenite::{
     WebSocketStream, client_async_with_config,
-    tungstenite::{Message, client::IntoClientRequest as _, protocol::WebSocketConfig},
+    tungstenite::{
+        Message, client::IntoClientRequest as _, http::HeaderValue, protocol::WebSocketConfig,
+    },
 };
 use zeroize::Zeroizing;
 
-use super::{CONNECT_TIMEOUT, INFERENCE_TIMEOUT, LOOPBACK, LocalSpeech, MAX_RESPONSE_BYTES};
-use crate::runtime::ports::LiveAudio;
+use super::{
+    CONNECT_TIMEOUT, INFERENCE_TIMEOUT, LOOPBACK, LocalSpeech, MAX_RESPONSE_BYTES, PARAKEET_RATES,
+};
+use crate::{recognition_terms::Terms, runtime::ports::LiveAudio};
 
 const FAILED: &str =
     "Continuous recognition stopped. Retrying this recording with the selected model.";
@@ -22,10 +26,10 @@ pub(super) async fn transcribe(
     speech: &mut LocalSpeech,
     audio: LiveAudio,
     language: &str,
-    terms: &crate::recognition_terms::Terms,
+    terms: &Terms,
 ) -> anyhow::Result<Option<String>> {
     ensure!(
-        speech.nemotron && (8_000..=96_000).contains(&audio.rate),
+        speech.nemotron && PARAKEET_RATES.contains(&audio.rate),
         FAILED
     );
     speech.verify_listener().await?;
@@ -44,11 +48,8 @@ pub(super) async fn transcribe(
     )
     .into_client_request()
     .map_err(|_private| anyhow!(FAILED))?;
-    let mut authorization = tokio_tungstenite::tungstenite::http::HeaderValue::from_str(&format!(
-        "Bearer {}",
-        speech.secret
-    ))
-    .map_err(|_private| anyhow!(FAILED))?;
+    let mut authorization = HeaderValue::from_str(&format!("Bearer {}", speech.secret))
+        .map_err(|_private| anyhow!(FAILED))?;
     authorization.set_sensitive(true);
     request.headers_mut().insert("Authorization", authorization);
     let limits = WebSocketConfig::default()

@@ -5,7 +5,12 @@ mod recognition;
 mod session;
 mod worker;
 
-use std::{convert::Infallible, io, sync::Arc, time::Instant};
+use std::{
+    convert::Infallible,
+    io,
+    sync::Arc,
+    time::{Instant, SystemTime},
+};
 
 use async_channel::{Receiver, Sender, TrySendError};
 use speakeasy_platform::{
@@ -19,7 +24,7 @@ use tokio::{
 };
 use zeroize::Zeroizing;
 
-use self::ports::{CaptureEvent, Ports, Published, SessionId, ShowEvent};
+use self::ports::{CaptureEvent, Ports, Published, RecognitionMode, SessionId, ShowEvent};
 use crate::{
     audio::Capture,
     config::{Change, Config, ValidConfig},
@@ -475,13 +480,13 @@ impl Ports for Desktop {
         &self,
         id: SessionId,
         microphone: Option<&str>,
-        recognition: crate::runtime::ports::RecognitionMode,
+        recognition: RecognitionMode,
         events: Sender<CaptureEvent>,
     ) -> anyhow::Result<Capture> {
         Capture::start(id, microphone, recognition, events)
     }
 
-    fn keep(&self, recorded: std::time::SystemTime) -> anyhow::Result<Option<show::Kept>> {
+    fn keep(&self, recorded: SystemTime) -> anyhow::Result<Option<show::Kept>> {
         show::keep(recorded).map(Some)
     }
 

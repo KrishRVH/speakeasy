@@ -5,7 +5,10 @@ use async_channel::{Receiver, Sender};
 use super::speech::Audibility;
 use crate::{
     runtime::ports::{CaptureEvent, Sealed, SessionId},
-    show::{AudioLog, checkpoint::KeptAudio},
+    show::{
+        AudioLog,
+        checkpoint::{KeptAudio, MAX_CUES},
+    },
 };
 
 pub(super) struct Keep {
@@ -38,7 +41,7 @@ impl<'a> Keeping<'a> {
     pub(super) fn classify(&mut self, speech: &mut Audibility, pcm: &[u8], cues: &Receiver<()>) {
         while cues.try_recv().is_ok() {
             speech.expect_cue(pcm);
-            if self.cues.len() < crate::show::checkpoint::MAX_CUES {
+            if self.cues.len() < MAX_CUES {
                 self.cues.push((self.classified, pcm.len()));
             } else {
                 self.overflowed = true;

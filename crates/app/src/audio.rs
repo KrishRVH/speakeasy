@@ -39,7 +39,10 @@ use self::{
     speech::Audibility,
     stream::{CallbackState, build_stream, capture_failure, microphone_error, rate_and_channels},
 };
-use crate::runtime::ports::{CaptureEvent, Capturing, Listening, Sealed, SessionId};
+use crate::{
+    runtime::ports::{CaptureEvent, Capturing, Listening, RecognitionMode, Sealed, SessionId},
+    show::AudioLog,
+};
 
 const INITIAL_RESERVATION: Duration = Duration::from_secs(10);
 
@@ -62,7 +65,7 @@ impl Capture {
     pub(crate) fn start(
         id: SessionId,
         microphone: Option<&str>,
-        recognition: crate::runtime::ports::RecognitionMode,
+        recognition: RecognitionMode,
         events: Sender<CaptureEvent>,
     ) -> anyhow::Result<Self> {
         let microphone = microphone.map(str::to_owned);
@@ -173,7 +176,7 @@ impl Listening for Capture {
         self.signal.thread.unpark();
     }
 
-    fn keep(&self, log: crate::show::AudioLog, start: Duration, language: &str) -> bool {
+    fn keep(&self, log: AudioLog, start: Duration, language: &str) -> bool {
         let accepted = self
             .keep
             .try_send(checkpoint::Keep {
@@ -253,7 +256,7 @@ struct Recorder<D = LiveStream> {
 impl Recorder {
     fn open(
         microphone: Option<&str>,
-        recognition: crate::runtime::ports::RecognitionMode,
+        recognition: RecognitionMode,
         events: &Sender<CaptureEvent>,
         control: &Arc<Control>,
     ) -> Result<Self, Startup> {
@@ -302,9 +305,8 @@ impl Recorder {
             errors: stream_errors,
             started,
             rate,
-            cuts: (recognition == crate::runtime::ports::RecognitionMode::Segmented)
-                .then(|| Cuts::new(rate)),
-            live: if recognition == crate::runtime::ports::RecognitionMode::Streaming {
+            cuts: (recognition == RecognitionMode::Segmented).then(|| Cuts::new(rate)),
+            live: if recognition == RecognitionMode::Streaming {
                 live::Feed::Waiting
             } else {
                 live::Feed::Abandoned

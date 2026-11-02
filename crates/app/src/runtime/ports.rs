@@ -1,15 +1,18 @@
-use std::time::{Duration, Instant, SystemTime};
+use std::{
+    ops::Range,
+    time::{Duration, Instant, SystemTime},
+};
 
 use async_channel::Sender;
 use speakeasy_platform::{Delivery, InsertPermit, Inserted, Scope, Taps};
 use speakeasy_show::{Ending, Journal, Narration, NarrationLoss, Recording};
-use tokio::sync::watch;
-use zeroize::Zeroize;
+use tokio::sync::{mpsc, oneshot, watch};
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
     config::Config,
     recognition_terms::Terms,
-    show::{AudioLog, FrameLog, Kept, Publication, Reopened, SavedShow},
+    show::{AudioLog, FrameLog, Interrupted, Kept, Publication, Reopened, SavedShow},
     sounds::Cue,
 };
 
@@ -67,8 +70,8 @@ pub(crate) enum RecognitionMode {
 
 pub(crate) struct LiveAudio {
     pub rate: u32,
-    pub frames: tokio::sync::mpsc::Receiver<zeroize::Zeroizing<Vec<u8>>>,
-    pub tail: tokio::sync::oneshot::Receiver<zeroize::Zeroizing<Vec<u8>>>,
+    pub frames: mpsc::Receiver<Zeroizing<Vec<u8>>>,
+    pub tail: oneshot::Receiver<Zeroizing<Vec<u8>>>,
 }
 
 #[derive(Default)]
@@ -81,7 +84,7 @@ pub(crate) struct Sealed {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Partition {
     pub pieces: u32,
-    pub tail: std::ops::Range<usize>,
+    pub tail: Range<usize>,
 }
 
 impl Drop for Sealed {
@@ -221,7 +224,7 @@ pub(crate) trait Ports: Send + 'static {
 
     fn reopen(
         &self,
-        interrupted: crate::show::Interrupted,
+        interrupted: Interrupted,
     ) -> impl Future<Output = anyhow::Result<Reopened>> + Send + 'static;
 
     fn load(

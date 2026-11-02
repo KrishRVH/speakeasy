@@ -1,4 +1,4 @@
-use std::{future::pending, mem};
+use std::{future::pending, mem, time::Duration};
 
 use speakeasy_core::gesture::State;
 use speakeasy_platform::Taps;
@@ -8,6 +8,7 @@ use super::{
     ports::{Capturing, Listening, Pinning},
     reap,
 };
+use crate::show::AudioLog;
 
 #[derive(Default)]
 pub(super) enum Device<R> {
@@ -66,12 +67,7 @@ impl<R: Listening> Device<R> {
         }
     }
 
-    pub(super) fn keep(
-        &self,
-        log: crate::show::AudioLog,
-        start: std::time::Duration,
-        language: &str,
-    ) -> bool {
+    pub(super) fn keep(&self, log: AudioLog, start: Duration, language: &str) -> bool {
         match self {
             Self::Open(recording) => recording.keep(log, start, language),
             Self::Free | Self::Retiring(_) => false,

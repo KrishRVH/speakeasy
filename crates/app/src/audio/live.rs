@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use tokio::sync::{mpsc, oneshot};
 use zeroize::Zeroizing;
 
@@ -6,6 +8,8 @@ use super::{
     speech::Audibility,
 };
 use crate::runtime::ports::{CaptureEvent, LiveAudio, SessionId};
+
+const FRAME: Duration = Duration::from_millis(100);
 
 pub(super) enum Feed {
     Waiting,
@@ -52,7 +56,7 @@ impl Feed {
                 cursor: range.start,
             };
         }
-        let chunk = bytes_in(samples_in(std::time::Duration::from_millis(100), rate));
+        let chunk = bytes_in(samples_in(FRAME, rate));
         while let Self::Sending { frames, cursor, .. } = self {
             if frames.is_closed() {
                 *self = Self::Abandoned;

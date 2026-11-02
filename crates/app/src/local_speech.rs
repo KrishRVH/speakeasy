@@ -2,7 +2,10 @@ mod streaming;
 
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
-use std::{fmt, iter, net::TcpListener, path::Path, process::ExitStatus, time::Duration};
+use std::{
+    fmt, iter, net::TcpListener, ops::RangeInclusive, path::Path, process::ExitStatus,
+    time::Duration,
+};
 
 use anyhow::{Context as _, anyhow, bail, ensure};
 use reqwest::{Client, RequestBuilder, multipart};
@@ -21,7 +24,7 @@ use crate::{
     config::{Config, Engine},
     http::{Trust, client_builder},
     recognition_terms::Terms,
-    runtime::ports::{STARTUP_CANCELLED, Speech},
+    runtime::ports::{LiveAudio, STARTUP_CANCELLED, Speech},
 };
 
 const LOOPBACK: &str = "127.0.0.1";
@@ -33,6 +36,7 @@ pub(crate) const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 
 const INFERENCE_TIMEOUT: Duration = Duration::from_mins(30);
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
+const PARAKEET_RATES: RangeInclusive<u32> = 8_000..=96_000;
 const STOPPED: &str = "Transcription stopped. Check the selected model and engine, then try again.";
 
 const EXIT_GRACE: Duration = Duration::from_millis(500);
@@ -183,7 +187,7 @@ impl LocalSpeech {
             Engine::Nemo => {
                 let rate = audio::wav_sample_rate(&wav)?;
                 ensure!(
-                    (8_000..=96_000).contains(&rate),
+                    PARAKEET_RATES.contains(&rate),
                     "Parakeet needs 8–96 kHz audio. Set your microphone to 48 kHz in your system's sound settings, or choose Whisper."
                 );
                 let mut form = recording_form(wav, R::FORMAT)?;
@@ -232,7 +236,7 @@ impl LocalSpeech {
 impl Speech for LocalSpeech {
     async fn transcribe_stream(
         &mut self,
-        audio: crate::runtime::ports::LiveAudio,
+        audio: LiveAudio,
         language: &str,
         terms: &Terms,
     ) -> anyhow::Result<Option<String>> {

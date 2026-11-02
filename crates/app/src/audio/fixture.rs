@@ -50,7 +50,7 @@ impl Drop for Profile {
 pub(crate) fn replay(
     id: SessionId,
     wav: &[u8],
-    recognition: crate::runtime::ports::RecognitionMode,
+    recognition: RecognitionMode,
     speed: u32,
     events: Sender<CaptureEvent>,
     finished: Sender<Instant>,
@@ -113,9 +113,8 @@ pub(crate) fn replay(
             errors: received,
             started,
             rate,
-            cuts: (recognition == crate::runtime::ports::RecognitionMode::Segmented)
-                .then(|| Cuts::new(rate)),
-            live: if recognition == crate::runtime::ports::RecognitionMode::Streaming {
+            cuts: (recognition == RecognitionMode::Segmented).then(|| Cuts::new(rate)),
+            live: if recognition == RecognitionMode::Streaming {
                 live::Feed::Waiting
             } else {
                 live::Feed::Abandoned

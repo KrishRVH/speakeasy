@@ -14,6 +14,7 @@ use super::{
 };
 use crate::{
     config::Config,
+    recognition_terms::Terms,
     transcript::{
         self, Fillers,
         vocabulary::{Correction, Vocabulary},
@@ -285,7 +286,7 @@ async fn transcript_of<W: Speech>(
     detail: Detail,
     fillers: Fillers,
     corrections: &[Correction],
-    terms: &crate::recognition_terms::Terms,
+    terms: &Terms,
 ) -> anyhow::Result<Transcript> {
     Ok(match detail {
         Detail::Text => Transcript::Text(worker.transcribe(wav, language, terms).await?),

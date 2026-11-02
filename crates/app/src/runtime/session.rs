@@ -15,7 +15,7 @@ use zeroize::Zeroizing;
 
 use super::{
     Phase, PracticeEvent,
-    ports::{Footage, Published, Sealed, SessionId},
+    ports::{Footage, LiveAudio, Published, Sealed, SessionId},
     recognition::{Detail, Recognition, Request, Ticket, Transcript},
 };
 use crate::{
@@ -330,7 +330,7 @@ impl Session {
         }
     }
 
-    pub(super) fn stream(&mut self, audio: super::ports::LiveAudio) {
+    pub(super) fn stream(&mut self, audio: LiveAudio) {
         if self.is_capturing() && !self.is_show() {
             self.recognition.stream(audio);
         }

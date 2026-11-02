@@ -1,8 +1,14 @@
 mod commands;
 
 use std::{
-    convert::Infallible, future::poll_fn, mem, ops::ControlFlow, pin::Pin, sync::Arc, task::Poll,
-    time::Instant,
+    convert::Infallible,
+    future::poll_fn,
+    mem,
+    ops::ControlFlow,
+    pin::Pin,
+    sync::Arc,
+    task::Poll,
+    time::{Instant, SystemTime},
 };
 
 use async_channel::{Receiver, RecvError, Sender};
@@ -21,8 +27,8 @@ use super::{
     device::Device,
     now,
     ports::{
-        CaptureEvent, PUBLISH_STOPPED, Ports, Preservation, Published, SessionId, ShowEvent,
-        Unchosen,
+        CaptureEvent, PUBLISH_STOPPED, Ports, Preservation, Published, RecognitionMode, SessionId,
+        ShowEvent, Unchosen,
     },
     session::{Delivered, Purpose, Session},
     worker::{Completion, Worker},
@@ -30,7 +36,7 @@ use super::{
 use crate::{
     config::{Change, Config, Engine},
     control::{Call, Command, Reply, Status},
-    show::SavedShow,
+    show::{SavedShow, Unwound},
     sounds::Cue,
     transcript::{self, style::Style, vocabulary::Vocabulary},
 };
@@ -682,7 +688,7 @@ impl<P: Ports> Owner<P> {
             let delivered = !receipt.is_closed()
                 && session.permit.commit()
                 && receipt
-                    .try_send(PracticeEvent::Text(zeroize::Zeroizing::new(text)))
+                    .try_send(PracticeEvent::Text(Zeroizing::new(text)))
                     .is_ok();
             self.end_session(if delivered {
                 Outcome::Practiced
@@ -704,9 +710,9 @@ impl<P: Ports> Owner<P> {
             return;
         }
         self.microphone.whole();
-        let recorded = std::time::SystemTime::now()
+        let recorded = SystemTime::now()
             .checked_sub(now().saturating_duration_since(session.started))
-            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            .unwrap_or(SystemTime::UNIX_EPOCH);
         let lost = match self.ports.keep(recorded) {
             Ok(Some(kept)) => {
                 session.keep(kept);
@@ -764,7 +770,7 @@ impl<P: Ports> Owner<P> {
                 self.gesture.finish()
             },
             Err(error) => {
-                if !error.is::<crate::show::Unwound>() {
+                if !error.is::<Unwound>() {
                     session.forfeit();
                 }
                 self.fail(format!("{error:#}"));
@@ -1130,11 +1136,11 @@ impl<P: Ports> Owner<P> {
         };
         let microphone = self.config.microphone.as_deref();
         let recognition = if session.is_show() || self.config.engine == Engine::Whisper {
-            super::ports::RecognitionMode::Whole
+            RecognitionMode::Whole
         } else if self.config.uses_nemotron() {
-            super::ports::RecognitionMode::Streaming
+            RecognitionMode::Streaming
         } else {
-            super::ports::RecognitionMode::Segmented
+            RecognitionMode::Segmented
         };
         match self.ports.record_microphone(
             session.id,
