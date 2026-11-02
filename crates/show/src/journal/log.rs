@@ -195,14 +195,12 @@ impl Log {
     }
 
     pub fn start(header: &[u8]) -> Result<Take, SourceError> {
+        let (magic, record) = header.split_at_checked(MAGIC.len()).unwrap_or_default();
         require(
-            header.len() == Self::HEADER_BYTES && header.get(..MAGIC.len()) == Some(MAGIC),
+            header.len() == Self::HEADER_BYTES && magic == MAGIC,
             "unsupported or truncated checkpoint header",
         )?;
-        let mut data = Cursor(payload(
-            header.get(MAGIC.len()..).unwrap_or_default(),
-            HEADER,
-        )?);
+        let mut data = Cursor(payload(record, HEADER)?);
         let budget = usize::try_from(data.wide()?)
             .map_err(|_out_of_range| SourceError("checkpoint memory budget is too large"))?;
         require(
