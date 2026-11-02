@@ -15,17 +15,11 @@ use speakeasy_platform::OwnedThread;
 use crate::lowpass::Lowpass;
 
 pub(crate) const HEARD_FOR: Duration = LATE.saturating_add(HEARD_CUE).saturating_add(ECHO);
-
 const LATE: Duration = Duration::from_millis(300);
-
 const HEARD_CUE: Duration = Duration::from_millis(200);
-
 const ECHO: Duration = Duration::from_millis(100);
-
 const LINGER: Duration = Duration::from_secs(10);
-
 const RATE: u64 = 48_000;
-
 const VOICES: usize = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
