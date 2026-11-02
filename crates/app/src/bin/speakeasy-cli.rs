@@ -8,9 +8,10 @@ use std::{
 
 fn main() -> ExitCode {
     let mut args = env::args_os().skip(1);
-    let first = args.next();
-    match first.as_deref().and_then(std::ffi::OsStr::to_str) {
-        None if first.is_none() => return help(),
+    let Some(first) = args.next() else {
+        return help();
+    };
+    match first.to_str() {
         Some("--help" | "-h") => return help(),
         Some("show" | "--version" | "status" | "dictation" | "paste-last" | "style" | "preset") => {
         },
@@ -26,10 +27,7 @@ fn main() -> ExitCode {
         Err(error) => return fail(format!("Cannot locate Speakeasy: {error}"), 1),
     };
 
-    match Command::new(&sibling)
-        .args(first.into_iter().chain(args))
-        .status()
-    {
+    match Command::new(&sibling).arg(first).args(args).status() {
         Ok(status) => match status.code().and_then(|code| u8::try_from(code).ok()) {
             Some(code) => ExitCode::from(code),
             None => fail(format!("Speakeasy stopped unexpectedly ({status})."), 1),
