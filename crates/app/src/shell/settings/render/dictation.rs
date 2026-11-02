@@ -32,7 +32,7 @@ impl Settings {
         .collect()
     }
 
-    fn shortcut(&self) -> SharedString {
+    pub(super) fn shortcut(&self) -> SharedString {
         #[cfg(target_os = "macos")]
         return self.config.mac_shortcut.label().into();
         #[cfg(not(target_os = "macos"))]

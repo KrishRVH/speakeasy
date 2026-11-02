@@ -368,9 +368,7 @@ impl Settings {
                     .flex()
                     .items_center()
                     .gap(px(16.0))
-                    .when(!external, |row| {
-                        row.child(kit.keys(&self.presentation.shortcut, true))
-                    })
+                    .when(!external, |row| row.child(kit.keys(&self.shortcut(), true)))
                     .child(
                         div()
                             .flex_1()
@@ -447,7 +445,7 @@ impl Settings {
         let shortcut = if external {
             div().child("Your desktop shortcut")
         } else {
-            kit.keys(&self.presentation.shortcut, false)
+            kit.keys(&self.shortcut(), false)
         };
         let mut lines = vec![line(
             shortcut,
