@@ -279,3 +279,24 @@ fn a_closed_control_stdout_never_claims_an_acknowledged_action_was_refused() -> 
     }
     Ok(())
 }
+
+#[test]
+fn a_control_command_without_a_settings_folder_is_unknown_rather_than_refused() -> anyhow::Result<()>
+{
+    let output = Command::new(APP)
+        .arg("status")
+        .env_remove("HOME")
+        .env_remove("XDG_CONFIG_HOME")
+        .env_remove("APPDATA")
+        .output()?;
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(output.stderr, b"");
+    let reply: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(reply["result"], "unknown");
+    assert!(
+        reply["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("settings folder"))
+    );
+    Ok(())
+}

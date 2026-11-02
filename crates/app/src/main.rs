@@ -141,11 +141,10 @@ fn main() -> ExitCode {
         },
         Invocation::Show(command) => in_terminal(|| command.run()),
         Invocation::Control(invocation) => {
-            let path = match settings_file(invocation.settings) {
-                Ok(path) => path,
-                Err(error) => return in_terminal(|| Err(error)),
+            let reply = match settings_file(invocation.settings) {
+                Ok(path) => Instance::control(&path, invocation.command),
+                Err(error) => control::Reply::unknown(format!("{error:#}")),
             };
-            let reply = Instance::control(&path, invocation.command);
             let code = reply.exit_code();
             let written = in_terminal(|| reply.write(&mut io::stdout().lock()));
             if written != ExitCode::SUCCESS && reply.result != control::Disposition::Refused {
