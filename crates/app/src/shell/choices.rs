@@ -8,6 +8,9 @@ use crate::{
     status::ServiceState,
 };
 
+const UNACKNOWLEDGED: &str =
+    "Preset selection stopped before acknowledging. Read status before choosing again.";
+
 pub(super) struct Selected {
     pub name: String,
     pub config: ValidConfig,
@@ -147,7 +150,10 @@ impl Services {
                 },
                 Err(_) => return,
             };
-            let reply = receipt.recv().await.unwrap_or_else(|_| Reply::unknown("Preset selection stopped before acknowledging. Read status before choosing again."));
+            let reply = receipt
+                .recv()
+                .await
+                .unwrap_or_else(|_| Reply::unknown(UNACKNOWLEDGED));
             cx.update_if_running(|cx| {
                 cx.update_global::<Self, _>(|services, _| {
                     services.confirm_preset(generation, selected, &reply);

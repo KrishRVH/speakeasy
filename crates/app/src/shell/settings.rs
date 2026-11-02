@@ -737,21 +737,6 @@ enum Reset {
     Running { _work: Task<()> },
 }
 
-fn update_notice(version: Option<crate::updates::Version>) -> Notice {
-    let action = "Release notes";
-    #[cfg(target_os = "windows")]
-    let action = if crate::updates::Download::available() {
-        "Download"
-    } else {
-        action
-    };
-    let message = match version {
-        Some(version) => format!("Speakeasy {version} is available. Choose {action}."),
-        None => "Speakeasy is up to date.".into(),
-    };
-    Notice::Note(message.into())
-}
-
 impl Notice {
     fn text(&self) -> SharedString {
         match self {

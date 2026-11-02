@@ -1,6 +1,6 @@
 use gpui::{Context, Task};
 
-use super::{Notice, Settings, is_demo, update_notice};
+use super::{Notice, Settings, is_demo};
 use crate::{
     gpui_ext::EntityUpdate as _,
     shell::Services,
@@ -144,30 +144,38 @@ impl Settings {
         let follow = cx.spawn(async move |this, cx| {
             tokio::pin!(outcome);
             let result = loop {
-                tokio::select! {
+                let changed = tokio::select! {
                     biased;
                     result = &mut outcome => break result,
-                    changed = progress.changed() => {
-                        if changed.is_err() { break outcome.await; }
-                        let progress = *progress.borrow_and_update();
-                        this.update_if_alive(cx, |view, cx| {
-                            if matches!(view.update, Update::Downloading { cancelled: false, .. }) {
-                                let message = progress.done.saturating_mul(100).checked_div(progress.total).map_or_else(
-                                    || progress.stage.to_owned(),
-                                    |percent| format!("{}: {percent}%", progress.stage),
-                                );
-                                view.notice = Some(Notice::Note(message.into()));
-                                cx.notify();
-                            }
-                        });
-                        gpui::Timer::after(super::PROGRESS_THROTTLE).await;
-                    },
+                    changed = progress.changed() => changed,
+                };
+                if changed.is_err() {
+                    break outcome.await;
                 }
+                let progress = *progress.borrow_and_update();
+                let message = progress
+                    .done
+                    .saturating_mul(100)
+                    .checked_div(progress.total)
+                    .map_or_else(
+                        || progress.stage.to_owned(),
+                        |percent| format!("{}: {percent}%", progress.stage),
+                    );
+                this.update_if_alive(cx, |view, cx| view.note_download(message, cx));
+                gpui::Timer::after(super::PROGRESS_THROTTLE).await;
             };
             this.update_if_alive(cx, |view, cx| {
-                let cancelled = matches!(view.update, Update::Downloading { cancelled: true, .. });
+                let cancelled = matches!(
+                    view.update,
+                    Update::Downloading {
+                        cancelled: true,
+                        ..
+                    }
+                );
                 view.update = Update::Available(version);
-                if cx.global::<Services>().is_quitting() { return; }
+                if cx.global::<Services>().is_quitting() {
+                    return;
+                }
                 if cancelled {
                     view.notice = Some(Notice::Note("Update download cancelled.".into()));
                     cx.notify();
@@ -194,6 +202,20 @@ impl Settings {
     }
 
     #[cfg(target_os = "windows")]
+    fn note_download(&mut self, message: String, cx: &mut Context<'_, Self>) {
+        if matches!(
+            self.update,
+            Update::Downloading {
+                cancelled: false,
+                ..
+            }
+        ) {
+            self.notice = Some(Notice::Note(message.into()));
+            cx.notify();
+        }
+    }
+
+    #[cfg(target_os = "windows")]
     pub(super) fn install_update(&mut self, cx: &mut Context<'_, Self>) {
         if is_demo(cx) || cx.global::<Services>().is_quitting() {
             return;
@@ -217,4 +239,19 @@ impl Settings {
             self.update = previous;
         }
     }
+}
+
+fn update_notice(version: Option<Version>) -> Notice {
+    let action = "Release notes";
+    #[cfg(target_os = "windows")]
+    let action = if crate::updates::Download::available() {
+        "Download"
+    } else {
+        action
+    };
+    let message = match version {
+        Some(version) => format!("Speakeasy {version} is available. Choose {action}."),
+        None => "Speakeasy is up to date.".into(),
+    };
+    Notice::Note(message.into())
 }
