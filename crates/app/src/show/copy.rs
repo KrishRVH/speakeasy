@@ -1,5 +1,4 @@
 use std::{
-    convert::Infallible,
     fmt::Write as _,
     io,
     path::{Path, PathBuf},
@@ -8,9 +7,9 @@ use std::{
 };
 
 use anyhow::Context as _;
-use async_channel::{Receiver, Sender};
+use async_channel::Receiver;
 use gpui::RenderImage;
-use speakeasy_platform::{ClipboardContent, IdleInput, OwnedThread};
+use speakeasy_platform::{ClipboardContent, IdleInput, StoppableThread};
 use speakeasy_show::Bundle;
 
 use super::store::recall;
@@ -108,19 +107,14 @@ pub(crate) type Receipt = Pin<Box<dyn Future<Output = Result<Outcome, String>> +
 
 #[derive(Default)]
 pub(crate) struct Copies {
-    pending: Option<Pending>,
-}
-
-struct Pending {
-    stopping: Sender<Infallible>,
-    thread: OwnedThread,
+    pending: Option<StoppableThread>,
 }
 
 impl Copies {
     pub(crate) fn is_busy(&self) -> bool {
         self.pending
             .as_ref()
-            .is_some_and(|pending| !pending.thread.is_finished())
+            .is_some_and(|pending| !pending.is_finished())
     }
 
     pub(crate) fn submit(
@@ -145,11 +139,10 @@ impl Copies {
             !self.is_busy(),
             "A clipboard copy is still finishing. Try again shortly."
         );
-        let (stopping, stopped) = async_channel::bounded::<Infallible>(1);
         let (done, receipt) = async_channel::bounded(1);
-        let thread = OwnedThread::spawn("show-copy", move || {
+        let thread = StoppableThread::spawn("show-copy", move |stopping| {
             let authorized = || {
-                !stopped.is_closed()
+                !stopping.is_closed()
                     && !done.is_closed()
                     && input.as_ref().is_none_or(IdleInput::is_current)
             };
@@ -171,19 +164,19 @@ impl Copies {
             )]
             let _ = done.try_send(result);
         })?;
-        let completion = Box::pin(completed(receipt, thread.exited()));
-        self.pending = Some(Pending { stopping, thread });
+        let completion = Box::pin(completed(receipt, thread.stopped()));
+        self.pending = Some(thread);
         Ok(completion)
     }
 
     pub(crate) fn cancel(&self) {
         if let Some(pending) = &self.pending {
-            pending.stopping.close();
+            pending.request_stop();
         }
     }
 
     pub(crate) fn drained(&self) -> impl Future<Output = ()> + use<> {
-        let pending = self.pending.as_ref().map(|pending| pending.thread.exited());
+        let pending = self.pending.as_ref().map(StoppableThread::stopped);
         async move {
             if let Some(pending) = pending {
                 pending.await;
@@ -201,12 +194,6 @@ async fn completed(
         .recv()
         .await
         .unwrap_or_else(|_| Err("Copy stopped unexpectedly. Try again when idle.".into()))
-}
-
-impl Drop for Copies {
-    fn drop(&mut self) {
-        self.cancel();
-    }
 }
 
 #[cfg(test)]

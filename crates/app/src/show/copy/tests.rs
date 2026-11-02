@@ -1,7 +1,7 @@
 use std::{fs, time::Duration};
 
 use serde_json::json;
-use speakeasy_platform::InputSender;
+use speakeasy_platform::{InputSender, OwnedThread};
 use speakeasy_show::{Image, Manifest};
 
 use super::*;

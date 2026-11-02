@@ -1,10 +1,9 @@
 mod frame;
 
-use std::{convert::Infallible, path::PathBuf, pin::Pin, sync::Arc, time::Duration};
+use std::{path::PathBuf, pin::Pin, sync::Arc, time::Duration};
 
-use async_channel::Sender;
 use gpui::RenderImage;
-use speakeasy_platform::OwnedThread;
+use speakeasy_platform::StoppableThread;
 use speakeasy_show::Moment;
 
 #[derive(Clone, Debug)]
@@ -44,12 +43,7 @@ pub(crate) enum Work {
 
 #[derive(Default)]
 pub(crate) struct Reads {
-    pending: Option<Pending>,
-}
-
-struct Pending {
-    stop: Sender<Infallible>,
-    thread: OwnedThread,
+    pending: Option<StoppableThread>,
 }
 
 impl Reads {
@@ -62,13 +56,12 @@ impl Reads {
         read: impl FnOnce(&dyn Fn() -> bool) -> Result<Decoded, String> + Send + 'static,
     ) -> anyhow::Result<Work> {
         if let Some(pending) = &self.pending
-            && !pending.thread.is_finished()
+            && !pending.is_finished()
         {
-            return Ok(Work::Waiting(Box::pin(pending.thread.exited())));
+            return Ok(Work::Waiting(Box::pin(pending.stopped())));
         }
-        let (stop, stopping) = async_channel::bounded::<Infallible>(1);
         let (done, result) = async_channel::bounded(1);
-        let thread = OwnedThread::spawn("show-preview", move || {
+        let thread = StoppableThread::spawn("show-preview", move |stopping| {
             let cancelled = || stopping.is_closed() || done.is_closed();
             let image = read(&cancelled);
             #[expect(
@@ -77,8 +70,8 @@ impl Reads {
             )]
             let _ = done.try_send(image);
         })?;
-        let exited = thread.exited();
-        self.pending = Some(Pending { stop, thread });
+        let exited = thread.stopped();
+        self.pending = Some(thread);
         Ok(Work::Reading(Box::pin(async move {
             exited.await;
             result.recv().await.unwrap_or_else(|_| {
@@ -89,23 +82,17 @@ impl Reads {
 
     pub(crate) fn cancel(&self) {
         if let Some(pending) = &self.pending {
-            pending.stop.close();
+            pending.request_stop();
         }
     }
 
     pub(crate) fn drained(&self) -> impl Future<Output = ()> + use<> {
-        let pending = self.pending.as_ref().map(|pending| pending.thread.exited());
+        let pending = self.pending.as_ref().map(StoppableThread::stopped);
         async move {
             if let Some(pending) = pending {
                 pending.await;
             }
         }
-    }
-}
-
-impl Drop for Reads {
-    fn drop(&mut self) {
-        self.cancel();
     }
 }
 
