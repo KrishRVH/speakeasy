@@ -1,12 +1,14 @@
 use std::{ffi::OsString, io, os::windows::ffi::OsStringExt as _, path::PathBuf};
 
-use anyhow::{Context as _, ensure};
+use anyhow::{Context as _, bail, ensure};
 use windows_sys::Win32::{
     Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS},
     System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_SZ, RRF_SUBKEY_WOW6464KEY, RegGetValueW},
 };
 
 use super::to_wide;
+
+const INVALID: &str = "The Windows installation path is invalid.";
 
 pub fn installed_directory() -> anyhow::Result<Option<PathBuf>> {
     let key = to_wide(
@@ -35,25 +37,15 @@ pub fn installed_directory() -> anyhow::Result<Option<PathBuf>> {
             "Cannot read the Windows installation. Open the release page to update manually.",
         );
     }
-    ensure!(
-        length >= 2 && length.is_multiple_of(2),
-        "The Windows installation path is invalid."
-    );
+    ensure!(length.is_multiple_of(2), INVALID);
     let units = usize::try_from(length / 2)?;
     let text = buffer
         .get(..units)
         .context("The Windows installation path is too long.")?;
-    ensure!(
-        text.last() == Some(&0),
-        "The Windows installation path is invalid."
-    );
-    let path = text
-        .get(..units.saturating_sub(1))
-        .context("The Windows installation path is invalid.")?;
-    ensure!(
-        !path.contains(&0),
-        "The Windows installation path is invalid."
-    );
+    let Some((0, path)) = text.split_last() else {
+        bail!(INVALID);
+    };
+    ensure!(!path.contains(&0), INVALID);
     let path = PathBuf::from(OsString::from_wide(path));
     ensure!(
         path.is_absolute(),

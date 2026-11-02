@@ -4,7 +4,6 @@ mod insertion;
 pub(crate) mod installation;
 pub(crate) mod login;
 pub(crate) mod movie;
-pub(crate) use movie::read::frame as read_movie_frame;
 mod presentation;
 pub(crate) mod screen;
 
@@ -45,6 +44,7 @@ use windows_sys::{
 pub(crate) use self::{
     input::{Monitor, start},
     insertion::{Insert, copy_content, copy_text},
+    movie::read::frame as read_movie_frame,
 };
 #[cfg(test)]
 use crate::NativeWindow;
