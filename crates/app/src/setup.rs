@@ -43,14 +43,13 @@ const NEMOTRON: Download<'static> = Download {
 };
 
 pub(crate) fn downloaded() -> Vec<Model> {
-    crate::paths::data_root().map_or_else(|_unavailable| Vec::new(), |root| downloaded_in(&root))
-}
-
-fn downloaded_in(root: &Path) -> Vec<Model> {
+    let Ok(root) = crate::paths::data_root() else {
+        return Vec::new();
+    };
     [(Model::Parakeet, &PARAKEET), (Model::Nemotron, &NEMOTRON)]
         .into_iter()
         .filter(|(_, download)| {
-            model_directory(root, download)
+            model_directory(&root, download)
                 .join(download.file_name())
                 .is_file()
         })
