@@ -5,18 +5,21 @@ use std::{
     time::SystemTime,
 };
 
-use speakeasy_show::{Ending, Moment, NarrationLoss, Unreadable};
-
-use super::{narration::Narration, navigation::Relation};
-use crate::show::store::{
-    age, checkpoint, pinned,
-    recall::{self, Entry, Health, ReadError},
-    retention::{Retention, interval},
-    source,
+use speakeasy_show::{
+    Annotations, Ending, Manifest, Moment, MoviePrefix, NarrationLoss, Recording, Source,
+    Unreadable,
 };
 
-const INCOMPLETE_NARRATION: &str =
-    "Narration is incomplete: only audio that reached the checkpoint was recovered.";
+use super::{narration::Narration, navigation::Relation};
+use crate::show::{
+    preview::Content,
+    store::{
+        age, checkpoint, pinned,
+        recall::{self, Entry, Health, ReadError},
+        retention::{Retention, interval},
+        source,
+    },
+};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum Mode {
@@ -141,14 +144,14 @@ pub(super) struct Frame {
     pub number: usize,
     pub at: Moment,
     pub marker: String,
-    pub file: crate::show::preview::Content,
+    pub file: Content,
 }
 
 impl Frame {
     pub(super) fn presentation(&self) -> std::time::Duration {
         let start = self.at.since(Moment::START);
         match &self.file {
-            crate::show::preview::Content::Video { span, .. } => start.saturating_add(
+            Content::Video { span, .. } => start.saturating_add(
                 span.start
                     .saturating_sub(Moment::from(span.start).since(Moment::START)),
             ),
@@ -205,35 +208,14 @@ impl Detail {
                 let manifest = show.manifest;
                 let recording = manifest.recording();
                 if mode == Mode::Video {
-                    match speakeasy_show::Annotations::new(recording, manifest.marks()) {
+                    match Annotations::new(recording, manifest.marks()) {
                         Ok(annotations) => scene = Some(Arc::new(annotations)),
                         Err(error) => warnings.push(format!("Video annotations are unavailable: {error}")),
                     }
                 }
                 narration = Narration::from_recording(recording);
-                let duration = recording.duration;
-                match recording.ending {
-                    Ending::Finished => {},
-                    Ending::ScreenStopped => warnings.push(format!(
-                        "Screen recording stopped at {duration}, before you finished."
-                    )),
-                    Ending::WindowClosed => {
-                        warnings.push(format!("The recorded window closed at {duration}."));
-                    },
-                    Ending::WindowOffScreen => warnings.push(format!(
-                        "The recorded window left the screen at {duration}."
-                    )),
-                }
-                match recording.narration_lost {
-                    Some(NarrationLoss::Incomplete) => warnings.push(INCOMPLETE_NARRATION.into()),
-                    None => {},
-                    Some(NarrationLoss::AudioStopped) => warnings
-                        .push("The microphone stopped, so this Show has no narration.".into()),
-                    Some(NarrationLoss::NotTranscribed) => warnings.push(
-                        "Your speech couldn't be transcribed, so this Show has no narration."
-                            .into(),
-                    ),
-                }
+                warnings.extend(ending(recording));
+                warnings.extend(recording.narration_lost.map(lost));
                 warnings.extend(
                     show.problems
                         .into_iter()
@@ -253,16 +235,9 @@ impl Detail {
                         warnings.push(format!("Mark {} has no saved frame.", mark.number));
                     }
                 }
-                frames = manifest
-                    .keyframes()
-                    .iter()
-                    .map(|frame| Frame {
-                        number: frame.index,
-                        at: frame.at,
-                        marker: frame.marker(manifest.marks()),
-                        file: crate::show::preview::Content::Png(frame.file()),
-                    })
-                    .collect();
+                if mode == Mode::Keyframes {
+                    frames = keyframes(&manifest);
+                }
             },
         }
         let mut source_available = false;
@@ -281,71 +256,37 @@ impl Detail {
                         source::longest_gap(&source)
                     );
                     if mode == Mode::Source {
-                        let source = Arc::new(source);
-                        frames = source
-                            .moments()
-                            .iter()
-                            .enumerate()
-                            .map(|(index, &at)| Frame {
-                                number: index.saturating_add(1),
-                                at,
-                                marker: String::new(),
-                                file: crate::show::preview::Content::Source {
-                                    index: Arc::clone(&source),
-                                },
-                            })
-                            .collect();
+                        frames = retained(source);
                     }
                 },
             },
         }
-        if mode == Mode::Source && !source_available {
-            frames.clear();
-        }
-        if mode == Mode::Video {
-            frames.clear();
-            if let Some(metadata) = &movie {
-                match crate::show::store::movie::inspect(directory) {
-                    Ok(Some(inspected)) => {
-                        let annotations = Moment::from_millis(
-                            metadata
-                                .coverage
-                                .as_ref()
-                                .map_or(0, |coverage| coverage.annotations_through_ms),
-                        );
-                        frames = inspected
-                            .prefix
-                            .samples()
-                            .iter()
-                            .copied()
-                            .enumerate()
-                            .map(|(index, sample)| Frame {
-                                number: index.saturating_add(1),
-                                at: Moment::from_millis(metadata.origin_ms)
-                                    .saturating_add(sample.at),
-                                marker: String::new(),
-                                file: crate::show::preview::Content::Video {
-                                    span: sample.at
-                                        ..inspected
-                                            .prefix
-                                            .samples()
-                                            .get(index.saturating_add(1))
-                                            .map_or(inspected.prefix.duration, |sample| sample.at),
-                                    annotations,
-                                    scene: scene.clone(),
-                                },
-                            })
-                            .collect();
-                        coverage = format!(
-                            "{} video samples · annotation record through {}",
-                            frames.len(),
-                            super::navigation::Stamp(annotations)
-                        );
-                    },
-                    Ok(None) => warnings
-                        .push("Retained video is no longer available. Refresh this Show.".into()),
-                    Err(error) => warnings.push(format!("Video frames are unavailable: {error:#}")),
-                }
+        if mode == Mode::Video
+            && let Some(metadata) = &movie
+        {
+            match crate::show::store::movie::inspect(directory) {
+                Ok(Some(inspected)) => {
+                    let annotations = Moment::from_millis(
+                        metadata
+                            .coverage
+                            .as_ref()
+                            .map_or(0, |coverage| coverage.annotations_through_ms),
+                    );
+                    frames = sampled(
+                        Moment::from_millis(metadata.origin_ms),
+                        &inspected.prefix,
+                        annotations,
+                        scene,
+                    );
+                    coverage = format!(
+                        "{} video samples · annotation record through {}",
+                        frames.len(),
+                        super::navigation::Stamp(annotations)
+                    );
+                },
+                Ok(None) => warnings
+                    .push("Retained video is no longer available. Refresh this Show.".into()),
+                Err(error) => warnings.push(format!("Video frames are unavailable: {error:#}")),
             }
         }
         Ok(Self {
@@ -359,6 +300,92 @@ impl Detail {
             movie,
         })
     }
+}
+
+fn ending(recording: &Recording) -> Option<String> {
+    let duration = recording.duration;
+    match recording.ending {
+        Ending::Finished => None,
+        Ending::ScreenStopped => Some(format!(
+            "Screen recording stopped at {duration}, before you finished."
+        )),
+        Ending::WindowClosed => Some(format!("The recorded window closed at {duration}.")),
+        Ending::WindowOffScreen => Some(format!(
+            "The recorded window left the screen at {duration}."
+        )),
+    }
+}
+
+fn lost(loss: NarrationLoss) -> String {
+    match loss {
+        NarrationLoss::Incomplete => {
+            "Narration is incomplete: only audio that reached the checkpoint was recovered."
+        },
+        NarrationLoss::AudioStopped => "The microphone stopped, so this Show has no narration.",
+        NarrationLoss::NotTranscribed => {
+            "Your speech couldn't be transcribed, so this Show has no narration."
+        },
+    }
+    .to_owned()
+}
+
+fn keyframes(manifest: &Manifest) -> Vec<Frame> {
+    manifest
+        .keyframes()
+        .iter()
+        .map(|frame| Frame {
+            number: frame.index,
+            at: frame.at,
+            marker: frame.marker(manifest.marks()),
+            file: Content::Png(frame.file()),
+        })
+        .collect()
+}
+
+fn retained(source: Source) -> Vec<Frame> {
+    let source = Arc::new(source);
+    source
+        .moments()
+        .iter()
+        .enumerate()
+        .map(|(index, &at)| Frame {
+            number: index.saturating_add(1),
+            at,
+            marker: String::new(),
+            file: Content::Source {
+                index: Arc::clone(&source),
+            },
+        })
+        .collect()
+}
+
+fn sampled(
+    origin: Moment,
+    prefix: &MoviePrefix,
+    annotations: Moment,
+    scene: Option<Arc<Annotations>>,
+) -> Vec<Frame> {
+    let samples = prefix.samples();
+    let ends = samples
+        .iter()
+        .skip(1)
+        .map(|next| next.at)
+        .chain([prefix.duration]);
+    samples
+        .iter()
+        .zip(ends)
+        .enumerate()
+        .map(|(index, (sample, end))| Frame {
+            number: index.saturating_add(1),
+            at: origin.saturating_add(sample.at),
+            marker: String::new(),
+            file: Content::Video {
+                span: sample.at..end,
+                annotations,
+                scene: scene.clone(),
+            },
+        })
+        .collect()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
