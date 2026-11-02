@@ -199,7 +199,7 @@ async fn interrupted_oversized_and_corrupt_downloads_leave_no_installer() {
     let client = client(client_builder(Trust::Nobody).unwrap().no_proxy()).unwrap();
     for response in [
         format!("{INSTALLER_HEAD}inst"),
-        format!("{INSTALLER_HEAD}installeX"),
+        format!("{INSTALLER_HEAD}INSTALLER"),
         format!("{CHUNKED_HEAD}a\r\ninstallerX\r\n0\r\n\r\n"),
     ] {
         let (url, served) = serve(response.into_bytes()).await;
