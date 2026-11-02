@@ -836,10 +836,10 @@ paused clock exercises gesture deadlines and the five-minute cap.
   same script with `-StaticAccessibility` to check nonactivating and normal reopen without animation
   or unrelated redraws, stale field edits and text ranges, and the provider after window
   destruction. It also checks that scrolling text into view keeps selection and focus, that retained
-  ranges survive field resizing, and that a reveal lands in the layout of a resize queued behind it.
-  `scripts/check-tray-windows.ps1 -Executable <speakeasy.exe>` checks minimize, close, relaunch, and
-  configuration preservation with owned `--demo-tray` windows. `mise run ps:syntax` parses the
-  Windows scripts on a native PowerShell host.
+  ranges survive field resizing, and that a reveal requested before a resize is painted lands in the
+  resized layout. `scripts/check-tray-windows.ps1 -Executable <speakeasy.exe>` checks minimize,
+  close, relaunch, and configuration preservation with owned `--demo-tray` windows.
+  `mise run ps:syntax` parses the Windows scripts on a native PowerShell host.
 - On Linux, `mise exec -- python scripts/check_demo_linux.py target/release/speakeasy` opens a
   private Xvfb display, checks rendered Settings and Shows, and checks that the preview shows and
   then hides the pill. It needs Xvfb, x11-utils, and a Vulkan driver.

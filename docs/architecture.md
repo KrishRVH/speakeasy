@@ -187,9 +187,10 @@ module unless a test file is named.
   layout it paints with the least movement, aligns the requested end when the range is wider than
   the field, keeps it revealed across resizes, and follows the caret again once the text or
   selection changes. Scrolling changes neither selection nor focus, and requests that name no range,
-  such as AT-SPI scroll hints, are ignored. Its
-  [tests](../crates/app/src/shell/settings/text_field/accessible/tests.rs) cover these boundaries.
-  The [Windows lifecycle patch](../vendor/gpui-pre-windows/src/accessibility.rs) empties the tree on
+  such as AT-SPI scroll hints, are ignored. The
+  [accessible tests](../crates/app/src/shell/settings/text_field/accessible/tests.rs) and the
+  viewport's own tests cover these boundaries. The
+  [Windows lifecycle patch](../vendor/gpui-pre-windows/src/accessibility.rs) empties the tree on
   hide or minimize, restores it after committed visibility, and empties and disconnects it before
   destroying its HWND. The [Windows text adapter](../vendor/accesskit_windows/src/text.rs) retires a
   range with the provider that created it, turns `ScrollIntoView` into a request that names the
