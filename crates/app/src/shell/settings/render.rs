@@ -160,7 +160,7 @@ impl Settings {
                         action.element_id(),
                         page.label(),
                         self.navigation.page == page,
-                        Some(ui.press(action)),
+                        ui.press(action),
                     )
                     .track_focus(self.navigation.focus(page))
             }))
@@ -175,13 +175,9 @@ impl Settings {
     ) -> Div {
         let open = self.menus.open == Some(menu);
         let action = Action::Menu(menu);
-        let trigger = ui.kit().dropdown(
-            action.element_id(),
-            label,
-            value,
-            open,
-            Some(ui.press(action)),
-        );
+        let trigger = ui
+            .kit()
+            .dropdown(action.element_id(), label, value, open, ui.press(action));
         self.anchor_menu(ui, menu, label, trigger, false)
     }
 

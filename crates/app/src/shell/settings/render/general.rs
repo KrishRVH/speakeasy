@@ -50,13 +50,13 @@ impl Settings {
                     choice.name(),
                     choice.palette(),
                     choice == theme,
-                    Some(ui.press(action)),
+                    ui.press(action),
                 )
             }));
         let switch = |title: &'static str, detail: &'static str, setting: Setting| {
             kit.setting(
                 title,
-                Some(detail.into()),
+                detail,
                 ui.switch(title, setting.is_on(&self.config), Action::Toggle(setting)),
             )
             .into_any_element()
@@ -64,7 +64,7 @@ impl Settings {
         kit.section(
             "Look and feel",
             vec![
-                kit.setting("Theme", Some(theme.name().into()), swatches)
+                kit.setting("Theme", theme.name(), swatches)
                     .into_any_element(),
                 switch(
                     "Reduce motion",
@@ -88,14 +88,11 @@ impl Settings {
             vec![
                 kit.setting(
                     "Start at login",
-                    Some(
-                        if blocked {
-                            "Turned off in Windows' Startup apps. Turn it on there."
-                        } else {
-                            "Speakeasy waits in the tray after you sign in."
-                        }
-                        .into(),
-                    ),
+                    if blocked {
+                        "Turned off in Windows' Startup apps. Turn it on there."
+                    } else {
+                        "Speakeasy waits in the tray after you sign in."
+                    },
                     ui.switch(
                         "Start at login",
                         self.config.start_at_login,
@@ -130,7 +127,7 @@ impl Settings {
             vec![
                 kit.setting(
                     "Shortcuts",
-                    Some(detail),
+                    detail,
                     self.dropdown(
                         ui,
                         Menu::Bindings,
@@ -256,13 +253,13 @@ impl Settings {
             vec![
                 kit.setting(
                     format!("Speakeasy {}", env!("CARGO_PKG_VERSION")),
-                    Some(detail),
+                    detail,
                     controls,
                 )
                 .into_any_element(),
                 kit.setting(
                     "Setup guide",
-                    Some("Walk through the shortcut and a practice sentence again.".into()),
+                    "Walk through the shortcut and a practice sentence again.",
                     ui.button_if(
                         "Replay",
                         Action::Onboarding(onboarding::Action::Replay),
@@ -288,10 +285,7 @@ impl Settings {
         let mut rows = vec![
             kit.setting(
                 "Start over",
-                Some(
-                    "Remove settings and downloaded engines and models, then download Parakeet again. Your Shows stay."
-                        .into(),
-                ),
+                "Remove settings and downloaded engines and models, then download Parakeet again. Your Shows stay.",
                 control,
             )
             .into_any_element(),

@@ -200,7 +200,7 @@ impl Settings {
                     .pl(px(16.0))
                     .pr(px(8.0))
                     .py(px(8.0))
-                    .child(kit.label(name, Some(preset.description().into())).flex_1())
+                    .child(kit.label(name, preset.description()).flex_1())
                     .child(status)
                     .child(self.anchor_menu(ui, menu, "Preset actions", more, true))
                     .into_any_element()

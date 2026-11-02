@@ -195,17 +195,16 @@ impl<'a> Kit<'a> {
         label: &str,
         value: impl Into<SharedString>,
         expanded: bool,
-        on_click: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Stateful<Div> {
         let palette = self.palette;
-        let enabled = on_click.is_some();
         let value = value.into();
         self.pressable(
             id,
             format!("{label}: {value}").into(),
             gpui::Role::Button,
             true,
-            on_click,
+            Some(on_click),
         )
         .w(px(200.0))
         .max_w_full()
@@ -223,7 +222,7 @@ impl<'a> Kit<'a> {
         .bg(rgb(palette.raise))
         .text_size(CONTROL_TEXT)
         .text_color(rgb(palette.ink))
-        .when(enabled && !expanded, |trigger| {
+        .when(!expanded, |trigger| {
             trigger.hover(move |style| style.border_color(alpha(palette.ink, 0.28)))
         })
         .child(
@@ -361,12 +360,11 @@ impl<'a> Kit<'a> {
         id: impl Into<ElementId>,
         label: impl Into<SharedString>,
         selected: bool,
-        on_click: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Stateful<Div> {
         let palette = self.palette;
-        let enabled = on_click.is_some();
         let label = label.into();
-        self.pressable(id, label.clone(), gpui::Role::Tab, false, on_click)
+        self.pressable(id, label.clone(), gpui::Role::Tab, false, Some(on_click))
             .aria_selected(selected)
             .flex_col()
             .h(px(40.0))
@@ -379,9 +377,7 @@ impl<'a> Kit<'a> {
                 FontWeight::NORMAL
             })
             .text_color(rgb(if selected { palette.ink } else { palette.muted }))
-            .when(enabled, |tab| {
-                tab.hover(move |style| style.text_color(rgb(palette.ink)))
-            })
+            .hover(move |style| style.text_color(rgb(palette.ink)))
             .child(
                 div()
                     .flex_1()
@@ -451,11 +447,10 @@ impl<'a> Kit<'a> {
         id: impl Into<ElementId>,
         label: &'static str,
         open: bool,
-        on_click: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Stateful<Div> {
         let palette = self.palette;
-        let enabled = on_click.is_some();
-        self.pressable(id, label.into(), gpui::Role::Button, false, on_click)
+        self.pressable(id, label.into(), gpui::Role::Button, false, Some(on_click))
             .h(HEIGHT)
             .pl(px(4.0))
             .pr(px(8.0))
@@ -466,9 +461,7 @@ impl<'a> Kit<'a> {
             .text_size(CONTROL_TEXT)
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(rgb(palette.muted))
-            .when(enabled, |disclosure| {
-                disclosure.hover(move |style| style.text_color(rgb(palette.ink)))
-            })
+            .hover(move |style| style.text_color(rgb(palette.ink)))
             .child(icon(
                 if open {
                     icons::CHEVRON_DOWN
@@ -521,7 +514,7 @@ impl<'a> Kit<'a> {
     pub(crate) fn setting(
         self,
         title: impl Into<SharedString>,
-        detail: Option<SharedString>,
+        detail: impl Into<SharedString>,
         control: impl IntoElement,
     ) -> Div {
         div()
@@ -535,7 +528,11 @@ impl<'a> Kit<'a> {
             .child(div().flex_none().child(control))
     }
 
-    pub(crate) fn label(self, title: impl Into<SharedString>, detail: Option<SharedString>) -> Div {
+    pub(crate) fn label(
+        self,
+        title: impl Into<SharedString>,
+        detail: impl Into<SharedString>,
+    ) -> Div {
         div()
             .min_w(px(0.0))
             .flex()
@@ -547,7 +544,7 @@ impl<'a> Kit<'a> {
                     .text_color(rgb(self.palette.ink))
                     .child(title.into()),
             )
-            .when_some(detail, |label, detail| label.child(self.detail(detail)))
+            .child(self.detail(detail))
     }
 
     pub(crate) fn detail(self, text: impl Into<SharedString>) -> Div {
@@ -694,7 +691,7 @@ impl<'a> Kit<'a> {
         label: impl Into<SharedString>,
         remove: impl Into<ElementId>,
         remove_label: impl Into<SharedString>,
-        on_remove: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+        on_remove: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Div {
         let palette = self.palette;
         div()
@@ -713,7 +710,7 @@ impl<'a> Kit<'a> {
             .text_color(rgb(palette.ink))
             .child(label.into())
             .child(
-                self.icon_button(remove, icons::CLOSE, remove_label, on_remove)
+                self.icon_button(remove, icons::CLOSE, remove_label, Some(on_remove))
                     .size(px(22.0))
                     .rounded_full(),
             )
@@ -756,17 +753,16 @@ impl<'a> Kit<'a> {
         name: &'static str,
         colors: &Palette,
         chosen: bool,
-        on_click: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Stateful<Div> {
         let palette = self.palette;
         let keyboard = self.keyboard;
-        let enabled = on_click.is_some();
         self.pressable(
             id,
             format!("Theme: {name}").into(),
             gpui::Role::RadioButton,
             true,
-            on_click,
+            Some(on_click),
         )
         .aria_toggled(if chosen {
             gpui::Toggled::True
@@ -782,7 +778,7 @@ impl<'a> Kit<'a> {
         } else {
             alpha(palette.lamp, 0.0)
         })
-        .when(enabled && !chosen, |swatch| {
+        .when(!chosen, |swatch| {
             swatch.hover(move |style| style.border_color(palette.edge()))
         })
         .when(keyboard, |swatch| {

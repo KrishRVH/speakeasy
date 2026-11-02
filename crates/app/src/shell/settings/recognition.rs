@@ -120,7 +120,7 @@ impl Settings {
                     phrase.clone(),
                     remove.element_id(),
                     format!("Remove hint {phrase}"),
-                    Some(ui.press(remove)),
+                    ui.press(remove),
                 )
             }));
         let unused = (!self.config.uses_nemotron()).then(|| {

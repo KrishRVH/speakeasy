@@ -186,7 +186,7 @@ impl Settings {
                     .flex()
                     .items_center()
                     .gap(px(12.0))
-                    .child(kit.label("Try it here", Some(note.into())).flex_1())
+                    .child(kit.label("Try it here", note).flex_1())
                     .child(ui.button_if(
                         "Start practice",
                         Action::Practice,
@@ -267,7 +267,7 @@ impl Settings {
             Action::ShowsHelp.element_id(),
             "Shortcuts for Shows",
             self.shows_help,
-            Some(ui.press(Action::ShowsHelp)),
+            ui.press(Action::ShowsHelp),
         );
         let word = |text: &'static str| div().text_color(rgb(palette.muted)).child(text);
         let key = |text: &'static str| kit.keycap(text, false);
@@ -351,14 +351,11 @@ impl Settings {
             rows.push(
                 kit.setting(
                     "Language",
-                    Some(
-                        if self.config.uses_nemotron() {
-                            "Nemotron transcribes the language you choose."
-                        } else {
-                            "Whisper can detect it, or you can choose."
-                        }
-                        .into(),
-                    ),
+                    if self.config.uses_nemotron() {
+                        "Nemotron transcribes the language you choose."
+                    } else {
+                        "Whisper can detect it, or you can choose."
+                    },
                     self.dropdown(
                         ui,
                         Menu::Language,
@@ -372,14 +369,11 @@ impl Settings {
         rows.push(
             kit.setting(
                 "Microphone",
-                Some(
-                    if self.config.microphone.is_none() {
-                        "Follows your system's input device."
-                    } else {
-                        "Speakeasy always uses this one."
-                    }
-                    .into(),
-                ),
+                if self.config.microphone.is_none() {
+                    "Follows your system's input device."
+                } else {
+                    "Speakeasy always uses this one."
+                },
                 self.dropdown(ui, Menu::Microphone, "Microphone", self.microphone_name()),
             )
             .into_any_element(),
@@ -436,7 +430,7 @@ impl Settings {
                     .px(px(16.0))
                     .py(px(12.0))
                     .child(
-                        kit.label("Speech model", Some(summary))
+                        kit.label("Speech model", summary)
                             .flex_1()
                             .when(warn, |label| label.text_color(rgb(ui.palette.warn))),
                     )
@@ -577,7 +571,7 @@ impl Settings {
                     .child(
                         kit.label(
                             "Prefer GPU",
-                            Some("Use your graphics card for speech when it can.".into()),
+                            "Use your graphics card for speech when it can.",
                         )
                         .flex_1(),
                     )
@@ -610,7 +604,7 @@ impl Settings {
                 .flex()
                 .items_center()
                 .gap(px(12.0))
-                .child(kit.label(kind, Some(file_name(path))).flex_1())
+                .child(kit.label(kind, file_name(path)).flex_1())
                 .child(ui.button_if("Choose…", action, Weight::Secondary, picking))
         };
         div()
@@ -679,7 +673,7 @@ impl Settings {
         };
         let fillers = kit.setting(
             "Remove um and uh",
-            Some(detail.into()),
+            detail,
             ui.switch_if(
                 "Remove um and uh",
                 Setting::RemoveFillers.is_on(&self.config),
@@ -693,7 +687,7 @@ impl Settings {
             let keep = self.config.text_delivery == TextDelivery::Type;
             kit.setting(
                 "Keep clipboard",
-                Some("Type text instead of pasting it, so your clipboard stays as it was.".into()),
+                "Type text instead of pasting it, so your clipboard stays as it was.",
                 ui.switch(
                     "Keep clipboard",
                     keep,
@@ -708,7 +702,7 @@ impl Settings {
         #[cfg(target_os = "linux")]
         let delivery = kit.setting(
             "Insert text by",
-            Some("How your words reach the app you're using.".into()),
+            "How your words reach the app you're using.",
             self.dropdown(
                 ui,
                 Menu::Delivery,

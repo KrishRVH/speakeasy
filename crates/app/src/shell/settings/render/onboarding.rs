@@ -208,7 +208,7 @@ impl Settings {
                     .flex_col()
                     .gap(px(12.0))
                     .p(px(16.0))
-                    .child(kit.label("Parakeet speech model", Some(super::setup_detail().into())))
+                    .child(kit.label("Parakeet speech model", super::setup_detail()))
                     .when_some(installing, |row, progress| {
                         row.child(kit.progress(fraction(progress)))
                             .child(kit.detail(progress_text(progress)))
@@ -224,10 +224,7 @@ impl Settings {
                     .gap(px(12.0))
                     .p(px(16.0))
                     .child(icon(icons::CHECK, 16.0, ui.palette.lamp))
-                    .child(kit.label(
-                        "Local speech is ready",
-                        Some("Next, try your shortcut.".into()),
-                    ))
+                    .child(kit.label("Local speech is ready", "Next, try your shortcut."))
                     .into_any_element(),
             ])
             .into_any_element()
@@ -274,7 +271,7 @@ impl Settings {
                         "Microphone · {}",
                         permissions::description(observed.microphone)
                     ),
-                    Some("Your first recording asks for access. If you denied it before, turn on Speakeasy in System Settings.".into()),
+                    "Your first recording asks for access. If you denied it before, turn on Speakeasy in System Settings.",
                     help("Open settings", permissions::Help::Microphone),
                 )
                 .into_any_element(),
@@ -283,7 +280,7 @@ impl Settings {
                         "Accessibility · {}",
                         permissions::description(observed.accessibility)
                     ),
-                    Some("Lets your shortcut work and your words appear. If macOS asks, quit and reopen Speakeasy.".into()),
+                    "Lets your shortcut work and your words appear. If macOS asks, quit and reopen Speakeasy.",
                     help("Open settings", permissions::Help::Accessibility),
                 )
                 .into_any_element(),
@@ -297,14 +294,11 @@ impl Settings {
             .child(kit.group(vec![
                 kit.setting(
                     "Microphone",
-                    Some(
-                        if cfg!(target_os = "windows") {
-                            "If Windows blocks the microphone, turn on microphone access for desktop apps."
-                        } else {
-                            "If your desktop asks to allow the dictation shortcut, approve it."
-                        }
-                        .into(),
-                    ),
+                    if cfg!(target_os = "windows") {
+                        "If Windows blocks the microphone, turn on microphone access for desktop apps."
+                    } else {
+                        "If your desktop asks to allow the dictation shortcut, approve it."
+                    },
                     help(permissions::OPEN, permissions::Help::Microphone),
                 )
                 .into_any_element(),
@@ -415,7 +409,7 @@ impl Settings {
             .child(kit.group(vec![
                 kit.setting(
                     "Microphone",
-                    Some("Not hearing anything? Choose another input.".into()),
+                    "Not hearing anything? Choose another input.",
                     self.dropdown(ui, Menu::Microphone, "Microphone", self.microphone_name()),
                 )
                 .into_any_element(),
