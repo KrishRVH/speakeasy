@@ -43,7 +43,7 @@ impl Terms {
         let mut seen = HashSet::new();
         for phrase in &self.0 {
             ensure!(
-                !phrase.trim().is_empty()
+                !phrase.is_empty()
                     && phrase == phrase.trim()
                     && phrase.chars().count() <= 64
                     && phrase.split_whitespace().count() <= 6

@@ -34,7 +34,6 @@ struct Biquad {
 impl Biquad {
     fn new(omega: f64, quality: f64) -> Self {
         let alpha = omega.sin() / (2.0 * quality);
-
         let one_minus_cos = 2.0 * (omega / 2.0).sin().powi(2);
         let a0 = 1.0 + alpha;
         Self {
