@@ -39,7 +39,7 @@ pub(super) fn write(
             );
             let span = Span::at(*at);
             query::Found {
-                kind: "time",
+                kind: query::Kind::Time,
                 number: None,
                 occurrence: None,
                 matches: vec![span],

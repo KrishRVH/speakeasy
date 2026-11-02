@@ -10,10 +10,18 @@ pub(in crate::show) enum Query {
     Match { phrase: String, occurrence: usize },
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(in crate::show) enum Kind {
+    Time,
+    Mark,
+    Phrase,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(in crate::show) struct Found {
-    pub kind: &'static str,
+    pub kind: Kind,
     pub number: Option<usize>,
     #[serde(rename = "match")]
     pub occurrence: Option<usize>,
@@ -27,11 +35,11 @@ pub(in crate::show) struct Found {
 impl Query {
     pub(in crate::show) fn resolve(&self, manifest: &Manifest) -> anyhow::Result<Found> {
         let (focus, kind, number, occurrence) = match self {
-            Self::At(at) => (Focus::At(*at), "time", None, None),
-            Self::Mark(number) => (Focus::Mark(*number), "mark", Some(*number), None),
-            Self::Phrase(phrase) => (Focus::Phrase(phrase), "phrase", None, None),
+            Self::At(at) => (Focus::At(*at), Kind::Time, None, None),
+            Self::Mark(number) => (Focus::Mark(*number), Kind::Mark, Some(*number), None),
+            Self::Phrase(phrase) => (Focus::Phrase(phrase), Kind::Phrase, None, None),
             Self::Match { phrase, occurrence } => {
-                (Focus::Phrase(phrase), "phrase", None, Some(*occurrence))
+                (Focus::Phrase(phrase), Kind::Phrase, None, Some(*occurrence))
             },
         };
         let matches = manifest.locate(focus)?;
@@ -53,7 +61,7 @@ impl Query {
             kind,
             number,
             occurrence: occurrence
-                .or_else(|| (kind == "phrase" && selected.is_some()).then_some(1)),
+                .or_else(|| (kind == Kind::Phrase && selected.is_some()).then_some(1)),
             matches,
             start_ms: selected.map(|span| span.start().as_millis()),
             end_ms: selected.map(|span| span.end().as_millis()),
