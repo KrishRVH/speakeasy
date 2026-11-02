@@ -271,7 +271,8 @@ module unless a test file is named.
   dictation, retires the runtime, and purges on an owned thread that Quit drains; nothing resumes
   until it exits, and a failed purge restores the previous settings. Settings refuses reset during
   setup, saves, or a held Windows update and refuses setup while settings are unreadable or a reset
-  runs. On success it adopts default settings as its saved baseline and starts automatic setup.
+  runs. On success it adopts default settings as its saved baseline and starts automatic setup;
+  as on a new install, the first complete save enables dictation, even if it was paused.
   [reset/tests.rs](../crates/app/src/reset/tests.rs) covers what stays, refusals, failure order, and
   linked folders.
 - **Tray and status**: [tray.rs](../crates/app/src/tray.rs), [tray/](../crates/app/src/tray),

@@ -146,10 +146,10 @@ A banner reports a settings file this version cannot read, names the file, and o
 fresh…**; the status line keeps the exact error for anyone who would rather fix the file. Otherwise
 General offers **Start over…**. Both confirm in place with **Delete settings and downloads** beside
 Cancel. Reset pauses dictation, deletes the downloaded engines, models, and updates and then the
-settings file, keeps every Show and the finished-guide marker, and starts automatic setup. It is
-unavailable during setup, saves, or a Windows update download, and setup and update downloads are
-unavailable while it runs. A failed reset keeps the previous settings and explains what stopped it.
-Quit waits for a running reset.
+settings file, keeps every Show and the finished-guide marker, and starts automatic setup, whose
+completion enables dictation as on a fresh install. It is unavailable during setup, saves, or a
+Windows update download, and setup and update downloads are unavailable while it runs. A failed
+reset keeps the previous settings and explains what stopped it. Quit waits for a running reset.
 
 On Windows, Start at login, off by default, belongs to the default settings file, which the sign-in
 entry opens. Each live launch with those settings registers the running executable to start at

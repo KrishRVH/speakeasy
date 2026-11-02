@@ -607,7 +607,10 @@ impl Services {
         }
         if !self.is_quitting() {
             match result {
-                Ok(()) => announce(&self.output, UNCONFIGURED),
+                Ok(()) => {
+                    self.lifecycle.start_fresh();
+                    announce(&self.output, UNCONFIGURED);
+                },
                 Err(_) if self.config.needs_engine() => {
                     self.output.send_modify(|snapshot| {
                         *snapshot = Snapshot {

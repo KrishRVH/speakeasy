@@ -177,6 +177,10 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
         started
     }
 
+    pub(super) const fn start_fresh(&mut self) {
+        self.held = false;
+    }
+
     pub(super) fn quit(&mut self) -> bool {
         let owners = match mem::take(&mut self.state) {
             State::Running(owners) | State::Stopping { owners, .. } => Some(owners),
@@ -336,6 +340,18 @@ mod tests {
         assert!(
             lifecycle.save_may_enable(lifecycle.epoch(), |()| false),
             "A restart that applies settings is not a user pause"
+        );
+    }
+
+    #[test]
+    fn settings_saved_after_a_fresh_start_enable_dictation_as_on_a_new_install() {
+        let mut lifecycle = Lifecycle::<(), ()>::default();
+        assert!(!lifecycle.pause());
+        assert!(!lifecycle.save_may_enable(lifecycle.epoch(), |()| false));
+        lifecycle.start_fresh();
+        assert!(
+            lifecycle.save_may_enable(lifecycle.epoch(), |()| false),
+            "Setup after a reset left dictation paused"
         );
     }
 
