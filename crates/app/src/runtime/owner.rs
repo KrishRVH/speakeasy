@@ -517,13 +517,17 @@ impl<P: Ports> Owner<P> {
             self.worker.reload(&self.ports, &self.config);
         }
         self.abandon();
-        self.worker.revive(&self.ports, &self.config);
+        self.apply_settings();
         self.outcome = if cancelled {
             self.cue(Cue::Cancel);
             Outcome::Cancelled
         } else {
             Outcome::Idle
         };
+    }
+
+    fn apply_settings(&mut self) {
+        self.worker.revive(&self.ports, &self.config);
         self.notice = Some(if self.worker.model() == ModelState::Ready {
             Notice::SettingsApplied
         } else {

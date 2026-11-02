@@ -1,6 +1,6 @@
 use super::{
-    Call, Change, Command, ControlFlow, Directive, ModelState, Notice, Owner, Ports, Purpose,
-    Reply, Session, Status, now,
+    Call, Change, Command, ControlFlow, Directive, ModelState, Owner, Ports, Purpose, Reply,
+    Session, Status, now,
 };
 
 impl<P: Ports> Owner<P> {
@@ -35,12 +35,7 @@ impl<P: Ports> Owner<P> {
                 if reload {
                     self.worker.reload(&self.ports, &self.config);
                 }
-                self.worker.revive(&self.ports, &self.config);
-                self.notice = Some(if self.worker.model() == ModelState::Ready {
-                    Notice::SettingsApplied
-                } else {
-                    Notice::LoadingModel
-                });
+                self.apply_settings();
                 call.respond(Reply::ok(self.control_status()));
                 ControlFlow::Continue(())
             },
