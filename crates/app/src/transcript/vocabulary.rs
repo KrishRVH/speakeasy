@@ -4,7 +4,7 @@ use anyhow::ensure;
 use serde::{Deserialize, Serialize};
 use speakeasy_show::{Narration, Word};
 
-pub(crate) const LIMIT: usize = 200;
+const LIMIT: usize = 200;
 const PHRASE_LIMIT: usize = 64;
 const WORD_LIMIT: usize = 6;
 const PUNCTUATION: [char; 19] = [

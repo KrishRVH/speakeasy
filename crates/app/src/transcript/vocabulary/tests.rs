@@ -72,7 +72,7 @@ fn invalid_and_duplicate_rules_fail_without_echoing_their_contents() {
                 heard: "PRIVATE_PHRASE".into(),
                 written: "secret".into()
             };
-            201
+            LIMIT + 1
         ],
         vec![
             Correction {
