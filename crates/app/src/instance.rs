@@ -130,7 +130,7 @@ impl Instance {
         }
         let mut caller = Caller {
             stream: &mut stream,
-            accepted: Instant::now(),
+            sent: Instant::now(),
             timeout: control::TIMEOUT.saturating_add(IO_TIMEOUT),
         };
         match read_frame(&mut caller) {
@@ -342,7 +342,7 @@ async fn handshake(stream: &mut AsyncStream, nonce: u128) -> io::Result<Option<I
 
 struct Caller<'stream> {
     stream: &'stream mut TcpStream,
-    accepted: Instant,
+    sent: Instant,
     timeout: Duration,
 }
 
@@ -350,7 +350,7 @@ impl Read for Caller<'_> {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         let remaining = self
             .timeout
-            .checked_sub(self.accepted.elapsed())
+            .checked_sub(self.sent.elapsed())
             .filter(|remaining| !remaining.is_zero())
             .ok_or(io::ErrorKind::TimedOut)?;
         self.stream.set_read_timeout(Some(remaining))?;
