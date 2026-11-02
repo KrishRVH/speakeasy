@@ -230,20 +230,10 @@ fn header(id: [u8; 16], size: [u32; 2]) -> Vec<u8> {
 }
 
 fn decode(record: &[u8; RECORD_BYTES]) -> Option<Change> {
-    let fields: [[u8; 4]; 10] = record.as_chunks::<4>().0.try_into().ok()?;
-    let [
-        sample,
-        left,
-        top,
-        width,
-        height,
-        x,
-        y,
-        right,
-        bottom,
-        checksum,
-    ] = fields.map(u32::from_le_bytes);
-    (crc32fast::hash(record.get(..36)?) == checksum).then_some(Change {
+    let (fields, checksum) = record.split_last_chunk::<4>()?;
+    let words: [[u8; 4]; 9] = fields.as_chunks::<4>().0.try_into().ok()?;
+    let [sample, left, top, width, height, x, y, right, bottom] = words.map(u32::from_le_bytes);
+    (crc32fast::hash(fields) == u32::from_le_bytes(*checksum)).then_some(Change {
         sample,
         content: [left, top, width, height],
         part: [x, y, right, bottom].map(f32::from_bits),
