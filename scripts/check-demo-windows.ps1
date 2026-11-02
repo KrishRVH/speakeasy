@@ -335,16 +335,28 @@ public sealed class TextEventCounts : IDisposable {
         $first.ScrollIntoView($true)
         Wait-Visible $first first-position
         $windowElement = [Windows.Automation.AutomationElement]::FromHandle($Window)
-        $resize = $windowElement.FindFirst([Windows.Automation.TreeScope]::Descendants, (New-Object Windows.Automation.PropertyCondition ([Windows.Automation.AutomationElement]::NameProperty), 'Resize field'))
+        $resize = $windowElement.FindFirst([Windows.Automation.TreeScope]::Descendants, (New-Object Windows.Automation.PropertyCondition ([Windows.Automation.AutomationElement]::NameProperty), 'Resize field')).GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern)
+        function Wait-Width([scriptblock]$Reached, [string]$Phase) {
+            $deadline = [DateTime]::UtcNow.AddSeconds(5)
+            while (!(& $Reached $Field.Current.BoundingRectangle.Width) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 20 }
+            if (!(& $Reached $Field.Current.BoundingRectangle.Width)) { throw "Owned field did not resize: $Phase" }
+        }
         $width = $Field.Current.BoundingRectangle.Width
-        $resize.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
-        $deadline = [DateTime]::UtcNow.AddSeconds(5)
-        while ($Field.Current.BoundingRectangle.Width -ge $width -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 20 }
-        if ($Field.Current.BoundingRectangle.Width -ge $width) { throw 'Owned field did not resize' }
+        $resize.Invoke()
+        Wait-Width { param($current) $current -lt $width } narrow
         Wait-Visible $first first-position
         if ($later.GetText(-1) -ne 'a') { throw 'Resizing retired a valid retained text range' }
         $later.ScrollIntoView($false)
         Wait-Visible $later resized-later-position
+        $resize.Invoke()
+        Wait-Width { param($current) $current -ge $width } wide
+        $first.ScrollIntoView($true)
+        Wait-Visible $first widened-first-position
+        # The request below names the range before the field narrows; the field reveals it in its new layout.
+        $resize.Invoke()
+        $later.ScrollIntoView($false)
+        Wait-Width { param($current) $current -lt $width } narrow-again
+        Wait-Visible $later queued-across-resize
         foreach ($endpoint in @([Windows.Automation.Text.TextPatternRangeEndpoint]::Start, [Windows.Automation.Text.TextPatternRangeEndpoint]::End)) {
             if ($text.GetSelection()[0].CompareEndpoints($endpoint, $selected, $endpoint) -ne 0) { throw 'Native scrolling changed the selection' }
         }
@@ -353,7 +365,7 @@ public sealed class TextEventCounts : IDisposable {
         $text.DocumentRange.ScrollIntoView($true)
         if ($text.GetVisibleRanges().Count -ne 1 -or $text.GetSelection()[0].GetText(-1) -ne '') { throw 'Empty field lost its caret range' }
         Set-Text 'Synthetic private draft'
-        Write-Host 'PASS: native TextPattern Unicode selection, events, retired ranges, empty carets, cross-run visibility, clipped geometry, precise scrolling, and retained ranges after resizing.'
+        Write-Host 'PASS: native TextPattern Unicode selection, events, retired ranges, empty carets, cross-run visibility, clipped geometry, precise scrolling, retained ranges after resizing, and reveals queued across a resize.'
     } finally {
         $events.Dispose()
     }

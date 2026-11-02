@@ -6,13 +6,12 @@ use super::Selection;
 enum Tracking {
     #[default]
     Caret,
-    Manual,
+    Span(Selection),
 }
 
 #[derive(Clone, Copy, Default)]
 pub(super) struct Viewport {
     pub(super) offset: Pixels,
-    pub(super) limit: Pixels,
     revision: u64,
     selection: Selection,
     tracking: Tracking,
@@ -23,7 +22,7 @@ impl Viewport {
         mut self,
         revision: u64,
         selection: Selection,
-        caret: Pixels,
+        x: impl Fn(usize) -> Pixels,
         width: Pixels,
         content_width: Pixels,
     ) -> Self {
@@ -32,28 +31,33 @@ impl Viewport {
         }
         self.revision = revision;
         self.selection = selection;
+        let span = match self.tracking {
+            Tracking::Caret => Selection {
+                anchor: selection.focus,
+                focus: selection.focus,
+            },
+            Tracking::Span(span) => span,
+        };
+        let (anchor, focus) = (x(span.anchor), x(span.focus));
         let width = width.max(px(0.0));
         let margin = px(3.0).min(width);
-        self.limit = (content_width + margin - width).max(px(0.0));
-        self.offset = self.offset.max(px(0.0)).min(self.limit);
-        if matches!(self.tracking, Tracking::Caret) {
-            if caret < self.offset {
-                self.offset = caret.max(px(0.0));
-            } else if caret + margin > self.offset + width {
-                self.offset = (caret + margin - width).max(px(0.0)).min(self.limit);
-            }
-        }
+        let (start, end) = (anchor.min(focus), anchor.max(focus) + margin);
+        let offset = if end - start <= width {
+            self.offset.min(start).max(end - width)
+        } else if focus < anchor {
+            start
+        } else {
+            end - width
+        };
+        let limit = (content_width + margin - width).max(px(0.0));
+        self.offset = offset.max(px(0.0)).min(limit);
         self
     }
 
-    pub(super) fn pan(&mut self, offset: Pixels) -> bool {
-        if !f32::from(offset).is_finite() {
-            return false;
-        }
-        let previous = self.offset;
-        self.offset = offset.max(px(0.0)).min(self.limit);
-        self.tracking = Tracking::Manual;
-        self.offset != previous
+    pub(super) fn reveal(&mut self, span: Selection, revision: u64, selection: Selection) {
+        self.revision = revision;
+        self.selection = selection;
+        self.tracking = Tracking::Span(span);
     }
 
     pub(super) fn reveal_caret(&mut self) {
@@ -65,72 +69,91 @@ impl Viewport {
 mod tests {
     use super::*;
 
-    #[test]
-    fn manual_pan_survives_redraw_and_later_absolute_requests_win() {
-        let selection = Selection {
-            anchor: 20,
-            focus: 100,
-        };
-        let mut view = Viewport::default().layout(1, selection, px(400.0), px(100.0), px(500.0));
-        assert_eq!(view.offset, px(303.0));
-        assert!(view.pan(px(10.0)));
-        assert!(view.pan(px(30.0)));
-        view = view.layout(1, selection, px(400.0), px(100.0), px(500.0));
-        assert_eq!(view.offset, px(30.0));
-        assert_eq!(view.selection, selection);
-        assert_eq!(view.revision, 1);
-        view.reveal_caret();
-        view = view.layout(1, selection, px(400.0), px(100.0), px(500.0));
-        assert_eq!(view.offset, px(303.0));
+    fn x(offset: usize) -> Pixels {
+        px(f32::from(u16::try_from(offset).unwrap()) * 10.0)
+    }
+
+    fn span(anchor: usize, focus: usize) -> Selection {
+        Selection { anchor, focus }
+    }
+
+    fn layout(view: Viewport, selection: Selection, width: f32) -> Viewport {
+        view.layout(1, selection, x, px(width), px(500.0))
     }
 
     #[test]
-    fn edits_and_selection_changes_reveal_the_caret_with_minimum_movement() {
-        let selection = Selection {
-            anchor: 40,
-            focus: 100,
-        };
-        let mut view = Viewport::default().layout(1, selection, px(400.0), px(100.0), px(500.0));
-        assert!(view.pan(px(10.0)));
-        view = view.layout(2, selection, px(400.0), px(100.0), px(500.0));
+    fn the_caret_stays_visible_with_minimum_movement() {
+        let caret = span(40, 40);
+        let mut view = layout(Viewport::default(), caret, 100.0);
         assert_eq!(view.offset, px(303.0));
-        view = view.layout(
-            2,
-            Selection {
-                anchor: 40,
-                focus: 90,
-            },
-            px(380.0),
-            px(100.0),
-            px(500.0),
-        );
+        view = layout(view, span(40, 38), 100.0);
         assert_eq!(view.offset, px(303.0));
-        view = view.layout(
-            2,
-            Selection {
-                anchor: 40,
-                focus: 1,
-            },
-            px(4.0),
-            px(100.0),
-            px(500.0),
-        );
-        assert_eq!(view.offset, px(4.0));
-    }
-
-    #[test]
-    fn resizing_clamps_manual_pan_and_nonfinite_requests_do_not_replace_it() {
-        let selection = Selection {
-            anchor: 0,
-            focus: 100,
-        };
-        let mut view = Viewport::default().layout(1, selection, px(400.0), px(100.0), px(500.0));
-        assert!(view.pan(px(350.0)));
-        assert!(!view.pan(px(f32::NAN)));
-        assert!(!view.pan(px(f32::INFINITY)));
-        view = view.layout(1, selection, px(400.0), px(450.0), px(500.0));
-        assert_eq!(view.offset, px(53.0));
-        view = view.layout(1, selection, px(400.0), px(600.0), px(500.0));
+        view = layout(view, span(40, 1), 100.0);
+        assert_eq!(view.offset, px(10.0));
+        view = view.layout(2, span(40, 1), x, px(100.0), px(50.0));
         assert_eq!(view.offset, px(0.0));
+    }
+
+    #[test]
+    fn a_revealed_span_stays_visible_across_resizes_until_the_selection_or_text_changes() {
+        let caret = span(50, 50);
+        let mut view = layout(Viewport::default(), caret, 100.0);
+        view.reveal(span(5, 6), 1, caret);
+        view = layout(view, caret, 100.0);
+        assert_eq!(
+            view.offset,
+            px(50.0),
+            "A span left of the field moved too far"
+        );
+        view.reveal(span(29, 30), 1, caret);
+        view = layout(view, caret, 100.0);
+        assert_eq!(
+            view.offset,
+            px(203.0),
+            "A later reveal did not replace the earlier one"
+        );
+        view = layout(view, caret, 40.0);
+        assert_eq!(view.offset, px(263.0), "Resizing lost the revealed span");
+        view = layout(view, span(50, 49), 40.0);
+        assert_eq!(
+            view.offset,
+            px(453.0),
+            "A selection change kept the old span"
+        );
+        view.reveal(span(5, 6), 1, span(50, 49));
+        view = view.layout(2, span(50, 49), x, px(40.0), px(500.0));
+        assert_eq!(
+            view.offset,
+            px(453.0),
+            "An edit kept a span from the old text"
+        );
+    }
+
+    #[test]
+    fn a_span_wider_than_the_field_aligns_its_focus_with_the_matching_edge() {
+        let caret = span(0, 0);
+        let mut view = layout(Viewport::default(), caret, 100.0);
+        view.reveal(span(40, 10), 1, caret);
+        view = layout(view, caret, 100.0);
+        assert_eq!(view.offset, px(100.0));
+        view.reveal(span(10, 40), 1, caret);
+        view = layout(view, caret, 100.0);
+        assert_eq!(view.offset, px(303.0));
+    }
+
+    #[test]
+    fn a_reveal_after_an_unpainted_edit_or_selection_change_outranks_the_caret() {
+        let mut view = layout(Viewport::default(), span(50, 50), 100.0);
+        let selected = span(50, 49);
+        view.reveal(span(5, 6), 1, selected);
+        view = layout(view, selected, 100.0);
+        assert_eq!(
+            view.offset,
+            px(50.0),
+            "The selection change replaced a later reveal"
+        );
+        view.reveal(span(29, 30), 2, selected);
+        view = view.layout(2, selected, x, px(100.0), px(500.0));
+        assert_eq!(view.offset, px(203.0), "The edit replaced a later reveal");
     }
 }

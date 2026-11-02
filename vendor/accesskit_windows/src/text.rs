@@ -5,8 +5,8 @@
 
 #![allow(non_upper_case_globals)]
 
-// Speakeasy patch: ScrollIntoView sends SetScrollOffset instead of a ScrollHint.
-use accesskit::{Action, ActionData, ActionRequest, VerticalOffset};
+// Speakeasy patch: ScrollIntoView names its range instead of sending a ScrollHint.
+use accesskit::{Action, ActionData, ActionRequest, TextSelection, VerticalOffset};
 use accesskit_consumer::{
     Node, TextPosition as Position, TextRange as Range, Tree, TreeState, WeakTextRange as WeakRange,
 };
@@ -25,9 +25,8 @@ use crate::{
     util::*,
 };
 
-// Speakeasy patch: clipped text geometry and precise horizontal scrolling.
+// Speakeasy patch: text geometry respects clipping ancestors.
 pub(crate) mod geometry;
-mod scroll;
 
 fn upgrade_range<'a>(weak: &WeakRange, tree_state: &'a TreeState) -> Result<Range<'a>> {
     if let Some(range) = weak.upgrade(tree_state) {
@@ -650,17 +649,25 @@ impl ITextRangeProvider_Impl for PlatformRange_Impl {
 
     fn ScrollIntoView(&self, align_to_top: BOOL) -> Result<()> {
         self.do_action(|range, tree| {
-            // Speakeasy patch: scroll the range's clipping container to an absolute offset.
-            let request = scroll::reveal(&range, align_to_top.into()).ok_or_else(not_supported)?;
+            // Speakeasy patch: name the exact range, with the aligned end as its
+            // focus, so the text's owner can reveal it from its current layout.
+            let (anchor, focus) = if align_to_top.into() {
+                (range.end(), range.start())
+            } else {
+                (range.start(), range.end())
+            };
             let (target_node, target_tree) = tree
                 .state()
-                .locate_node(request.target)
+                .locate_node(focus.inner_node().id())
                 .ok_or_else(element_not_available)?;
             Ok(ActionRequest {
-                action: Action::SetScrollOffset,
+                action: Action::ScrollIntoView,
                 target_tree,
                 target_node,
-                data: Some(ActionData::SetScrollOffset(request.point)),
+                data: Some(ActionData::SetTextSelection(TextSelection {
+                    anchor: anchor.to_raw(),
+                    focus: focus.to_raw(),
+                })),
             })
         })
     }

@@ -693,6 +693,6 @@ impl Adapter {
     }
 }
 
-// Speakeasy patch: regressions for provider and range retirement.
+// Speakeasy patch: regressions for provider and range retirement, and range scrolling.
 #[cfg(test)]
 mod tests;

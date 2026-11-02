@@ -1,7 +1,7 @@
-// Speakeasy patch: regressions for provider and range retirement.
+// Speakeasy patch: regressions for provider and range retirement, and range scrolling.
 
 use super::*;
-use accesskit::{ActionRequest, TextDirection};
+use accesskit::{Action, ActionData, ActionRequest, TextDirection, TextPosition, TextSelection};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use windows::{Win32::System::Variant::VARIANT, core::Interface};
 
@@ -131,3 +131,26 @@ fn a_retained_range_retires_with_its_provider_when_its_nodes_return() {
     }));
 }
 
+#[test]
+fn scrolling_a_range_into_view_names_it_with_the_aligned_end_as_focus() {
+    let (adapter, requests) = activate();
+    let range = document(&field(&adapter));
+    unsafe {
+        range.MoveEndpointByUnit(TextPatternRangeEndpoint_Start, TextUnit_Character, 2)
+    }
+    .unwrap();
+    let at = |character_index| TextPosition {
+        node: LocalNodeId(2),
+        character_index,
+    };
+    for (align_to_top, anchor, focus) in [(true, at(9), at(2)), (false, at(2), at(9))] {
+        unsafe { range.ScrollIntoView(align_to_top.into()) }.unwrap();
+        let request = requests.try_recv().unwrap();
+        assert_eq!(request.action, Action::ScrollIntoView);
+        assert_eq!(request.target_node, LocalNodeId(2));
+        assert_eq!(
+            request.data,
+            Some(ActionData::SetTextSelection(TextSelection { anchor, focus }))
+        );
+    }
+}

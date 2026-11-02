@@ -1,15 +1,13 @@
 use std::hash::{DefaultHasher, Hash as _, Hasher as _};
 
 use gpui::{
-    A11ySubtreeBuilder, Bounds, EntityId, Pixels, ShapedLine, Window,
-    accesskit::{
-        ActionData, Node, NodeId, Point, Rect, Role, TextDirection, TextPosition, TextSelection,
-    },
+    A11ySubtreeBuilder, AccessibleAction, Bounds, EntityId, Pixels, ShapedLine, Window,
+    accesskit::{ActionData, Node, NodeId, Rect, Role, TextDirection, TextPosition, TextSelection},
     point, px, size,
 };
 use unicode_segmentation::UnicodeSegmentation as _;
 
-use super::{Selection, edit::Edit, viewport::Viewport};
+use super::{Selection, edit::Edit};
 
 #[cfg(test)]
 mod tests;
@@ -19,42 +17,31 @@ const RUN_LENGTH: usize = 255;
 pub(super) enum Request<'a> {
     Replace(&'a str),
     Select(Selection),
-    Scroll(Pixels),
+    Reveal(Selection),
 }
 
 impl<'a> Request<'a> {
     pub(super) fn new(
+        action: AccessibleAction,
         data: &'a ActionData,
         field: EntityId,
         edit: &Edit,
-        viewport: &Viewport,
-        scale: f32,
     ) -> Option<Self> {
-        match data {
-            ActionData::Value(value) => Some(Self::Replace(value)),
-            ActionData::SetTextSelection(TextSelection { anchor, focus }) => {
-                let document = Document::new(field, edit)?;
-                Some(Self::Select(Selection {
-                    anchor: document.offset(*anchor)?,
-                    focus: document.offset(*focus)?,
-                }))
+        match (action, data) {
+            (AccessibleAction::SetValue, ActionData::Value(value)) => Some(Self::Replace(value)),
+            (AccessibleAction::SetTextSelection, ActionData::SetTextSelection(selection)) => {
+                Document::new(field, edit)?
+                    .selection(*selection)
+                    .map(Self::Select)
             },
-            ActionData::SetScrollOffset(offset) => scroll(*offset, viewport.limit, scale),
+            (AccessibleAction::ScrollIntoView, ActionData::SetTextSelection(span)) => {
+                Document::new(field, edit)?
+                    .selection(*span)
+                    .map(Self::Reveal)
+            },
             _ => None,
         }
     }
-}
-
-fn scroll(Point { x, y }: Point, limit: Pixels, scale: f32) -> Option<Request<'static>> {
-    let limit = f64::from(f32::from(limit) * scale);
-    let valid =
-        scale.is_finite() && scale > 0.0 && x.is_finite() && y == 0.0 && (0.0..=limit).contains(&x);
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "A valid offset lies within the f32 scroll limit it was published from"
-    )]
-    let offset = (x / f64::from(scale)) as f32;
-    valid.then_some(Request::Scroll(px(offset)))
 }
 
 struct Document {
@@ -153,13 +140,19 @@ impl Document {
             .boundaries()
             .nth(position.character_index)
     }
+
+    fn selection(&self, TextSelection { anchor, focus }: TextSelection) -> Option<Selection> {
+        Some(Selection {
+            anchor: self.offset(anchor)?,
+            focus: self.offset(focus)?,
+        })
+    }
 }
 
 struct Frame {
     bounds: Bounds<Pixels>,
     visible: Bounds<Pixels>,
     scroll: Pixels,
-    limit: Pixels,
     scale: f32,
 }
 
@@ -189,7 +182,7 @@ impl Painted {
         edit: &Edit,
         line: &ShapedLine,
         bounds: Bounds<Pixels>,
-        viewport: &Viewport,
+        scroll: Pixels,
         window: &Window,
     ) -> Option<Self> {
         let document = Document::new(field, edit)?;
@@ -204,26 +197,16 @@ impl Painted {
             Frame {
                 bounds,
                 visible: bounds.intersect(&window.content_mask().bounds),
-                scroll: viewport.offset,
-                limit: viewport.limit,
+                scroll,
                 scale: window.scale_factor(),
             },
         )
     }
 
     fn measured(document: Document, edit: &Edit, edges: Vec<Pixels>, frame: Frame) -> Option<Self> {
-        let Frame {
-            scroll,
-            limit,
-            scale,
-            ..
-        } = frame;
-        let measurable = scale.is_finite()
-            && scale > 0.0
-            && f32::from(scroll).is_finite()
-            && (f32::from(limit) * scale).is_finite()
-            && px(0.0) <= scroll
-            && scroll <= limit;
+        let Frame { scroll, scale, .. } = frame;
+        let measurable =
+            scale.is_finite() && scale > 0.0 && f32::from(scroll).is_finite() && px(0.0) <= scroll;
         let ends = edit.ends();
         let selection = TextSelection {
             anchor: document.position(ends.anchor)?,
@@ -238,24 +221,18 @@ impl Painted {
         })
     }
 
+    pub(super) fn run_ids(&self) -> Vec<NodeId> {
+        self.document.runs().iter().map(|run| run.id).collect()
+    }
+
     pub(super) fn publish(self, subtree: &mut A11ySubtreeBuilder<'_>) {
         let mut published = true;
         for (id, node) in self.runs() {
             published &= subtree.push_child(id, node);
         }
-        let Frame {
-            visible,
-            scroll,
-            limit,
-            scale,
-            ..
-        } = self.frame;
         let field = subtree.parent_node();
-        field.set_bounds(self.frame.physical(visible));
+        field.set_bounds(self.frame.physical(self.frame.visible));
         field.set_clips_children();
-        field.set_scroll_x(f64::from(f32::from(scroll) * scale));
-        field.set_scroll_x_min(0.0);
-        field.set_scroll_x_max(f64::from(f32::from(limit) * scale));
         if published {
             field.set_text_selection(self.selection);
         }

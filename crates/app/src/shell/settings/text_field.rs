@@ -9,13 +9,14 @@ use edit::{Composition, Edit};
 use gpui::{
     AccessibleAction, App, Bounds, ClipboardItem, Context, ElementInputHandler, EntityInputHandler,
     EventEmitter, FocusHandle, Focusable, KeyDownEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, Pixels, Point, ShapedLine, TextRun, UTF16Selection, UnderlineStyle, Window,
-    accesskit::ActionData, canvas, div, fill, point, prelude::*, px, size,
+    MouseMoveEvent, Pixels, Point, ShapedLine, TextRun, UTF16Selection, UnderlineStyle, WeakEntity,
+    Window, accesskit::ActionData, canvas, div, fill, point, prelude::*, px, size,
 };
 use viewport::Viewport;
 
 use crate::{
     controls::{CONTROL_TEXT, CORNER, HEIGHT, ring},
+    gpui_ext::EntityUpdate as _,
     theme::{Theme, alpha},
 };
 
@@ -151,33 +152,35 @@ impl TextField {
     }
 
     fn respond(
-        cx: &Context<'_, Self>,
+        field: WeakEntity<Self>,
+        action: AccessibleAction,
     ) -> impl FnMut(Option<&ActionData>, &mut Window, &mut App) + 'static {
-        let respond = cx.listener(Self::act);
         move |data, window, cx| {
             if let Some(data) = data {
-                respond(data, window, cx);
+                field.update_if_alive(cx, |field, cx| field.act(action, data, window, cx));
             }
         }
     }
 
-    fn act(&mut self, data: &ActionData, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(request) = Request::new(
-            data,
-            cx.entity_id(),
-            &self.edit,
-            &self.viewport,
-            window.scale_factor(),
-        ) else {
-            return;
-        };
-        match request {
-            Request::Replace(text) => {
+    fn act(
+        &mut self,
+        action: AccessibleAction,
+        data: &ActionData,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        match Request::new(action, data, cx.entity_id(), &self.edit) {
+            Some(Request::Replace(text)) => {
                 let range = 0..self.edit.text.encode_utf16().count();
                 self.replace(Some(range), text, Composition::Commit, cx);
             },
-            Request::Select(selection) => self.select_accessible(selection, window, cx),
-            Request::Scroll(offset) => self.scroll_accessible(offset, cx),
+            Some(Request::Select(selection)) => self.select_accessible(selection, window, cx),
+            Some(Request::Reveal(span)) => {
+                self.viewport
+                    .reveal(span, self.edit.generation, self.edit.ends());
+                cx.notify();
+            },
+            None => {},
         }
     }
 
@@ -193,12 +196,6 @@ impl TextField {
         self.viewport.reveal_caret();
         window.focus(&self.focus, cx);
         cx.notify();
-    }
-
-    fn scroll_accessible(&mut self, offset: Pixels, cx: &mut Context<'_, Self>) {
-        if self.viewport.pan(offset) {
-            cx.notify();
-        }
     }
 
     fn shape(&self, window: &Window) -> ShapedLine {
@@ -410,6 +407,7 @@ impl Render for TextField {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let palette = self.theme.palette();
         let field = cx.entity();
+        let this = cx.weak_entity();
         let placeholder = (self.edit.text.is_empty() && self.edit.marked.is_none())
             .then_some(self.placeholder)
             .filter(|placeholder| !placeholder.is_empty());
@@ -456,9 +454,14 @@ impl Render for TextField {
                     .when(!self.placeholder.is_empty(), |input| {
                         input.aria_placeholder(self.placeholder)
                     })
-                    .on_a11y_action(AccessibleAction::SetValue, Self::respond(cx))
-                    .on_a11y_action(AccessibleAction::SetTextSelection, Self::respond(cx))
-                    .on_a11y_action(AccessibleAction::SetScrollOffset, Self::respond(cx))
+                    .on_a11y_action(
+                        AccessibleAction::SetValue,
+                        Self::respond(this.clone(), AccessibleAction::SetValue),
+                    )
+                    .on_a11y_action(
+                        AccessibleAction::SetTextSelection,
+                        Self::respond(this, AccessibleAction::SetTextSelection),
+                    )
                     .a11y_synthetic_children(move |subtree| {
                         if let Ok(painted) = painted.try_recv() {
                             painted.publish(subtree);
@@ -475,29 +478,42 @@ impl Render for TextField {
                                 let viewport = input.viewport.layout(
                                     input.edit.generation,
                                     input.edit.ends(),
-                                    line.x_for_index(input.edit.cursor),
+                                    |offset| line.x_for_index(offset),
                                     bounds.size.width,
                                     line.width,
                                 );
-                                if window.is_a11y_active()
+                                let runs = if window.is_a11y_active()
                                     && let Some(painted) = Painted::new(
                                         field.entity_id(),
                                         &input.edit,
                                         &line,
                                         bounds,
-                                        &viewport,
+                                        viewport.offset,
                                         window,
-                                    )
-                                {
+                                    ) {
+                                    let runs = painted.run_ids();
                                     #[expect(
                                         clippy::let_underscore_must_use,
                                         reason = "A field without an accessibility node this frame has no reader for its text"
                                     )]
                                     let _ = publish.try_send(painted);
-                                }
-                                (field.clone(), line, viewport)
+                                    runs
+                                } else {
+                                    Vec::new()
+                                };
+                                (field.clone(), line, viewport, runs)
                             },
-                            move |bounds, (field, line, viewport), window, cx| {
+                            move |bounds, (field, line, viewport, runs), window, cx| {
+                                for run in runs {
+                                    window.on_a11y_action(
+                                        run,
+                                        AccessibleAction::ScrollIntoView,
+                                        Self::respond(
+                                            field.downgrade(),
+                                            AccessibleAction::ScrollIntoView,
+                                        ),
+                                    );
+                                }
                                 field.update(cx, |input, cx| {
                                     let scroll = viewport.offset;
                                     input.viewport = viewport;

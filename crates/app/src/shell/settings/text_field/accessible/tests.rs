@@ -1,4 +1,7 @@
-use gpui::{EntityId, accesskit::Point};
+use gpui::{
+    EntityId,
+    accesskit::{Point, ScrollHint},
+};
 
 use super::*;
 use crate::shell::settings::text_field::edit::Composition;
@@ -21,7 +24,6 @@ fn frame(scroll: f32) -> Frame {
         bounds,
         visible: bounds,
         scroll: px(scroll),
-        limit: px(400.0),
         scale: 2.0,
     }
 }
@@ -36,9 +38,15 @@ fn painted(edit: &Edit, scroll: f32) -> Option<Painted> {
 }
 
 fn request(edit: &Edit, data: &ActionData) -> Option<Selection> {
-    match Request::new(data, EntityId::from(FIELD), edit, &Viewport::default(), 1.0)? {
+    let request = Request::new(
+        AccessibleAction::SetTextSelection,
+        data,
+        EntityId::from(FIELD),
+        edit,
+    );
+    match request? {
         Request::Select(selection) => Some(selection),
-        Request::Replace(_) | Request::Scroll(_) => None,
+        Request::Replace(_) | Request::Reveal(_) => None,
     }
 }
 
@@ -163,10 +171,12 @@ fn scrolling_moves_geometry_without_retiring_runs() {
     );
     assert_eq!(still.bounds().unwrap().x0, 20.0);
     assert_eq!(scrolled.bounds().unwrap().x0, -10.0);
-    assert!(
-        painted(&text, 401.0).is_none(),
-        "A scroll past its limit was published"
-    );
+    for invalid in [-1.0, f32::NAN, f32::INFINITY] {
+        assert!(
+            painted(&text, invalid).is_none(),
+            "A scroll of {invalid} was published"
+        );
+    }
 }
 
 #[test]
@@ -182,28 +192,50 @@ fn a_field_scrolled_out_of_its_clip_publishes_an_empty_rectangle_at_the_clip_edg
 }
 
 #[test]
-fn scroll_requests_convert_scale_and_reject_offsets_outside_the_published_range() {
-    let viewport =
-        Viewport::default().layout(1, Selection::default(), px(0.0), px(100.0), px(500.0));
-    let text = edit("abc");
-    let scroll = |x: f64, y: f64, scale: f32| {
-        let data = ActionData::SetScrollOffset(Point { x, y });
-        match Request::new(&data, EntityId::from(FIELD), &text, &viewport, scale) {
-            Some(Request::Scroll(offset)) => Some(offset),
-            Some(Request::Replace(_) | Request::Select(_)) | None => None,
-        }
+fn reveal_requests_name_ranges_of_the_current_revision_and_match_their_action() {
+    let mut text = edit("ab🦀c");
+    let doc = document(&text);
+    let span = TextSelection {
+        anchor: doc.position(text.text.len()).unwrap(),
+        focus: doc.position(1).unwrap(),
     };
-    assert_eq!(scroll(806.0, 0.0, 2.0), Some(px(403.0)));
-    assert_eq!(scroll(0.0, 0.0, 2.0), Some(px(0.0)));
-    for (x, y, scale) in [
-        (806.5, 0.0, 2.0),
-        (-1.0, 0.0, 2.0),
-        (f64::NAN, 0.0, 2.0),
-        (f64::INFINITY, 0.0, 2.0),
-        (10.0, 1.0, 2.0),
-        (10.0, 0.0, 0.0),
-        (10.0, 0.0, f32::NAN),
+    let reveal = |text: &Edit, action, data: &ActionData| match Request::new(
+        action,
+        data,
+        EntityId::from(FIELD),
+        text,
+    )? {
+        Request::Reveal(span) => Some(span),
+        Request::Replace(_) | Request::Select(_) => None,
+    };
+    let named = ActionData::SetTextSelection(span);
+    assert_eq!(
+        reveal(&text, AccessibleAction::ScrollIntoView, &named),
+        Some(Selection {
+            anchor: text.text.len(),
+            focus: 1
+        })
+    );
+    assert!(
+        Request::new(
+            AccessibleAction::SetTextSelection,
+            &ActionData::Value("ab".into()),
+            EntityId::from(FIELD),
+            &text
+        )
+        .is_none(),
+        "A value was accepted as a selection"
+    );
+    for data in [
+        ActionData::ScrollHint(ScrollHint::TopEdge),
+        ActionData::SetScrollOffset(Point { x: 10.0, y: 0.0 }),
     ] {
-        assert_eq!(scroll(x, y, scale), None, "Accepted ({x}, {y}) at {scale}x");
+        assert_eq!(reveal(&text, AccessibleAction::ScrollIntoView, &data), None);
     }
+    text.set(text.text.clone());
+    assert_eq!(
+        reveal(&text, AccessibleAction::ScrollIntoView, &named),
+        None,
+        "A replaced text accepted a reveal from its previous revision"
+    );
 }
