@@ -5,20 +5,20 @@ use std::{
 
 use super::{encoder, read};
 use crate::{
-    Frame,
+    Frame, Part,
     movie::{
         canvas,
         encode::{Encoder as Timeline, End},
         recording::Movie,
     },
 };
-type Encoder = Timeline<encoder::Codec>;
-const FILE_LIMIT: u64 = 384 << 20;
-use crate::Part;
 
 mod colors;
 mod geometry;
 mod timing;
+
+type Encoder = Timeline<encoder::Codec>;
+const FILE_LIMIT: u64 = 384 << 20;
 
 fn frame(width: u32, height: u32, shade: u8) -> Frame {
     Frame {
