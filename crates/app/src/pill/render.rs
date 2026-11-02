@@ -5,10 +5,11 @@ use speakeasy_core::motion::Spring;
 
 use super::{
     Content, LID_CLOSED, Pill, RECORDING_WIDTH, SHADOW_BLUR, SHADOW_OFFSET, SHADOW_ROOM, Scene,
-    grille::Grille, symbol::Symbol,
+    grille::Grille,
 };
 use crate::{
-    controls::{caps, facet, hollow},
+    controls::{caps, facet, hollow, icon},
+    icons,
     runtime::Phase,
     theme::{Palette, alpha},
 };
@@ -209,8 +210,8 @@ impl Pill {
                 };
 
                 let mark = match (scene.show, scene.hands_free) {
-                    (true, _) => Some(Symbol::Screen.element(palette.live)),
-                    (false, true) => Some(Symbol::Lock.element(palette.muted)),
+                    (true, _) => Some(icon(icons::SCREEN, 16.0, palette.live)),
+                    (false, true) => Some(icon(icons::LOCK, 16.0, palette.muted)),
                     (false, false) => None,
                 };
 
@@ -237,7 +238,7 @@ impl Pill {
 
 fn slot_label(scene: &Scene, palette: &Palette) -> Option<AnyElement> {
     match scene.phase {
-        Phase::Starting => Some(marked(Symbol::Microphone, palette.muted, "Opening mic…")),
+        Phase::Starting => Some(marked(icons::MICROPHONE, palette.muted, "Opening mic…")),
         Phase::Empty => Some(
             div()
                 .text_size(px(12.0))
@@ -245,19 +246,19 @@ fn slot_label(scene: &Scene, palette: &Palette) -> Option<AnyElement> {
                 .into_any_element(),
         ),
         Phase::Copied if scene.labels_copy() => {
-            Some(marked(Symbol::Check, palette.lamp, "Show copied"))
+            Some(marked(icons::CHECK, palette.lamp, "Show copied"))
         },
-        Phase::Done => Some(Symbol::Check.element(palette.lamp).into_any_element()),
+        Phase::Done => Some(icon(icons::CHECK, 16.0, palette.lamp).into_any_element()),
         _ => None,
     }
 }
 
-fn marked(symbol: Symbol, color: u32, text: &'static str) -> AnyElement {
+fn marked(path: &'static str, color: u32, text: &'static str) -> AnyElement {
     div()
         .flex()
         .items_center()
         .gap(px(7.0))
-        .child(symbol.element(color))
+        .child(icon(path, 16.0, color))
         .child(div().text_size(px(12.0)).child(text))
         .into_any_element()
 }
