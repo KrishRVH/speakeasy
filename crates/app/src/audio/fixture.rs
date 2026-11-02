@@ -75,7 +75,7 @@ pub(crate) fn replay(
         .map(|bytes| i16::from_le_bytes(*bytes))
         .collect::<Vec<_>>();
     anyhow::ensure!(!samples.is_empty(), "The fixture has no samples");
-    Capture::spawn(id, events, move |events, control, cues, keep, whole| {
+    Capture::spawn(id, events, move |events, control, requests| {
         let started = Instant::now();
         let (producer, ring) = RingBuffer::new(samples_in(RING_CAPACITY, rate));
         let (errors, received) = async_channel::bounded(1);
@@ -112,7 +112,7 @@ pub(crate) fn replay(
             stats: Statistics::default(),
             report,
         });
-        Ok(recorder.record(id, events, control, cues, keep, whole))
+        Ok(recorder.record(id, events, control, requests))
     })
 }
 

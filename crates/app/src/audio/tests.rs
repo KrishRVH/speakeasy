@@ -1,10 +1,11 @@
-use std::sync::PoisonError;
+use std::{sync::PoisonError, time::SystemTime};
 
 use anyhow::ensure;
 use tokio::time::timeout;
 
 use super::{pcm::SAMPLE_BYTES, *};
 use crate::{
+    show::{Keeper, Kept},
     sounds::Cue,
     testing::{PATIENCE, still_pending},
 };
@@ -73,7 +74,7 @@ async fn sealed_audio_is_reported_before_device_teardown_and_retirement_waits() 
     let (events, audio) = async_channel::bounded(1);
     let (entered, teardown) = async_channel::bounded(1);
     let (release, waiting) = async_channel::bounded(1);
-    let capture = Capture::spawn(SessionId::FIRST, events, move |_, _, _, _, _| {
+    let capture = Capture::spawn(SessionId::FIRST, events, move |_, _, _| {
         Ok(Captured {
             outcome: Ok(Some(Sealed {
                 wav: vec![1, 2],
@@ -102,7 +103,7 @@ async fn capture_retirement_signals_cancel_and_waits_for_teardown() -> anyhow::R
     let (events, _audio) = async_channel::bounded(1);
     let (started, starting) = async_channel::bounded(1);
     let (release, waiting) = async_channel::bounded(1);
-    let capture = Capture::spawn(SessionId::FIRST, events, move |_, control, _, _, _| {
+    let capture = Capture::spawn(SessionId::FIRST, events, move |_, control, _| {
         started.send_blocking(Arc::clone(control))?;
         waiting.recv_blocking()?;
         Ok(Captured {
@@ -150,7 +151,7 @@ async fn consumer_wakes(cancel: bool, wake_before_park: bool) -> anyhow::Result<
     let (armed, arming) = async_channel::bounded(1);
     let gate = Arc::new((Mutex::new(!wake_before_park), Condvar::new()));
     let waiting = Arc::clone(&gate);
-    let capture = Capture::spawn(SessionId::FIRST, events, move |_, control, _, _, _| {
+    let capture = Capture::spawn(SessionId::FIRST, events, move |_, control, _| {
         ensure!(control.mode() == Mode::Recording);
         armed.send_blocking(thread::current())?;
         let (lock, ready) = &*waiting;
@@ -208,7 +209,7 @@ async fn consumer_wakes(cancel: bool, wake_before_park: bool) -> anyhow::Result<
 async fn closing_audio_events_unblocks_owned_capture_retirement() -> anyhow::Result<()> {
     let (events, audio) = async_channel::bounded(1);
     events.try_send(CaptureEvent::Ready(SessionId::FIRST))?;
-    let capture = Capture::spawn(SessionId::FIRST, events, |_, _, _, _, _| {
+    let capture = Capture::spawn(SessionId::FIRST, events, |_, _, _| {
         Ok(Captured {
             outcome: Ok(None),
             device: (),
@@ -228,7 +229,7 @@ async fn a_panicked_capture_reports_failure_and_still_retires() -> anyhow::Resul
     let capture = Capture::spawn(
         SessionId::FIRST,
         events,
-        |_, _, _, _, _| -> anyhow::Result<Captured<()>> {
+        |_, _, _| -> anyhow::Result<Captured<()>> {
             panic::resume_unwind(Box::new(()));
         },
     )?;
@@ -239,6 +240,46 @@ async fn a_panicked_capture_reports_failure_and_still_retires() -> anyhow::Resul
         "A panicked capture left its session waiting"
     );
     timeout(PATIENCE, capture.retire()).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_finished_capture_refuses_a_late_show_checkpoint() -> anyhow::Result<()> {
+    struct Device(Receiver<()>);
+    impl Drop for Device {
+        fn drop(&mut self) {
+            self.0.recv_blocking().unwrap_or_default();
+        }
+    }
+    let root = tempfile::tempdir()?;
+    let parent = root.path().to_owned();
+    let (events, audio) = async_channel::bounded(1);
+    let (release, waiting) = async_channel::bounded(1);
+    let capture = Capture::spawn(SessionId::FIRST, events, move |_, _, _| {
+        Ok(Captured {
+            outcome: Ok(None),
+            device: Device(waiting),
+        })
+    })?;
+    let report = timeout(PATIENCE, audio.recv()).await??;
+    let Kept {
+        keeper,
+        frames,
+        audio: log,
+    } = Keeper::start(move || Ok(parent), SystemTime::now())?;
+    drop(frames);
+    let accepted = capture.keep(log, Duration::ZERO, "en");
+    release.try_send(())?;
+    timeout(PATIENCE, capture.retire()).await?;
+    keeper.close().await?;
+    assert!(matches!(
+        report,
+        CaptureEvent::Finished(SessionId::FIRST, Ok(None))
+    ));
+    assert!(
+        !accepted,
+        "A finished capture accepted Show audio it can never checkpoint"
+    );
     Ok(())
 }
 

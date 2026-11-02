@@ -72,7 +72,7 @@ impl Capture {
         Self::spawn(
             id,
             events,
-            move |events, control, cues, keep, whole| match Recorder::open(
+            move |events, control, requests| match Recorder::open(
                 microphone.as_deref(),
                 recognition,
                 events,
@@ -80,7 +80,7 @@ impl Capture {
             ) {
                 Ok(recorder) => {
                     let Captured { outcome, device } =
-                        recorder.record(id, events, control, cues, keep, whole);
+                        recorder.record(id, events, control, requests);
                     Ok(Captured {
                         outcome,
                         device: Some(device),
@@ -101,9 +101,7 @@ impl Capture {
         work: impl FnOnce(
             &Sender<CaptureEvent>,
             &Arc<Control>,
-            &Receiver<()>,
-            &Receiver<checkpoint::Keep>,
-            &Receiver<()>,
+            &Requests,
         ) -> anyhow::Result<Captured<D>>
         + Send
         + 'static,
@@ -112,14 +110,17 @@ impl Capture {
         let (cues, heard) = async_channel::unbounded();
         let (keep, kept) = async_channel::bounded(1);
         let (whole, entire) = async_channel::bounded(1);
+        let requests = Requests {
+            cues: heard,
+            keep: kept,
+            whole: entire,
+        };
         let thread = OwnedThread::spawn("audio-capture", {
             let control = Arc::clone(&control);
             move || {
-                let ran = panic::catch_unwind(AssertUnwindSafe(|| {
-                    work(&events, &control, &heard, &kept, &entire)
-                }));
-                kept.close();
-                drop(kept);
+                let ran =
+                    panic::catch_unwind(AssertUnwindSafe(|| work(&events, &control, &requests)));
+                drop(requests);
                 let (outcome, device) = match ran {
                     Ok(Ok(Captured { outcome, device })) => (outcome, Some(device)),
                     Ok(Err(error)) => (Err(error), None),
@@ -215,6 +216,12 @@ impl Drop for Signal {
         self.control.cancel();
         self.thread.unpark();
     }
+}
+
+struct Requests {
+    cues: Receiver<()>,
+    keep: Receiver<checkpoint::Keep>,
+    whole: Receiver<()>,
 }
 
 enum Startup {
@@ -342,12 +349,10 @@ impl<D> Recorder<D> {
         id: SessionId,
         events: &Sender<CaptureEvent>,
         control: &Control,
-        cues: &Receiver<()>,
-        keep: &Receiver<checkpoint::Keep>,
-        whole: &Receiver<()>,
+        requests: &Requests,
     ) -> Captured<D> {
-        let mut keeping = checkpoint::Keeping::new(keep);
-        let drained = self.drain(id, events, control, cues, &mut keeping, whole);
+        let mut keeping = checkpoint::Keeping::new(&requests.keep);
+        let drained = self.drain(id, events, control, requests, &mut keeping);
         if !abandoned(control, events) && !keeping.finish(self.pcm.audio(), self.rate) {
             keeping.warn(id, events);
         }
@@ -387,9 +392,8 @@ impl<D> Recorder<D> {
         id: SessionId,
         events: &Sender<CaptureEvent>,
         control: &Control,
-        cues: &Receiver<()>,
+        requests: &Requests,
         keeping: &mut checkpoint::Keeping<'_>,
-        whole: &Receiver<()>,
     ) -> anyhow::Result<()> {
         let mut meter = LevelMeter::new();
         let mut ready = false;
@@ -401,7 +405,7 @@ impl<D> Recorder<D> {
             if abandoned(control, events) {
                 return Ok(());
             }
-            if whole.try_recv().is_ok() {
+            if requests.whole.try_recv().is_ok() {
                 self.cuts = None;
                 self.live = live::Feed::Abandoned;
             }
@@ -419,7 +423,7 @@ impl<D> Recorder<D> {
                 ready = true;
                 events.send_blocking(CaptureEvent::Ready(id))?;
             }
-            keeping.classify(&mut self.speech, self.pcm.audio(), cues);
+            keeping.classify(&mut self.speech, self.pcm.audio(), &requests.cues);
             if !keeping.offer(self.pcm.audio(), self.rate) {
                 keeping.warn(id, events);
             }
