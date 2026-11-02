@@ -192,15 +192,19 @@ impl Review {
 
     pub(crate) fn reveal(&mut self, window: &Window, cx: &mut Context<'_, Self>) {
         self.refresh(cx);
-        self.visibility = Some(defer_native(
-            window.window_handle(),
-            "Shows",
-            cx,
-            |native, cx| {
-                native.set_window_visible(true);
-                cx.update(|cx| cx.activate(true));
-            },
-        ));
+        let shows = window.window_handle();
+        self.visibility = Some(defer_native(shows, "Shows", cx, move |native, cx| {
+            native.set_window_visible(true);
+            cx.update(|cx| {
+                cx.activate(true);
+                #[cfg(target_os = "linux")]
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "A Shows window that closed after mapping has nothing left to raise"
+                )]
+                let _ = cx.update_window(shows, |_, window, _| window.activate_window());
+            });
+        }));
     }
 
     pub(crate) fn set_theme(&mut self, theme: Theme, cx: &mut Context<'_, Self>) {
