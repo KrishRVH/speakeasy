@@ -817,7 +817,7 @@ impl<'a> Kit<'a> {
         )
     }
 
-    fn pressable(
+    pub(crate) fn pressable(
         self,
         id: impl Into<ElementId>,
         label: SharedString,

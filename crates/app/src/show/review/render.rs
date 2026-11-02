@@ -13,8 +13,7 @@ use super::{
 };
 use crate::{
     controls::{
-        CONTROL_TEXT, DETAIL_LINE, DETAIL_TEXT, DISABLED, Kit, PANEL_CORNER, TITLE_TEXT, Tone,
-        Weight,
+        CONTROL_TEXT, DETAIL_LINE, DETAIL_TEXT, Kit, PANEL_CORNER, TITLE_TEXT, Tone, Weight,
     },
     icons,
     show::{
@@ -105,7 +104,6 @@ impl Review {
         now: SystemTime,
         cx: &Context<'_, Self>,
     ) -> Div {
-        let selected = self.library.selected.as_ref();
         div()
             .w(px(260.0))
             .flex_none()
@@ -157,6 +155,8 @@ impl Review {
             .child(
                 div()
                     .id("show-library")
+                    .role(gpui::Role::ListBox)
+                    .aria_label("Shows")
                     .flex_1()
                     .min_h(px(0.0))
                     .overflow_y_scroll()
@@ -165,42 +165,52 @@ impl Review {
                     .flex()
                     .flex_col()
                     .gap(px(2.0))
-                    .children(self.library.rows.iter().enumerate().map(|(index, row)| {
-                        let current = selected.is_some_and(|key| key.directory == row.directory);
-                        self.show_row(index, row, current, kit, palette, now, cx)
-                    })),
+                    .children(
+                        self.library
+                            .rows
+                            .iter()
+                            .enumerate()
+                            .map(|(index, row)| self.show_row(index, row, kit, palette, now, cx)),
+                    ),
             )
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "A library row reads its row, selection, kit, palette, clock, and view context"
-    )]
     fn show_row(
         &self,
         index: usize,
         row: &Row,
-        current: bool,
         kit: Kit<'_>,
         palette: &Palette,
         now: SystemTime,
         cx: &Context<'_, Self>,
     ) -> Stateful<Div> {
+        let current = self.library.is_selected(&row.directory);
+        let recorded = row.recorded(now);
         let description = row.duration.map_or_else(
             || "Details unavailable".into(),
             |duration| format!("{duration} · {} frames", row.frames),
         );
         let tags: Vec<_> = (row.pinned == Some(true))
-            .then(|| kit.tag("Kept", Tone::Lamp))
+            .then_some(("Kept", Tone::Lamp))
             .into_iter()
-            .chain(status(row).map(|(label, tone)| kit.tag(label, tone)))
+            .chain(status(row))
             .collect();
+        let label = [recorded.as_str(), &description]
+            .into_iter()
+            .chain(tags.iter().map(|&(tag, _)| tag))
+            .collect::<Vec<_>>()
+            .join(", ");
         let hover = palette.hover();
-        self.pressable(
+        pressable(
+            kit,
             palette,
-            id(Action::Show(index)),
-            press(Action::Show(index), true, cx),
+            Action::Show(index),
+            label.into(),
+            gpui::Role::ListBoxOption,
+            true,
+            cx,
         )
+        .aria_selected(current)
         .relative()
         .w_full()
         .flex()
@@ -216,7 +226,7 @@ impl Review {
             div()
                 .text_size(TITLE_TEXT)
                 .font_weight(FontWeight::MEDIUM)
-                .child(row.recorded(now)),
+                .child(recorded),
         )
         .child(kit.detail(description))
         .when(!tags.is_empty(), |item| {
@@ -226,7 +236,7 @@ impl Review {
                     .flex()
                     .flex_wrap()
                     .gap(px(4.0))
-                    .children(tags),
+                    .children(tags.into_iter().map(|(tag, tone)| kit.tag(tag, tone))),
             )
         })
     }
@@ -471,7 +481,7 @@ impl Review {
             )
             .child(match self.pane {
                 Pane::Summary => self.summary(palette).into_any_element(),
-                Pane::Narration => self.narration(palette, cx).into_any_element(),
+                Pane::Narration => self.narration(kit, palette, cx).into_any_element(),
             })
     }
 
@@ -694,7 +704,7 @@ impl Review {
         well(palette, "show-summary", px(160.0)).child(text)
     }
 
-    fn narration(&self, palette: &Palette, cx: &Context<'_, Self>) -> Stateful<Div> {
+    fn narration(&self, kit: Kit<'_>, palette: &Palette, cx: &Context<'_, Self>) -> Stateful<Div> {
         let narration = self.detail.as_ref().map(|detail| &detail.narration);
         let incomplete = narration.is_some_and(Narration::incomplete);
         let truncated = narration.is_some_and(Narration::truncated);
@@ -704,7 +714,7 @@ impl Review {
                     clauses
                         .iter()
                         .enumerate()
-                        .map(|(index, clause)| self.clause(index, clause, palette, cx)),
+                        .map(|(index, clause)| self.clause(index, clause, kit, palette, cx)),
                 )
             },
             Some(Narration::Untimed { text, .. }) => div()
@@ -768,6 +778,7 @@ impl Review {
         &self,
         index: usize,
         clause: &speakeasy_show::TimedClause,
+        kit: Kit<'_>,
         palette: &Palette,
         cx: &Context<'_, Self>,
     ) -> Stateful<Div> {
@@ -778,11 +789,16 @@ impl Review {
             .detail
             .as_ref()
             .is_some_and(|detail| !detail.frames.is_empty());
+        let stamp = Stamp(clause.at).to_string();
         let hover = palette.hover();
-        self.pressable(
+        pressable(
+            kit,
             palette,
-            id(Action::Clause(index)),
-            press(Action::Clause(index), enabled, cx),
+            Action::Clause(index),
+            format!("{stamp} {}", clause.text).into(),
+            gpui::Role::Button,
+            enabled,
+            cx,
         )
         .w_full()
         .flex()
@@ -799,7 +815,7 @@ impl Review {
             div()
                 .flex_none()
                 .text_color(rgb(palette.muted))
-                .child(Stamp(clause.at).to_string()),
+                .child(stamp),
         )
         .child(div().flex_1().min_w(px(0.0)).child(clause.text.clone()))
     }
@@ -887,29 +903,6 @@ impl Review {
                         pane.child(confirm(pending, busy, kit, palette, cx))
                     }),
             )
-    }
-
-    fn pressable(
-        &self,
-        palette: &Palette,
-        id: ElementId,
-        on_click: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
-    ) -> Stateful<Div> {
-        let enabled = on_click.is_some();
-        let lamp = palette.lamp;
-        div()
-            .id(id)
-            .focusable()
-            .tab_stop(enabled)
-            .border_1()
-            .border_color(alpha(lamp, 0.0))
-            .when(!enabled, |item| item.opacity(DISABLED))
-            .when(self.keyboard, |item| {
-                item.focus(move |style| style.border_color(rgb(lamp)).bg(alpha(lamp, 0.1)))
-            })
-            .when_some(on_click, |item, on_click| {
-                item.cursor_pointer().on_click(on_click)
-            })
     }
 }
 
@@ -1153,6 +1146,20 @@ fn press(
     cx: &Context<'_, Review>,
 ) -> Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static> {
     enabled.then(|| cx.listener(move |view, _, _, cx| view.act(action, cx)))
+}
+
+fn pressable(
+    kit: Kit<'_>,
+    palette: &Palette,
+    action: Action,
+    label: SharedString,
+    role: gpui::Role,
+    enabled: bool,
+    cx: &Context<'_, Review>,
+) -> Stateful<Div> {
+    kit.pressable(id(action), label, role, false, press(action, enabled, cx))
+        .border_1()
+        .border_color(alpha(palette.lamp, 0.0))
 }
 
 fn command(
