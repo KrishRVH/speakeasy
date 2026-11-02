@@ -112,6 +112,12 @@ pub(in crate::shell::settings) async fn exercise(
             view.config.language == "en",
             "The surviving preset was not usable"
         );
+        view.toggle_menu(Menu::Preset(0), window, cx);
+        view.finish_reset(Ok(()), cx);
+        ensure!(
+            view.config.presets.is_empty() && view.menus.open.is_none(),
+            "A reset left the menu of a preset it removed open"
+        );
         view.config = original;
         view.notice = None;
         cx.notify();

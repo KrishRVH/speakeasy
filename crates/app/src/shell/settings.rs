@@ -358,6 +358,7 @@ impl Settings {
                 self.vocabulary.clear(cx);
                 self.recognition.clear(cx);
                 self.presets.clear(cx);
+                self.menus.dismiss_presets();
                 self.own_engine = false;
                 self.choosing_model = false;
                 self.file_picker = None;
