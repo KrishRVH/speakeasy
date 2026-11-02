@@ -17,6 +17,16 @@ pub(super) struct Download<'a> {
     pub(super) sha256: &'a str,
 }
 
+impl<'a> Download<'a> {
+    pub(super) fn file_name(&self) -> &'a str {
+        self.url.rsplit_once('/').map_or(self.url, |(_, name)| name)
+    }
+
+    fn matches(&self, hash: Sha256) -> bool {
+        hex_digest(&hash.finalize()) == self.sha256
+    }
+}
+
 pub(super) async fn fetch(
     client: &Client,
     download: &Download<'_>,
@@ -24,17 +34,16 @@ pub(super) async fn fetch(
     step: &'static str,
     progress: &watch::Sender<Progress>,
 ) -> anyhow::Result<PathBuf> {
-    let name = file_name(download.url);
+    let name = download.file_name();
     let path = directory.join(name);
     if path.is_file() {
         let size = fs::metadata(&path).map_err(file_error(directory))?.len();
         if size != download.size
-            || hex_digest(
-                &hash_partial(&path, size, progress)
+            || !download.matches(
+                hash_file(&path, size, progress)
                     .await
-                    .map_err(file_error(directory))?
-                    .finalize(),
-            ) != download.sha256
+                    .map_err(file_error(directory))?,
+            )
         {
             bail!(
                 "The installed download at {} does not match its published checksum. Move this file aside and try setup again.",
@@ -47,10 +56,10 @@ pub(super) async fn fetch(
     let partial = directory.join(format!("{name}.part"));
     let mut done = fs::metadata(&partial).map_or(0, |metadata| metadata.len());
     if done == download.size {
-        let hasher = hash_partial(&partial, done, progress)
+        let hash = hash_file(&partial, done, progress)
             .await
             .map_err(file_error(directory))?;
-        if hex_digest(&hasher.finalize()) == download.sha256 {
+        if download.matches(hash) {
             fs::rename(&partial, &path).map_err(file_error(directory))?;
             return Ok(path);
         }
@@ -71,9 +80,9 @@ pub(super) async fn fetch(
     if !status.is_success() {
         bail!("The download server answered {status}. Try again later.");
     }
-    let (mut hasher, mut file) = if done > 0 && status == StatusCode::PARTIAL_CONTENT {
+    let (mut hash, mut file) = if done > 0 && status == StatusCode::PARTIAL_CONTENT {
         (
-            hash_partial(&partial, done, progress)
+            hash_file(&partial, done, progress)
                 .await
                 .map_err(file_error(directory))?,
             OpenOptions::new()
@@ -102,13 +111,13 @@ pub(super) async fn fetch(
         if done > download.size {
             break;
         }
-        hasher.update(&chunk);
+        hash.update(&chunk);
         file.write_all(&chunk).map_err(file_error(directory))?;
         progress.send_modify(|progress| progress.done = done);
     }
     file.sync_all().map_err(file_error(directory))?;
     drop(file);
-    if done != download.size || hex_digest(&hasher.finalize()) != download.sha256 {
+    if done != download.size || !download.matches(hash) {
         fs::remove_file(&partial).map_err(file_error(directory))?;
         bail!("A download did not match its published checksum. Try again.");
     }
@@ -124,8 +133,8 @@ pub(super) fn hex_digest(bytes: &[u8]) -> String {
         .collect()
 }
 
-async fn hash_partial(
-    partial: &Path,
+async fn hash_file(
+    path: &Path,
     size: u64,
     progress: &watch::Sender<Progress>,
 ) -> io::Result<Sha256> {
@@ -134,7 +143,7 @@ async fn hash_partial(
         done: 0,
         total: size,
     });
-    let mut file = tokio::fs::File::open(partial).await?;
+    let mut file = tokio::fs::File::open(path).await?;
 
     let mut chunk = Vec::with_capacity(1024 * 1024);
     let mut hasher = Sha256::new();
@@ -152,10 +161,6 @@ async fn hash_partial(
         tokio::task::yield_now().await;
     }
     Ok(hasher)
-}
-
-pub(super) fn file_name(url: &str) -> &str {
-    url.rsplit_once('/').map_or(url, |(_, name)| name)
 }
 
 #[cfg(test)]

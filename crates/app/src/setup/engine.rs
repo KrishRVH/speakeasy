@@ -73,7 +73,7 @@ pub(super) struct ChosenEngine {
 }
 
 impl ChosenEngine {
-    pub(super) fn executable(self) -> PathBuf {
+    pub(super) fn executable(&self) -> PathBuf {
         self.directory.join(EXECUTABLE)
     }
 }

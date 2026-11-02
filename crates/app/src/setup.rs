@@ -50,13 +50,16 @@ fn downloaded_in(root: &Path) -> Vec<Model> {
     [(Model::Parakeet, &PARAKEET), (Model::Nemotron, &NEMOTRON)]
         .into_iter()
         .filter(|(_, download)| {
-            root.join("models")
-                .join(download.sha256)
-                .join(download::file_name(download.url))
+            model_directory(root, download)
+                .join(download.file_name())
                 .is_file()
         })
         .map(|(model, _)| model)
         .collect()
+}
+
+fn model_directory(root: &Path, download: &Download<'_>) -> PathBuf {
+    root.join("models").join(download.sha256)
 }
 
 #[derive(Clone, Copy)]
@@ -301,17 +304,16 @@ async fn install(
     let model = fetch(
         &client,
         download,
-        &root.join("models").join(download.sha256),
+        &model_directory(root, download),
         step,
         progress,
     )
     .await?;
-    let use_gpu = engine.use_gpu;
     Ok(Installed {
         choice,
         engine_executable: engine.executable(),
         model,
-        use_gpu,
+        use_gpu: engine.use_gpu,
     })
 }
 

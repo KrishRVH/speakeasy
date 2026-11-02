@@ -9,7 +9,7 @@ use tokio::sync::watch;
 
 use super::{
     Installation, Progress,
-    download::{Download, fetch, file_name},
+    download::{Download, fetch},
     file_error, system32,
 };
 use crate::child::hidden_command;
@@ -26,7 +26,7 @@ pub(super) async fn unpack(
     progress: &watch::Sender<Progress>,
     installation: &mut Installation,
 ) -> anyhow::Result<PathBuf> {
-    let name = file_name(archive.url);
+    let name = archive.file_name();
     let stem = name
         .strip_suffix(".zip")
         .or_else(|| name.strip_suffix(".tar.gz"))
