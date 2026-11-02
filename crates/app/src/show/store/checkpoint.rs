@@ -21,6 +21,7 @@ const LOCK: &str = "owner.lock";
 const DISCARDED: &str = "discarded";
 const PUBLISHED: &str = "published";
 const NARRATED: &str = "\nnarrated";
+const MARKER_LIMIT: u64 = 128;
 const PROVENANCE: &str = ".checkpoint";
 const NARRATION: &str = "narration.json";
 const NARRATION_LIMIT: u64 = 4 << 20;
@@ -274,7 +275,7 @@ impl Checkpoint {
     }
 
     fn publication(&self) -> anyhow::Result<Option<Publication>> {
-        let marker = match recall::read_file(&self.directory, PUBLISHED, 128) {
+        let marker = match recall::read_file(&self.directory, PUBLISHED, MARKER_LIMIT) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error.into()),
@@ -287,9 +288,10 @@ impl Checkpoint {
             .map_or((marker, Publication::Pending), |target| {
                 (target, Publication::Narrated)
             });
-        let target = Some(target)
-            .filter(|name| age::recorded_at(name).is_some())
-            .context("Checkpoint publication marker is invalid")?;
+        anyhow::ensure!(
+            age::recorded_at(target).is_some(),
+            "Checkpoint publication marker is invalid"
+        );
         let target = self
             .directory
             .parent()
@@ -304,7 +306,7 @@ impl Checkpoint {
         if !metadata.is_dir() || metadata.file_type().is_symlink() {
             return Ok(None);
         }
-        match recall::read_file(&target, PROVENANCE, 128) {
+        match recall::read_file(&target, PROVENANCE, MARKER_LIMIT) {
             Ok(bytes) => Ok((bytes == self.id()?.as_bytes()).then_some(publication)),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(error.into()),
@@ -349,10 +351,7 @@ impl Checkpoint {
             let Ok(event) = Log::decode(&record) else {
                 break;
             };
-            if take.apply(&event).is_err() {
-                break;
-            }
-            if take.ended() {
+            if take.apply(&event).is_err() || take.ended() {
                 break;
             }
         }
