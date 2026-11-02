@@ -49,6 +49,7 @@ use crate::{
     instance::{Event, Instance, Request},
     runtime::{Meter, Phase, Report, Snapshot},
     shell::{LaunchMode, Services},
+    transcript::style::Style,
 };
 
 const BRAND_FONT: &str = "Josefin Sans";
@@ -336,33 +337,44 @@ fn terminal() -> Option<io::Stderr> {
 
 fn print_help() -> io::Result<()> {
     let mut out = io::stdout().lock();
-    let commands = if cfg!(target_os = "linux") {
-        " | --toggle | --cancel"
-    } else {
-        ""
-    };
-    writeln!(
-        out,
-        "speakeasy [--config PATH] [--demo | --demo-tray{commands}]\nShortcut: {SHORTCUT}"
-    )?;
     if cfg!(target_os = "linux") {
         writeln!(
             out,
-            "Hold to dictate or double-tap for hands-free. {CANCEL_SHORTCUT} cancels. Desktop-approved bindings may differ.\n--toggle / --cancel control a running app when Desktop bindings is enabled."
+            "speakeasy [--config PATH] [--demo | --demo-tray | --toggle | --cancel]\n\
+             Shortcut: {SHORTCUT}\n\
+             Hold to dictate or double-tap for hands-free. {CANCEL_SHORTCUT} cancels. \
+             Desktop-approved bindings may differ.\n\
+             --toggle / --cancel control a running app when Desktop bindings is enabled."
         )?;
     } else {
         writeln!(
             out,
-            "Hold to dictate; add Space or double-tap for hands-free, or S, W, or A to Show the screen, a window, or an area. Add V to paste the last dictation. {CANCEL_SHORTCUT} cancels, a Show only while the shortcut is held."
+            "speakeasy [--config PATH] [--demo | --demo-tray]\n\
+             Shortcut: {SHORTCUT}\n\
+             Hold to dictate; add Space or double-tap for hands-free, or S, W, or A to Show \
+             the screen, a window, or an area. Add V to paste the last dictation. \
+             {CANCEL_SHORTCUT} cancels, a Show only while the shortcut is held."
         )?;
     }
     writeln!(
         out,
-        "--demo uses simulated audio without the microphone, global shortcut, model, or clipboard.\n--demo-tray also previews native tray, minimize, close and relaunch behavior."
-    )?;
-    writeln!(
-        out,
-        "speakeasy status [--config PATH]\nspeakeasy dictation start [--style STYLE] [--config PATH]\nspeakeasy dictation stop|cancel TOKEN [--config PATH]\nspeakeasy paste-last [--config PATH]\nspeakeasy style STYLE [--config PATH]\nspeakeasy preset NAME [--config PATH]\n\nControl commands return JSON: exit 0 acknowledged, 1 refused, 2 unknown or not running.\nStart returns a session token; stop and cancel require that exact token.\nStyles: prose, verbatim, camel, pascal, snake, kebab, constant.\nPreset selects a saved preset while idle. Style applies to the next recording.\nspeakeasy --version prints the version.\nspeakeasy show --help lists the Show commands."
+        "--demo uses simulated audio without the microphone, global shortcut, model, or \
+         clipboard.\n\
+         --demo-tray also previews native tray, minimize, close and relaunch behavior.\n\
+         speakeasy status [--config PATH]\n\
+         speakeasy dictation start [--style STYLE] [--config PATH]\n\
+         speakeasy dictation stop|cancel TOKEN [--config PATH]\n\
+         speakeasy paste-last [--config PATH]\n\
+         speakeasy style STYLE [--config PATH]\n\
+         speakeasy preset NAME [--config PATH]\n\n\
+         Control commands return JSON: exit 0 acknowledged, 1 refused, 2 unknown or not \
+         running.\n\
+         Start returns a session token; stop and cancel require that exact token.\n\
+         Styles: {styles}.\n\
+         Preset selects a saved preset while idle. Style applies to the next recording.\n\
+         speakeasy --version prints the version.\n\
+         speakeasy show --help lists the Show commands.",
+        styles = Style::ALL.map(Style::name).join(", "),
     )
 }
 
