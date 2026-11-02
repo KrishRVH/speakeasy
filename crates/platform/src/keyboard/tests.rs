@@ -136,6 +136,7 @@ fn mac_presets_keep_hands_free_shows_and_escape_without_claiming_left_modifiers(
         );
     }
 }
+
 #[test]
 fn mac_alternative_modifiers_preserve_quick_application_shortcuts() {
     for shortcut in [
