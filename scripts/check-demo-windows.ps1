@@ -399,6 +399,10 @@ function Test-StaticAccessibility([IntPtr]$Window) {
         $show = $transition.Show
         $null = [DemoWindows]::ShowWindow($Window, $show)
         $field = Wait-Field "reopen with command $show"
+        try {
+            if (![string]::IsNullOrEmpty($oldText.GetText(-1))) { throw 'Reopening revived a retained text range' }
+        } catch [Windows.Automation.ElementNotAvailableException] {}
+        catch [InvalidOperationException] {}
         try { $oldValue.SetValue('Stale synthetic edit') }
         catch [Windows.Automation.ElementNotAvailableException] {}
         catch [InvalidOperationException] {}
@@ -408,7 +412,7 @@ function Test-StaticAccessibility([IntPtr]$Window) {
         $oldValue = $value
         $oldText = $field.GetCurrentPattern([Windows.Automation.TextPattern]::Pattern).DocumentRange
     }
-    Write-Host 'PASS: static owned UIA hide/minimize, nonactivating and normal reopen, and stale-provider rejection without unrelated redraws.'
+    Write-Host 'PASS: static owned UIA hide/minimize, nonactivating and normal reopen, and stale provider and range rejection without unrelated redraws.'
     return $root
 }
 # -4 is per-monitor DPI awareness (v2), so window rectangles are in the physical pixels that

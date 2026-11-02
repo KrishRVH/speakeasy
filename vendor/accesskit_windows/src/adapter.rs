@@ -673,6 +673,6 @@ impl QueuedEvents {
 // contained types. This is safe because we're not using COM threading.
 unsafe impl Send for QueuedEvents {}
 
-// Speakeasy patch: regressions for provider retirement.
+// Speakeasy patch: regressions for provider and range retirement.
 #[cfg(test)]
 mod tests;

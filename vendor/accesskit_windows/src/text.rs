@@ -19,7 +19,11 @@ use windows::{
     core::*,
 };
 
-use crate::{context::Context, util::*};
+use crate::{
+    context::Context,
+    node::{PlatformNode, PlatformNode_Impl},
+    util::*,
+};
 
 // Speakeasy patch: clipped text geometry and precise horizontal scrolling.
 pub(crate) mod geometry;
@@ -213,13 +217,16 @@ fn move_position(
 #[implement(ITextRangeProvider)]
 pub(crate) struct PlatformRange {
     context: Weak<Context>,
+    // Speakeasy patch: the provider whose text pattern created the range.
+    owner: ComObject<PlatformNode>,
     state: RwLock<WeakRange>,
 }
 
 impl PlatformRange {
-    pub(crate) fn new(context: &Weak<Context>, range: Range) -> Self {
+    pub(crate) fn new(owner: &PlatformNode_Impl, range: Range) -> Self {
         Self {
-            context: context.clone(),
+            context: owner.context.clone(),
+            owner: owner.to_object(),
             state: RwLock::new(range.downgrade()),
         }
     }
@@ -228,12 +235,25 @@ impl PlatformRange {
         upgrade(&self.context)
     }
 
+    // Speakeasy patch: a range retires with its provider, even when a later tree
+    // restores its nodes. Callers hold the tree lock, so retirement cannot race.
+    fn require_current(&self, context: &Context) -> Result<()> {
+        let owner: &PlatformNode = &self.owner;
+        match owner.node_id {
+            Some(id) if !context.is_current_platform_node(id, owner) => {
+                Err(element_not_available())
+            }
+            _ => Ok(()),
+        }
+    }
+
     fn with_tree_state_and_context<F, T>(&self, f: F) -> Result<T>
     where
         F: FnOnce(&TreeState, &Context) -> Result<T>,
     {
         let context = self.upgrade_context()?;
         let tree = context.read_tree();
+        self.require_current(&context)?;
         f(tree.state(), &context)
     }
 
@@ -291,6 +311,7 @@ impl PlatformRange {
     {
         let context = self.upgrade_context()?;
         let tree = context.read_tree();
+        self.require_current(&context)?;
         let range = self.upgrade_for_read(tree.state())?;
         let request = f(range, &tree)?;
         drop(tree);
@@ -311,6 +332,7 @@ impl Clone for PlatformRange {
     fn clone(&self) -> Self {
         PlatformRange {
             context: self.context.clone(),
+            owner: self.owner.clone(),
             state: RwLock::new(self.state.read().unwrap().clone()),
         }
     }
@@ -354,7 +376,8 @@ impl ITextRangeProvider_Impl for PlatformRange_Impl {
             return Ok(result as i32);
         }
         self.require_same_context(other)?;
-        self.with_tree_state(|tree_state| {
+        self.with_tree_state_and_context(|tree_state, context| {
+            other.require_current(context)?;
             let range = self.upgrade_for_read(tree_state)?;
             let other_range = other.upgrade_for_read(tree_state)?;
             if range.node().id() != other_range.node().id() {
@@ -519,6 +542,7 @@ impl ITextRangeProvider_Impl for PlatformRange_Impl {
         // Revisit this if we eventually support embedded objects.
         let context = self.upgrade_context()?;
         let tree = context.read_tree();
+        self.require_current(&context)?;
         let id = self.upgrade_node(tree.state())?.id();
         Ok(context.get_or_create_platform_node(id).into_interface())
     }
@@ -583,7 +607,8 @@ impl ITextRangeProvider_Impl for PlatformRange_Impl {
         // We have to obtain the tree state and ranges manually to avoid
         // lifetime issues, and work with the two locks in a specific order
         // to avoid deadlock.
-        self.with_tree_state(|tree_state| {
+        self.with_tree_state_and_context(|tree_state, context| {
+            other.require_current(context)?;
             let other_range = other.upgrade_for_read(tree_state)?;
             let mut state = self.state.write().unwrap();
             let mut range = upgrade_range(&state, tree_state)?;

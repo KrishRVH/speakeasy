@@ -1432,11 +1432,12 @@ patterns! {
             })
         }
     )),
+    // Speakeasy patch: each text range holds the provider that created it.
     (UIA_TextPatternId, ITextProvider, ITextProvider_Impl, is_text_pattern_supported, (), (
         fn GetSelection(&self) -> Result<*mut SAFEARRAY> {
             self.resolve_for_text_pattern(|node| {
                 if let Some(range) = node.text_selection() {
-                    let platform_range: ITextRangeProvider = PlatformTextRange::new(&self.context, range).into();
+                    let platform_range: ITextRangeProvider = PlatformTextRange::new(self, range).into();
                     let iunknown: IUnknown = platform_range.cast()?;
                     Ok(safe_array_from_com_slice(&[iunknown]))
                 } else {
@@ -1450,7 +1451,7 @@ patterns! {
             self.resolve_for_text_pattern(|node| {
                 let ranges = crate::text::geometry::visible_ranges(&node.document_range());
                 let providers = ranges.into_iter().map(|range| {
-                    let provider: ITextRangeProvider = PlatformTextRange::new(&self.context, range).into();
+                    let provider: ITextRangeProvider = PlatformTextRange::new(self, range).into();
                     provider.cast::<IUnknown>()
                 }).collect::<Result<Vec<_>>>()?;
                 Ok(safe_array_from_com_slice(&providers))
@@ -1469,14 +1470,14 @@ patterns! {
                 let point = node.transform().inverse() * point;
                 let pos = node.text_position_at_point(point);
                 let range = pos.to_degenerate_range();
-                Ok(PlatformTextRange::new(&self.context, range).into())
+                Ok(PlatformTextRange::new(self, range).into())
             })
         },
 
         fn DocumentRange(&self) -> Result<ITextRangeProvider> {
             self.resolve_for_text_pattern(|node| {
                 let range = node.document_range();
-                Ok(PlatformTextRange::new(&self.context, range).into())
+                Ok(PlatformTextRange::new(self, range).into())
             })
         },
 
