@@ -66,22 +66,21 @@ impl Keeper {
         let (audio, audio_input) = Input::lane(AUDIO_EVENTS, AUDIO_BYTES);
         let (returned, closed) = async_channel::bounded(1);
         let thread = StoppableThread::spawn("show-checkpoint", move |stopping| {
-            let outcome = (|| {
-                let checkpoint =
-                    match parent().and_then(|parent| Checkpoint::create(&parent, recorded)) {
-                        Ok(checkpoint) => checkpoint,
-                        Err(_unavailable) => return Ok(None),
-                    };
-                tokio::runtime::Builder::new_current_thread()
-                    .build()?
-                    .block_on(write(
-                        &checkpoint.directory,
-                        frame_input,
-                        audio_input,
-                        stopping,
-                    ));
-                anyhow::Ok(Some(checkpoint))
-            })();
+            let outcome = match parent().and_then(|parent| Checkpoint::create(&parent, recorded)) {
+                Ok(checkpoint) => tokio::runtime::Builder::new_current_thread()
+                    .build()
+                    .map(|runtime| {
+                        runtime.block_on(write(
+                            &checkpoint.directory,
+                            frame_input,
+                            audio_input,
+                            stopping,
+                        ));
+                        Some(checkpoint)
+                    })
+                    .map_err(anyhow::Error::from),
+                Err(_unavailable) => Ok(None),
+            };
             #[expect(
                 clippy::let_underscore_must_use,
                 reason = "Emergency teardown may drop the receiver; dropping this result unlocks the retained checkpoint only after all writes stop"

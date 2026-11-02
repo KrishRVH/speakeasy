@@ -20,6 +20,7 @@ const LOG: &str = "take.log";
 const LOCK: &str = "owner.lock";
 const DISCARDED: &str = "discarded";
 const PUBLISHED: &str = "published";
+const NARRATED: &str = "\nnarrated";
 const PROVENANCE: &str = ".checkpoint";
 const NARRATION: &str = "narration.json";
 const NARRATION_LIMIT: u64 = 4 << 20;
@@ -93,12 +94,7 @@ impl Interrupted {
         let checkpoint = held.context(
             "This Show is already recording, recovering, or being discarded. Refresh Shows.",
         )?;
-        let parent = self
-            .directory
-            .parent()
-            .and_then(Path::parent)
-            .context("Checkpoint has no Shows folder")?;
-        anyhow::ensure!(!retired(parent, &checkpoint, SystemTime::now())?, GONE);
+        anyhow::ensure!(!checkpoint.retired(SystemTime::now())?, GONE);
         Ok(checkpoint)
     }
 }
@@ -123,14 +119,13 @@ impl Checkpoint {
                 Err(error) => return Err(error.into()),
             }
         };
-        let result = (|| {
-            let lock = File::create_new(directory.join(LOCK))?;
+        let locked = File::create_new(directory.join(LOCK)).and_then(|lock| {
             lock.lock()?;
             sync_directory(&directory)?;
             sync_directory(&root)?;
-            anyhow::Ok(lock)
-        })();
-        match result {
+            Ok(lock)
+        });
+        match locked {
             Ok(lock) => Ok(Self {
                 directory,
                 lock: OwnerLock(lock),
@@ -138,17 +133,20 @@ impl Checkpoint {
             Err(error) => {
                 fs::remove_dir_all(directory)
                     .context("Cannot remove an unopened Show checkpoint")?;
-                Err(error)
+                Err(error.into())
             },
         }
     }
 
-    pub(crate) fn recorded(&self) -> anyhow::Result<SystemTime> {
+    fn id(&self) -> anyhow::Result<&str> {
         self.directory
             .file_name()
             .and_then(|name| name.to_str())
-            .and_then(age::recorded_at)
-            .context("Checkpoint recording date is invalid")
+            .context("Checkpoint has no ID")
+    }
+
+    pub(crate) fn recorded(&self) -> anyhow::Result<SystemTime> {
+        age::recorded_at(self.id()?).context("Checkpoint recording date is invalid")
     }
 
     pub(crate) fn interrupted(self) -> anyhow::Result<Interrupted> {
@@ -164,11 +162,7 @@ impl Checkpoint {
         staged: &Staged,
         publication: Publication,
     ) -> anyhow::Result<()> {
-        let id = self
-            .directory
-            .file_name()
-            .and_then(|name| name.to_str())
-            .context("Checkpoint has no ID")?;
+        let id = self.id()?;
         let target = staged
             .directory
             .file_name()
@@ -179,7 +173,7 @@ impl Checkpoint {
         let mut marker = tempfile::NamedTempFile::new_in(&self.directory)?;
         marker.write_all(target.as_bytes())?;
         if publication == Publication::Narrated {
-            marker.write_all(b"\nnarrated")?;
+            marker.write_all(NARRATED.as_bytes())?;
         }
         marker.as_file().sync_all()?;
         marker
@@ -261,20 +255,60 @@ impl Checkpoint {
     }
 
     pub(in crate::show) fn pending(&self) -> anyhow::Result<bool> {
-        let parent = self
+        Ok(self.publication()? == Some(Publication::Pending) && self.has_audio()?)
+    }
+
+    fn retired(&self, now: SystemTime) -> anyhow::Result<bool> {
+        let discarded = match fs::symlink_metadata(self.directory.join(DISCARDED)) {
+            Ok(_) => true,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+            Err(error) => return Err(error.into()),
+        };
+        Ok(discarded
+            || age::expires_at(self.id()?).is_none_or(|expiry| expiry <= now)
+            || match self.publication()? {
+                Some(Publication::Narrated) => true,
+                Some(Publication::Pending) => !self.has_audio()?,
+                None => false,
+            })
+    }
+
+    fn publication(&self) -> anyhow::Result<Option<Publication>> {
+        let marker = match recall::read_file(&self.directory, PUBLISHED, 128) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        let marker = std::str::from_utf8(&marker)
+            .ok()
+            .context("Checkpoint publication marker is invalid")?;
+        let (target, publication) = marker
+            .strip_suffix(NARRATED)
+            .map_or((marker, Publication::Pending), |target| {
+                (target, Publication::Narrated)
+            });
+        let target = Some(target)
+            .filter(|name| age::recorded_at(name).is_some())
+            .context("Checkpoint publication marker is invalid")?;
+        let target = self
             .directory
             .parent()
             .and_then(Path::parent)
-            .context("Checkpoint has no parent")?;
-        let id = self
-            .directory
-            .file_name()
-            .and_then(|name| name.to_str())
-            .context("Checkpoint has no ID")?;
-        Ok(
-            published(parent, &self.directory, id)? == Some(Publication::Pending)
-                && self.has_audio()?,
-        )
+            .context("Checkpoint has no Shows folder")?
+            .join(target);
+        let metadata = match fs::symlink_metadata(&target) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Ok(None);
+        }
+        match recall::read_file(&target, PROVENANCE, 128) {
+            Ok(bytes) => Ok((bytes == self.id()?.as_bytes()).then_some(publication)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error.into()),
+        }
     }
 
     pub(crate) fn replay(&self) -> anyhow::Result<Take> {
@@ -418,113 +452,73 @@ fn visit(
     mut each: impl FnMut(Checkpoint, bool) -> anyhow::Result<()>,
 ) -> Vec<Problem> {
     let root = parent.join(ROOT);
+    let entries = match entries(&root) {
+        Ok(entries) => entries,
+        Err(error) => {
+            return vec![Problem {
+                directory: root,
+                message: format!("{error:#}"),
+            }];
+        },
+    };
     let mut problems = Vec::new();
-    let result = (|| {
-        match fs::symlink_metadata(&root) {
-            Ok(metadata) => anyhow::ensure!(
-                metadata.is_dir() && !metadata.file_type().is_symlink(),
-                "Show checkpoints must be a directory, not a link"
-            ),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-            Err(error) => return Err(error.into()),
+    for entry in entries.into_iter().flatten() {
+        let directory = entry
+            .as_ref()
+            .map_or_else(|_| root.clone(), fs::DirEntry::path);
+        let visited = entry
+            .map_err(anyhow::Error::from)
+            .and_then(|entry| visit_entry(&entry, now, &mut each));
+        if let Err(error) = visited {
+            problems.push(Problem {
+                directory,
+                message: format!("{error:#}"),
+            });
         }
-        for entry in fs::read_dir(&root)? {
-            let directory = entry
-                .as_ref()
-                .map_or_else(|_| root.clone(), std::fs::DirEntry::path);
-            let checked = (|| {
-                let entry = entry?;
-                if !entry.file_type()?.is_dir() {
-                    return Ok(());
-                }
-                let name = entry.file_name();
-                if name.to_str().and_then(age::expires_at).is_none() {
-                    return Ok(());
-                }
-                let checkpoint = match lock(&directory) {
-                    Ok(Some(checkpoint)) => checkpoint,
-                    Ok(None) => return Ok(()),
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-                    Err(error) => return Err(error.into()),
-                };
-                let is_retired = retired(parent, &checkpoint, now)?;
-                each(checkpoint, is_retired)
-            })();
-            if let Err(error) = checked {
-                problems.push(Problem {
-                    directory,
-                    message: format!("{error:#}"),
-                });
-            }
-        }
-        anyhow::Ok(())
-    })();
-    if let Err(error) = result {
-        problems.push(Problem {
-            directory: root,
-            message: format!("{error:#}"),
-        });
     }
     problems
 }
 
-fn retired(parent: &Path, checkpoint: &Checkpoint, now: SystemTime) -> anyhow::Result<bool> {
-    let directory = &checkpoint.directory;
-    let name = directory
-        .file_name()
-        .and_then(|name| name.to_str())
-        .context("Checkpoint has no ID")?;
-    let discarded = match fs::symlink_metadata(directory.join(DISCARDED)) {
-        Ok(_) => true,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+fn entries(root: &Path) -> anyhow::Result<Option<fs::ReadDir>> {
+    match fs::symlink_metadata(root) {
+        Ok(metadata) => anyhow::ensure!(
+            metadata.is_dir() && !metadata.file_type().is_symlink(),
+            "Show checkpoints must be a directory, not a link"
+        ),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    }
+    Ok(Some(fs::read_dir(root)?))
+}
+
+fn visit_entry(
+    entry: &fs::DirEntry,
+    now: SystemTime,
+    each: &mut impl FnMut(Checkpoint, bool) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    if !entry.file_type()?.is_dir()
+        || entry
+            .file_name()
+            .to_str()
+            .and_then(age::expires_at)
+            .is_none()
+    {
+        return Ok(());
+    }
+    let checkpoint = match lock(&entry.path()) {
+        Ok(Some(checkpoint)) => checkpoint,
+        Ok(None) => return Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error.into()),
     };
-    Ok(discarded
-        || age::expires_at(name).is_none_or(|expiry| expiry <= now)
-        || match published(parent, directory, name)? {
-            Some(Publication::Narrated) => true,
-            Some(Publication::Pending) => !checkpoint.has_audio()?,
-            None => false,
-        })
+    let retired = checkpoint.retired(now)?;
+    each(checkpoint, retired)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(in crate::show) enum Publication {
     Pending,
     Narrated,
-}
-
-fn published(parent: &Path, directory: &Path, id: &str) -> anyhow::Result<Option<Publication>> {
-    let marker = match recall::read_file(directory, PUBLISHED, 128) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.into()),
-    };
-    let marker = std::str::from_utf8(&marker)
-        .ok()
-        .context("Checkpoint publication marker is invalid")?;
-    let (target, publication) = marker
-        .strip_suffix("\nnarrated")
-        .map_or((marker, Publication::Pending), |target| {
-            (target, Publication::Narrated)
-        });
-    let target = Some(target)
-        .filter(|name| age::recorded_at(name).is_some())
-        .context("Checkpoint publication marker is invalid")?;
-    let target = parent.join(target);
-    let metadata = match fs::symlink_metadata(&target) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.into()),
-    };
-    if !metadata.is_dir() || metadata.file_type().is_symlink() {
-        return Ok(None);
-    }
-    match recall::read_file(&target, PROVENANCE, 128) {
-        Ok(bytes) => Ok((bytes == id.as_bytes()).then_some(publication)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error.into()),
-    }
 }
 
 fn lock(directory: &Path) -> io::Result<Option<Checkpoint>> {
