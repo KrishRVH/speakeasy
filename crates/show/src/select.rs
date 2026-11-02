@@ -59,7 +59,7 @@ pub struct Keyframe {
 impl Keyframe {
     #[must_use]
     pub fn marker(&self, marks: &[Mark]) -> String {
-        crate::describe::Marker(self, self.marks_in(marks)).to_string()
+        describe::Marker(self, self.marks_in(marks)).to_string()
     }
 
     pub(crate) fn marks_in<'a>(&self, marks: &'a [Mark]) -> &'a [Mark] {

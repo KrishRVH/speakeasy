@@ -17,6 +17,8 @@ const ONSET_TOLERANCE: Duration = Duration::from_millis(50);
 
 const COMMA_CLAUSE_WORDS: usize = 3;
 
+const LONGEST_ROW: Duration = Duration::from_secs(10);
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct TimedClause {
     pub at: Moment,
@@ -43,8 +45,7 @@ pub fn timed_clauses(words: &[Word]) -> Vec<TimedClause> {
         boundary |= boundaries.next_if_eq(&index).is_some();
         let text = word.text.trim();
         let new_row = rows.last().is_none_or(|row| {
-            !attaches(text)
-                && (boundary || word.span.start().since(row.at) >= Duration::from_secs(10))
+            !attaches(text) && (boundary || word.span.start().since(row.at) >= LONGEST_ROW)
         });
         if !attaches(text) {
             boundary = false;
