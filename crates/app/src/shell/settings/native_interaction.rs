@@ -2,18 +2,18 @@ use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
 use gpui::{
-    AppContext as _, Application, AsyncApp, KeyDownEvent, KeyUpEvent, Keystroke, PlatformInput,
-    WindowHandle, WindowOptions,
+    AppContext as _, AsyncApp, KeyDownEvent, KeyUpEvent, Keystroke, PlatformInput, WindowHandle,
+    WindowOptions,
 };
 
 use super::{menu::Menu, *};
-use crate::{gpui_ext::AppUpdate as _, runtime::Meter, shell::LaunchMode, show::Canvas};
+use crate::{runtime::Meter, shell::LaunchMode, show::Canvas};
 
 #[test]
 #[ignore = "Opt-in owned windows; Linux requires a private X11 display. No microphone, input, or clipboard"]
 fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::Result<()> {
     let (completed, outcome) = std::sync::mpsc::channel();
-    Application::new().run(move |cx| {
+    crate::application::new().unwrap().run(move |cx| {
         cx.spawn(async move |cx| {
             let result = async {
                 let directory = tempfile::tempdir()?;
@@ -28,7 +28,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                 let (canvas, _) = watch::channel(Canvas::default());
                 let pill = cx.update(|cx| {
                     crate::pill::open(updates.clone(), levels, true, config.theme, cx)
-                })??;
+                })?;
                 cx.update(|cx| {
                     cx.set_global(Services::new(
                         directory.path().join("settings.json"),
@@ -41,11 +41,11 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                         None,
                         LaunchMode::DemoTray,
                     ));
-                })?;
+                });
                 let settings = cx.open_window(WindowOptions::default(), |window, cx| {
                     cx.new(|cx| Settings::new(config, updates, window, cx))
                 })?;
-                cx.update(|cx| cx.global_mut::<Services>().settings = Some(settings))?;
+                cx.update(|cx| cx.global_mut::<Services>().settings = Some(settings));
                 onboarding::native_tests::exercise(settings, cx).await?;
                 presets::native_tests::exercise(settings, cx).await?;
                 settings.update(cx, |view, _, cx| {
@@ -68,17 +68,21 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     anyhow::Ok(())
                 })??;
                 parakeet_cleanup_language(settings, cx)?;
-                settings.update(cx, |view, window, _| {
-                    view.menus.trigger(Menu::Language).focus(window);
+                settings.update(cx, |view, window, cx| {
+                    view.menus.trigger(Menu::Language).focus(window, cx);
                 })?;
                 key(settings, "enter", cx)?;
                 ensure!(
                     settings.read_with(cx, |view, _| view.menus.open == Some(Menu::Language))?,
                     "The toggle's release immediately selected a language"
                 );
-                Timer::after(Duration::from_millis(100)).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
                 key(settings, "end", cx)?;
-                Timer::after(Duration::from_millis(100)).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
                 settings.update(cx, |view, _, _| {
                     ensure!(
                         view.menus.scroll.offset().y < gpui::px(0.0),
@@ -118,21 +122,25 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                         view.menus.trigger(Menu::Language).is_focused(window),
                         "Escape lost picker focus"
                     );
-                    window.activate_window();
+                    activate(window)?;
                     view.toggle_menu(Menu::Language, window, cx);
                     cx.notify();
                     anyhow::Ok(())
                 })??;
-                Timer::after(Duration::from_millis(100)).await;
-                settings.update(cx, |view, window, _| {
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
+                settings.update(cx, |view, window, cx| {
                     ensure!(
                         window.is_window_active(),
                         "The owned focus fixture did not activate"
                     );
-                    view.menus.trigger(Menu::Language).focus(window);
+                    view.menus.trigger(Menu::Language).focus(window, cx);
                     anyhow::Ok(())
                 })??;
-                Timer::after(Duration::from_millis(100)).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
                 key(settings, "space", cx)?;
                 settings.update(cx, |view, window, cx| {
                     ensure!(
@@ -143,8 +151,10 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     cx.notify();
                     anyhow::Ok(())
                 })??;
-                Timer::after(Duration::from_millis(100)).await;
-                settings.update(cx, |view, window, _| view.menus.group.focus(window))?;
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
+                settings.update(cx, |view, window, cx| view.menus.group.focus(window, cx))?;
                 key(settings, "home", cx)?;
                 key(settings, "enter", cx)?;
                 settings.update(cx, |view, window, cx| {
@@ -156,9 +166,13 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     cx.notify();
                     anyhow::Ok(())
                 })??;
-                Timer::after(Duration::from_millis(100)).await;
-                settings.update(cx, |_, window, _| window.blur())?;
-                Timer::after(Duration::from_millis(100)).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
+                settings.update(cx, |_, window, cx| window.blur(cx))?;
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
                 settings.update(cx, |view, window, cx| {
                     ensure!(
                         view.menus.open.is_none(),
@@ -168,13 +182,19 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     cx.notify();
                     anyhow::Ok(())
                 })??;
-                Timer::after(Duration::from_millis(100)).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
                 let other = cx.open_window(WindowOptions::default(), |_, cx| {
                     cx.new(|_| gpui::EmptyView)
                 })?;
-                Timer::after(Duration::from_millis(100)).await;
-                other.update(cx, |_, window, _| window.activate_window())?;
-                Timer::after(Duration::from_millis(100)).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
+                other.update(cx, |_, window, _| activate(window))??;
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
                 settings.update(cx, |view, window, cx| {
                     ensure!(
                         !window.is_window_active(),
@@ -191,10 +211,11 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                             == Some("Blocked"),
                         "A denied microphone permission was presented as allowed"
                     );
-                    window.activate_window();
-                    anyhow::Ok(())
+                    activate(window)
                 })??;
-                Timer::after(Duration::from_millis(100)).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
                 settings.update(cx, |view, window, _| {
                     ensure!(
                         view.menus.trigger(Menu::Language).is_focused(window),
@@ -219,7 +240,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                 navigate(settings, cx).await?;
                 other.update(cx, |_, window, _| window.remove_window())?;
 
-                cx.update(|cx| close(settings, cx))??;
+                cx.update(|cx| close(settings, cx))?;
                 settings.update(cx, |view, _, _| {
                     ensure!(
                         view.practice.text.is_empty(),
@@ -236,7 +257,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
             }
             .await;
             completed.send(result).unwrap();
-            cx.update_if_running(|cx| cx.quit());
+            cx.update(|cx| cx.quit());
         })
         .detach();
     });
@@ -293,12 +314,16 @@ async fn navigate(settings: WindowHandle<Settings>, cx: &mut AsyncApp) -> anyhow
         (Page::Words, "space"),
         (Page::Dictation, "enter"),
     ] {
-        settings.update(cx, |view, window, _| {
-            view.navigation.focus(page).focus(window);
+        settings.update(cx, |view, window, cx| {
+            view.navigation.focus(page).focus(window, cx);
         })?;
-        Timer::after(Duration::from_millis(100)).await;
+        cx.background_executor()
+            .timer(Duration::from_millis(100))
+            .await;
         key(settings, activation, cx)?;
-        Timer::after(Duration::from_millis(100)).await;
+        cx.background_executor()
+            .timer(Duration::from_millis(100))
+            .await;
         settings.update(cx, |view, window, _| {
             ensure!(
                 view.navigation.page == page,
@@ -349,16 +374,53 @@ fn close(settings: WindowHandle<Settings>, cx: &mut App) -> anyhow::Result<()> {
     })
 }
 
-fn key(settings: WindowHandle<Settings>, name: &str, cx: &mut AsyncApp) -> anyhow::Result<()> {
+fn key(
+    settings: WindowHandle<Settings>,
+    name: &'static str,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<()> {
     let keystroke = Keystroke::parse(name)?;
     cx.update_window(settings.into(), |_, window, cx| {
         window.dispatch_event(
             PlatformInput::KeyDown(KeyDownEvent {
                 keystroke: keystroke.clone(),
                 is_held: false,
+                prefer_character_input: false,
             }),
             cx,
         );
         window.dispatch_event(PlatformInput::KeyUp(KeyUpEvent { keystroke }), cx);
     })
+}
+
+#[cfg_attr(
+    not(target_os = "linux"),
+    expect(
+        clippy::unnecessary_wraps,
+        reason = "Linux focuses the owned window through a fallible X11 connection; other platforms share its signature"
+    )
+)]
+fn activate(window: &gpui::Window) -> anyhow::Result<()> {
+    cfg_select! {
+        target_os = "linux" => {
+            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            use x11rb::{
+                CURRENT_TIME,
+                connection::Connection as _,
+                protocol::xproto::{ConnectionExt as _, InputFocus},
+                xcb_ffi::XCBConnection,
+            };
+            let RawWindowHandle::Xcb(owned) = HasWindowHandle::window_handle(window)?.as_raw()
+            else {
+                anyhow::bail!("The owned fixture is not an XCB window");
+            };
+            let (connection, _) = XCBConnection::connect(None)?;
+            connection
+                .set_input_focus(InputFocus::POINTER_ROOT, owned.window.get(), CURRENT_TIME)?
+                .check()?;
+            connection.flush()?;
+        },
+        _ => window.activate_window(),
+    }
+    Ok(())
 }

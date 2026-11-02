@@ -509,9 +509,7 @@ impl MetalRenderer {
         if let Some(layer) = &self.layer {
             layer.setDrawableSize(CGSize::new(size.width.0 as f64, size.height.0 as f64));
         }
-        if let Err(error) = self.update_path_intermediate_textures(size) {
-            log::error!("failed to resize path textures: {error:#}");
-        }
+        // Speakeasy patch: render_frame sizes path textures only for frames that draw paths.
     }
 
     fn update_path_intermediate_textures(&mut self, size: Size<DevicePixels>) -> Result<()> {
@@ -652,7 +650,11 @@ impl MetalRenderer {
         texture: &ProtocolObject<dyn MTLTexture>,
         viewport_size: Size<DevicePixels>,
     ) -> Result<Retained<ProtocolObject<dyn MTLCommandBuffer>>> {
-        if self.path_intermediate_texture.is_none() {
+        // Speakeasy patch: frames without paths release the path textures.
+        if scene.paths.is_empty() {
+            self.path_intermediate_texture = None;
+            self.path_intermediate_msaa_texture = None;
+        } else {
             self.update_path_intermediate_textures(viewport_size)?;
         }
         let mut writer = InstanceBufferWriter::new(

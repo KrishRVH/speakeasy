@@ -4,7 +4,6 @@ use super::{Services, lifecycle::ConfigEpoch};
 use crate::{
     config::{Change, Config, ValidConfig},
     control::{Call, Command, Disposition, Reply, Status},
-    gpui_ext::AppUpdate as _,
     status::ServiceState,
 };
 
@@ -60,7 +59,7 @@ impl Services {
             let Some(reason) = reply.reason else {
                 return;
             };
-            cx.update_if_running(|cx| {
+            cx.update(|cx| {
                 let services = cx.global::<Services>();
                 if services.choices.generation == generation {
                     services.report(crate::runtime::Report::Failed(reason));
@@ -143,18 +142,17 @@ impl Services {
                 })
             });
             let (selected, receipt) = match admission {
-                Ok(Ok(admission)) => admission,
-                Ok(Err(reason)) => {
+                Ok(admission) => admission,
+                Err(reason) => {
                     call.respond(Reply::refused(reason));
                     return;
                 },
-                Err(_) => return,
             };
             let reply = receipt
                 .recv()
                 .await
                 .unwrap_or_else(|_| Reply::unknown(UNACKNOWLEDGED));
-            cx.update_if_running(|cx| {
+            cx.update(|cx| {
                 cx.update_global::<Self, _>(|services, _| {
                     services.confirm_preset(generation, selected, &reply);
                 });

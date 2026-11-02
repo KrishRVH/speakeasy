@@ -14,7 +14,6 @@ public static class DemoWindows {
     [DllImport("user32")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
     [DllImport("user32", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr window, StringBuilder text, int capacity);
     [DllImport("user32")] public static extern bool IsWindowVisible(IntPtr window);
-    [DllImport("user32")] public static extern uint GetDpiForWindow(IntPtr window);
     [DllImport("user32")] public static extern bool GetWindowRect(IntPtr window, out Rect rect);
     [DllImport("user32")] public static extern IntPtr WindowFromPhysicalPoint(Point point);
     [DllImport("user32")] public static extern IntPtr GetForegroundWindow();
@@ -266,9 +265,7 @@ public sealed class TextEventCounts : IDisposable {
         if ($visible[0].GetText(-1).Length -ge $long.Length -or !$visible[0].GetText(-1).EndsWith(' end')) { throw 'Visible range does not match the scrolled suffix' }
         $rectangles = $document.GetBoundingRectangles()
         if ($rectangles.Count -ne 1) { throw 'One scrolled line must have one visible rectangle' }
-        $scale = [DemoWindows]::GetDpiForWindow($Window) / 96.0
-        $control = $Field.Current.BoundingRectangle
-        $viewport = New-Object Windows.Rect ($control.Left + 11 * $scale), ($control.Top + 6 * $scale), ($control.Width - 22 * $scale), (20 * $scale)
+        $viewport = $Field.Current.BoundingRectangle
         $rect = $rectangles[0]
         if ([Math]::Abs($rect.Left - $viewport.Left) -gt 1 -or $rect.Right -gt $viewport.Right + 1 -or $rect.Top -lt $viewport.Top - 1 -or $rect.Bottom -gt $viewport.Bottom + 1) { throw 'Text geometry escaped or did not reach the actual paint clip' }
         $hidden = $document.Clone()

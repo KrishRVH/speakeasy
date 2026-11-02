@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
+mod application;
 mod audio;
 mod child;
 mod config;
@@ -39,13 +40,12 @@ use std::{
 };
 
 use anyhow::{Context as _, bail};
-use gpui::{App, Application, BorrowAppContext};
+use gpui::{App, BorrowAppContext};
 use speakeasy_platform::{CANCEL_SHORTCUT, SHORTCUT};
 use tokio::sync::watch;
 
 use crate::{
     config::{Config, Startup, ValidConfig},
-    gpui_ext::AppUpdate as _,
     instance::{Event, Instance, Request},
     runtime::{Meter, Phase, Report, Snapshot},
     shell::{LaunchMode, Services},
@@ -174,13 +174,6 @@ fn run(mode: LaunchMode, settings: Option<PathBuf>) -> anyhow::Result<()> {
     launch(path, mode, acquired)
 }
 
-#[cfg_attr(
-    not(target_os = "windows"),
-    expect(
-        clippy::unnecessary_wraps,
-        reason = "Windows reports installer handoff failures after the UI exits"
-    )
-)]
 fn launch(
     path: PathBuf,
     mode: LaunchMode,
@@ -201,7 +194,7 @@ fn launch(
     let onboarding = !mode.is_demo() && shell::onboarding_pending(&path);
     let (output, updates) = watch::channel(snapshot);
     let (meter, levels) = watch::channel(Meter::default());
-    let application = Application::new().with_assets(icons::Icons);
+    let application = application::new()?.with_assets(icons::Icons);
     application.on_reopen(shell::reveal);
     #[cfg(target_os = "macos")]
     application.on_quit_requested(shell::request_quit);
@@ -288,7 +281,8 @@ fn launch(
             shell::reveal(cx);
         }
         if !mode.is_resident() {
-            cx.on_window_closed(shell::quit_after_settings).detach();
+            cx.on_window_closed(|cx, _| shell::quit_after_settings(cx))
+                .detach();
         }
         if mode == LaunchMode::Demo {
             shell::reveal_shows(cx);
@@ -306,7 +300,7 @@ fn abandon<Held: 'static>(error: anyhow::Error, held: Held, cx: &App) {
     cx.spawn(async move |cx| {
         let _held = held;
         speakeasy_platform::show_startup_error(&message);
-        cx.update_if_running(shell::request_quit);
+        cx.update(shell::request_quit);
     })
     .detach();
 }

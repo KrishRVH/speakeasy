@@ -3,7 +3,7 @@ use std::path::Path;
 use gpui::{App, BorrowAppContext as _};
 
 use super::Services;
-use crate::{gpui_ext::AppUpdate as _, runtime::Report};
+use crate::runtime::Report;
 
 #[derive(Clone, Copy)]
 pub(crate) enum LastShow {
@@ -34,7 +34,7 @@ fn copy(cx: &mut App) {
     };
     let copying = cx.spawn(async move |cx| {
         let result = receipt.await;
-        cx.update_if_running(|cx| {
+        cx.update(|cx| {
             let services = cx.global::<Services>();
             match result {
                 Ok(crate::show::copy::Outcome::Copied) => services.report(Report::ShowCopied),
@@ -57,7 +57,7 @@ fn open(cx: &mut App) {
         });
         services.recovery = Some(cx.spawn(async move |cx| {
             let found = found.await;
-            cx.update_if_running(|cx| match found {
+            cx.update(|cx| match found {
                 Ok(Some(folder)) => cx.open_with_system(&folder),
                 Ok(None) => cx.global::<Services>().report(Report::ShowGone(show)),
                 Err(error) => cx.global::<Services>().report(&error),

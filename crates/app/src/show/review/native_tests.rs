@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::ensure;
-use gpui::{Application, AsyncApp, Render, RenderImage, Timer, div, prelude::*};
+use gpui::{AsyncApp, Render, RenderImage, div, prelude::*};
 
 use super::*;
 
@@ -19,13 +19,14 @@ fn native_show_review_navigates_damage_and_releases_private_images() -> anyhow::
         .build()?;
     let _entered = runtime.enter();
     let (completed, outcome) = std::sync::mpsc::channel();
-    Application::new()
+    crate::application::new()
+        .unwrap()
         .with_assets(crate::icons::Icons)
         .run(move |cx| {
             crate::load_brand_font(cx);
             cx.spawn(async move |cx| {
                 completed.send(exercise(cx).await).unwrap();
-                cx.update_if_running(|cx| cx.quit());
+                cx.update(|cx| cx.quit());
             })
             .detach();
         });
@@ -61,8 +62,8 @@ impl Render for Keeper {
     reason = "Native review acceptance uses GPUI's UI-thread context"
 )]
 async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
-    cx.update(|cx| cx.set_global(TestEdits(super::super::edits::Edits::default())))?;
-    cx.update(|cx| cx.set_global(TestReads(super::super::preview::Reads::default())))?;
+    cx.update(|cx| cx.set_global(TestEdits(super::super::edits::Edits::default())));
+    cx.update(|cx| cx.set_global(TestReads(super::super::preview::Reads::default())));
     let keeper = cx.open_window(
         WindowOptions {
             show: false,
@@ -135,7 +136,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         cx,
     )
     .await?;
-    cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear())?;
+    cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))?;
     let next = window.update(cx, |view, window, cx| {
         let detail = view
             .detail
@@ -157,16 +158,16 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
                 ))
             })
             .context("The fixture's tab stops fit usize")?;
-        view.focus.focus(window);
+        view.focus.focus(window, cx);
         for _ in 0..tabs {
-            window.focus_next();
+            window.focus_next(cx);
         }
         window
             .focused(cx)
             .context("Next did not receive keyboard focus")
     })??;
     for (stroke, before, after) in [("enter", 0, 1), ("space", 1, 2)] {
-        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear())?;
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))?;
         window.update(cx, |_, window, _| {
             ensure!(
                 next.is_focused(window),
@@ -623,7 +624,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
             cx.global::<TestEdits>().0.drained(),
             cx.global::<TestReads>().0.drained(),
         )
-    })?;
+    });
     edits.await;
     reads.await;
     ensure!(
@@ -646,14 +647,22 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn key(window: WindowHandle<Review>, stroke: &str, cx: &mut AsyncApp) -> anyhow::Result<()> {
+fn key(
+    window: WindowHandle<Review>,
+    stroke: &'static str,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<()> {
     let keystroke = gpui::Keystroke::parse(stroke)?;
     cx.update_window(window.into(), |_, window, cx| {
         window.dispatch_keystroke(keystroke, cx);
     })
 }
 
-fn release(window: WindowHandle<Review>, stroke: &str, cx: &mut AsyncApp) -> anyhow::Result<()> {
+fn release(
+    window: WindowHandle<Review>,
+    stroke: &'static str,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<()> {
     let keystroke = gpui::Keystroke::parse(stroke)?;
     cx.update_window(window.into(), |_, window, cx| {
         window.dispatch_event(
@@ -664,20 +673,20 @@ fn release(window: WindowHandle<Review>, stroke: &str, cx: &mut AsyncApp) -> any
 }
 
 fn more_actions(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyhow::Result<()> {
-    let shown = window.update(cx, |view, window, _| {
+    let shown = window.update(cx, |view, window, cx| {
         let stops = view
             .library
             .rows
             .len()
             .checked_add(3)
             .context("The fixture's tab stops fit usize")?;
-        view.focus.focus(window);
+        view.focus.focus(window, cx);
         for _ in 0..stops {
-            window.focus_next();
+            window.focus_next(cx);
         }
         anyhow::Ok(view.library.selected.clone())
     })??;
-    cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear())?;
+    cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))?;
     key(window, "enter", cx)?;
     release(window, "enter", cx)?;
     let opened = window.read_with(cx, |view, _| view.menu)?;
@@ -685,7 +694,7 @@ fn more_actions(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyhow::Resu
         matches!(opened, menu::Menu::Open(Some(_))),
         "Enter on More actions did not open its menu at an available action"
     );
-    cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear())?;
+    cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))?;
     key(window, "down", cx)?;
     let (moved, selected) =
         window.read_with(cx, |view, _| (view.menu, view.library.selected.clone()))?;
@@ -810,7 +819,7 @@ async fn copy_selected(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyho
     })??;
     wait_for(window, |view| view.copying.is_none(), cx).await?;
     ensure!(
-        cx.read_global::<CopyProbe, _>(|probe, _| probe.received)?,
+        cx.read_global::<CopyProbe, _>(|probe, _| probe.received),
         "The visual copy action did not run"
     );
     let copied = window.read_with(cx, |view, _| {
@@ -841,7 +850,7 @@ async fn copy_selected(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyho
             .map(|key| key.directory.clone())
     })?;
     wait_for(window, |view| view.copying.is_none(), cx).await?;
-    let agent = cx.read_global::<CopyProbe, _>(|probe, _| probe.agent.clone())?;
+    let agent = cx.read_global::<CopyProbe, _>(|probe, _| probe.agent.clone());
     ensure!(
         agent.is_some() && agent == selected,
         "Send to agent did not point at the selected Show"
@@ -866,7 +875,9 @@ async fn wait_for(
             start.elapsed() < Duration::from_secs(30),
             "Review did not reach the expected state"
         );
-        Timer::after(Duration::from_millis(10)).await;
+        cx.background_executor()
+            .timer(Duration::from_millis(10))
+            .await;
     }
     Ok(())
 }
@@ -922,6 +933,8 @@ async fn pixels(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyhow::Resu
             start.elapsed() < Duration::from_secs(10),
             "Review did not paint the synthetic frame"
         );
-        Timer::after(Duration::from_millis(20)).await;
+        cx.background_executor()
+            .timer(Duration::from_millis(20))
+            .await;
     }
 }

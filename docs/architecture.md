@@ -173,32 +173,28 @@ module unless a test file is named.
   practice cleanup through the borrowed-window close callback.
   [config/tests.rs](../crates/app/src/config/tests.rs) pins the file contract.
 - **Accessibility**: Settings owns accessible names, roles, switch/page state, and bounded field
-  edits. The [GPUI accessibility owner](../vendor/gpui/src/window/a11y.rs) builds each active tree
-  with physical client bounds, preserves semantic parents through deferred rendering, and rolls back
-  aborted or hidden layout. Window-owned tasks receive bounded native requests. Native node
-  identities survive ordinary redraws and retire on removal or hiding; actions resolve against
-  current, enabled controls. The
-  [Windows adapter](../vendor/gpui/src/platform/windows/accessibility.rs) redacts before
-  hide/minimize, restores only after the committed visibility transition, and disconnects before
-  destroying its HWND. The [framework tests](../vendor/gpui/src/window/a11y/tests.rs) cover tree and
-  rendering invariants; [Windows acceptance](../scripts/check-demo-windows.ps1) drives the demo and
-  a [static owned fixture](../crates/app/src/shell/settings/native_accessibility.rs) through UI
-  Automation. The [text registration](../vendor/gpui/src/window/a11y/text.rs) publishes the current
-  shaped line, byte-based selection, and paint viewport together after layout succeeds. Grapheme
-  positions map back through the current field's runs; every replacement retires retained ranges,
-  including replacement with identical text. The editor rejects selection during active IME
-  composition. Clusters exceeding AccessKit’s 255-byte character limit retain the field value but
-  omit text ranges until the text is representable again. Committed edits and completed composition
-  restore grapheme-aligned selections without changing active UTF-16 composition ranges. The
-  [Windows text adapter](../vendor/accesskit_windows/src/text/geometry.rs) clips native rectangles
-  and visible ranges without removing document text. Its
-  [scroll adapter](../vendor/accesskit_windows/src/text/scroll.rs) converts exact ranges into
-  absolute horizontal offsets; queued requests preserve the latest intent even when its range was
-  already visible. The field owns its viewport and resumes caret tracking after edits or selection
-  changes. Layout changes retire the scroll target while preserving text ranges; requests computed
-  against old geometry cannot pan the new viewport. Unreachable or empty viewports return an
-  unsupported result. Outer Settings scrolling, complete app semantics, and the other native bridges
-  remain unimplemented.
+  edits; GPUI builds the AccessKit tree and routes native actions to element handlers. The
+  [text field](../crates/app/src/shell/settings/text_field.rs) publishes a text input whose bounds
+  are its visible paint clip, with its horizontal scroll range and selection.
+  [accessible.rs](../crates/app/src/shell/settings/text_field/accessible.rs) publishes the shaped
+  line as runs of at most 255 graphemes whose ids change with each edit revision, so every
+  replacement retires retained ranges, including replacement with identical text. Native selections
+  map grapheme positions back to byte offsets in the current revision. The editor refuses them
+  during IME composition, and a caret inside a grapheme or a cluster beyond AccessKit's 255-byte
+  character limit keeps the value but publishes no text ranges. Scroll requests arrive in physical
+  pixels and must fall within the current scroll range; an offset outside it is ignored, not
+  clamped. Scrolling changes neither selection nor focus. Its
+  [tests](../crates/app/src/shell/settings/text_field/accessible/tests.rs) cover these boundaries.
+  The [Windows lifecycle patch](../vendor/gpui-pre-windows/src/accessibility.rs) empties the tree on
+  hide or minimize, restores it after committed visibility, and empties it before destroying its
+  HWND. The [Windows text adapter](../vendor/accesskit_windows/src/text/geometry.rs) clips native
+  rectangles and visible ranges without removing document text, and its
+  [scroll adapter](../vendor/accesskit_windows/src/text/scroll.rs) turns a range into the smallest
+  absolute horizontal offset on the field. [Windows acceptance](../scripts/check-demo-windows.ps1)
+  drives the demo and a
+  [static owned fixture](../crates/app/src/shell/settings/native_accessibility.rs) through UI
+  Automation. GPUI's macOS and Linux bridges have no native acceptance; outer Settings scrolling and
+  complete app semantics remain unimplemented.
 - **Private practice and readiness**:
   [settings/practice.rs](../crates/app/src/shell/settings/practice.rs) owns the receipt and
   transient rendered text. The session fixes its destination at admission; practice commits the same
@@ -609,10 +605,10 @@ module unless a test file is named.
   [tests/test_profiling.py](../tests/test_profiling.py) checks the Linux profiler, and
   [tests/test_launchers.py](../tests/test_launchers.py) the Linux demo check's process ownership,
   `AppRun`, and script arguments.
-- **Dependency patches**: the root Cargo patch selects a narrowly patched GPUI 0.2.2;
-  [vendor/gpui](../vendor/gpui/README.speakeasy.md) and
-  [vendor/gpui_media](../vendor/gpui_media/README.speakeasy.md) record each patched contract and the
-  checks that cover it, and [platform/tests/](../crates/platform/tests) runs the portable ones.
+- **Dependency patches**: the root Cargo patch selects patched GPUI 0.3.11 (`gpui-pre`) crates and
+  AccessKit Windows 0.34.0; [the vendor index](../vendor/README.md) records each patched contract
+  and the checks that cover it, and [platform/tests/](../crates/platform/tests) runs the portable
+  ones.
 
 ## Cross-module invariants
 

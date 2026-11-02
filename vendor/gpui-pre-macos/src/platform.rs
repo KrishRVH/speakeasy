@@ -32,6 +32,7 @@ use objc2::{
 use objc2_app_kit::{
     NSAppearance, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSAppearanceNameVibrantDark,
     NSAppearanceNameVibrantLight, NSApplication, NSApplicationActivationPolicy,
+    NSApplicationTerminateReply,
     NSControlStateValueOn, NSCursor, NSDocumentController, NSEventModifierFlags, NSMenu,
     NSMenuItem, NSModalResponse, NSModalResponseOK, NSOpenPanel, NSSavePanel, NSScroller,
     NSScrollerStyle, NSWorkspace, NSWorkspaceDidWakeNotification, NSWorkspaceWillSleepNotification,
@@ -67,6 +68,11 @@ unsafe fn build_classes() {
             let mut decl = ClassBuilder::new(c"GPUIApplication", class!(NSApplication))
                 .expect("failed to register GPUIApplication");
             decl.add_ivar::<*mut c_void>(MAC_PLATFORM_IVAR);
+            // Speakeasy patch: a deferred termination ignores repeated native requests.
+            decl.add_method(
+                sel!(terminate:),
+                terminate as extern "C-unwind" fn(_, Sel, *mut AnyObject),
+            );
             decl.register()
         }
     };
@@ -86,6 +92,12 @@ unsafe fn build_classes() {
             decl.add_method(
                 sel!(applicationShouldHandleReopen:hasVisibleWindows:),
                 should_handle_reopen as extern "C-unwind" fn(_, Sel, *mut AnyObject, Bool) -> Bool,
+            );
+            // Speakeasy patch: let the app finish its own shutdown before termination.
+            decl.add_method(
+                sel!(applicationShouldTerminate:),
+                should_terminate
+                    as extern "C-unwind" fn(_, Sel, *mut AnyObject) -> NSApplicationTerminateReply,
             );
             decl.add_method(
                 sel!(applicationWillTerminate:),
@@ -163,6 +175,14 @@ unsafe fn build_classes() {
 
 pub struct MacPlatform(Mutex<MacPlatformState>, MainThreadMarker);
 
+// Speakeasy patch: the state of a native termination request the app may defer.
+#[derive(Clone, Copy)]
+enum Termination {
+    Idle,
+    Requested { native_pending: bool },
+    Approved,
+}
+
 pub(crate) struct MacPlatformState {
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
@@ -182,6 +202,9 @@ pub(crate) struct MacPlatformState {
     on_system_wake: Option<Box<dyn FnMut()>>,
     system_power_observers_registered: bool,
     quit: Option<Box<dyn FnMut() -> bool>>,
+    // Speakeasy patch: the app's quit handler and the native request it may defer.
+    quit_requested: Option<Box<dyn FnOnce() -> bool>>,
+    termination: Termination,
     menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
     validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
     will_open_menu: Option<Box<dyn FnMut()>>,
@@ -245,6 +268,8 @@ impl MacPlatform {
             find_pasteboard: Pasteboard::find(),
             reopen: None,
             quit: None,
+            quit_requested: None,
+            termination: Termination::Idle,
             menu_command: None,
             validate_menu_command: None,
             will_open_menu: None,
@@ -588,7 +613,18 @@ impl Platform for MacPlatform {
         extern "C" fn quit(_: *mut c_void) {
             unsafe {
                 let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
-                let _: () = msg_send![app, terminate: ptr::null_mut::<AnyObject>()];
+                // Speakeasy patch: approve a deferred native request instead of starting another.
+                let pending = running_platform(&*app).is_some_and(|platform| {
+                    matches!(
+                        std::mem::replace(&mut platform.0.lock().termination, Termination::Approved),
+                        Termination::Requested { native_pending: true }
+                    )
+                });
+                if pending {
+                    let _: () = msg_send![app, replyToApplicationShouldTerminate: Bool::YES];
+                } else {
+                    let _: () = msg_send![app, terminate: ptr::null_mut::<AnyObject>()];
+                }
             }
         }
     }
@@ -1039,6 +1075,11 @@ impl Platform for MacPlatform {
         self.0.lock().quit = Some(callback);
     }
 
+    // Speakeasy patch: stores the handler that answers the first native termination request.
+    fn on_quit_requested(&self, callback: Box<dyn FnOnce() -> bool>) {
+        self.0.lock().quit_requested = Some(callback);
+    }
+
     fn on_reopen(&self, callback: Box<dyn FnMut()>) {
         self.0.lock().reopen = Some(callback);
     }
@@ -1384,6 +1425,57 @@ extern "C-unwind" fn should_handle_reopen(
         }
     }
     Bool::YES
+}
+
+// Speakeasy patch: reads the platform without asserting, since AppKit may message the app before
+// `run` stores it or after `run` clears it.
+unsafe fn running_platform(object: &AnyObject) -> Option<&MacPlatform> {
+    let ivar = object.class().instance_variable(MAC_PLATFORM_IVAR)?;
+    let pointer = unsafe { *ivar.load::<*mut c_void>(object) };
+    unsafe { pointer.cast::<MacPlatform>().as_ref() }
+}
+
+extern "C-unwind" fn terminate(this: &AnyObject, _: Sel, sender: *mut AnyObject) {
+    let pending = unsafe { running_platform(this) }.is_some_and(|platform| {
+        matches!(platform.0.lock().termination, Termination::Requested { .. })
+    });
+    if !pending {
+        unsafe {
+            let _: () = msg_send![super(this, class!(NSApplication)), terminate: sender];
+        }
+    }
+}
+
+fn termination_reply(native_pending: bool) -> NSApplicationTerminateReply {
+    if native_pending {
+        NSApplicationTerminateReply::TerminateLater
+    } else {
+        NSApplicationTerminateReply::TerminateCancel
+    }
+}
+
+// Speakeasy patch: a request that arrives inside a main-queue task cannot wait, because AppKit's
+// nested run loop cannot drain the serial main queue the app's shutdown needs. It is canceled
+// while the app drains, and the app's later `quit` terminates.
+extern "C-unwind" fn should_terminate(
+    this: &AnyObject,
+    _: Sel,
+    _: *mut AnyObject,
+) -> NSApplicationTerminateReply {
+    let platform = unsafe { get_mac_platform(this) };
+    let mut state = platform.0.lock();
+    match state.termination {
+        Termination::Approved => return NSApplicationTerminateReply::TerminateNow,
+        Termination::Requested { native_pending } => return termination_reply(native_pending),
+        Termination::Idle => {}
+    }
+    let Some(callback) = state.quit_requested.take() else {
+        return NSApplicationTerminateReply::TerminateNow;
+    };
+    drop(state);
+    let native_pending = callback() && !AppleDispatcher::is_dispatching_main();
+    platform.0.lock().termination = Termination::Requested { native_pending };
+    termination_reply(native_pending)
 }
 
 extern "C-unwind" fn will_terminate(this: &AnyObject, _: Sel, _: *mut AnyObject) {

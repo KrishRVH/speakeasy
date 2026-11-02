@@ -848,9 +848,10 @@ paused clock exercises gesture deadlines and the five-minute cap.
   [Linux implementation](docs/linux-implementation.md#setup-and-distribution) explains the Mesa
   requirement.
 - `cargo run --locked -p speakeasy --example check_native_rendering -- --native-gui` opens an owned
-  non-activating window, renders an embedded SVG and paths, resizes, and repeats show/hide. It runs
-  on the process main thread for AppKit. Linux needs a private display, such as `xvfb-run -a`;
-  Windows and Mac use their native desktop. It accesses no microphone, global hook, or clipboard.
+  non-activating window, renders an embedded SVG with alternating path and pathless frames, resizes,
+  and repeats show/hide. It runs on the process main thread for AppKit. Linux needs a private
+  display, such as `xvfb-run -a`; Windows and Mac use their native desktop. It accesses no
+  microphone, global hook, or clipboard.
 - `cargo test --locked -p speakeasy native_show_review_ -- --ignored --test-threads=1` on Windows,
   or with `xvfb-run -a` on Linux, checks synthetic Show navigation, damage, edited summaries,
   expiry, ZIP export, visual-copy requests through a fake, and image cleanup on close. Linux also
@@ -971,8 +972,8 @@ Speakeasy is free and open source under the [MIT License](LICENSE). Josefin Sans
 [SIL Open Font License](crates/app/assets/JosefinSans-OFL.txt), the cue sounds are cut from
 hollandm's CC0 [kalimba recordings](https://freesound.org/people/hollandm/packs/38696/) on
 Freesound, `speakeasy-show` adapts MIT-licensed code credited in its
-[notice](crates/show/NOTICE.md), and the patched GPUI under `vendor/` keeps its
-[Apache 2.0 license](vendor/gpui/LICENSE-APACHE). Every package includes `LICENSE`, the font
+[notice](crates/show/NOTICE.md), and the patched GPUI crates under `vendor/` keep their
+[Apache 2.0 license](vendor/gpui-pre/LICENSE-APACHE). Every package includes `LICENSE`, the font
 license, that notice, and `THIRD-PARTY-NOTICES.txt`, which packaging generates with `cargo about`
 from the crates built for that platform and the licenses
 [packaging/about.toml](packaging/about.toml) accepts.

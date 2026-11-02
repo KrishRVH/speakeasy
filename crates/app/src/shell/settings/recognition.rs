@@ -82,7 +82,7 @@ impl Settings {
             .field
             .read(cx)
             .focus_handle(cx)
-            .focus(window);
+            .focus(window, cx);
         cx.notify();
     }
 

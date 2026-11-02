@@ -14,7 +14,7 @@ mod vocabulary;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use async_channel::Receiver;
-use gpui::{App, BorrowAppContext, Context, ElementId, SharedString, Task, Timer, Window};
+use gpui::{App, BorrowAppContext, Context, ElementId, SharedString, Task, Window};
 use speakeasy_platform::{FileFilter, Permissions};
 use tokio::sync::watch;
 use updates::Update;
@@ -188,18 +188,18 @@ impl Settings {
             self.practice.stop();
         }
         if !matches!(action, Action::Menu(_)) {
-            self.close_menu(window);
+            self.close_menu(window, cx);
         }
         match action {
             Action::Onboarding(action) => self.onboarding_action(action, window, cx),
-            Action::Page(page) => self.open_page(page, window),
+            Action::Page(page) => self.open_page(page, window, cx),
             Action::Menu(menu) => self.toggle_menu(menu, window, cx),
             Action::Setup => self.toggle_setup(cx),
             Action::Install(model) => self.install_model(model, cx),
             Action::Models => self.choosing_model = !self.choosing_model,
             Action::ChooseModel => {
                 self.choosing_model = true;
-                self.open_page(navigation::Page::Dictation, window);
+                self.open_page(navigation::Page::Dictation, window, cx);
             },
             Action::ShowsHelp => self.shows_help = !self.shows_help,
             Action::OwnEngine => self.use_own_engine(cx),
@@ -511,12 +511,13 @@ impl Settings {
 
     pub(super) fn play(&mut self, cx: &Context<'_, Self>) {
         let services = cx.global::<Services>();
-        let script = demo::play(
+        let script = demo::Script::new(
+            cx.background_executor().clone(),
             services.output.clone(),
             services.meter.clone(),
             services.canvas.clone(),
         );
-        self.preview = Some(cx.spawn(async move |_, _| script.await));
+        self.preview = Some(cx.spawn(async move |_, _| script.play().await));
     }
 
     fn toggle_setup(&mut self, cx: &Context<'_, Self>) {
@@ -556,7 +557,7 @@ impl Settings {
                 if this.update(cx, |_, cx| cx.notify()).is_err() {
                     return;
                 }
-                Timer::after(PROGRESS_THROTTLE).await;
+                cx.background_executor().timer(PROGRESS_THROTTLE).await;
             }
             let outcome = outcome.await;
             this.update_if_alive(cx, |view, cx| view.finish_setup(outcome, cx));
@@ -682,7 +683,7 @@ impl Settings {
 
     fn flash_saved(&mut self, cx: &Context<'_, Self>) {
         self.saved = Some(cx.spawn(async move |this, cx| {
-            Timer::after(SAVED_FLASH).await;
+            cx.background_executor().timer(SAVED_FLASH).await;
             this.update_if_alive(cx, |view, cx| {
                 view.saved = None;
                 cx.notify();

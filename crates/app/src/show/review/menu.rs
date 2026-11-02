@@ -6,6 +6,7 @@ use gpui::{
 use super::{Action, CopyKind, ExportKind, ImageState, Review, render::id};
 use crate::{
     controls::{CORNER, DISABLED, HEIGHT, Kit, popover},
+    gpui_ext::AriaDisabled as _,
     icons,
     theme::Palette,
 };

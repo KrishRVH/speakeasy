@@ -29,7 +29,8 @@ keywords = [
     "accessibility",
 ]
 categories = ["gui"]
-license = "MIT OR Apache-2.0"
+# Speakeasy patch: cite the Chromium-derived text code.
+license = "(MIT OR Apache-2.0) AND BSD-3-Clause"
 repository = "https://github.com/AccessKit/accesskit"
 resolver = "2"
 

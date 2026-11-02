@@ -233,19 +233,37 @@ by the native allocation while locked. CMSampleBuffer/format results follow Crea
 retain their dependencies. Finish waits for its native completion; unfinished Drop cancels before
 closing the sink. The checkpoint lease outlives those resources.
 
-## Owned vendor adapters
+## GPUI and vendored adapters
 
-Owners: `vendor/gpui/src/platform/windows/accessibility.rs`, `window/a11y.rs`,
-`window/a11y/text.rs`, `window/a11y/text/scroll.rs`,
-`vendor/accesskit_windows/src/text/geometry.rs`, `text/scroll.rs`; native quit/lifecycle patches in
-GPUI remain covered by its patch README.
+Owners: the [vendor index](../vendor/README.md) lists each patched vendor file;
+`crates/app/src/application.rs`, `shell/shutdown.rs`, and `shell/settings/text_field/accessible.rs`
+hold the app side.
+
+GPUI's `AsyncApp::update` panics if the app is gone or already borrowed. Every `AsyncApp` Speakeasy
+uses comes from `cx.spawn`, and foreground tasks run only from the platform loop while
+`Application::run` holds the app. `App::shutdown` blocks on its quit futures alone, so no foreground
+task runs under its borrow. Speakeasy never calls `to_async` or keeps an `AsyncApp` beyond its task.
+
+`App::shutdown` runs the quit observers, then disposes windows and flushes effects, then polls the
+observers' futures for up to `SHUTDOWN_TIMEOUT` (200 ms). Speakeasy's observer removes the services
+before any window is disposed, and Settings finishes its queued saves as its window is disposed. The
+forced-exit fallback keeps the instance lock inside the returned future until window disposal has
+completed. Settings stays owned by its window alone.
+
+On macOS a deferred termination (`NSTerminateLater`) runs AppKit's nested run loop, which cannot
+drain the serial main queue that GPUI's foreground tasks need. The Apple dispatcher marks main-queue
+tasks with a flag only the main thread writes, and `applicationShouldTerminate:` defers only outside
+such a task and outside an application borrow. The platform takes its state lock only around reads
+and writes of the termination state, never across the app's handler or AppKit calls.
 
 Vendor patches follow upstream documentation policy. Windows UIA native event raising and provider
-return occur outside RefCell/window-state borrows because either can synchronously reenter.
-Hide/minimize redaction invalidates the current epoch before native events; show publication waits
-for committed visibility. Disconnect takes the adapter state out before events or HWND destruction.
-Monotonic node IDs are not reused after removal/invalidation; actions refresh the owner and require
-current membership and enabled/visible semantics. Accessible text uses editor graphemes, retires
-ranges on replacement and refuses ambiguous composition selections. Bounds are physical client
-coordinates and clipping must not turn disjoint/inverted rectangles into visible content. Absolute
-scroll requests preserve order without changing selection.
+return occur outside window-state borrows because either can synchronously reenter through
+`WM_GETOBJECT`. Hide publishes an empty root-only tree before the window disappears and minimize
+publishes it as the window minimizes; the tree returns only after `WM_WINDOWPOSCHANGED` commits
+visibility. `WM_DESTROY` publishes the empty tree while the HWND is valid. A provider retires when
+its node leaves the tree, even when a later tree reuses the id, because GPUI derives node ids from
+element ids. Actions queued before a hide still reach the current tree, and retained text ranges
+resolve again once the tree returns. Range actions are requested after the tree lock is released and
+report errors instead of panicking across COM. Bounds are physical client coordinates, and clipping
+must not turn disjoint or inverted rectangles into visible content. Absolute scroll requests
+preserve order without changing selection.

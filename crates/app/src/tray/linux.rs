@@ -21,9 +21,7 @@ pub(crate) fn install(cx: &mut App) -> anyhow::Result<()> {
     let presentations = native.updater();
     let events = cx.spawn(async move |cx| {
         while let Ok(action) = actions.recv().await {
-            if cx.update(|cx| handle(action, cx)).is_err() {
-                break;
-            }
+            cx.update(|cx| handle(action, cx));
         }
     });
     let mut changes = TrayChanges::new(cx);

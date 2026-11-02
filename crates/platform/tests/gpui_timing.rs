@@ -1,2 +1,2 @@
-#[path = "../../../vendor/gpui/src/platform/windows/vsync/interval.rs"]
+#[path = "../../../vendor/gpui-pre-windows/src/vsync/interval.rs"]
 mod interval;

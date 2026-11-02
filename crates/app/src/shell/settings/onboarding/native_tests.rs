@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use anyhow::ensure;
-use gpui::{AsyncApp, Timer, WindowHandle};
+use gpui::{AsyncApp, WindowHandle};
 
 use super::{Action, Step};
 use crate::shell::settings::{Action as SettingsAction, Settings};
@@ -23,7 +23,9 @@ pub(in crate::shell::settings) async fn exercise(
         );
         anyhow::Ok(())
     })??;
-    Timer::after(Duration::from_millis(100)).await;
+    cx.background_executor()
+        .timer(Duration::from_millis(100))
+        .await;
     settings.update(cx, |view, window, cx| {
         view.act(SettingsAction::Onboarding(Action::Next), window, cx);
         ensure!(
@@ -32,7 +34,9 @@ pub(in crate::shell::settings) async fn exercise(
         );
         anyhow::Ok(())
     })??;
-    Timer::after(Duration::from_millis(100)).await;
+    cx.background_executor()
+        .timer(Duration::from_millis(100))
+        .await;
     settings.update(cx, |view, window, cx| {
         view.act(SettingsAction::Onboarding(Action::Next), window, cx);
         ensure!(
@@ -56,7 +60,9 @@ pub(in crate::shell::settings) async fn exercise(
         );
         anyhow::Ok(())
     })??;
-    Timer::after(Duration::from_millis(100)).await;
+    cx.background_executor()
+        .timer(Duration::from_millis(100))
+        .await;
     settings.update(cx, |view, window, cx| {
         view.act(SettingsAction::Onboarding(Action::Next), window, cx);
         ensure!(
@@ -73,7 +79,9 @@ pub(in crate::shell::settings) async fn exercise(
         );
         anyhow::Ok(())
     })??;
-    Timer::after(Duration::from_millis(100)).await;
+    cx.background_executor()
+        .timer(Duration::from_millis(100))
+        .await;
     settings.update(cx, |view, window, cx| {
         view.act(SettingsAction::Onboarding(Action::Finish), window, cx);
         ensure!(

@@ -121,7 +121,7 @@ impl Settings {
                         .heard
                         .read(cx)
                         .focus_handle(cx)
-                        .focus(window);
+                        .focus(window, cx);
                 }
             },
             Edit::Revise(index) => {
@@ -138,7 +138,7 @@ impl Settings {
                         .revised_heard
                         .read(cx)
                         .focus_handle(cx)
-                        .focus(window);
+                        .focus(window, cx);
                 }
             },
             Edit::Save => {

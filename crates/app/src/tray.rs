@@ -144,12 +144,10 @@ impl TrayChanges {
     }
 
     #[cfg(any(target_os = "windows", target_os = "macos"))]
-    fn refresh(&mut self, cx: &AsyncApp) -> Option<&TrayState> {
+    fn refresh(&mut self, cx: &AsyncApp) -> &TrayState {
         let snapshot = self.snapshots.borrow_and_update().clone();
-        let state = cx
-            .update(|cx| TrayState::new(cx.global::<Services>(), &snapshot))
-            .ok()?;
-        Some(self.last.insert(state))
+        let state = cx.update(|cx| TrayState::new(cx.global::<Services>(), &snapshot));
+        self.last.insert(state)
     }
 
     #[expect(
@@ -159,9 +157,7 @@ impl TrayChanges {
     async fn next(&mut self, cx: &AsyncApp) -> Option<&TrayState> {
         while self.snapshots.changed().await.is_ok() {
             let snapshot = self.snapshots.borrow_and_update().clone();
-            let state = cx
-                .update(|cx| TrayState::new(cx.global::<Services>(), &snapshot))
-                .ok()?;
+            let state = cx.update(|cx| TrayState::new(cx.global::<Services>(), &snapshot));
             if self.last.as_ref() != Some(&state) {
                 return Some(self.last.insert(state));
             }

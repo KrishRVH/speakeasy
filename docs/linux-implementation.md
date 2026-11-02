@@ -75,11 +75,10 @@ Speakeasy never infers it from the focused application.
 
 ## Presentation and lifecycle
 
-The pinned GPUI X11 renderer supplies Settings and the pill, with the native contracts recorded in
-[the dependency patch](../vendor/gpui/README.speakeasy.md). Wayland hosts need Xwayland for
-presentation. The pill uses notification hints, override-redirect, no keyboard focus, and an empty
-input shape before mapping. These hints need native acceptance for stacking, fullscreen, mixed
-scaling, and focus.
+GPUI's X11 platform supplies Settings and the pill; [the vendor index](../vendor/README.md) records
+Speakeasy's patches to it. Wayland hosts need Xwayland for presentation. The pill uses notification
+hints, override-redirect, no keyboard focus, and an empty input shape before mapping. These hints
+need native acceptance for stacking, fullscreen, mixed scaling, and focus.
 
 Private-Xvfb presentation checks exercise actual Settings rendering, pill startup visibility, input
 shape, and simulated show/hide without microphone, shortcuts, or clipboard access. They cover queued
@@ -169,11 +168,12 @@ compositor or editor support. See
 [device keymaps](https://libinput.pages.freedesktop.org/libei/api/group__libei-device.html), and
 [sender lifetime](https://libinput.pages.freedesktop.org/libei/api/group__libei-sender.html).
 
-GPUI's Wayland constructor assigns an xdg-toplevel role before returning. A post-creation native
-adapter cannot turn that surface into layer-shell because the role lasts for its lifetime. A native
-Wayland pill needs a pre-role construction boundary, so Linux presents through X11/Xwayland. See
-[GPUI's constructor](https://docs.rs/crate/gpui/0.2.2/source/src/platform/linux/wayland/window.rs),
-[Wayland roles](https://wayland.freedesktop.org/docs/html/apa.html#protocol-spec-wl_surface), and
+A Wayland surface keeps its first role for its lifetime, so a native Wayland pill must be created as
+a layer-shell surface rather than adapted after creation. GPUI's
+[`WindowKind::LayerShell`](https://docs.rs/crate/gpui-pre/0.3.11/source/src/platform/layer_shell.rs)
+creates one, but Speakeasy presents only through X11/Xwayland, where the pill's hints have native
+acceptance. See
+[Wayland roles](https://wayland.freedesktop.org/docs/html/apa.html#protocol-spec-wl_surface) and
 [layer-shell](https://raw.githubusercontent.com/swaywm/wlr-protocols/master/unstable/wlr-layer-shell-unstable-v1.xml).
 X11 pill hints follow [EWMH](https://specifications.freedesktop.org/wm/latest/ar01s05.html) and the
 [X Shape protocol](https://xorg.freedesktop.org/archive/X11R7.7/doc/xextproto/shape.html).

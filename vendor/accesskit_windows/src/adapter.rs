@@ -672,3 +672,7 @@ impl QueuedEvents {
 // so implement Send even though windows-rs doesn't implement it for all
 // contained types. This is safe because we're not using COM threading.
 unsafe impl Send for QueuedEvents {}
+
+// Speakeasy patch: regressions for provider retirement.
+#[cfg(test)]
+mod tests;

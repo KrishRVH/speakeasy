@@ -1,40 +1,28 @@
-use gpui::{AccessibleTextSelection, Pixels, px};
+use gpui::{Pixels, px};
 
-#[derive(Clone, Copy)]
+use super::Selection;
+
+#[derive(Clone, Copy, Default)]
 enum Tracking {
+    #[default]
     Caret,
     Manual,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub(super) struct Viewport {
     pub(super) offset: Pixels,
     pub(super) limit: Pixels,
     revision: u64,
-    selection: AccessibleTextSelection,
+    selection: Selection,
     tracking: Tracking,
-}
-
-impl Default for Viewport {
-    fn default() -> Self {
-        Self {
-            offset: px(0.0),
-            limit: px(0.0),
-            revision: 0,
-            selection: AccessibleTextSelection {
-                anchor: 0,
-                focus: 0,
-            },
-            tracking: Tracking::Caret,
-        }
-    }
 }
 
 impl Viewport {
     pub(super) fn layout(
         mut self,
         revision: u64,
-        selection: AccessibleTextSelection,
+        selection: Selection,
         caret: Pixels,
         width: Pixels,
         content_width: Pixels,
@@ -79,7 +67,7 @@ mod tests {
 
     #[test]
     fn manual_pan_survives_redraw_and_later_absolute_requests_win() {
-        let selection = AccessibleTextSelection {
+        let selection = Selection {
             anchor: 20,
             focus: 100,
         };
@@ -98,7 +86,7 @@ mod tests {
 
     #[test]
     fn edits_and_selection_changes_reveal_the_caret_with_minimum_movement() {
-        let selection = AccessibleTextSelection {
+        let selection = Selection {
             anchor: 40,
             focus: 100,
         };
@@ -108,7 +96,7 @@ mod tests {
         assert_eq!(view.offset, px(303.0));
         view = view.layout(
             2,
-            AccessibleTextSelection {
+            Selection {
                 anchor: 40,
                 focus: 90,
             },
@@ -119,7 +107,7 @@ mod tests {
         assert_eq!(view.offset, px(303.0));
         view = view.layout(
             2,
-            AccessibleTextSelection {
+            Selection {
                 anchor: 40,
                 focus: 1,
             },
@@ -132,7 +120,7 @@ mod tests {
 
     #[test]
     fn resizing_clamps_manual_pan_and_nonfinite_requests_do_not_replace_it() {
-        let selection = AccessibleTextSelection {
+        let selection = Selection {
             anchor: 0,
             focus: 100,
         };

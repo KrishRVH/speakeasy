@@ -1,10 +1,11 @@
 use gpui::{
-    AnyElement, App, BoxShadow, ClickEvent, Corner, Div, ElementId, FontWeight, Pixels, Rgba,
+    Anchor, AnyElement, App, BoxShadow, ClickEvent, Div, ElementId, FontWeight, Pixels, Rgba,
     SharedString, Stateful, Window, anchored, deferred, div, point, prelude::*, px, relative, rgb,
     svg,
 };
 
 use crate::{
+    gpui_ext::AriaDisabled as _,
     icons::{self, JEWEL_CUT, JEWEL_HOLLOW},
     theme::{Palette, alpha, mix},
 };
@@ -261,6 +262,7 @@ impl<'a> Kit<'a> {
                 offset: point(px(0.0), px(8.0)),
                 blur_radius: px(24.0),
                 spread_radius: px(0.0),
+                inset: false,
             }])
             .text_size(CONTROL_TEXT)
             .text_color(rgb(palette.ink))
@@ -789,12 +791,14 @@ impl<'a> Kit<'a> {
                         offset: point(px(0.0), px(0.0)),
                         blur_radius: px(0.0),
                         spread_radius: px(4.0),
+                        inset: false,
                     },
                     BoxShadow {
                         color: rgb(palette.panel).into(),
                         offset: point(px(0.0), px(0.0)),
                         blur_radius: px(0.0),
                         spread_radius: px(2.0),
+                        inset: false,
                     },
                 ])
             })
@@ -865,9 +869,9 @@ pub(crate) fn popover(menu: impl IntoElement, align_right: bool) -> Div {
             deferred(
                 anchored()
                     .anchor(if align_right {
-                        Corner::TopRight
+                        Anchor::TopRight
                     } else {
-                        Corner::TopLeft
+                        Anchor::TopLeft
                     })
                     .snap_to_window_with_margin(px(8.0))
                     .child(menu),
@@ -898,6 +902,7 @@ pub(crate) fn ring(color: u32) -> Vec<BoxShadow> {
         offset: point(px(0.0), px(0.0)),
         blur_radius: px(0.0),
         spread_radius: px(3.0),
+        inset: false,
     }]
 }
 

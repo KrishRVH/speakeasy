@@ -367,20 +367,14 @@ default-features = false
 
 [dependencies.image]
 version = "0.25.1"
+# Speakeasy patch: only the formats GPUI's ImageFormat names.
 features = [
     "bmp",
-    "dds",
-    "exr",
-    "ff",
     "gif",
-    "hdr",
     "ico",
     "jpeg",
     "png",
     "pnm",
-    "qoi",
-    "rayon",
-    "tga",
     "tiff",
     "webp",
 ]

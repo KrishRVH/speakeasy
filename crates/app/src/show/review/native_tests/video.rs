@@ -13,13 +13,14 @@ fn native_show_video_review_scrubs_steps_and_releases_its_reader() -> anyhow::Re
         .build()?;
     let _entered = runtime.enter();
     let (completed, outcome) = std::sync::mpsc::channel();
-    Application::new()
+    crate::application::new()
+        .unwrap()
         .with_assets(crate::icons::Icons)
         .run(move |cx| {
             crate::load_brand_font(cx);
             cx.spawn(async move |cx| {
                 completed.send(exercise_video(cx).await).unwrap();
-                cx.update_if_running(|cx| cx.quit());
+                cx.update(|cx| cx.quit());
             })
             .detach();
         });
@@ -37,7 +38,7 @@ async fn exercise_video(cx: &mut AsyncApp) -> anyhow::Result<()> {
     let directory = fixture.path().join("20261020T143205Z");
     fs::create_dir(&directory)?;
     movie::tests::native_fixture(&directory)?;
-    cx.update(|cx| cx.set_global(TestReads(crate::show::preview::Reads::default())))?;
+    cx.update(|cx| cx.set_global(TestReads(crate::show::preview::Reads::default())));
     let keeper = cx.open_window(
         WindowOptions {
             show: false,
@@ -181,7 +182,7 @@ async fn exercise_video(cx: &mut AsyncApp) -> anyhow::Result<()> {
             Ok(())
         })??;
     }
-    cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear())?;
+    cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))?;
     let bounds = window.read_with(cx, |view, _| view.timeline.bounds)?;
     let position = bounds.center();
     cx.update_window(window.into(), |_, window, cx| {
@@ -223,7 +224,7 @@ async fn exercise_video(cx: &mut AsyncApp) -> anyhow::Result<()> {
         );
         Ok(())
     })??;
-    cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear())?;
+    cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))?;
     let bounds = window.read_with(cx, |view, _| view.timeline.bounds)?;
     let position = bounds.center();
     cx.update_window(window.into(), |_, window, cx| {
@@ -288,9 +289,11 @@ async fn exercise_video(cx: &mut AsyncApp) -> anyhow::Result<()> {
         view.act(Action::Frame(1), window, cx);
         window.remove_window();
     })?;
-    let drained = cx.update(|cx| cx.global::<TestReads>().0.drained())?;
+    let drained = cx.update(|cx| cx.global::<TestReads>().0.drained());
     drained.await;
-    Timer::after(Duration::from_millis(50)).await;
+    cx.background_executor()
+        .timer(Duration::from_millis(50))
+        .await;
     assert!(pixels.upgrade().is_none());
     assert!(
         !directory.exists(),

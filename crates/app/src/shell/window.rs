@@ -13,7 +13,7 @@ use super::{LaunchMode, Services, settings::Settings};
 #[cfg(target_os = "windows")]
 use crate::gpui_ext::native_window;
 use crate::{
-    gpui_ext::{AppUpdate, WindowUpdate, defer_native},
+    gpui_ext::{WindowUpdate, defer_native},
     show::review::{self, Source},
 };
 
@@ -174,9 +174,9 @@ fn set_visible(settings: WindowHandle<Settings>, visible: bool, cx: &mut App) {
     let task = defer_native(settings.into(), WINDOW_NAME, cx, move |native, cx| {
         native.set_window_visible(visible);
         if visible {
-            cx.update_if_running(|cx| cx.activate(true));
+            cx.update(|cx| cx.activate(true));
         } else {
-            cx.update_if_running(show_tray_hint);
+            cx.update(show_tray_hint);
         }
     });
 
@@ -245,9 +245,7 @@ fn minimize_to_tray(window: &Window, cx: &App) -> anyhow::Result<gpui::Task<()>>
     native_window(window, WINDOW_NAME)?.minimize_to_tray(hide)?;
     Ok(cx.spawn(async move |cx| {
         while hidden.recv().await.is_ok() {
-            if cx.update(hide_to_tray).is_err() {
-                break;
-            }
+            cx.update(hide_to_tray);
         }
     }))
 }

@@ -1,12 +1,24 @@
 [workspace]
 members = ["crates/core", "crates/show", "crates/platform", "crates/app"]
-exclude = ["vendor/gpui", "vendor/gpui_media", "vendor/accesskit_windows"]
+exclude = [
+  "vendor/accesskit_windows",
+  "vendor/gpui-pre",
+  "vendor/gpui-pre-apple",
+  "vendor/gpui-pre-linux",
+  "vendor/gpui-pre-macos",
+  "vendor/gpui-pre-wgpu",
+  "vendor/gpui-pre-windows",
+]
 resolver = "3"
 
 [patch.crates-io]
-gpui = { path = "vendor/gpui" }
-gpui_media = { path = "vendor/gpui_media" }
 accesskit_windows = { path = "vendor/accesskit_windows" }
+gpui-pre = { path = "vendor/gpui-pre" }
+gpui-pre-apple = { path = "vendor/gpui-pre-apple" }
+gpui-pre-linux = { path = "vendor/gpui-pre-linux" }
+gpui-pre-macos = { path = "vendor/gpui-pre-macos" }
+gpui-pre-wgpu = { path = "vendor/gpui-pre-wgpu" }
+gpui-pre-windows = { path = "vendor/gpui-pre-windows" }
 
 [workspace.package]
 version = "0.9.0"
@@ -16,8 +28,8 @@ license = "MIT"
 publish = false
 
 [workspace.dependencies]
-# libloading, tiny-skia, x11rb, and zbus match the majors GPUI 0.2.2 brings in, so each compiles
-# once; move them with GPUI.
+# libloading, tiny-skia, x11rb, and zbus match the majors GPUI brings in, so each compiles once;
+# move them with GPUI.
 anyhow = "1.0.104"
 # arboard claims the X11 clipboard through x11rb's pure-Rust resolver, which Speakeasy's own
 # connections avoid (linux/x11.rs `connect`). x11rb 0.13 tries the abstract socket WSLg serves; 0.14
@@ -37,10 +49,12 @@ embed-resource = "3.0.12"
 fdeflate = "0.3.7"
 futures-util = "0.3.34"
 getrandom = "0.4.3"
-gpui = { version = "=0.2.2", default-features = false }
+gpui = { package = "gpui-pre", version = "=0.3.11", default-features = false }
+gpui_linux = { package = "gpui-pre-linux", version = "=0.3.11", default-features = false }
+gpui_macos = { package = "gpui-pre-macos", version = "=0.3.11", default-features = false }
+gpui_windows = { package = "gpui-pre-windows", version = "=0.3.11", default-features = false }
 image = { version = "0.25.10", default-features = false }
-# 0.2.190 drops the Linux `ENOATTR` that GPUI 0.2.2 still reaches through xattr 0.2.3.
-libc = "=0.2.189"
+libc = "0.2.189"
 libloading = "0.8.9"
 objc2 = "0.6.5"
 objc2-app-kit = { version = "0.3.2", default-features = false }
@@ -59,7 +73,7 @@ raw-window-handle = "0.6.2"
 reqwest = { version = "0.13.5", default-features = false }
 ring = "0.17.14"
 rtrb = "0.4.0"
-# Linux TLS runs on ring, the provider GPUI already links; the default would add AWS-LC.
+# Linux TLS runs on ring, which the app links for update signatures; the default would add AWS-LC.
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-platform-verifier = "0.7.1"
 serde = "1.0.229"
@@ -186,14 +200,14 @@ use_self = "allow"
 
 # Dev and test builds keep file:line for first-party and patched GPUI frames and drop other
 # dependency debuginfo. Full debuginfo for one build: --config 'profile.dev.debug="full"'
-# --config 'profile.dev.package."*".debug="full"' --config 'profile.dev.package.gpui.debug="full"'
+# --config 'profile.dev.package."*".debug="full"' --config 'profile.dev.package.gpui-pre.debug="full"'
 [profile.dev]
 debug = "line-tables-only"
 
 [profile.dev.package."*"]
 debug = false
 
-[profile.dev.package.gpui]
+[profile.dev.package.gpui-pre]
 debug = "line-tables-only"
 
 [profile.release]

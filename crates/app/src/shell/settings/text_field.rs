@@ -1,14 +1,16 @@
+mod accessible;
 mod edit;
 mod viewport;
 
-use std::ops::Range;
+use std::{ops::Range, sync::mpsc};
 
+use accessible::{Painted, Request};
 use edit::{Composition, Edit};
 use gpui::{
-    App, Bounds, ClipboardItem, Context, ElementInputHandler, EntityInputHandler, EventEmitter,
-    FocusHandle, Focusable, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels,
-    Point, ShapedLine, TextRun, UTF16Selection, UnderlineStyle, Window, canvas, div, fill, point,
-    prelude::*, px, size,
+    AccessibleAction, App, Bounds, ClipboardItem, Context, ElementInputHandler, EntityInputHandler,
+    EventEmitter, FocusHandle, Focusable, KeyDownEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, Pixels, Point, ShapedLine, TextRun, UTF16Selection, UnderlineStyle, Window,
+    accesskit::ActionData, canvas, div, fill, point, prelude::*, px, size,
 };
 use viewport::Viewport;
 
@@ -16,6 +18,12 @@ use crate::{
     controls::{CONTROL_TEXT, CORNER, HEIGHT, ring},
     theme::{Theme, alpha},
 };
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct Selection {
+    pub(super) anchor: usize,
+    pub(super) focus: usize,
+}
 
 pub(super) struct TextField {
     label: &'static str,
@@ -136,24 +144,54 @@ impl TextField {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        window.focus(&self.focus);
+        window.focus(&self.focus, cx);
         self.selecting = true;
         self.select_point(event.position, event.modifiers.shift);
         cx.notify();
     }
 
+    fn respond(
+        cx: &Context<'_, Self>,
+    ) -> impl FnMut(Option<&ActionData>, &mut Window, &mut App) + 'static {
+        let respond = cx.listener(Self::act);
+        move |data, window, cx| {
+            if let Some(data) = data {
+                respond(data, window, cx);
+            }
+        }
+    }
+
+    fn act(&mut self, data: &ActionData, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(request) = Request::new(
+            data,
+            cx.entity_id(),
+            &self.edit,
+            &self.viewport,
+            window.scale_factor(),
+        ) else {
+            return;
+        };
+        match request {
+            Request::Replace(text) => {
+                let range = 0..self.edit.text.encode_utf16().count();
+                self.replace(Some(range), text, Composition::Commit, cx);
+            },
+            Request::Select(selection) => self.select_accessible(selection, window, cx),
+            Request::Scroll(offset) => self.scroll_accessible(offset, cx),
+        }
+    }
+
     pub(super) fn select_accessible(
         &mut self,
-        selection: gpui::AccessibleTextSelection,
+        selection: Selection,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if self.edit.marked.is_some() || !self.edit.select_range(selection.anchor, selection.focus)
-        {
+        if self.edit.marked.is_some() || !self.edit.select_range(selection) {
             return;
         }
         self.viewport.reveal_caret();
-        window.focus(&self.focus);
+        window.focus(&self.focus, cx);
         cx.notify();
     }
 
@@ -161,6 +199,48 @@ impl TextField {
         if self.viewport.pan(offset) {
             cx.notify();
         }
+    }
+
+    fn shape(&self, window: &Window) -> ShapedLine {
+        let style = window.text_style();
+        let text = self.edit.text.clone();
+        let base = TextRun {
+            len: text.len(),
+            font: style.font(),
+            color: style.color,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        let runs = if let Some(marked) = &self.edit.marked {
+            vec![
+                TextRun {
+                    len: marked.start,
+                    ..base.clone()
+                },
+                TextRun {
+                    len: marked.len(),
+                    underline: Some(UnderlineStyle {
+                        color: Some(style.color),
+                        thickness: px(1.0),
+                        wavy: false,
+                    }),
+                    ..base.clone()
+                },
+                TextRun {
+                    len: text.len().saturating_sub(marked.end),
+                    ..base
+                },
+            ]
+            .into_iter()
+            .filter(|run| run.len > 0)
+            .collect::<Vec<_>>()
+        } else {
+            vec![base]
+        };
+        window
+            .text_system()
+            .shape_line(text.into(), CONTROL_TEXT, &runs, None)
     }
 
     fn paint_text(
@@ -193,7 +273,14 @@ impl TextField {
                     gpui::rgb(lamp),
                 ));
             }
-            line.paint(origin, bounds.size.height, window, cx)
+            line.paint(
+                origin,
+                bounds.size.height,
+                gpui::TextAlign::Left,
+                None,
+                window,
+                cx,
+            )
         })
     }
 
@@ -320,30 +407,14 @@ impl Focusable for TextField {
 }
 
 impl Render for TextField {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let palette = self.theme.palette();
         let field = cx.entity();
         let placeholder = (self.edit.text.is_empty() && self.edit.marked.is_none())
             .then_some(self.placeholder)
             .filter(|placeholder| !placeholder.is_empty());
-        let set_value = cx.listener(|field, value: &str, _, cx| {
-            let range = 0..field.edit.text.encode_utf16().count();
-            field.replace(Some(range), value, Composition::Commit, cx);
-        });
+        let (publish, painted) = mpsc::sync_channel::<Painted>(1);
         div()
-            .id("text-field")
-            .role(gpui::Role::TextInput)
-            .aria_label(self.label)
-            .aria_value(self.edit.text.clone())
-            .on_a11y_action(
-                gpui::accesskit::Action::SetValue,
-                move |data, window, cx| {
-                    if let Some(gpui::accesskit::ActionData::Value(value)) = data {
-                        set_value(value, window, cx);
-                    }
-                },
-            )
-            .track_focus(&self.focus)
             .cursor_text()
             .relative()
             .w_full()
@@ -355,9 +426,8 @@ impl Render for TextField {
             .border_1()
             .border_color(palette.edge())
             .hover(|style| style.border_color(gpui::rgb(palette.muted)))
-            .focus(|style| {
-                style
-                    .border_color(gpui::rgb(palette.lamp))
+            .when(self.focus.is_focused(window), |body| {
+                body.border_color(gpui::rgb(palette.lamp))
                     .shadow(ring(palette.lamp))
             })
             .bg(gpui::rgb(palette.raise))
@@ -378,112 +448,76 @@ impl Render for TextField {
                 cx.listener(|field, _, _, _| field.selecting = false),
             )
             .child(
-                canvas(
-                    move |bounds, window, cx| {
-                        let input = field.read(cx);
-                        let style = window.text_style();
-                        let text = input.edit.text.clone();
-                        let base = TextRun {
-                            len: text.len(),
-                            font: style.font(),
-                            color: style.color,
-                            background_color: None,
-                            underline: None,
-                            strikethrough: None,
-                        };
-                        let runs = if let Some(marked) = &input.edit.marked {
-                            vec![
-                                TextRun {
-                                    len: marked.start,
-                                    ..base.clone()
-                                },
-                                TextRun {
-                                    len: marked.len(),
-                                    underline: Some(UnderlineStyle {
-                                        color: Some(style.color),
-                                        thickness: px(1.0),
-                                        wavy: false,
-                                    }),
-                                    ..base.clone()
-                                },
-                                TextRun {
-                                    len: text.len().saturating_sub(marked.end),
-                                    ..base
-                                },
-                            ]
-                            .into_iter()
-                            .filter(|run| run.len > 0)
-                            .collect::<Vec<_>>()
-                        } else {
-                            vec![base]
-                        };
-                        let line =
-                            window
-                                .text_system()
-                                .shape_line(text.into(), CONTROL_TEXT, &runs, None);
-                        let cursor = line.x_for_index(input.edit.cursor);
-                        let range = input.edit.selection();
-                        let anchor = if input.edit.reversed() {
-                            range.end
-                        } else {
-                            range.start
-                        };
-                        let selected = gpui::AccessibleTextSelection {
-                            anchor,
-                            focus: input.edit.cursor,
-                        };
-                        let viewport = input.viewport.layout(
-                            input.edit.generation,
-                            selected,
-                            cursor,
-                            bounds.size.width,
-                            line.width,
-                        );
-                        let editor = field.clone();
-                        let scroll_editor = field.clone();
-                        window.register_accessible_text(
-                            gpui::AccessibleText {
-                                line: &line,
-                                origin: bounds.origin,
-                                viewport: bounds,
-                                scroll_offset: viewport.offset,
-                                scroll_limit: viewport.limit,
-                                selection: selected,
-                                revision: input.edit.generation,
+                div()
+                    .id("text-field")
+                    .role(gpui::Role::TextInput)
+                    .aria_label(self.label)
+                    .aria_value(self.edit.text.clone())
+                    .when(!self.placeholder.is_empty(), |input| {
+                        input.aria_placeholder(self.placeholder)
+                    })
+                    .on_a11y_action(AccessibleAction::SetValue, Self::respond(cx))
+                    .on_a11y_action(AccessibleAction::SetTextSelection, Self::respond(cx))
+                    .on_a11y_action(AccessibleAction::SetScrollOffset, Self::respond(cx))
+                    .a11y_synthetic_children(move |subtree| {
+                        if let Ok(painted) = painted.try_recv() {
+                            painted.publish(subtree);
+                        }
+                    })
+                    .track_focus(&self.focus)
+                    .w_full()
+                    .h(px(20.0))
+                    .child(
+                        canvas(
+                            move |bounds, window, cx| {
+                                let input = field.read(cx);
+                                let line = input.shape(window);
+                                let viewport = input.viewport.layout(
+                                    input.edit.generation,
+                                    input.edit.ends(),
+                                    line.x_for_index(input.edit.cursor),
+                                    bounds.size.width,
+                                    line.width,
+                                );
+                                if window.is_a11y_active()
+                                    && let Some(painted) = Painted::new(
+                                        field.entity_id(),
+                                        &input.edit,
+                                        &line,
+                                        bounds,
+                                        &viewport,
+                                        window,
+                                    )
+                                {
+                                    #[expect(
+                                        clippy::let_underscore_must_use,
+                                        reason = "A field without an accessibility node this frame has no reader for its text"
+                                    )]
+                                    let _ = publish.try_send(painted);
+                                }
+                                (field.clone(), line, viewport)
                             },
-                            move |selection, window, cx| {
-                                editor.update(cx, |field, cx| {
-                                    field.select_accessible(selection, window, cx);
+                            move |bounds, (field, line, viewport), window, cx| {
+                                field.update(cx, |input, cx| {
+                                    let scroll = viewport.offset;
+                                    input.viewport = viewport;
+                                    window.handle_input(
+                                        &input.focus,
+                                        ElementInputHandler::new(bounds, field.clone()),
+                                        cx,
+                                    );
+                                    let failed =
+                                        input.paint_text(&line, bounds, scroll, window, cx).is_err();
+                                    if failed && input.problem.is_none() {
+                                        input.problem = Some("Cannot render this phrase.");
+                                        cx.notify();
+                                    }
+                                    input.layout = Some((line, bounds, scroll));
                                 });
                             },
-                            move |offset, _, cx| {
-                                scroll_editor
-                                    .update(cx, |field, cx| field.scroll_accessible(offset, cx));
-                            },
-                        );
-                        (field.clone(), line, viewport)
-                    },
-                    move |bounds, (field, line, viewport), window, cx| {
-                        field.update(cx, |input, cx| {
-                            let scroll = viewport.offset;
-                            input.viewport = viewport;
-                            window.handle_input(
-                                &input.focus,
-                                ElementInputHandler::new(bounds, field.clone()),
-                                cx,
-                            );
-                            let failed =
-                                input.paint_text(&line, bounds, scroll, window, cx).is_err();
-                            if failed && input.problem.is_none() {
-                                input.problem = Some("Cannot render this phrase.");
-                                cx.notify();
-                            }
-                            input.layout = Some((line, bounds, scroll));
-                        });
-                    },
-                )
-                .w_full()
-                .h(px(20.0)),
+                        )
+                        .size_full(),
+                    ),
             )
             .when_some(placeholder, |body, placeholder| {
                 body.child(

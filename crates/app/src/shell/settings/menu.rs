@@ -1,5 +1,5 @@
 use gpui::{
-    Context, FocusHandle, KeyDownEvent, KeyUpEvent, ScrollHandle, SharedString, Subscription,
+    App, Context, FocusHandle, KeyDownEvent, KeyUpEvent, ScrollHandle, SharedString, Subscription,
     Window,
 };
 
@@ -237,7 +237,7 @@ impl Settings {
         cx: &mut Context<'_, Self>,
     ) {
         if self.menus.open == Some(menu) {
-            self.close_menu(window);
+            self.close_menu(window, cx);
             return;
         }
         if menu == Menu::Microphone {
@@ -254,7 +254,7 @@ impl Settings {
                         return;
                     };
                     if inside {
-                        view.menus.trigger(menu).focus(window);
+                        view.menus.trigger(menu).focus(window, cx);
                     }
                     cx.notify();
                 }),
@@ -266,13 +266,13 @@ impl Settings {
             .unwrap_or(0);
         self.menus.open = Some(menu);
         self.menus.scroll.scroll_to_item(self.menus.cursor);
-        self.menus.list.focus(window);
+        self.menus.list.focus(window, cx);
     }
 
-    pub(super) fn close_menu(&mut self, window: &mut Window) {
+    pub(super) fn close_menu(&mut self, window: &mut Window, cx: &mut App) {
         self.menus.focus_out = None;
         if let Some(menu) = self.menus.open.take() {
-            self.menus.trigger(menu).focus(window);
+            self.menus.trigger(menu).focus(window, cx);
         }
     }
 
@@ -297,7 +297,7 @@ impl Settings {
                 return;
             },
             "escape" | "tab" => {
-                self.close_menu(window);
+                self.close_menu(window, cx);
                 if event.keystroke.key == "escape" {
                     cx.stop_propagation();
                 }

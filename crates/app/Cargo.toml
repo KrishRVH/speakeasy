@@ -25,7 +25,7 @@ cpal.workspace = true
 crc32fast.workspace = true
 getrandom.workspace = true
 futures-util.workspace = true
-gpui = { workspace = true, features = ["font-kit"] }
+gpui.workspace = true
 image = { workspace = true, features = ["png"] }
 raw-window-handle.workspace = true
 reqwest = { workspace = true, features = ["multipart"] }
@@ -51,7 +51,7 @@ tokio = { workspace = true, features = ["net", "test-util"] }
 embed-resource.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
-gpui = { workspace = true, features = ["x11"] }
+gpui_linux = { workspace = true, features = ["x11"] }
 # Setup downloads over rustls on ring with the system trust store; http.rs supplies the provider.
 reqwest = { workspace = true, features = ["rustls-no-provider"] }
 rustls.workspace = true
@@ -61,8 +61,12 @@ rustls-platform-verifier.workspace = true
 x11rb = { workspace = true, features = ["allow-unsafe-code", "shape"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+gpui_macos = { workspace = true, features = ["font-kit"] }
 objc2 = { workspace = true, optional = true }
 objc2-app-kit = { workspace = true, optional = true, features = ["NSApplication", "NSResponder", "NSRunningApplication", "libc"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+gpui_windows.workspace = true
 
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 # Setup downloads over the operating system's TLS stack and trust store.

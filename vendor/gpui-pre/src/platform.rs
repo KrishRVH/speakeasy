@@ -461,6 +461,11 @@ pub trait Platform: 'static {
     fn open_with_system(&self, path: &Path);
 
     fn on_quit(&self, callback: Box<dyn FnMut() -> bool>);
+    // Speakeasy patch: a native quit request may defer termination until the app approves it.
+    /// Registers the callback that receives a native request to terminate the app. The callback
+    /// returns whether termination can wait for [`App::quit`] without blocking its own work.
+    #[cfg(target_os = "macos")]
+    fn on_quit_requested(&self, _callback: Box<dyn FnOnce() -> bool>) {}
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
     /// Registers the callback invoked when the system is about to sleep.
     fn on_system_sleep(&self, callback: Box<dyn FnMut()>);

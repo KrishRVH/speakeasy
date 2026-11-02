@@ -1,4 +1,4 @@
-use gpui::{Context, FocusHandle, ScrollHandle, Window, point, px};
+use gpui::{App, Context, FocusHandle, ScrollHandle, Window, point, px};
 
 use super::Settings;
 
@@ -46,12 +46,12 @@ impl Navigation {
 }
 
 impl Settings {
-    pub(super) fn open_page(&mut self, page: Page, window: &mut Window) {
+    pub(super) fn open_page(&mut self, page: Page, window: &mut Window, cx: &mut App) {
         if self.navigation.page != page {
             self.practice.stop();
             self.navigation.page = page;
             self.navigation.scroll.set_offset(point(px(0.0), px(0.0)));
         }
-        self.navigation.focus(page).focus(window);
+        self.navigation.focus(page).focus(window, cx);
     }
 }

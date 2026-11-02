@@ -34,7 +34,7 @@ use tokio::sync::watch;
 
 use super::store::{recall, retention};
 use crate::{
-    gpui_ext::{AppUpdate, EntityUpdate, defer_native, follow},
+    gpui_ext::{EntityUpdate, defer_native, follow},
     runtime::Snapshot,
     theme::Theme,
 };
@@ -136,10 +136,10 @@ impl Review {
         snapshots: watch::Receiver<Snapshot>,
         actions: Actions,
         window: &mut Window,
-        cx: &Context<'_, Self>,
+        cx: &mut Context<'_, Self>,
     ) -> Self {
         let focus = cx.focus_handle();
-        window.focus(&focus);
+        window.focus(&focus, cx);
         Self {
             focus,
             source,
@@ -192,7 +192,7 @@ impl Review {
             cx,
             |native, cx| {
                 native.set_window_visible(true);
-                cx.update_if_running(|cx| cx.activate(true));
+                cx.update(|cx| cx.activate(true));
             },
         ));
     }

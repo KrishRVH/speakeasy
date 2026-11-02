@@ -154,17 +154,7 @@ version = "0.4"
 features = ["std"]
 default-features = false
 
-[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies.notify-rust]
-version = "4"
-
-[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies.oo7]
-version = "0.6"
-features = [
-    "async-std",
-    "native_crypto",
-]
-default-features = false
-
+# Speakeasy patch: no keyring or notification clients; Speakeasy stores no credentials.
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies.open]
 version = "5.2.0"
 optional = true

@@ -115,7 +115,7 @@ impl Settings {
         self.notice = None;
         self.onboarding = Some(next);
         self.navigation.scroll.set_offset(point(px(0.0), px(0.0)));
-        self.onboarding_focus.focus(window);
+        self.onboarding_focus.focus(window, cx);
         if next == Step::Practice && !is_demo(cx) {
             self.toggle_practice(cx);
         }

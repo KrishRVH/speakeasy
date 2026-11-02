@@ -12,6 +12,11 @@ use windows::Win32::{
     System::Performance::QueryPerformanceFrequency,
 };
 
+// Speakeasy patch: interval selection lives in a host-testable module.
+mod interval;
+
+use interval::{VSYNC_INTERVAL_THRESHOLD, select_interval};
+
 static QPC_TICKS_PER_SECOND: LazyLock<u64> = LazyLock::new(|| {
     let mut frequency = 0;
     // On systems that run Windows XP or later, the function will always succeed and
@@ -20,7 +25,6 @@ static QPC_TICKS_PER_SECOND: LazyLock<u64> = LazyLock::new(|| {
     frequency as u64
 });
 
-const VSYNC_INTERVAL_THRESHOLD: Duration = Duration::from_millis(1);
 const DEFAULT_VSYNC_INTERVAL: Duration = Duration::from_micros(16_666); // ~60Hz
 
 pub(crate) struct VSyncProvider {
@@ -65,23 +69,16 @@ fn get_dwm_interval() -> Result<Duration> {
         ..Default::default()
     };
     unsafe { DwmGetCompositionTimingInfo(HWND::default(), &mut timing_info) }?;
-    let interval = retrieve_duration(timing_info.qpcRefreshPeriod, *QPC_TICKS_PER_SECOND);
     // Check for interval values that are impossibly low. A 29 microsecond
     // interval was seen (from a qpcRefreshPeriod of 60).
-    if interval < VSYNC_INTERVAL_THRESHOLD {
-        Ok(retrieve_duration(
-            timing_info.rateRefresh.uiDenominator as u64,
-            timing_info.rateRefresh.uiNumerator as u64,
-        ))
-    } else {
-        Ok(interval)
-    }
-}
-
-#[inline]
-fn retrieve_duration(counts: u64, ticks_per_second: u64) -> Duration {
-    let ticks_per_microsecond = ticks_per_second / 1_000_000;
-    Duration::from_micros(counts / ticks_per_microsecond)
+    // Speakeasy patch: select_interval rejects zero clocks instead of dividing by them.
+    select_interval(
+        timing_info.qpcRefreshPeriod,
+        *QPC_TICKS_PER_SECOND,
+        timing_info.rateRefresh.uiNumerator,
+        timing_info.rateRefresh.uiDenominator,
+    )
+    .context("DWM reported no valid refresh interval")
 }
 
 #[cfg(test)]

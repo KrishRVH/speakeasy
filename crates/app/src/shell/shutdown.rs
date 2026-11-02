@@ -1,11 +1,11 @@
 use std::time::Duration;
 
-use gpui::{App, AsyncApp, Timer, WindowHandle};
+use gpui::{App, AsyncApp, WindowHandle};
 
 #[cfg(target_os = "windows")]
 use super::services::Installation;
 use super::{Services, settings::Settings};
-use crate::gpui_ext::{AppUpdate, WindowUpdate};
+use crate::gpui_ext::WindowUpdate;
 
 const DRAIN_POLL: Duration = Duration::from_millis(10);
 
@@ -57,9 +57,9 @@ fn begin_quit(
         }
         stopped.await;
         while !drained(settings, cx) {
-            Timer::after(DRAIN_POLL).await;
+            cx.background_executor().timer(DRAIN_POLL).await;
         }
-        cx.update_if_running(|cx| {
+        cx.update(|cx| {
             let services = cx.global_mut::<Services>();
             services.finish_quit();
             #[cfg(target_os = "windows")]

@@ -15,7 +15,6 @@ use crate::show::SavedShow;
 use crate::{
     audio::MicrophoneScan,
     config::{Change, Config, ValidConfig},
-    gpui_ext::AppUpdate,
     instance::{Event, Instance, Request},
     pill::Pill,
     runtime::{self, Meter, ModelState, Phase, Report, Runtime, Snapshot},
@@ -249,17 +248,12 @@ impl Services {
     ) {
         self.requests = Some(cx.spawn(async move |cx| {
             while let Ok(request) = requests.recv().await {
-                if cx
-                    .update(|cx| match request {
-                        Event::Shortcut(request) => handle_request(request, cx),
-                        Event::Control(call) => cx.update_global::<Services, _>(|services, cx| {
-                            services.control(call, cx);
-                        }),
-                    })
-                    .is_err()
-                {
-                    break;
-                }
+                cx.update(|cx| match request {
+                    Event::Shortcut(request) => handle_request(request, cx),
+                    Event::Control(call) => cx.update_global::<Services, _>(|services, cx| {
+                        services.control(call, cx);
+                    }),
+                });
             }
         }));
     }
@@ -452,7 +446,7 @@ impl Services {
         announce(&self.output, CHECKING);
         self.validation = Some(cx.spawn(async move |cx| {
             let result = validation.await;
-            cx.update_if_running(|cx| Self::validation_complete(epoch, result, cx));
+            cx.update(|cx| Self::validation_complete(epoch, result, cx));
         }));
     }
 
@@ -509,7 +503,7 @@ impl Services {
         };
         self.retirement = Some(cx.spawn(async move |cx| {
             stopped.await;
-            cx.update_if_running(|cx| {
+            cx.update(|cx| {
                 cx.update_global::<Self, _>(|services, cx| services.retired(cx));
             });
         }));
@@ -593,7 +587,7 @@ impl Services {
                 Err("The reset stopped unexpectedly. Check your settings, then try again.".into())
             });
             exited.await;
-            cx.update_if_running(|cx| {
+            cx.update(|cx| {
                 cx.update_global::<Self, _>(|services, _| services.purged(before, result, &done));
             });
         });

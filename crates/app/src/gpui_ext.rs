@@ -1,25 +1,26 @@
 use anyhow::{Context as _, anyhow};
 use gpui::{
-    AnyWindowHandle, App, AppContext, AsyncApp, Context, Flatten, Render, Task, WeakEntity, Window,
-    WindowHandle,
+    AccessibleAction, AnyWindowHandle, App, AppContext, AsyncApp, Context, Render,
+    StatefulInteractiveElement, Task, WeakEntity, Window, WindowHandle,
 };
 use raw_window_handle::HasWindowHandle;
 use speakeasy_platform::NativeWindow;
 use tokio::sync::watch;
 
 pub(crate) trait EntityUpdate<T> {
-    fn update_if_alive<C>(&self, cx: &mut C, update: impl FnOnce(&mut T, &mut Context<'_, T>))
-    where
-        C: AppContext,
-        anyhow::Result<C::Result<()>>: Flatten<()>;
+    fn update_if_alive<C: AppContext>(
+        &self,
+        cx: &mut C,
+        update: impl FnOnce(&mut T, &mut Context<'_, T>),
+    );
 }
 
 impl<T: 'static> EntityUpdate<T> for WeakEntity<T> {
-    fn update_if_alive<C>(&self, cx: &mut C, update: impl FnOnce(&mut T, &mut Context<'_, T>))
-    where
-        C: AppContext,
-        anyhow::Result<C::Result<()>>: Flatten<()>,
-    {
+    fn update_if_alive<C: AppContext>(
+        &self,
+        cx: &mut C,
+        update: impl FnOnce(&mut T, &mut Context<'_, T>),
+    ) {
         #[expect(
             clippy::let_underscore_must_use,
             reason = "A released entity has no state left to update"
@@ -27,6 +28,22 @@ impl<T: 'static> EntityUpdate<T> for WeakEntity<T> {
         let _ = self.update(cx, update);
     }
 }
+
+pub(crate) trait AriaDisabled: StatefulInteractiveElement {
+    fn aria_disabled(self, disabled: bool) -> Self {
+        if !disabled {
+            return self;
+        }
+        self.a11y_synthetic_children(|subtree| {
+            let node = subtree.parent_node();
+            node.set_disabled();
+            node.remove_action(AccessibleAction::Click);
+            node.remove_action(AccessibleAction::Focus);
+        })
+    }
+}
+
+impl<E: StatefulInteractiveElement> AriaDisabled for E {}
 
 pub(crate) trait WindowUpdate<V> {
     fn update_if_open<C: AppContext>(
@@ -47,20 +64,6 @@ impl<V: Render> WindowUpdate<V> for WindowHandle<V> {
             reason = "A closed window has no view left to update"
         )]
         let _ = self.update(cx, update);
-    }
-}
-
-pub(crate) trait AppUpdate {
-    fn update_if_running(&self, update: impl FnOnce(&mut App));
-}
-
-impl AppUpdate for AsyncApp {
-    fn update_if_running(&self, update: impl FnOnce(&mut App)) {
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "A released app has already disposed of every view an update could reach"
-        )]
-        let _ = self.update(update);
     }
 }
 

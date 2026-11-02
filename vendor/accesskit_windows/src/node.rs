@@ -846,6 +846,10 @@ impl PlatformNode {
     fn node<'a>(&self, tree: &'a Tree) -> Result<Node<'a>> {
         let state = tree.state();
         if let Some(id) = self.node_id {
+            // Speakeasy patch: a later tree that reuses the id gets a new provider.
+            if !self.upgrade_context()?.is_current_platform_node(id, self) {
+                return Err(element_not_available());
+            }
             if let Some(node) = state.node_by_id(id) {
                 Ok(node)
             } else {
@@ -1442,10 +1446,15 @@ patterns! {
         },
 
         fn GetVisibleRanges(&self) -> Result<*mut SAFEARRAY> {
-            // TBD: Do we need this? The Quorum GUI toolkit, which is our
-            // current point of comparison for text functionality,
-            // doesn't implement it.
-            Ok(std::ptr::null_mut())
+            // Speakeasy patch: report the spans that clipping ancestors leave visible.
+            self.resolve_for_text_pattern(|node| {
+                let ranges = crate::text::geometry::visible_ranges(&node.document_range());
+                let providers = ranges.into_iter().map(|range| {
+                    let provider: ITextRangeProvider = PlatformTextRange::new(&self.context, range).into();
+                    provider.cast::<IUnknown>()
+                }).collect::<Result<Vec<_>>>()?;
+                Ok(safe_array_from_com_slice(&providers))
+            })
         },
 
         fn RangeFromChild(&self, _child: Ref<IRawElementProviderSimple>) -> Result<ITextRangeProvider> {

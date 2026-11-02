@@ -5,7 +5,7 @@ mod keyboard;
 mod platform;
 #[cfg(any(feature = "wayland", feature = "x11"))]
 mod power;
-mod system_notifications;
+// Speakeasy patch: system_notifications.rs is deleted with its notify-rust client.
 #[cfg(any(feature = "wayland", feature = "x11"))]
 mod text_system;
 #[cfg(feature = "wayland")]

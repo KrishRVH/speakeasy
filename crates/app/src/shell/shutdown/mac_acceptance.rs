@@ -1,7 +1,7 @@
 use std::{io::Write as _, time::Duration};
 
 use anyhow::{Context as _, ensure};
-use gpui::{App, Application, Global, Timer, Window};
+use gpui::{App, Global, Window};
 use objc2::MainThreadMarker;
 use objc2_app_kit::{
     NSApplication, NSApplicationDelegate, NSApplicationTerminateReply, NSRunningApplication,
@@ -77,7 +77,7 @@ pub(crate) fn native_quit_check() -> anyhow::Result<()> {
 
 fn exercise(mode: Mode) -> anyhow::Result<()> {
     let main = MainThreadMarker::new().context("Native quit requires the main thread")?;
-    let application = Application::new().with_assets(crate::icons::Icons);
+    let application = crate::application::new()?.with_assets(crate::icons::Icons);
     application.on_quit_requested(|cx| {
         let progress = cx.global_mut::<Progress>();
         if progress.requested {
@@ -159,21 +159,25 @@ fn start(mode: Mode, main: MainThreadMarker, cx: &mut App) -> anyhow::Result<()>
     .detach();
     cx.spawn(async move |cx| {
         let result = async {
-            Timer::after(Duration::from_millis(100)).await;
+            cx.background_executor()
+                .timer(Duration::from_millis(100))
+                .await;
             match mode {
                 Mode::External | Mode::Repeated => {
                     writeln!(std::io::stdout().lock(), "Owned Mac quit ready")?;
                 },
                 Mode::Borrowed => {},
                 Mode::Foreground => NSApplication::sharedApplication(main).terminate(None),
-                Mode::Approved => cx.update(request_quit)?,
+                Mode::Approved => cx.update(request_quit),
             }
-            while !cx.update(|cx| cx.global::<Services>().is_quitting())? {
-                Timer::after(Duration::from_millis(10)).await;
+            while !cx.update(|cx| cx.global::<Services>().is_quitting()) {
+                cx.background_executor()
+                    .timer(Duration::from_millis(10))
+                    .await;
             }
             check_reply(mode, main)?;
             if mode == Mode::Repeated {
-                cx.update(|_| NSApplication::sharedApplication(main).terminate(None))?;
+                cx.update(|_| NSApplication::sharedApplication(main).terminate(None));
                 check_reply(mode, main)?;
             }
             for _ in 0..3 {
@@ -181,23 +185,23 @@ fn start(mode: Mode, main: MainThreadMarker, cx: &mut App) -> anyhow::Result<()>
                     window.on_next_frame(frame);
                     window.refresh();
                 })?;
-                Timer::after(Duration::from_millis(50)).await;
-                ensure!(cx.update(|cx| cx.global::<Services>().is_quitting())?);
+                cx.background_executor()
+                    .timer(Duration::from_millis(50))
+                    .await;
+                ensure!(cx.update(|cx| cx.global::<Services>().is_quitting()));
                 ensure!(accepted.is_empty(), "Held save acknowledged prematurely");
             }
             Ok(())
         }
         .await;
-        if let Err(error) = cx.update(|cx| {
+        cx.update(|cx| {
             let progress = cx.global_mut::<Progress>();
             progress.released = true;
             if progress.error.is_none() {
                 progress.error = result.err();
             }
             request_quit(cx);
-        }) {
-            report(Err(error));
-        }
+        });
         if let Err(error) = release.try_send(()) {
             report(Err(error.into()));
         }

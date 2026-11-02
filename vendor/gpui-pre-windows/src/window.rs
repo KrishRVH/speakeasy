@@ -1,4 +1,7 @@
 #![deny(unsafe_op_in_unsafe_fn)]
+// Speakeasy patch: UI Automation lifecycle.
+#[path = "accessibility.rs"]
+mod accessibility;
 
 use std::{
     cell::{Cell, RefCell},
@@ -1093,17 +1096,30 @@ impl PlatformWindow for WindowsWindow {
             callback: callbacks.activation,
         };
 
+        // Speakeasy patch: a window that is not presented yet starts redacted.
+        let requested_visible = unsafe { IsWindowVisible(self.0.hwnd) }.as_bool();
         *self.state.a11y.borrow_mut() = Some(A11yState {
             adapter,
             activation_handler,
+            redacted: !self.0.visibility().is_visible(),
+            requested_visible,
         });
     }
 
     fn a11y_tree_update(&self, tree_update: accesskit::TreeUpdate) {
+        // Speakeasy patch: a redacted window keeps publishing an empty tree.
+        let exposed = self.0.accessibility_exposed();
         let events = {
             let mut a11y = self.state.a11y.borrow_mut();
-            a11y.as_mut()
-                .and_then(|a11y| a11y.adapter.update_if_active(|| tree_update))
+            a11y.as_mut().and_then(|a11y| {
+                a11y.adapter.update_if_active(|| {
+                    if exposed {
+                        tree_update
+                    } else {
+                        accessibility::empty_tree()
+                    }
+                })
+            })
         };
         // The borrow must be dropped before raising events, because
         // `events.raise()` calls `UiaRaiseAutomationPropertyChangedEvent`
@@ -1123,6 +1139,9 @@ impl PlatformWindow for WindowsWindow {
 pub(crate) struct A11yState {
     pub(crate) adapter: accesskit_windows::Adapter,
     pub(crate) activation_handler: A11yActivationHandler,
+    // Speakeasy patch: hidden or minimized windows expose an empty tree until shown again.
+    redacted: bool,
+    requested_visible: bool,
 }
 
 pub(crate) struct A11yActivationHandler {

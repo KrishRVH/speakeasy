@@ -106,7 +106,11 @@ impl Settings {
             },
             Edit::Name => {
                 self.presets.naming = true;
-                self.presets.name.read(cx).focus_handle(cx).focus(window);
+                self.presets
+                    .name
+                    .read(cx)
+                    .focus_handle(cx)
+                    .focus(window, cx);
             },
             Edit::Save => {
                 let name = self.presets.name.read(cx).text().to_owned();

@@ -12,9 +12,8 @@ use std::{
 
 use anyhow::Context as _;
 use gpui::{
-    AnyWindowHandle, App, AppContext, Bounds, Size, Task, Timer, Window,
-    WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind, WindowOptions, point,
-    prelude::*, px, size,
+    AnyWindowHandle, App, AppContext, Bounds, Size, Task, Window, WindowBackgroundAppearance,
+    WindowBounds, WindowHandle, WindowKind, WindowOptions, point, prelude::*, px, size,
 };
 use speakeasy_core::{gesture::RECORDING_LIMIT, motion::Spring};
 use speakeasy_platform::{PILL_HEIGHT, PILL_WIDTH};
@@ -294,7 +293,7 @@ impl Pill {
             && let Some(delay) = delay
         {
             self.wake = Some(cx.spawn(async move |this, cx| {
-                Timer::after(delay).await;
+                cx.background_executor().timer(delay).await;
                 this.update_if_alive(cx, |pill, cx| {
                     pill.wake = None;
                     cx.notify();

@@ -97,6 +97,8 @@ impl WindowsWindowInner {
             WM_CREATE => self.handle_create_msg(handle),
             WM_MOVE => self.handle_move_msg(handle, lparam),
             WM_SIZE => self.handle_size_msg(wparam, lparam),
+            // Speakeasy patch: accessibility follows the committed visibility transition.
+            WM_WINDOWPOSCHANGED => self.handle_window_pos_changed_msg(handle, wparam, lparam),
             WM_GETMINMAXINFO => self.handle_get_min_max_info_msg(lparam),
             WM_ENTERSIZEMOVE | WM_ENTERMENULOOP => self.handle_size_move_loop(handle),
             WM_EXITSIZEMOVE | WM_EXITMENULOOP => self.handle_size_move_loop_exit(handle),
@@ -226,6 +228,8 @@ impl WindowsWindowInner {
         // Don't resize the renderer when the window is minimized, but record that it was minimized so
         // that on restore the swap chain can be recreated via `update_drawable_size_even_if_unchanged`.
         if wparam.0 == SIZE_MINIMIZED as usize {
+            // Speakeasy patch: a minimized window hides its accessibility tree.
+            self.redact_accessibility();
             self.state
                 .restore_from_minimized
                 .set(self.state.callbacks.request_frame.take());
@@ -323,6 +327,8 @@ impl WindowsWindowInner {
     }
 
     fn handle_destroy_msg(&self, handle: HWND) -> Option<isize> {
+        // Speakeasy patch: UI Automation disconnects while the HWND is still valid.
+        self.disconnect_accessibility();
         let callback = { self.state.callbacks.close.take() };
         // Re-enable parent window if this was a modal dialog
         if let Some(parent_hwnd) = self.parent_hwnd {
@@ -1273,6 +1279,8 @@ impl WindowsWindowInner {
         handle: HWND,
         wparam: WPARAM,
     ) -> Option<isize> {
+        // Speakeasy patch: hiding redacts accessibility before the window disappears.
+        self.request_accessibility_visibility(wparam.0 != 0);
         self.report_visibility();
         if wparam.0 == 1 {
             self.draw_window(handle, false);

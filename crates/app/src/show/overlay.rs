@@ -8,7 +8,7 @@ use async_channel::Sender;
 use gpui::{
     AnyWindowHandle, App, AppContext, Bounds, Div, FillOptions, FillRule, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, PathStyle, Pixels, Render, Rgba,
-    Size, Task, Timer, Window, WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind,
+    Size, Task, Window, WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind,
     WindowOptions, canvas, div, point, prelude::*, px, relative, white,
 };
 use speakeasy_platform::{Display, NativeWindow, Part};
@@ -375,7 +375,7 @@ impl Render for Overlay {
         self.wake = match sheet.next_frame(now) {
             Redraw::OnChange => None,
             Redraw::After(delay) => Some(cx.spawn(async move |this, cx| {
-                Timer::after(delay).await;
+                cx.background_executor().timer(delay).await;
                 this.update_if_alive(cx, |_, cx| cx.notify());
             })),
             Redraw::Animate => {
@@ -597,9 +597,7 @@ pub(crate) fn attend(
             }
             let show = snapshots.borrow().session;
             let (misplaced, misplacements) = async_channel::bounded(1);
-            let Ok(opened) = cx.update(|cx| open(canvas.clone(), misplaced, cx)) else {
-                return;
-            };
+            let opened = cx.update(|cx| open(canvas.clone(), misplaced, cx));
             if opened.is_err()
                 && let Some(chosen) = canvas.borrow().chosen()
             {
@@ -643,9 +641,7 @@ pub(crate) fn attend(
                 continue;
             };
             reported = true;
-            if cx.update(|cx| report(&error, cx)).is_err() {
-                return;
-            }
+            cx.update(|cx| report(&error, cx));
         }
     })
     .detach();

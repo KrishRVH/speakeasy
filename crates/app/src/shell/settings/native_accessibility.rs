@@ -2,12 +2,12 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use gpui::{
-    AppContext as _, Application, Bounds, Context, Entity, IntoElement, Render, Task, Window,
-    WindowBounds, WindowOptions, div, point, prelude::*, px, size,
+    AppContext as _, Bounds, Context, Entity, IntoElement, Render, Task, Window, WindowBounds,
+    WindowOptions, div, point, prelude::*, px, size,
 };
 
 use super::text_field::TextField;
-use crate::{gpui_ext::AppUpdate as _, theme::Theme};
+use crate::theme::Theme;
 
 struct Fixture {
     field: Entity<TextField>,
@@ -45,7 +45,7 @@ impl Render for Fixture {
 #[ignore = "Opt-in static owned window; scripts/check-demo-windows.ps1 -StaticAccessibility drives its UIA provider"]
 fn native_accessibility_static_fixture() -> anyhow::Result<()> {
     let (completed, outcome) = std::sync::mpsc::channel();
-    Application::new().run(move |cx| {
+    crate::application::new().unwrap().run(move |cx| {
         cx.open_window(
             WindowOptions {
                 show: false,
@@ -71,7 +71,7 @@ fn native_accessibility_static_fixture() -> anyhow::Result<()> {
                 let timer = cx.background_executor().timer(Duration::from_secs(45));
                 let timeout = cx.spawn(async move |cx| {
                     timer.await;
-                    cx.update_if_running(|cx| cx.quit());
+                    cx.update(|cx| cx.quit());
                 });
                 cx.new(|_| Fixture {
                     field,

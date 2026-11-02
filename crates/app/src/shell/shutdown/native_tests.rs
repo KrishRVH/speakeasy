@@ -1,6 +1,5 @@
 use std::{fs, sync::mpsc};
 
-use gpui::Application;
 use tokio::sync::watch;
 
 use super::*;
@@ -20,7 +19,8 @@ fn handoff(force_native_quit: bool) -> anyhow::Result<()> {
     let (release, held) = async_channel::bounded(1);
     let configuration = settings.clone();
     let (handoff, ready) = mpsc::channel();
-    Application::new()
+    crate::application::new()
+        .unwrap()
         .with_assets(crate::icons::Icons)
         .run(move |cx| {
             crate::load_brand_font(cx);
@@ -76,8 +76,7 @@ fn handoff(force_native_quit: bool) -> anyhow::Result<()> {
                             ),
                             "accepted writes still block installation"
                         );
-                    })
-                    .expect("live app");
+                    });
                     release.try_send(()).expect("finish accepted write");
                 })
                 .detach();

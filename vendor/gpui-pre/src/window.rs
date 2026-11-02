@@ -2343,7 +2343,10 @@ impl Window {
             platform_window.set_app_id(&app_id);
         }
 
-        platform_window.map_window().unwrap();
+        // Speakeasy patch: a hidden window stays unmapped, and a failed map is an error.
+        if show {
+            platform_window.map_window()?;
+        }
 
         Ok(Window {
             handle,

@@ -6,13 +6,10 @@ use std::{
     sync::Arc,
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
-use std::{
-    ffi::OsString,
-    fs::File,
-    io::Read as _,
-    os::fd::{AsFd, AsRawFd},
-    time::Duration,
-};
+use std::{ffi::OsString, fs::File, os::fd::AsFd, time::Duration};
+// Speakeasy patch: only the Wayland pipe reader uses these.
+#[cfg(feature = "wayland")]
+use std::{io::Read as _, os::fd::AsRawFd};
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use anyhow::ensure;
@@ -54,7 +51,6 @@ pub(crate) const SCROLL_LINES: f32 = 3.0;
 pub(crate) const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(crate) const DOUBLE_CLICK_DISTANCE: Pixels = px(5.0);
-pub(crate) const KEYRING_LABEL: &str = "zed-github-account";
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
 const FILE_PICKER_PORTAL_MISSING: &str =
@@ -97,8 +93,7 @@ pub(crate) struct LinuxCommon {
     pub(crate) callbacks: PlatformHandlers,
     pub(crate) signal: LoopSignal,
     pub(crate) menus: Vec<OwnedMenu>,
-    app_name: Option<String>,
-    system_notifications: crate::linux::system_notifications::SystemNotificationState,
+    // Speakeasy patch: no app name or notification state; Speakeasy posts no notifications.
     #[cfg_attr(
         not(all(target_os = "linux", any(feature = "wayland", feature = "x11"))),
         allow(dead_code)
@@ -147,9 +142,7 @@ impl LinuxCommon {
             callbacks,
             signal,
             menus: Vec::new(),
-            app_name: None,
-            system_notifications: crate::linux::system_notifications::SystemNotificationState::new(
-            ),
+            // Speakeasy patch: no app name or notification state.
             power_sender,
             power_listener_started: false,
             power_mode: PowerMode::Unknown,
@@ -993,32 +986,7 @@ impl Platform for LinuxPlatform {
         });
     }
 
-    fn set_app_identity(&self, _identifier: &str, name: &str) {
-        self.with_common(|common| common.app_name = Some(name.to_string()));
-    }
-
-    fn show_system_notification(&self, notification: gpui::SystemNotification) {
-        self.with_common(|common| {
-            common
-                .system_notifications
-                .show(common.app_name.as_deref(), notification)
-        });
-    }
-
-    fn dismiss_system_notification(&self, tag: &str) {
-        self.with_common(|common| common.system_notifications.dismiss(tag));
-    }
-
-    fn on_system_notification_response(
-        &self,
-        callback: Box<dyn FnMut(gpui::SystemNotificationResponse)>,
-    ) {
-        self.with_common(|common| {
-            let executor = common.foreground_executor.clone();
-            common.system_notifications.on_response(&executor, callback)
-        });
-    }
-
+    // Speakeasy patch: app identity and system notifications use the trait's no-op defaults.
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
         self.with_common(|common| {
             common.callbacks.app_menu_action = Some(callback);
@@ -1079,70 +1047,17 @@ impl Platform for LinuxPlatform {
         self.with_common(|common| common.auto_hide_scrollbars)
     }
 
-    fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
-        let url = url.to_string();
-        let username = username.to_string();
-        let password = password.to_vec();
-        self.background_executor().spawn(async move {
-            let keyring = oo7::Keyring::new().await?;
-            keyring.unlock().await?;
-            keyring
-                .create_item(
-                    KEYRING_LABEL,
-                    &vec![("url", &url), ("username", &username)],
-                    password,
-                    true,
-                )
-                .await?;
-            Ok(())
-        })
+    // Speakeasy patch: Speakeasy stores no credentials, so it links no keyring client.
+    fn write_credentials(&self, _: &str, _: &str, _: &[u8]) -> Task<Result<()>> {
+        Task::ready(Err(anyhow!("Speakeasy stores no credentials")))
     }
 
-    fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
-        let url = url.to_string();
-        self.background_executor().spawn(async move {
-            let keyring = oo7::Keyring::new().await?;
-            keyring.unlock().await?;
-
-            let items = keyring.search_items(&vec![("url", &url)]).await?;
-
-            for item in items.into_iter() {
-                if item.label().await.is_ok_and(|label| label == KEYRING_LABEL) {
-                    let attributes = item.attributes().await?;
-                    let username = attributes
-                        .get("username")
-                        .context("Cannot find username in stored credentials")?;
-                    item.unlock().await?;
-                    let secret = item.secret().await?;
-
-                    // we lose the zeroizing capabilities at this boundary,
-                    // a current limitation GPUI's credentials api
-                    return Ok(Some((username.to_string(), secret.to_vec())));
-                } else {
-                    continue;
-                }
-            }
-            Ok(None)
-        })
+    fn read_credentials(&self, _: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
+        Task::ready(Ok(None))
     }
 
-    fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
-        let url = url.to_string();
-        self.background_executor().spawn(async move {
-            let keyring = oo7::Keyring::new().await?;
-            keyring.unlock().await?;
-
-            let items = keyring.search_items(&vec![("url", &url)]).await?;
-
-            for item in items.into_iter() {
-                if item.label().await.is_ok_and(|label| label == KEYRING_LABEL) {
-                    item.delete().await?;
-                    return Ok(());
-                }
-            }
-
-            Ok(())
-        })
+    fn delete_credentials(&self, _: &str) -> Task<Result<()>> {
+        Task::ready(Ok(()))
     }
 
     fn window_appearance(&self) -> WindowAppearance {
@@ -1317,10 +1232,12 @@ pub(super) fn get_xkb_compose_state(cx: &xkb::Context) -> Option<xkb::compose::S
     state
 }
 
-#[cfg(any(feature = "wayland", feature = "x11"))]
+// Speakeasy patch: the pipe reader serves only Wayland, so X11-only builds omit it.
+#[cfg(feature = "wayland")]
 pub(super) const PIPE_READ_TIMEOUT: Duration = Duration::from_secs(4);
 
-#[cfg(any(feature = "wayland", feature = "x11"))]
+// Speakeasy patch: Wayland-only, like PIPE_READ_TIMEOUT.
+#[cfg(feature = "wayland")]
 pub(super) fn read_fd_with_timeout(
     mut fd: filedescriptor::FileDescriptor,
     timeout: Duration,
@@ -1921,7 +1838,8 @@ mod tests {
         }
     }
 
-    #[cfg(any(feature = "wayland", feature = "x11"))]
+    // Speakeasy patch: Wayland-only, like read_fd_with_timeout.
+    #[cfg(feature = "wayland")]
     mod read_fd_with_timeout {
         use super::super::{PIPE_READ_TIMEOUT, read_fd_with_timeout};
         use std::io::Write as _;

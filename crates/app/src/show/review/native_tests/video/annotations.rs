@@ -26,7 +26,7 @@ pub(super) async fn exercise(
         ("spaces".into(), serde_json::json!({"strokes":[],"pins":[{"generation":1,"part":[0,0.25,1,0.75],"observed":283}],"actions":[]})),
     ]);
     fs::write(directory.join("show.json"), serde_json::to_vec(&manifest)?)?;
-    cx.update(|cx| cx.set_global(Copies::default()))?;
+    cx.update(|cx| cx.set_global(Copies::default()));
     window.update(cx, |view, window, cx| {
         view.actions.can_copy = |_| true;
         view.actions.copy = |request, cx| {
@@ -55,7 +55,7 @@ pub(super) async fn exercise(
     window.update(cx, |view, _, cx| view.copy(CopyKind::Evidence, cx))?;
     wait_for(window, |view| view.copying.is_none(), cx).await?;
     let copied = cx
-        .update(|cx| cx.global_mut::<Copies>().0.pop())?
+        .update(|cx| cx.global_mut::<Copies>().0.pop())
         .context("Missing copy payload")?;
     let crate::show::copy::Request::Moment { text, image } = copied else {
         anyhow::bail!("Wrong copy payload")

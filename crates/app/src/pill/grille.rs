@@ -111,7 +111,7 @@ impl Grille {
             slot.height - 6.0,
         );
         let corners = Corners::all(px(((slot.height - 6.0) / 2.0).min(5.0)));
-        window.paint_shadows(
+        window.paint_drop_shadows(
             glow,
             corners,
             &[BoxShadow {
@@ -119,6 +119,7 @@ impl Grille {
                 offset: point(px(0.0), px(0.0)),
                 blur_radius: px(6.0),
                 spread_radius: px(0.0),
+                inset: false,
             }],
         );
         window.paint_quad(fill(glow, alpha(self.palette.lamp, 0.85)).corner_radii(corners));
@@ -172,6 +173,7 @@ impl Grille {
                     2.0 * KEYSTONE_RADIUS,
                 ),
                 icons::KEYSTONE.into(),
+                None,
                 TransformationMatrix::unit(),
                 alpha(palette.lamp, 0.8).into(),
                 cx,

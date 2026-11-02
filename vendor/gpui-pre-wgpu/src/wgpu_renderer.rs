@@ -1459,7 +1459,12 @@ impl WgpuRendererCore {
         );
 
         self.atlas.before_frame();
-        self.ensure_intermediate_textures(size);
+        // Speakeasy patch: frames without paths release the path textures.
+        if scene.paths.is_empty() {
+            self.resources.invalidate_intermediate_textures();
+        } else {
+            self.ensure_intermediate_textures(size);
+        }
 
         let gamma_params = GammaParams {
             gamma_ratios: self.rendering_params.gamma_ratios,

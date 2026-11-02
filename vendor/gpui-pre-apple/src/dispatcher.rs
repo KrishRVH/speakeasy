@@ -15,13 +15,26 @@ use mach2::{
 use async_task::Runnable;
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use objc2_foundation::{NSActivityOptions, NSObjectProtocol, NSProcessInfo, NSString, NSThread};
-use std::{ffi::c_void, ptr::NonNull, time::Duration};
+use std::{
+    ffi::c_void,
+    ptr::NonNull,
+    sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
+};
 
 pub struct AppleDispatcher;
+
+// Speakeasy patch: native termination must know whether the serial main queue is running a task.
+static MAIN_DISPATCH: AtomicBool = AtomicBool::new(false);
 
 impl AppleDispatcher {
     pub fn new() -> Self {
         Self
+    }
+
+    /// Whether the main queue is running a foreground task, which a nested run loop cannot yield.
+    pub fn is_dispatching_main() -> bool {
+        MAIN_DISPATCH.load(Ordering::Relaxed)
     }
 }
 
@@ -51,7 +64,8 @@ impl PlatformDispatcher for AppleDispatcher {
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, _priority: Priority) {
         let context = runnable.into_raw().as_ptr() as *mut c_void;
         unsafe {
-            DispatchQueue::main().exec_async_f(context, trampoline);
+            // Speakeasy patch: main-queue tasks run through the trampoline that marks them.
+            DispatchQueue::main().exec_async_f(context, main_trampoline);
         }
     }
 
@@ -187,6 +201,20 @@ fn set_audio_thread_priority() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+// Speakeasy patch: marks the main queue busy while a task runs and restores the outer state.
+extern "C" fn main_trampoline(context: *mut c_void) {
+    struct Scope(bool);
+
+    impl Drop for Scope {
+        fn drop(&mut self) {
+            MAIN_DISPATCH.store(self.0, Ordering::Relaxed);
+        }
+    }
+
+    let _scope = Scope(MAIN_DISPATCH.swap(true, Ordering::Relaxed));
+    trampoline(context);
 }
 
 extern "C" fn trampoline(context: *mut c_void) {

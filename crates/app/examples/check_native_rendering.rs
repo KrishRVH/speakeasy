@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+#[path = "../src/application.rs"]
+mod application;
 #[path = "../src/icons.rs"]
 mod icons;
 
@@ -10,8 +12,8 @@ use std::{
 
 use anyhow::{Context as _, ensure};
 use gpui::{
-    AppContext, Application, AsyncApp, Bounds, PathBuilder, Pixels, Timer, Window, WindowBounds,
-    WindowHandle, WindowKind, WindowOptions, canvas, div, point, prelude::*, px, rgb, size, svg,
+    AppContext, AsyncApp, Bounds, PathBuilder, Pixels, Window, WindowBounds, WindowHandle,
+    WindowKind, WindowOptions, canvas, div, point, prelude::*, px, rgb, size, svg,
 };
 use raw_window_handle::HasWindowHandle;
 
@@ -70,7 +72,7 @@ fn main() -> anyhow::Result<()> {
         "Pass --native-gui to opt into opening owned test windows"
     );
     let (completed, outcome) = std::sync::mpsc::channel();
-    Application::new().with_assets(icons::Icons).run(move |cx| {
+    application::new()?.with_assets(icons::Icons).run(move |cx| {
         cx.spawn(async move |cx| {
             let result = exercise(cx).await;
             #[cfg(target_os = "macos")]
@@ -87,11 +89,7 @@ fn main() -> anyhow::Result<()> {
                 reason = "A closed acceptance result lane has no caller; quitting still disposes all owned windows"
             )]
             let _ = completed.send(result);
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "A disposed app has already ended the native acceptance loop"
-            )]
-            let _ = cx.update(|cx| cx.quit());
+            cx.update(|cx| cx.quit());
         })
         .detach();
     });
@@ -128,31 +126,33 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     #[cfg(target_os = "linux")]
     let sampler = window.update(cx, |_, window, _| linux::Sampler::of(window))??;
     for iteration in 0..CYCLES {
-        let draws_path = iteration != 0;
+        let draws_path = iteration % 2 == 1;
         window.update(cx, |scene, _, _| scene.draws_path = draws_path)?;
         native.set_pill_visible(true);
         let preceding = window.read_with(cx, |scene, _| scene.renders)?;
-        let width = if iteration % 2 == 0 { 64.0 } else { 96.0 };
+        let width = if iteration % 3 == 0 { 64.0 } else { 96.0 };
         window.update(cx, |_, window, _| {
             window.resize(size(px(width), px(64.0)));
             window.refresh();
         })?;
         wait_for_render(window, preceding, cx).await?;
         #[cfg(target_os = "linux")]
-        sampler.wait_for_pixels(draws_path).await?;
+        sampler
+            .wait_for_pixels(draws_path, cx.background_executor())
+            .await?;
         native.set_pill_visible(false);
-        Timer::after(PRESENT_SETTLE).await;
+        cx.background_executor().timer(PRESENT_SETTLE).await;
     }
     let mut out = io::stdout().lock();
     if cfg!(target_os = "linux") {
         writeln!(
             out,
-            "PASS: SVG and path pixels verified across resize and {CYCLES} native show/hide cycles."
+            "PASS: SVG and alternating path pixels verified across resize and {CYCLES} native show/hide cycles."
         )?;
     } else {
         writeln!(
             out,
-            "PASS: native render callbacks completed across SVG/path scenes, resize, and {CYCLES} show/hide cycles."
+            "PASS: native render callbacks completed across alternating SVG/path scenes, resize, and {CYCLES} show/hide cycles."
         )?;
     }
     Ok(())
@@ -169,13 +169,13 @@ async fn wait_for_render(
 ) -> anyhow::Result<()> {
     let started = Instant::now();
     while window.read_with(cx, |scene, _| scene.renders)? == preceding {
-        Timer::after(POLL_INTERVAL).await;
+        cx.background_executor().timer(POLL_INTERVAL).await;
         ensure!(
             started.elapsed() < TIMEOUT,
             "Native frame source did not redraw"
         );
     }
-    Timer::after(PRESENT_SETTLE).await;
+    cx.background_executor().timer(PRESENT_SETTLE).await;
     Ok(())
 }
 
@@ -197,7 +197,7 @@ mod linux {
     use std::time::Instant;
 
     use anyhow::{Context as _, anyhow, bail, ensure};
-    use gpui::{Timer, Window};
+    use gpui::{BackgroundExecutor, Window};
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use x11rb::{
         protocol::xproto::{ConnectionExt as _, ImageFormat},
@@ -224,7 +224,11 @@ mod linux {
             })
         }
 
-        pub(super) async fn wait_for_pixels(&self, draws_path: bool) -> anyhow::Result<()> {
+        pub(super) async fn wait_for_pixels(
+            &self,
+            draws_path: bool,
+            clock: &BackgroundExecutor,
+        ) -> anyhow::Result<()> {
             let (connection, _) = XCBConnection::connect(None)?;
             let started = Instant::now();
             loop {
@@ -232,7 +236,7 @@ mod linux {
                 if verified.is_ok() || started.elapsed() >= TIMEOUT {
                     return verified;
                 }
-                Timer::after(POLL_INTERVAL).await;
+                clock.timer(POLL_INTERVAL).await;
             }
         }
 
@@ -278,7 +282,12 @@ mod linux {
             if draws_path {
                 ensure!(
                     color(24, 24)? == DIAMOND,
-                    "Path did not render after allocation or resize"
+                    "Path did not render after allocation, release, or resize"
+                );
+            } else {
+                ensure!(
+                    color(24, 24)? == BACKGROUND,
+                    "Path pixels outlived the frame that drew them"
                 );
             }
             Ok(())

@@ -162,7 +162,9 @@ impl Settings {
                         |percent| format!("{}: {percent}%", progress.stage),
                     );
                 this.update_if_alive(cx, |view, cx| view.note_download(message, cx));
-                gpui::Timer::after(super::PROGRESS_THROTTLE).await;
+                cx.background_executor()
+                    .timer(super::PROGRESS_THROTTLE)
+                    .await;
             };
             this.update_if_alive(cx, |view, cx| {
                 let cancelled = matches!(

@@ -226,10 +226,8 @@ pub(crate) fn attend(report: impl Fn(&anyhow::Error, &mut App) + 'static, cx: &A
                 .background_executor()
                 .spawn(async move { sweep(&parent, SystemTime::now()) })
                 .await;
-            if let Err(error) = swept
-                && cx.update(|cx| report(&error, cx)).is_err()
-            {
-                return;
+            if let Err(error) = swept {
+                cx.update(|cx| report(&error, cx));
             }
             cx.background_executor().timer(SWEEP_EVERY).await;
         }

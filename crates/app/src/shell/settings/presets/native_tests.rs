@@ -1,5 +1,5 @@
 use anyhow::ensure;
-use gpui::{AsyncApp, Task, Timer, WindowHandle};
+use gpui::{AsyncApp, Task, WindowHandle};
 
 use super::{super::vocabulary, *};
 use crate::{
@@ -52,7 +52,9 @@ pub(in crate::shell::settings) async fn exercise(
         view.config.recognition_terms = Terms::default();
         anyhow::Ok(())
     })??;
-    Timer::after(std::time::Duration::from_millis(100)).await;
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(100))
+        .await;
     settings.update(cx, |view, window, cx| {
         let unmodified = view.config.clone();
         view.file_picker = Some(Task::ready(()));

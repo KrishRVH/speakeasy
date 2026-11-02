@@ -95,4 +95,13 @@ impl Context {
         let mut platform_nodes = self.platform_nodes.lock().unwrap();
         platform_nodes.remove(&id);
     }
+
+    // Speakeasy patch: a provider stays retired after its node leaves the tree.
+    pub(crate) fn is_current_platform_node(&self, id: NodeId, node: &PlatformNode) -> bool {
+        let platform_nodes = self.platform_nodes.lock().unwrap();
+        platform_nodes.get(&id).is_some_and(|current| {
+            let current: &PlatformNode = current;
+            std::ptr::eq(current, node)
+        })
+    }
 }

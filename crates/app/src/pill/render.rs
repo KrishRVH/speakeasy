@@ -62,6 +62,7 @@ impl Pill {
                         offset: point(px(0.0), px(SHADOW_OFFSET)),
                         blur_radius: px(SHADOW_BLUR),
                         spread_radius: px(0.0),
+                        inset: false,
                     }])
                     .overflow_hidden()
                     .opacity(self.capsule.opacity.value().clamp(0.0, 1.0))

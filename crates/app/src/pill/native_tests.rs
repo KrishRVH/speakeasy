@@ -13,12 +13,11 @@ use x11rb::{
 };
 
 use super::*;
-use crate::gpui_ext::AppUpdate;
 
 #[test]
 #[ignore = "Opt-in native windows on the X11 display, never microphone, input, or clipboard"]
 fn idle_native_pill_starts_unmapped_and_can_show_and_hide() -> anyhow::Result<()> {
-    run_native(async |cx: &AsyncApp| cx.update(check_idle_pill).flatten())
+    run_native(async |cx: &AsyncApp| cx.update(check_idle_pill))
 }
 
 #[test]
@@ -31,10 +30,10 @@ fn run_native(
     check: impl AsyncFnOnce(&AsyncApp) -> anyhow::Result<()> + 'static,
 ) -> anyhow::Result<()> {
     let (completed, outcome) = std::sync::mpsc::channel();
-    gpui::Application::new().run(move |cx| {
+    crate::application::new().unwrap().run(move |cx| {
         cx.spawn(async move |cx| {
             completed.send(check(cx).await).unwrap();
-            cx.update_if_running(|cx| cx.quit());
+            cx.update(|cx| cx.quit());
         })
         .detach();
     });
@@ -152,7 +151,9 @@ impl Render for LateColors {
     reason = "Native acceptance creates and observes GPUI windows on their owning UI thread"
 )]
 async fn check_late_window(cx: &AsyncApp) -> anyhow::Result<()> {
-    Timer::after(Duration::from_millis(100)).await;
+    cx.background_executor()
+        .timer(Duration::from_millis(100))
+        .await;
     let id = cx.update(|cx| {
         let (_publisher, updates) = watch::channel(Snapshot::default());
         let (_meter, levels) = watch::channel(Meter::default());
@@ -169,12 +170,14 @@ async fn check_late_window(cx: &AsyncApp) -> anyhow::Result<()> {
             |_, cx| cx.new(|_| LateColors),
         )?;
         colors.update(cx, |_, window, _| x11_window(window))?
-    })??;
+    })?;
     let (connection, _) = XCBConnection::connect(None)?;
     let geometry = connection.get_geometry(id)?.reply()?;
     let deadline = Instant::now().checked_add(Duration::from_secs(3)).unwrap();
     loop {
-        Timer::after(Duration::from_millis(50)).await;
+        cx.background_executor()
+            .timer(Duration::from_millis(50))
+            .await;
         let image = connection
             .get_image(
                 ImageFormat::Z_PIXMAP,

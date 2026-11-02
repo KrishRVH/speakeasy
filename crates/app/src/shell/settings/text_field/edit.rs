@@ -2,6 +2,8 @@ use std::ops::Range;
 
 use unicode_segmentation::UnicodeSegmentation as _;
 
+use super::Selection;
+
 pub(super) enum Composition {
     Commit,
     Mark(Option<Range<usize>>),
@@ -25,6 +27,13 @@ impl Edit {
         self.cursor < self.anchor
     }
 
+    pub(super) const fn ends(&self) -> Selection {
+        Selection {
+            anchor: self.anchor,
+            focus: self.cursor,
+        }
+    }
+
     pub(super) fn select(&mut self, offset: usize, extend: bool) {
         self.cursor = self.floor_grapheme(offset);
         if !extend {
@@ -32,7 +41,7 @@ impl Edit {
         }
     }
 
-    pub(super) fn select_range(&mut self, anchor: usize, focus: usize) -> bool {
+    pub(super) fn select_range(&mut self, Selection { anchor, focus }: Selection) -> bool {
         if self.floor_grapheme(anchor) != anchor || self.floor_grapheme(focus) != focus {
             return false;
         }
@@ -208,9 +217,12 @@ mod tests {
         let mut edit = Edit::default();
         edit.set("ae\u{301}👩🏽‍💻".into());
         let end = edit.text.len();
-        assert!(edit.select_range(end, 1));
+        assert!(edit.select_range(Selection {
+            anchor: end,
+            focus: 1
+        }));
         for (anchor, focus) in [(2, 1), (0, 2), (0, usize::MAX)] {
-            assert!(!edit.select_range(anchor, focus));
+            assert!(!edit.select_range(Selection { anchor, focus }));
             assert_eq!(edit.anchor, end);
             assert_eq!(edit.cursor, 1);
         }

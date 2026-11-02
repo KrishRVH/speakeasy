@@ -2,19 +2,18 @@ use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
 use gpui::{
-    AppContext as _, Application, Bounds, EntityInputHandler as _, WindowBounds, WindowOptions,
-    point, px, size,
+    AppContext as _, Bounds, EntityInputHandler as _, WindowBounds, WindowOptions, point, px, size,
 };
 
 use super::*;
-use crate::{config::valid_config, gpui_ext::AppUpdate as _, theme::Theme};
+use crate::{config::valid_config, theme::Theme};
 
 #[test]
 #[ignore = "Opt-in owned windows; Linux requires a private X11 display. No microphone, input, or clipboard"]
 fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() -> anyhow::Result<()>
 {
     let (completed, outcome) = std::sync::mpsc::channel();
-    Application::new().run(move |cx| {
+    crate::application::new().unwrap().run(move |cx| {
         cx.spawn(async move |cx| {
             let result = async {
                 let directory = tempfile::tempdir()?;
@@ -39,9 +38,8 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                         .is_none(),
                     "The pending settings save started before the first finished"
                 );
-                let input = cx.new(|cx| {
-                    text_field::TextField::new("Synthetic field", Theme::default(), cx)
-                })?;
+                let input = cx
+                    .new(|cx| text_field::TextField::new("Synthetic field", Theme::default(), cx));
                 let window = cx.open_window(
                     WindowOptions {
                         window_bounds: Some(WindowBounds::Windowed(Bounds::new(
@@ -99,7 +97,7 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                     })
                 })?;
                 drop(view);
-                cx.update(|_| {})?;
+                cx.update(|_| {});
                 ensure!(
                     Config::read(&path)?.threads == 8,
                     "Settings drop lost the queued save"
@@ -121,7 +119,7 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                         "Committing the composition changed its text"
                     );
                     field.select_accessible(
-                        gpui::AccessibleTextSelection {
+                        text_field::Selection {
                             anchor: field.text().len(),
                             focus: 4,
                         },
@@ -141,7 +139,9 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                     );
                     anyhow::Ok(())
                 })??;
-                gpui::Timer::after(Duration::from_millis(100)).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
                 window.update(cx, |field, window, cx| {
                     let bounds = field.bounds_for_range(8..11, Bounds::default(), window, cx);
                     ensure!(bounds.is_some(), "The field did not shape its text");
@@ -152,7 +152,7 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
             }
             .await;
             completed.send(result).unwrap();
-            cx.update_if_running(|cx| cx.quit());
+            cx.update(|cx| cx.quit());
         })
         .detach();
     });
@@ -167,7 +167,7 @@ fn composition_keys(
     cx: &mut gpui::Context<'_, text_field::TextField>,
 ) -> anyhow::Result<()> {
     field.select_accessible(
-        gpui::AccessibleTextSelection {
+        text_field::Selection {
             anchor: 0,
             focus: 0,
         },
@@ -179,6 +179,7 @@ fn composition_keys(
             &gpui::KeyDownEvent {
                 keystroke: gpui::Keystroke::parse(key)?,
                 is_held: false,
+                prefer_character_input: false,
             },
             window,
             cx,

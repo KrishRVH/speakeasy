@@ -201,9 +201,7 @@ pub(crate) fn install(cx: &mut App) -> anyhow::Result<()> {
     );
     let events = cx.spawn(async move |cx| {
         while let Ok(command) = commands.recv().await {
-            if cx.update(|cx| command.run(cx)).is_err() {
-                break;
-            }
+            cx.update(|cx| command.run(cx));
         }
     });
     let mut presenter = Presenter {
@@ -237,10 +235,7 @@ pub(crate) fn install(cx: &mut App) -> anyhow::Result<()> {
                 },
             };
             if refresh {
-                let Some(state) = changes.refresh(cx) else {
-                    break;
-                };
-                presenter.present(state);
+                presenter.present(changes.refresh(cx));
             }
         }
     });
