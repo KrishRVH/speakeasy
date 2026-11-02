@@ -17,6 +17,8 @@ const TILE: usize = 64;
 pub const MAX_FRAME_EDGE: u32 = 2_560;
 const PIXEL: usize = 4;
 const DURATION_LIMIT: Moment = Moment::from_millis(360_000);
+const ENTRY_OVERHEAD: usize = Signature::BYTES + 64;
+const TILE_OVERHEAD: usize = 32;
 
 pub struct Journal {
     samples: Vec<Sample>,
@@ -106,7 +108,7 @@ impl Journal {
     }
 
     #[must_use]
-    pub fn sealed(mut self) -> Self {
+    pub(crate) fn sealed(mut self) -> Self {
         self.latest = None;
         self
     }
@@ -219,7 +221,7 @@ impl Entry {
     #[must_use]
     pub(crate) fn bytes(&self) -> usize {
         self.tiles.iter().fold(
-            9_280_usize.saturating_add(self.tiles.len().saturating_mul(32)),
+            ENTRY_OVERHEAD.saturating_add(self.tiles.len().saturating_mul(TILE_OVERHEAD)),
             |bytes, (_, tile)| bytes.saturating_add(tile.len()),
         )
     }

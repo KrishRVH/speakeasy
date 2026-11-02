@@ -8,6 +8,7 @@ use crate::{Ending, Image, Moment, Point, Recording, Rect, Signature, Size, Span
 const MAGIC: &[u8; 8] = b"SPKLOG02";
 const EDGE: usize = super::MAX_FRAME_EDGE as usize;
 const RECORD_LIMIT: usize = 40 << 20;
+const EVENT_OVERHEAD: usize = 64;
 
 const HEADER: u8 = 0;
 const SURFACE: u8 = 1;
@@ -45,8 +46,8 @@ impl TakeEvent {
         match self {
             Self::Arrival {
                 entry: Some(entry), ..
-            } => entry.bytes().saturating_add(64),
-            _ => 64,
+            } => entry.bytes().saturating_add(EVENT_OVERHEAD),
+            _ => EVENT_OVERHEAD,
         }
     }
 }
