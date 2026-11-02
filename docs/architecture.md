@@ -609,9 +609,12 @@ module unless a test file is named.
 - **Scripts and packaging**: [scripts/](../scripts) and [packaging/](../packaging) profile, check,
   package, and launch the app, [app/build.rs](../crates/app/build.rs) embeds the Windows resources,
   and `mise run hygiene` runs [check_repository.py](../scripts/check_repository.py).
-  [tests/test_profiling.py](../tests/test_profiling.py) checks the Linux profiler, and
+  [tests/test_profiling.py](../tests/test_profiling.py) checks the Linux profiler,
   [tests/test_launchers.py](../tests/test_launchers.py) the Linux demo check's process ownership,
-  `AppRun`, and script arguments.
+  `AppRun`, and script arguments, [tests/test_macos_package.py](../tests/test_macos_package.py) that
+  Mac distribution fails closed around notarization, and
+  [tests/test_update_signing.py](../tests/test_update_signing.py) that signed update metadata binds
+  the installer and version.
 - **Dependency patches**: the root Cargo patch selects patched GPUI 0.3.11 (`gpui-pre`) crates and
   AccessKit Windows 0.34.0; [the vendor index](../vendor/README.md) records each patched contract
   and the checks that cover it, and [platform/tests/](../crates/platform/tests) runs the portable

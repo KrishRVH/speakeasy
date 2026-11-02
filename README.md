@@ -602,7 +602,7 @@ paste** if automatic insertion is unavailable. X11 automatic paste needs the fir
 active and an unshifted V key in it; otherwise Speakeasy copies the text and explains how to paste
 it.
 
-For a desktop without suitable shortcut permissions, set **General › Desktop › Shortcuts** to
+For a desktop without suitable shortcut permissions, set **General → Desktop → Shortcuts** to
 **Desktop bindings** and assign the two commands Settings shows in your desktop's shortcut settings:
 `speakeasy --toggle` and `speakeasy --cancel`, with `--config` when you use another settings file.
 This mode starts/finishes hands-free. Set **Insert text by** to **Copy for manual paste** as well to
