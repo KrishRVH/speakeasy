@@ -253,13 +253,7 @@ impl ScreenCapture {
         movie: Option<crate::MovieTarget>,
     ) -> anyhow::Result<Self> {
         let thread = StoppableThread::spawn("screen-capture", move |stopping| {
-            #[cfg(any(target_os = "windows", target_os = "macos"))]
             native::capture(target, interval, longest_edge, &events, &stopping, movie);
-            #[cfg(target_os = "linux")]
-            {
-                drop(movie);
-                native::capture(target, interval, longest_edge, &events, &stopping);
-            }
         })?;
         Ok(Self { thread })
     }
@@ -360,7 +354,7 @@ mod unsupported {
     use async_channel::{Receiver, Sender};
 
     use super::{Part, PointerSample, ScreenEvent, Target};
-    use crate::{NativeWindow, linux::SHOWS_UNSUPPORTED};
+    use crate::{MovieTarget, NativeWindow, linux::SHOWS_UNSUPPORTED};
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub(crate) struct Display;
@@ -376,12 +370,13 @@ mod unsupported {
         bail!(SHOWS_UNSUPPORTED)
     }
 
-    pub(super) const fn capture(
+    pub(super) fn capture(
         _: Target,
         _: Duration,
         _: u32,
         _: &Sender<ScreenEvent>,
         _: &Receiver<Infallible>,
+        _: Option<MovieTarget>,
     ) {
     }
 
