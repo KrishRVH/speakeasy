@@ -1,6 +1,7 @@
 use proptest::prelude::*;
 
 use super::*;
+use crate::journal::record::framed;
 
 fn encode(journal: &Journal, duration: Moment) -> Vec<u8> {
     let mut bytes = Vec::new();
@@ -155,8 +156,8 @@ proptest! {
         let mut journal = Journal::with_budget(budget);
         for (n, (color, width, height)) in colors.into_iter().enumerate() {
             if let Some(frame) = journal.admit() {
-                frame.record(Moment::from_millis(u64::try_from(n).unwrap().saturating_mul(200)),
-                    Image::filled(width, height, color).unwrap());
+                let at = Moment::from_millis(u64::try_from(n).unwrap().saturating_mul(200));
+                frame.record(at, Image::filled(width, height, color).unwrap());
             }
         }
         let bytes = encode(&journal, Moment::from_millis(6_000));
@@ -171,13 +172,9 @@ proptest! {
     fn arbitrary_indexes_are_bounded_and_never_reach_tile_reads(
         bytes in prop::collection::vec(any::<u8>(), 0..4_096),
     ) {
-        let mut archive = MAGIC.to_vec();
-        emit_record::<SourceError>(INDEX_RECORD, &bytes, &mut |chunk| {
-            archive.extend_from_slice(chunk);
-            Ok(())
-        }).unwrap();
-        archive.extend_from_slice(&u64::try_from(bytes.len().saturating_add(RECORD_OVERHEAD)).unwrap().to_le_bytes());
-        archive.extend_from_slice(FOOTER);
+        let index = framed(INDEX_RECORD, &bytes).unwrap();
+        let size = u64::try_from(index.len()).unwrap().to_le_bytes();
+        let archive = [MAGIC.as_slice(), &index, &size, FOOTER].concat();
         prop_assert!(open(&archive).is_err());
     }
 }

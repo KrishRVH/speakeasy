@@ -109,7 +109,12 @@ proptest! {
 
             gesture.tick(now);
             if saving && !matches!(event, Event::Abandon | Event::Complete) {
-                prop_assert_eq!(gesture.phase, Phase::Saving, "{:?} ended a Show being saved", event);
+                prop_assert_eq!(
+                    gesture.phase,
+                    Phase::Saving,
+                    "{:?} ended a Show being saved",
+                    event
+                );
             }
             if let Some(started) = capture_start(&gesture) {
                 let limit = started.checked_add(RECORDING_LIMIT).expect("Bounded test clock");

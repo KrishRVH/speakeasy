@@ -42,17 +42,39 @@ fn replay(bytes: &[u8]) -> Result<Take, SourceError> {
 
 proptest! {
     #[test]
-    fn replay_matches_live_thinning_geometry_and_pointer_fold(colors in prop::collection::vec(any::<u8>(), 1..35), budget in 0..2_000_usize) {
+    fn replay_matches_live_thinning_geometry_and_pointer_fold(
+        colors in prop::collection::vec(any::<u8>(), 1..35),
+        budget in 0..2_000_usize,
+    ) {
         let mut live = Take::new(budget, surface());
         let mut bytes = Log::header(budget, surface()).unwrap();
         for (index, color) in colors.into_iter().enumerate() {
             let at = Moment::from_millis(u64::try_from(index).unwrap().saturating_mul(100));
-            apply(&mut live, &TakeEvent::Surface(Size { width: 800.0 + f32::from(color), height: 600.0 }), &mut bytes);
-            let event = live.arrive(at, || Some(Image::filled(65 + u32::from(color % 2), 66, [color; 3]).unwrap())).unwrap();
+            let shade = f32::from(color);
+            let resized = Size {
+                width: 800.0 + shade,
+                height: 600.0,
+            };
+            apply(&mut live, &TakeEvent::Surface(resized), &mut bytes);
+            let width = 65 + u32::from(color % 2);
+            let event = live
+                .arrive(at, || Some(Image::filled(width, 66, [color; 3]).unwrap()))
+                .unwrap();
             bytes.extend(Log::encode(&event).unwrap());
-            apply(&mut live, &TakeEvent::Pointer { part: Rect::from([0.0, 0.0, 0.5 + f32::from(color) / 510.0, 1.0]), at, point: Point::new(f32::from(color) / 255.0, 0.5), drawing: index % 3 != 0, pressed: false }, &mut bytes);
+            let pointer = TakeEvent::Pointer {
+                part: Rect::from([0.0, 0.0, 0.5 + shade / 510.0, 1.0]),
+                at,
+                point: Point::new(shade / 255.0, 0.5),
+                drawing: index % 3 != 0,
+                pressed: false,
+            };
+            apply(&mut live, &pointer, &mut bytes);
         }
-        apply(&mut live, &TakeEvent::End { at: Moment::from_millis(4_000), ending: Ending::WindowClosed }, &mut bytes);
+        let end = TakeEvent::End {
+            at: Moment::from_millis(4_000),
+            ending: Ending::WindowClosed,
+        };
+        apply(&mut live, &end, &mut bytes);
         let replayed = replay(&bytes).unwrap();
         prop_assert!(replayed.ended());
         let (recording, journal) = live.finish();

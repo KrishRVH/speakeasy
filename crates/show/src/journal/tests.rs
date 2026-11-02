@@ -169,7 +169,8 @@ proptest! {
                 *value = value.wrapping_add(40);
             }
             let image = quadrants(shade, small);
-            let moment = Moment::from_millis(u64::try_from(index).unwrap().checked_mul(100).unwrap());
+            let millis = u64::try_from(index).unwrap().checked_mul(100).unwrap();
+            let moment = Moment::from_millis(millis);
             admitted(&mut journal).record(moment, image.clone());
             recorded.push((moment, image));
         }
@@ -180,7 +181,9 @@ proptest! {
             recorded = recorded
                 .into_iter()
                 .enumerate()
-                .filter(|(index, _)| index.is_multiple_of(2) || index.checked_add(1).unwrap() == count)
+                .filter(|(index, _)| {
+                    index.is_multiple_of(2) || index.checked_add(1).unwrap() == count
+                })
                 .map(|(_, frame)| frame)
                 .collect();
             prop_assert!(journal.bytes() <= before);

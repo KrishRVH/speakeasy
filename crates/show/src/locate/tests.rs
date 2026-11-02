@@ -81,15 +81,18 @@ proptest! {
     #[test]
     fn selection_is_bounded_distinct_and_keeps_the_anchor(
         mut millis in prop::collection::vec(0_u64..300_000, 0..100),
-        start in 0_u64..300_000, end in 0_u64..300_000, most in 1_usize..13,
+        start in 0_u64..300_000,
+        end in 0_u64..300_000,
+        most in 1_usize..13,
     ) {
-        millis.sort_unstable(); millis.dedup();
+        millis.sort_unstable();
+        millis.dedup();
         let moments: Vec<_> = millis.into_iter().map(Moment::from_millis).collect();
         let window = Span::new(Moment::from_millis(start), Moment::from_millis(end));
         let anchor = window.start();
         let samples = pick(&moments, window, anchor, most);
         prop_assert!(samples.times.len() <= most);
-        prop_assert!(samples.times.windows(2).all(|pair| pair[0] < pair[1]));
+        prop_assert!(samples.times.is_sorted_by(|earlier, later| earlier < later));
         prop_assert!(samples.times.iter().all(|at| moments.contains(at) && *at <= window.end()));
         if let Some(at) = moments.iter().rev().find(|at| **at <= anchor) {
             prop_assert!(samples.times.contains(at));
