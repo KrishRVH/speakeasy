@@ -10,6 +10,7 @@ use std::{
 use anyhow::Context as _;
 pub(crate) use frame::{AnnotationState, Crop, decoder_time};
 use serde::{Deserialize, Serialize};
+use speakeasy_core::gesture::RECORDING_LIMIT;
 use speakeasy_show::{Moment, MovieError, MoviePrefix};
 
 use super::{recall, sync_directory};
@@ -63,7 +64,7 @@ impl Metadata {
             .checked_duration_since(started)
             .context("Movie began before its session")?;
         anyhow::ensure!(
-            origin < speakeasy_core::gesture::RECORDING_LIMIT,
+            origin < RECORDING_LIMIT,
             "Movie began after the recording limit"
         );
         anyhow::ensure!(
@@ -106,7 +107,7 @@ impl Metadata {
         let through_ms = u64::try_from(
             through
                 .saturating_duration_since(started)
-                .min(speakeasy_core::gesture::RECORDING_LIMIT)
+                .min(RECORDING_LIMIT)
                 .as_millis(),
         )?;
         anyhow::ensure!(
@@ -278,8 +279,7 @@ fn read_metadata(directory: &Path) -> anyhow::Result<Metadata> {
     anyhow::ensure!(
         metadata.version == 2
             && metadata.geometry.is_some() == metadata.coverage.is_some()
-            && metadata.origin_ms
-                < u64::try_from(speakeasy_core::gesture::RECORDING_LIMIT.as_millis())?,
+            && metadata.origin_ms < u64::try_from(RECORDING_LIMIT.as_millis())?,
         "Movie timing metadata is unsupported"
     );
     Ok(metadata)
@@ -328,7 +328,7 @@ pub(super) fn open(directory: &Path) -> anyhow::Result<Option<Reading>> {
         prefix.size == metadata.size,
         "Movie canvas differs from its timing metadata"
     );
-    let limit = u64::try_from(speakeasy_core::gesture::RECORDING_LIMIT.as_millis())?;
+    let limit = u64::try_from(RECORDING_LIMIT.as_millis())?;
     let end_ms = metadata
         .origin_ms
         .saturating_add(u64::try_from(prefix.duration.as_millis())?);
@@ -410,9 +410,7 @@ pub(in crate::show::store) fn retain(
         .metadata
         .origin_ms
         .saturating_add(u64::try_from(movie.prefix.duration.as_millis())?)
-        .min(u64::try_from(
-            speakeasy_core::gesture::RECORDING_LIMIT.as_millis(),
-        )?);
+        .min(u64::try_from(RECORDING_LIMIT.as_millis())?);
     let partial = movie.prefix.truncated
         || movie
             .metadata

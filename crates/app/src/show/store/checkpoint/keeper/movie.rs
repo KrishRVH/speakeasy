@@ -1,6 +1,7 @@
 use std::{path::Path, time::Instant};
 
 use anyhow::Context as _;
+use speakeasy_core::gesture::RECORDING_LIMIT;
 use speakeasy_platform::{MovieControl, MovieEvent, MovieTarget};
 
 use crate::show::store::movie::{FILE, Metadata, geometry};
@@ -14,7 +15,7 @@ pub(super) struct Writing {
 impl Writing {
     pub(super) fn new(directory: &Path, started: Instant) -> anyhow::Result<(Self, MovieTarget)> {
         let deadline = started
-            .checked_add(speakeasy_core::gesture::RECORDING_LIMIT)
+            .checked_add(RECORDING_LIMIT)
             .context("Movie deadline is out of range")?;
         let (control, target) = MovieControl::new(directory.join(FILE), deadline);
         Ok((

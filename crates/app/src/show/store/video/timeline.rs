@@ -4,6 +4,7 @@ use std::{
 };
 
 use anyhow::Context as _;
+use speakeasy_core::gesture::RECORDING_LIMIT;
 use speakeasy_show::{Narration, Recording, Span, timed_clauses};
 
 use crate::show::store::{checkpoint::KeptAudio, movie::Inspected};
@@ -22,7 +23,7 @@ impl Timing {
         span: Option<Span>,
         audio: Option<&KeptAudio>,
     ) -> anyhow::Result<Self> {
-        let limit = u64::try_from(speakeasy_core::gesture::RECORDING_LIMIT.as_millis())?;
+        let limit = u64::try_from(RECORDING_LIMIT.as_millis())?;
         let origin = audio.map_or(movie.metadata.origin_ms, |audio| {
             movie
                 .metadata
