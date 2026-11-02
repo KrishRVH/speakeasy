@@ -4,6 +4,7 @@ use gpui::{
     AnyElement, App, ClickEvent, Context, Div, ElementId, FontWeight, KeyDownEvent, MouseDownEvent,
     Pixels, SharedString, Stateful, Window, div, img, prelude::*, px, rgb,
 };
+use speakeasy_show::NarrationLoss;
 
 use super::{
     Action, CopyKind, Direction, ExportKind, ImageState, Kind, Mode, Pane, Review, Source,
@@ -731,13 +732,11 @@ impl Review {
                 .child(div().mt(px(8.0)).child(text.clone())),
             Some(Narration::Silent) => div().child("No speech was recorded."),
             Some(Narration::Lost(loss)) => div().text_color(rgb(palette.warn)).child(match loss {
-                speakeasy_show::NarrationLoss::Incomplete => {
+                NarrationLoss::Incomplete => {
                     "Only part of the audio was recovered; it contains no recognized words."
                 },
-                speakeasy_show::NarrationLoss::AudioStopped => {
-                    "The microphone stopped. Narration is missing."
-                },
-                speakeasy_show::NarrationLoss::NotTranscribed => {
+                NarrationLoss::AudioStopped => "The microphone stopped. Narration is missing.",
+                NarrationLoss::NotTranscribed => {
                     "Speech could not be transcribed. Narration is missing."
                 },
             }),
@@ -920,22 +919,18 @@ fn status(row: &Row) -> impl Iterator<Item = (&'static str, Tone)> {
             Kind::Interrupted(_) => Some(("Interrupted", Tone::Warn)),
             Kind::Saved => None,
         },
-        row.narration_lost.map(|lost| {
-            (
-                if lost == speakeasy_show::NarrationLoss::Incomplete {
-                    "Narration incomplete"
-                } else {
-                    "No narration"
-                },
-                Tone::Muted,
-            )
+        row.narration_lost.map(|lost| match lost {
+            NarrationLoss::Incomplete => ("Narration incomplete", Tone::Muted),
+            NarrationLoss::AudioStopped | NarrationLoss::NotTranscribed => {
+                ("No narration", Tone::Muted)
+            },
         }),
         (row.early && matches!(row.kind, Kind::Saved)).then_some(("Ended early", Tone::Warn)),
-        (row.health != Health::Ok).then_some(if row.health == Health::Unsupported {
-            ("Can't open", Tone::Warn)
-        } else {
-            ("Damaged", Tone::Warn)
-        }),
+        match row.health {
+            Health::Ok => None,
+            Health::Unsupported => Some(("Can't open", Tone::Warn)),
+            Health::Damaged => Some(("Damaged", Tone::Warn)),
+        },
     ]
     .into_iter()
     .flatten()

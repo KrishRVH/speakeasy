@@ -225,6 +225,7 @@ fn narration_distinguishes_silence_missing_words_and_untimed_text_and_bounds_the
     assert_eq!(clauses[0].text.len(), 64 << 10);
     assert!(truncated);
 }
+
 #[test]
 fn a_video_reference_requests_inside_the_displayed_sample_instead_of_rounding_into_its_predecessor()
 {
@@ -299,6 +300,7 @@ fn a_video_reference_requests_inside_the_displayed_sample_instead_of_rounding_in
         "Only the nanosecond clock keeps the next sample strictly beyond 100 ms"
     );
 }
+
 #[test]
 fn video_seeking_and_request_captions_preserve_submillisecond_order() -> anyhow::Result<()> {
     use std::time::Duration;
