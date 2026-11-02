@@ -18,7 +18,7 @@ pub(crate) const MORE: &str = "icons/symbols/more.svg";
 pub(crate) const ARROW_RIGHT: &str = "icons/symbols/arrow-right.svg";
 pub(crate) const INFO: &str = "icons/symbols/info.svg";
 
-const ASSETS: [(&str, &[u8]); 15] = [
+const ASSETS: &[(&str, &[u8])] = &[
     (KEYSTONE, include_bytes!("../assets/keystone.svg")),
     (JEWEL_HOLLOW, include_bytes!("../assets/jewel-hollow.svg")),
     (JEWEL_CUT, include_bytes!("../assets/jewel-cut.svg")),
