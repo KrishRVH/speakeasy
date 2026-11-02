@@ -4,7 +4,7 @@ mod linux;
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 mod windows_macos;
 
-use gpui::{App, AsyncApp};
+use gpui::{App, AsyncApp, Subscription};
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 use speakeasy_platform::Scope;
 use speakeasy_platform::{Input, TrayItem, TrayMenu};
@@ -130,23 +130,39 @@ fn dictation_menu(
 
 struct TrayChanges {
     snapshots: watch::Receiver<Snapshot>,
+    services: async_channel::Receiver<()>,
+    _observation: Subscription,
     last: Option<TrayState>,
 }
 
 impl TrayChanges {
-    fn new(cx: &App) -> Self {
+    fn new(cx: &mut App) -> Self {
         let mut snapshots = cx.global::<Services>().output.subscribe();
         snapshots.mark_changed();
+        let (changed, services) = async_channel::bounded(1);
+        let observation = cx.observe_global::<Services>(move |_| {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "A queued change already reads the latest Services; a closed lane means the tray was disposed"
+            )]
+            let _ = changed.try_send(());
+        });
         Self {
             snapshots,
+            services,
+            _observation: observation,
             last: None,
         }
     }
 
+    fn read(&mut self, cx: &AsyncApp) -> TrayState {
+        let snapshot = self.snapshots.borrow_and_update().clone();
+        cx.update(|cx| TrayState::new(cx.global::<Services>(), &snapshot))
+    }
+
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     fn refresh(&mut self, cx: &AsyncApp) -> &TrayState {
-        let snapshot = self.snapshots.borrow_and_update().clone();
-        let state = cx.update(|cx| TrayState::new(cx.global::<Services>(), &snapshot));
+        let state = self.read(cx);
         self.last.insert(state)
     }
 
@@ -155,14 +171,16 @@ impl TrayChanges {
         reason = "Tray states read Services through GPUI's thread-affine async context"
     )]
     async fn next(&mut self, cx: &AsyncApp) -> Option<&TrayState> {
-        while self.snapshots.changed().await.is_ok() {
-            let snapshot = self.snapshots.borrow_and_update().clone();
-            let state = cx.update(|cx| TrayState::new(cx.global::<Services>(), &snapshot));
+        loop {
+            tokio::select! {
+                changed = self.snapshots.changed() => changed.ok()?,
+                changed = self.services.recv() => changed.ok()?,
+            }
+            let state = self.read(cx);
             if self.last.as_ref() != Some(&state) {
                 return Some(self.last.insert(state));
             }
         }
-        None
     }
 }
 
@@ -243,6 +261,52 @@ fn activity(snapshot: &Snapshot) -> Activity {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_services_change_reaches_the_tray_without_a_snapshot_change() -> anyhow::Result<()> {
+        use gpui::{Application, WindowHandle, WindowId, WindowingModes};
+
+        use crate::{
+            config::Config, runtime::Meter, shell::LaunchMode, show::Canvas, testing::PATIENCE,
+        };
+
+        let (completed, outcome) = std::sync::mpsc::channel();
+        Application::with_platform(gpui_linux::linux_platform(WindowingModes::HEADLESS)).run(
+            move |cx| {
+                cx.set_global(Services::new(
+                    "settings.json".into(),
+                    false,
+                    Config::default(),
+                    watch::channel(Snapshot::default()).0,
+                    watch::channel(Meter::default()).0,
+                    watch::channel(Canvas::default()).0,
+                    WindowHandle::new(WindowId::from(0)),
+                    None,
+                    LaunchMode::DemoTray,
+                ));
+                let mut changes = TrayChanges::new(cx);
+                cx.spawn(async move |cx| {
+                    let mut themes = Vec::new();
+                    themes.extend(changes.next(cx).await.map(|state| state.theme));
+                    cx.update(|cx| cx.global_mut::<Services>().config.theme = Theme::Iris);
+                    themes.extend(tokio::select! {
+                        state = changes.next(cx) => state.map(|state| state.theme),
+                        () = cx.background_executor().timer(PATIENCE) => None,
+                    });
+                    completed.send(themes).unwrap();
+                    cx.update(|cx| cx.quit());
+                })
+                .detach();
+            },
+        );
+        assert_eq!(
+            outcome.recv()?,
+            [Theme::Jet, Theme::Iris],
+            "The tray kept a theme Services no longer holds"
+        );
+        Ok(())
+    }
 
     #[test]
     fn dictation_entries_are_enabled_only_while_their_command_can_act() {

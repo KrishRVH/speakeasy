@@ -882,7 +882,6 @@ fn present_appearance(cx: &mut App) {
     if let Some(shows) = shows {
         shows.update_if_open(cx, |view, _, cx| view.set_theme(theme, cx));
     }
-    cx.global::<Services>().output.send_modify(|_| ());
 }
 
 #[cfg(test)]

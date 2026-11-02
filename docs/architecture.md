@@ -278,7 +278,9 @@ module unless a test file is named.
   linked folders.
 - **Tray and status**: [tray.rs](../crates/app/src/tray.rs), [tray/](../crates/app/src/tray),
   [status.rs](../crates/app/src/status.rs), and
-  [platform/src/linux/tray.rs](../crates/platform/src/linux/tray.rs) mirror service state;
+  [platform/src/linux/tray.rs](../crates/platform/src/linux/tray.rs) mirror service state. The tray
+  follows runtime snapshots and observes `Services` itself, so settings such as the theme need no
+  snapshot to reach it; tray.rs's tests check that and when each menu entry acts.
   [shell/recovery.rs](../crates/app/src/shell/recovery.rs) copies or opens the last Show off the UI
   thread.
 - **Instance and relaunch**: [instance.rs](../crates/app/src/instance.rs) owns the lock and the
