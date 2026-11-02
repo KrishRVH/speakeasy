@@ -25,7 +25,7 @@ pub(crate) fn request_quit(cx: &mut App) {
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) fn request_install(installer: crate::updates::Installer, cx: &mut App) {
+pub(super) fn request_install(installer: crate::updates::Installer, cx: &mut App) {
     begin_quit(cx, Some(installer));
 }
 
@@ -75,7 +75,7 @@ fn begin_quit(
 fn drained(settings: Option<WindowHandle<Settings>>, cx: &mut AsyncApp) -> bool {
     settings.is_none_or(|settings| {
         settings
-            .update(cx, |view, _, _| view.drain_finished())
+            .update(cx, |view, _, _| view.drained())
             .unwrap_or(true)
     })
 }

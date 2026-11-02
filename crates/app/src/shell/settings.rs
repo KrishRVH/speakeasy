@@ -43,7 +43,7 @@ const SAVED_FLASH: Duration = Duration::from_millis(1_600);
 
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "Settings owns independent window flags: file readability, disclosures, input modality, and the Windows startup approval it observes"
+    reason = "Settings owns independent window flags: file readability, the own-engine choice, disclosures, input modality, and the Windows startup approval it observes"
 )]
 pub(super) struct Settings {
     config: Config,
@@ -276,17 +276,7 @@ impl Settings {
             #[cfg(target_os = "windows")]
             Action::DownloadUpdate => self.download_update(cx),
             #[cfg(target_os = "windows")]
-            Action::CancelUpdate => match &self.update {
-                Update::Downloading { .. } => {
-                    self.update.cancel();
-                    self.notice = Some(Notice::Note("Cancelling update download…".into()));
-                },
-                Update::Ready(installer) => {
-                    self.update = Update::Available(installer.version());
-                    self.notice = Some(Notice::Note("Update download cancelled.".into()));
-                },
-                _ => {},
-            },
+            Action::CancelUpdate => self.cancel_update(),
             #[cfg(target_os = "windows")]
             Action::InstallUpdate => self.install_update(cx),
             Action::PermissionHelp(help) => cx.open_url(help.url()),
@@ -362,8 +352,7 @@ impl Settings {
                 self.own_engine = false;
                 self.choosing_model = false;
                 self.file_picker = None;
-                show_motion(self.config.prefers_reduced_motion(), cx);
-                show_theme(cx);
+                present_appearance(cx);
                 self.start_setup(cx);
             },
             Err(error) => self.notice = Some(Notice::Problem(error.into())),
@@ -410,7 +399,8 @@ impl Settings {
         }
         self.edited(cx);
         if is_demo(cx) && setting == Setting::ReduceMotion {
-            show_motion(self.config.prefers_reduced_motion(), cx);
+            cx.global_mut::<Services>().config.reduced_motion = self.config.reduced_motion;
+            present_appearance(cx);
         }
     }
 
@@ -418,8 +408,8 @@ impl Settings {
         self.config.theme = theme;
         self.edited(cx);
         if is_demo(cx) {
-            cx.global_mut::<Services>().config.theme = self.config.theme;
-            show_theme(cx);
+            cx.global_mut::<Services>().config.theme = theme;
+            present_appearance(cx);
         }
     }
 
@@ -450,25 +440,27 @@ impl Settings {
         if self.file_picker.is_some() {
             return;
         }
-        let title = match (self.config.engine, file) {
-            (Engine::Nemo, EngineFile::Executable) => "Choose nemo-speech",
-            (Engine::Nemo, EngineFile::Model) => "Choose a NeMo GGUF model",
-            (Engine::Whisper, EngineFile::Executable) => "Choose whisper-server",
-            (Engine::Whisper, EngineFile::Model) => "Choose a Whisper GGML model",
+        let programs = FileFilter {
+            name: "Programs",
+            pattern: "*.exe",
         };
-        let filter = match (self.config.engine, file) {
-            (_, EngineFile::Executable) => FileFilter {
-                name: "Programs",
-                pattern: "*.exe",
-            },
-            (Engine::Nemo, EngineFile::Model) => FileFilter {
-                name: "NeMo models",
-                pattern: "*.gguf",
-            },
-            (Engine::Whisper, EngineFile::Model) => FileFilter {
-                name: "Whisper models",
-                pattern: "*.bin",
-            },
+        let (title, filter) = match (self.config.engine, file) {
+            (Engine::Nemo, EngineFile::Executable) => ("Choose nemo-speech", programs),
+            (Engine::Whisper, EngineFile::Executable) => ("Choose whisper-server", programs),
+            (Engine::Nemo, EngineFile::Model) => (
+                "Choose a NeMo GGUF model",
+                FileFilter {
+                    name: "NeMo models",
+                    pattern: "*.gguf",
+                },
+            ),
+            (Engine::Whisper, EngineFile::Model) => (
+                "Choose a Whisper GGML model",
+                FileFilter {
+                    name: "Whisper models",
+                    pattern: "*.bin",
+                },
+            ),
         };
         let picker = choose_file(window, title, filter, cx);
         self.file_picker = Some(cx.spawn(async move |this, cx| {
@@ -677,8 +669,7 @@ impl Settings {
         if self.notice.is_none() {
             self.flash_saved(cx);
         }
-        show_motion(cx.global::<Services>().config.prefers_reduced_motion(), cx);
-        show_theme(cx);
+        present_appearance(cx);
     }
 
     fn flash_saved(&mut self, cx: &Context<'_, Self>) {
@@ -700,7 +691,7 @@ impl Settings {
         self.update.cancel();
     }
 
-    pub(super) fn drain_finished(&mut self) -> bool {
+    pub(super) fn drained(&mut self) -> bool {
         let update_drained = self.update.drained();
         self.setup = self
             .setup
@@ -879,22 +870,19 @@ fn is_demo(cx: &App) -> bool {
     cx.global::<Services>().mode.is_demo()
 }
 
-fn show_theme(cx: &mut App) {
+fn present_appearance(cx: &mut App) {
     let services = cx.global::<Services>();
-    let (pill, theme) = (services.pill, services.config.theme);
-    pill.update_if_open(cx, |view, _, cx| view.set_theme(theme, cx));
-    if let Some(shows) = cx.global::<Services>().shows {
-        shows.update_if_open(cx, |view, _, cx| view.set_theme(theme, cx));
-    }
-
-    cx.global::<Services>().output.send_modify(|_| ());
-}
-
-fn show_motion(reduced_motion: bool, cx: &mut App) {
-    let pill = cx.global::<Services>().pill;
+    let (pill, shows) = (services.pill, services.shows);
+    let theme = services.config.theme;
+    let reduced_motion = services.config.prefers_reduced_motion();
     pill.update_if_open(cx, |view, _, cx| {
+        view.set_theme(theme, cx);
         view.set_reduced_motion(reduced_motion, cx);
     });
+    if let Some(shows) = shows {
+        shows.update_if_open(cx, |view, _, cx| view.set_theme(theme, cx));
+    }
+    cx.global::<Services>().output.send_modify(|_| ());
 }
 
 #[cfg(test)]

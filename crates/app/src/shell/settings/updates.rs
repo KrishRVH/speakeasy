@@ -218,6 +218,21 @@ impl Settings {
     }
 
     #[cfg(target_os = "windows")]
+    pub(super) fn cancel_update(&mut self) {
+        match &self.update {
+            Update::Downloading { .. } => {
+                self.update.cancel();
+                self.notice = Some(Notice::Note("Cancelling update download…".into()));
+            },
+            Update::Ready(installer) => {
+                self.update = Update::Available(installer.version());
+                self.notice = Some(Notice::Note("Update download cancelled.".into()));
+            },
+            Update::Idle | Update::Checking { .. } | Update::Available(_) => {},
+        }
+    }
+
+    #[cfg(target_os = "windows")]
     pub(super) fn install_update(&mut self, cx: &mut Context<'_, Self>) {
         if is_demo(cx) || cx.global::<Services>().is_quitting() {
             return;
