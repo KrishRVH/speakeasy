@@ -2734,6 +2734,13 @@ impl Window {
         self.platform_window.set_input_region(region);
     }
 
+    // Speakeasy patch: a window the platform can hide stays open and keeps its state.
+    /// Linux only: unmaps the window while `visible` is false, keeping it open, and maps it again
+    /// when `visible` is true. On Wayland this applies to parentless toplevels and layer surfaces.
+    pub fn set_window_visible(&self, visible: bool) {
+        self.platform_window.set_visible(visible);
+    }
+
     /// Return the `WindowBounds` to indicate that how a window should be opened
     /// after it has been closed
     pub fn window_bounds(&self) -> WindowBounds {

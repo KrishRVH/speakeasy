@@ -1839,6 +1839,17 @@ impl PlatformWindow for X11Window {
             .log_err();
     }
 
+    // Speakeasy patch: hiding unmaps the window without closing it, on GPUI's own connection.
+    fn set_visible(&self, visible: bool) {
+        let window = self.0.x_window;
+        let result = if visible {
+            self.0.xcb.map_window(window)
+        } else {
+            self.0.xcb.unmap_window(window)
+        };
+        check_reply(|| "X11 MapWindow or UnmapWindow failed.", result).log_err();
+    }
+
     fn window_decorations(&self) -> gpui::Decorations {
         let state = self.0.state.borrow();
 

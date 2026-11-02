@@ -36,6 +36,12 @@ app liveness for `AsyncApp`, and `App::shutdown` ordering.
 - `src/app.rs` and `src/platform.rs` add the macOS-only `Application::on_quit_requested` and its
   platform hook. The handler runs once, outside any application borrow, and termination waits for,
   or defers to, its `App::quit`. The Mac quit acceptance in CI (`mac_updates`) covers it.
+- `src/window.rs` and `src/platform.rs` add `Window::set_window_visible` and its platform hook,
+  which hides a window without closing it. X11 and Wayland implement it. Upstream has no way to
+  hide a Wayland window, so closing Settings to the tray would drop its view and stop its
+  downloads. The Settings close and reopening rows of
+  [Linux native acceptance](../docs/linux-implementation.md#native-acceptance-still-required) cover
+  it.
 - `Cargo.toml` builds `image` with only the formats GPUI's `ImageFormat` names, dropping the dds,
   exr, ff, hdr, qoi, and tga decoders and rayon. This saves size; it is not a contract.
 
@@ -66,6 +72,17 @@ app liveness for `AsyncApp`, and `App::shutdown` ordering.
   no notifications. `src/linux/system_notifications.rs` is deleted.
 - `src/linux/platform.rs` compiles its pipe reader only with Wayland, so the X11-only build has no
   dead code.
+- `src/linux/x11/window.rs` implements `PlatformWindow::set_visible` with MapWindow and UnmapWindow
+  on GPUI's own connection; upstream X11 ignores it.
+- `src/linux/wayland/window.rs` implements `PlatformWindow::map_window` and `set_visible`. A window
+  opens hidden and attaches a buffer only while shown; `map_window` shows one opened with `show`.
+  Hiding a parentless toplevel does as GTK and Qt do: it destroys the decoration, toplevel, and
+  xdg_surface and commits a null buffer; showing creates new role objects on the same surface with
+  the saved title, app ID, size limits, and decoration request, then maps on the compositor's
+  configure. Hiding a layer surface commits a null buffer, which unmaps it but keeps its role
+  object, then commits again so the compositor configures it while hidden; showing draws at once.
+  A configure leaves a hidden window's visibility alone. Dialogs, child windows, and popups ignore
+  it.
 
 ## gpui-pre-wgpu
 

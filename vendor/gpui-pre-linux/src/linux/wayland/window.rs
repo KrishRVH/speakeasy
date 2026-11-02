@@ -143,12 +143,20 @@ pub struct WaylandWindowState {
     client_inset: Option<Pixels>,
     client_corner_radii: Corners<Pixels>,
     accesskit_adapter: Option<accesskit_unix::Adapter>,
+    // Speakeasy patch: a hidden toplevel gets these back when it is shown again.
+    title: Option<String>,
+    min_size: Option<Size<Pixels>>,
+    requested_decorations: Option<WindowDecorations>,
+    // Speakeasy patch: whether the surface may carry a buffer, apart from its role.
+    mapping: Mapping,
 }
 
 pub enum WaylandSurfaceState {
     Xdg(WaylandXdgSurfaceState),
     LayerShell(WaylandLayerSurfaceState),
     Popup(WaylandPopupSurfaceState),
+    // Speakeasy patch: a hidden toplevel's role objects are destroyed; showing it creates new ones.
+    Withdrawn,
 }
 
 impl WaylandSurfaceState {
@@ -387,6 +395,8 @@ impl WaylandSurfaceState {
             WaylandSurfaceState::Popup(WaylandPopupSurfaceState { xdg_surface, .. }) => {
                 xdg_surface.ack_configure(serial);
             }
+            // Speakeasy patch: a withdrawn toplevel has no role to configure.
+            WaylandSurfaceState::Withdrawn => {}
         }
     }
 
@@ -414,7 +424,8 @@ impl WaylandSurfaceState {
             WaylandSurfaceState::Popup(WaylandPopupSurfaceState { xdg_surface, .. }) => {
                 Some(xdg_surface)
             }
-            WaylandSurfaceState::LayerShell(_) => None,
+            // Speakeasy patch: a withdrawn toplevel has no xdg_surface.
+            WaylandSurfaceState::LayerShell(_) | WaylandSurfaceState::Withdrawn => None,
         }
     }
 
@@ -440,6 +451,8 @@ impl WaylandSurfaceState {
             WaylandSurfaceState::Popup(WaylandPopupSurfaceState { xdg_surface, .. }) => {
                 xdg_surface.set_window_geometry(x, y, width, height);
             }
+            // Speakeasy patch: showing the toplevel again sets its geometry on configure.
+            WaylandSurfaceState::Withdrawn => {}
         }
     }
 
@@ -541,6 +554,8 @@ impl WaylandSurfaceState {
                 xdg_popup.destroy();
                 xdg_surface.destroy();
             }
+            // Speakeasy patch: hiding already destroyed the toplevel's role objects.
+            WaylandSurfaceState::Withdrawn => {}
         }
     }
 }
@@ -590,9 +605,14 @@ impl WaylandWindowState {
             WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu)?
         };
 
+        // Speakeasy patch: the title is kept for showing a hidden toplevel again.
+        let title = options
+            .titlebar
+            .and_then(|titlebar| titlebar.title)
+            .map(|title| title.to_string());
         if let WaylandSurfaceState::Xdg(ref xdg_state) = surface_state {
-            if let Some(title) = options.titlebar.and_then(|titlebar| titlebar.title) {
-                xdg_state.toplevel.set_title(title.to_string());
+            if let Some(title) = title.clone() {
+                xdg_state.toplevel.set_title(title);
             }
 
             if let Some(app_id) = options.app_id.as_ref() {
@@ -645,6 +665,10 @@ impl WaylandWindowState {
             client_inset: None,
             client_corner_radii: Corners::default(),
             accesskit_adapter: None,
+            title,
+            min_size: options.window_min_size,
+            requested_decorations: None,
+            mapping: Mapping::Hidden,
         })
     }
 
@@ -750,6 +774,13 @@ mod presentation_state_tests {
         assert!(PresentationState::RetryBeforeFirstPresent.requires_presentation());
         assert!(PresentationState::RetryAfterPresent.requires_presentation());
     }
+}
+
+// Speakeasy patch: a window opens hidden and attaches a buffer only while GPUI shows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mapping {
+    Shown,
+    Hidden,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -946,6 +977,11 @@ impl WaylandWindowStatePtr {
     }
 
     pub fn frame(&self, signal_at: Option<Instant>, signal_source: FrameRequestSource) {
+        // Speakeasy patch: a hidden window draws nothing until it is shown.
+        if self.state.borrow().mapping == Mapping::Hidden {
+            self.frame_loop.set(FrameLoop::Parked);
+            return;
+        }
         self.frame_loop.set(FrameLoop::Ticking);
         let mut state = self.state.borrow_mut();
         state.resize_throttle = false;
@@ -976,7 +1012,16 @@ impl WaylandWindowStatePtr {
         let mut state = self.state.borrow_mut();
 
         let frame_loop = self.frame_loop.get();
-        if frame_loop == FrameLoop::AwaitingCallback {
+        // Speakeasy patch: a window unmapped during this tick waits for its next configure, and
+        // one hidden during it waits until it is shown.
+        if matches!(
+            frame_loop,
+            FrameLoop::AwaitingCallback | FrameLoop::Unconfigured
+        ) {
+            return;
+        }
+        if state.mapping == Mapping::Hidden {
+            self.frame_loop.set(FrameLoop::Parked);
             return;
         }
 
@@ -1117,6 +1162,10 @@ impl WaylandWindowStatePtr {
                     state.fullscreen = configure.fullscreen;
                     state.maximized = configure.maximized;
                     state.tiling = configure.tiling;
+                    // Speakeasy patch: a configure leaves a hidden window's visibility alone.
+                    if state.mapping == Mapping::Hidden {
+                        configure.visibility = state.visibility;
+                    }
                     let visibility_changed = state.visibility != configure.visibility;
                     state.visibility = configure.visibility;
                     // Limit interactive resizes to once per vblank
@@ -1581,6 +1630,136 @@ impl WaylandWindowStatePtr {
         }
     }
 
+    // Speakeasy patch: hides a parentless toplevel as GTK and Qt do, by destroying its roles,
+    // and a layer surface in place. A null buffer unmaps whichever has presented, and nothing
+    // draws until it is shown again. An unmapped layer surface commits again at once, so it is
+    // configured while hidden, as one opened hidden is. Popups, dialogs, and child windows stay
+    // as they are.
+    fn hide(&self) {
+        let mut state = self.state.borrow_mut();
+        if state.mapping == Mapping::Hidden {
+            return;
+        }
+        let withdraws = match &state.surface_state {
+            WaylandSurfaceState::Xdg(WaylandXdgSurfaceState { dialog: None, .. }) => {
+                if state.parent.is_some() {
+                    return;
+                }
+                true
+            }
+            WaylandSurfaceState::LayerShell(_) => false,
+            _ => return,
+        };
+        let presented = matches!(
+            state.presentation,
+            PresentationState::Presented | PresentationState::RetryAfterPresent
+        );
+        if withdraws {
+            let mut roles =
+                std::mem::replace(&mut state.surface_state, WaylandSurfaceState::Withdrawn);
+            if let Some(decoration) = roles.decoration() {
+                decoration.destroy();
+            }
+            roles.destroy();
+        }
+        if presented {
+            state.surface.attach(None, 0, 0);
+            state.surface.commit();
+            if !withdraws {
+                state.surface.commit();
+            }
+        }
+        if withdraws || presented {
+            state.in_progress_configure = None;
+            self.frame_loop.set(FrameLoop::Unconfigured);
+        } else if self.frame_loop.get() != FrameLoop::Unconfigured {
+            // A layer surface that never presented keeps its configure, and a frame callback it
+            // awaits may never come, so showing it schedules a frame of its own.
+            self.frame_loop.set(FrameLoop::Parked);
+        }
+        state.mapping = Mapping::Hidden;
+        state.pending_frame_callback = None;
+        state.presentation = PresentationState::Unpresented;
+        state.in_progress_window_controls = None;
+        state.resize_throttle = false;
+        let reported = state.visibility != WindowVisibility::Hidden;
+        state.visibility = WindowVisibility::Hidden;
+        if reported {
+            let this = self.clone();
+            state
+                .globals
+                .executor
+                .spawn(async move { this.report_visibility(WindowVisibility::Hidden) })
+                .detach();
+        }
+    }
+
+    // Speakeasy patch: shows a hidden window. A withdrawn toplevel gets new roles on the same
+    // surface and commits without a buffer, so the compositor configures it again. A surface
+    // awaiting its configure draws when it arrives; a configured one draws at once.
+    fn show(&self) {
+        let mut state = self.state.borrow_mut();
+        if state.mapping == Mapping::Shown {
+            return;
+        }
+        state.mapping = Mapping::Shown;
+        state.redraw_requested = true;
+        let withdrawn = matches!(state.surface_state, WaylandSurfaceState::Withdrawn);
+        if withdrawn {
+            let qh = state.globals.qh.clone();
+            let xdg_surface =
+                state
+                    .globals
+                    .wm_base
+                    .get_xdg_surface(&state.surface, &qh, state.surface.id());
+            let toplevel = xdg_surface.get_toplevel(&qh, state.surface.id());
+            if let Some(title) = state.title.clone() {
+                toplevel.set_title(title);
+            }
+            if let Some(app_id) = state.app_id.clone() {
+                toplevel.set_app_id(app_id);
+            }
+            if let Some(size) = state.min_size {
+                toplevel.set_min_size(f32::from(size.width) as i32, f32::from(size.height) as i32);
+            }
+            if let Some(renderer) = state.renderer.as_ref() {
+                let max_texture_size = renderer.max_texture_size() as i32;
+                toplevel.set_max_size(max_texture_size, max_texture_size);
+            }
+            let decoration = state
+                .globals
+                .decoration_manager
+                .as_ref()
+                .map(|manager| manager.get_toplevel_decoration(&toplevel, &qh, state.surface.id()));
+            if let (Some(decoration), Some(requested)) = (&decoration, state.requested_decorations)
+            {
+                decoration.set_mode(requested.to_xdg());
+            }
+            state.surface_state = WaylandSurfaceState::Xdg(WaylandXdgSurfaceState {
+                xdg_surface,
+                toplevel,
+                decoration,
+                dialog: None,
+            });
+        }
+        let reported = state.visibility != WindowVisibility::Visible;
+        state.visibility = WindowVisibility::Visible;
+        if reported {
+            let this = self.clone();
+            state
+                .globals
+                .executor
+                .spawn(async move { this.report_visibility(WindowVisibility::Visible) })
+                .detach();
+        }
+        if withdrawn {
+            state.surface.commit();
+        } else if self.frame_loop.get() != FrameLoop::Unconfigured {
+            drop(state);
+            self.schedule_frame();
+        }
+    }
+
     pub fn handle_input(&self, input: PlatformInput) {
         if self.is_blocked() {
             return;
@@ -1901,9 +2080,12 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn set_title(&mut self, title: &str) {
-        if let Some(toplevel) = self.borrow().surface_state.toplevel() {
+        let mut state = self.borrow_mut();
+        if let Some(toplevel) = state.surface_state.toplevel() {
             toplevel.set_title(title.to_string());
         }
+        // Speakeasy patch: a hidden toplevel gets the latest title when shown again.
+        state.title = Some(title.to_string());
     }
 
     fn set_app_id(&mut self, app_id: &str) {
@@ -2021,9 +2203,30 @@ impl PlatformWindow for WaylandWindow {
         self.0.callbacks.borrow_mut().button_layout_changed = Some(callback);
     }
 
+    // Speakeasy patch: hiding unmaps a toplevel or layer surface without closing it.
+    fn set_visible(&self, visible: bool) {
+        if visible {
+            self.0.show();
+        } else {
+            self.0.hide();
+        }
+    }
+
+    // Speakeasy patch: a window opened hidden attaches no buffer until it is shown. Its first
+    // commit already asked for the configure that draws it.
+    fn map_window(&mut self) -> anyhow::Result<()> {
+        self.0.show();
+        Ok(())
+    }
+
     fn draw(&self, scene: &Scene) {
         let mut state = self.borrow_mut();
         let state = &mut *state;
+        // Speakeasy patch: a hidden window attaches no buffer. One would map it again, or forbid
+        // giving a withdrawn toplevel a role.
+        if state.mapping == Mapping::Hidden {
+            return;
+        }
         let Some(renderer) = &mut state.renderer else {
             return;
         };
@@ -2188,6 +2391,8 @@ impl PlatformWindow for WaylandWindow {
 
     fn request_decorations(&self, decorations: WindowDecorations) {
         let mut state = self.borrow_mut();
+        // Speakeasy patch: a hidden toplevel asks for the same decorations when shown again.
+        state.requested_decorations = Some(decorations);
         match state.surface_state.decoration().as_ref() {
             Some(decoration) => {
                 decoration.set_mode(decorations.to_xdg());

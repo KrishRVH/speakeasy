@@ -1392,6 +1392,8 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     #[cfg(all(target_os = "linux", feature = "wayland"))]
     fn set_exclusive_edge(&self, _edge: layer_shell::Anchor) {}
     fn set_input_region(&self, _region: Option<&[Bounds<Pixels>]>) {}
+    // Speakeasy patch: hides a window without closing it, and shows it again.
+    fn set_visible(&self, _visible: bool) {}
     fn window_decorations(&self) -> Decorations {
         Decorations::Server
     }
