@@ -160,11 +160,7 @@ impl<'a> Kit<'a> {
         let palette = self.palette;
         let enabled = on_click.is_some();
         self.pressable(id, label.into(), gpui::Role::Switch, true, on_click)
-            .aria_toggled(if on {
-                gpui::Toggled::True
-            } else {
-                gpui::Toggled::False
-            })
+            .aria_toggled(on.into())
             .relative()
             .w(px(40.0))
             .h(px(22.0))
@@ -649,11 +645,7 @@ impl<'a> Kit<'a> {
         let palette = self.palette;
         let enabled = on_click.is_some();
         self.pressable(id, label.into(), gpui::Role::RadioButton, false, on_click)
-            .aria_toggled(if chosen {
-                gpui::Toggled::True
-            } else {
-                gpui::Toggled::False
-            })
+            .aria_toggled(chosen.into())
             .w_full()
             .items_start()
             .gap(px(12.0))
@@ -766,11 +758,7 @@ impl<'a> Kit<'a> {
             true,
             Some(on_click),
         )
-        .aria_toggled(if chosen {
-            gpui::Toggled::True
-        } else {
-            gpui::Toggled::False
-        })
+        .aria_toggled(chosen.into())
         .size(px(34.0))
         .justify_center()
         .rounded_full()
