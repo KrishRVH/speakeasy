@@ -9,7 +9,9 @@ use speakeasy_platform::{
     Display, Frame, OwnedThread, Part, PointerMonitor, PointerSample, Scope, ScreenCapture,
     ScreenEvent, Taps, Target, WindowGone,
 };
-use speakeasy_show::{Ending, Image, Mark, Moment, Point, SAMPLE_INTERVAL, Size, Span, TakeEvent};
+use speakeasy_show::{
+    Ending, Image, MAX_FRAME_EDGE, Mark, Moment, Point, SAMPLE_INTERVAL, Size, Span, TakeEvent,
+};
 use tokio::sync::watch;
 
 use super::{FrameLog, overlay::Canvas};
@@ -17,8 +19,6 @@ use crate::runtime::{
     self,
     ports::{Capturing, Footage, Pinning, SessionId, ShowEvent, Unchosen},
 };
-
-pub(super) const LONGEST_EDGE: u32 = speakeasy_show::MAX_FRAME_EDGE;
 
 const JOURNAL_BUDGET: usize = speakeasy_show::Log::MAX_BUDGET;
 
@@ -211,7 +211,7 @@ fn record(
             }
             let (frame_lane, frames) = async_channel::bounded(FRAME_LANE);
             let capture =
-                ScreenCapture::start(target, SAMPLE_INTERVAL, LONGEST_EDGE, frame_lane, movie)?;
+                ScreenCapture::start(target, SAMPLE_INTERVAL, MAX_FRAME_EDGE, frame_lane, movie)?;
             let (sample_lane, samples) = async_channel::bounded(POINTER_LANE);
             let pointer = PointerMonitor::start(target, sample_lane, shortcut)?;
             let sources = Sources {
@@ -392,23 +392,28 @@ impl<'a> Take<'a> {
                 Ok((at, ending))
             })
         });
-        match ended {
-            Some(Ok((at, ending))) => self.into_footage(at, ending).await.map(Some),
+        let (at, ending) = match ended {
+            Some(Ok(end)) => end,
             Some(Err(_invalid_event)) if !self.state.journal().is_empty() => {
-                if let Some(log) = self.log.take() {
-                    let _complete = log.close().await;
-                }
+                self.abandon_log().await;
                 self.warn_checkpoint();
-                self.into_footage(runtime::now(), Ending::ScreenStopped)
-                    .await
-                    .map(Some)
+                (runtime::now(), Ending::ScreenStopped)
             },
-            other => {
-                if let Some(log) = self.log.take() {
-                    let _complete = log.close().await;
-                }
-                other.transpose().map(|_| None)
+            Some(Err(error)) => {
+                self.abandon_log().await;
+                return Err(error);
             },
+            None => {
+                self.abandon_log().await;
+                return Ok(None);
+            },
+        };
+        self.into_footage(at, ending).await.map(Some)
+    }
+
+    async fn abandon_log(&mut self) {
+        if let Some(log) = self.log.take() {
+            let _flushed = log.close().await;
         }
     }
 
@@ -651,7 +656,7 @@ mod native_tests {
             .journal
             .frame_at(Moment::START)
             .context("A first frame")?;
-        assert!(frame.width().max(frame.height()) <= LONGEST_EDGE);
+        assert!(frame.width().max(frame.height()) <= MAX_FRAME_EDGE);
         let (aspect, surface) = (frame.aspect(), width / height);
         assert!((aspect - surface).abs() < 0.02, "{aspect} vs {surface}");
         Ok(())

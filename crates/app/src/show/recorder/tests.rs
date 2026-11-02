@@ -3,6 +3,7 @@ use speakeasy_show::{Action, Pin};
 
 use super::*;
 
+mod checkpoint;
 mod geometry;
 
 const TEARDOWN: Duration = Duration::from_millis(400);
@@ -412,5 +413,3 @@ fn a_recording_that_found_nothing_to_record_says_so_unless_the_owner_cancelled_i
     );
     Ok(())
 }
-
-mod checkpoint;
