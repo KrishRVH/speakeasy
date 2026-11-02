@@ -81,7 +81,7 @@ impl Entry {
     }
 
     pub(crate) fn file(&self, name: &str) -> PathBuf {
-        self.directory.join(name.split('/').collect::<PathBuf>())
+        bundle_path(&self.directory, name)
     }
 }
 
@@ -201,10 +201,14 @@ pub(super) fn regular_file(directory: &Path, name: &str, limit: u64) -> io::Resu
     Err(io::Error::other("missing file name"))
 }
 
+pub(super) fn bundle_path(directory: &Path, name: &str) -> PathBuf {
+    directory.join(name.split('/').collect::<PathBuf>())
+}
+
 pub(crate) fn read_file(directory: &Path, name: &str, limit: u64) -> io::Result<Vec<u8>> {
     regular_file(directory, name, limit)?;
     let mut bytes = Vec::new();
-    fs::File::open(directory.join(name.split('/').collect::<PathBuf>()))?
+    fs::File::open(bundle_path(directory, name))?
         .take(limit.saturating_add(1))
         .read_to_end(&mut bytes)?;
     if !u64::try_from(bytes.len()).is_ok_and(|length| length <= limit) {

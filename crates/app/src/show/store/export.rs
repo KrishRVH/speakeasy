@@ -197,7 +197,7 @@ fn archive(
 
 fn copy(directory: &Path, name: &str, limit: u64, out: &mut impl io::Write) -> io::Result<u64> {
     recall::regular_file(directory, name, limit)?;
-    let file = File::open(directory.join(name.split('/').collect::<PathBuf>()))?;
+    let file = File::open(recall::bundle_path(directory, name))?;
     let metadata = file.metadata()?;
     if !metadata.is_file() || metadata.len() > limit {
         return Err(io::Error::other(
