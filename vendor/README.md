@@ -85,11 +85,11 @@ app liveness for `AsyncApp`, and `App::shutdown` ordering.
   slot 0 so the device context cannot keep the textures alive. D3D11 defers destruction until the
   GPU finishes with them.
 - The new `src/accessibility.rs`, with hunks in `window.rs` and `events.rs`, ties UI Automation to
-  committed visibility. Hide publishes an empty root-only tree before the window disappears and minimize as
-  it minimizes; exposure resumes only
-  after `WM_WINDOWPOSCHANGED` commits visibility, through a forced frame. Windows start redacted
-  until presented. `WM_DESTROY` publishes the empty tree while the HWND is still valid. Events
-  are raised outside the window-state borrow because they can reenter through `WM_GETOBJECT`.
+  committed visibility. Hide publishes an empty root-only tree before the window disappears and
+  minimize as it minimizes; exposure resumes only after `WM_WINDOWPOSCHANGED` commits visibility,
+  through a forced frame. Windows start redacted until presented. `WM_DESTROY` publishes the empty
+  tree while the HWND is still valid and then disconnects the window from UI Automation. Events are
+  raised outside the window-state borrow because they can reenter through `WM_GETOBJECT`.
   `scripts/check-demo-windows.ps1` checks these natively.
 
 ## accesskit_windows
@@ -99,17 +99,19 @@ app liveness for `AsyncApp`, and `App::shutdown` ordering.
   [the AccessKit repository](https://github.com/AccessKit/accesskit/tree/1bbcf100942bac96c2c3a4a91cb67b0b20201a24).
 - `src/text.rs`: range actions return a `Result`, so a missing node reports
   `UIA_E_ELEMENTNOTAVAILABLE` instead of panicking across COM. `GetBoundingRectangles` uses
-  clipped geometry. `ScrollIntoView` sends `SetScrollOffset` to the range's clipping container;
-  upstream sends a `ScrollHint` to a text run, which GPUI does not handle.
+  clipped geometry. Each range keeps the provider that created it and reports
+  `UIA_E_ELEMENTNOTAVAILABLE` once that provider retires, so a range retained across a hide does
+  not resolve against the restored tree. `ScrollIntoView` sends the range as a `SetTextSelection`
+  payload whose focus is the aligned end, targeted at the run holding that end; upstream sends only
+  a `ScrollHint`, which cannot say which part of the run to reveal.
 - The new `src/text/geometry.rs` clips range rectangles and visible character spans to every
   clipping ancestor. Each line yields one continuous span even with fractional advances, and
   inverted or empty clips expose nothing.
-- The new `src/text/scroll.rs` finds the nearest ancestor that clips and supports
-  `SetScrollOffset`, then computes the smallest horizontal offset that reveals the range's start
-  or end. Empty, inverted, unreachable, or non-finite viewports are unsupported.
-- `src/node.rs`: `GetVisibleRanges` returns the clipped visible spans instead of null. A provider
-  whose node was removed returns `UIA_E_ELEMENTNOTAVAILABLE` even when a later tree reuses the
-  node id; `src/context.rs` adds the identity check. GPUI derives node ids from element ids, so
-  without it a stale provider revives.
-- `src/adapter/tests.rs` (test-only) and the tests beside `geometry.rs` and `scroll.rs` run on
-  Windows through `mise run rust:test`.
+- `src/node.rs`: `GetVisibleRanges` returns the clipped visible spans instead of null, and text
+  ranges are created with their provider. A provider whose node was removed returns
+  `UIA_E_ELEMENTNOTAVAILABLE` even when a later tree reuses the node id; `src/context.rs` adds the
+  identity check. GPUI derives node ids from element ids, so without it a stale provider revives.
+- `src/adapter.rs` adds `Adapter::disconnect`, which publishes a final tree, raises its events, and
+  returns a null provider for the window so UI Automation drops its entries for the HWND.
+- `src/adapter/tests.rs` (test-only) and the tests beside `geometry.rs` run on Windows through
+  `mise run rust:test`.

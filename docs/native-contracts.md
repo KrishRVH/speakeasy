@@ -260,10 +260,14 @@ Vendor patches follow upstream documentation policy. Windows UIA native event ra
 return occur outside window-state borrows because either can synchronously reenter through
 `WM_GETOBJECT`. Hide publishes an empty root-only tree before the window disappears and minimize
 publishes it as the window minimizes; the tree returns only after `WM_WINDOWPOSCHANGED` commits
-visibility. `WM_DESTROY` publishes the empty tree while the HWND is valid. A provider retires when
-its node leaves the tree, even when a later tree reuses the id, because GPUI derives node ids from
-element ids. Actions queued before a hide still reach the current tree, and retained text ranges
-resolve again once the tree returns. Range actions are requested after the tree lock is released and
-report errors instead of panicking across COM. Bounds are physical client coordinates, and clipping
-must not turn disjoint or inverted rectangles into visible content. Absolute scroll requests
-preserve order without changing selection.
+visibility. `WM_DESTROY` publishes the empty tree while the HWND is valid, then returns a null
+provider for the HWND so UI Automation drops its entries for the window. A provider retires when its
+node leaves the tree, even when a later tree reuses the id, because GPUI derives node ids from
+element ids, and a text range retires with the provider that created it. Range actions are requested
+after the tree lock is released and report errors instead of panicking across COM. Bounds are
+physical client coordinates, and clipping must not turn disjoint or inverted rectangles into visible
+content. A range scroll request carries the range rather than coordinates, so the field resolves it
+against the layout it paints next. GPUI queues action requests and handles them on the foreground
+after the adapter returns, so a request made just before a hide reaches the restored tree when its
+element survives; rejecting it needs a tree generation in GPUI's action path. The macOS and Linux
+AccessKit bridges carry no Speakeasy patches and do not withdraw a hidden window's tree.
