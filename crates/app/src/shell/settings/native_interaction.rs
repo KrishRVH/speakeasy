@@ -9,6 +9,8 @@ use gpui::{
 use super::{menu::Menu, *};
 use crate::{runtime::Meter, shell::LaunchMode, show::Canvas};
 
+const SETTLE: Duration = Duration::from_millis(100);
+
 #[test]
 #[ignore = "Opt-in owned windows; Linux requires a private X11 display. No microphone, input, or clipboard"]
 fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::Result<()> {
@@ -76,13 +78,9 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     settings.read_with(cx, |view, _| view.menus.open == Some(Menu::Language))?,
                     "The toggle's release immediately selected a language"
                 );
-                cx.background_executor()
-                    .timer(Duration::from_millis(100))
-                    .await;
+                settle(cx).await;
                 key(settings, "end", cx)?;
-                cx.background_executor()
-                    .timer(Duration::from_millis(100))
-                    .await;
+                settle(cx).await;
                 settings.update(cx, |view, _, _| {
                     ensure!(
                         view.menus.scroll.offset().y < gpui::px(0.0),
@@ -127,9 +125,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     cx.notify();
                     anyhow::Ok(())
                 })??;
-                cx.background_executor()
-                    .timer(Duration::from_millis(100))
-                    .await;
+                settle(cx).await;
                 settings.update(cx, |view, window, cx| {
                     ensure!(
                         window.is_window_active(),
@@ -138,9 +134,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     view.menus.trigger(Menu::Language).focus(window, cx);
                     anyhow::Ok(())
                 })??;
-                cx.background_executor()
-                    .timer(Duration::from_millis(100))
-                    .await;
+                settle(cx).await;
                 key(settings, "space", cx)?;
                 settings.update(cx, |view, window, cx| {
                     ensure!(
@@ -151,9 +145,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     cx.notify();
                     anyhow::Ok(())
                 })??;
-                cx.background_executor()
-                    .timer(Duration::from_millis(100))
-                    .await;
+                settle(cx).await;
                 settings.update(cx, |view, window, cx| view.menus.group.focus(window, cx))?;
                 key(settings, "home", cx)?;
                 key(settings, "enter", cx)?;
@@ -166,13 +158,9 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     cx.notify();
                     anyhow::Ok(())
                 })??;
-                cx.background_executor()
-                    .timer(Duration::from_millis(100))
-                    .await;
+                settle(cx).await;
                 settings.update(cx, |_, window, cx| window.blur(cx))?;
-                cx.background_executor()
-                    .timer(Duration::from_millis(100))
-                    .await;
+                settle(cx).await;
                 settings.update(cx, |view, window, cx| {
                     ensure!(
                         view.menus.open.is_none(),
@@ -182,19 +170,13 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     cx.notify();
                     anyhow::Ok(())
                 })??;
-                cx.background_executor()
-                    .timer(Duration::from_millis(100))
-                    .await;
+                settle(cx).await;
                 let other = cx.open_window(WindowOptions::default(), |_, cx| {
                     cx.new(|_| gpui::EmptyView)
                 })?;
-                cx.background_executor()
-                    .timer(Duration::from_millis(100))
-                    .await;
+                settle(cx).await;
                 other.update(cx, |_, window, _| activate(window))??;
-                cx.background_executor()
-                    .timer(Duration::from_millis(100))
-                    .await;
+                settle(cx).await;
                 settings.update(cx, |view, window, cx| {
                     ensure!(
                         !window.is_window_active(),
@@ -213,9 +195,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     );
                     activate(window)
                 })??;
-                cx.background_executor()
-                    .timer(Duration::from_millis(100))
-                    .await;
+                settle(cx).await;
                 settings.update(cx, |view, window, _| {
                     ensure!(
                         view.menus.trigger(Menu::Language).is_focused(window),
@@ -317,13 +297,9 @@ async fn navigate(settings: WindowHandle<Settings>, cx: &mut AsyncApp) -> anyhow
         settings.update(cx, |view, window, cx| {
             view.navigation.focus(page).focus(window, cx);
         })?;
-        cx.background_executor()
-            .timer(Duration::from_millis(100))
-            .await;
+        settle(cx).await;
         key(settings, activation, cx)?;
-        cx.background_executor()
-            .timer(Duration::from_millis(100))
-            .await;
+        settle(cx).await;
         settings.update(cx, |view, window, _| {
             ensure!(
                 view.navigation.page == page,
@@ -366,6 +342,10 @@ fn grant_microphone_on_return() -> impl FnMut() -> Permissions {
         microphone = Permission::Granted;
         snapshot
     }
+}
+
+pub(super) fn settle(cx: &AsyncApp) -> Task<()> {
+    cx.background_executor().timer(SETTLE)
 }
 
 fn close(settings: WindowHandle<Settings>, cx: &mut App) -> anyhow::Result<()> {

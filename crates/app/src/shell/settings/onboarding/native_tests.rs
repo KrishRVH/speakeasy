@@ -1,10 +1,8 @@
-use std::time::Duration;
-
 use anyhow::ensure;
 use gpui::{AsyncApp, WindowHandle};
 
 use super::{Action, Step};
-use crate::shell::settings::{Action as SettingsAction, Settings};
+use crate::shell::settings::{Action as SettingsAction, Settings, native_interaction::settle};
 
 #[expect(
     clippy::future_not_send,
@@ -23,9 +21,7 @@ pub(in crate::shell::settings) async fn exercise(
         );
         anyhow::Ok(())
     })??;
-    cx.background_executor()
-        .timer(Duration::from_millis(100))
-        .await;
+    settle(cx).await;
     settings.update(cx, |view, window, cx| {
         view.act(SettingsAction::Onboarding(Action::Next), window, cx);
         ensure!(
@@ -34,9 +30,7 @@ pub(in crate::shell::settings) async fn exercise(
         );
         anyhow::Ok(())
     })??;
-    cx.background_executor()
-        .timer(Duration::from_millis(100))
-        .await;
+    settle(cx).await;
     settings.update(cx, |view, window, cx| {
         view.act(SettingsAction::Onboarding(Action::Next), window, cx);
         ensure!(
@@ -60,9 +54,7 @@ pub(in crate::shell::settings) async fn exercise(
         );
         anyhow::Ok(())
     })??;
-    cx.background_executor()
-        .timer(Duration::from_millis(100))
-        .await;
+    settle(cx).await;
     settings.update(cx, |view, window, cx| {
         view.act(SettingsAction::Onboarding(Action::Next), window, cx);
         ensure!(
@@ -79,9 +71,7 @@ pub(in crate::shell::settings) async fn exercise(
         );
         anyhow::Ok(())
     })??;
-    cx.background_executor()
-        .timer(Duration::from_millis(100))
-        .await;
+    settle(cx).await;
     settings.update(cx, |view, window, cx| {
         view.act(SettingsAction::Onboarding(Action::Finish), window, cx);
         ensure!(
