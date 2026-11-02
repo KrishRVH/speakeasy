@@ -6,7 +6,7 @@ use gpui::{
 use super::{
     Action, Div, EDGE, IntoElement as _, ParentElement as _, Settings, Styled as _, TEXT, Ui,
     cycle_focus, div, header, is_demo, permissions, progress_bar, px, relative, rgb, row,
-    setup_detail,
+    setup_detail, unreadable_text,
 };
 use crate::{
     controls::Weight,
@@ -133,6 +133,7 @@ impl Settings {
         let running = is_demo(ui.cx) || ui.cx.global::<Services>().is_running();
         let next = Action::Onboarding(TourAction::Next);
         let (label, action, enabled) = match step {
+            Step::Prepare if self.unreadable || self.resetting() => ("Continue", next, false),
             Step::Prepare if self.is_setting_up() => ("Setting up…", next, false),
             Step::Prepare if self.retiring_setup.is_some() => ("Pausing download…", next, false),
             Step::Prepare | Step::Practice if self.saving.is_some() => ("Saving…", next, false),
@@ -177,16 +178,40 @@ impl Settings {
     }
 
     fn onboarding_prepare(&self, ui: &Ui<'_>) -> Div {
-        let needs_setup = !is_demo(ui.cx) && (self.config.needs_engine() || self.is_setting_up());
+        let blocked = self.unreadable || self.resetting();
+        let needs_setup =
+            !blocked && !is_demo(ui.cx) && (self.config.needs_engine() || self.is_setting_up());
         let progress = self.setup.as_ref().map(|(setup, _, _)| setup.progress());
-        div().flex().flex_col().gap(px(20.0)).text_size(px(15.0))
+        let card = ui.kit().inlay().flex().flex_col().gap(px(12.0));
+        let card = if blocked {
+            card.child(unreadable_text(ui.cx))
+                .child(self.reset_controls(ui, "Start fresh…"))
+        } else {
+            card.child(if needs_setup {
+                setup_detail(progress)
+            } else {
+                "Local speech is installed. Let's try your shortcut.".into()
+            })
+            .when_some(progress, |card, progress| {
+                card.child(progress_bar(progress, ui.palette))
+            })
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(20.0))
+            .text_size(px(15.0))
             .child(div().text_color(rgb(ui.palette.lamp)).child("Say the word."))
             .child("Your voice becomes text on this computer. No account, no dictation history, no recording uploads.")
-            .child(ui.kit().inlay().flex().flex_col().gap(px(12.0))
-                .child(if needs_setup { setup_detail(progress) } else { "Local speech is installed. Let's try your shortcut.".into() })
-                .when_some(progress, |card, progress| card.child(progress_bar(progress, ui.palette))))
-            .when(needs_setup, |page| page.child(div().text_size(TEXT).text_color(rgb(ui.palette.muted))
-                .child("One download, then you can dictate offline. Skip returns to Settings without stopping an active download.")))
+            .child(card)
+            .when(needs_setup, |page| {
+                page.child(
+                    div()
+                        .text_size(TEXT)
+                        .text_color(rgb(ui.palette.muted))
+                        .child("One download, then you can dictate offline. Skip returns to Settings without stopping an active download."),
+                )
+            })
     }
 
     #[cfg_attr(

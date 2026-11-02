@@ -42,6 +42,23 @@ const NEMOTRON: Download<'static> = Download {
     sha256: "3fc991d3badad7277c11030a7519832cddaf2057aafed6d4b25147e953a070b1",
 };
 
+pub(crate) fn downloaded() -> Vec<Model> {
+    crate::paths::data_root().map_or_else(|_unavailable| Vec::new(), |root| downloaded_in(&root))
+}
+
+fn downloaded_in(root: &Path) -> Vec<Model> {
+    [(Model::Parakeet, &PARAKEET), (Model::Nemotron, &NEMOTRON)]
+        .into_iter()
+        .filter(|(_, download)| {
+            root.join("models")
+                .join(download.sha256)
+                .join(download::file_name(download.url))
+                .is_file()
+        })
+        .map(|(model, _)| model)
+        .collect()
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct Progress {
     pub step: &'static str,

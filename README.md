@@ -629,7 +629,7 @@ Long Parakeet dictation starts recognition at pauses while you keep speaking, re
 after release. Text still arrives once, when you finish, with phrase corrections applied across the
 whole dictation.
 
-**Nemotron** is an optional 742 MB download under **Advanced → Local speech**. NVIDIA's Nemotron 3.5
+**Nemotron** is an optional 742 MB download under **Advanced → Speech model**. NVIDIA's Nemotron 3.5
 ASR Streaming 0.6B supports 32 locales, including Hindi, Japanese, Korean, and Mandarin. Choose a
 language or automatic detection. It performs continuous inference during ordinary dictation and
 practice; final text arrives once, after release. If continuous recognition fails, Speakeasy retries
@@ -641,9 +641,10 @@ replacement text. Add a name or phrase, then save. Up to 100 hints are stored lo
 six words and 64 characters. They remain saved when another model is selected, but only Nemotron
 uses them. Use **Phrase corrections** when you want a deterministic replacement.
 
-**Whisper** runs a local whisper.cpp server with a GGML model. Switch the engine under **Advanced →
-Local speech**, choose its executable and model, and save; switching is always explicit. The
-known-good Windows build is
+**Your own engine**, under **Advanced → Speech model**, runs a whisper.cpp or NeMo-Speech.cpp build
+you installed. Choose **Whisper** or **NeMo**, then the program and model file for that engine, and
+save; switching engines clears the other engine's files, and switching is always explicit.
+**Whisper** runs a local whisper.cpp server with a GGML model. The known-good Windows build is
 [whisper.cpp b5130](https://github.com/ggml-org/whisper.cpp/releases/tag/b5130): extract the
 complete runtime and choose `Release/whisper-server.exe`. Turn off **Prefer GPU** for a CPU-only
 build. The `threads` setting applies to Whisper and defaults to four. On shared Linux machines,
@@ -726,11 +727,15 @@ neither shows nor changes it.
 Settings live in `%APPDATA%\speakeasy\settings.json` on Windows and
 `~/Library/Application Support/speakeasy/settings.json` on Mac. The Windows and Mac packages include
 `settings.example.json`, the settings a first launch starts from; pass `--config <path>` to use
-another file. Speakeasy reads settings files from other releases, and saving writes only the
-settings you changed, so edits you make to the file by hand stay. On Windows and Mac, configured
-launches go straight to the tray or menu bar; Linux opens Settings at startup. Closing Settings
-hides it and keeps unsaved edits; Windows minimize also hides it. Reopening Speakeasy or choosing
-**Settings…** in the tray brings it back.
+another file. Saving writes only the settings you changed, so edits you make to the file by hand
+stay. When a settings file from another Speakeasy version cannot be read, Settings and the setup
+guide offer **Start fresh…**; **Advanced → Reset Speakeasy…** does the same at any time. After you
+confirm, it deletes the downloaded engines, models, and updates and then the settings file, with its
+phrase corrections, hints, and presets, and downloads Parakeet again. Every Show stays. If something
+cannot be removed, the settings stay and Speakeasy says what to close or fix. On Windows and Mac,
+configured launches go straight to the tray or menu bar; Linux opens Settings at startup. Closing
+Settings hides it and keeps unsaved edits; Windows minimize also hides it. Reopening Speakeasy or
+choosing **Settings…** in the tray brings it back.
 
 ### Tray
 

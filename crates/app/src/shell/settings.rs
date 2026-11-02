@@ -6,6 +6,7 @@ mod practice;
 mod presets;
 mod recognition;
 mod render;
+mod speech;
 mod text_field;
 mod updates;
 mod vocabulary;
@@ -61,6 +62,10 @@ pub(super) struct Settings {
     onboarding_completion: Option<onboarding::Completion>,
     update: Update,
     _updates: Task<()>,
+    unreadable: bool,
+    reset: Reset,
+    downloaded: Vec<Model>,
+    own_engine: bool,
     startup_apps_off: bool,
     #[cfg(target_os = "linux")]
     desktop_command: SharedString,
@@ -81,6 +86,7 @@ impl Settings {
         let desktop_command = desktop_command(&services.path, services.default_settings).into();
         let onboarding = (!services.mode.is_demo() && onboarding::pending(&services.path))
             .then_some(onboarding::Step::Prepare);
+        let unreadable = !services.mode.is_demo() && Config::is_unreadable(&services.path);
         let vocabulary = vocabulary::Editor::new(config.theme, cx);
         let recognition = recognition::Editor::new(config.theme, cx);
         let presets = presets::Editor::new(config.theme, cx);
@@ -110,6 +116,10 @@ impl Settings {
             _updates: follow(updates, cx, Snapshot::clone, |view, snapshot, cx| {
                 view.apply_snapshot(&snapshot, cx);
             }),
+            unreadable,
+            reset: Reset::Idle,
+            downloaded: crate::setup::downloaded(),
+            own_engine: false,
             startup_apps_off: false,
             #[cfg(target_os = "linux")]
             desktop_command,
@@ -146,7 +156,12 @@ impl Settings {
         }
         if matches!(
             action,
-            Action::Pause | Action::Resume | Action::Engine | Action::Setup
+            Action::Pause
+                | Action::Resume
+                | Action::Engine(_)
+                | Action::OwnEngine
+                | Action::Setup
+                | Action::ConfirmReset
         ) {
             self.practice.stop();
         }
@@ -155,7 +170,19 @@ impl Settings {
             Action::Page(page) => self.open_page(page, window),
             Action::Setup => self.toggle_setup(cx),
             Action::Install(model) => self.install_model(model, cx),
-            Action::Engine => self.switch_engine(),
+            Action::OwnEngine => self.use_own_engine(),
+            Action::Engine(engine) => self.switch_engine(engine),
+            Action::Reset => {
+                if self.can_reset(cx) {
+                    self.reset = Reset::Confirming;
+                }
+            },
+            Action::ConfirmReset => self.confirm_reset(cx),
+            Action::CancelReset => {
+                if matches!(self.reset, Reset::Confirming) {
+                    self.reset = Reset::Idle;
+                }
+            },
             Action::Choose(file) => self.choose(file, window, cx),
             Action::Refresh => self.refresh_microphones(cx),
             Action::Microphone => self.cycle_microphone(),
@@ -186,6 +213,7 @@ impl Settings {
                     self.recognition.clear(cx);
                     self.presets.clear(cx);
                     self.language.cursor = None;
+                    self.own_engine = false;
                     self.edited();
                 }
             },
@@ -228,17 +256,79 @@ impl Settings {
         cx.notify();
     }
 
-    fn switch_engine(&mut self) {
-        self.config.engine = self.config.engine.next();
-        if self.config.engine == Engine::Whisper {
-            self.config.language = crate::models::whisper_language(&self.config.language).into();
-        } else if self.config.uses_nemotron() {
-            self.config.language = crate::models::nemotron_language(&self.config.language).into();
+    fn use_own_engine(&mut self) {
+        speech::use_own_engine(&mut self.config);
+        self.own_engine = true;
+        self.edited();
+    }
+
+    fn switch_engine(&mut self, engine: Engine) {
+        if speech::switch_engine(&mut self.config, engine) {
+            self.language.cursor = None;
+            self.edited();
         }
-        self.language.cursor = None;
-        self.notice = Some(Notice::Note(
-            "Choose the executable and model for this engine, then save.".into(),
-        ));
+    }
+
+    const fn resetting(&self) -> bool {
+        matches!(self.reset, Reset::Running { .. })
+    }
+
+    fn can_reset(&self, cx: &App) -> bool {
+        let services = cx.global::<Services>();
+        !services.mode.is_demo()
+            && !services.is_quitting()
+            && self.setup.is_none()
+            && self.retiring_setup.is_none()
+            && self.saving.is_none()
+            && !self.resetting()
+            && !self.update.holds_download()
+    }
+
+    fn confirm_reset(&mut self, cx: &mut Context<'_, Self>) {
+        if !matches!(self.reset, Reset::Confirming) || !self.can_reset(cx) {
+            return;
+        }
+        let receipt = match cx.update_global::<Services, _>(|services, cx| services.reset(cx)) {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                self.reset = Reset::Idle;
+                self.notice = Some(Notice::Problem(format!("{error:#}").into()));
+                return;
+            },
+        };
+        self.notice = None;
+        self.reset = Reset::Running {
+            _work: cx.spawn(async move |this, cx| {
+                let result = receipt.recv().await.unwrap_or_else(|_closed| {
+                    Err("The reset stopped before removing anything. Try again.".into())
+                });
+                this.update_if_alive(cx, |view, cx| view.finish_reset(result, cx));
+            }),
+        };
+    }
+
+    fn finish_reset(&mut self, result: Result<(), String>, cx: &mut Context<'_, Self>) {
+        self.reset = Reset::Idle;
+        let path = cx.global::<Services>().path.clone();
+        self.unreadable = Config::is_unreadable(&path);
+        self.downloaded = crate::setup::downloaded();
+        match result {
+            Ok(()) => {
+                self.config = Config::default();
+                self.saves = SaveQueue::new(path, Config::default());
+                self.vocabulary.clear(cx);
+                self.recognition.clear(cx);
+                self.presets.clear(cx);
+                self.language.cursor = None;
+                self.own_engine = false;
+                self.file_picker = None;
+                show_motion(self.config.prefers_reduced_motion(), cx);
+                show_theme(cx);
+                self.start_setup(cx);
+            },
+            Err(error) => self.notice = Some(Notice::Problem(error.into())),
+        }
+        cx.notify();
     }
 
     fn edited(&mut self) {
@@ -395,6 +485,8 @@ impl Settings {
             || is_demo(cx)
             || self.setup.is_some()
             || self.retiring_setup.is_some()
+            || self.unreadable
+            || self.resetting()
         {
             return;
         }
@@ -456,9 +548,11 @@ impl Settings {
                 && !self.recognition.pending(cx)
                 && !self.presets.pending(cx)
         });
+        self.downloaded = crate::setup::downloaded();
         match outcome {
             Some(Ok(installed)) => {
                 installed.apply_to(&mut self.config);
+                self.own_engine = false;
                 if auto_apply {
                     self.save(cx);
                 } else {
@@ -606,6 +700,12 @@ enum Notice {
     Problem(SharedString),
 }
 
+enum Reset {
+    Idle,
+    Confirming,
+    Running { _work: Task<()> },
+}
+
 fn update_notice(version: Option<crate::updates::Version>) -> Notice {
     let action = "Open release";
     #[cfg(target_os = "windows")]
@@ -680,8 +780,12 @@ enum Action {
     PermissionHelp(permissions::Help),
     Shows,
     Setup,
-    Engine,
+    OwnEngine,
+    Engine(Engine),
     Choose(EngineFile),
+    Reset,
+    ConfirmReset,
+    CancelReset,
     Microphone,
     Refresh,
     Language,
@@ -727,7 +831,12 @@ impl Action {
             Self::PermissionHelp(permissions::Help::Screen) => "screen-help",
             Self::Shows => "shows",
             Self::Setup => "setup",
-            Self::Engine => "engine",
+            Self::OwnEngine => "own-engine",
+            Self::Engine(Engine::Whisper) => "engine-whisper",
+            Self::Engine(Engine::Nemo) => "engine-nemo",
+            Self::Reset => "reset",
+            Self::ConfirmReset => "confirm-reset",
+            Self::CancelReset => "cancel-reset",
             Self::Choose(EngineFile::Executable) => "choose-executable",
             Self::Choose(EngineFile::Model) => "choose-model",
             Self::Microphone => "microphone",

@@ -37,13 +37,6 @@ impl Engine {
             Self::Nemo => "NeMo",
         }
     }
-
-    pub(crate) const fn next(self) -> Self {
-        match self {
-            Self::Whisper => Self::Nemo,
-            Self::Nemo => Self::Whisper,
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -214,6 +207,17 @@ impl Config {
     pub(crate) fn read(path: &Path) -> anyhow::Result<Self> {
         let contents = fs::read(path).with_context(|| format!("Cannot read {}", path.display()))?;
         Ok(parse(&contents, path)?.0)
+    }
+
+    pub(crate) fn is_unreadable(path: &Path) -> bool {
+        path.exists() && Self::read(path).is_err()
+    }
+
+    pub(crate) fn discard(path: &Path) -> io::Result<()> {
+        match fs::remove_file(link_target(path)?) {
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+            removed => removed,
+        }
     }
 
     pub(crate) fn load(path: &Path) -> (Self, Startup) {

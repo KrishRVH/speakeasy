@@ -120,8 +120,24 @@ and cancel cues follow the end of capture and are never recorded.
 
 Configured native launches stay in the tray/menu bar. First setup and invalid configuration open
 Settings. A fresh install sets itself up there: a card names each step with its progress, **Cancel**
-pauses and later resumes, and completion enables dictation. The manual engine controls stay hidden
+pauses and later resumes, and completion enables dictation. The speech model controls stay hidden
 while setup runs. Linux opens Settings at startup to expose desktop permissions and tray state.
+
+Advanced lists the speech model as three tickets: Parakeet v3, marked recommended, Nemotron 3.5, and
+Your own engine. Each says what the model is for and shows Selected, Downloaded, or its download
+size. Choosing a managed model downloads only what is missing and puts it in the draft; choosing the
+selected one again re-checks and repairs its files. Your own engine opens a panel with Whisper and
+NeMo tabs and only the active engine's program and model pickers; changing tabs clears the other
+engine's files.
+
+A settings file this version cannot read replaces the setup card, and the guide's automatic setup,
+with a card that names the file and offers **Start fresh…**; the status line keeps the exact error
+for anyone who would rather fix the file. Otherwise Advanced offers **Reset Speakeasy…**. Both
+confirm in place with **Delete settings and downloads** beside Cancel. Reset pauses dictation,
+deletes the downloaded engines, models, and updates and then the settings file, keeps every Show and
+the finished-guide marker, and starts automatic setup. It is unavailable during setup, saves, or a
+Windows update download, and setup and update downloads are unavailable while it runs. A failed
+reset keeps the previous settings and explains what stopped it. Quit waits for a running reset.
 
 On Windows, Start at login, off by default, belongs to the default settings file, which the sign-in
 entry opens. Each live launch with those settings registers the running executable to start at
@@ -240,9 +256,10 @@ original seven-day schedule even when the saved bundle is kept.
   that buffer can be recovered.
 - Insertion does not steal focus. OS submission is the observable result; success in every editor
   cannot be inferred from submitting keystrokes.
-- Settings exposes automatic setup while no engine is set up, and manual engine/model selection,
-  microphone selection, language where applicable, GPU preference, text delivery, English filler
-  removal, reduced motion, sounds, theme, and on Windows start at login.
+- Settings exposes automatic setup while no engine is set up, speech model selection including a
+  user-installed engine, reset, microphone selection, language where applicable, GPU preference,
+  text delivery, English filler removal, reduced motion, sounds, theme, and on Windows start at
+  login.
 
 ## Acceptance
 

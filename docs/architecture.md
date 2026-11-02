@@ -152,6 +152,8 @@ module unless a test file is named.
   use the same NeMo/auto defaults as a new install. Unsupported fields and values stop loading and
   saving without replacing the file; saves preserve concurrent edits to current settings. One
   `text_delivery` choice controls insertion.
+  [settings/speech.rs](../crates/app/src/shell/settings/speech.rs) reads the draft as a managed
+  model or the user's own engine, and switching engines clears the inactive engine's files.
   [config/presets.rs](../crates/app/src/config/presets.rs) stores bounded named dictation choices,
   validates them without opening inactive model paths, and loads them into the draft. Its snapshot
   excludes microphone, delivery, shortcuts, sound, and presentation options.
@@ -255,7 +257,18 @@ module unless a test file is named.
   cover blocked transitions and marker failures; the Settings native interaction test walks the
   simulated guide and checks text cleanup and preservation of edits.
 - **Setup**: [setup.rs](../crates/app/src/setup.rs) and [setup/](../crates/app/src/setup) choose,
-  download, verify, and unpack engines; a full install is opt-in.
+  download, verify, and unpack engines and report which managed models are already downloaded; a
+  full install is opt-in.
+- **Reset**: [reset.rs](../crates/app/src/reset.rs) holds `setup.lock`, refuses while another copy
+  holds it or the update cache lock, deletes the data root's engines, models, downloads, and updates
+  folders, and deletes the settings file last, through a settings link. A linked folder loses only
+  its link; Shows and the finished-guide marker stay, and a repeated purge succeeds. Services pauses
+  dictation, retires the runtime, and purges on an owned thread that Quit drains; nothing resumes
+  until it exits, and a failed purge restores the previous settings. Settings refuses reset during
+  setup, saves, or a held Windows update and refuses setup while settings are unreadable or a reset
+  runs. On success it adopts default settings as its saved baseline and starts automatic setup.
+  [reset/tests.rs](../crates/app/src/reset/tests.rs) covers what stays, refusals, failure order, and
+  linked folders.
 - **Tray and status**: [tray.rs](../crates/app/src/tray.rs), [tray/](../crates/app/src/tray),
   [status.rs](../crates/app/src/status.rs), and
   [platform/src/linux/tray.rs](../crates/platform/src/linux/tray.rs) mirror service state;

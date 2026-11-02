@@ -72,6 +72,10 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                     saving: None,
                     saves,
                     _updates: Task::ready(()),
+                    unreadable: false,
+                    reset: super::Reset::Idle,
+                    downloaded: Vec::new(),
+                    own_engine: false,
                     startup_apps_off: false,
                     #[cfg(target_os = "linux")]
                     desktop_command: SharedString::default(),

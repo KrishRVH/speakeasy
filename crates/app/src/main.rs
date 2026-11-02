@@ -16,6 +16,7 @@ mod models;
 mod paths;
 mod pill;
 mod recognition_terms;
+mod reset;
 mod runtime;
 mod setup;
 mod shell;
@@ -408,7 +409,7 @@ fn sign_in_launch(
 
 fn split_startup(startup: Startup) -> (Option<ValidConfig>, Snapshot) {
     let placeholder = || Snapshot {
-        message: "Speakeasy is not set up yet.".into(),
+        message: status::UNCONFIGURED.into(),
         ..Snapshot::default()
     };
     match startup {

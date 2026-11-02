@@ -8,6 +8,8 @@ use crate::{
 pub(crate) const PAUSING: &str = "Pausing dictation…";
 pub(crate) const PAUSED: &str = "Dictation paused";
 pub(crate) const QUITTING: &str = "Quitting Speakeasy…";
+pub(crate) const UNCONFIGURED: &str = "Speakeasy is not set up yet.";
+pub(crate) const RESETTING: &str = "Removing settings and downloads…";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ServiceState {
@@ -49,7 +51,7 @@ impl Readiness {
             model: match snapshot.model {
                 ModelState::Ready => "Ready",
                 ModelState::Loading => "Loading…",
-                ModelState::Unavailable => "Unavailable (see Advanced → Local speech)",
+                ModelState::Unavailable => "Unavailable (see Advanced → Speech model)",
             },
             shortcut: if snapshot.desktop_ready {
                 "Available"

@@ -8,7 +8,8 @@ use gpui::{
 };
 
 use super::{
-    Action, EngineFile, Setting, Settings, is_demo, language, navigation::Page, permissions,
+    Action, EngineFile, Reset, Setting, Settings, is_demo, language, navigation::Page, permissions,
+    speech::Speech,
 };
 use crate::{
     config::{Engine, TextDelivery},
@@ -38,7 +39,7 @@ impl Render for Settings {
         if let Some(step) = self.onboarding {
             return self.onboarding_view(step, &ui);
         }
-        let unconfigured = !is_demo(cx) && self.config.needs_engine();
+        let unconfigured = !is_demo(cx) && cx.global::<Services>().config.needs_engine();
         let unsaved = self.unsaved(cx);
         let compact = window.viewport_size().height < px(600.0);
         let top = div()
@@ -63,9 +64,13 @@ impl Render for Settings {
             .flex()
             .flex_col()
             .gap(px(20.0))
-            .when(self.is_setting_up() || unconfigured, |body| {
-                body.child(self.setup_card(&ui))
+            .when(self.unreadable, |body| {
+                body.child(self.unreadable_card(&ui))
             })
+            .when(
+                (self.is_setting_up() || unconfigured) && !self.unreadable && !self.resetting(),
+                |body| body.child(self.setup_card(&ui)),
+            )
             .child(self.page(&ui))
             .child(footer(palette, cx));
 
@@ -167,7 +172,7 @@ impl Settings {
             ],
             Page::Advanced => [
                 (!self.is_setting_up()).then(|| {
-                    group().child(self.engine_section(ui)).child(self.switch(
+                    group().child(self.speech_section(ui)).child(self.switch(
                         ui,
                         "Prefer GPU",
                         Setting::PreferGpu,
@@ -186,7 +191,21 @@ impl Settings {
                         .child(row().child(ui.button(
                             "Replay setup",
                             Action::Onboarding(super::onboarding::Action::Replay),
-                        ))),
+                        )))
+                        .when(!self.unreadable, |group| {
+                            group.child(
+                                ui.section("Start over")
+                                    .child(
+                                        div()
+                                            .text_size(TEXT)
+                                            .text_color(rgb(ui.palette.muted))
+                                            .child(
+                                                "Remove settings and downloaded engines and models, then download Parakeet again. Your Shows stay.",
+                                            ),
+                                    )
+                                    .child(self.reset_controls(ui, "Reset Speakeasy…")),
+                            )
+                        }),
                 ),
             ],
         };
@@ -214,7 +233,9 @@ impl Settings {
             });
         #[cfg(target_os = "windows")]
         let controls = match &self.update {
-            super::Update::Available(_) if crate::updates::Download::available() => {
+            super::Update::Available(_)
+                if crate::updates::Download::available() && !self.resetting() =>
+            {
                 controls.child(ui.button("Download update", Action::DownloadUpdate))
             },
             super::Update::Downloading {
@@ -421,40 +442,150 @@ impl Settings {
             })
     }
 
-    fn engine_section(&self, ui: &Ui<'_>) -> impl IntoElement {
-        let detail = "Parakeet: 714 MB · 25 European languages. Nemotron: 742 MB · 32 locales, including Hindi, Japanese, Korean, and Mandarin. Downloads stay local; save to switch.";
-        div()
-            .flex()
-            .flex_col()
-            .gap(ROW_GAP)
+    fn speech_section(&self, ui: &Ui<'_>) -> impl IntoElement {
+        let speech = Speech::of(&self.config, self.own_engine);
+        let managed = |model: Model, about: &'static str, size: &'static str| {
+            let chosen = speech == Some(Speech::Managed(model));
+            let status = if chosen {
+                "Selected"
+            } else if self.downloaded.contains(&model) {
+                "Downloaded"
+            } else {
+                size
+            };
+            choice(
+                ui,
+                Action::Install(model),
+                model.label(),
+                about,
+                Some(status),
+                chosen,
+            )
+        };
+        ui.section("Speech model")
             .child(
                 div()
                     .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(ui.kit().eyebrow("Local speech"))
-                    .child(ui.picker("Engine", self.config.engine.label(), Action::Engine)),
+                    .flex_col()
+                    .child(managed(
+                        Model::Parakeet,
+                        "Recommended. Fast and accurate in 25 European languages, detected as you speak.",
+                        "714 MB download",
+                    ))
+                    .child(managed(
+                        Model::Nemotron,
+                        "32 locales, including Hindi, Japanese, Korean, and Mandarin. Follows the language you choose and your recognition hints.",
+                        "742 MB download",
+                    ))
+                    .child(choice(
+                        ui,
+                        Action::OwnEngine,
+                        "Your own engine",
+                        "A whisper.cpp or NeMo-Speech build you installed, with a model file you choose.",
+                        (speech == Some(Speech::Own)).then_some("Selected"),
+                        speech == Some(Speech::Own),
+                    )),
             )
+            .when(speech == Some(Speech::Own), |section| {
+                section.child(self.own_engine_panel(ui))
+            })
+    }
+
+    fn own_engine_panel(&self, ui: &Ui<'_>) -> impl IntoElement {
+        let engine = self.config.engine;
+        let (program, model, source) = match engine {
+            Engine::Whisper => (
+                "whisper-server program",
+                "Whisper model (.bin)",
+                "Use whisper-server from a whisper.cpp release and a GGML model.",
+            ),
+            Engine::Nemo => (
+                "nemo-speech program",
+                "NeMo model (.gguf)",
+                "Use nemo-speech from NeMo-Speech.cpp and a GGUF speech model.",
+            ),
+        };
+        let file = |path: &Path| {
+            path.file_name().map_or_else(
+                || SharedString::from("Not chosen"),
+                |name| name.to_string_lossy().into_owned().into(),
+            )
+        };
+        ui.kit()
+            .inlay()
+            .flex()
+            .flex_col()
+            .gap(px(12.0))
+            .child(ui.kit().tab_bar("engine-tabs", "Engine").children(
+                [Engine::Whisper, Engine::Nemo].map(|choice| {
+                    let action = Action::Engine(choice);
+                    ui.kit().tab(
+                        action.element_id(),
+                        choice.label(),
+                        engine == choice,
+                        Some(ui.press(action)),
+                    )
+                }),
+            ))
             .child(
                 row()
-                    .child(ui.button("Set up Parakeet v3", Action::Install(Model::Parakeet)))
-                    .child(ui.button("Set up Nemotron 3.5", Action::Install(Model::Nemotron))),
+                    .flex_wrap()
+                    .child(ui.picker(
+                        program,
+                        file(&self.config.engine_executable),
+                        Action::Choose(EngineFile::Executable),
+                    ))
+                    .child(ui.picker(
+                        model,
+                        file(&self.config.model),
+                        Action::Choose(EngineFile::Model),
+                    )),
             )
             .child(
                 div()
                     .text_size(TEXT)
                     .text_color(rgb(ui.palette.muted))
-                    .child(detail),
+                    .child(source),
             )
-            .when_some(self.config.model_choice(), |section, model| {
-                section.child(format!("Selected model: {}", model.label()))
-            })
-            .child(ui.file_row(
-                &self.config.engine_executable,
-                "Choose executable",
-                EngineFile::Executable,
-            ))
-            .child(ui.file_row(&self.config.model, "Choose model", EngineFile::Model))
+    }
+
+    fn unreadable_card(&self, ui: &Ui<'_>) -> Div {
+        ui.kit()
+            .inlay()
+            .flex()
+            .flex_col()
+            .gap(px(10.0))
+            .child(ui.kit().eyebrow("Settings can't be read"))
+            .child(div().text_size(TEXT).child(unreadable_text(ui.cx)))
+            .child(self.reset_controls(ui, "Start fresh…"))
+    }
+
+    fn reset_controls(&self, ui: &Ui<'_>, label: &'static str) -> Div {
+        let enabled = self.can_reset(ui.cx);
+        let button = |label: &'static str, action: Action, weight: Weight| {
+            ui.kit().button(
+                action.element_id(),
+                label,
+                weight,
+                (enabled || action == Action::CancelReset).then(|| ui.press(action)),
+            )
+        };
+        match self.reset {
+            Reset::Idle => row().child(button(label, Action::Reset, Weight::Destroy)),
+            Reset::Confirming => row()
+                .child(button(
+                    "Delete settings and downloads",
+                    Action::ConfirmReset,
+                    Weight::ConfirmDestroy,
+                ))
+                .child(button("Cancel", Action::CancelReset, Weight::Secondary)),
+            Reset::Running { .. } => row().child(
+                div()
+                    .text_size(TEXT)
+                    .text_color(rgb(ui.palette.muted))
+                    .child(crate::status::RESETTING),
+            ),
+        }
     }
 
     fn linux_section(&self, ui: &Ui<'_>) -> impl IntoElement {
@@ -646,7 +777,10 @@ impl Settings {
     fn commands(&self, ui: &Ui<'_>, unsaved: bool) -> impl IntoElement {
         let services = ui.cx.global::<Services>();
         let running = services.is_running();
-        let primary = if self.is_setting_up() && self.config.needs_engine() {
+        let primary = if (self.is_setting_up() && self.config.needs_engine())
+            || self.unreadable
+            || self.resetting()
+        {
             None
         } else {
             primary_command(is_demo(ui.cx), services.service_state(), unsaved)
@@ -684,13 +818,18 @@ impl Settings {
                     .text_color(tone(self.presentation.indicator == Indicator::Attention))
                     .child(self.presentation.message.clone()),
             )
-            .when_some(self.notice.as_ref(), |status, notice| {
-                status.child(
-                    div()
-                        .text_color(tone(notice.is_problem()))
-                        .child(notice.text()),
-                )
-            })
+            .when_some(
+                self.notice
+                    .as_ref()
+                    .filter(|notice| notice.text().as_ref() != self.presentation.message),
+                |status, notice| {
+                    status.child(
+                        div()
+                            .text_color(tone(notice.is_problem()))
+                            .child(notice.text()),
+                    )
+                },
+            )
             .when(unsaved, |status| {
                 status.child(div().text_color(tone(false)).child("Unsaved changes"))
             });
@@ -759,20 +898,6 @@ impl Ui<'_> {
         )
     }
 
-    fn file_row(&self, path: &Path, label: &'static str, file: EngineFile) -> impl IntoElement {
-        let name = path.file_name().map_or_else(
-            || "Not selected".into(),
-            |name| name.to_string_lossy().into_owned(),
-        );
-        div()
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap(px(12.0))
-            .child(div().flex_1().overflow_hidden().text_size(TEXT).child(name))
-            .child(self.button(label, Action::Choose(file)))
-    }
-
     fn section(&self, title: &'static str) -> Div {
         div()
             .flex()
@@ -782,8 +907,53 @@ impl Ui<'_> {
     }
 }
 
+fn unreadable_text(cx: &App) -> String {
+    let path = &cx.global::<Services>().path;
+    let file = path.file_name().map_or_else(
+        || path.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    format!(
+        "Speakeasy can't read {file}, often because another version wrote it. Fix the error below and restart, or start fresh: remove the settings and downloads, then download Parakeet again. Your Shows stay."
+    )
+}
+
 fn row() -> Div {
     div().flex().gap(ROW_GAP)
+}
+
+fn choice(
+    ui: &Ui<'_>,
+    action: Action,
+    title: &'static str,
+    about: &'static str,
+    status: Option<&'static str>,
+    chosen: bool,
+) -> gpui::Stateful<Div> {
+    ui.kit()
+        .ticket(
+            action.element_id(),
+            div().text_size(px(14.0)).child(title),
+            chosen,
+            Some(ui.press(action)),
+        )
+        .role(gpui::Role::RadioButton)
+        .aria_toggled(if chosen {
+            gpui::Toggled::True
+        } else {
+            gpui::Toggled::False
+        })
+        .aria_label(status.map_or_else(|| title.into(), |status| format!("{title}: {status}")))
+        .w_full()
+        .child(
+            div()
+                .text_size(TEXT)
+                .text_color(rgb(ui.palette.muted))
+                .child(about),
+        )
+        .when_some(status, |ticket, status| {
+            ticket.child(ui.kit().label(status))
+        })
 }
 
 fn primary_command(

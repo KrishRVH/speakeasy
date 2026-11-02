@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::anyhow;
 use gpui::{App, BorrowAppContext, Global, Task, WindowHandle};
-use speakeasy_platform::{Input, InputMonitor};
+use speakeasy_platform::{Input, InputMonitor, OwnedThread};
 use tokio::sync::watch;
 
 use super::{
@@ -20,7 +20,7 @@ use crate::{
     pill::Pill,
     runtime::{self, Meter, ModelState, Phase, Report, Runtime, Snapshot},
     show::{Canvas, review::Review},
-    status::{PAUSED, PAUSING, QUITTING, ServiceState, Status},
+    status::{PAUSED, PAUSING, QUITTING, RESETTING, ServiceState, Status, UNCONFIGURED},
     transcript::style::Style,
 };
 
@@ -46,6 +46,22 @@ impl LaunchMode {
 enum Restart {
     Apply(Box<ValidConfig>),
     Validate,
+    Reset(Box<Purge>),
+}
+
+type Purged = Result<(), String>;
+pub(super) type ResetReceipt = async_channel::Receiver<Purged>;
+
+struct Purge {
+    settings: PathBuf,
+    data: PathBuf,
+    before: Before,
+    done: async_channel::Sender<Purged>,
+}
+
+struct Before {
+    config: Config,
+    status: Snapshot,
 }
 
 struct Owners {
@@ -110,6 +126,7 @@ pub(crate) struct Services {
     pub(super) show_edits: crate::show::edits::Edits,
     show_copies: crate::show::copy::Copies,
     pub(super) show_previews: crate::show::preview::Reads,
+    purging: Option<(OwnedThread, Task<()>)>,
 }
 
 impl Global for Services {}
@@ -159,6 +176,7 @@ impl Services {
             show_edits: crate::show::edits::Edits::default(),
             show_copies: crate::show::copy::Copies::default(),
             show_previews: crate::show::preview::Reads::default(),
+            purging: None,
         }
     }
 
@@ -412,7 +430,7 @@ impl Services {
     }
 
     pub(super) fn resume(&mut self, cx: &App) {
-        if self.is_running() || self.lifecycle.is_pausing() {
+        if self.is_running() || self.lifecycle.is_pausing() || self.purging.is_some() {
             return;
         }
         if self.runtime().is_some() {
@@ -510,8 +528,103 @@ impl Services {
                 }
             },
             Some(Restart::Validate) => self.resume(cx),
+            Some(Restart::Reset(purge)) => self.purge(*purge, cx),
             None => announce(&self.output, PAUSED),
         }
+    }
+
+    pub(super) fn reset(&mut self, cx: &App) -> anyhow::Result<ResetReceipt> {
+        anyhow::ensure!(
+            !self.is_quitting() && !self.mode.is_demo() && self.purging.is_none(),
+            "Speakeasy cannot reset right now. Try again in a moment."
+        );
+        let (done, receipt) = async_channel::bounded(1);
+        let purge = Purge {
+            settings: self.path.clone(),
+            data: crate::paths::data_root()?,
+            before: Before {
+                config: std::mem::take(&mut self.config),
+                status: self.output.borrow().clone(),
+            },
+            done,
+        };
+        self.choices.selected = None;
+        self.pause(cx);
+        announce(&self.output, RESETTING);
+        if self.lifecycle.is_pausing() {
+            self.lifecycle.queue(Restart::Reset(Box::new(purge)));
+        } else {
+            self.purge(purge, cx);
+        }
+        Ok(receipt)
+    }
+
+    fn purge(&mut self, purge: Purge, cx: &App) {
+        let Purge {
+            settings,
+            data,
+            before,
+            done,
+        } = purge;
+        let (sent, outcome) = async_channel::bounded(1);
+        let thread = OwnedThread::spawn("speakeasy-reset", move || {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "Services keeps the receiver until this thread exits, unless the app is already gone"
+            )]
+            let _ = sent.try_send(
+                crate::reset::purge(&settings, &data).map_err(|error| format!("{error:#}")),
+            );
+        });
+        let thread = match thread {
+            Ok(thread) => thread,
+            Err(error) => {
+                self.purged(
+                    before,
+                    Err(format!("Cannot start the reset: {error}. Try again.")),
+                    &done,
+                );
+                return;
+            },
+        };
+        let exited = thread.exited();
+        let finished = cx.spawn(async move |cx| {
+            let result = outcome.recv().await.unwrap_or_else(|_stopped| {
+                Err("The reset stopped unexpectedly. Check your settings, then try again.".into())
+            });
+            exited.await;
+            cx.update_if_running(|cx| {
+                cx.update_global::<Self, _>(|services, _| services.purged(before, result, &done));
+            });
+        });
+        self.purging = Some((thread, finished));
+    }
+
+    fn purged(&mut self, before: Before, result: Purged, done: &async_channel::Sender<Purged>) {
+        self.purging = None;
+        if result.is_err() {
+            self.config = before.config;
+        }
+        if !self.is_quitting() {
+            match result {
+                Ok(()) => announce(&self.output, UNCONFIGURED),
+                Err(_) if self.config.needs_engine() => {
+                    self.output.send_modify(|snapshot| {
+                        *snapshot = Snapshot {
+                            epoch: snapshot.epoch.next(),
+                            last_show: snapshot.last_show.clone(),
+                            ..before.status
+                        };
+                    });
+                },
+                Err(_) => announce(&self.output, PAUSED),
+            }
+        }
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "A closed Settings window drops its receipt; Services already settled the outcome"
+        )]
+        let _ = done.try_send(result);
     }
 
     pub(super) fn begin_quit(&mut self) -> Option<impl Future<Output = ()> + use<>> {
@@ -535,10 +648,14 @@ impl Services {
         let edited = self.show_edits.drained();
         let copied = self.show_copies.drained();
         let previewed = self.show_previews.drained();
+        let purged = self.purging.as_ref().map(|(thread, _)| thread.exited());
         Some(async move {
             edited.await;
             copied.await;
             previewed.await;
+            if let Some(purged) = purged {
+                purged.await;
+            }
             if let Some(stopped) = stopped {
                 stopped.await;
             }

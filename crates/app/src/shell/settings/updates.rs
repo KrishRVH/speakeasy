@@ -39,6 +39,14 @@ impl Update {
         }
     }
 
+    pub(super) const fn holds_download(&self) -> bool {
+        match self {
+            #[cfg(target_os = "windows")]
+            Self::Downloading { .. } | Self::Ready(_) => true,
+            _ => false,
+        }
+    }
+
     pub(super) const fn busy(&self) -> bool {
         match self {
             Self::Checking { .. } => true,
@@ -119,7 +127,7 @@ impl Settings {
         let Update::Available(version) = self.update else {
             return;
         };
-        if is_demo(cx) || cx.global::<Services>().is_quitting() {
+        if is_demo(cx) || cx.global::<Services>().is_quitting() || self.resetting() {
             return;
         }
         let (operation, mut progress) = match crate::updates::Download::prepare(
