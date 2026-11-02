@@ -20,11 +20,7 @@ fn a_future_cut_segment_cannot_repaint_the_carried_joint() {
 
 #[test]
 fn a_mark_cannot_declare_completion_before_its_referenced_strokes() {
-    let mut tracker = Tracker::new(Size {
-        width: 1000.0,
-        height: 1000.0,
-    });
-    assert!(tracker.locate(WHOLE));
+    let mut tracker = tracker();
     tracker.observe(ms(100), Point::new(0.2, 0.5), true, false);
     tracker.observe(ms(200), Point::new(0.8, 0.5), true, false);
     tracker.observe(ms(210), Point::new(0.8, 0.5), false, false);
@@ -67,11 +63,7 @@ fn cancellation_between_primitives_leaves_the_original_frame_untouched() {
 
 #[test]
 fn ambiguous_pin_identity_cannot_acquire_a_timing_proof() {
-    let mut tracker = Tracker::new(Size {
-        width: 1000.0,
-        height: 1000.0,
-    });
-    assert!(tracker.locate(WHOLE));
+    let mut tracker = tracker();
     tracker.observe(ms(90), Point::new(0.0, 0.5), false, false);
     assert!(tracker.pin(Span::new(ms(80), ms(100))));
     let marks = tracker.marks();

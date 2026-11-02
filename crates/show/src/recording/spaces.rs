@@ -47,16 +47,8 @@ impl Spaces {
     }
 
     pub(crate) fn mark(&self, mark: &Mark, pins: &[Pin]) -> Option<Rect> {
-        if let Shape::Pin { point } = mark.shape {
-            let mut matches = pins
-                .iter()
-                .enumerate()
-                .filter(|(_, pin)| pin.at == mark.span.start() && pin.point == point);
-            let (index, _) = matches.next()?;
-            if matches.next().is_some() {
-                return None;
-            }
-            return self.pins.get(index)?.map(|proof| proof.space.part);
+        if let Shape::Pin { .. } = mark.shape {
+            return self.pin(mark, pins).map(|proof| proof.space.part);
         }
         let members = self.strokes.get(mark.strokes.clone())?;
         let first = (*members.first()?)?;
@@ -65,15 +57,30 @@ impl Spaces {
             .all(|space| *space == Some(first))
             .then_some(first.part)
     }
-}
 
-#[cfg(test)]
-mod tests;
+    pub(crate) fn pin(&self, mark: &Mark, pins: &[Pin]) -> Option<PinSpace> {
+        let Shape::Pin { point } = mark.shape else {
+            return None;
+        };
+        let mut matches = pins
+            .iter()
+            .enumerate()
+            .filter(|(_, pin)| pin.at == mark.span.start() && pin.point == point);
+        let (index, _) = matches.next()?;
+        if matches.next().is_some() {
+            return None;
+        }
+        *self.pins.get(index)?
+    }
+}
 
 pub(crate) fn valid(part: Rect) -> bool {
     [part.left, part.top, part.right, part.bottom]
         .into_iter()
-        .all(|edge| edge.is_finite() && (0.0..=1.0).contains(&edge))
+        .all(|edge| (0.0..=1.0).contains(&edge))
         && part.left < part.right
         && part.top < part.bottom
 }
+
+#[cfg(test)]
+mod tests;

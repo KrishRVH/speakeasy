@@ -8,7 +8,11 @@ use tiny_skia::{PixmapPaint, Transform};
 use super::{RECENT_INK, RIPPLE_REACH, closed_curve, fill, label, ripple};
 use crate::{
     Action, Error, Image, Mark, Moment, Point, Recording, Rect, Shape, Stroke, Typeface, ink,
-    locate::PixelRect, recording::Spaces,
+    locate::PixelRect,
+    recording::{
+        Spaces,
+        spaces::{self, Space},
+    },
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -44,53 +48,7 @@ impl fmt::Debug for Annotations {
 
 impl Annotations {
     pub fn new(recording: &Recording, marks: &[Mark]) -> Result<Self, Error> {
-        let point = |point: Point| {
-            point.is_finite() && (0.0..=1.0).contains(&point.x) && (0.0..=1.0).contains(&point.y)
-        };
-        let valid = recording.spaces_valid()
-            && recording.strokes.iter().all(|stroke| {
-                stroke
-                    .points()
-                    .iter()
-                    .all(|ink| point(ink.point) && ink.at <= recording.duration)
-            })
-            && recording
-                .pins
-                .iter()
-                .all(|pin| point(pin.point) && pin.at <= recording.duration)
-            && recording.actions.iter().all(|action| {
-                action.span().end() <= recording.duration
-                    && match action {
-                        Action::Click { point: at, .. } => at.is_finite(),
-                        Action::Drag { from, to, .. } => from.is_finite() && to.is_finite(),
-                    }
-            })
-            && marks.iter().all(|mark| {
-                mark.span.end() <= recording.duration
-                    && mark.strokes.start <= mark.strokes.end
-                    && mark.strokes.end <= recording.strokes.len()
-                    && point(Point::new(mark.bounds.left, mark.bounds.top))
-                    && point(Point::new(mark.bounds.right, mark.bounds.bottom))
-                    && (matches!(mark.shape, Shape::Pin { .. })
-                        || recording
-                            .strokes
-                            .get(mark.strokes.clone())
-                            .is_some_and(|strokes| {
-                                !strokes.is_empty()
-                                    && strokes.iter().all(|stroke| {
-                                        mark.span.start() <= stroke.span().start()
-                                            && stroke.span().end() <= mark.span.end()
-                                    })
-                            }))
-                    && match mark.shape {
-                        Shape::Pin { point: at } => point(at),
-                        Shape::Line { from, to } | Shape::Arrow { from, to } => {
-                            point(from) && point(to)
-                        },
-                        _ => true,
-                    }
-            });
-        if !valid {
+        if !consistent(recording, marks) {
             return Err(Error::evidence(
                 "Saved annotation geometry or timing is invalid",
             ));
@@ -115,9 +73,7 @@ impl Annotations {
         if cancelled() {
             return Ok(None);
         }
-        if at > self.duration.since(Moment::START)
-            || !crate::recording::spaces::valid(viewport.source)
-        {
+        if at > self.duration.since(Moment::START) || !spaces::valid(viewport.source) {
             return Err(Error::evidence(
                 "Video sample has no compatible annotation coverage",
             ));
@@ -129,7 +85,17 @@ impl Annotations {
             height,
         } = viewport.content;
         let mut content = image.cropped(left, top, width, height)?;
+        let (Ok(x), Ok(y)) = (i32::try_from(left), i32::try_from(top)) else {
+            return Err(Error::evidence("Video content is outside its canvas"));
+        };
         let (w, h) = (width as f32, height as f32);
+        let located = |spaces: &[Option<Space>], index: usize| {
+            spaces
+                .get(index)
+                .copied()
+                .flatten()
+                .is_some_and(|space| space.part == viewport.source)
+        };
         let mut report = AnnotationReport::default();
         let mut shown = vec![false; self.strokes.len()];
         let mut canvas = content.as_mut();
@@ -156,14 +122,7 @@ impl Annotations {
             {
                 continue;
             }
-            if self
-                .spaces
-                .strokes
-                .get(index)
-                .copied()
-                .flatten()
-                .is_none_or(|space| space.part != viewport.source)
-            {
+            if !located(&self.spaces.strokes, index) {
                 report.omitted = report.omitted.saturating_add(1);
                 continue;
             }
@@ -189,6 +148,7 @@ impl Annotations {
                 Some(*count)
             }))
             .collect();
+        let radius = ink::label_radius(w, h);
         for bound in &self.labels {
             if cancelled() {
                 return Ok(None);
@@ -202,7 +162,6 @@ impl Annotations {
                 labels::Placement::Visible => {},
             }
             let mark = &bound.mark;
-            let radius = ink::label_radius(w, h);
             label(
                 &mut canvas,
                 mark,
@@ -221,26 +180,13 @@ impl Annotations {
                 continue;
             }
             let endpoint = action.point();
-            if !(0.0..=1.0).contains(&endpoint.x)
-                || !(0.0..=1.0).contains(&endpoint.y)
-                || self
-                    .spaces
-                    .actions
-                    .get(index)
-                    .copied()
-                    .flatten()
-                    .is_none_or(|space| space.part != viewport.source)
-            {
+            if !Rect::UNIT.contains(endpoint) || !located(&self.spaces.actions, index) {
                 report.omitted = report.omitted.saturating_add(1);
                 continue;
             }
-            ripple(&mut canvas, action.point().scaled(w, h), ink::detail(w, h));
+            ripple(&mut canvas, endpoint.scaled(w, h), ink::detail(w, h));
             report.drawn = report.drawn.saturating_add(1);
         }
-        let x = i32::try_from(left)
-            .map_err(|_outside| Error::evidence("Video content is outside its canvas"))?;
-        let y = i32::try_from(top)
-            .map_err(|_outside| Error::evidence("Video content is outside its canvas"))?;
         if cancelled() {
             return Ok(None);
         }
@@ -254,6 +200,62 @@ impl Annotations {
         );
         Ok(Some(report))
     }
+}
+
+fn consistent(recording: &Recording, marks: &[Mark]) -> bool {
+    let Recording {
+        duration,
+        strokes,
+        pins,
+        actions,
+        ..
+    } = recording;
+    recording.spaces_valid()
+        && strokes
+            .iter()
+            .flat_map(Stroke::points)
+            .all(|ink| Rect::UNIT.contains(ink.point) && ink.at <= *duration)
+        && pins
+            .iter()
+            .all(|pin| Rect::UNIT.contains(pin.point) && pin.at <= *duration)
+        && actions.iter().all(|action| {
+            action.span().end() <= *duration
+                && match *action {
+                    Action::Click { point, .. } => point.is_finite(),
+                    Action::Drag { from, to, .. } => from.is_finite() && to.is_finite(),
+                }
+        })
+        && marks.iter().all(|mark| {
+            let drawn = match (mark.shape, strokes.get(mark.strokes.clone())) {
+                (_, None) => false,
+                (Shape::Pin { .. }, Some(_)) => true,
+                (_, Some(members)) => {
+                    !members.is_empty()
+                        && members.iter().all(|stroke| {
+                            mark.span.start() <= stroke.span().start()
+                                && stroke.span().end() <= mark.span.end()
+                        })
+                },
+            };
+            let placed = match mark.shape {
+                Shape::Pin { point } => Rect::UNIT.contains(point),
+                Shape::Line { from, to } | Shape::Arrow { from, to } => {
+                    Rect::UNIT.contains(from) && Rect::UNIT.contains(to)
+                },
+                Shape::Tap | Shape::Circle | Shape::Underline | Shape::Scribble => true,
+            };
+            let Rect {
+                left,
+                top,
+                right,
+                bottom,
+            } = mark.bounds;
+            mark.span.end() <= *duration
+                && drawn
+                && placed
+                && Rect::UNIT.contains(Point::new(left, top))
+                && Rect::UNIT.contains(Point::new(right, bottom))
+        })
 }
 
 #[cfg(test)]

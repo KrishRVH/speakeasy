@@ -1,14 +1,8 @@
 use super::*;
+use crate::{InkPoint, Size, Span, Tracker, typeface::tests::typeface};
 
 mod integrity;
-use crate::{InkPoint, Size, Span, Tracker, recording::spaces::Space, typeface::tests::typeface};
 
-const WHOLE: Rect = Rect {
-    left: 0.0,
-    top: 0.0,
-    right: 1.0,
-    bottom: 1.0,
-};
 const VIEW: VideoViewport = VideoViewport {
     content: PixelRect {
         left: 10,
@@ -16,11 +10,20 @@ const VIEW: VideoViewport = VideoViewport {
         width: 100,
         height: 60,
     },
-    source: WHOLE,
+    source: Rect::UNIT,
 };
 
 fn ms(value: u64) -> Moment {
     Moment::from_millis(value)
+}
+
+fn tracker() -> Tracker {
+    let mut tracker = Tracker::new(Size {
+        width: 1000.0,
+        height: 1000.0,
+    });
+    assert!(tracker.locate(Rect::UNIT));
+    tracker
 }
 
 fn blank() -> Image {
@@ -53,7 +56,7 @@ fn recording(strokes: Vec<Stroke>) -> Recording {
             strokes: vec![
                 Some(Space {
                     generation: 1,
-                    part: WHOLE
+                    part: Rect::UNIT
                 });
                 strokes.len()
             ],
@@ -121,11 +124,7 @@ fn continuous_cut_segments_expire_together() {
 
 #[test]
 fn labels_wait_for_the_complete_mark() {
-    let mut tracker = Tracker::new(Size {
-        width: 1000.0,
-        height: 1000.0,
-    });
-    assert!(tracker.locate(WHOLE));
+    let mut tracker = tracker();
     tracker.observe(ms(100), Point::new(0.2, 0.5), true, false);
     tracker.observe(ms(200), Point::new(0.8, 0.5), true, false);
     tracker.observe(ms(210), Point::new(0.8, 0.5), false, false);
@@ -142,11 +141,7 @@ fn labels_wait_for_the_complete_mark() {
 
 #[test]
 fn delayed_pins_wait_for_observation_and_unknown_geometry_is_omitted() {
-    let mut tracker = Tracker::new(Size {
-        width: 1000.0,
-        height: 1000.0,
-    });
-    assert!(tracker.locate(WHOLE));
+    let mut tracker = tracker();
     tracker.observe(ms(120), Point::new(0.5, 0.5), false, false);
     assert!(tracker.pin(Span::new(ms(80), ms(100))));
     let marks = tracker.marks();
@@ -180,11 +175,7 @@ fn delayed_pins_wait_for_observation_and_unknown_geometry_is_omitted() {
 
 #[test]
 fn actions_wait_for_release_and_incompatible_coordinates_are_omitted() {
-    let mut tracker = Tracker::new(Size {
-        width: 1000.0,
-        height: 1000.0,
-    });
-    assert!(tracker.locate(WHOLE));
+    let mut tracker = tracker();
     tracker.observe(ms(100), Point::new(0.2, 0.5), false, true);
     tracker.observe(ms(200), Point::new(0.8, 0.5), false, false);
     let mut recording = tracker.finish(ms(1000));
@@ -222,11 +213,7 @@ fn actions_wait_for_release_and_incompatible_coordinates_are_omitted() {
 
 #[test]
 fn releasing_outside_the_target_does_not_disable_valid_ink() {
-    let mut tracker = Tracker::new(Size {
-        width: 1000.0,
-        height: 1000.0,
-    });
-    assert!(tracker.locate(WHOLE));
+    let mut tracker = tracker();
     tracker.observe(ms(10), Point::new(0.2, 0.5), true, false);
     tracker.observe(ms(20), Point::new(0.8, 0.5), true, false);
     tracker.observe(ms(30), Point::new(0.8, 0.5), false, false);

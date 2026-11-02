@@ -159,6 +159,11 @@ impl Rect {
     }
 
     #[must_use]
+    pub(crate) fn contains(self, point: Point) -> bool {
+        (self.left..=self.right).contains(&point.x) && (self.top..=self.bottom).contains(&point.y)
+    }
+
+    #[must_use]
     pub(crate) fn union(self, other: Self) -> Self {
         Self {
             left: self.left.min(other.left),
@@ -233,5 +238,22 @@ mod tests {
             <[f32; 4]>::from(bounds.expanded_within(0.25, Rect::UNIT)),
             [0.0, 0.0, 0.95, 1.0]
         );
+    }
+
+    #[test]
+    fn containment_includes_edges_and_rejects_non_finite_points() {
+        let inside = [
+            Point::new(0.0, 1.0),
+            Point::new(1.0, 0.0),
+            Point::new(0.5, 0.5),
+        ];
+        assert!(inside.into_iter().all(|point| Rect::UNIT.contains(point)));
+        let outside = [
+            Point::new(-0.01, 0.5),
+            Point::new(0.5, 1.01),
+            Point::new(f32::NAN, 0.5),
+            Point::new(0.5, f32::INFINITY),
+        ];
+        assert!(!outside.into_iter().any(|point| Rect::UNIT.contains(point)));
     }
 }

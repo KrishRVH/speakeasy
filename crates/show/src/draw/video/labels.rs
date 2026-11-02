@@ -1,7 +1,10 @@
-use std::{collections::BTreeMap, time::Duration};
+use std::time::Duration;
 
 use super::RECENT_INK;
-use crate::{Mark, Moment, Point, Recording, Rect, Shape};
+use crate::{
+    Mark, Moment, Recording, Rect, Shape,
+    recording::spaces::{PinSpace, Space},
+};
 
 pub(super) struct Label {
     pub mark: Mark,
@@ -10,7 +13,7 @@ pub(super) struct Label {
 
 enum Anchor {
     Ink(Option<Rect>),
-    Pin(Option<(Rect, Moment)>),
+    Pin(Option<PinSpace>),
 }
 
 pub(super) enum Placement {
@@ -20,27 +23,11 @@ pub(super) enum Placement {
 }
 
 pub(super) fn resolve(recording: &Recording, marks: &[Mark]) -> Vec<Label> {
-    let key = |at: Moment, point: Point| {
-        let bits = |value: f32| if value == 0.0 { 0 } else { value.to_bits() };
-        (at.as_millis(), bits(point.x), bits(point.y))
-    };
-    let mut pins = BTreeMap::new();
-    for (index, pin) in recording.pins.iter().enumerate() {
-        let proof = recording.spaces.pins.get(index).copied().flatten();
-        pins.entry(key(pin.at, pin.point))
-            .and_modify(|proof| *proof = None)
-            .or_insert(proof);
-    }
     marks
         .iter()
         .map(|mark| {
-            let anchor = if let Shape::Pin { point } = mark.shape {
-                Anchor::Pin(
-                    pins.get(&key(mark.span.start(), point))
-                        .copied()
-                        .flatten()
-                        .map(|proof| (proof.space.part, proof.observed)),
-                )
+            let anchor = if let Shape::Pin { .. } = mark.shape {
+                Anchor::Pin(recording.spaces.pin(mark, &recording.pins))
             } else {
                 Anchor::Ink(recording.spaces.mark(mark, &recording.pins))
             };
@@ -59,7 +46,10 @@ impl Label {
         }
         let part = match self.anchor {
             Anchor::Pin(None) => None,
-            Anchor::Pin(Some((part, observed))) => {
+            Anchor::Pin(Some(PinSpace {
+                space: Space { part, .. },
+                observed,
+            })) => {
                 let start = observed.max(self.mark.span.end()).since(Moment::START);
                 if at < start || at.saturating_sub(start) > RECENT_INK {
                     return Placement::Hidden;
