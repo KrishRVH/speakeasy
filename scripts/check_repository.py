@@ -160,7 +160,7 @@ def name_findings(paths: list[str]) -> list[str]:
             and set(stem_tokens) <= NOTE_TOKENS
         ):
             findings.append(f"{path}: handoff note; keep task notes in untracked .scratch/")
-        elif len(parts) <= 2 and top in ("docs", name) and DATED_NAME.search(name):
+        elif directories in ((), ("docs",)) and DATED_NAME.search(name):
             findings.append(f"{path}: dated name; current docs carry no dates")
     return findings
 
