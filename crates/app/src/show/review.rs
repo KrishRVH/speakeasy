@@ -233,8 +233,8 @@ impl Review {
                         view.directory = Some(root.directory);
                         view.fixture = root.fixture.or_else(|| view.fixture.take());
                         match view.library.replace(rows) {
-                            Some(key) => view.open_selected(key, None, None, cx),
-                            None => view.clear_selection(None, cx),
+                            Some(key) => view.open_selected(key, None, cx),
+                            None => view.clear_selection(cx),
                         }
                         view.notice = notice;
                     },
@@ -253,10 +253,9 @@ impl Review {
         &mut self,
         key: Key,
         seek: Option<speakeasy_show::Moment>,
-        window: Option<&mut Window>,
         cx: &mut Context<'_, Self>,
     ) {
-        self.clear_selection(window, cx);
+        self.clear_selection(cx);
         if self.interrupted().is_some() {
             cx.notify();
             return;
@@ -289,23 +288,23 @@ impl Review {
                     None => key,
                 };
                 view.detail = Some(detail);
-                view.load_frame(key, None, cx);
+                view.load_frame(key, cx);
                 cx.notify();
             });
         }));
     }
 
-    fn load_frame(&mut self, key: Key, window: Option<&mut Window>, cx: &mut Context<'_, Self>) {
+    fn load_frame(&mut self, key: Key, cx: &mut Context<'_, Self>) {
         self.loading = None;
         if self.mode != Mode::Video || !matches!(self.image, ImageState::Ready(_)) {
-            self.replace_image(ImageState::Loading, window, cx);
+            self.replace_image(ImageState::Loading, cx);
         }
         let Some(frame) = self
             .detail
             .as_ref()
             .and_then(|detail| detail.frames.get(key.frame))
         else {
-            self.replace_image(ImageState::Empty, None, cx);
+            self.replace_image(ImageState::Empty, cx);
             return;
         };
         let request = super::preview::Request {
@@ -320,7 +319,6 @@ impl Review {
             Err(error) => {
                 self.replace_image(
                     ImageState::Failed(format!("Cannot load this frame: {error:#}")),
-                    None,
                     cx,
                 );
                 cx.notify();
@@ -341,7 +339,7 @@ impl Review {
                 }
                 view.loading = None;
                 let Some(result) = result else {
-                    view.load_frame(key, None, cx);
+                    view.load_frame(key, cx);
                     return;
                 };
                 view.replace_image(
@@ -349,7 +347,6 @@ impl Review {
                         Ok(decoded) => ImageState::Ready(decoded),
                         Err(message) => ImageState::Failed(message),
                     },
-                    None,
                     cx,
                 );
                 cx.notify();
@@ -358,7 +355,7 @@ impl Review {
         cx.notify();
     }
 
-    fn clear_selection(&mut self, window: Option<&mut Window>, cx: &mut Context<'_, Self>) {
+    fn clear_selection(&mut self, cx: &mut Context<'_, Self>) {
         self.opening = None;
         self.loading = None;
         self.copying = None;
@@ -369,19 +366,19 @@ impl Review {
         self.menu = menu::Menu::Closed;
         self.timeline = timeline::Timeline::default();
         self.notice = None;
-        self.replace_image(ImageState::Empty, window, cx);
+        self.replace_image(ImageState::Empty, cx);
     }
 
-    fn replace_image(&mut self, image: ImageState, window: Option<&mut Window>, cx: &mut App) {
-        if let ImageState::Ready(old) = std::mem::replace(&mut self.image, image) {
-            cx.drop_image(old.image, window);
+    fn replace_image(&mut self, image: ImageState, cx: &mut App) {
+        if let ImageState::Ready(replaced) = std::mem::replace(&mut self.image, image) {
+            cx.defer(move |cx| cx.drop_image(replaced.image, None));
         }
     }
 
     fn read_failed(&mut self, error: io::Error, cx: &mut Context<'_, Self>) {
         if error.kind() == io::ErrorKind::NotFound {
             self.library.forget();
-            self.clear_selection(None, cx);
+            self.clear_selection(cx);
         } else {
             self.notice = Some(format!(
                 "Cannot open this Show: {error}. {}",
@@ -705,18 +702,18 @@ impl Review {
         }));
     }
 
-    fn seek(&mut self, request: Request, window: &mut Window, cx: &mut Context<'_, Self>) {
+    fn seek(&mut self, request: Request, cx: &mut Context<'_, Self>) {
         if let Some((index, _)) = self
             .detail
             .as_ref()
             .and_then(|detail| detail.locate(request.at))
         {
-            self.act(Action::Frame(index), window, cx);
+            self.act(Action::Frame(index), cx);
             self.request = Some(request);
         }
     }
 
-    fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<'_, Self>) {
+    fn act(&mut self, action: Action, cx: &mut Context<'_, Self>) {
         self.menu = menu::Menu::Closed;
         match action {
             Action::Annotations => {
@@ -725,7 +722,7 @@ impl Review {
                 {
                     self.annotated = !self.annotated;
                     let key = self.library.select(current.directory, current.frame);
-                    self.load_frame(key, Some(window), cx);
+                    self.load_frame(key, cx);
                 }
             },
             Action::Pane(pane) => self.pane = pane,
@@ -740,7 +737,6 @@ impl Review {
                             at: clause.at,
                             origin: Origin::Clause(index),
                         },
-                        window,
                         cx,
                     );
                 }
@@ -757,7 +753,6 @@ impl Review {
                             at: *at,
                             origin: Origin::Mark(number),
                         },
-                        window,
                         cx,
                     );
                 }
@@ -769,7 +764,7 @@ impl Review {
                     } else {
                         key.frame.saturating_add(1)
                     };
-                    self.act(Action::Frame(frame), window, cx);
+                    self.act(Action::Frame(frame), cx);
                 }
             },
             Action::Refresh => self.refresh(cx),
@@ -786,7 +781,7 @@ impl Review {
                     });
                     self.mode = mode;
                     let key = self.library.select(current.directory, 0);
-                    self.open_selected(key, at, Some(window), cx);
+                    self.open_selected(key, at, cx);
                     self.request = request;
                 }
             },
@@ -796,7 +791,7 @@ impl Review {
                 {
                     self.mode = Mode::Keyframes;
                     let key = self.library.select(row.directory.clone(), 0);
-                    self.open_selected(key, None, Some(window), cx);
+                    self.open_selected(key, None, cx);
                 }
             },
             Action::Frame(index) => {
@@ -809,7 +804,7 @@ impl Review {
                     && current.frame != index
                 {
                     let key = self.library.select(current.directory, index);
-                    self.load_frame(key, Some(window), cx);
+                    self.load_frame(key, cx);
                 }
             },
             Action::Recover => self.recover(cx),
@@ -845,7 +840,7 @@ impl Review {
                         Direction::Back => target.min(current.frame.saturating_sub(1)),
                     }
                     .min(detail.frames.len().saturating_sub(1));
-                    self.act(Action::Frame(index), window, cx);
+                    self.act(Action::Frame(index), cx);
                 }
             },
             Action::Copy(kind) => self.copy(kind, cx),

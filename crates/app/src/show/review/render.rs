@@ -1178,7 +1178,7 @@ fn press(
     enabled: bool,
     cx: &Context<'_, Review>,
 ) -> Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static> {
-    enabled.then(|| cx.listener(move |view, _, window, cx| view.act(action.clone(), window, cx)))
+    enabled.then(|| cx.listener(move |view, _, _, cx| view.act(action.clone(), cx)))
 }
 
 fn command(
@@ -1268,7 +1268,7 @@ impl Review {
             _ => None,
         };
         if let Some(action) = action {
-            self.act(action, window, cx);
+            self.act(action, cx);
             cx.stop_propagation();
         }
     }

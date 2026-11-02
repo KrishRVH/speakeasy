@@ -86,8 +86,8 @@ async fn exercise_video(cx: &mut AsyncApp) -> anyhow::Result<()> {
     drop(fixture);
     window.update(cx, |view, _, cx| view.refresh(cx))?;
     wait_for(window, ready, cx).await?;
-    window.update(cx, |view, window, cx| {
-        view.act(Action::Mode(Mode::Video), window, cx);
+    window.update(cx, |view, _, cx| {
+        view.act(Action::Mode(Mode::Video), cx);
     })?;
     wait_for(
         window,
@@ -95,8 +95,8 @@ async fn exercise_video(cx: &mut AsyncApp) -> anyhow::Result<()> {
         cx,
     )
     .await?;
-    window.update(cx, |view, window, cx| {
-        view.act(Action::Frame(1), window, cx);
+    window.update(cx, |view, _, cx| {
+        view.act(Action::Frame(1), cx);
     })?;
     wait_for(window, ready, cx).await?;
     let (reference, image) = window.read_with(cx, |view, _| -> anyhow::Result<_> {
@@ -153,9 +153,9 @@ async fn exercise_video(cx: &mut AsyncApp) -> anyhow::Result<()> {
         "Copy moment's retrieval query selected different pixels"
     );
     drop(image);
-    window.update(cx, |view, window, cx| {
+    window.update(cx, |view, _, cx| {
         for index in 0..120 {
-            view.act(Action::Frame(index), window, cx);
+            view.act(Action::Frame(index), cx);
         }
     })?;
     wait_for(window, ready, cx).await?;
@@ -172,7 +172,7 @@ async fn exercise_video(cx: &mut AsyncApp) -> anyhow::Result<()> {
         Ok(())
     })??;
     for (action, expected) in [(Action::Mark(1), 750_u64), (Action::Clause(0), 483)] {
-        window.update(cx, |view, window, cx| view.act(action, window, cx))?;
+        window.update(cx, |view, _, cx| view.act(action, cx))?;
         wait_for(window, ready, cx).await?;
         window.read_with(cx, |view, _| -> anyhow::Result<()> {
             let ImageState::Ready(decoded) = &view.image else {
@@ -286,7 +286,7 @@ async fn exercise_video(cx: &mut AsyncApp) -> anyhow::Result<()> {
     })??;
     annotations::exercise(window, &directory, cx).await?;
     window.update(cx, |view, window, cx| {
-        view.act(Action::Frame(1), window, cx);
+        view.act(Action::Frame(1), cx);
         window.remove_window();
     })?;
     let drained = cx.update(|cx| cx.global::<TestReads>().0.drained());

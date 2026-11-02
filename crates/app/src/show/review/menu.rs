@@ -210,7 +210,7 @@ impl Review {
         };
         window.prevent_default();
         cx.stop_propagation();
-        self.act(item.action, window, cx);
+        self.act(item.action, cx);
     }
 }
 
@@ -240,8 +240,8 @@ fn entry(kit: Kit<'_>, item: Item, highlighted: bool, cx: &Context<'_, Review>) 
         label,
         false,
         highlighted,
-        cx.listener(move |view, _: &ClickEvent, window, cx| {
-            view.act(action.clone(), window, cx);
+        cx.listener(move |view, _: &ClickEvent, _, cx| {
+            view.act(action.clone(), cx);
         }),
     )
 }

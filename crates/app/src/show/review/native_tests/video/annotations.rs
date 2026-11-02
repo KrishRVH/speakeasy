@@ -27,14 +27,14 @@ pub(super) async fn exercise(
     ]);
     fs::write(directory.join("show.json"), serde_json::to_vec(&manifest)?)?;
     cx.update(|cx| cx.set_global(Copies::default()));
-    window.update(cx, |view, window, cx| {
+    window.update(cx, |view, _, cx| {
         view.actions.can_copy = |_| true;
         view.actions.copy = |request, cx| {
             cx.global_mut::<Copies>().0.push(request);
             Ok(Box::pin(async { Ok(crate::show::copy::Outcome::Copied) }))
         };
         let key = view.library.select(directory.clone(), 1);
-        view.open_selected(key, None, Some(window), cx);
+        view.open_selected(key, None, cx);
         cx.notify();
     })?;
     wait_for(window, ready, cx).await?;
@@ -94,9 +94,9 @@ pub(super) async fn exercise(
         pixel.swap(0, 2);
     }
     assert_eq!(annotated.as_bytes(0), Some(png.as_slice()));
-    window.update(cx, |view, window, cx| {
+    window.update(cx, |view, _, cx| {
         let selected = view.library.selected.clone();
-        view.act(Action::Annotations, window, cx);
+        view.act(Action::Annotations, cx);
         assert_ne!(view.library.selected, selected);
         assert!(view.loading.is_some());
         assert!(view.video_caption().contains("Annotations on"));
@@ -113,12 +113,12 @@ pub(super) async fn exercise(
         assert!(view.video_caption().contains("annotations off"));
         Ok(())
     })??;
-    window.update(cx, |view, window, cx| {
+    window.update(cx, |view, _, cx| {
         for index in 0..15 {
-            view.act(Action::Frame(index), window, cx);
-            view.act(Action::Annotations, window, cx);
+            view.act(Action::Frame(index), cx);
+            view.act(Action::Annotations, cx);
         }
-        view.act(Action::Frame(1), window, cx);
+        view.act(Action::Frame(1), cx);
     })?;
     wait_for(window, ready, cx).await?;
     window.read_with(cx, |view, _| -> anyhow::Result<()> {
@@ -130,8 +130,8 @@ pub(super) async fn exercise(
         assert_eq!(decoded.image.as_bytes(0), annotated.as_bytes(0));
         Ok(())
     })??;
-    window.update(cx, |view, window, cx| {
-        view.act(Action::Frame(29), window, cx);
+    window.update(cx, |view, _, cx| {
+        view.act(Action::Frame(29), cx);
     })?;
     wait_for(window, ready, cx).await?;
     window.read_with(cx, |view, _| -> anyhow::Result<()> {

@@ -126,9 +126,9 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     export_selected(window, cx).await?;
     copy_selected(window, cx).await?;
 
-    window.update(cx, |view, window, cx| {
-        view.act(Action::Mode(Mode::Keyframes), window, cx);
-        view.act(Action::Frame(0), window, cx);
+    window.update(cx, |view, _, cx| {
+        view.act(Action::Mode(Mode::Keyframes), cx);
+        view.act(Action::Frame(0), cx);
     })?;
     wait_for(
         window,
@@ -193,8 +193,8 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         );
     }
     more_actions(window, cx)?;
-    window.update(cx, |view, window, cx| {
-        view.act(Action::Frame(0), window, cx);
+    window.update(cx, |view, _, cx| {
+        view.act(Action::Frame(0), cx);
     })?;
     wait_for(
         window,
@@ -228,8 +228,8 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         },
     )?;
     fs::write(first.join("source.frames"), encoded)?;
-    window.update(cx, |view, window, cx| {
-        view.act(Action::Mode(Mode::Source), window, cx);
+    window.update(cx, |view, _, cx| {
+        view.act(Action::Mode(Mode::Source), cx);
     })?;
     wait_for(
         window,
@@ -248,9 +248,9 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         );
         assert!(detail.is_some_and(|detail| detail.coverage.contains("28500 ms")));
     })?;
-    let request = window.update(cx, |view, window, cx| {
-        view.act(Action::Pane(Pane::Narration), window, cx);
-        view.act(Action::Clause(0), window, cx);
+    let request = window.update(cx, |view, _, cx| {
+        view.act(Action::Pane(Pane::Narration), cx);
+        view.act(Action::Clause(0), cx);
         let request = view.request.context("Narration did not select a frame")?;
         let detail = view
             .detail
@@ -288,7 +288,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
             view.copying.is_none(),
             "Preview copied to the real clipboard"
         );
-        view.act(Action::Mode(Mode::Keyframes), window, cx);
+        view.act(Action::Mode(Mode::Keyframes), cx);
         anyhow::Ok(request)
     })??;
     wait_for(
@@ -297,7 +297,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         cx,
     )
     .await?;
-    window.update(cx, |view, window, cx| {
+    window.update(cx, |view, _, cx| {
         assert_eq!(view.request, Some(request));
         assert_eq!(
             view.library.selected.as_ref().map(|key| key.frame),
@@ -306,7 +306,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
                 .and_then(|detail| detail.locate(request.at))
                 .map(|(index, _)| index)
         );
-        view.act(Action::Mode(Mode::Source), window, cx);
+        view.act(Action::Mode(Mode::Source), cx);
     })?;
     wait_for(
         window,
@@ -314,15 +314,15 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         cx,
     )
     .await?;
-    window.update(cx, |view, window, cx| {
+    window.update(cx, |view, _, cx| {
         assert_eq!(view.request, Some(request));
-        view.act(Action::Next, window, cx);
+        view.act(Action::Next, cx);
         assert!(
             view.request.is_none(),
             "Frame navigation kept a stale narration request"
         );
-        view.act(Action::Clause(0), window, cx);
-        view.act(Action::Refresh, window, cx);
+        view.act(Action::Clause(0), cx);
+        view.act(Action::Refresh, cx);
         assert!(
             view.request.is_none(),
             "Refresh kept a stale narration request"
@@ -338,14 +338,14 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         cx,
     )
     .await?;
-    window.update(cx, |view, window, cx| {
+    window.update(cx, |view, _, cx| {
         let detail = view.detail.as_ref().context("The preview has loaded")?;
         let (number, at) = *detail
             .marks
             .first()
             .context("The preview contains a mark")?;
         let expected = detail.locate(at).context("Mark has no frame")?.0;
-        view.act(Action::Mark(number), window, cx);
+        view.act(Action::Mark(number), cx);
         assert_eq!(
             view.library.selected.as_ref().map(|key| key.frame),
             Some(expected)
@@ -354,12 +354,12 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
             view.request.map(|request| request.origin),
             Some(Origin::Mark(number))
         );
-        view.act(Action::Frame(2), window, cx);
-        view.act(Action::Jump(Direction::Forward), window, cx);
+        view.act(Action::Frame(2), cx);
+        view.act(Action::Jump(Direction::Forward), cx);
         assert_eq!(view.library.selected.as_ref().map(|key| key.frame), Some(3));
-        view.act(Action::Jump(Direction::Back), window, cx);
+        view.act(Action::Jump(Direction::Back), cx);
         assert_eq!(view.library.selected.as_ref().map(|key| key.frame), Some(2));
-        view.act(Action::Mode(Mode::Keyframes), window, cx);
+        view.act(Action::Mode(Mode::Keyframes), cx);
         anyhow::Ok(())
     })??;
     wait_for(
@@ -381,9 +381,9 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
                 .map(|(index, _)| index)
         );
     })?;
-    window.update(cx, |view, window, cx| {
-        view.act(Action::Keep, window, cx);
-        view.act(Action::Show(1), window, cx);
+    window.update(cx, |view, _, cx| {
+        view.act(Action::Keep, cx);
+        view.act(Action::Show(1), cx);
     })?;
     wait_for(
         window,
@@ -406,16 +406,16 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         );
     })?;
     assert!(!first.join(".pinned").exists());
-    window.update(cx, |view, window, cx| view.act(Action::Show(0), window, cx))?;
+    window.update(cx, |view, _, cx| view.act(Action::Show(0), cx))?;
     wait_for(
         window,
         |view| view.opening.is_none() && matches!(view.image, ImageState::Ready(_)),
         cx,
     )
     .await?;
-    window.update(cx, |view, window, cx| {
-        view.act(Action::Next, window, cx);
-        view.act(Action::Frame(3), window, cx);
+    window.update(cx, |view, _, cx| {
+        view.act(Action::Next, cx);
+        view.act(Action::Frame(3), cx);
     })?;
     wait_for(
         window,
@@ -429,15 +429,15 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         cx,
     )
     .await?;
-    window.update(cx, |view, window, cx| view.act(Action::Show(2), window, cx))?;
+    window.update(cx, |view, _, cx| view.act(Action::Show(2), cx))?;
     wait_for(
         window,
         |view| view.opening.is_none() && matches!(view.image, ImageState::Ready(_)),
         cx,
     )
     .await?;
-    window.update(cx, |view, window, cx| {
-        view.act(Action::Frame(2), window, cx);
+    window.update(cx, |view, _, cx| {
+        view.act(Action::Frame(2), cx);
     })?;
     wait_for(
         window,
@@ -450,10 +450,10 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         .context("The missing frame must remain selected")?;
     ensure!(selected.frame == 2, "A missing frame selected a substitute");
     let directory = selected.directory;
-    window.update(cx, |view, window, cx| {
+    window.update(cx, |view, _, cx| {
         view.check_selected(cx);
-        view.act(Action::Keep, window, cx);
-        view.act(Action::Refresh, window, cx);
+        view.act(Action::Keep, cx);
+        view.act(Action::Refresh, cx);
         view.check_selected(cx);
         assert!(
             view.checking.is_none() && view.listing.is_none(),
@@ -507,7 +507,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         assert!(view.library.gone && view.library.selected.is_none());
         assert!(view.detail.is_none() && matches!(view.image, ImageState::Empty));
     })?;
-    window.update(cx, |view, window, cx| view.act(Action::Show(0), window, cx))?;
+    window.update(cx, |view, _, cx| view.act(Action::Show(0), cx))?;
     wait_for(
         window,
         |view| matches!(view.image, ImageState::Ready(_)),
@@ -523,7 +523,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         })?
         .context("The loaded preview selected a Show")?;
     fs::remove_dir_all(&vanished)?;
-    window.update(cx, |view, window, cx| view.act(Action::Keep, window, cx))?;
+    window.update(cx, |view, _, cx| view.act(Action::Keep, cx))?;
     wait_for(window, |view| view.keeping.is_none(), cx).await?;
     window.read_with(cx, |view, _| {
         assert!(view.library.gone && view.library.selected.is_none());
@@ -535,7 +535,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
                 .all(|row| row.directory != vanished)
         );
     })?;
-    window.update(cx, |view, window, cx| view.act(Action::Show(0), window, cx))?;
+    window.update(cx, |view, _, cx| view.act(Action::Show(0), cx))?;
     wait_for(
         window,
         |view| matches!(view.image, ImageState::Ready(_)),
@@ -559,30 +559,30 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     let interrupted = checkpoint.interrupted()?;
     window.update(cx, |view, _, cx| view.refresh(cx))?;
     wait_for(window, |view| view.listing.is_none(), cx).await?;
-    window.update(cx, |view, window, cx| view.act(Action::Show(0), window, cx))?;
+    window.update(cx, |view, _, cx| view.act(Action::Show(0), cx))?;
     window.read_with(cx, |view, _| {
         assert!(view.interrupted().is_some());
         assert!(view.detail.is_none());
         assert!(matches!(view.image, ImageState::Empty));
     })?;
-    window.update(cx, |view, window, cx| view.act(Action::Recover, window, cx))?;
+    window.update(cx, |view, _, cx| view.act(Action::Recover, cx))?;
     wait_for(window, |view| view.recovering.is_none(), cx).await?;
     ensure!(
         interrupted.directory().exists(),
         "Failed recovery discarded its checkpoint"
     );
-    window.update(cx, |view, window, cx| view.act(Action::Discard, window, cx))?;
+    window.update(cx, |view, _, cx| view.act(Action::Discard, cx))?;
     ensure!(
         interrupted.directory().exists(),
         "Discard ran before confirmation"
     );
-    window.update(cx, |view, window, cx| view.act(Action::Discard, window, cx))?;
+    window.update(cx, |view, _, cx| view.act(Action::Discard, cx))?;
     ensure!(
         interrupted.directory().exists(),
         "A double activation bypassed confirmation"
     );
-    window.update(cx, |view, window, cx| {
-        view.act(Action::ConfirmDiscard, window, cx);
+    window.update(cx, |view, _, cx| {
+        view.act(Action::ConfirmDiscard, cx);
     })?;
     wait_for(
         window,
@@ -594,7 +594,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         !interrupted.directory().exists(),
         "Confirmed discard left its checkpoint"
     );
-    window.update(cx, |view, window, cx| view.act(Action::Show(0), window, cx))?;
+    window.update(cx, |view, _, cx| view.act(Action::Show(0), cx))?;
     wait_for(
         window,
         |view| matches!(view.image, ImageState::Ready(_)),
@@ -830,7 +830,7 @@ async fn copy_selected(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyho
         "The review did not report the synthetic copy result"
     );
 
-    let selected = window.update(cx, |view, native, cx| {
+    let selected = window.update(cx, |view, _, cx| {
         view.source = Source::Saved;
         view.actions.can_copy = |_| true;
         view.actions.copy = |request, cx| {
@@ -840,7 +840,7 @@ async fn copy_selected(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyho
             cx.global_mut::<CopyProbe>().agent = Some(directory);
             Ok(Box::pin(async { Ok(super::super::copy::Outcome::Copied) }))
         };
-        view.act(Action::Copy(CopyKind::Agent), native, cx);
+        view.act(Action::Copy(CopyKind::Agent), cx);
         view.source = Source::Demo;
         view.actions.can_copy = |_| false;
         view.actions.copy = |_, _| anyhow::bail!("Synthetic review does not use the clipboard");

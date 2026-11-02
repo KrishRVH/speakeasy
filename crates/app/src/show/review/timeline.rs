@@ -1,8 +1,6 @@
 use std::time::Duration;
 
-use gpui::{
-    Bounds, Context, MouseButton, Pixels, Window, canvas, div, prelude::*, px, relative, rgb,
-};
+use gpui::{Bounds, Context, MouseButton, Pixels, canvas, div, prelude::*, px, relative, rgb};
 use speakeasy_show::{Moment, Span};
 
 use super::{Action, ImageState, Mode, Review, navigation::Stamp};
@@ -53,20 +51,18 @@ impl Review {
                     })
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(|view, event: &gpui::MouseDownEvent, window, cx| {
+                        cx.listener(|view, event: &gpui::MouseDownEvent, _, cx| {
                             view.timeline.dragging = true;
-                            view.scrub(event.position.x, window, cx);
+                            view.scrub(event.position.x, cx);
                         }),
                     )
-                    .on_mouse_move(
-                        cx.listener(|view, event: &gpui::MouseMoveEvent, window, cx| {
-                            if !event.dragging() {
-                                view.timeline.dragging = false;
-                            } else if view.timeline.dragging {
-                                view.scrub(event.position.x, window, cx);
-                            }
-                        }),
-                    )
+                    .on_mouse_move(cx.listener(|view, event: &gpui::MouseMoveEvent, _, cx| {
+                        if !event.dragging() {
+                            view.timeline.dragging = false;
+                        } else if view.timeline.dragging {
+                            view.scrub(event.position.x, cx);
+                        }
+                    }))
                     .on_mouse_up(
                         MouseButton::Left,
                         cx.listener(|view, _, _, _| view.timeline.dragging = false),
@@ -139,7 +135,7 @@ impl Review {
         ))
     }
 
-    fn scrub(&mut self, x: Pixels, window: &mut Window, cx: &mut Context<'_, Self>) {
+    fn scrub(&mut self, x: Pixels, cx: &mut Context<'_, Self>) {
         if self.mode != Mode::Video || self.timeline.bounds.size.width <= px(0.0) {
             return;
         }
@@ -158,7 +154,7 @@ impl Review {
             .as_ref()
             .and_then(|detail| detail.locate(covered.start().saturating_add(offset)))
         {
-            self.act(Action::Frame(index), window, cx);
+            self.act(Action::Frame(index), cx);
         }
     }
 
