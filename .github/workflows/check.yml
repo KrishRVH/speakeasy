@@ -15,11 +15,11 @@ on:
         type: boolean
         default: false
       screen:
-        description: Explicitly opt into owned-window Mac screen capture without saving pixels
+        description: With movie, explicitly opt into owned-window Mac screen capture without saving pixels
         type: boolean
         default: false
       movie_fixture_run:
-        description: Reuse synthetic Windows movies from this run for a focused Mac decoder check
+        description: With movie, reuse the synthetic Windows movies of the run with this ID for a focused Mac decoder check
         type: string
         default: ''
   push:
