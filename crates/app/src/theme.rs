@@ -13,7 +13,7 @@ pub(crate) enum Theme {
 impl Theme {
     pub(crate) const ALL: [Self; 4] = [Self::Jet, Self::Emerald, Self::Iris, Self::Chrome];
 
-    pub(crate) fn name(self) -> &'static str {
+    pub(crate) const fn name(self) -> &'static str {
         match self {
             Self::Jet => "Jet & Champagne",
             Self::Emerald => "Emerald Lounge",
@@ -22,7 +22,7 @@ impl Theme {
         }
     }
 
-    pub(crate) fn palette(self) -> &'static Palette {
+    pub(crate) const fn palette(self) -> &'static Palette {
         match self {
             Self::Jet => &Palette {
                 room: 0x0A_0A_0B,
@@ -37,7 +37,7 @@ impl Theme {
             },
             Self::Emerald => &Palette {
                 room: 0x07_12_0F,
-                door: 0x000C_1A16,
+                door: 0x0C_1A_16_u32,
                 panel: 0x0F_1F_1A,
                 raise: 0x18_30_28,
                 ink: 0xE8_EF_E9,
@@ -120,8 +120,5 @@ pub(crate) fn quantize(value: f32) -> u8 {
 }
 
 pub(crate) fn alpha(color: u32, opacity: f32) -> gpui::Rgba {
-    gpui::Rgba {
-        a: opacity,
-        ..gpui::rgb(color)
-    }
+    gpui::rgb(color).alpha(opacity)
 }
