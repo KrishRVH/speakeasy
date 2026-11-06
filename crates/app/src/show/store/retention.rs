@@ -1,11 +1,41 @@
 use std::{
     fs::{self, File, OpenOptions},
     io,
-    path::Path,
+    path::{Path, PathBuf},
     time::{Duration, SystemTime},
 };
 
+use anyhow::Context as _;
+
 use super::{PIN, age, pinned};
+
+pub(crate) struct Deleted {
+    pub checkpoint: Option<PathBuf>,
+    pub cleanup: Option<io::Error>,
+}
+
+pub(crate) fn delete(parent: &Path, directory: &Path) -> anyhow::Result<Deleted> {
+    let (retired, checkpoint) = {
+        let _lock = lock(parent)?;
+        let id = super::address::managed_id(parent, directory)?
+            .context("Only Shows in the managed Shows folder can be deleted here")?;
+        let checkpoint = super::checkpoint::discard_published(parent, directory)?;
+        let retired = super::retire(parent, directory, id.as_str())
+            .context("Cannot delete this Show. Close its open files, refresh, and try again")?;
+        (retired, checkpoint)
+    };
+    let cleanup = super::sync_directory(parent)
+        .and_then(|()| match fs::remove_dir_all(&retired) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            result => result,
+        })
+        .and_then(|()| super::sync_directory(parent))
+        .err();
+    Ok(Deleted {
+        checkpoint,
+        cleanup,
+    })
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Retention {

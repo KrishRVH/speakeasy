@@ -364,9 +364,9 @@ module unless a test file is named.
   GPUI's asset cache, and passes source and video BGRA directly to the renderer. `Image` owns
   premultiplied RGBA; `into_bgra` consumes it into straight-alpha BGRA, reusing opaque pixel
   storage. GPUI's `RenderImage` expects BGRA bytes inside `image::Frame` despite the buffer's RGBA
-  type. Decoder errors never include content. Services owns accepted Keep/Discard writes through
-  [edits.rs](../crates/app/src/show/edits.rs); Quit awaits them, and an immutable fixture lease
-  keeps preview storage alive until completion. Recovery enters the session owner's shielded
+  type. Decoder errors never include content. Services owns accepted Keep/Discard/Delete writes
+  through [edits.rs](../crates/app/src/show/edits.rs); Quit awaits them, and an immutable fixture
+  lease keeps preview storage alive until completion. Recovery enters the session owner's shielded
   publication stage through a bounded request lane. Recovering retained audio uses the configured
   local speech worker; recovery opens no microphone and performs no clipboard work. The
   [video timeline](../crates/app/src/show/review/timeline.rs) uses complete fragment sample times
@@ -377,21 +377,24 @@ module unless a test file is named.
   private text boundaries. Opt-in [native_tests.rs](../crates/app/src/show/review/native_tests.rs)
   exercises the real view with synthetic files, including rendering on a private Linux display,
   retention actions, stale completion notices, and cleanup on close. Retention writes run off the UI
-  thread and stay bound to their original Show; activation rereads the summary and pin. The shell
-  supplies copy availability and routes accepted writes and recovery while the view owns result
-  receipts. [copy.rs](../crates/app/src/show/copy.rs) owns explicit review/tray copies through
-  native cleanup, including the Send to agent prompt, which names the folder, each manifest contact
-  sheet in order, and `summary.md` but carries no Show text. It retains the displayed image
-  snapshot, reads or encodes off the UI thread, and rejects dropped receipts, lifecycle
-  cancellation, and any newer input generation before native replacement. Copies made while paused
-  are cancelled before an owner starts. Quit drains the worker, and a replacement waits for its
-  predecessor to finish. [copy/tests.rs](../crates/app/src/show/copy/tests.rs) checks those races
-  with fake native access; the owned-window review test checks the actual visual request through an
-  injected copy action without touching the clipboard, and keyboard routing in the More actions
-  menu, where Escape closes the menu rather than the window. That menu relies on GPUI's dispatch
-  order: the root's capture-phase mouse-down runs before the popover's mouse-down-out, so pressing
-  the trigger of an open menu closes it, and a capture-phase key-up activates the highlighted action
-  and stops propagation before the focused trigger's keyboard click.
+  thread and stay bound to their original Show; activation rereads the summary and pin.
+  [deletion.rs](../crates/app/src/show/review/deletion.rs) binds saved-Show confirmation to the
+  offered row, invalidates it on selection or refresh, and waits for preview completion before
+  accepting deletion. It clears the removed Show's pixels without selecting a substitute or changing
+  another Show's notice. The shell supplies copy availability and routes accepted writes and
+  recovery while the view owns result receipts. [copy.rs](../crates/app/src/show/copy.rs) owns
+  explicit review/tray copies through native cleanup, including the Send to agent prompt, which
+  names the folder, each manifest contact sheet in order, and `summary.md` but carries no Show text.
+  It retains the displayed image snapshot, reads or encodes off the UI thread, and rejects dropped
+  receipts, lifecycle cancellation, and any newer input generation before native replacement. Copies
+  made while paused are cancelled before an owner starts. Quit drains the worker, and a replacement
+  waits for its predecessor to finish. [copy/tests.rs](../crates/app/src/show/copy/tests.rs) checks
+  those races with fake native access; the owned-window review test checks the actual visual request
+  through an injected copy action without touching the clipboard, and keyboard routing in the More
+  actions menu, where Escape closes the menu rather than the window. That menu relies on GPUI's
+  dispatch order: the root's capture-phase mouse-down runs before the popover's mouse-down-out, so
+  pressing the trigger of an open menu closes it, and a capture-phase key-up activates the
+  highlighted action and stops propagation before the focused trigger's keyboard click.
 - **Show composition**: [crates/show/src](../crates/show/src), notably
   [locate.rs](../crates/show/src/locate.rs) resolves phrases and marks to exact recorded spans;
   [locate/evidence.rs](../crates/show/src/locate/evidence.rs) renders bounded source sheets and mark
@@ -471,7 +474,13 @@ module unless a test file is named.
   [retention.rs](../crates/app/src/show/store/retention.rs) owns Keep changes and an OS file lock
   shared with cleanup across app and CLI processes. Cleanup holds it from the final pin check
   through renaming an expired Show out of the visible library, then removes files without the lock.
-  Hidden expired directories survive interrupted deletion for the next cleanup pass. Its
+  Explicit deletion validates a managed directory under the same lock, including kept or damaged
+  Shows. It first discards associated recovery data only after bounded reciprocal publication
+  markers agree and checkpoint ownership is available. Missing checkpoints need no cleanup; damaged
+  or active ownership refuses deletion. The bundle is renamed without replacing an existing cleanup
+  directory, then its files are removed outside the lock. A cleanup failure reports the hidden state
+  and remains retryable; exported copies and unrelated checkpoints are untouched. Hidden expired
+  directories survive interrupted deletion for the next cleanup pass. Its
   [tests](../crates/app/src/show/store/retention/tests.rs) exercise ordering, original expiry dates,
   interrupted deletion, moved bundles, links, and preserved edits.
   [checkpoint.rs](../crates/app/src/show/store/checkpoint.rs) owns private live logs and exclusive

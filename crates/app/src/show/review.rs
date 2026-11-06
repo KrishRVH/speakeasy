@@ -1,3 +1,4 @@
+mod deletion;
 mod export;
 mod handoff;
 mod library;
@@ -89,6 +90,8 @@ pub(crate) struct Review {
     recovering: Option<Task<()>>,
     discarding: Option<Task<()>>,
     confirm_discard: bool,
+    deleting: Option<(PathBuf, Task<()>)>,
+    confirm_delete: Option<library::Offered>,
     keyboard: bool,
     menu: menu::Menu,
     visibility: Option<Task<()>>,
@@ -173,6 +176,8 @@ impl Review {
             recovering: None,
             discarding: None,
             confirm_discard: false,
+            deleting: None,
+            confirm_delete: None,
             keyboard: false,
             menu: menu::Menu::Closed,
             visibility: None,
@@ -202,7 +207,8 @@ impl Review {
     }
 
     fn refresh(&mut self, cx: &mut Context<'_, Self>) {
-        if self.keeping.is_some() {
+        self.confirm_delete = None;
+        if self.keeping.is_some() || self.deleting.is_some() {
             return;
         }
         self.notice = None;
@@ -253,6 +259,14 @@ impl Review {
         cx: &mut Context<'_, Self>,
     ) {
         self.clear_selection(cx);
+        if self
+            .deleting
+            .as_ref()
+            .is_some_and(|(directory, _)| directory == &key.directory)
+        {
+            cx.notify();
+            return;
+        }
         if let Some(position) = self.library.position() {
             self.library_scroll.scroll_to_item(position);
         }
@@ -365,6 +379,7 @@ impl Review {
         self.detail = None;
         self.request = None;
         self.confirm_discard = false;
+        self.confirm_delete = None;
         self.menu = menu::Menu::Closed;
         self.timeline = timeline::Timeline::default();
         self.notice = None;
@@ -390,7 +405,7 @@ impl Review {
     }
 
     fn check_selected(&mut self, cx: &Context<'_, Self>) {
-        if self.keeping.is_some() {
+        if self.keeping.is_some() || self.deleting.is_some() {
             return;
         }
         let Some(key) = self
@@ -433,6 +448,7 @@ impl Review {
             || self.listing.is_some()
             || self.recovering.is_some()
             || self.discarding.is_some()
+            || self.deleting.is_some()
         {
             return;
         }
@@ -517,7 +533,13 @@ impl Review {
     }
 
     pub(super) fn can_copy(&self, cx: &App) -> bool {
-        self.source != Source::Demo && (self.actions.can_copy)(cx) && self.copying.is_none()
+        self.source != Source::Demo
+            && (self.actions.can_copy)(cx)
+            && self.copying.is_none()
+            && self
+                .deleting
+                .as_ref()
+                .is_none_or(|(directory, _)| !self.library.is_selected(directory))
     }
 
     fn copy(&mut self, kind: CopyKind, cx: &mut Context<'_, Self>) {
@@ -602,7 +624,11 @@ impl Review {
     }
 
     fn recover(&mut self, cx: &Context<'_, Self>) {
-        if self.recovering.is_some() || self.discarding.is_some() || self.keeping.is_some() {
+        if self.recovering.is_some()
+            || self.discarding.is_some()
+            || self.keeping.is_some()
+            || self.deleting.is_some()
+        {
             return;
         }
         let Some(interrupted) = self.interrupted().cloned() else {
@@ -643,7 +669,11 @@ impl Review {
     }
 
     fn discard(&mut self, cx: &mut Context<'_, Self>) {
-        if self.recovering.is_some() || self.discarding.is_some() || self.keeping.is_some() {
+        if self.recovering.is_some()
+            || self.discarding.is_some()
+            || self.keeping.is_some()
+            || self.deleting.is_some()
+        {
             return;
         }
         let Some(interrupted) = self.interrupted().cloned() else {
@@ -791,6 +821,9 @@ impl Review {
                 }
             },
             Action::Recover => self.recover(cx),
+            Action::Delete(offer) => self.ask_delete(offer),
+            Action::ConfirmDelete(offer) => self.delete(offer, cx),
+            Action::CancelDelete => self.confirm_delete = None,
             Action::Discard => {
                 self.confirm_discard = true;
                 let message = if self
@@ -901,6 +934,9 @@ enum Action {
     Discard,
     ConfirmDiscard,
     CancelDiscard,
+    Delete(library::Offered),
+    ConfirmDelete(library::Offered),
+    CancelDelete,
     Jump(Direction),
     Mode(Mode),
     Previous,

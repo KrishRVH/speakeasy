@@ -352,6 +352,17 @@ impl Review {
                 heading(kit, palette, title.into(), meta, tags)
                     .child(self.actions(row, kit, palette, now, cx)),
             )
+            .when_some(self.confirm_delete, |body, offer| {
+                let name = self.library.selected.as_ref()
+                    .and_then(|key| key.directory.file_name())
+                    .map_or_else(|| "this Show".into(), |name| name.to_string_lossy().into_owned());
+                body.child(div().px(px(24.0)).pt(px(16.0)).child(confirm(Confirmation {
+                    message: format!("Permanently delete {name}? This removes its images, video, summary, narration, and associated recovery audio, even if kept. Exported copies stay."),
+                    cancel: Action::CancelDelete,
+                    confirm: Action::ConfirmDelete(offer),
+                    label: "Delete permanently",
+                }, !self.can_delete(), kit, palette, cx)))
+            })
             .child(self.review(key.frame, kit, palette, cx))
             .into_any_element()
     }
@@ -414,7 +425,10 @@ impl Review {
                 Action::Keep,
                 keep,
                 Weight::Quiet,
-                kept.is_some() && self.keeping.is_none() && self.listing.is_none(),
+                kept.is_some()
+                    && self.keeping.is_none()
+                    && self.listing.is_none()
+                    && self.deleting.is_none(),
                 cx,
             ))
             .child(self.more(kit, palette, cx))
@@ -834,7 +848,10 @@ impl Review {
         cx: &Context<'_, Self>,
     ) -> Div {
         let pending = interrupted.narration_pending();
-        let busy = self.recovering.is_some() || self.discarding.is_some() || self.keeping.is_some();
+        let busy = self.recovering.is_some()
+            || self.discarding.is_some()
+            || self.keeping.is_some()
+            || self.deleting.is_some();
         let lead = if pending {
             RETRY_NARRATION
         } else {
@@ -904,7 +921,23 @@ impl Review {
                         cx,
                     ))
                     .when(self.confirm_discard, |pane| {
-                        pane.child(confirm(pending, busy, kit, palette, cx))
+                        pane.child(confirm(
+                            Confirmation {
+                                message: if pending {
+                                    super::DISCARD_AUDIO
+                                } else {
+                                    super::DISCARD_SHOW
+                                }
+                                .into(),
+                                cancel: Action::CancelDiscard,
+                                confirm: Action::ConfirmDiscard,
+                                label: "Discard permanently",
+                            },
+                            busy,
+                            kit,
+                            palette,
+                            cx,
+                        ))
                     }),
             )
     }
@@ -1061,8 +1094,15 @@ fn bar(palette: &Palette) -> Div {
         .bg(rgb(palette.lamp))
 }
 
+struct Confirmation {
+    message: String,
+    cancel: Action,
+    confirm: Action,
+    label: &'static str,
+}
+
 fn confirm(
-    pending: bool,
+    confirmation: Confirmation,
     busy: bool,
     kit: Kit<'_>,
     palette: &Palette,
@@ -1079,18 +1119,14 @@ fn confirm(
         .border_color(alpha(palette.warn, 0.3))
         .bg(alpha(palette.warn, 0.06))
         .child(div().flex().child(kit.tag("Cannot be undone", Tone::Warn)))
-        .child(div().line_height(BODY_LINE).child(if pending {
-            super::DISCARD_AUDIO
-        } else {
-            super::DISCARD_SHOW
-        }))
+        .child(div().line_height(BODY_LINE).child(confirmation.message))
         .child(
             div()
                 .flex()
                 .gap(px(8.0))
                 .child(command(
                     kit,
-                    Action::CancelDiscard,
+                    confirmation.cancel,
                     "Cancel",
                     Weight::Secondary,
                     !busy,
@@ -1098,8 +1134,8 @@ fn confirm(
                 ))
                 .child(command(
                     kit,
-                    Action::ConfirmDiscard,
-                    "Discard permanently",
+                    confirmation.confirm,
+                    confirmation.label,
                     Weight::ConfirmDestroy,
                     !busy,
                     cx,
@@ -1114,6 +1150,9 @@ pub(super) fn id(action: Action) -> ElementId {
         Action::Discard => "discard-show".into(),
         Action::ConfirmDiscard => "confirm-discard-show".into(),
         Action::CancelDiscard => "cancel-discard-show".into(),
+        Action::Delete(_) => "delete-show".into(),
+        Action::ConfirmDelete(_) => "confirm-delete-show".into(),
+        Action::CancelDelete => "cancel-delete-show".into(),
         Action::Jump(Direction::Forward) => "forward-show".into(),
         Action::Jump(Direction::Back) => "rewind-show".into(),
         Action::Mode(Mode::Keyframes) => "show-keyframes".into(),
@@ -1218,6 +1257,7 @@ impl Review {
             .as_ref()
             .map_or(0, |detail| detail.frames.len().saturating_sub(1));
         let action = match event.keystroke.key.as_str() {
+            "escape" if self.confirm_delete.is_some() => Some(Action::CancelDelete),
             "escape" => {
                 window.remove_window();
                 cx.stop_propagation();

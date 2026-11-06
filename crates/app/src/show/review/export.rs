@@ -16,7 +16,7 @@ pub(super) enum Kind {
 
 impl Review {
     pub(super) fn export(&mut self, kind: Kind, cx: &mut Context<'_, Self>) {
-        if self.exporting.is_some() || self.detail.is_none() {
+        if self.exporting.is_some() || self.deleting.is_some() || self.detail.is_none() {
             return;
         }
         let Some(key) = &self.library.selected else {
@@ -63,7 +63,10 @@ impl Review {
         kind: Kind,
         cx: &mut Context<'_, Self>,
     ) {
-        if !self.library.is_selected(&directory) || self.exporting.is_some() {
+        if !self.library.is_selected(&directory)
+            || self.exporting.is_some()
+            || self.deleting.is_some()
+        {
             return;
         }
         let edit = match kind {

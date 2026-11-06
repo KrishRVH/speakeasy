@@ -244,7 +244,11 @@ viewer does not change which Show the tray remembers. **Keep Show** prevents the
 expiring. **Allow expiry** restores its original expiry date, seven days after recording; for an
 already overdue Show the button says **Allow cleanup**, and cleanup can remove it on its next pass.
 Keeping a Show changes only its `.pinned` marker, including when the manifest or a frame is damaged.
-Keep and Discard finish even if you close the window; Quit waits for accepted writes.
+Choose **More actions → Delete Show…** to permanently delete the selected Show, including a kept or
+damaged one. Confirmation names the Show and removes its saved files and associated recovery audio;
+exported copies stay. Cancel or Escape dismisses the confirmation. If its audio is still recording
+or recovering, let that work finish and try deletion again. Keep, Discard, and confirmed deletion
+finish even if you close the window; Quit waits for accepted writes.
 
 **Export ZIP…** saves a portable copy to a new path you choose. It includes the saved summary,
 manifest with narration, contact sheets, keyframes, and retained source samples when available.

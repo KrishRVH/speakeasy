@@ -85,7 +85,7 @@ impl Review {
             .detail
             .as_ref()
             .is_some_and(|detail| detail.movie.is_some());
-        let idle = self.exporting.is_none();
+        let idle = self.exporting.is_none() && self.deleting.is_none();
         [
             (!cfg!(target_os = "linux")).then(|| Item {
                 action: Action::Copy(CopyKind::Evidence),
@@ -111,12 +111,17 @@ impl Review {
             }),
             Some(Item {
                 action: Action::Export(ExportKind::Archive),
-                label: if idle {
+                label: if self.exporting.is_none() {
                     "Export ZIP…"
                 } else {
                     "Exporting…"
                 },
                 enabled: idle && self.detail.is_some(),
+            }),
+            self.library.position().map(|index| Item {
+                action: Action::Delete(self.library.offer(index)),
+                label: "Delete Show…",
+                enabled: self.can_delete(),
             }),
         ]
         .into_iter()

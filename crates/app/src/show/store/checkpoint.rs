@@ -401,6 +401,40 @@ pub(crate) struct Listing {
     pub problems: Vec<Problem>,
 }
 
+pub(super) fn discard_published(
+    parent: &Path,
+    directory: &Path,
+) -> anyhow::Result<Option<PathBuf>> {
+    const DAMAGED: &str = "Cannot verify this Show's recovery link. Check its .checkpoint and recovery files before deleting it.";
+    let bytes = match recall::read_file(directory, PROVENANCE, MARKER_LIMIT) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).context(DAMAGED),
+    };
+    let id = std::str::from_utf8(&bytes)
+        .ok()
+        .and_then(super::address::ShowId::parse)
+        .context(DAMAGED)?;
+    let path = parent.join(ROOT).join(id.as_str());
+    match fs::symlink_metadata(&path) {
+        Ok(_) => {},
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).context(DAMAGED),
+    }
+    let checkpoint = lock(&path).context(DAMAGED)?.context(
+        "This Show is still recording or recovering. Let it finish, then try deleting it again.",
+    )?;
+    let marker = recall::read_file(&path, PUBLISHED, MARKER_LIMIT).context(DAMAGED)?;
+    let marker = std::str::from_utf8(&marker).ok().context(DAMAGED)?;
+    let target = marker.strip_suffix(NARRATED).unwrap_or(marker);
+    let target = super::address::ShowId::parse(target).context(DAMAGED)?;
+    if directory.file_name().and_then(|name| name.to_str()) != Some(target.as_str()) {
+        return Ok(None);
+    }
+    checkpoint.discard()?;
+    Ok(Some(path))
+}
+
 pub(crate) struct Problem {
     pub directory: PathBuf,
     pub message: String,

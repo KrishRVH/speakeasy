@@ -3,6 +3,8 @@ use std::sync::mpsc;
 use super::*;
 use crate::show::store::{self, address, recall};
 
+mod deletion;
+
 fn show(parent: &Path, at: SystemTime) -> io::Result<std::path::PathBuf> {
     let directory = parent.join(store::utc_stamp(at));
     fs::create_dir(&directory)?;

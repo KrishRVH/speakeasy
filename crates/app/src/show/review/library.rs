@@ -399,7 +399,7 @@ pub(super) struct Key {
     pub frame: usize,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct Offered {
     revision: u64,
     pub index: usize,
@@ -488,11 +488,22 @@ impl Library {
     }
 
     pub(super) fn forget(&mut self) {
-        if let Some(key) = self.selected.take() {
-            self.listing_revision = self.listing_revision.wrapping_add(1);
-            self.rows.retain(|row| row.directory != key.directory);
+        if let Some(key) = self.selected.clone() {
+            self.remove(&key.directory);
         }
         self.gone = true;
         self.visited = true;
+    }
+
+    pub(super) fn remove(&mut self, directory: &Path) -> bool {
+        self.listing_revision = self.listing_revision.wrapping_add(1);
+        self.rows.retain(|row| row.directory != directory);
+        let selected = self.is_selected(directory);
+        if selected {
+            self.selected = None;
+            self.gone = true;
+            self.visited = true;
+        }
+        selected
     }
 }

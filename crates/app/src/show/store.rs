@@ -312,20 +312,25 @@ fn retire_expired(
     let Some(name) = name.to_str().filter(|name| stamp(name).is_some()) else {
         return Ok(Cleanup::Remove(path));
     };
-    let destination = parent.join(format!("{EXPIRED_PREFIX}{name}"));
-    let retired = match fs::symlink_metadata(&destination) {
-        Ok(_) => Err(ErrorKind::AlreadyExists.into()),
-        Err(error) if error.kind() == ErrorKind::NotFound => fs::rename(&path, &destination),
-        Err(error) => return Err(error),
-    };
-    match retired {
-        Ok(()) => Ok(Cleanup::Remove(destination)),
+    match retire(parent, &path, name) {
+        Ok(destination) => Ok(Cleanup::Remove(destination)),
         Err(error) if error.kind() == ErrorKind::NotFound => Err(error),
         Err(_blocked) => {
             voice::expire(&path, now)?;
             Ok(Cleanup::Blocked)
         },
     }
+}
+
+fn retire(parent: &Path, directory: &Path, name: &str) -> io::Result<PathBuf> {
+    let destination = parent.join(format!("{EXPIRED_PREFIX}{name}"));
+    match fs::symlink_metadata(&destination) {
+        Ok(_) => return Err(ErrorKind::AlreadyExists.into()),
+        Err(error) if error.kind() == ErrorKind::NotFound => {},
+        Err(error) => return Err(error),
+    }
+    fs::rename(directory, &destination)?;
+    Ok(destination)
 }
 
 fn expired(entry: &fs::DirEntry, cutoff: &str, now: SystemTime) -> io::Result<bool> {

@@ -8,6 +8,7 @@ use gpui::{AsyncApp, Pixels, Render, RenderImage, Size, div, prelude::*};
 
 use super::*;
 
+mod deletion;
 #[cfg(target_os = "windows")]
 mod video;
 
@@ -503,6 +504,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
             "Activation did not reread retention changed outside the viewer"
         );
     })?;
+    deletion::exercise(window, &directory, cx).await?;
     fs::remove_dir_all(directory)?;
     window.update(cx, |view, _, cx| view.refresh(cx))?;
     wait_for(window, |view| view.listing.is_none(), cx).await?;

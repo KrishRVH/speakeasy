@@ -205,15 +205,20 @@ interrupted, pending or lost narration, early-ending, and damaged status. A soft
 mark the selected Show. With no Shows, Windows and macOS explain how to record one, with S, W, and A
 as keycaps. The selected Show's header carries its retention and status tags, Send to agent as the
 main action, Copy summary, Keep Show or Allow expiry, and a More actions menu for the image copy,
-Open folder, video, and export commands; the menu dims actions that are unavailable. Below the
-header come warnings, a segmented switch for the frame source, one keyframe with its time and
-numbered marks, frame chips, and a Summary or Narration switch over the current summary as inert
+Open folder, video, export, and Delete Show commands; the menu dims actions that are unavailable.
+Below the header come warnings, a segmented switch for the frame source, one keyframe with its time
+and numbered marks, frame chips, and a Summary or Narration switch over the current summary as inert
 plain text. An interrupted Show leads with its recovery action; Discard stays apart as a destructive
 outline, and its confirmation adds a Cannot be undone tag, Cancel, and a filled Discard permanently.
-Focus rings appear only after keyboard input. Up/Down selects Shows, Left/Right steps frames,
-Home/End selects the first/last frame, and Escape closes. While the menu is open, Up/Down move
-through its available actions and Escape closes only the menu. Tab and Shift+Tab move through
-controls; Enter or Space activates them. Closing releases the view and its images.
+Delete Show opens the same confirmation treatment for a saved Show, names its folder ID, and
+explains that saved files and associated recovery audio are removed even when kept. Exported copies
+stay. Cancel or Escape dismisses confirmation; changing Shows or refreshing invalidates it. An old
+confirmation cannot delete a newly selected Show. Deletion clears the removed selection and pixels;
+completion leaves another selected Show and its notice unchanged. Focus rings appear only after
+keyboard input. Up/Down selects Shows, Left/Right steps frames, Home/End selects the first/last
+frame, and Escape closes. While the menu is open, Up/Down move through its available actions and
+Escape closes only the menu. Tab and Shift+Tab move through controls; Enter or Space activates them.
+Closing releases the view and its images.
 
 Refresh rereads the library. Regaining focus checks that the selected folder still exists and
 rereads its summary; external edits are never overwritten. Copy summary reads the file again on

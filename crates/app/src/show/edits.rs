@@ -19,6 +19,10 @@ pub(crate) enum Edit {
         kept: bool,
     },
     Discard(Interrupted),
+    Delete {
+        parent: PathBuf,
+        directory: PathBuf,
+    },
     Export {
         directory: PathBuf,
         destination: PathBuf,
@@ -33,6 +37,7 @@ pub(crate) enum Edit {
 pub(crate) enum Written {
     Retention(Retention),
     Discarded,
+    Deleted(retention::Deleted),
     Exported(export::Exported),
     Video(video::Exported),
 }
@@ -73,6 +78,9 @@ impl Edits {
                     .map_err(Into::into),
                 Edit::Discard(interrupted) => {
                     interrupted.lock()?.discard().map(|()| Written::Discarded)
+                },
+                Edit::Delete { parent, directory } => {
+                    retention::delete(&parent, &directory).map(Written::Deleted)
                 },
                 Edit::Export {
                     directory,
