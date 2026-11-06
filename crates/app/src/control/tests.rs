@@ -3,7 +3,7 @@ use crate::transcript::style::Case;
 
 fn status() -> Status {
     Status {
-        version: "0.7.0".into(),
+        version: env!("CARGO_PKG_VERSION").into(),
         service: "running".into(),
         phase: "recording".into(),
         model: "ready".into(),

@@ -150,7 +150,7 @@ async fn serve(response: Vec<u8>) -> (String, tokio::task::JoinHandle<()>) {
 }
 
 fn cache_entries(root: &Path) -> Vec<std::ffi::OsString> {
-    fs::read_dir(root)
+    fs::read_dir(root.join("updates"))
         .unwrap()
         .map(|entry| entry.unwrap().file_name())
         .collect()
@@ -189,7 +189,7 @@ async fn verified_download_retains_the_file_until_its_owner_is_released() {
     }
     assert!(path.is_file());
     drop(installer);
-    assert_eq!(cache_entries(root.path()), [".lock"]);
+    assert_eq!(cache_entries(root.path()), Vec::<std::ffi::OsString>::new());
 }
 
 #[tokio::test]
@@ -209,7 +209,7 @@ async fn interrupted_oversized_and_corrupt_downloads_leave_no_installer() {
                 .is_err()
         );
         served.await.unwrap();
-        assert_eq!(cache_entries(root.path()), [".lock"]);
+        assert_eq!(cache_entries(root.path()), Vec::<std::ffi::OsString>::new());
     }
 }
 
@@ -300,5 +300,5 @@ async fn cancellation_closes_the_download_before_reporting_completion() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(cache_entries(root.path()), [".lock"]);
+    assert_eq!(cache_entries(root.path()), Vec::<std::ffi::OsString>::new());
 }

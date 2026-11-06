@@ -131,19 +131,33 @@ impl Settings {
             .bg(rgb(palette.panel))
             .child(heading)
             .child(legend)
-            .when(
-                cfg!(target_os = "macos")
-                    && self.config.mac_shortcut != speakeasy_platform::MacShortcut::Function,
-                |card| {
-                    let note = "Hold briefly before adding Space, S, W, or A. Quick combinations keep their usual action.";
-                    card.child(kit.detail(note).px(px(20.0)).pb(px(12.0)))
-                },
-            )
+            .when(cfg!(target_os = "macos"), |card| {
+                card.child(
+                    kit.detail(self.mac_shortcut_help())
+                        .px(px(20.0))
+                        .pb(px(12.0)),
+                )
+            })
             .child(self.practice_panel(ui))
     }
 
+    pub(super) const fn mac_shortcut_help(&self) -> &'static str {
+        match self.config.mac_shortcut {
+            speakeasy_platform::MacShortcut::Function => {
+                "External keyboard? Its Fn key may stay inside the keyboard. Choose F13, Right Option, or Right Command if Fn does nothing."
+            },
+            speakeasy_platform::MacShortcut::F13 => {
+                "Use your keyboard's F13 key, or map a key to F13 in its keyboard software. Speakeasy reserves F13 while dictation is enabled."
+            },
+            speakeasy_platform::MacShortcut::RightOption
+            | speakeasy_platform::MacShortcut::RightCommand => {
+                "Hold briefly before adding Space, S, W, A, or V. Quick combinations keep their usual action."
+            },
+        }
+    }
+
     #[cfg(target_os = "macos")]
-    fn mac_shortcut(&self, ui: &Ui<'_>) -> Div {
+    pub(super) fn mac_shortcut(&self, ui: &Ui<'_>) -> Div {
         let menu = Menu::Shortcut;
         let action = Action::Menu(menu);
         let trigger = ui

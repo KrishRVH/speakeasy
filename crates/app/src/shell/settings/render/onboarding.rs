@@ -343,6 +343,29 @@ impl Settings {
                 .text_color(rgb(palette.muted))
                 .child("Your words appear here.")
         };
+        let heading = div()
+            .flex()
+            .items_center()
+            .gap(px(16.0))
+            .when(!external, |row| row.child(kit.keys(&self.shortcut(), true)))
+            .child(
+                div()
+                    .flex_1()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.0))
+                    .text_color(rgb(if recognized {
+                        palette.lamp
+                    } else {
+                        palette.muted
+                    }))
+                    .when(recording, |status| {
+                        status.child(level(palette.live, self.practice.level))
+                    })
+                    .child(status),
+            );
+        #[cfg(target_os = "macos")]
+        let heading = heading.child(self.mac_shortcut(ui));
         let card = div()
             .flex()
             .flex_col()
@@ -356,29 +379,10 @@ impl Settings {
                 palette.line()
             })
             .bg(rgb(palette.panel))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(16.0))
-                    .when(!external, |row| row.child(kit.keys(&self.shortcut(), true)))
-                    .child(
-                        div()
-                            .flex_1()
-                            .flex()
-                            .items_center()
-                            .gap(px(10.0))
-                            .text_color(rgb(if recognized {
-                                palette.lamp
-                            } else {
-                                palette.muted
-                            }))
-                            .when(recording, |status| {
-                                status.child(level(palette.live, self.practice.level))
-                            })
-                            .child(status),
-                    ),
-            )
+            .child(heading)
+            .when(cfg!(target_os = "macos"), |card| {
+                card.child(kit.detail(self.mac_shortcut_help()))
+            })
             .child(
                 div()
                     .id("onboarding-transcript")

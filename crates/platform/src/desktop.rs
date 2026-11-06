@@ -67,6 +67,7 @@ pub enum MacShortcut {
     Function,
     RightOption,
     RightCommand,
+    F13,
 }
 
 impl MacShortcut {
@@ -76,6 +77,7 @@ impl MacShortcut {
             Self::Function => "Fn",
             Self::RightOption => "Right Option",
             Self::RightCommand => "Right Command",
+            Self::F13 => "F13",
         }
     }
 }

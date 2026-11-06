@@ -63,7 +63,7 @@ impl Download {
             version > installed,
             "This release is not newer than the installed version."
         );
-        let root = crate::paths::data_root()?.join("updates");
+        let root = crate::paths::data_root()?;
         let (progress, observed) = watch::channel(Progress {
             stage: "Authenticating update",
             done: 0,
@@ -147,7 +147,7 @@ async fn download(
     let lease = cache::acquire(root)?;
     let directory = tempfile::Builder::new()
         .prefix("release-")
-        .tempdir_in(root)
+        .tempdir_in(root.join("updates"))
         .context(DOWNLOAD_FAILED)?;
     let path = directory.path().join(manifest::NAME);
     let mut file = File::create_new(&path).context(DOWNLOAD_FAILED)?;

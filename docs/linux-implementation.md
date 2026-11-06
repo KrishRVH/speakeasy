@@ -27,8 +27,9 @@ Settings shows the actual accepted dictate and cancel bindings. A chord another 
 grabs stops desktop access with an error naming that shortcut, dictation or cancel. X11 releases its
 active keyboard grab immediately after a trigger, returning unrelated keys to the focused editor.
 Portal activations and deactivations are consumed in message order, with repeated activations
-ignored while held. Binding or keyboard map changes require Save and Resume; desktop command
-bindings with manual paste depend on no keyboard map.
+ignored while held. Settings applies binding changes automatically. After changing external desktop
+bindings or the keyboard map, pause and resume dictation; desktop command bindings with manual paste
+depend on no keyboard map.
 
 ## Owned preparation and insertion
 

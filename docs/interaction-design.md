@@ -238,17 +238,20 @@ original seven-day schedule even when the saved bundle is kept.
 
 ## Interaction contracts
 
-- Hold Ctrl+Win on Windows or Fn on macOS to dictate; release to finish. Adding Space during the
+- Hold Ctrl+Win on Windows or the selected Mac shortcut to dictate; release to finish. Mac defaults
+  to Fn and also offers F13, Right Option, and Right Command, including during setup practice. The
+  shortcut card explains firmware-only Fn keys and the F13 alternative. Adding Space during the
   hold, or double-tapping, switches to hands-free; press the shortcut again to finish. A short
   single tap finishes after its tap window.
 - Linux holds Ctrl+Super+Space or double-taps it for hands-free; its accepted binding is shown in
   Settings. Desktop command bindings start/finish hands-free.
-- On Windows/macOS, the shortcut's modifiers are observed, never swallowed. Only the Space that
-  locks hands-free, V that pastes the last dictation, and S, W, or A that starts a Show are withheld
-  from the focused app. Shift stays passive so a Show can draw and pin with it, and another app's
-  double Shift still works; any other key during a hold belongs to a different shortcut, so it
-  interrupts the recording, and the shortcut waits for release. On Windows, an unassigned mask key
-  keeps the released Win key from opening Start.
+- On Windows/macOS, the shortcut's modifiers are observed, never swallowed. A selected F13 is
+  reserved: its presses, repeats, and releases are withheld, and repeats cannot start a recording.
+  Apart from F13, only the Space that locks hands-free, V that pastes the last dictation, and S, W,
+  or A that starts a Show are withheld from the focused app. Shift stays passive so a Show can draw
+  and pin with it, and another app's double Shift still works; any other key during a hold belongs
+  to a different shortcut, so it interrupts the recording, and the shortcut waits for release. On
+  Windows, an unassigned mask key keeps the released Win key from opening Start.
 - During a Windows/macOS hold, S, W, or A turns the recording into a Show, hands-free and keeping
   the narration since the press; pressing the shortcut again finishes it on release. The pill table
   shows what the pill presents. S records the display under the pointer and W the window under it,

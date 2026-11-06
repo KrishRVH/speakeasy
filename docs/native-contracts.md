@@ -124,6 +124,12 @@ Policy decisions and delivery occur under one lock to preserve event order. Call
 the lane/stop the loop instead of crossing the ABI. Notification tokens remain retained until
 removal.
 
+Mac F13 uses key code 105 and the event's autorepeat field. Its initial press and release establish
+the pre-event hold explicitly; unrelated events reconcile against HID-system physical key state. The
+secondary Fn flag can accompany function keys, so it does not make F13 another modifier chord. The
+insertion worker retains the configured shortcut and polls physical F13 state for both its release
+wait and its final preflight. Its per-request autorelease pool encloses native delivery.
+
 Permission queries report consent only; they do not open a microphone, prove device readiness or
 install a hook. The Mac clipboard's private/transient marks precede user content, and change-count
 plus content checks bound clipboard replacement races.

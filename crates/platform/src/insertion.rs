@@ -11,7 +11,7 @@ use async_channel::{Receiver, Sender};
 use tokio::sync::watch;
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
-pub(crate) use self::commit::{NativeInsert, Worker};
+pub(crate) use self::commit::{NativeInsert, Worker, deliver};
 use crate::InsertPermit;
 
 pub(crate) const MODIFIER_WAIT: Duration = Duration::from_millis(800);

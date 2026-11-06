@@ -3,11 +3,10 @@ use std::panic::{self, AssertUnwindSafe};
 use anyhow::anyhow;
 use async_channel::Receiver;
 
-#[cfg(any(target_os = "windows", target_os = "macos"))]
-use super::wait_for_released_modifiers;
-use super::{Delivery, INSERTION_STOPPED, Inserted, Inserter, Insertion, OwnFocus};
-#[cfg(any(target_os = "windows", target_os = "macos"))]
-use crate::native;
+use super::{
+    Delivery, INSERTION_STOPPED, Inserted, Inserter, Insertion, OwnFocus,
+    wait_for_released_modifiers,
+};
 use crate::{InputSender, InsertPermit, OwnedThread};
 
 pub(crate) struct Worker {
@@ -17,17 +16,7 @@ pub(crate) struct Worker {
 }
 
 impl Worker {
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
     pub(crate) fn start(
-        input: InputSender,
-        own_focus: OwnFocus,
-    ) -> std::io::Result<(Self, Inserter)> {
-        #[cfg(target_os = "macos")]
-        let deliver = |request: &Insertion| objc2::rc::autoreleasepool(|_| deliver(request));
-        Self::spawn(input, own_focus, deliver)
-    }
-
-    fn spawn(
         input: InputSender,
         own_focus: OwnFocus,
         serve_one: impl Fn(&Insertion) -> anyhow::Result<Inserted> + Send + 'static,
@@ -72,11 +61,13 @@ fn serve(
     }
 }
 
-#[cfg(any(target_os = "windows", target_os = "macos"))]
-fn deliver(request: &Insertion) -> anyhow::Result<Inserted> {
-    wait_for_released_modifiers(&request.permit, || Ok(native::modifiers().any()))?;
+pub(crate) fn deliver<N: NativeInsert>(
+    native: &mut N,
+    request: &Insertion,
+) -> anyhow::Result<Inserted> {
+    wait_for_released_modifiers(&request.permit, || Ok(!native.shortcut_released()))?;
     insert(
-        &mut native::Insert,
+        native,
         &request.text,
         &request.permit,
         request.delivery,

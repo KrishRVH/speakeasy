@@ -6,7 +6,7 @@ use crate::{
 
 fn status() -> Status {
     Status {
-        version: "0.7.0".into(),
+        version: env!("CARGO_PKG_VERSION").into(),
         service: "running".into(),
         phase: "idle".into(),
         model: "ready".into(),

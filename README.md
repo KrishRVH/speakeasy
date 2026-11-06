@@ -36,11 +36,22 @@ slot on screen while you speak, and recognizes every word on your machine.
 | Show the screen, a window, or an area; see below | <kbd>S</kbd>, <kbd>W</kbd>, or <kbd>A</kbd> during the hold | <kbd>S</kbd>, <kbd>W</kbd>, or <kbd>A</kbd> during the hold |
 
 The shortcuts match Wispr Flow's defaults, and double-tapping the shortcut also starts hands-free.
-On Mac, Settings offers Fn, Right Option, or Right Command. With either right modifier, hold it for
-a quarter-second before adding Space, S, W, A, or V; quick combinations keep their usual action.
-Left Option and Left Command remain ordinary modifiers.
+On Mac, Settings and the setup guide offer Fn, F13, Right Option, or Right Command. With either
+right modifier, hold it for a quarter-second before adding Space, S, W, A, or V; quick combinations
+keep their usual action. Left Option and Left Command remain ordinary modifiers.
 
 For Fn, set **System Settings › Keyboard › Press 🌐 key to** to **Do Nothing** so Fn only dictates.
+
+**External Mac keyboards:** a keyboard's Fn key may switch its own layers without sending anything
+to macOS. For example, the Keychron Q6 Ultra 8K's Fn is a
+[firmware layer switch](https://github.com/Keychron/zmk/blob/7f8d16732a3782e237915bff30a1f67de09268b7/app/boards/shields/keychron_q6_ultra_ansi/keychron_q6_ultra_ansi.keymap#L209).
+Choose **F13** in Speakeasy and use the keyboard's F13 key, or map a spare key to F13 in the
+keyboard's software. The Q6 Ultra 8K already provides F13; keeping Fn as its layer switch preserves
+its keyboard controls. F13 supports the same hold, double-tap, and Show gestures without the
+right-modifier delay, and Speakeasy withholds it from other apps while dictation is enabled. Right
+Option and Right Command also work without remapping. Speakeasy cannot observe a key that the
+keyboard does not send.
+
 **Remove um and uh** removes standalone English hesitation words locally. With Nemotron or Whisper
 it applies, and starts on, once English is the chosen language; other languages keep every word.
 Parakeet detects the language as you speak, so the switch starts off and turning it on tells it to
@@ -364,8 +375,7 @@ or an unsupported format, after printing its findings. A listing succeeds even w
 are damaged. An unreadable Shows folder fails the command; a missing one is an empty listing. The
 recording's `narrationLost` field is absent when no narration loss was reported, or `audioStopped`,
 `notTranscribed`, or `incomplete`. `incomplete` means recovery transcribed the surviving audio
-prefix; its text and timings cover only that prefix. CLI builds without narration recovery support
-cannot read this value.
+prefix; its text and timings cover only that prefix.
 
 Manifests are limited to 16 MiB and summaries to 1 MiB. Only the current format, 3, is read and
 written; unknown fields are ignored. Other formats are reported as unsupported and left untouched.
@@ -402,11 +412,12 @@ platforms; Linux's desktop-binding `--toggle` and `--cancel` still require Deskt
 `show skill` prints the [agent reading guide](skills/speakeasy-show/SKILL.md) embedded in the
 installed binary. Save it as `SKILL.md` in a skill folder your agent loads. It explains the reading
 order, numbered references, private-file handling, and source-frame retrieval. `frames` reports
-retained timestamps, sampling stride, and the longest gap. `frame` requires an explicit time and a
-new PNG path; it exports the image at or before that time, or the first image when the request
-precedes capture. Its metadata reports both requested and actual times. It refuses times after the
-Show ends and never overwrites a file. These commands cannot retrieve discarded frames or retry lost
-narration. `speakeasy show --help` lists their options.
+retained timestamps, sampling stride, and the longest gap. `frame` requires an explicit focus
+(`--at`, `--mark`, or `--phrase`) and a new PNG path; it exports the image at or before the resolved
+time, or the first image when the request precedes capture. Its metadata reports both requested and
+actual times. It refuses times after the Show ends and never overwrites a file. These commands
+cannot retrieve discarded frames or retry lost narration. `speakeasy show --help` lists their
+options.
 
 `list` gives interrupted Shows distinct `interrupted:ID` identifiers and null duration/frame counts;
 it does not replay their logs. `speakeasy show discard "interrupted:ID" --json` permanently removes

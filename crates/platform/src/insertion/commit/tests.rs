@@ -1,4 +1,4 @@
-use std::panic;
+use std::{collections::VecDeque, panic};
 
 use anyhow::Context as _;
 
@@ -10,6 +10,8 @@ use crate::{
         tests::{DELIVERIES, EXTERNAL_FOCUS, OWN_FOCUS, RELEASED},
     },
 };
+
+mod delivery;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Step {
@@ -31,6 +33,7 @@ struct Fake {
     revokes_at: Option<(Step, InsertPermit)>,
     holds: bool,
     external_focus: bool,
+    releases: VecDeque<bool>,
 }
 
 impl Fake {
@@ -42,6 +45,7 @@ impl Fake {
             revokes_at: None,
             holds: true,
             external_focus: EXTERNAL_FOCUS,
+            releases: VecDeque::new(),
         }
     }
 
@@ -104,7 +108,7 @@ impl NativeInsert for Fake {
 
     fn shortcut_released(&mut self) -> bool {
         self.reach(Step::ShortcutReleased);
-        RELEASED
+        self.releases.pop_front().unwrap_or(RELEASED)
     }
 
     fn send(&mut self, keys: Delivery) -> anyhow::Result<Inserted> {
@@ -277,7 +281,7 @@ fn escape_during_the_final_checks_prevents_input() -> anyhow::Result<()> {
 async fn a_stopped_worker_exits_while_inserters_outlive_it() -> anyhow::Result<()> {
     let (events, _receiver) = async_channel::bounded(1);
     let input = InputSender::new(events);
-    let (worker, inserter) = Worker::spawn(input.clone(), unfocused(), |_| Ok(Inserted::Sent))?;
+    let (worker, inserter) = Worker::start(input.clone(), unfocused(), |_| Ok(Inserted::Sent))?;
     worker.request_stop();
     tokio::time::timeout(PATIENCE, worker.stopped())
         .await
@@ -295,7 +299,7 @@ async fn a_stopped_worker_exits_while_inserters_outlive_it() -> anyhow::Result<(
 #[tokio::test]
 async fn a_panic_answers_a_fixed_message_and_the_next_request_is_served() -> anyhow::Result<()> {
     let (events, _receiver) = async_channel::bounded(1);
-    let (_worker, inserter) = Worker::spawn(InputSender::new(events), unfocused(), |request| {
+    let (_worker, inserter) = Worker::start(InputSender::new(events), unfocused(), |request| {
         if request.text == "panics" {
             panic::resume_unwind(Box::new("private payload"));
         }

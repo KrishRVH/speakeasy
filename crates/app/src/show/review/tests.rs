@@ -8,6 +8,7 @@ use crate::show::store::recall::Health;
 
 mod narration;
 mod offers;
+mod source;
 
 fn row(name: &str) -> Row {
     Row {

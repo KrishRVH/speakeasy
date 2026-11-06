@@ -79,7 +79,11 @@ pub(super) fn start(
     options: DesktopOptions,
     own_focus: OwnFocus,
 ) -> anyhow::Result<(OwnedThread, Monitor, Inserter)> {
-    let (insertion, inserter) = insertion::Worker::start(input.clone(), own_focus)?;
+    let shortcut = options.mac_shortcut;
+    let (insertion, inserter) =
+        insertion::Worker::start(input.clone(), own_focus, move |request| {
+            objc2::rc::autoreleasepool(|_| insertion::deliver(&mut Insert { shortcut }, request))
+        })?;
     #[expect(
         clippy::disallowed_types,
         reason = "The event tap and AppKit lifecycle callbacks share the same narrowly locked policy; see SharedPolicy"
@@ -363,11 +367,13 @@ fn observe(
         CGEventType::KeyDown => MacEvent::Key {
             code,
             down: true,
+            repeat: event.get_integer_value_field(EventField::KEYBOARD_EVENT_AUTOREPEAT) != 0,
             held,
         },
         CGEventType::KeyUp => MacEvent::Key {
             code,
             down: false,
+            repeat: false,
             held,
         },
         CGEventType::FlagsChanged => MacEvent::FlagsChanged { code, held },
@@ -465,16 +471,21 @@ impl Window {
     }
 }
 
-pub(super) fn modifiers() -> Modifiers {
-    modifiers_for(MacShortcut::Function)
-}
-
 pub(super) fn modifiers_for(shortcut: MacShortcut) -> Modifiers {
-    shortcut
-        .modifiers(cg::CGEventSource::flags_state(cg::CGEventSourceStateID::CombinedSessionState).0)
+    let mut held = shortcut.modifiers(
+        cg::CGEventSource::flags_state(cg::CGEventSourceStateID::CombinedSessionState).0,
+    );
+    if shortcut == MacShortcut::F13 {
+        held.talk = u16::try_from(shortcut.key_code()).is_ok_and(|code| {
+            cg::CGEventSource::key_state(cg::CGEventSourceStateID::HIDSystemState, code)
+        });
+    }
+    held
 }
 
-pub(super) struct Insert;
+pub(super) struct Insert {
+    shortcut: MacShortcut,
+}
 
 impl insertion::NativeInsert for Insert {
     type Keys = Vec<CGEvent>;
@@ -531,7 +542,7 @@ impl insertion::NativeInsert for Insert {
     }
 
     fn shortcut_released(&mut self) -> bool {
-        !modifiers().any()
+        !modifiers_for(self.shortcut).any()
     }
 
     fn send(&mut self, keys: Vec<CGEvent>) -> anyhow::Result<Inserted> {

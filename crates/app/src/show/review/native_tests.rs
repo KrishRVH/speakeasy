@@ -209,7 +209,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         .context("The loaded preview selected a Show")?
         .directory;
     let mut journal = speakeasy_show::Journal::new();
-    for at in [100, 700, 1_500, 30_000] {
+    for at in [100, 700, 1_500, 19_000] {
         journal
             .admit()
             .context("Synthetic frame was not admitted")?
@@ -220,7 +220,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     }
     let mut encoded = Vec::new();
     journal.write_source::<speakeasy_show::SourceError>(
-        speakeasy_show::Moment::from_millis(31_000),
+        speakeasy_show::Moment::from_millis(20_000),
         |bytes| {
             encoded.extend_from_slice(bytes);
             Ok(())
@@ -245,7 +245,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
                 .map(|frame| frame.at.as_millis()),
             Some(100)
         );
-        assert!(detail.is_some_and(|detail| detail.coverage.contains("28500 ms")));
+        assert!(detail.is_some_and(|detail| detail.coverage.contains("17500 ms")));
     })?;
     let request = window.update(cx, |view, _, cx| {
         view.act(Action::Pane(Pane::Narration), cx);

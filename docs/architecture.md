@@ -144,7 +144,10 @@ module unless a test file is named.
   `Window::set_window_visible` on Linux, where the platform crate only checks that a window is X11
   or Wayland. [keyboard/tests.rs](../crates/platform/src/keyboard/tests.rs) checks the pure key
   decisions on every host; owned-window and private-Xvfb checks are opt-in, and the hooks need
-  native acceptance.
+  native acceptance. Mac F13 uses key events and physical key-state reconciliation; Fn and the right
+  modifiers use modifier events. Only right modifiers defer quick application combinations.
+  Insertion waits for the configured shortcut through the same native adapter that rechecks it
+  before delivery; selecting F13 never reserves it for another shortcut setting.
 - **Pill and motion**: [pill.rs](../crates/app/src/pill.rs) and [pill/](../crates/app/src/pill),
   [core/src/motion.rs](../crates/core/src/motion.rs), [gpui_ext.rs](../crates/app/src/gpui_ext.rs),
   [icons.rs](../crates/app/src/icons.rs), and [theme.rs](../crates/app/src/theme.rs) animate the
@@ -277,17 +280,18 @@ module unless a test file is named.
 - **Setup**: [setup.rs](../crates/app/src/setup.rs) and [setup/](../crates/app/src/setup) choose,
   download, verify, and unpack engines and report which managed models are already downloaded; a
   full install is opt-in.
-- **Reset**: [reset.rs](../crates/app/src/reset.rs) holds `setup.lock`, refuses while another copy
-  holds it or the update cache lock, deletes the data root's engines, models, downloads, and updates
-  folders, and deletes the settings file last, through a settings link. A linked folder loses only
-  its link; Shows and the finished-guide marker stay, and a repeated purge succeeds. Services pauses
-  dictation, retires the runtime, and purges on an owned thread that Quit drains; nothing resumes
-  until it exits, and a failed purge restores the previous settings. Settings refuses reset during
-  setup, saves, or a held Windows update and refuses setup while settings are unreadable or a reset
-  runs. On success it adopts default settings as its saved baseline and starts automatic setup; as
-  on a new install, the first complete save enables dictation, even if it was paused.
-  [reset/tests.rs](../crates/app/src/reset/tests.rs) covers what stays, refusals, failure order, and
-  linked folders.
+- **Reset**: [reset.rs](../crates/app/src/reset.rs) holds `setup.lock` and `updates.lock` in the
+  data root through deletion, refuses while another copy holds either, and deletes engines, models,
+  downloads, and updates folders, and deletes the settings file last, through a settings link. A
+  linked folder loses only its link; Shows and the finished-guide marker stay, and a repeated purge
+  succeeds. Services pauses dictation, retires the runtime, and purges on an owned thread that Quit
+  drains; nothing resumes until it exits, and a failed purge restores the previous settings.
+  Settings refuses reset during setup, saves, or a held Windows update and refuses setup while
+  settings are unreadable or a reset runs. On success it adopts default settings as its saved
+  baseline and starts automatic setup; as on a new install, the first complete save enables
+  dictation, even if it was paused. [reset/tests.rs](../crates/app/src/reset/tests.rs) covers what
+  stays, refusals, failure order, and linked folders. Update preparation holds the same
+  `updates.lock` outside its removable cache; deleting payloads cannot replace a live lease.
 - **Tray and status**: [tray.rs](../crates/app/src/tray.rs), [tray/](../crates/app/src/tray),
   [status.rs](../crates/app/src/status.rs), and
   [platform/src/linux/tray.rs](../crates/platform/src/linux/tray.rs) mirror service state. The tray
@@ -507,11 +511,12 @@ module unless a test file is named.
   [journal/source.rs](../crates/show/src/journal/source.rs) streams optional retained frames into
   `source.frames` (512 MiB maximum), with checksummed tiles and an index capped at 64 MiB/4096
   frames. [store/source.rs](../crates/app/src/show/store/source.rs) performs bounded range reads;
-  the viewer and CLI decode only the requested frame. Source exports require explicit time/path and
-  never overwrite. Source writes use a temporary file; failure saves selected keyframes with a
-  nonfatal notice. [publish/tests/recovery.rs](../crates/app/src/show/publish/tests/recovery.rs)
-  covers this fallback, publication failure, revocation, original expiry, and duplicate recovery
-  prevention.
+  the viewer and CLI decode only the requested frame. Retained source frames require a readable Show
+  manifest with the same recording duration; a mismatch leaves keyframes and edits readable. Source
+  exports require an explicit focus and new output path and never overwrite. Source writes use a
+  temporary file; failure saves selected keyframes with a nonfatal notice.
+  [publish/tests/recovery.rs](../crates/app/src/show/publish/tests/recovery.rs) covers this
+  fallback, publication failure, revocation, original expiry, and duplicate recovery prevention.
 - **Screen capture and overlay**: [platform/src/screen.rs](../crates/platform/src/screen.rs),
   [screen/geometry.rs](../crates/platform/src/screen/geometry.rs),
   [windows/screen.rs](../crates/platform/src/windows/screen.rs) with

@@ -11,12 +11,21 @@ use crate::config::Config;
 const DOWNLOADS: [&str; 4] = ["engines", "models", "downloads", "updates"];
 
 pub(crate) fn purge(settings: &Path, data: &Path) -> anyhow::Result<()> {
+    purge_with(settings, data, remove)
+}
+
+fn purge_with(
+    settings: &Path,
+    data: &Path,
+    remove: impl Fn(&Path) -> io::Result<()>,
+) -> anyhow::Result<()> {
+    fs::create_dir_all(data).map_err(|error| cannot("create", data, &error))?;
     let _setup = claim(
         &data.join("setup.lock"),
         "Another Speakeasy copy is setting up local speech. Let it finish, then try again.",
     )?;
-    claim(
-        &data.join("updates").join(".lock"),
+    let _update = claim(
+        &data.join("updates.lock"),
         "Another Speakeasy copy is preparing an update. Finish or cancel it, then try again.",
     )?;
     for folder in DOWNLOADS.map(|folder| data.join(folder)) {
@@ -25,20 +34,16 @@ pub(crate) fn purge(settings: &Path, data: &Path) -> anyhow::Result<()> {
     Config::discard(settings).map_err(|error| cannot("remove", settings, &error))
 }
 
-fn claim(lock: &Path, busy: &str) -> anyhow::Result<Option<File>> {
-    let file = match OpenOptions::new()
+fn claim(lock: &Path, busy: &str) -> anyhow::Result<File> {
+    let file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
         .open(lock)
-    {
-        Ok(file) => file,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(cannot("open", lock, &error)),
-    };
+        .map_err(|error| cannot("open", lock, &error))?;
     match file.try_lock() {
-        Ok(()) => Ok(Some(file)),
+        Ok(()) => Ok(file),
         Err(TryLockError::WouldBlock) => bail!("{busy}"),
         Err(TryLockError::Error(error)) => Err(cannot("lock", lock, &error)),
     }

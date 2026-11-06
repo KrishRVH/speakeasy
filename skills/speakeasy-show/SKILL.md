@@ -78,9 +78,11 @@ session origin from `recording.json`. Report decoder failures as unavailable evi
 A **Send to agent** prompt names the Show folder, its contact sheets in order, and `summary.md`. It
 carries paths, not the Show's text: open those files as in the steps above.
 
-A **Copy moment** reference names the displayed frame and may also name the narration or mark time
-that selected it. Cite the displayed frame's timestamp; the requested time can fall in a sampling
-gap. The reference contains no transcript and does not replace the user's edited summary.
+A **Copy image + summary + narration** reference names the displayed frame and may also name the
+narration or mark time that selected it. Cite the displayed frame's timestamp; the requested time
+can fall in a sampling gap. Read its **Edited summary** and **Recorded narration** as separate
+sources: edits express the user's intent, while narration records speech. Honor any truncation or
+incomplete-narration notices before treating the pasted context as complete.
 
 `speakeasy show list --json` lists saved and interrupted Shows without narration. Use it to find a
 recording only when the user asks; select an explicit ID or path rather than guessing from recency.

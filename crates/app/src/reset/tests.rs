@@ -53,7 +53,7 @@ fn a_purge_forgets_settings_and_downloads_but_keeps_every_show() -> anyhow::Resu
 fn a_purge_refuses_while_another_copy_sets_up_or_prepares_an_update() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let (settings, data) = fixture(root.path())?;
-    for lock in [data.join("setup.lock"), data.join("updates/.lock")] {
+    for lock in [data.join("setup.lock"), data.join("updates.lock")] {
         let held = File::create(&lock)?;
         held.try_lock()?;
         assert!(
@@ -67,6 +67,40 @@ fn a_purge_refuses_while_another_copy_sets_up_or_prepares_an_update() -> anyhow:
         drop(held);
     }
     purge(&settings, &data)
+}
+
+#[test]
+fn a_purge_keeps_both_leases_through_deletion_even_without_a_cache() -> anyhow::Result<()> {
+    for cache_exists in [true, false] {
+        let root = tempfile::tempdir()?;
+        let (settings, data) = fixture(root.path())?;
+        if !cache_exists {
+            fs::remove_dir_all(data.join("updates"))?;
+        }
+        purge_with(&settings, &data, |path| {
+            remove(path)?;
+            for name in ["setup.lock", "updates.lock"] {
+                let contender = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(data.join(name))?;
+                assert!(matches!(
+                    contender.try_lock(),
+                    Err(TryLockError::WouldBlock)
+                ));
+            }
+            assert!(settings.is_file());
+            Ok(())
+        })?;
+        for name in ["setup.lock", "updates.lock"] {
+            let available = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(data.join(name))?;
+            available.try_lock()?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(unix)]

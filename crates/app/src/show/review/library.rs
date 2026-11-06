@@ -196,6 +196,7 @@ impl Detail {
         let mut narration = Narration::Unavailable;
         let mut movie = None;
         let mut scene = None;
+        let mut duration = None;
         match entry.show {
             Err(ReadError::Manifest(Unreadable::Unsupported(version))) => warnings.push(format!(
                 "This Show uses format {version}. Update Speakeasy to view its frames. Its summary may still be readable."
@@ -207,6 +208,7 @@ impl Detail {
                 movie = show.movie;
                 let manifest = show.manifest;
                 let recording = manifest.recording();
+                duration = Some(recording.duration);
                 if mode == Mode::Video {
                     match Annotations::new(recording, manifest.marks()) {
                         Ok(annotations) => scene = Some(Arc::new(annotations)),
@@ -247,6 +249,8 @@ impl Detail {
             Err(error) => warnings.push(format!("Source frames are unavailable: {error}")),
             Ok(Some(_)) => match source::inspect(directory) {
                 Err(error) => warnings.push(format!("Source frames are unavailable: {error:#}")),
+                Ok(source) if Some(source.duration()) != duration => warnings
+                    .push("Source frames do not match this Show's recording timeline.".into()),
                 Ok(source) => {
                     source_available = true;
                     coverage = format!(

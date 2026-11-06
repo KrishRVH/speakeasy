@@ -70,8 +70,8 @@ app liveness for `AsyncApp`, and `App::shutdown` ordering.
 
 - `src/linux/platform.rs`, `src/linux.rs`, and `Cargo.toml` stub the credential methods (writes
   fail, reads find nothing, deletes succeed) and drop system notifications, which removes the oo7
-  keyring and notify-rust clients and about 30 crates. Speakeasy stores no credentials and posts
-  no notifications. `src/linux/system_notifications.rs` is deleted.
+  keyring and notify-rust clients and about 30 crates. Speakeasy does not use GPUI's credential
+  store or notifications. `src/linux/system_notifications.rs` is deleted.
 - `src/linux/x11/window.rs` and `Cargo.toml` implement `set_input_region` with an XShape input
   shape, as Wayland's input region already does; upstream X11 ignores it. The X11 pill passes
   through every click; `idle_native_pill_starts_unmapped_and_can_show_and_hide` fails without this.

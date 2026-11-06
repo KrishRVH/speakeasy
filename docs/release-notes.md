@@ -1,33 +1,26 @@
 # Release notes
 
-Speakeasy 0.10.0 runs natively on Wayland desktops with layer shell, lets the pill's waveform follow
-your voice, and makes Settings and the Shows window easier to use with a keyboard or screen reader.
+Speakeasy 0.10.1 adds F13 dictation for external Mac keyboards and fixes races in reset and Show
+review.
 
-**Breaking change:** `speakeasy show frames` and `speakeasy show frame` refuse a focus value that
-begins with `-`, such as `--phrase --json`, instead of reading it as a phrase, as every other option
-already does. Until 1.0.0, Speakeasy supports its current formats and settings only, with no
-migration or compatibility paths.
-
-- **Native Wayland.** On KDE Plasma, sway, Hyprland, niri, and other compositors with layer shell,
-  Speakeasy runs as a Wayland client. The pill appears at the bottom of the focused display, never
-  takes focus or clicks, leaves the screen entirely while idle, and comes back after its display is
-  unplugged. Closing Settings to the tray hides it without stopping a model or update download.
-  GNOME, WSLg, and other desktops without layer shell keep using X11 through Xwayland. With neither
-  available, Speakeasy stops with a message that says what to enable.
-- **A waveform that follows your voice.** The pill's bars rise with each syllable and fall in
-  pauses, scaled to how loudly you speak rather than to a fixed range.
-- **Screen readers.** On Windows, text ranges a screen reader held before Settings was hidden stop
-  working instead of reading the reopened window, a request to scroll text into view lands even if
-  the field resizes first, and closing a window disconnects it from UI Automation. In the Shows
-  window, the library is a list of selectable rows and each narration clause is a labeled button. On
-  macOS and Linux, Settings now publishes the same accessibility tree as on Windows.
-- **Shows window.** The selected Show and the selected frame stay scrolled into view. On Linux,
-  revealing an open Shows window raises it. A Show that cannot open says its narration is
-  unavailable instead of loading forever.
-- **Clearer errors.** Exporting into a missing folder, control commands with a bad session token,
-  preset name, or style, and `speakeasy show` options now say which rule was broken. On macOS,
-  Settings refuses an engine program without execute permission instead of failing when dictation
-  starts.
+- **External Mac keyboards.** Choose F13 in Settings or the setup guide, then use the keyboard's F13
+  key or map a spare key to F13 in its keyboard software. This addresses keyboards such as the
+  Keychron Q6 Ultra 8K whose Fn key switches firmware layers without sending a key to macOS.
+  Speakeasy cannot observe that firmware-only Fn key. F13 supports hold-to-talk, double-tap
+  hands-free, and Show gestures; repeats do not restart dictation or interrupt Shift pins. Text
+  delivery waits for the selected shortcut to be released. Fn, Right Option, and Right Command
+  remain available.
+- **Stable microphone choices.** An open microphone menu keeps each row attached to its device when
+  devices refresh, so a click cannot select a different microphone.
+- **Reliable Show review.** Delayed clicks in a refreshed Show list cannot open a different Show.
+  Retained source frames with a mismatched recording timeline are unavailable; saved keyframes and
+  edited summaries remain readable. The agent reading guide accurately describes the edited summary
+  and recorded narration included by the copy action.
+- **Reset and updates.** Reset holds both setup and update locks until deletion finishes. The update
+  lock lives outside the removable cache, preventing another copy from starting an update while
+  reset removes its files.
+- **Cleanup evaluation.** The public-fixture accuracy harness can compare recognition with cleanup
+  enabled and disabled, measuring errors introduced and corrected by cleanup separately.
 
 Hold-to-talk, double-tap hands-free, and the five-minute recording limit remain. Recognition stays
 local, with no accounts, telemetry, dictation history, or automatic uploads. Managed Shows expire

@@ -18,7 +18,7 @@ pub(super) fn acquire(root: &Path) -> anyhow::Result<File> {
         .write(true)
         .create(true)
         .truncate(false)
-        .open(root.join(".lock"))
+        .open(root.join("updates.lock"))
         .context(CACHE_ACCESS)?;
 
     match lock.try_lock() {
@@ -28,7 +28,9 @@ pub(super) fn acquire(root: &Path) -> anyhow::Result<File> {
         ),
         Err(fs::TryLockError::Error(error)) => return Err(error).context(CACHE_ACCESS),
     }
-    clean(root)
+    let payloads = root.join("updates");
+    fs::create_dir_all(&payloads).context(CACHE_ACCESS)?;
+    clean(&payloads)
         .context("Cannot clean the update cache. Close old installers and check folder access.")?;
     Ok(lock)
 }
@@ -102,31 +104,45 @@ mod tests {
     use super::*;
 
     #[test]
+    fn removing_payloads_cannot_replace_a_live_preparations_lock() {
+        let root = tempfile::tempdir().unwrap();
+        let owner = acquire(root.path()).unwrap();
+        let payloads = root.path().join("updates");
+        fs::create_dir_all(&payloads).unwrap();
+        fs::remove_dir_all(&payloads).unwrap();
+        assert!(acquire(root.path()).is_err());
+        drop(owner);
+        let _next = acquire(root.path()).unwrap();
+        assert!(payloads.is_dir());
+    }
+
+    #[test]
     fn a_live_preparation_excludes_cleanup_and_an_abandoned_stage_is_reclaimed() {
         let root = tempfile::tempdir().unwrap();
         let owner = acquire(root.path()).unwrap();
-        let stage = root.path().join("release-abandoned");
-        fs::create_dir(&stage).unwrap();
+        let stage = root.path().join("updates/release-abandoned");
+        fs::create_dir_all(&stage).unwrap();
         fs::write(stage.join(NAME), b"synthetic installer").unwrap();
         assert!(acquire(root.path()).is_err());
         assert!(stage.join(NAME).is_file());
         drop(owner);
         let _next = acquire(root.path()).unwrap();
         assert!(!stage.exists());
-        assert!(root.path().join(".lock").is_file());
+        assert!(root.path().join("updates.lock").is_file());
     }
 
     #[test]
     fn cleanup_preserves_unknown_files_and_linked_content() {
         let root = tempfile::tempdir().unwrap();
-        let stage = root.path().join("release-user-edited");
-        fs::create_dir(&stage).unwrap();
+        let stage = root.path().join("updates/release-user-edited");
+        fs::create_dir_all(&stage).unwrap();
         fs::write(stage.join(NAME), b"synthetic installer").unwrap();
         fs::write(stage.join("notes.txt"), b"user data").unwrap();
         let outside = tempfile::tempdir().unwrap();
         fs::write(outside.path().join(NAME), b"unowned installer").unwrap();
         #[cfg(unix)]
-        std::os::unix::fs::symlink(outside.path(), root.path().join("release-linked")).unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.path().join("updates/release-linked"))
+            .unwrap();
         let _owner = acquire(root.path()).unwrap();
         assert_eq!(fs::read(stage.join("notes.txt")).unwrap(), b"user data");
         assert!(stage.join(NAME).is_file());
@@ -135,6 +151,6 @@ mod tests {
             b"unowned installer"
         );
         #[cfg(unix)]
-        assert!(root.path().join("release-linked").is_symlink());
+        assert!(root.path().join("updates/release-linked").is_symlink());
     }
 }

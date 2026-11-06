@@ -44,7 +44,7 @@ impl Installer {
         configuration: PathBuf,
     ) -> anyhow::Result<(Self, PathBuf)> {
         let cache = root.join("updates");
-        let lease = super::cache::acquire(&cache)?;
+        let lease = super::cache::acquire(root)?;
         let directory = tempfile::Builder::new()
             .prefix("release-")
             .tempdir_in(&cache)?;

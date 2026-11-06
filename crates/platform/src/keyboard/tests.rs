@@ -4,6 +4,8 @@ use anyhow::Context as _;
 
 use super::*;
 
+mod f13;
+
 const LEFT_CONTROL: u32 = 0xA2;
 const RIGHT_CONTROL: u32 = 0xA3;
 const LEFT_WINDOWS: u32 = 0x5B;
@@ -238,7 +240,12 @@ fn shift_on(code: i64, down: bool, others: Modifiers) -> MacEvent {
 }
 
 fn key(code: i64, down: bool, held: Modifiers) -> MacEvent {
-    MacEvent::Key { code, down, held }
+    MacEvent::Key {
+        code,
+        down,
+        repeat: false,
+        held,
+    }
 }
 
 fn keyboard_fn_up() -> bool {

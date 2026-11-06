@@ -401,6 +401,7 @@ impl crate::MacShortcut {
             Self::Function => Mac::FUNCTION,
             Self::RightOption => Mac::RIGHT_OPTION,
             Self::RightCommand => Mac::RIGHT_COMMAND,
+            Self::F13 => 105,
         }
     }
 
@@ -410,10 +411,16 @@ impl crate::MacShortcut {
         const OPTION: u64 = 0x0008_0000;
         const COMMAND: u64 = 0x0010_0000;
         const FUNCTION: u64 = 0x0080_0000;
+        let flags = if matches!(self, Self::F13) {
+            flags & !FUNCTION
+        } else {
+            flags
+        };
         let (talk_mask, own_group, opposite) = match self {
             Self::Function => (FUNCTION, FUNCTION, 0),
             Self::RightOption => (0x40, OPTION, 0x20),
             Self::RightCommand => (0x10, COMMAND, 0x08),
+            Self::F13 => (0, 0, 0),
         };
         let talk = flags & talk_mask != 0;
         let others = CONTROL | OPTION | COMMAND | FUNCTION;
@@ -433,6 +440,7 @@ pub(super) enum MacEvent {
     Key {
         code: i64,
         down: bool,
+        repeat: bool,
         held: Modifiers,
     },
     FlagsChanged {
@@ -449,6 +457,11 @@ impl MacEvent {
         keyboard_held: impl FnOnce() -> bool,
     ) -> bool {
         match *self {
+            Self::Key {
+                code, down, repeat, ..
+            } if shortcut == crate::MacShortcut::F13 && code == shortcut.key_code() => {
+                !down || repeat
+            },
             Self::FlagsChanged { code, held } if code == shortcut.key_code() => !held.talk,
             Self::Key { held, .. } | Self::FlagsChanged { held, .. } => {
                 held.talk || keyboard_held()
@@ -526,6 +539,23 @@ impl Mac {
 
     fn decide(&mut self, event: MacEvent, at: Instant) -> Decision {
         match event {
+            MacEvent::Key {
+                code,
+                down,
+                repeat,
+                held,
+            } if self.shortcut == crate::MacShortcut::F13 && code == self.shortcut.key_code() => {
+                if !repeat {
+                    self.taps.interrupt();
+                }
+                Decision::swallow(if !down {
+                    self.chord.release()
+                } else if repeat || held.other_shortcut {
+                    None
+                } else {
+                    self.chord.press()
+                })
+            },
             MacEvent::FlagsChanged { code, held } if code == self.shortcut.key_code() => {
                 self.taps.interrupt();
                 self.pressed = held.talk.then_some(at);
@@ -558,7 +588,10 @@ impl Mac {
                     Self::ESCAPE => Decision::pass(down.then_some(Action::Escape)),
                     Self::SPACE | Self::SCREEN | Self::WINDOW | Self::AREA | Self::PASTE_LAST
                         if down
-                            && self.shortcut != crate::MacShortcut::Function
+                            && matches!(
+                                self.shortcut,
+                                crate::MacShortcut::RightOption | crate::MacShortcut::RightCommand
+                            )
                             && self.pressed.is_none_or(|pressed| {
                                 at.saturating_duration_since(pressed) < APPLICATION_SHORTCUT
                             }) =>

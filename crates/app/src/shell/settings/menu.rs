@@ -204,6 +204,7 @@ impl Settings {
                     MacShortcut::Function,
                     MacShortcut::RightOption,
                     MacShortcut::RightCommand,
+                    MacShortcut::F13,
                 ]
                 .map(|shortcut| {
                     Item::choice(
