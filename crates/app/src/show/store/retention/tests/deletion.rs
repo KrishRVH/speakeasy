@@ -110,14 +110,17 @@ fn incomplete_deletion_is_hidden_and_cleanup_retries_it() -> anyhow::Result<()> 
     let root = tempfile::tempdir()?;
     let now = SystemTime::now();
     let directory = show(root.path(), now)?;
-    fs::set_permissions(&directory, fs::Permissions::from_mode(0o555))?;
+    let sealed = directory.join("sealed");
+    fs::create_dir(&sealed)?;
+    fs::write(sealed.join("frame.png"), b"synthetic frame")?;
+    fs::set_permissions(&sealed, fs::Permissions::from_mode(0o555))?;
     let deleted = delete(root.path(), &directory)?;
     let retired = root.path().join(format!(
         "{}{}",
         store::EXPIRED_PREFIX,
         directory.file_name().unwrap().to_string_lossy()
     ));
-    fs::set_permissions(&retired, fs::Permissions::from_mode(0o700))?;
+    fs::set_permissions(retired.join("sealed"), fs::Permissions::from_mode(0o700))?;
     assert!(deleted.cleanup.is_some());
     assert!(!directory.exists());
     assert_eq!(recall::list(root.path())?.count(), 0);
