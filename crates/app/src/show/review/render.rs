@@ -209,7 +209,7 @@ impl Review {
         pressable(
             kit,
             palette,
-            Action::Show(index),
+            Action::Show(self.library.offer(index)),
             label.into(),
             gpui::Role::ListBoxOption,
             true,
@@ -1135,7 +1135,7 @@ pub(super) fn id(action: Action) -> ElementId {
         Action::Export(ExportKind::Archive) => "shows-export".into(),
         Action::Export(ExportKind::Video) => "shows-export-video".into(),
         Action::CancelExport => "shows-cancel-export".into(),
-        Action::Show(index) => ("show", index).into(),
+        Action::Show(offer) => ("show", offer.index).into(),
         Action::Frame(index) => ("frame", index).into(),
     }
 }
@@ -1232,8 +1232,13 @@ impl Review {
                 cx.stop_propagation();
                 return;
             },
-            "up" => Some(Action::Show(row.unwrap_or(0).saturating_sub(1))),
-            "down" => Some(Action::Show(row.map_or(0, |row| row.saturating_add(1)))),
+            "up" => Some(Action::Show(
+                self.library.offer(row.unwrap_or(0).saturating_sub(1)),
+            )),
+            "down" => Some(Action::Show(
+                self.library
+                    .offer(row.map_or(0, |row| row.saturating_add(1))),
+            )),
             "left" => Some(Action::Frame(frame.saturating_sub(1))),
             "right" => Some(Action::Frame(frame.saturating_add(1))),
             "pageup" => Some(Action::Jump(Direction::Back)),

@@ -768,8 +768,8 @@ impl Review {
                     self.request = request;
                 }
             },
-            Action::Show(index) => {
-                if let Some(row) = self.library.rows.get(index)
+            Action::Show(offer) => {
+                if let Some(row) = self.library.offered(offer)
                     && !self.library.is_selected(&row.directory)
                 {
                     self.mode = Mode::Keyframes;
@@ -906,7 +906,7 @@ enum Action {
     Previous,
     Next,
     Refresh,
-    Show(usize),
+    Show(library::Offered),
     Frame(usize),
     Copy(CopyKind),
     Export(ExportKind),

@@ -2,6 +2,8 @@ pub(crate) mod style;
 pub(crate) mod vocabulary;
 
 use speakeasy_show::{Narration, Word};
+use style::Style;
+use vocabulary::{Correction, Vocabulary};
 
 const PAUSES: [char; 4] = [',', ';', ':', '…'];
 const SENTENCE_ENDINGS: [char; 3] = ['.', '!', '?'];
@@ -10,6 +12,15 @@ const SENTENCE_ENDINGS: [char; 3] = ['.', '!', '?'];
 pub(crate) enum Fillers {
     Preserve,
     Remove,
+}
+
+pub(crate) fn for_dictation(
+    heard: &str,
+    style: Style,
+    configured: Fillers,
+    corrections: &[Correction],
+) -> String {
+    style.apply(Vocabulary::new(corrections).text(&for_insertion(heard, style.fillers(configured))))
 }
 
 pub(crate) fn for_insertion(text: &str, fillers: Fillers) -> String {
@@ -73,7 +84,30 @@ fn is_pause_or_ending(character: char) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
+
+    proptest! {
+        #[test]
+        fn whitespace_normalization_preserves_every_dictation_policy(
+            tokens in prop::collection::vec(prop::sample::select(vec!["cube um control", "cube control", "Um,", "uh?", "uh.", "READY", "世界", "déjà", "5", "alpha"]), 0..30),
+            separator in prop::sample::select(vec![" ", "\t", "\r\n", "\u{a0}", "\u{2003}"]),
+            style in prop::sample::select(Style::ALL.to_vec()),
+            remove in any::<bool>(),
+        ) {
+            let heard = tokens.join(separator);
+            let corrections = [
+                Correction { heard: "cube control".into(), written: "kubectl".into() },
+                Correction { heard: "cube um control".into(), written: "literal phrase".into() },
+            ];
+            let fillers = if remove { Fillers::Remove } else { Fillers::Preserve };
+            prop_assert_eq!(
+                for_dictation(&for_insertion(&heard, Fillers::Preserve), style, fillers, &corrections),
+                for_dictation(&heard, style, fillers, &corrections)
+            );
+        }
+    }
 
     #[test]
     fn fillers_at_each_position_leave_clean_spacing_and_punctuation() {

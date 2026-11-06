@@ -104,7 +104,8 @@ module unless a test file is named.
   validates bounded recognition hints independently of transcript corrections. Hints travel per
   request; editing them cancels the session but keeps the worker.
 - **Transcript cleanup**: [transcript.rs](../crates/app/src/transcript.rs), with the filler policy
-  in `Config::fillers` ([config.rs](../crates/app/src/config.rs)).
+  in `Config::fillers` ([config.rs](../crates/app/src/config.rs)). `for_dictation` composes filler
+  removal, phrase corrections, and the session's output style for insertion and paired replay.
   [vocabulary.rs](../crates/app/src/transcript/vocabulary.rs) validates and compiles per-request
   phrase corrections after filler removal, preserving timed-word spans. Its tests cover word
   boundaries, non-chaining replacements, duplicate validation, and timing.
@@ -158,12 +159,14 @@ module unless a test file is named.
   Dictation, Words, and General; [navigation.rs](../crates/app/src/shell/settings/navigation.rs)
   owns page selection and keyboard focus and ends private practice when its page is hidden.
   [settings/menu.rs](../crates/app/src/shell/settings/menu.rs) owns the one open dropdown, its
-  keyboard cursor, and focus return to its trigger. [controls.rs](../crates/app/src/controls.rs)
-  draws the themed controls Settings and Shows share, and the jewels and tracked capitals the pill
-  borrows. [config.rs](../crates/app/src/config.rs) and [paths.rs](../crates/app/src/paths.rs) own
-  the file contract and where it lives. Missing fields use the same NeMo/auto defaults as a new
-  install. Unsupported fields and values stop loading and saving without replacing the file; saves
-  preserve concurrent edits to current settings. One `text_delivery` choice controls insertion.
+  keyboard cursor, and focus return to its trigger. While the microphone menu is open, refresh keeps
+  offered devices in place and appends new devices. Disconnected rows stay labeled and inert until
+  reopening compacts them. [controls.rs](../crates/app/src/controls.rs) draws the themed controls
+  Settings and Shows share, and the jewels and tracked capitals the pill borrows.
+  [config.rs](../crates/app/src/config.rs) and [paths.rs](../crates/app/src/paths.rs) own the file
+  contract and where it lives. Missing fields use the same NeMo/auto defaults as a new install.
+  Unsupported fields and values stop loading and saving without replacing the file; saves preserve
+  concurrent edits to current settings. One `text_delivery` choice controls insertion.
   [settings/speech.rs](../crates/app/src/shell/settings/speech.rs) reads the settings as a managed
   model or the user's own engine, and switching engines clears the inactive engine's files.
   [config/presets.rs](../crates/app/src/config/presets.rs) stores bounded named dictation choices,
@@ -347,9 +350,11 @@ module unless a test file is named.
   summary, and bounded original narration for an explicit evidence copy, keeping their meanings
   separate. A labeled summary excerpt keeps the combined text inside the clipboard byte limit
   without dropping narration or changing the bundle. Selection revisions reject stale Show and frame
-  results. The [preview owner](../crates/app/src/show/preview.rs) retains one blocking reader
-  through native cleanup; a replacement waits for that acknowledgement, and the view keeps only its
-  latest pending seek. Closing cancels its receipt; Quit cancels and drains the owner.
+  results. A separate listing revision rejects row actions offered before a refresh or deletion;
+  selecting a frame or changing retention does not invalidate those actions. The
+  [preview owner](../crates/app/src/show/preview.rs) retains one blocking reader through native
+  cleanup; a replacement waits for that acknowledgement, and the view keeps only its latest pending
+  seek. Closing cancels its receipt; Quit cancels and drains the owner.
   [preview/frame.rs](../crates/app/src/show/preview/frame.rs) caps PNG files at 32 MiB and
   dimensions at 4096 pixels per side. It decodes off the UI thread, leaves private pixels out of
   GPUI's asset cache, and passes source and video BGRA directly to the renderer. `Image` owns
@@ -825,8 +830,11 @@ file, and requires a canonical mono PCM16 WAV. Alternatively, `SPEAKEASY_FIXTURE
 [public corpus manifest](performance.md#public-corpus-replay); it replaces the WAV/reference
 variables. `SPEAKEASY_FIXTURE_SEGMENT=1` admits segmentation for Parakeet; otherwise it measures
 whole-clip inference. `SPEAKEASY_FIXTURE_SPEED` defaults to one (real time); larger integers
-accelerate quality replays. The [README](../README.md#build-and-verify) lists packaging scripts and
-native checks.
+accelerate quality replays. `SPEAKEASY_FIXTURE_CLEANUP` selects `production` (the default) or `raw`;
+only raw mode accepts `SPEAKEASY_FIXTURE_CANDIDATE`, a settings file differing only in corrections
+and filler removal. The [public corpus replay](performance.md#public-corpus-replay) describes paired
+scoring and its latency limits. The [README](../README.md#build-and-verify) lists packaging scripts
+and native checks.
 
 Default checks cannot establish live microphone, screen capture, overlay placement, hooks, clipboard
 and editor acceptance, compositor behavior, or mixed-display frame pacing.

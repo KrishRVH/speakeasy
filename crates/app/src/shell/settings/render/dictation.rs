@@ -360,8 +360,12 @@ impl Settings {
     pub(super) fn microphone_name(&self) -> SharedString {
         match &self.config.microphone {
             None => "System default".into(),
-            Some(id) => match self.microphones.iter().find(|device| device.id == *id) {
-                Some(device) => device.name.clone().into(),
+            Some(id) => match self
+                .microphones
+                .iter()
+                .find(|row| row.present && row.device.id == *id)
+            {
+                Some(row) => row.device.name.clone().into(),
                 None if self.microphone_listing.is_some() => "Checking…".into(),
                 None => "Unavailable microphone".into(),
             },

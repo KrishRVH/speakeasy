@@ -100,8 +100,8 @@ the source, license, selection rule, any audio transformations, model/runtime id
 hardware alongside the results. Do not put private recordings in this fixture.
 
 ```sh
-SPEAKEASY_FIXTURE_CONFIG=.scratch/public-speech/config.json \
-  SPEAKEASY_FIXTURE_CORPUS=.scratch/public-speech/corpus.json \
+SPEAKEASY_FIXTURE_CONFIG="$PWD/.scratch/public-speech/config.json" \
+  SPEAKEASY_FIXTURE_CORPUS="$PWD/.scratch/public-speech/corpus.json" \
   SPEAKEASY_FIXTURE_SPEED=1 SPEAKEASY_FIXTURE_SEGMENT=1 \
   cargo test -p speakeasy --release --locked runtime::fixture::profile_recording_dictation \
   -- --exact --ignored --nocapture --test-threads=1
@@ -126,6 +126,37 @@ punctuation quality. Preserve silence cases' insertion counts and raw error tota
 zero reference words make an error rate undefined. Compare the same pinned corpus and normalization
 across products, and evaluate conversational speech, accents, names, numbers and languages
 separately before drawing product-wide conclusions.
+
+Set `SPEAKEASY_FIXTURE_CLEANUP=raw` to compare cleanup policies on one recognition. The replay
+preserves language and recognition hints, disables corrections and filler removal, and uses the
+verbatim style. Its fake insertion receives whitespace-normalized recognizer text. The shared
+`for_dictation` function then applies the current settings in prose style. A property test checks
+that normalizing whitespace before this function preserves its output, including correction phrases
+spanning fillers. This mode compares text policies, not recognizers.
+
+Optionally set `SPEAKEASY_FIXTURE_CANDIDATE` to the absolute path of a second settings file. It must
+match the current settings except for `vocabulary` and `remove_fillers`. Invalid modes, a candidate
+outside raw mode, and other settings differences fail before a worker starts. Default `production`
+replay retains its existing scores and latency measurements.
+
+Raw reports carry `cleanup: "raw-replay"`, the raw score, and each policy's score and text hash.
+They compare word and formatting errors separately against raw text, and the candidate also compares
+against the current policy. Damage counts use the same word tokenizer:
+
+| Field                     | Meaning                                                                                  |
+| ------------------------- | ---------------------------------------------------------------------------------------- |
+| `introduced_tokens`       | Output occurrences of token types absent from both raw text and reference                |
+| `removed_reference_words` | Per token, the smaller raw/reference count minus the output count, bounded below by zero |
+| `digit_tokens_lost`       | Raw occurrences of tokens containing a numeric character that disappear from output      |
+| `changed`                 | Whether the output differs from raw text, including formatting                           |
+
+Digit loss measures spelling, not numeric meaning: replacing `5` with `five` counts as loss;
+replacing `two` with `2` does not. These counts do not establish semantic damage. Overall and
+per-tag summaries retain quality totals, word and formatting wins/losses/ties, changed clips,
+`damaged_clips` (word-error losses against raw), and damage counts. Empty references keep error
+counts with undefined rates. Raw fake-insertion counts and per-case latency describe raw replay;
+aggregate latency percentiles are absent. Use production replay for latency claims. No report
+contains recognized text, references, or correction phrases.
 
 ## Native process sampling
 

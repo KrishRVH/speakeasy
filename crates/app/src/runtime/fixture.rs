@@ -16,8 +16,9 @@ use crate::{
 };
 
 mod corpus;
+mod paired;
 
-use corpus::{Clip, Score};
+use corpus::Clip;
 
 const STARTUP_TIMEOUT: Duration = local_speech::STARTUP_TIMEOUT
     .saturating_mul(2)
@@ -399,6 +400,9 @@ impl Speech for MeasuredSpeech {
 async fn profile_recording_dictation() -> anyhow::Result<()> {
     let path = PathBuf::from(std::env::var("SPEAKEASY_FIXTURE_CONFIG")?);
     let config = Config::read(&path)?.validated(&path)?.into_inner();
+    let cleanup_mode = std::env::var_os("SPEAKEASY_FIXTURE_CLEANUP");
+    let candidate = std::env::var_os("SPEAKEASY_FIXTURE_CANDIDATE").map(PathBuf::from);
+    let cleanup = paired::Cleanup::read(cleanup_mode.as_deref(), candidate.as_deref(), &config)?;
     let speed = std::env::var("SPEAKEASY_FIXTURE_SPEED")
         .unwrap_or_else(|_| "1".into())
         .parse::<u32>()?;
@@ -410,7 +414,7 @@ async fn profile_recording_dictation() -> anyhow::Result<()> {
         let mut results = Vec::new();
         for case in &corpus.clips {
             let clip = case.load(path.parent().context("Corpus has no parent directory")?)?;
-            let report = recording(config.clone(), clip, speed, segmenting).await?;
+            let report = recording(&config, clip, speed, segmenting, &cleanup).await?;
             eprintln!(
                 "Recording fixture case: {}",
                 serde_json::json!({
@@ -433,7 +437,7 @@ async fn profile_recording_dictation() -> anyhow::Result<()> {
             &PathBuf::from(std::env::var("SPEAKEASY_FIXTURE_WAV")?),
             &PathBuf::from(std::env::var("SPEAKEASY_FIXTURE_REFERENCE")?),
         )?;
-        let report = recording(config, clip, speed, segmenting).await?;
+        let report = recording(&config, clip, speed, segmenting, &cleanup).await?;
         eprintln!(
             "Recording fixture profile: {}",
             serde_json::to_string(&report)?
@@ -455,15 +459,16 @@ struct Report {
     requests: Vec<Inference>,
     capture: Statistics,
     #[serde(flatten)]
-    score: Score,
+    evaluation: paired::Evaluation,
     total_inference_ms: Option<f64>,
 }
 
 async fn recording(
-    config: Config,
+    config: &Config,
     clip: Clip,
     speed: u32,
     segmenting: bool,
+    cleanup: &paired::Cleanup,
 ) -> anyhow::Result<Report> {
     let continuous = segmenting && config.uses_nemotron();
     let wav_sha256 = sha256(&clip.wav);
@@ -488,9 +493,10 @@ async fn recording(
         requests: Some(requests),
     };
     let started = Instant::now();
+    let (recognition_config, style) = cleanup.prepare(config);
     let runtime = Runtime::start_with(
-        config,
-        watch::channel(super::Style::default()).1,
+        recognition_config,
+        watch::channel(style).1,
         output,
         meter,
         fixture,
@@ -544,7 +550,7 @@ async fn recording(
         reference_sha256,
         requests,
         capture,
-        score: Score::new(&clip.reference, &text),
+        evaluation: cleanup.evaluate(&clip.reference, &text, config),
         total_inference_ms,
     })
 }

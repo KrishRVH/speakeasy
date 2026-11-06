@@ -382,7 +382,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     })?;
     window.update(cx, |view, _, cx| {
         view.act(Action::Keep, cx);
-        view.act(Action::Show(1), cx);
+        view.act(Action::Show(view.library.offer(1)), cx);
     })?;
     wait_for(
         window,
@@ -405,7 +405,9 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         );
     })?;
     assert!(!first.join(".pinned").exists());
-    window.update(cx, |view, _, cx| view.act(Action::Show(0), cx))?;
+    window.update(cx, |view, _, cx| {
+        view.act(Action::Show(view.library.offer(0)), cx);
+    })?;
     wait_for(
         window,
         |view| view.opening.is_none() && matches!(view.image, ImageState::Ready(_)),
@@ -428,7 +430,9 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         cx,
     )
     .await?;
-    window.update(cx, |view, _, cx| view.act(Action::Show(2), cx))?;
+    window.update(cx, |view, _, cx| {
+        view.act(Action::Show(view.library.offer(2)), cx);
+    })?;
     wait_for(
         window,
         |view| view.opening.is_none() && matches!(view.image, ImageState::Ready(_)),
@@ -506,7 +510,9 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         assert!(view.library.gone && view.library.selected.is_none());
         assert!(view.detail.is_none() && matches!(view.image, ImageState::Empty));
     })?;
-    window.update(cx, |view, _, cx| view.act(Action::Show(0), cx))?;
+    window.update(cx, |view, _, cx| {
+        view.act(Action::Show(view.library.offer(0)), cx);
+    })?;
     wait_for(
         window,
         |view| matches!(view.image, ImageState::Ready(_)),
@@ -534,7 +540,9 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
                 .all(|row| row.directory != vanished)
         );
     })?;
-    window.update(cx, |view, _, cx| view.act(Action::Show(0), cx))?;
+    window.update(cx, |view, _, cx| {
+        view.act(Action::Show(view.library.offer(0)), cx);
+    })?;
     wait_for(
         window,
         |view| matches!(view.image, ImageState::Ready(_)),
@@ -558,7 +566,9 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     let interrupted = checkpoint.interrupted()?;
     window.update(cx, |view, _, cx| view.refresh(cx))?;
     wait_for(window, |view| view.listing.is_none(), cx).await?;
-    window.update(cx, |view, _, cx| view.act(Action::Show(0), cx))?;
+    window.update(cx, |view, _, cx| {
+        view.act(Action::Show(view.library.offer(0)), cx);
+    })?;
     window.read_with(cx, |view, _| {
         assert!(view.interrupted().is_some());
         assert!(view.detail.is_none());
@@ -593,7 +603,9 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         !interrupted.directory().exists(),
         "Confirmed discard left its checkpoint"
     );
-    window.update(cx, |view, _, cx| view.act(Action::Show(0), cx))?;
+    window.update(cx, |view, _, cx| {
+        view.act(Action::Show(view.library.offer(0)), cx);
+    })?;
     wait_for(
         window,
         |view| matches!(view.image, ImageState::Ready(_)),
@@ -788,7 +800,8 @@ async fn selection_in_view(window: WindowHandle<Review>, cx: &mut AsyncApp) -> a
     })?;
     let first = first.context("The review selected a Show")?;
     resize(window, size(px(1_100.0), px(320.0)), cx).await?;
-    select(window, Action::Show(last), cx).await?;
+    let offered = window.update(cx, |view, _, _| view.library.offer(last))?;
+    select(window, Action::Show(offered), cx).await?;
     let (library, row, offset) = window.read_with(cx, |view, _| {
         (
             view.library_scroll.bounds(),
@@ -802,6 +815,7 @@ async fn selection_in_view(window: WindowHandle<Review>, cx: &mut AsyncApp) -> a
         "The selected Show row lies outside the visible library"
     );
     resize(window, size(px(1_100.0), px(640.0)), cx).await?;
+    let first = window.update(cx, |view, _, _| view.library.offer(first))?;
     select(window, Action::Show(first), cx).await
 }
 

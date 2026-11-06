@@ -7,6 +7,7 @@ use super::{
 use crate::show::store::recall::Health;
 
 mod narration;
+mod offers;
 
 fn row(name: &str) -> Row {
     Row {

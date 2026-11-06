@@ -39,7 +39,7 @@ use crate::{
     config::{Change, Config, Engine},
     show::{SavedShow, Unwound},
     sounds::Cue,
-    transcript::{self, style::Style, vocabulary::Vocabulary},
+    transcript::{self, style::Style},
 };
 
 const INSERT_FAILED: &str =
@@ -516,12 +516,11 @@ impl<P: Ports> Owner<P> {
         else {
             return;
         };
-        let fillers = session
-            .style
-            .fillers(self.config.fillers(&self.config.language));
-        let text = session.style.apply(
-            Vocabulary::new(&self.config.vocabulary)
-                .text(&transcript::for_insertion(&heard, fillers)),
+        let text = transcript::for_dictation(
+            &heard,
+            session.style,
+            self.config.fillers(&self.config.language),
+            &self.config.vocabulary,
         );
         if text.is_empty() {
             self.end_session(Outcome::Empty);

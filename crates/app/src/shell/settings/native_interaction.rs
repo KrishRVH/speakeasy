@@ -11,6 +11,8 @@ use crate::{runtime::Meter, shell::LaunchMode, show::Canvas};
 
 const SETTLE: Duration = Duration::from_millis(100);
 
+mod microphones;
+
 #[test]
 #[ignore = "Opt-in owned windows; Linux requires a private X11 display. No microphone, input, or clipboard"]
 fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::Result<()> {
@@ -79,6 +81,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     anyhow::Ok(())
                 })??;
                 parakeet_cleanup_language(settings, cx)?;
+                microphones::exercise(settings, cx).await?;
                 settings.update(cx, |view, window, cx| {
                     view.menus.trigger(Menu::Language).focus(window, cx);
                 })?;

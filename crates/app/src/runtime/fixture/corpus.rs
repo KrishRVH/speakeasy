@@ -5,7 +5,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use super::{Report, sha256};
+use super::{Report, paired, sha256};
 
 pub(super) const WORD_SCORING: &str = "lowercase-alphanumeric-runs-v1";
 
@@ -76,12 +76,26 @@ impl Corpus {
                 groups.entry(tag).or_default().push(report);
             }
         }
-        Summary {
-            overall: Metrics::new(reports.iter()),
-            by_tag: groups
-                .into_iter()
-                .map(|(tag, rows)| (tag.to_owned(), Metrics::new(rows.into_iter())))
-                .collect(),
+        if reports
+            .first()
+            .is_some_and(|report| matches!(report.evaluation, paired::Evaluation::Raw { .. }))
+        {
+            Summary::Raw {
+                cleanup: "raw-replay",
+                overall: paired::Metrics::new(reports.iter()),
+                by_tag: groups
+                    .into_iter()
+                    .map(|(tag, rows)| (tag.to_owned(), paired::Metrics::new(rows.into_iter())))
+                    .collect(),
+            }
+        } else {
+            Summary::Production {
+                overall: Metrics::new(reports.iter()),
+                by_tag: groups
+                    .into_iter()
+                    .map(|(tag, rows)| (tag.to_owned(), Metrics::new(rows.into_iter())))
+                    .collect(),
+            }
         }
     }
 }
@@ -116,12 +130,6 @@ pub(super) struct Score {
 
 impl Score {
     pub(super) fn new(reference: &str, text: &str) -> Self {
-        let words = |text: &str| {
-            text.split(|c: char| !c.is_alphanumeric())
-                .filter(|s| !s.is_empty())
-                .map(str::to_lowercase)
-                .collect::<Vec<_>>()
-        };
         let expected = words(reference);
         let heard = words(text);
         let formatted: Vec<_> = reference.split_whitespace().collect();
@@ -140,22 +148,33 @@ impl Score {
     }
 }
 
-#[derive(Serialize)]
-pub(super) struct Summary {
-    overall: Metrics,
-    by_tag: BTreeMap<String, Metrics>,
+pub(super) fn words(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|s| !s.is_empty())
+        .map(str::to_lowercase)
+        .collect()
 }
 
 #[derive(Serialize)]
-struct Metrics {
+#[serde(untagged)]
+pub(super) enum Summary {
+    Production {
+        overall: Metrics,
+        by_tag: BTreeMap<String, Metrics>,
+    },
+    Raw {
+        cleanup: &'static str,
+        overall: paired::Metrics,
+        by_tag: BTreeMap<String, paired::Metrics>,
+    },
+}
+
+#[derive(Serialize)]
+pub(super) struct Metrics {
     clips: usize,
     inserted_clips: usize,
-    reference_words: usize,
-    word_errors: usize,
-    word_error_rate: Option<f64>,
-    formatting_reference_words: usize,
-    formatting_word_errors: usize,
-    formatting_word_error_rate: Option<f64>,
+    #[serde(flatten)]
+    quality: Quality,
     realtime_insertions: usize,
     stop_to_fake_insert_p50_ms: Option<f64>,
     stop_to_fake_insert_p95_ms: Option<f64>,
@@ -164,19 +183,6 @@ struct Metrics {
 impl Metrics {
     fn new<'a>(reports: impl Iterator<Item = &'a Report>) -> Self {
         let reports: Vec<_> = reports.collect();
-        let reference_words = reports
-            .iter()
-            .map(|r| r.score.reference_words)
-            .sum::<usize>();
-        let word_errors = reports.iter().map(|r| r.score.word_errors).sum::<usize>();
-        let formatting_reference_words = reports
-            .iter()
-            .map(|r| r.score.formatting_reference_words)
-            .sum::<usize>();
-        let formatting_word_errors = reports
-            .iter()
-            .map(|r| r.score.formatting_word_errors)
-            .sum::<usize>();
         let mut latency: Vec<_> = reports
             .iter()
             .filter(|r| r.speed == 1)
@@ -194,6 +200,41 @@ impl Metrics {
                 .iter()
                 .filter(|r| r.stop_to_fake_insert_ms.is_some())
                 .count(),
+            quality: Quality::new(reports.iter().map(|r| r.evaluation.score())),
+            realtime_insertions: latency.len(),
+            stop_to_fake_insert_p50_ms: percentile(50),
+            stop_to_fake_insert_p95_ms: percentile(95),
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub(super) struct Quality {
+    reference_words: usize,
+    word_errors: usize,
+    word_error_rate: Option<f64>,
+    formatting_reference_words: usize,
+    formatting_word_errors: usize,
+    formatting_word_error_rate: Option<f64>,
+}
+
+impl Quality {
+    pub(super) fn new<'a>(scores: impl Iterator<Item = &'a Score>) -> Self {
+        let scores: Vec<_> = scores.collect();
+        let reference_words = scores
+            .iter()
+            .map(|score| score.reference_words)
+            .sum::<usize>();
+        let word_errors = scores.iter().map(|score| score.word_errors).sum::<usize>();
+        let formatting_reference_words = scores
+            .iter()
+            .map(|score| score.formatting_reference_words)
+            .sum::<usize>();
+        let formatting_word_errors = scores
+            .iter()
+            .map(|score| score.formatting_word_errors)
+            .sum::<usize>();
+        Self {
             reference_words,
             word_errors,
             word_error_rate: (reference_words > 0)
@@ -202,9 +243,6 @@ impl Metrics {
             formatting_word_errors,
             formatting_word_error_rate: (formatting_reference_words > 0)
                 .then(|| formatting_word_errors as f64 / formatting_reference_words as f64),
-            realtime_insertions: latency.len(),
-            stop_to_fake_insert_p50_ms: percentile(50),
-            stop_to_fake_insert_p95_ms: percentile(95),
         }
     }
 }

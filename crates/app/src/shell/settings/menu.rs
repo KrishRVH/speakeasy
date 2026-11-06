@@ -5,6 +5,7 @@ use gpui::{
 
 use super::{Action, Settings, presets};
 use crate::{
+    audio::InputDevice,
     config::{Config, Engine, presets::LIMIT},
     models::{self, LANGUAGES, WHISPER_LANGUAGES},
 };
@@ -39,6 +40,30 @@ impl Menu {
 }
 
 const FIXED: usize = 4;
+
+pub(super) struct Offered {
+    pub(super) device: InputDevice,
+    pub(super) present: bool,
+}
+
+pub(super) fn keep_rows(rows: &mut Vec<Offered>, fresh: Vec<InputDevice>) {
+    for row in rows.iter_mut() {
+        row.present = false;
+    }
+    for device in fresh {
+        if let Some(row) = rows.iter_mut().find(|row| row.device.id == device.id) {
+            if !row.present {
+                row.device = device;
+                row.present = true;
+            }
+        } else {
+            rows.push(Offered {
+                device,
+                present: true,
+            });
+        }
+    }
+}
 
 pub(super) struct Item {
     pub(super) label: SharedString,
@@ -160,11 +185,15 @@ impl Settings {
                 Action::SelectMicrophone(None),
                 self.config.microphone.is_none(),
             ))
-            .chain(self.microphones.iter().enumerate().map(|(index, device)| {
+            .chain(self.microphones.iter().enumerate().map(|(index, row)| {
                 Item::choice(
-                    device.name.clone(),
+                    if row.present {
+                        row.device.name.clone()
+                    } else {
+                        format!("{} (disconnected)", row.device.name)
+                    },
                     Action::SelectMicrophone(Some(index)),
-                    self.config.microphone.as_deref() == Some(device.id.as_str()),
+                    self.config.microphone.as_deref() == Some(row.device.id.as_str()),
                 )
             }))
             .collect(),
@@ -241,6 +270,7 @@ impl Settings {
             return;
         }
         if menu == Menu::Microphone {
+            self.microphones.retain(|row| row.present);
             self.refresh_microphones(cx);
         }
         self.menus.focus_out =
@@ -332,3 +362,6 @@ impl Settings {
         cx.stop_propagation();
     }
 }
+
+#[cfg(test)]
+mod tests;

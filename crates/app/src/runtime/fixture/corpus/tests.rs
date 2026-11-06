@@ -13,7 +13,7 @@ fn report(reference: &str, text: &str, latency: Option<f64>, speed: u32) -> Repo
         reference_sha256: String::new(),
         requests: Vec::new(),
         capture: Statistics::default(),
-        score: Score::new(reference, text),
+        evaluation: paired::Evaluation::Production(Score::new(reference, text)),
         total_inference_ms: Some(0.0),
     }
 }
@@ -33,9 +33,9 @@ fn scoring_counts_deletions_and_weights_words_without_accelerated_latency() {
         report("word", "word", Some(0.1), 10),
     ];
     let measured = Metrics::new(reports.iter());
-    assert_eq!(measured.word_errors, 2);
-    assert_eq!(measured.reference_words, 14);
-    assert_eq!(measured.word_error_rate, Some(2.0 / 14.0));
+    assert_eq!(measured.quality.word_errors, 2);
+    assert_eq!(measured.quality.reference_words, 14);
+    assert_eq!(measured.quality.word_error_rate, Some(2.0 / 14.0));
     assert_eq!(measured.clips, 5);
     assert_eq!(measured.inserted_clips, 4);
     assert_eq!(measured.realtime_insertions, 3);
@@ -53,8 +53,8 @@ fn scoring_separates_formatting_from_words_and_retains_silence_hallucinations() 
     assert_eq!(score.formatting_reference_words, 2);
     let hallucination = report("", "unexpected words", Some(5.0), 1);
     let metrics = Metrics::new(std::iter::once(&hallucination));
-    assert_eq!(metrics.word_errors, 2);
-    assert_eq!(metrics.word_error_rate, None);
+    assert_eq!(metrics.quality.word_errors, 2);
+    assert_eq!(metrics.quality.word_error_rate, None);
     let encoded = serde_json::to_string(&hallucination).unwrap();
     assert!(!encoded.contains("unexpected words"));
 }
@@ -79,10 +79,12 @@ fn corpus_verifies_both_files_and_rejects_duplicate_cases() -> anyhow::Result<()
     let case_read = corpus.clips.first().unwrap();
     case_read.load(temp.path())?;
     let reports = [report("public words", "public", Some(7.0), 1)];
-    let summary = corpus.summarize(&reports);
-    assert_eq!(summary.overall.word_errors, 1);
-    assert_eq!(summary.by_tag["short"].word_errors, 1);
-    assert_eq!(summary.by_tag["english"].reference_words, 2);
+    let Summary::Production { overall, by_tag } = corpus.summarize(&reports) else {
+        panic!("Production summary required");
+    };
+    assert_eq!(overall.quality.word_errors, 1);
+    assert_eq!(by_tag["short"].quality.word_errors, 1);
+    assert_eq!(by_tag["english"].quality.reference_words, 2);
     std::fs::write(temp.path().join("reference.txt"), "changed words")?;
     assert!(
         case_read

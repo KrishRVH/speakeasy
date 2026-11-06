@@ -395,6 +395,12 @@ pub(super) struct Key {
     pub frame: usize,
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct Offered {
+    revision: u64,
+    pub index: usize,
+}
+
 #[derive(Default)]
 pub(super) struct Library {
     pub rows: Vec<Row>,
@@ -402,6 +408,7 @@ pub(super) struct Library {
     pub gone: bool,
     visited: bool,
     revision: u64,
+    listing_revision: u64,
 }
 
 impl Library {
@@ -412,6 +419,7 @@ impl Library {
     }
 
     pub(super) fn replace(&mut self, rows: Vec<Row>) -> Option<Key> {
+        self.listing_revision = self.listing_revision.wrapping_add(1);
         self.rows = rows;
         let path = match &self.selected {
             Some(key) if self.rows.iter().any(|row| row.directory == key.directory) => {
@@ -426,6 +434,19 @@ impl Library {
         };
         let frame = self.selected.as_ref().map_or(0, |key| key.frame);
         path.map(|path| self.select(path, frame))
+    }
+
+    pub(super) const fn offer(&self, index: usize) -> Offered {
+        Offered {
+            revision: self.listing_revision,
+            index,
+        }
+    }
+
+    pub(super) fn offered(&self, offer: Offered) -> Option<&Row> {
+        (offer.revision == self.listing_revision)
+            .then(|| self.rows.get(offer.index))
+            .flatten()
     }
 
     pub(super) fn select(&mut self, directory: PathBuf, frame: usize) -> Key {
@@ -464,6 +485,7 @@ impl Library {
 
     pub(super) fn forget(&mut self) {
         if let Some(key) = self.selected.take() {
+            self.listing_revision = self.listing_revision.wrapping_add(1);
             self.rows.retain(|row| row.directory != key.directory);
         }
         self.gone = true;

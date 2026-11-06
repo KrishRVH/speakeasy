@@ -50,7 +50,7 @@ pub(super) struct Settings {
     presentation: Presentation,
     permissions: Option<Permissions>,
     notice: Option<Notice>,
-    microphones: Vec<InputDevice>,
+    microphones: Vec<menu::Offered>,
     file_picker: Option<Task<()>>,
     microphone_listing: Option<Task<()>>,
     preview: Option<Task<()>>,
@@ -223,7 +223,8 @@ impl Settings {
                     Some(index) => self
                         .microphones
                         .get(index)
-                        .map(|device| Some(device.id.clone())),
+                        .filter(|row| row.present)
+                        .map(|row| Some(row.device.id.clone())),
                 };
                 if let Some(microphone) = chosen {
                     self.config.microphone = microphone;
@@ -423,18 +424,31 @@ impl Settings {
         self.microphone_listing = Some(cx.spawn(async move |this, cx| {
             let result = async move { listing?.await }.await;
             this.update_if_alive(cx, |view, cx| {
-                match result {
-                    Ok(microphones) => view.microphones = microphones,
-                    Err(_) => {
-                        view.notice = Some(Notice::Problem(
-                            "Cannot list microphones. Check your system's sound settings.".into(),
-                        ));
-                    },
-                }
-                view.microphone_listing = None;
-                cx.notify();
+                view.microphones_listed(result, cx);
             });
         }));
+    }
+
+    fn microphones_listed(
+        &mut self,
+        result: anyhow::Result<Vec<InputDevice>>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        match result {
+            Ok(microphones) => {
+                if self.menus.open != Some(menu::Menu::Microphone) {
+                    self.microphones.clear();
+                }
+                menu::keep_rows(&mut self.microphones, microphones);
+            },
+            Err(_) => {
+                self.notice = Some(Notice::Problem(
+                    "Cannot list microphones. Check your system's sound settings.".into(),
+                ));
+            },
+        }
+        self.microphone_listing = None;
+        cx.notify();
     }
 
     fn choose(&mut self, file: EngineFile, window: &Window, cx: &Context<'_, Self>) {
