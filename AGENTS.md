@@ -25,6 +25,9 @@ project's profile; dependency licenses are checked only where packaging must cit
 
 ## Ownership and interfaces
 
+- Maximize shared Rust core code across Windows, macOS, and Linux throughout the codebase. Keep
+  common behavior, state, policies, and tests in shared modules; isolate OS differences in native
+  adapters. Reuse existing modules before adding platform-specific implementations.
 - `crates/core` (`speakeasy-core`) owns pure gestures and motion; `crates/show` (`speakeasy-show`)
   pure Show composition, no I/O; `crates/platform` (`speakeasy-platform`) native adapters, including
   screen capture and the overlay window; `crates/app` (`speakeasy`) GPUI, the session owner, audio
