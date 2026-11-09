@@ -44,8 +44,8 @@ pub(super) fn payload(record: &[u8], kind: u8) -> Result<&[u8], SourceError> {
         cursor.0.len() == length.saturating_add(4),
         "record length is invalid",
     )?;
-    let (data, checksum) = cursor.0.split_at(length);
-    let expected = Cursor(checksum).word()?;
+    let data = cursor.data(length)?;
+    let expected = cursor.word()?;
     let mut crc = crc32fast::Hasher::new();
     crc.update(&actual);
     crc.update(data);

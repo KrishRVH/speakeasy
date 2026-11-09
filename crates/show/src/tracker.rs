@@ -77,7 +77,7 @@ impl Tracker {
         }
     }
 
-    pub const fn resize(&mut self, surface: Size) {
+    pub(crate) const fn resize(&mut self, surface: Size) {
         self.surface = surface;
     }
 
@@ -94,7 +94,7 @@ impl Tracker {
         true
     }
 
-    pub fn gap(&mut self, at: Moment) {
+    pub(crate) fn gap(&mut self, at: Moment) {
         self.lift();
         self.space = None;
         self.pointer = None;
@@ -155,7 +155,7 @@ impl Tracker {
         &self.strokes
     }
 
-    pub fn pin(&mut self, taps: Span) -> bool {
+    pub(crate) fn pin(&mut self, taps: Span) -> bool {
         let used = self
             .shift_uses
             .iter()

@@ -115,9 +115,7 @@ pub fn compose<E: From<Error> + Send>(
                 })
             })
             .into_iter()
-            .collect::<Result<Vec<_>, E>>()?
-            .into_iter()
-            .unzip();
+            .collect::<Result<_, E>>()?;
         crops.extend(cropped);
         sheets.push(File {
             name: sheet_file(number),
@@ -152,7 +150,6 @@ pub fn compose<E: From<Error> + Send>(
             frames.push(file?);
         }
     }
-    drop(planned);
     for (keyframe, crop) in keyframes.iter_mut().zip(crops) {
         keyframe.crop = crop;
     }

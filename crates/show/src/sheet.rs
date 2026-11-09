@@ -121,7 +121,7 @@ pub(crate) fn render(
     let mut canvas = sheet.as_mut();
     for (((badge, (_, corner)), cell), scaled) in badges.iter().zip(frames).zip(&cells).zip(scaled)
     {
-        let scaled = scaled.ok_or_else(|| Error::evidence("Cannot scale a contact sheet frame"))?;
+        let scaled = scaled.ok_or_else(|| Error::invalid("Cannot scale a contact sheet frame"))?;
         let (left, top) = cell.centered_origin(scaled.width(), scaled.height());
         canvas.draw_pixmap(
             left,

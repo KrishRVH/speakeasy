@@ -1,6 +1,6 @@
 #[expect(
     clippy::cast_possible_truncation,
-    reason = "Channels deliberately round to eight bits; out-of-range values saturate"
+    reason = "Channels round to eight bits; out-of-range values saturate"
 )]
 #[expect(
     clippy::cast_sign_loss,
@@ -24,12 +24,9 @@ pub(crate) fn pixels(value: f32) -> u32 {
 
 #[expect(
     clippy::cast_possible_truncation,
-    reason = "Positions truncate to the pixel they fall in and saturate at the index range"
+    reason = "Values floor to a whole count or index and saturate at the usize range"
 )]
-#[expect(
-    clippy::cast_sign_loss,
-    reason = "Positions before the first pixel clamp to it"
-)]
+#[expect(clippy::cast_sign_loss, reason = "Negative values saturate to zero")]
 pub(crate) fn count_floor(value: f32) -> usize {
     value.floor() as usize
 }

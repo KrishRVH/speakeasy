@@ -6,6 +6,8 @@ pub use evidence::{Cell, Evidence, PixelRect, crop_image};
 
 use crate::{Manifest, Moment, Narration, Span};
 
+const MOST_SPOKEN_TOKENS: usize = 10_000;
+
 #[derive(Clone, Copy)]
 pub enum Focus<'a> {
     At(Moment),
@@ -85,9 +87,9 @@ impl Manifest {
         let spoken: Vec<_> = words
             .iter()
             .flat_map(|word| tokens(&word.text).map(move |token| (token, word.span)))
-            .take(10_001)
+            .take(MOST_SPOKEN_TOKENS.saturating_add(1))
             .collect();
-        if spoken.len() > 10_000 {
+        if spoken.len() > MOST_SPOKEN_TOKENS {
             return Err(Unlocated(
                 "Narration is too large to search; use a mark or time",
             ));

@@ -73,7 +73,7 @@ impl Evidence {
             || moments.array_windows::<2>().any(|[one, two]| one >= two)
         {
             return Err(
-                Error::evidence("Choose between 1 and 12 distinct ordered source frames").into(),
+                Error::invalid("Choose between 1 and 12 distinct ordered source frames").into(),
             );
         }
         let mut frames = Vec::with_capacity(moments.len());
@@ -83,12 +83,12 @@ impl Evidence {
             let SourceFrame { at: sampled, image } = frame(at)?;
             if sampled != at {
                 return Err(
-                    Error::evidence("Source sampling changed; refresh before exporting").into(),
+                    Error::invalid("Source sampling changed; refresh before exporting").into(),
                 );
             }
             let size = (image.width(), image.height());
             if crop.is_some() && dimensions.is_some_and(|previous| previous != size) {
-                return Err(Error::evidence(
+                return Err(Error::invalid(
                     "The captured surface resized; export uncropped frames instead",
                 )
                 .into());
@@ -101,7 +101,7 @@ impl Evidence {
                     convert::pixels(image.width() as f32 * scale).max(1),
                     convert::pixels(image.height() as f32 * scale).max(1),
                 )
-                .ok_or_else(|| Error::evidence("Cannot scale the source image"))?;
+                .ok_or_else(|| Error::invalid("Cannot scale the source image"))?;
             frames.push((thumbnail, Corner::Left));
             cells.push(Cell {
                 sampled_ms: sampled.as_millis(),
@@ -111,12 +111,9 @@ impl Evidence {
         let badges = moments
             .iter()
             .enumerate()
-            .map(|(index, at)| {
-                let ms = at.as_millis();
-                Badge {
-                    number: index.saturating_add(1),
-                    time: format!("{}:{:02}.{:03}", ms / 60_000, ms / 1_000 % 60, ms % 1_000),
-                }
+            .map(|(index, at)| Badge {
+                number: index.saturating_add(1),
+                time: format!("{at}.{:03}", at.as_millis() % 1_000),
             })
             .collect::<Vec<_>>();
         Ok(Self {
@@ -136,7 +133,7 @@ pub fn crop_image(image: Image, crop: Option<Rect>) -> Result<(Image, Option<Pix
         || rect.left > rect.right
         || rect.top > rect.bottom
     {
-        return Err(Error::evidence(
+        return Err(Error::invalid(
             "The mark has invalid bounds; export an uncropped frame instead",
         ));
     }

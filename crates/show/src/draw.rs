@@ -45,9 +45,9 @@ pub(crate) struct Badge {
 }
 
 pub(crate) struct Shown<'a> {
-    pub ink: Vec<Vec<Point>>,
-    pub focus: Option<Point>,
-    pub labels: Vec<&'a Mark>,
+    ink: Vec<Vec<Point>>,
+    focus: Option<Point>,
+    labels: Vec<&'a Mark>,
 }
 
 impl<'a> Shown<'a> {

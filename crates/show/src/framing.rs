@@ -108,12 +108,14 @@ pub(crate) fn plan(
                 })
                 .collect();
             let shown = Shown::on(keyframe, recording, marks);
-            let drawn = shown
+            let votes: Vec<Vote> = shown
                 .gestures()
-                .map(|gesture| gesture.iter().map(|&point| (point, keyframe.at)).collect());
-            let votes: Vec<Vote> = drawn
-                .chain(touched.iter().cloned())
-                .flat_map(Vote::shared)
+                .flat_map(|gesture| Vote::shared(gesture.iter().map(|&point| (point, keyframe.at))))
+                .chain(
+                    touched
+                        .iter()
+                        .flat_map(|gesture| Vote::shared(gesture.iter().copied())),
+                )
                 .collect();
             let regions = changes.get(position).map_or(&[][..], Vec::as_slice);
             let caused = regions
@@ -193,15 +195,12 @@ struct Vote {
 }
 
 impl Vote {
-    fn shared(gesture: Vec<(Point, Moment)>) -> impl Iterator<Item = Self> {
-        let finite: Vec<(Point, Moment)> = gesture
-            .into_iter()
-            .filter(|(point, _)| point.is_finite())
-            .collect();
-        let weight = (finite.len() as f32).recip();
-        finite
-            .into_iter()
-            .map(move |(point, at)| Self { point, at, weight })
+    fn shared(
+        gesture: impl Iterator<Item = (Point, Moment)> + Clone,
+    ) -> impl Iterator<Item = Self> {
+        let finite = gesture.filter(|(point, _)| point.is_finite());
+        let weight = (finite.clone().count() as f32).recip();
+        finite.map(move |(point, at)| Self { point, at, weight })
     }
 }
 

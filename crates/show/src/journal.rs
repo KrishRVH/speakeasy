@@ -178,7 +178,7 @@ pub struct Admission<'a>(&'a mut Journal);
 impl Admission<'_> {
     #[expect(
         clippy::must_use_candidate,
-        reason = "Recording mutates the admitted journal; only checkpoint callers need the returned entry"
+        reason = "Recording mutates the journal; only checkpoint callers use the returned entry"
     )]
     pub fn record(self, at: Moment, frame: Image) -> Entry {
         let Self(journal) = self;

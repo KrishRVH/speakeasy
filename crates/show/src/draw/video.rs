@@ -49,7 +49,7 @@ impl fmt::Debug for Annotations {
 impl Annotations {
     pub fn new(recording: &Recording, marks: &[Mark]) -> Result<Self, Error> {
         if !consistent(recording, marks) {
-            return Err(Error::evidence(
+            return Err(Error::invalid(
                 "Saved annotation geometry or timing is invalid",
             ));
         }
@@ -68,13 +68,13 @@ impl Annotations {
         at: Duration,
         viewport: VideoViewport,
         typeface: &Typeface,
-        cancelled: impl Fn() -> bool,
+        mut cancelled: impl FnMut() -> bool,
     ) -> Result<Option<AnnotationReport>, Error> {
         if cancelled() {
             return Ok(None);
         }
         if at > self.duration.since(Moment::START) || !spaces::valid(viewport.source) {
-            return Err(Error::evidence(
+            return Err(Error::invalid(
                 "Video sample has no compatible annotation coverage",
             ));
         }
@@ -86,7 +86,7 @@ impl Annotations {
         } = viewport.content;
         let mut content = image.cropped(left, top, width, height)?;
         let (Ok(x), Ok(y)) = (i32::try_from(left), i32::try_from(top)) else {
-            return Err(Error::evidence("Video content is outside its canvas"));
+            return Err(Error::invalid("Video content is outside its canvas"));
         };
         let (w, h) = (width as f32, height as f32);
         let located = |spaces: &[Option<Space>], index: usize| {
@@ -137,8 +137,8 @@ impl Annotations {
                 closed_curve(&ink::outline(&points, ink::pen(w, h))),
                 ink::COLOR,
             );
-            if let Some(shown) = shown.get_mut(index) {
-                *shown = true;
+            if let Some(drawn) = shown.get_mut(index) {
+                *drawn = true;
             }
             report.drawn = report.drawn.saturating_add(1);
         }

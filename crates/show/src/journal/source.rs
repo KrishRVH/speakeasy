@@ -223,15 +223,14 @@ impl Source {
             .segments
             .partition_point(|segment| segment.first <= first)
             .saturating_sub(1);
-        let mut size = None;
-        self.segments
+        let mut sizes = self
+            .segments
             .iter()
             .skip(segment)
             .take_while(|segment| segment.first <= last)
-            .all(|segment| {
-                size.replace((segment.width, segment.height))
-                    .is_none_or(|previous| previous == (segment.width, segment.height))
-            })
+            .map(|segment| (segment.width, segment.height));
+        let first = sizes.next();
+        sizes.all(|size| Some(size) == first)
     }
 
     pub fn frame<E: From<SourceError>>(

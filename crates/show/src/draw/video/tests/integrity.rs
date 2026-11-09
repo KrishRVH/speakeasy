@@ -39,11 +39,7 @@ fn cancellation_between_primitives_leaves_the_original_frame_untouched() {
     ]);
     let scene = Annotations::new(&recording, &[]).unwrap();
     let mut image = blank();
-    #[expect(
-        clippy::disallowed_types,
-        reason = "The synchronous callback needs an interior counter to cancel a later batch"
-    )]
-    let polls = std::cell::Cell::new(0);
+    let mut polls = 0;
     let result = scene
         .paint(
             &mut image,
@@ -51,14 +47,14 @@ fn cancellation_between_primitives_leaves_the_original_frame_untouched() {
             VIEW,
             &typeface(),
             || {
-                polls.set(polls.get() + 1);
-                polls.get() >= 3
+                polls += 1;
+                polls >= 3
             },
         )
         .unwrap();
     assert!(result.is_none());
     assert_eq!(image, blank());
-    assert_eq!(polls.get(), 3);
+    assert_eq!(polls, 3);
 }
 
 #[test]
