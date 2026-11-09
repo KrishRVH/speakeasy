@@ -213,7 +213,7 @@ with its recovery action; Discard stays apart as a destructive outline, and its 
 Cannot be undone tag, Cancel, and a filled Discard permanently. Delete Show opens the same
 confirmation treatment for a saved Show, names its folder ID, and explains that saved files and
 associated recovery audio are removed even when kept. Exported copies stay. Cancel or Escape
-dismisses the Delete confirmation; changing Shows or refreshing invalidates it. An old confirmation
+dismisses either confirmation; changing Shows or refreshing invalidates it. An old confirmation
 cannot delete a newly selected Show. Deletion clears the removed selection and pixels; completion
 leaves another selected Show and its notice unchanged. Focus rings appear only after keyboard input.
 Up/Down selects Shows, Left/Right steps frames, Page Up/Page Down jumps ten seconds, Home/End

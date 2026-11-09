@@ -38,22 +38,22 @@ pub(super) async fn exercise(
                 .context("The fixture Show is selected")?,
         );
         view.act(Action::ConfirmDelete(offer), cx);
-        assert!(view.deleting.is_none());
+        assert!(view.write.is_none());
         view.menu = menu::Menu::Open(None);
         anyhow::Ok(offer)
     })??;
     key(window, "up", cx)?;
     release(window, "enter", cx)?;
     window.read_with(cx, |view, _| {
-        assert!(view.confirm_delete == Some(offered));
-        assert!(view.deleting.is_none());
+        assert!(view.confirm == Some(Confirm::Delete(offered)));
+        assert!(view.write.is_none());
     })?;
     assert!(first.is_dir());
     cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))?;
     window.update(cx, |view, _, cx| view.act(Action::Delete(offered), cx))?;
     assert!(first.is_dir());
     key(window, "escape", cx)?;
-    window.read_with(cx, |view, _| assert!(view.confirm_delete.is_none()))?;
+    window.read_with(cx, |view, _| assert!(view.confirm.is_none()))?;
 
     window.update(cx, |view, _, cx| view.act(Action::Delete(offered), cx))?;
     select(window, second, cx).await?;
@@ -65,11 +65,11 @@ pub(super) async fn exercise(
         );
         view.act(Action::Delete(newer), cx);
         view.act(Action::ConfirmDelete(offered), cx);
-        assert!(view.confirm_delete == Some(newer) && view.deleting.is_none());
+        assert!(view.confirm == Some(Confirm::Delete(newer)) && view.write.is_none());
         view.act(Action::Refresh, cx);
-        assert!(view.confirm_delete.is_none());
+        assert!(view.confirm.is_none());
         view.act(Action::ConfirmDelete(newer), cx);
-        assert!(view.deleting.is_none());
+        assert!(view.write.is_none());
         anyhow::Ok(newer)
     })??;
     assert!(first.is_dir() && second.is_dir());
@@ -81,7 +81,7 @@ pub(super) async fn exercise(
     .await?;
     window.update(cx, |view, _, cx| {
         view.act(Action::Delete(newer), cx);
-        assert!(view.confirm_delete.is_none());
+        assert!(view.confirm.is_none());
     })?;
 
     select(window, first, cx).await?;
@@ -97,7 +97,11 @@ pub(super) async fn exercise(
         );
         view.act(Action::Delete(offer), cx);
         view.act(Action::ConfirmDelete(offer), cx);
-        assert!(view.deleting.is_some());
+        assert!(matches!(view.write, Some(Write::Deleting { .. })));
+        assert!(
+            !view.can_refresh(),
+            "Refresh was offered while a deletion held the library"
+        );
         assert!(view.detail.is_none() && matches!(view.image, ImageState::Empty));
         assert!(!view.can_copy(cx));
         let next = view
@@ -113,12 +117,7 @@ pub(super) async fn exercise(
         view.notice = Some("Synthetic newer selection notice".into());
         anyhow::Ok(())
     })??;
-    wait_for(
-        window,
-        |view| view.deleting.is_none() && view.can_delete(),
-        cx,
-    )
-    .await?;
+    wait_for(window, |view| view.write.is_none() && view.can_delete(), cx).await?;
     assert!(!first.exists() && second.is_dir());
     window.read_with(cx, |view, _| {
         assert!(view.library.is_selected(second));
@@ -138,7 +137,7 @@ pub(super) async fn exercise(
         view.act(Action::ConfirmDelete(offer), cx);
         anyhow::Ok(())
     })??;
-    wait_for(window, |view| view.deleting.is_none(), cx).await?;
+    wait_for(window, |view| view.write.is_none(), cx).await?;
     assert!(!second.exists());
     window.read_with(cx, |view, _| {
         assert!(view.library.selected.is_none() && view.library.gone);

@@ -7,7 +7,8 @@ use gpui::{
 use speakeasy_show::NarrationLoss;
 
 use super::{
-    Action, CopyKind, Direction, ExportKind, ImageState, Kind, Mode, Pane, Review, Source,
+    Action, Confirm, CopyKind, Direction, Export, ExportKind, ImageState, Kind, Mode, Pane, Review,
+    Source, Write,
     library::{Detail, Key, Row},
     narration::{self, Narration},
     navigation::{Origin, Stamp},
@@ -147,7 +148,7 @@ impl Review {
                         Action::Refresh,
                         "Refresh",
                         Weight::Quiet,
-                        self.listing.is_none() && self.keeping.is_none(),
+                        self.can_refresh(),
                         cx,
                     )),
             )
@@ -345,6 +346,7 @@ impl Review {
             .chain(status(row).map(|(label, tone)| kit.tag(label, tone)))
             .collect()
         });
+        let delete_offer = self.confirm.and_then(Confirm::delete_offer);
         div()
             .flex_1()
             .min_w(px(0.0))
@@ -354,7 +356,7 @@ impl Review {
                 heading(kit, palette, title.into(), meta, tags)
                     .child(self.actions(row, kit, palette, now, cx)),
             )
-            .when_some(self.confirm_delete, |body, offer| {
+            .when_some(delete_offer, |body, offer| {
                 let name = key.directory.file_name().map_or_else(
                     || "this Show".into(),
                     |name| name.to_string_lossy().into_owned(),
@@ -387,9 +389,10 @@ impl Review {
         let can_copy = self.can_copy(cx);
         let kept = row.and_then(|row| row.pinned);
         let keep = if self
-            .keeping
+            .write
             .as_ref()
-            .is_some_and(|(directory, _)| self.library.is_selected(directory))
+            .and_then(Write::keeping)
+            .is_some_and(|directory| self.library.is_selected(directory))
         {
             "Saving…"
         } else {
@@ -419,25 +422,25 @@ impl Review {
                     cx,
                 ))
             })
-            .when(self.export_cancel.is_some(), |bar| {
-                bar.child(command(
-                    kit,
-                    Action::CancelExport,
-                    "Cancel export",
-                    Weight::Quiet,
-                    true,
-                    cx,
-                ))
-            })
+            .when(
+                self.export.as_ref().is_some_and(Export::cancellable),
+                |bar| {
+                    bar.child(command(
+                        kit,
+                        Action::CancelExport,
+                        "Cancel export",
+                        Weight::Quiet,
+                        true,
+                        cx,
+                    ))
+                },
+            )
             .child(command(
                 kit,
                 Action::Keep,
                 keep,
                 Weight::Quiet,
-                kept.is_some()
-                    && self.keeping.is_none()
-                    && self.listing.is_none()
-                    && self.deleting.is_none(),
+                kept.is_some() && self.can_keep(),
                 cx,
             ))
             .child(self.more(kit, palette, cx))
@@ -869,10 +872,8 @@ impl Review {
         cx: &Context<'_, Self>,
     ) -> Div {
         let pending = interrupted.narration_pending();
-        let busy = self.recovering.is_some()
-            || self.discarding.is_some()
-            || self.keeping.is_some()
-            || self.deleting.is_some();
+        let busy = !self.can_change_interrupted();
+        let confirming = self.confirm == Some(Confirm::Discard);
         let lead = if pending {
             RETRY_NARRATION
         } else {
@@ -938,10 +939,10 @@ impl Review {
                         Action::Discard,
                         if pending { "Discard audio" } else { "Discard" },
                         Weight::Destroy,
-                        !busy && !self.confirm_discard,
+                        !busy && !confirming,
                         cx,
                     ))
-                    .when(self.confirm_discard, |pane| {
+                    .when(confirming, |pane| {
                         pane.child(confirm(
                             Confirmation {
                                 message: if pending {
@@ -1278,7 +1279,7 @@ impl Review {
             .as_ref()
             .map_or(0, |detail| detail.frames.len().saturating_sub(1));
         let action = match event.keystroke.key.as_str() {
-            "escape" if self.confirm_delete.is_some() => Some(Action::CancelDelete),
+            "escape" if self.confirm.is_some() => self.confirm.map(Confirm::cancel),
             "escape" => {
                 window.remove_window();
                 cx.stop_propagation();

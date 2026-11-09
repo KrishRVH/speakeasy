@@ -1,6 +1,6 @@
 use gpui::Context;
 
-use super::{Kind, Review, library::Offered};
+use super::{Confirm, Kind, Review, Write, library::Offered};
 use crate::{
     gpui_ext::EntityUpdate as _,
     show::edits::{Edit, Written},
@@ -12,11 +12,8 @@ impl Review {
             && self.listing.is_none()
             && self.opening.is_none()
             && self.loading.is_none()
-            && self.keeping.is_none()
-            && self.recovering.is_none()
-            && self.discarding.is_none()
-            && self.deleting.is_none()
-            && self.exporting.is_none()
+            && self.write.is_none()
+            && self.export.is_none()
             && self.copying.is_none()
     }
 
@@ -26,12 +23,12 @@ impl Review {
             && matches!(row.kind, Kind::Saved)
             && self.library.is_selected(&row.directory)
         {
-            self.confirm_delete = Some(offer);
+            self.confirm = Some(Confirm::Delete(offer));
         }
     }
 
     pub(super) fn delete(&mut self, offer: Offered, cx: &mut Context<'_, Self>) {
-        if !self.can_delete() || self.confirm_delete != Some(offer) {
+        if !self.can_delete() || self.confirm != Some(Confirm::Delete(offer)) {
             return;
         }
         let Some(row) = self.library.offered(offer).filter(|row| {
@@ -59,9 +56,9 @@ impl Review {
         };
         self.clear_selection(cx);
         self.notice = Some("Deleting Show…".into());
-        self.deleting = Some((
-            directory.clone(),
-            cx.spawn(async move |view, cx| {
+        self.write = Some(Write::Deleting {
+            directory: directory.clone(),
+            _task: cx.spawn(async move |view, cx| {
                 let result = receipt
                     .recv()
                     .await
@@ -69,7 +66,7 @@ impl Review {
                     .and_then(|result| result);
                 view.update_if_alive(cx, |view, cx| view.delete_finished(&directory, result, cx));
             }),
-        ));
+        });
     }
 
     fn delete_finished(
@@ -78,7 +75,7 @@ impl Review {
         result: anyhow::Result<Written>,
         cx: &mut Context<'_, Self>,
     ) {
-        self.deleting = None;
+        self.write = None;
         let result = result.and_then(|written| match written {
             Written::Deleted(deleted) => Ok(deleted),
             _ => anyhow::bail!("Show deletion returned an unexpected result. Refresh Shows."),

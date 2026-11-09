@@ -40,6 +40,9 @@ impl gpui::Global for TestReads {}
 struct TestEdits(super::super::edits::Edits);
 impl gpui::Global for TestEdits {}
 
+struct Recoveries(crate::runtime::RecoveryReceipt);
+impl gpui::Global for Recoveries {}
+
 struct CopyProbe {
     image: std::sync::Weak<RenderImage>,
     summary: String,
@@ -63,6 +66,8 @@ impl Render for Keeper {
 async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     cx.update(|cx| cx.set_global(TestEdits(super::super::edits::Edits::default())));
     cx.update(|cx| cx.set_global(TestReads(super::super::preview::Reads::default())));
+    let (recovered, recoveries) = async_channel::bounded(1);
+    cx.update(|cx| cx.set_global(Recoveries(recoveries)));
     let keeper = cx.open_window(
         WindowOptions {
             show: false,
@@ -98,14 +103,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
                         preview: |request, cx| cx.global_mut::<TestReads>().0.submit(request),
                         can_copy: |_| false,
                         copy: |_, _| anyhow::bail!("Synthetic review does not use the clipboard"),
-                        recover: |_, _| {
-                            let (done, receipt) = async_channel::bounded(1);
-                            done.try_send(Err(
-                                "Synthetic recovery failed; the checkpoint remains.".into(),
-                            ))
-                            .map_err(|_closed| "Synthetic receipt closed")?;
-                            Ok(receipt)
-                        },
+                        recover: |_, cx| Ok(cx.global::<Recoveries>().0.clone()),
                     },
                     window,
                     cx,
@@ -387,7 +385,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     })?;
     wait_for(
         window,
-        |view| view.keeping.is_none() && view.opening.is_none(),
+        |view| view.write.is_none() && view.opening.is_none(),
         cx,
     )
     .await?;
@@ -464,7 +462,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
             "A read can overwrite an in-flight retention change"
         );
     })?;
-    wait_for(window, |view| view.keeping.is_none(), cx).await?;
+    wait_for(window, |view| view.write.is_none(), cx).await?;
     window.read_with(cx, |view, _| {
         assert_eq!(
             view.library
@@ -531,7 +529,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         .context("The loaded preview selected a Show")?;
     fs::remove_dir_all(&vanished)?;
     window.update(cx, |view, _, cx| view.act(Action::Keep, cx))?;
-    wait_for(window, |view| view.keeping.is_none(), cx).await?;
+    wait_for(window, |view| view.write.is_none(), cx).await?;
     window.read_with(cx, |view, _| {
         assert!(view.library.gone && view.library.selected.is_none());
         assert!(view.detail.is_none() && matches!(view.image, ImageState::Empty));
@@ -577,17 +575,59 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         assert!(view.detail.is_none());
         assert!(matches!(view.image, ImageState::Empty));
     })?;
-    window.update(cx, |view, _, cx| view.act(Action::Recover, cx))?;
-    wait_for(window, |view| view.recovering.is_none(), cx).await?;
+    window.update(cx, |view, _, cx| {
+        view.act(Action::Recover, cx);
+        let saved = view
+            .library
+            .rows
+            .iter()
+            .position(|row| matches!(row.kind, Kind::Saved))
+            .context("A saved Show is listed beside the interrupted one")?;
+        view.act(Action::Show(view.library.offer(saved)), cx);
+        ensure!(
+            !view.can_keep(),
+            "Keep was offered while a recovery held the library"
+        );
+        view.act(Action::Keep, cx);
+        ensure!(
+            matches!(view.write, Some(Write::Recovering { .. })),
+            "Keep started while a recovery held the library"
+        );
+        anyhow::Ok(())
+    })??;
+    recovered.try_send(Err(
+        "Synthetic recovery failed; the checkpoint remains.".into()
+    ))?;
+    wait_for(window, |view| view.write.is_none(), cx).await?;
     ensure!(
         interrupted.directory().exists(),
         "Failed recovery discarded its checkpoint"
     );
-    window.update(cx, |view, _, cx| view.act(Action::Discard, cx))?;
+    window.update(cx, |view, window, cx| {
+        ensure!(view.can_keep(), "Keep stayed unavailable after recovery");
+        view.act(Action::Show(view.library.offer(0)), cx);
+        ensure!(
+            view.interrupted().is_some(),
+            "The interrupted Show is first"
+        );
+        view.act(Action::Discard, cx);
+        view.focus.focus(window, cx);
+        anyhow::Ok(())
+    })??;
     ensure!(
         interrupted.directory().exists(),
         "Discard ran before confirmation"
     );
+    cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))?;
+    key(window, "escape", cx)?;
+    window.read_with(cx, |view, _| {
+        ensure!(
+            view.confirm.is_none() && view.notice.is_none(),
+            "Escape left the discard confirmation open"
+        );
+        anyhow::Ok(())
+    })??;
+    window.update(cx, |view, _, cx| view.act(Action::Discard, cx))?;
     window.update(cx, |view, _, cx| view.act(Action::Discard, cx))?;
     ensure!(
         interrupted.directory().exists(),
@@ -596,9 +636,18 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     window.update(cx, |view, _, cx| {
         view.act(Action::ConfirmDiscard, cx);
     })?;
+    cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))?;
+    key(window, "escape", cx)?;
+    window.read_with(cx, |view, _| {
+        ensure!(
+            view.confirm == Some(Confirm::Discard),
+            "Escape dismissed a discard that was already running"
+        );
+        anyhow::Ok(())
+    })??;
     wait_for(
         window,
-        |view| view.discarding.is_none() && view.listing.is_none(),
+        |view| view.write.is_none() && view.listing.is_none(),
         cx,
     )
     .await?;
@@ -845,7 +894,7 @@ async fn export_selected(window: WindowHandle<Review>, cx: &mut AsyncApp) -> any
             cx,
         );
     })?;
-    wait_for(window, |view| view.exporting.is_none(), cx).await?;
+    wait_for(window, |view| view.export.is_none(), cx).await?;
     let success = window.read_with(cx, |view, _| {
         view.notice
             .as_ref()

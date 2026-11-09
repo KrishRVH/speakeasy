@@ -377,18 +377,21 @@ module unless a test file is named.
   storage. GPUI's `RenderImage` expects BGRA bytes inside `image::Frame` despite the buffer's RGBA
   type. Decoder errors never include content. Services owns accepted Keep/Discard/Delete writes
   through [edits.rs](../crates/app/src/show/edits.rs); Quit awaits them, and an immutable fixture
-  lease keeps preview storage alive until completion. Recovery enters the session owner's shielded
-  publication stage through a bounded request lane. Recovering retained audio uses the configured
-  local speech worker; recovery opens no microphone and performs no clipboard work. The
-  [video timeline](../crates/app/src/show/review/timeline.rs) uses complete fragment sample times
-  for stepping and seeking. Lookups and captions preserve the decoder's clock: 100 ns on Windows and
-  nanoseconds on macOS; Evidence copying emits a retrieval query only when a whole millisecond lies
-  inside the displayed sample. During seeking, the previous video image stays visible and copying is
-  disabled. [review/tests.rs](../crates/app/src/show/review/tests.rs) checks navigation, damage, and
-  private text boundaries. Opt-in [native_tests.rs](../crates/app/src/show/review/native_tests.rs)
-  exercises the real view with synthetic files, including rendering on a private Linux display,
-  retention actions, stale completion notices, and cleanup on close. Retention writes run off the UI
-  thread and stay bound to their original Show; activation rereads the summary and pin.
+  lease keeps preview storage alive until completion. The view runs one library write (Keep,
+  Recover, Discard, or Delete) at a time, and each write's control is enabled by the same check its
+  action applies; a running discard keeps its confirmation until it finishes. Recovery enters the
+  session owner's shielded publication stage through a bounded request lane. Recovering retained
+  audio uses the configured local speech worker; recovery opens no microphone and performs no
+  clipboard work. The [video timeline](../crates/app/src/show/review/timeline.rs) uses complete
+  fragment sample times for stepping and seeking. Lookups and captions preserve the decoder's clock:
+  100 ns on Windows and nanoseconds on macOS; Evidence copying emits a retrieval query only when a
+  whole millisecond lies inside the displayed sample. During seeking, the previous video image stays
+  visible and copying is disabled. [review/tests.rs](../crates/app/src/show/review/tests.rs) checks
+  navigation, damage, and private text boundaries. Opt-in
+  [native_tests.rs](../crates/app/src/show/review/native_tests.rs) exercises the real view with
+  synthetic files, including rendering on a private Linux display, retention actions, stale
+  completion notices, and cleanup on close. Retention writes run off the UI thread and stay bound to
+  their original Show; activation rereads the summary and pin.
   [deletion.rs](../crates/app/src/show/review/deletion.rs) binds saved-Show confirmation to the
   offered row, invalidates it on selection or refresh, and waits for preview completion before
   accepting deletion. It clears the removed Show's pixels without selecting a substitute or changing

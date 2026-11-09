@@ -62,6 +62,77 @@ enum ImageState {
     Failed(String),
 }
 
+enum Write {
+    Keeping { directory: PathBuf, _task: Task<()> },
+    Recovering { _task: Task<()> },
+    Discarding { _task: Task<()> },
+    Deleting { directory: PathBuf, _task: Task<()> },
+}
+
+impl Write {
+    const fn holds_listing(&self) -> bool {
+        matches!(self, Self::Keeping { .. } | Self::Deleting { .. })
+    }
+
+    fn keeping(&self) -> Option<&Path> {
+        match self {
+            Self::Keeping { directory, .. } => Some(directory),
+            Self::Recovering { .. } | Self::Discarding { .. } | Self::Deleting { .. } => None,
+        }
+    }
+
+    fn deleting(&self) -> Option<&Path> {
+        match self {
+            Self::Deleting { directory, .. } => Some(directory),
+            Self::Keeping { .. } | Self::Recovering { .. } | Self::Discarding { .. } => None,
+        }
+    }
+}
+
+enum Export {
+    Choosing {
+        _task: Task<()>,
+    },
+    Running {
+        _task: Task<()>,
+        cancel: Option<async_channel::Sender<()>>,
+    },
+}
+
+impl Export {
+    const fn cancellable(&self) -> bool {
+        matches!(
+            self,
+            Self::Running {
+                cancel: Some(_),
+                ..
+            }
+        )
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Confirm {
+    Discard,
+    Delete(library::Offered),
+}
+
+impl Confirm {
+    const fn cancel(self) -> Action {
+        match self {
+            Self::Discard => Action::CancelDiscard,
+            Self::Delete(_) => Action::CancelDelete,
+        }
+    }
+
+    const fn delete_offer(self) -> Option<library::Offered> {
+        match self {
+            Self::Delete(offer) => Some(offer),
+            Self::Discard => None,
+        }
+    }
+}
+
 pub(crate) struct Review {
     focus: FocusHandle,
     source: Source,
@@ -83,15 +154,10 @@ pub(crate) struct Review {
     opening: Option<Task<()>>,
     loading: Option<Task<()>>,
     copying: Option<Task<()>>,
-    exporting: Option<Task<()>>,
-    export_cancel: Option<async_channel::Sender<()>>,
+    export: Option<Export>,
     checking: Option<Task<()>>,
-    keeping: Option<(PathBuf, Task<()>)>,
-    recovering: Option<Task<()>>,
-    discarding: Option<Task<()>>,
-    confirm_discard: bool,
-    deleting: Option<(PathBuf, Task<()>)>,
-    confirm_delete: Option<library::Offered>,
+    write: Option<Write>,
+    confirm: Option<Confirm>,
     keyboard: bool,
     menu: menu::Menu,
     visibility: Option<Task<()>>,
@@ -169,15 +235,10 @@ impl Review {
             opening: None,
             loading: None,
             copying: None,
-            exporting: None,
-            export_cancel: None,
+            export: None,
             checking: None,
-            keeping: None,
-            recovering: None,
-            discarding: None,
-            confirm_discard: false,
-            deleting: None,
-            confirm_delete: None,
+            write: None,
+            confirm: None,
             keyboard: false,
             menu: menu::Menu::Closed,
             visibility: None,
@@ -206,9 +267,17 @@ impl Review {
         cx.notify();
     }
 
+    fn holds_listing(&self) -> bool {
+        self.write.as_ref().is_some_and(Write::holds_listing)
+    }
+
+    fn can_refresh(&self) -> bool {
+        self.listing.is_none() && !self.holds_listing()
+    }
+
     fn refresh(&mut self, cx: &mut Context<'_, Self>) {
-        self.confirm_delete = None;
-        if self.keeping.is_some() || self.deleting.is_some() {
+        self.dismiss();
+        if self.holds_listing() {
             return;
         }
         self.notice = None;
@@ -260,9 +329,10 @@ impl Review {
     ) {
         self.clear_selection(cx);
         if self
-            .deleting
+            .write
             .as_ref()
-            .is_some_and(|(directory, _)| directory == &key.directory)
+            .and_then(Write::deleting)
+            .is_some_and(|directory| directory == key.directory)
         {
             cx.notify();
             return;
@@ -378,8 +448,7 @@ impl Review {
         self.checking = None;
         self.detail = None;
         self.request = None;
-        self.confirm_discard = false;
-        self.confirm_delete = None;
+        self.confirm = None;
         self.menu = menu::Menu::Closed;
         self.timeline = timeline::Timeline::default();
         self.notice = None;
@@ -405,7 +474,7 @@ impl Review {
     }
 
     fn check_selected(&mut self, cx: &Context<'_, Self>) {
-        if self.keeping.is_some() || self.deleting.is_some() {
+        if self.holds_listing() {
             return;
         }
         let Some(key) = self
@@ -443,13 +512,12 @@ impl Review {
         }));
     }
 
+    fn can_keep(&self) -> bool {
+        self.write.is_none() && self.listing.is_none()
+    }
+
     fn keep(&mut self, cx: &mut Context<'_, Self>) {
-        if self.keeping.is_some()
-            || self.listing.is_some()
-            || self.recovering.is_some()
-            || self.discarding.is_some()
-            || self.deleting.is_some()
-        {
+        if !self.can_keep() {
             return;
         }
         let Some((parent, key)) = self.directory.clone().zip(self.library.selected.clone()) else {
@@ -476,9 +544,9 @@ impl Review {
                 return;
             },
         };
-        self.keeping = Some((
-            key.directory.clone(),
-            cx.spawn(async move |view, cx| {
+        self.write = Some(Write::Keeping {
+            directory: key.directory.clone(),
+            _task: cx.spawn(async move |view, cx| {
                 let result = work
                     .recv()
                     .await
@@ -495,12 +563,12 @@ impl Review {
                         _ => Err(io::Error::other("Retention write returned no result")),
                     });
                 view.update_if_alive(cx, |view, cx| {
-                    view.keeping = None;
+                    view.write = None;
                     view.kept(&key.directory, result, cx);
                     cx.notify();
                 });
             }),
-        ));
+        });
         cx.notify();
     }
 
@@ -537,9 +605,10 @@ impl Review {
             && (self.actions.can_copy)(cx)
             && self.copying.is_none()
             && self
-                .deleting
+                .write
                 .as_ref()
-                .is_none_or(|(directory, _)| !self.library.is_selected(directory))
+                .and_then(Write::deleting)
+                .is_none_or(|directory| !self.library.is_selected(directory))
     }
 
     fn copy(&mut self, kind: CopyKind, cx: &mut Context<'_, Self>) {
@@ -623,12 +692,12 @@ impl Review {
         }
     }
 
+    const fn can_change_interrupted(&self) -> bool {
+        self.write.is_none()
+    }
+
     fn recover(&mut self, cx: &Context<'_, Self>) {
-        if self.recovering.is_some()
-            || self.discarding.is_some()
-            || self.keeping.is_some()
-            || self.deleting.is_some()
-        {
+        if !self.can_change_interrupted() {
             return;
         }
         let Some(interrupted) = self.interrupted().cloned() else {
@@ -642,15 +711,15 @@ impl Review {
                 return;
             },
         };
-        self.confirm_discard = false;
+        self.confirm = None;
         self.notice =
             Some("Recovery queued. It starts after the current recording finishes.".into());
-        self.recovering = Some(cx.spawn(async move |view, cx| {
+        let task = cx.spawn(async move |view, cx| {
             let result = result.recv().await.unwrap_or_else(|_closed| {
                 Err("Recovery stopped. The interrupted Show remains available.".into())
             });
             view.update_if_alive(cx, |view, cx| {
-                view.recovering = None;
+                view.write = None;
                 match result {
                     Ok(show) if view.library.selected == key => {
                         view.library.select(show.directory().to_owned(), 0);
@@ -665,23 +734,17 @@ impl Review {
                     Err(_) => cx.notify(),
                 }
             });
-        }));
+        });
+        self.write = Some(Write::Recovering { _task: task });
     }
 
     fn discard(&mut self, cx: &mut Context<'_, Self>) {
-        if self.recovering.is_some()
-            || self.discarding.is_some()
-            || self.keeping.is_some()
-            || self.deleting.is_some()
-        {
+        if !self.can_change_interrupted() || self.confirm != Some(Confirm::Discard) {
             return;
         }
         let Some(interrupted) = self.interrupted().cloned() else {
             return;
         };
-        if !self.confirm_discard {
-            return;
-        }
         let key = self.library.selected.clone();
         let work = match (self.actions.edit)(
             super::edits::Edit::Discard(interrupted),
@@ -694,15 +757,17 @@ impl Review {
                 return;
             },
         };
-        self.discarding = Some(cx.spawn(async move |view, cx| {
+        let task = cx.spawn(async move |view, cx| {
             let result = work
                 .recv()
                 .await
                 .map_err(anyhow::Error::from)
                 .and_then(|result| result);
             view.update_if_alive(cx, |view, cx| {
-                view.discarding = None;
-                view.confirm_discard = false;
+                view.write = None;
+                if view.confirm == Some(Confirm::Discard) {
+                    view.confirm = None;
+                }
                 match result {
                     Ok(_) => view.refresh(cx),
                     Err(error) if view.library.selected == key => {
@@ -712,7 +777,19 @@ impl Review {
                     Err(_) => cx.notify(),
                 }
             });
-        }));
+        });
+        self.write = Some(Write::Discarding { _task: task });
+    }
+
+    fn dismiss(&mut self) {
+        match self.confirm {
+            Some(Confirm::Delete(_)) => self.confirm = None,
+            Some(Confirm::Discard) if self.can_change_interrupted() => {
+                self.confirm = None;
+                self.notice = None;
+            },
+            Some(Confirm::Discard) | None => {},
+        }
     }
 
     fn seek(&mut self, request: Request, cx: &mut Context<'_, Self>) {
@@ -823,24 +900,21 @@ impl Review {
             Action::Recover => self.recover(cx),
             Action::Delete(offer) => self.ask_delete(offer),
             Action::ConfirmDelete(offer) => self.delete(offer, cx),
-            Action::CancelDelete => self.confirm_delete = None,
             Action::Discard => {
-                self.confirm_discard = true;
-                let message = if self
-                    .interrupted()
-                    .is_some_and(crate::show::Interrupted::narration_pending)
+                if let Some(interrupted) =
+                    self.interrupted().filter(|_| self.can_change_interrupted())
                 {
-                    DISCARD_AUDIO
-                } else {
-                    DISCARD_SHOW
-                };
-                self.notice = Some(message.into());
+                    let message = if interrupted.narration_pending() {
+                        DISCARD_AUDIO
+                    } else {
+                        DISCARD_SHOW
+                    };
+                    self.confirm = Some(Confirm::Discard);
+                    self.notice = Some(message.into());
+                }
             },
             Action::ConfirmDiscard => self.discard(cx),
-            Action::CancelDiscard => {
-                self.confirm_discard = false;
-                self.notice = None;
-            },
+            Action::CancelDelete | Action::CancelDiscard => self.dismiss(),
             Action::Jump(direction) => {
                 if let Some((detail, current)) =
                     self.detail.as_ref().zip(self.library.selected.as_ref())
@@ -862,7 +936,9 @@ impl Review {
             Action::Copy(kind) => self.copy(kind, cx),
             Action::Export(kind) => self.export(kind, cx),
             Action::CancelExport => {
-                self.export_cancel = None;
+                if let Some(Export::Running { cancel, .. }) = &mut self.export {
+                    *cancel = None;
+                }
                 self.notice = Some("Cancelling video export…".into());
             },
             Action::Keep => self.keep(cx),

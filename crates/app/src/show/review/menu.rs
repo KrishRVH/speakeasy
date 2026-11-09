@@ -85,7 +85,7 @@ impl Review {
             .detail
             .as_ref()
             .is_some_and(|detail| detail.movie.is_some());
-        let idle = self.exporting.is_none() && self.deleting.is_none();
+        let idle = self.can_export();
         [
             (!cfg!(target_os = "linux")).then(|| Item {
                 action: Action::Copy(CopyKind::Evidence),
@@ -111,7 +111,7 @@ impl Review {
             }),
             Some(Item {
                 action: Action::Export(ExportKind::Archive),
-                label: if self.exporting.is_none() {
+                label: if self.export.is_none() {
                     "Export ZIP…"
                 } else {
                     "Exporting…"
