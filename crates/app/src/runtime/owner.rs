@@ -940,7 +940,7 @@ impl<P: Ports> Owner<P> {
     }
 
     fn attach_audio(&mut self) {
-        if let Some((log, start)) = self.session.as_mut().and_then(Session::audio)
+        if let Some((log, start)) = self.session.as_mut().and_then(Session::take_audio_log)
             && !self.microphone.keep(log, start, &self.config.language)
         {
             self.warn(Notice::CheckpointLost);
@@ -986,7 +986,7 @@ impl<P: Ports> Owner<P> {
         let Some(scope) = session.queued_screen() else {
             return;
         };
-        let log = session.frames();
+        let log = session.take_frame_log();
         match self.ports.record_screen(
             session.id,
             session.started,

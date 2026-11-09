@@ -199,11 +199,11 @@ impl Session {
         }
     }
 
-    pub(super) fn frames(&mut self) -> Option<FrameLog> {
+    pub(super) fn take_frame_log(&mut self) -> Option<FrameLog> {
         self.show.as_mut()?.frames.take()
     }
 
-    pub(super) fn audio(&mut self) -> Option<(AudioLog, Duration)> {
+    pub(super) fn take_audio_log(&mut self) -> Option<(AudioLog, Duration)> {
         let (Stage::Recording { audio } | Stage::Stopping { audio }) = self.stage else {
             return None;
         };

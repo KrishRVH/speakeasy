@@ -173,7 +173,7 @@ impl Listening for Capture {
     fn whole(&self) {
         #[expect(
             clippy::let_underscore_must_use,
-            reason = "One stop request is enough; a full or closed lane already prevents further work"
+            reason = "A full single-slot lane already holds this request, and a closed lane belongs to a capture that has ended"
         )]
         let _ = self.whole.try_send(());
         self.signal.thread.unpark();
@@ -499,7 +499,7 @@ impl LevelMeter {
         }
         #[expect(
             clippy::cast_possible_truncation,
-            reason = "The display meter intentionally converts bounded normalized RMS to f32; PCM remains independently encoded"
+            reason = "The RMS of samples clamped to [-1, 1] lies in [0, 1], and the display meter needs no f64 precision"
         )]
         let rms = mem::take(&mut self.power).mean_square().sqrt() as f32;
         self.since = now;

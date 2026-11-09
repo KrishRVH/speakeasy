@@ -45,7 +45,7 @@ impl MicrophoneScan {
             drop(finished);
             #[expect(
                 clippy::let_underscore_must_use,
-                reason = "Only a dropped scan closes the receiver, and then no Settings view waits for the list"
+                reason = "The lane closes only once the scan and every waiting Settings view drop their receivers, so nobody wants the list"
             )]
             let _ = reply.try_send(enumerate());
         })?;
