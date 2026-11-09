@@ -532,7 +532,7 @@ impl Review {
         }
     }
 
-    pub(super) fn can_copy(&self, cx: &App) -> bool {
+    fn can_copy(&self, cx: &App) -> bool {
         self.source != Source::Demo
             && (self.actions.can_copy)(cx)
             && self.copying.is_none()

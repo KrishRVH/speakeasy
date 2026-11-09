@@ -140,7 +140,7 @@ fn read(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
 }
 
 fn excerpt(text: &str) -> Value {
-    let boundary = text.floor_char_boundary(TEXT_LIMIT.min(text.len()));
+    let boundary = text.floor_char_boundary(TEXT_LIMIT);
     json!({"text": text.get(..boundary).unwrap_or_default(), "totalBytes": text.len(), "truncated": boundary < text.len()})
 }
 
@@ -258,7 +258,7 @@ fn source_image(
     manifest: &Manifest,
     query: &Query,
 ) -> Result<(Vec<u8>, Value), String> {
-    let found: Found = query.resolve(manifest).map_err(|safe| safe.to_string())?;
+    let found = query.resolve(manifest).map_err(|safe| safe.to_string())?;
     let span = found
         .selected
         .ok_or("Several phrase matches exist; use show_read to list matches, then choose match")?;

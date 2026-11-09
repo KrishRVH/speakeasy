@@ -141,7 +141,7 @@ mod tests {
 
     #[test]
     fn source_and_png_previews_preserve_bgra_pixels_and_selected_time() -> anyhow::Result<()> {
-        use speakeasy_show::{Image, Journal, Moment};
+        use speakeasy_show::{Image, Journal};
 
         let directory = tempfile::tempdir()?;
         let bgra = [7, 20, 190, 255].repeat(70 * 65);
@@ -173,7 +173,7 @@ mod tests {
             )
             .map_err(anyhow::Error::msg)?;
             assert_eq!(decoded.image.as_bytes(0), Some(bgra.as_slice()));
-            assert_eq!(decoded.at, std::time::Duration::from_millis(200));
+            assert_eq!(decoded.at, Duration::from_millis(200));
             assert_eq!(decoded.annotations, movie::AnnotationState::Off);
         }
         Ok(())

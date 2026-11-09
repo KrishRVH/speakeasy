@@ -32,6 +32,8 @@ const RECOVERY_AUDIO: &str = "Recovery leaves your clipboard alone. Recovered vo
     export and expires seven days after the original recording, even if you keep the Show.";
 const RECOVERY_PREFIX: &str = "A crash or a slow or full disk can leave a shorter recording. Recovery preserves \
     the original expiry date.";
+const DELETE_SHOW: &str = "This removes its images, video, summary, narration, and associated \
+    recovery audio, even if kept. Exported copies stay.";
 const RECORD_HINT: &str =
     "Hold your shortcut and press S, W, or A to record your screen, a window, or an area.";
 const KEYS_HINT: &str = "Page Up / Page Down: jump 10 seconds · Home / End: first / last frame";
@@ -353,15 +355,22 @@ impl Review {
                     .child(self.actions(row, kit, palette, now, cx)),
             )
             .when_some(self.confirm_delete, |body, offer| {
-                let name = self.library.selected.as_ref()
-                    .and_then(|key| key.directory.file_name())
-                    .map_or_else(|| "this Show".into(), |name| name.to_string_lossy().into_owned());
-                body.child(div().px(px(24.0)).pt(px(16.0)).child(confirm(Confirmation {
-                    message: format!("Permanently delete {name}? This removes its images, video, summary, narration, and associated recovery audio, even if kept. Exported copies stay."),
-                    cancel: Action::CancelDelete,
-                    confirm: Action::ConfirmDelete(offer),
-                    label: "Delete permanently",
-                }, !self.can_delete(), kit, palette, cx)))
+                let name = key.directory.file_name().map_or_else(
+                    || "this Show".into(),
+                    |name| name.to_string_lossy().into_owned(),
+                );
+                body.child(div().px(px(24.0)).pt(px(16.0)).child(confirm(
+                    Confirmation {
+                        message: format!("Permanently delete {name}? {DELETE_SHOW}"),
+                        cancel: Action::CancelDelete,
+                        confirm: Action::ConfirmDelete(offer),
+                        label: "Delete permanently",
+                    },
+                    !self.can_delete(),
+                    kit,
+                    palette,
+                    cx,
+                )))
             })
             .child(self.review(key.frame, kit, palette, cx))
             .into_any_element()

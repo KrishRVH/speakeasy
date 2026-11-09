@@ -474,9 +474,9 @@ impl Library {
     }
 
     pub(super) fn offered(&self, offer: Offered) -> Option<&Row> {
-        (offer.revision == self.listing_revision)
-            .then(|| self.rows.get(offer.index))
-            .flatten()
+        self.rows
+            .get(offer.index)
+            .filter(|_| offer.revision == self.listing_revision)
     }
 
     pub(super) fn select(&mut self, directory: PathBuf, frame: usize) -> Key {

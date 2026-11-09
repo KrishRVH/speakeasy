@@ -5,8 +5,8 @@ use serde_json::{Map, Value, json};
 
 use super::{DISCLOSURE, Roots, tools};
 
-pub(super) const STATELESS_VERSION: &str = "2026-07-28";
-pub(super) const INITIALIZED_VERSION: &str = "2025-11-25";
+const STATELESS_VERSION: &str = "2026-07-28";
+const INITIALIZED_VERSION: &str = "2025-11-25";
 const VERSION_META: &str = "io.modelcontextprotocol/protocolVersion";
 const CAPABILITIES_META: &str = "io.modelcontextprotocol/clientCapabilities";
 const LINE_LIMIT: usize = 64 << 10;
@@ -288,7 +288,7 @@ fn error(id: Value, code: i32, message: &'static str, data: Option<Value>) -> Va
     json!({"jsonrpc": "2.0", "id": id, "error": error})
 }
 
-pub(super) fn encode(value: &impl Serialize) -> io::Result<Vec<u8>> {
+fn encode(value: &impl Serialize) -> io::Result<Vec<u8>> {
     encode_with_limit(value, RESPONSE_LIMIT)
 }
 

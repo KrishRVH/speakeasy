@@ -85,8 +85,8 @@ fn the_more_menu_opens_once_per_press_and_keyboard_skips_unavailable_actions() {
     assert_eq!(Menu::Closed.step(&enabled, true), Menu::Closed);
 }
 
-#[tokio::test]
-async fn a_cropped_keyframe_says_so_and_offers_the_whole_screen() -> anyhow::Result<()> {
+#[test]
+fn a_cropped_keyframe_says_so_and_offers_the_whole_screen() -> anyhow::Result<()> {
     let root = Source::Demo.load()?;
     let (rows, _) = list(&root.directory)?;
     let detail = Detail::open(&rows[0].directory, library::Mode::Keyframes)?;

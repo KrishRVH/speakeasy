@@ -357,8 +357,7 @@ fn install_skill(directory: &Path) -> anyhow::Result<PathBuf> {
     let mut file = tempfile::NamedTempFile::new_in(&directory)?;
     file.write_all(SKILL.as_bytes())?;
     file.as_file().sync_all()?;
-    let _installed = file
-        .persist_noclobber(&path)
+    file.persist_noclobber(&path)
         .map_err(|error| error.error)
         .context("Cannot install the Show skill without replacing an existing file")?;
     Ok(path)

@@ -83,17 +83,10 @@ impl Canvas {
     }
 
     fn cover(&self) -> Option<Cover> {
-        match self {
-            Self::Hidden => None,
-            Self::Picking { display, .. } => Some(Cover {
-                display: *display,
-                picking: true,
-            }),
-            Self::Covering { display, .. } => Some(Cover {
-                display: *display,
-                picking: false,
-            }),
-        }
+        self.display().map(|display| Cover {
+            display,
+            picking: matches!(self, Self::Picking { .. }),
+        })
     }
 
     fn chosen(&self) -> Option<&Sender<Part>> {
