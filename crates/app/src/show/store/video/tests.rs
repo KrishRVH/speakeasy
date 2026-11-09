@@ -109,6 +109,34 @@ fn captions_clip_and_rebase_word_times() -> anyhow::Result<()> {
 }
 
 #[test]
+fn markup_like_narration_gets_a_style_reset_after_every_brace_and_backslash() -> anyhow::Result<()>
+{
+    let recording = Recording {
+        narration: Narration::Words(vec![Word {
+            span: Span::new(Moment::START, Moment::from_millis(500)),
+            text: CAPTION.into(),
+        }]),
+        ..Recording::default()
+    };
+    let timing = timeline::Timing {
+        start_ms: 0,
+        end_ms: 1000,
+        frames: 30,
+    };
+    let mut output = Vec::new();
+    timeline::captions(&recording, &timing, &mut output)?;
+    assert_eq!(
+        String::from_utf8(output)?,
+        concat!(
+            "1\n00:00:00,000 --> 00:00:00,500\n",
+            r"Q&A <demo> {{\r}\{\r}i1}back\{\r}slash \{\r}N \{\r}n {{\r}\{\r}r} &amp;.",
+            "\n\n"
+        )
+    );
+    Ok(())
+}
+
+#[test]
 fn refusal_and_cancellation_never_replace_an_existing_file() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let show = root.path().join("show");

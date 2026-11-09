@@ -11,6 +11,8 @@ use crate::show::store::{checkpoint::KeptAudio, movie::Inspected};
 
 pub(super) const FPS: u64 = 30;
 
+const MARKUP: [char; 2] = ['{', '\\'];
+
 pub(super) struct Timing {
     pub start_ms: u64,
     pub end_ms: u64,
@@ -152,9 +154,9 @@ pub(super) fn captions(
             timestamp(start.saturating_sub(timing.start_ms)),
             timestamp(end.saturating_sub(timing.start_ms))
         )?;
-        for character in text.chars() {
-            write!(out, "{character}")?;
-            if matches!(character, '{' | '\\') {
+        for run in text.split_inclusive(MARKUP) {
+            out.write_all(run.as_bytes())?;
+            if run.ends_with(MARKUP) {
                 out.write_all(br"{\r}")?;
             }
         }
