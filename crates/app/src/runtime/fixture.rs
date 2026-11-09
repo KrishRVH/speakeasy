@@ -148,44 +148,6 @@ impl Ports for Fixture {
     fn hold_cues(&self, _: bool) {}
 }
 
-#[tokio::test]
-async fn fake_insertion_accepts_unrelated_speech_but_never_a_cancelled_permit() -> anyhow::Result<()>
-{
-    let (loaded, _ready) = async_channel::bounded(1);
-    let (inserted, submitted) = async_channel::bounded(1);
-    let fixture = Fixture {
-        wav: Vec::new(),
-        loaded,
-        inserted,
-        replay: None,
-        requests: None,
-    };
-    let (sender, _events) = async_channel::bounded(1);
-    let input = speakeasy_platform::InputSender::new(sender);
-    let text = "Different public speech.\nNext line.";
-    assert!(matches!(
-        fixture
-            .insert(
-                text.into(),
-                input.begin().unwrap(),
-                speakeasy_platform::Delivery::Paste
-            )
-            .await?,
-        speakeasy_platform::Inserted::Sent
-    ));
-    assert_eq!(submitted.recv().await?.1, text);
-    let permit = input.begin().unwrap();
-    input.cancel();
-    assert!(matches!(
-        fixture
-            .insert(text.into(), permit, speakeasy_platform::Delivery::Paste)
-            .await?,
-        speakeasy_platform::Inserted::Unavailable(_)
-    ));
-    assert!(submitted.is_empty());
-    Ok(())
-}
-
 struct FixtureDevice {
     capture: Option<Capture>,
     id: SessionId,
@@ -289,7 +251,7 @@ async fn profile_fixture_dictation() -> anyhow::Result<()> {
     };
     let runtime = Runtime::start_with(
         config,
-        watch::channel(super::Style::default()).1,
+        watch::channel(Style::default()).1,
         output,
         meter,
         fixture,

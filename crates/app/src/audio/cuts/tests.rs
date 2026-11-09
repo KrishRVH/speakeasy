@@ -57,19 +57,25 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(32))]
     #[test]
     fn accepted_pieces_and_tail_equal_the_unchanged_final_pcm(
-        bursts in prop::collection::vec((1000_usize..30_000,0_usize..2000),1..7),
-        chunk in 1_usize..400, failures in 0_usize..5, cue in any::<bool>(),
+        bursts in prop::collection::vec((1000_usize..30_000, 0_usize..2000), 1..7),
+        chunk in 1_usize..400,
+        failures in 0_usize..5,
+        cue in any::<bool>(),
     ) {
         let samples = audio(&bursts);
-        let (wav,pieces,partition,minimum) = replay(&samples,chunk,failures,cue);
-        let mut baseline = Pcm16::with_reservation(samples.len(),samples.len());
-        for sample in samples { baseline.push(sample); }
+        let (wav, pieces, partition, minimum) = replay(&samples, chunk, failures, cue);
+        let mut baseline = Pcm16::with_reservation(samples.len(), samples.len());
+        for sample in samples {
+            baseline.push(sample);
+        }
         let mut gate = Audibility::new(1000);
-        if cue { gate.expect_cue(baseline.audio()); }
-        let sealed = baseline.seal(gate,1000).unwrap().unwrap();
-        prop_assert_eq!(&wav,&sealed.wav);
+        if cue {
+            gate.expect_cue(baseline.audio());
+        }
+        let sealed = baseline.seal(gate, 1000).unwrap().unwrap();
+        prop_assert_eq!(&wav, &sealed.wav);
         if partition.is_some() {
-            prop_assert_eq!(pieces,&wav[44..]);
+            prop_assert_eq!(pieces, &wav[44..]);
             prop_assert!(minimum >= 40_000);
         }
     }

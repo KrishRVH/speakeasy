@@ -150,7 +150,7 @@ impl Score {
 
 pub(super) fn words(text: &str) -> Vec<String> {
     text.split(|c: char| !c.is_alphanumeric())
-        .filter(|s| !s.is_empty())
+        .filter(|word| !word.is_empty())
         .map(str::to_lowercase)
         .collect()
 }
@@ -185,8 +185,8 @@ impl Metrics {
         let reports: Vec<_> = reports.collect();
         let mut latency: Vec<_> = reports
             .iter()
-            .filter(|r| r.speed == 1)
-            .filter_map(|r| r.stop_to_fake_insert_ms)
+            .filter(|report| report.speed == 1)
+            .filter_map(|report| report.stop_to_fake_insert_ms)
             .collect();
         latency.sort_by(f64::total_cmp);
         let percentile = |percent: usize| {
@@ -198,9 +198,9 @@ impl Metrics {
             clips: reports.len(),
             inserted_clips: reports
                 .iter()
-                .filter(|r| r.stop_to_fake_insert_ms.is_some())
+                .filter(|report| report.stop_to_fake_insert_ms.is_some())
                 .count(),
-            quality: Quality::new(reports.iter().map(|r| r.evaluation.score())),
+            quality: Quality::new(reports.iter().map(|report| report.evaluation.score())),
             realtime_insertions: latency.len(),
             stop_to_fake_insert_p50_ms: percentile(50),
             stop_to_fake_insert_p95_ms: percentile(95),

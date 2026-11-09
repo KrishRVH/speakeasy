@@ -81,7 +81,10 @@ fn mcp_stdio_roundtrips_both_protocols_through_the_console_process() -> anyhow::
     let manifest = json!({
         "version": 3, "duration": 1000, "surface": {"width": 2, "height": 2},
         "strokes": [], "pins": [], "actions": [], "narration": {"words": []},
-        "marks": [], "keyframes": [{"index": 1, "at": 500, "reason": "middle", "event": "public fixture", "marks": [0,0]}]
+        "marks": [],
+        "keyframes": [{
+            "index": 1, "at": 500, "reason": "middle", "event": "public fixture", "marks": [0, 0]
+        }]
     });
     fs::write(directory.join("show.json"), serde_json::to_vec(&manifest)?)?;
     let summary = "Public fixture: ü, \"quoted\" and a literal \\ path.\nSecond line.\n";
@@ -93,7 +96,11 @@ fn mcp_stdio_roundtrips_both_protocols_through_the_console_process() -> anyhow::
         let first = if modern {
             json!({"jsonrpc": "2.0", "id": 1, "method": "server/discover", "params": {}})
         } else {
-            json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "public-process-fixture", "version": "1"}}})
+            json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "public-process-fixture", "version": "1"}
+            }})
         };
         let mut requests = vec![first];
         if !modern {
@@ -101,7 +108,9 @@ fn mcp_stdio_roundtrips_both_protocols_through_the_console_process() -> anyhow::
         }
         requests.extend([
             json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}),
-            json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "show_read", "arguments": {"show": name}}}),
+            json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
+                "name": "show_read", "arguments": {"show": name}
+            }}),
         ]);
         if modern {
             for request in &mut requests {

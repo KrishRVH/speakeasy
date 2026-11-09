@@ -41,7 +41,7 @@ fn scoring_counts_deletions_and_weights_words_without_accelerated_latency() {
     assert_eq!(measured.realtime_insertions, 3);
     assert_eq!(measured.stop_to_fake_insert_p50_ms, Some(10.0));
     assert_eq!(measured.stop_to_fake_insert_p95_ms, Some(100.0));
-    let accelerated = Metrics::new(reports.iter().filter(|r| r.speed == 10));
+    let accelerated = Metrics::new(reports.iter().filter(|report| report.speed == 10));
     assert_eq!(accelerated.stop_to_fake_insert_p95_ms, None);
 }
 

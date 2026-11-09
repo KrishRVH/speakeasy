@@ -19,8 +19,8 @@ use crate::{
     testing::{PATIENCE, still_pending},
 };
 
-type Reply = oneshot::Sender<anyhow::Result<String>>;
-type TranscriptionJob = (String, Reply);
+type TranscriptReply = oneshot::Sender<anyhow::Result<String>>;
+type TranscriptionJob = (String, TranscriptReply);
 type OpenedCapture = (SessionId, Sender<CaptureEvent>);
 type OpenedShow = (SessionId, Scope, Sender<ShowEvent>);
 
@@ -177,13 +177,11 @@ impl FakePorts {
         .into_iter()
         .flatten()
         .map(|gate| gate.release.clone());
-        let insertion = self.insertion.iter().map(|gate| gate.release.clone());
-        CleanupGates(
-            releases
-                .chain(insertion)
-                .chain(self.show_recovery.iter().map(|gate| gate.release.clone()))
-                .collect(),
-        )
+        let permits = [&self.insertion, &self.show_recovery]
+            .into_iter()
+            .flatten()
+            .map(|gate| gate.release.clone());
+        CleanupGates(releases.chain(permits).collect())
     }
 }
 
@@ -760,7 +758,7 @@ impl<Host: Sync> Harness<Host> {
         receive(&self.captures).await
     }
 
-    async fn finish(&self) -> anyhow::Result<Reply> {
+    async fn finish(&self) -> anyhow::Result<TranscriptReply> {
         self.input(Input::Toggle);
         let (language, reply) = receive(&self.jobs).await?;
         assert_eq!(language, self.runtime.configuration.borrow().language);
@@ -822,7 +820,7 @@ async fn practice_text(
     Ok(text)
 }
 
-fn answer(reply: Reply, text: &str) -> anyhow::Result<()> {
+fn answer(reply: TranscriptReply, text: &str) -> anyhow::Result<()> {
     ensure!(
         reply.send(Ok(text.to_owned())).is_ok(),
         "The transcription request was abandoned"

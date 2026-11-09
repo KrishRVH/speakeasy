@@ -172,9 +172,15 @@ fn summaries_keep_per_tag_damage_and_silence_errors() {
         report(cleanup.evaluate("keep 5", "keep 5", &current)),
         report(cleanup.evaluate("", "phantom", &current)),
     ];
-    let clips: Vec<_> = ["numbers", "silence"].into_iter().map(|tag| serde_json::json!({
-        "id": tag, "tags": [tag], "wav": "unused", "reference": "unused", "wav_sha256": "unused", "reference_sha256": "unused",
-    })).collect();
+    let clips: Vec<_> = ["numbers", "silence"]
+        .into_iter()
+        .map(|tag| {
+            serde_json::json!({
+                "id": tag, "tags": [tag], "wav": "unused", "reference": "unused",
+                "wav_sha256": "unused", "reference_sha256": "unused",
+            })
+        })
+        .collect();
     let corpus: corpus::Corpus =
         serde_json::from_value(serde_json::json!({"clips": clips})).unwrap();
     let summary = serde_json::to_value(corpus.summarize(&reports)).unwrap();

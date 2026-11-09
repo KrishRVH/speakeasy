@@ -413,7 +413,7 @@ fn releases() -> impl Strategy<Value = Releases> {
     })
 }
 
-type Job = (Vec<u8>, Reply);
+type Job = (Vec<u8>, TranscriptReply);
 
 fn spoken_by(id: SessionId, pieces: u32) -> Sealed {
     Sealed {
@@ -431,7 +431,7 @@ fn transcript_of(wav: &[u8]) -> anyhow::Result<String> {
     clippy::let_underscore_must_use,
     reason = "An abandoned request has nobody left to answer"
 )]
-fn answer_unless_abandoned(reply: Reply, result: anyhow::Result<String>) {
+fn answer_unless_abandoned(reply: TranscriptReply, result: anyhow::Result<String>) {
     let _ = reply.send(result);
 }
 
@@ -445,7 +445,7 @@ struct Open {
     retiring: bool,
 }
 
-struct Ending {
+struct Finish {
     device: (Source, SessionId),
     answered: bool,
 }
@@ -455,12 +455,12 @@ struct Model {
     updates: watch::Receiver<Snapshot>,
     log: Receiver<Log>,
     jobs: Receiver<Job>,
-    replies: VecDeque<(String, Reply)>,
+    replies: VecDeque<(String, TranscriptReply)>,
     microphone: Option<(SessionId, Sender<CaptureEvent>)>,
     pieces: u32,
     screen: Option<(SessionId, Sender<ShowEvent>)>,
     open: HashMap<Source, Open>,
-    finished: Vec<Ending>,
+    finished: Vec<Finish>,
     worker: bool,
 }
 
@@ -637,7 +637,7 @@ impl Model {
                 },
                 Log::Finished(source, id) => {
                     if !self.finishing(source, id) {
-                        self.finished.push(Ending {
+                        self.finished.push(Finish {
                             device: (source, id),
                             answered: false,
                         });
@@ -741,7 +741,7 @@ impl Model {
             .find(|ending| ending.device == device)
         {
             Some(ending) => ending.answered = true,
-            None => self.finished.push(Ending {
+            None => self.finished.push(Finish {
                 device,
                 answered: true,
             }),
