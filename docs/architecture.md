@@ -434,21 +434,36 @@ module unless a test file is named.
   spreads remaining frames across the recording. Float-to-pixel conversions saturate outside their
   integer range and map NaN to zero.
 - **Show framing**: [framing.rs](../crates/show/src/framing.rs) crops screen-Show keyframes; window
-  and area Shows record `Framing::Chosen` in the checkpoint header and keep their frames whole. Each
-  keyframe's slice runs halfway to its neighbors. Its activity is the drawn ink, pins, and click
-  focus plus clicks and drags in the slice, joined by changed regions within 40 points of that
-  input; with no input, any changed region frames it. The crop pads the activity by 0.28 of the
-  screen's geometric mean side, grows to 320 by 200 points and to a quarter of the screen's width or
-  height, and stays whole at 85% coverage. A keyframe without activity takes the nearest earlier
-  crop, else the next. Neighbors whose union overlaps by 60% share one crop. Geometry is the only
-  input; no window titles or app names. [signature.rs](../crates/show/src/signature.rs) supplies
-  changed regions from pooled samples, ignoring pointer-sized changes. Composition grows a crop to
-  everything drawn, then [framing/content.rs](../crates/show/src/framing/content.rs) moves edges
-  outward, never inward, into empty gutters and past lines and borders that cross them, within 120
-  points or 60% of the crop. The cut covers whole pixels, and `show.json` records the exact part
-  cut. [framing/tests/corpus.rs](../crates/show/src/framing/tests/corpus.rs) scores the planner on
-  Scrawl's 13 simulated captures: every must-see target stays in frame and no capture scores below
-  its uncropped frames. The neighboring tests check crop invariants and snapping.
+  and area Shows record `Framing::Chosen` in the checkpoint header and keep their frames whole. A
+  screen Show's platform window watch records window layouts, front to back: bounds as fractions of
+  the screen, an opaque window and app number per Show, and a layer: normal, floating (always on
+  top), menu, or bar. The checkpoint journal keeps them for recovery; `show.json` never does. Each
+  keyframe's slice runs halfway to its neighbors. Its input is the drawn ink and pins plus clicks
+  and drags in the slice, and the click focus joins its extent. Each stroke, pin, click, and drag
+  casts one vote, shared by its points. A click or drag point votes for the window under it at its
+  time, ink and pins at the keyframe's time. A menu votes for its app's front window and passes
+  through to the window beneath when its app has none; a bar votes for the front normal window,
+  which floating windows never are. When one or two windows hold 80% of the votes, the keyframe
+  frames them where they stand at its time, with their app's menus and the app's windows in front
+  that overlap them, such as dialogs, and any input outside them, padded by 12 points; the frame is
+  fixed, so nothing beside a control falls out. When those windows cover 90% of the screen or more,
+  as a maximized window does, the crop covers only the input and the changes it caused, inside the
+  windows. With no input, the front window frames the keyframe, joined by the normal window with the
+  most changed area, each with its app's menus and overlapping windows in front. Without windows,
+  the input joins changed regions within 40 points of it; with no input, any changed region frames
+  the keyframe. That crop pads the activity by 0.28 of the screen's geometric mean side, grows to
+  320 by 200 points and to a quarter of the screen's width or height, and stays whole at 85%
+  coverage. A keyframe without activity takes the nearest earlier crop, else the next. Neighbors
+  whose union overlaps by 60% share one crop. Geometry is the only input; no window titles or app
+  names. [signature.rs](../crates/show/src/signature.rs) supplies changed regions from pooled
+  samples, ignoring pointer-sized changes. Composition grows a crop to everything drawn, then
+  [framing/content.rs](../crates/show/src/framing/content.rs) moves edges outward, never inward and
+  never past the planned window, into empty gutters and past lines and borders that cross them,
+  within 120 points or 60% of the crop. The cut covers whole pixels, and `show.json` records the
+  exact part cut. [framing/tests/corpus.rs](../crates/show/src/framing/tests/corpus.rs) scores the
+  planner on Hex's 13 simulated captures with and without their window layouts: every must-see
+  target stays in frame and no capture scores below its uncropped frames. The neighboring tests
+  check window attribution, crop invariants, and snapping.
 - **Show bundle format**: [bundle.rs](../crates/show/src/bundle.rs) and
   [describe.rs](../crates/show/src/describe.rs).
   [bundle/tests.rs](../crates/show/src/bundle/tests.rs) checks paginated sheets and pins

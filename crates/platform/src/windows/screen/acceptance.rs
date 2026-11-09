@@ -32,7 +32,7 @@ use windows_sys::{
                 SWP_NOZORDER, SetWindowDisplayAffinity, TranslateMessage, UnregisterClassW,
                 WDA_EXCLUDEFROMCAPTURE, WDA_MONITOR, WDA_NONE, WM_DPICHANGED, WM_NCCALCSIZE,
                 WM_PAINT, WNDCLASSW, WNDPROC, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-                WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+                WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_OVERLAPPEDWINDOW, WS_POPUP,
             },
         },
     },
@@ -42,10 +42,11 @@ use windows_sys::{
 
 use super::{
     exclusion::{affinity, excluded_for_good, top_level_windows},
+    layout::classify,
     readback::{BYTES_PER_PIXEL, created, texture_description},
     *,
 };
-use crate::{ScreenCapture, windows::native_window};
+use crate::{ScreenCapture, WindowLayer, windows::native_window};
 
 const PATTERN_WIDTH: i32 = 640;
 const PATTERN_HEIGHT: i32 = 400;
@@ -77,6 +78,7 @@ const PATTERN_CLASS: PCWSTR = w!("SpeakeasyCapturePattern");
 const OVERLAY_CLASS: PCWSTR = w!("SpeakeasyCaptureOverlay");
 const GPUI_POPUP_CLASS: PCWSTR = w!("SpeakeasyGpuiPopup");
 const SUBJECT_CLASS: PCWSTR = w!("SpeakeasyCaptureSubject");
+const LISTED_CLASS: PCWSTR = w!("SpeakeasyListedWindow");
 
 const GPUI_POPUP_STYLES: [u32; 2] = [0, WS_EX_TOOLWINDOW | WS_EX_TOPMOST];
 
@@ -249,6 +251,44 @@ fn a_window_capture_stops_once_its_window_closes_or_goes_off_screen() -> anyhow:
             "{departure:?} left capture at {stopped:?}"
         );
     }
+    Ok(())
+}
+
+#[test]
+#[ignore = "Shows owned windows briefly to sort them by layer; captures nothing and prints no other window"]
+fn window_layouts_sort_windows_by_layer_and_leave_ours_out() -> anyhow::Result<()> {
+    per_monitor_aware()?;
+    let display = display_under_pointer()?;
+    let gray = unsafe { CreateSolidBrush(0x0060_6060) };
+    let _class = Class::register(LISTED_CLASS, Some(DefWindowProcW), gray)?;
+    let bounds = Layout::centered_on(display.native).pattern;
+    let shown = |styles: [u32; 2]| -> anyhow::Result<Popup> {
+        let window = Popup::styled(LISTED_CLASS, styles, bounds)?;
+        window.show();
+        Ok(window)
+    };
+    let normal = shown([WS_OVERLAPPEDWINDOW, 0])?;
+    let menu = shown([WS_POPUP, WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE])?;
+    let floating = shown([WS_OVERLAPPEDWINDOW, WS_EX_TOPMOST | WS_EX_NOACTIVATE])?;
+    let through = shown([WS_POPUP, WS_EX_TRANSPARENT | WS_EX_NOACTIVATE])?;
+    let cloaked = shown([WS_OVERLAPPEDWINDOW, 0])?;
+    let hidden = Popup::styled(LISTED_CLASS, [WS_OVERLAPPEDWINDOW, 0], bounds)?;
+    dispatch_messages_for(COMPOSED);
+    let ours = [normal.0, menu.0, floating.0, through.0, cloaked.0, hidden.0];
+    let cloaked = Departure::Cloak.take_off_screen(cloaked)?;
+    assert_eq!(classify(normal.0), Some(WindowLayer::Normal));
+    assert_eq!(classify(menu.0), Some(WindowLayer::Menu));
+    assert_eq!(classify(floating.0), Some(WindowLayer::Floating));
+    assert_eq!(classify(through.0), None);
+    assert_eq!(cloaked.map(|window| classify(window.0)), Some(None));
+    assert_eq!(classify(hidden.0), None);
+    let listed = stack(display.native).context("Cannot list windows")?;
+    assert!(
+        listed.iter().all(|window| ours
+            .iter()
+            .all(|&own| u64::try_from(own.addr()).ok() != Some(window.window))),
+        "Speakeasy's windows stay out of window layouts"
+    );
     Ok(())
 }
 

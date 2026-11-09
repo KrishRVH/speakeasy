@@ -1,6 +1,6 @@
 pub(crate) mod video;
 
-use std::time::Duration;
+use std::{slice, time::Duration};
 
 use tiny_skia::{FillRule, Paint, Path, PathBuilder, PixmapMut, Transform};
 
@@ -83,6 +83,14 @@ impl<'a> Shown<'a> {
             focus,
             labels: own.iter().chain(recent_marks).collect(),
         }
+    }
+
+    pub(crate) fn gestures(&self) -> impl Iterator<Item = &[Point]> {
+        let pins = self.labels.iter().filter_map(|mark| match &mark.shape {
+            Shape::Pin { point } => Some(slice::from_ref(point)),
+            _ => None,
+        });
+        self.ink.iter().map(Vec::as_slice).chain(pins)
     }
 
     pub(crate) fn points(&self) -> impl Iterator<Item = Point> {

@@ -149,13 +149,11 @@ pub(super) struct Frame {
 }
 
 impl Frame {
-    pub(super) fn caption(&self, count: usize, whole_screen: bool) -> String {
-        let crop = match (self.cropped, whole_screen) {
-            (false, _) => "",
-            (true, false) => " · Cropped to where you worked",
-            (true, true) => {
-                " · Cropped to where you worked; All retained frames shows the whole screen"
-            },
+    pub(super) fn caption(&self, count: usize) -> String {
+        let crop = if self.cropped {
+            " · Cropped to where you worked"
+        } else {
+            ""
         };
         format!(
             "#{} of {count} · {} · {} ms{}{crop}",
@@ -164,6 +162,10 @@ impl Frame {
             self.at.as_millis(),
             self.marker
         )
+    }
+
+    pub(super) const fn offers_whole_screen(&self, mode: Mode, source_available: bool) -> bool {
+        self.cropped && source_available && matches!(mode, Mode::Keyframes)
     }
 
     pub(super) fn presentation(&self) -> std::time::Duration {

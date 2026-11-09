@@ -28,8 +28,9 @@ use objc2_core_graphics::{
     CGDirectDisplayID, CGDisplayBounds, CGError, CGEvent, CGEventSource, CGEventSourceStateID,
     CGGetDisplaysWithPoint, CGMainDisplayID, CGMouseButton, CGRectMakeWithDictionaryRepresentation,
     CGWindowID, CGWindowListCopyWindowInfo, CGWindowListOption, kCGColorSpaceSRGB,
-    kCGNullDirectDisplay, kCGNullWindowID, kCGWindowAlpha, kCGWindowBounds, kCGWindowIsOnscreen,
-    kCGWindowLayer, kCGWindowNumber, kCGWindowOwnerPID,
+    kCGDockWindowLevel, kCGMainMenuWindowLevel, kCGNormalWindowLevel, kCGNullDirectDisplay,
+    kCGNullWindowID, kCGPopUpMenuWindowLevel, kCGUtilityWindowLevel, kCGWindowAlpha,
+    kCGWindowBounds, kCGWindowIsOnscreen, kCGWindowLayer, kCGWindowNumber, kCGWindowOwnerPID,
 };
 use objc2_core_media::CMSampleBuffer;
 use objc2_core_video::{
@@ -48,7 +49,8 @@ use tokio::{runtime, time};
 use crate::{
     NativeWindow,
     screen::{
-        self, Frame, Part, PointerSample, Region, ScreenEvent, Target, WindowGone,
+        self, Frame, Listed, Part, PointerSample, Region, ScreenEvent, Target, WindowGone,
+        WindowLayer,
         geometry::{Bounds, fit, narrow, pack_rows, pixels},
     },
 };
@@ -133,6 +135,41 @@ pub(crate) fn window_under_pointer(display: Display) -> anyhow::Result<Option<(W
             let part = display.bounds.part_covered_by(front.bounds)?;
             Some((Window(front.number), part))
         }))
+}
+
+pub(crate) fn stack(display: Display) -> Option<Vec<Listed>> {
+    let options =
+        CGWindowListOption::OptionOnScreenOnly | CGWindowListOption::ExcludeDesktopElements;
+    let listed = windows(options, kCGNullWindowID)?;
+    Some(
+        listed
+            .into_iter()
+            .filter(|window| window.alpha > 0.0 && !super::is_own_process(window.owner))
+            .filter_map(|window| {
+                Some(Listed {
+                    window: u64::from(window.number),
+                    process: u64::try_from(window.owner).ok()?,
+                    layer: layer(window.layer)?,
+                    part: display.bounds.part_covered_by(window.bounds)?,
+                })
+            })
+            .collect(),
+    )
+}
+
+fn layer(level: i64) -> Option<WindowLayer> {
+    let level = i32::try_from(level).ok()?;
+    if level == kCGNormalWindowLevel {
+        Some(WindowLayer::Normal)
+    } else if (kCGNormalWindowLevel..=kCGUtilityWindowLevel).contains(&level) {
+        Some(WindowLayer::Floating)
+    } else if level == kCGPopUpMenuWindowLevel {
+        Some(WindowLayer::Menu)
+    } else if level == kCGDockWindowLevel || level == kCGMainMenuWindowLevel {
+        Some(WindowLayer::Bar)
+    } else {
+        None
+    }
 }
 
 enum Place {
@@ -591,5 +628,32 @@ pub(crate) fn set_overlay_visible(window: &NativeWindow, visible: bool) {
         window.orderFrontRegardless();
     } else {
         window.orderOut(None);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use objc2_core_graphics::{
+        kCGDesktopWindowLevel, kCGFloatingWindowLevel, kCGModalPanelWindowLevel,
+        kCGScreenSaverWindowLevel,
+    };
+
+    use super::*;
+
+    #[test]
+    fn window_levels_sort_into_ordinary_floating_menu_and_bar_layers() {
+        let sorted = |level: i32| layer(i64::from(level));
+        assert_eq!(sorted(kCGNormalWindowLevel), Some(WindowLayer::Normal));
+        assert_eq!(sorted(kCGFloatingWindowLevel), Some(WindowLayer::Floating));
+        assert_eq!(
+            sorted(kCGModalPanelWindowLevel),
+            Some(WindowLayer::Floating)
+        );
+        assert_eq!(sorted(kCGUtilityWindowLevel), Some(WindowLayer::Floating));
+        assert_eq!(sorted(kCGPopUpMenuWindowLevel), Some(WindowLayer::Menu));
+        assert_eq!(sorted(kCGMainMenuWindowLevel), Some(WindowLayer::Bar));
+        assert_eq!(sorted(kCGDockWindowLevel), Some(WindowLayer::Bar));
+        assert_eq!(sorted(kCGDesktopWindowLevel), None);
+        assert_eq!(sorted(kCGScreenSaverWindowLevel), None);
     }
 }

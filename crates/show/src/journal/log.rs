@@ -4,7 +4,8 @@ use super::{
     tiles,
 };
 use crate::{
-    Ending, Framing, Image, Moment, Point, Recording, Rect, Signature, Size, Span, Tracker,
+    Ending, Framing, Image, Layer, Layout, Moment, Point, Recording, Rect, Signature, Size, Span,
+    Tracker, Window, layout::MOST_WINDOWS,
 };
 
 const MAGIC: &[u8; 8] = b"SPKLOG03";
@@ -19,6 +20,9 @@ const ARRIVAL: u8 = 4;
 const END: u8 = 5;
 const POINTER_GAP: u8 = 6;
 const POINTER: u8 = 7;
+const WINDOWS: u8 = 8;
+
+const WINDOW_BYTES: usize = 2 * size_of::<u32>() + size_of::<u8>() + 4 * size_of::<f32>();
 
 const AUTOMATIC: u8 = 0;
 const CHOSEN: u8 = 1;
@@ -34,6 +38,7 @@ pub enum TakeEvent {
         pressed: bool,
     },
     PointerGap(Moment),
+    Windows(Layout),
     Pin(Span),
     Arrival {
         at: Moment,
@@ -52,6 +57,11 @@ impl TakeEvent {
             Self::Arrival {
                 entry: Some(entry), ..
             } => entry.bytes().saturating_add(EVENT_OVERHEAD),
+            Self::Windows(layout) => layout
+                .windows
+                .len()
+                .saturating_mul(WINDOW_BYTES)
+                .saturating_add(EVENT_OVERHEAD),
             _ => EVENT_OVERHEAD,
         }
     }
@@ -149,6 +159,11 @@ impl Take {
                 valid_time(*at)?;
                 self.latest = self.latest.max(*at);
                 self.tracker.gap(*at);
+            },
+            TakeEvent::Windows(layout) => {
+                valid_time(layout.at)?;
+                self.journal.arrange(layout)?;
+                self.latest = self.latest.max(layout.at);
             },
             TakeEvent::Pin(span) => {
                 valid_time(span.end())?;
@@ -299,6 +314,27 @@ impl Log {
                 data.extend_from_slice(&at.as_millis().to_le_bytes());
                 POINTER_GAP
             },
+            TakeEvent::Windows(layout) => {
+                require(layout.valid(), "checkpoint window layout is invalid")?;
+                data.extend_from_slice(&layout.at.as_millis().to_le_bytes());
+                put(&mut data, layout.windows.len())?;
+                for window in &layout.windows {
+                    data.extend_from_slice(&window.id.to_le_bytes());
+                    data.extend_from_slice(&window.app.to_le_bytes());
+                    data.push(match window.layer {
+                        Layer::Normal => 0,
+                        Layer::Menu => 1,
+                        Layer::Bar => 2,
+                        Layer::Floating => 3,
+                    });
+                    data.extend(
+                        <[f32; 4]>::from(window.bounds)
+                            .into_iter()
+                            .flat_map(f32::to_le_bytes),
+                    );
+                }
+                WINDOWS
+            },
         };
         require(
             data.len().saturating_add(RECORD_OVERHEAD) <= RECORD_LIMIT,
@@ -359,6 +395,7 @@ impl Log {
                 },
             },
             POINTER_GAP => TakeEvent::PointerGap(Moment::from_millis(data.wide()?)),
+            WINDOWS => TakeEvent::Windows(layout(&mut data)?),
             _ => return Err(SourceError("unsupported checkpoint event")),
         };
         require(data.0.is_empty(), "checkpoint record has trailing data")?;
@@ -446,6 +483,33 @@ fn put(bytes: &mut Vec<u8>, value: usize) -> Result<(), SourceError> {
         .map_err(|_out_of_range| SourceError("checkpoint count is too large"))?;
     bytes.extend_from_slice(&value.to_le_bytes());
     Ok(())
+}
+
+fn layout(data: &mut Cursor<'_>) -> Result<Layout, SourceError> {
+    let at = Moment::from_millis(data.wide()?);
+    let count = data.count(MOST_WINDOWS, WINDOW_BYTES)?;
+    let windows = (0..count)
+        .map(|_| {
+            let (id, app) = (data.word()?, data.word()?);
+            let layer = match data.take::<1>()? {
+                [0] => Layer::Normal,
+                [1] => Layer::Menu,
+                [2] => Layer::Bar,
+                [3] => Layer::Floating,
+                _ => return Err(SourceError("checkpoint window layer is unknown")),
+            };
+            let edges = [data.take()?, data.take()?, data.take()?, data.take()?];
+            Ok(Window {
+                id,
+                app,
+                layer,
+                bounds: Rect::from(edges.map(f32::from_le_bytes)),
+            })
+        })
+        .collect::<Result<_, SourceError>>()?;
+    let layout = Layout { at, windows };
+    require(layout.valid(), "checkpoint window layout is invalid")?;
+    Ok(layout)
 }
 
 fn boolean(data: &mut Cursor<'_>) -> Result<bool, SourceError> {

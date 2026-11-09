@@ -396,6 +396,7 @@ fn a_failed_frame_stops_loading_before_the_next_sheet() {
                 crop: None,
             })
             .collect(),
+        plans: Vec::new(),
     };
     let result = compose(
         Recording::default(),

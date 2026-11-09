@@ -1,7 +1,7 @@
 use std::{fmt, iter, mem, ops::Range, sync::Arc, time::Duration};
 
 use crate::{
-    Image, Moment, convert,
+    Image, Layout, Moment, convert,
     signature::{Sample, Signature},
 };
 
@@ -22,6 +22,7 @@ const TILE_OVERHEAD: usize = 32;
 
 pub struct Journal {
     samples: Vec<Sample>,
+    layouts: Vec<Layout>,
     segments: Vec<Segment>,
     bytes: usize,
     budget: usize,
@@ -75,6 +76,7 @@ impl fmt::Debug for Journal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Journal")
             .field("frames", &self.samples.len())
+            .field("layouts", &self.layouts.len())
             .field("bytes", &self.bytes)
             .field("budget", &self.budget)
             .field("stride", &self.stride)
@@ -92,6 +94,7 @@ impl Journal {
     pub(crate) const fn with_budget(budget: usize) -> Self {
         Self {
             samples: Vec::new(),
+            layouts: Vec::new(),
             segments: Vec::new(),
             bytes: 0,
             budget,
@@ -116,6 +119,11 @@ impl Journal {
     #[must_use]
     pub fn samples(&self) -> &[Sample] {
         &self.samples
+    }
+
+    #[must_use]
+    pub fn layouts(&self) -> &[Layout] {
+        &self.layouts
     }
 
     #[must_use]
@@ -228,6 +236,16 @@ impl Entry {
 }
 
 impl Journal {
+    fn arrange(&mut self, layout: &Layout) -> Result<(), SourceError> {
+        require(layout.valid(), "checkpoint window layout is invalid")?;
+        require(
+            self.layouts.last().is_none_or(|last| last.at <= layout.at),
+            "checkpoint window layouts are out of order",
+        )?;
+        self.layouts.push(layout.clone());
+        Ok(())
+    }
+
     fn restore(&mut self, at: Moment, entry: Option<&Entry>) -> Result<(), SourceError> {
         if let Some(entry) = entry {
             require(

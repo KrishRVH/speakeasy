@@ -86,24 +86,31 @@ fn the_more_menu_opens_once_per_press_and_keyboard_skips_unavailable_actions() {
 }
 
 #[tokio::test]
-async fn a_cropped_keyframe_says_so_and_where_the_whole_screen_is() -> anyhow::Result<()> {
+async fn a_cropped_keyframe_says_so_and_offers_the_whole_screen() -> anyhow::Result<()> {
     let root = Source::Demo.load()?;
     let (rows, _) = list(&root.directory)?;
     let detail = Detail::open(&rows[0].directory, library::Mode::Keyframes)?;
-    let cropped = detail.frames.iter().filter(|frame| frame.cropped).count();
-    assert!(cropped > 0 && cropped < detail.frames.len(), "{cropped}");
-    let note = "Cropped to where you worked";
-    for frame in &detail.frames {
-        let alone = frame.caption(detail.frames.len(), false);
-        let pointed = frame.caption(detail.frames.len(), true);
-        assert_eq!(alone.ends_with(note), frame.cropped, "{alone}");
+    assert!(detail.frames.iter().any(|frame| frame.cropped));
+    let uncropped = library::Frame {
+        number: 1,
+        at: speakeasy_show::Moment::START,
+        marker: String::new(),
+        cropped: false,
+        file: crate::show::preview::Content::Png("frames/frame-01.png".to_owned()),
+    };
+    for frame in detail.frames.iter().chain([&uncropped]) {
+        let caption = frame.caption(detail.frames.len());
         assert_eq!(
-            pointed.ends_with(&format!(
-                "{note}; All retained frames shows the whole screen"
-            )),
+            caption.ends_with(" · Cropped to where you worked"),
             frame.cropped,
-            "{pointed}"
+            "{caption}"
         );
+        assert_eq!(
+            frame.offers_whole_screen(library::Mode::Keyframes, true),
+            frame.cropped
+        );
+        assert!(!frame.offers_whole_screen(library::Mode::Keyframes, false));
+        assert!(!frame.offers_whole_screen(library::Mode::Source, true));
     }
     Ok(())
 }

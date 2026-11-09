@@ -12,6 +12,7 @@ mod geometry;
 mod image;
 pub mod ink;
 mod journal;
+mod layout;
 pub mod locate;
 mod marks;
 mod moment;
@@ -38,6 +39,7 @@ pub use crate::{
         Admission, Entry, Journal, Log, MAX_FRAME_EDGE, Source, SourceError, SourceFrame, Take,
         TakeEvent,
     },
+    layout::{Layer, Layout, MOST_WINDOWS, Window},
     marks::{Mark, Shape},
     moment::{Moment, Span},
     movie::{MovieError, MovieNormalization, MoviePrefix, MovieSample},

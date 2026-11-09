@@ -1,7 +1,7 @@
 use serde::Deserialize;
 
 use super::*;
-use crate::{InkPoint, Reason, Stroke, marks};
+use crate::{InkPoint, Layer, Reason, Stroke, Window, marks};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -15,7 +15,22 @@ struct Case {
     clicks: Vec<(f32, f32, u64)>,
     drags: Vec<(f32, f32, u64, f32, f32, u64)>,
     changes: Vec<Vec<Rect>>,
+    layouts: Vec<Arranged>,
     spans: Vec<Truth>,
+}
+
+#[derive(Deserialize)]
+struct Arranged {
+    at: u64,
+    windows: Vec<Placed>,
+}
+
+#[derive(Deserialize)]
+struct Placed {
+    id: u32,
+    app: u32,
+    layer: String,
+    bounds: Rect,
 }
 
 #[derive(Deserialize)]
@@ -81,7 +96,31 @@ impl Case {
         }
     }
 
-    fn plan(&self) -> Vec<Rect> {
+    fn layouts(&self) -> Vec<Layout> {
+        self.layouts
+            .iter()
+            .map(|arranged| Layout {
+                at: Moment::from_millis(arranged.at),
+                windows: arranged
+                    .windows
+                    .iter()
+                    .map(|placed| Window {
+                        id: placed.id,
+                        app: placed.app,
+                        layer: match placed.layer.as_str() {
+                            "Normal" => Layer::Normal,
+                            "Floating" => Layer::Floating,
+                            "Menu" => Layer::Menu,
+                            _ => Layer::Bar,
+                        },
+                        bounds: placed.bounds,
+                    })
+                    .collect(),
+            })
+            .collect()
+    }
+
+    fn plan(&self, layouts: &[Layout]) -> Vec<Rect> {
         let recording = self.recording();
         let marks = marks::group(&recording.strokes, &recording.pins, recording.surface);
         let owner = |mark: &Mark| {
@@ -129,9 +168,9 @@ impl Case {
                 }
             })
             .collect();
-        plan(&recording, &keyframes, &marks, &self.changes)
+        plan(&recording, &keyframes, &marks, &self.changes, layouts)
             .into_iter()
-            .map(|crop| crop.unwrap_or(Rect::UNIT))
+            .map(|plan| plan.map_or(Rect::UNIT, |plan| plan.crop))
             .collect()
     }
 
@@ -231,13 +270,17 @@ struct Score {
     uncovered: Vec<(usize, Rect)>,
 }
 
-#[test]
-fn crops_keep_each_keyframes_subject_and_never_lose_to_the_whole_screen() {
+fn corpus_mean(window_aware: bool) -> f32 {
     let cases = corpus();
     assert_eq!(cases.len(), 13);
     let mut total = 0.0;
     for case in &cases {
-        let crops = case.plan();
+        let layouts = if window_aware {
+            case.layouts()
+        } else {
+            Vec::new()
+        };
+        let crops = case.plan(&layouts);
         let score = case.score(&crops);
         let whole = case.score(&vec![Rect::UNIT; crops.len()]);
         assert!(
@@ -255,6 +298,17 @@ fn crops_keep_each_keyframes_subject_and_never_lose_to_the_whole_screen() {
         );
         total += score.value;
     }
-    let mean = total / cases.len() as f32;
-    assert!(mean >= 0.64, "corpus mean {mean:.3}");
+    total / cases.len() as f32
+}
+
+#[test]
+fn crops_keep_each_keyframes_subject_and_never_lose_to_the_whole_screen() {
+    let mean = corpus_mean(false);
+    assert!(mean >= 0.64, "corpus mean without windows {mean:.3}");
+}
+
+#[test]
+fn window_positions_frame_the_windows_the_user_worked_in() {
+    let mean = corpus_mean(true);
+    assert!(mean >= 0.8, "corpus mean with windows {mean:.3}");
 }

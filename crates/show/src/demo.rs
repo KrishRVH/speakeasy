@@ -6,8 +6,8 @@ use tiny_skia::{
 };
 
 use crate::{
-    Action, Bundle, Ending, Error, Image, InkPoint, Moment, Narration, Pin, Point, Recording, Rect,
-    SAMPLE_INTERVAL, Size, Span, Stroke, Typeface, Word, compose,
+    Action, Bundle, Ending, Error, Image, InkPoint, Layer, Layout, Moment, Narration, Pin, Point,
+    Recording, Rect, SAMPLE_INTERVAL, Size, Span, Stroke, Typeface, Window, Word, compose,
     draw::{paint, rounded},
     select,
     signature::{Sample, Signature},
@@ -102,7 +102,7 @@ impl Demo {
         .collect::<Result<Vec<_>, Error>>()?;
         let selection = select(&recording, &samples)
             .ok_or_else(Error::unsampled)?
-            .framed(&recording, &samples);
+            .framed(&recording, &samples, &layouts());
         compose(
             recording,
             selection,
@@ -110,6 +110,23 @@ impl Demo {
             &self.typeface,
         )
     }
+}
+
+fn layouts() -> Vec<Layout> {
+    vec![Layout {
+        at: Moment::START,
+        windows: vec![Window {
+            id: 0,
+            app: 0,
+            layer: Layer::Normal,
+            bounds: Rect {
+                left: WINDOW.left / SCENE.width,
+                top: WINDOW.top / SCENE.height,
+                right: WINDOW.right / SCENE.width,
+                bottom: WINDOW.bottom / SCENE.height,
+            },
+        }],
+    }]
 }
 
 struct Scene<'a> {
@@ -466,7 +483,7 @@ Contact sheet: `{}`
 - #4 (0:12) [③ pinned, clicked] “Now I click reduce motion and nothing happens.”
 - #5 (0:17) [dragged right] “Dragging the text size slider works, though.”
 Full-size keyframes: `{}` to `{}`. Timeline: `{}`.
-Frames #1, #2, #4, and #5 are cropped to the area the user worked in; the timeline gives each crop as a fraction of the screen.
+Every keyframe is cropped to the area the user worked in; the timeline gives each crop as a fraction of the screen.
 ",
                 directory.display(),
                 directory.join("contact-sheet.png").display(),

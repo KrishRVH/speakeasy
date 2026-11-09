@@ -601,7 +601,7 @@ impl Review {
             .detail
             .as_ref()
             .map_or(&[][..], |detail| detail.frames.as_slice());
-        let whole_screen = self
+        let source_available = self
             .detail
             .as_ref()
             .is_some_and(|detail| detail.source_available);
@@ -611,9 +611,12 @@ impl Review {
         } else {
             frames.get(index).map_or_else(
                 || "No saved frame available".into(),
-                |frame| frame.caption(count, whole_screen),
+                |frame| frame.caption(count),
             )
         };
+        let whole_screen = frames
+            .get(index)
+            .is_some_and(|frame| frame.offers_whole_screen(self.mode, source_available));
         div()
             .flex()
             .flex_col()
@@ -625,6 +628,16 @@ impl Review {
                     .items_center()
                     .gap(px(4.0))
                     .child(div().flex_1().min_w(px(0.0)).child(caption))
+                    .when(whole_screen, |row| {
+                        row.child(command(
+                            kit,
+                            Action::Mode(Mode::Source),
+                            "Whole screen",
+                            Weight::Quiet,
+                            true,
+                            cx,
+                        ))
+                    })
                     .child(kit.icon_button(
                         id(Action::Previous),
                         icons::CHEVRON_LEFT,

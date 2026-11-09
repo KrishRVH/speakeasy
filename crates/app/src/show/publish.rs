@@ -260,7 +260,7 @@ fn persist(
     let voiced = recording.narration_lost != Some(NarrationLoss::AudioSilent);
     let selection = select(&recording, journal.samples()).context(NOTHING_RECORDED)?;
     let selection = match framing {
-        Framing::Automatic => selection.framed(&recording, journal.samples()),
+        Framing::Automatic => selection.framed(&recording, journal.samples(), journal.layouts()),
         Framing::Chosen => selection,
     };
     let typeface = Typeface::parse(crate::BRAND_FONT_FILE)?;

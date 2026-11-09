@@ -51,8 +51,8 @@ pub use self::{
     permissions::{Permission, Permissions},
     process::ProcessGroup,
     screen::{
-        Display, Frame, Part, PointerMonitor, PointerSample, Scope, ScreenCapture, ScreenEvent,
-        Target, WindowGone,
+        Display, Frame, Part, PlacedWindow, PointerMonitor, PointerSample, Scope, ScreenCapture,
+        ScreenEvent, Target, WindowGone, WindowLayer, WindowLayout, WindowWatch,
     },
 };
 

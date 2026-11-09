@@ -1,6 +1,7 @@
 use crate::movie::recording as movie;
 
 mod exclusion;
+mod layout;
 mod readback;
 
 use std::{
@@ -63,6 +64,7 @@ use windows_sys::Win32::{
     },
 };
 
+pub(crate) use self::layout::stack;
 use self::{
     exclusion::{Exclusions, exclude_always},
     readback::{Readback, device_for},

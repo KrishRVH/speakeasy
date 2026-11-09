@@ -207,9 +207,8 @@ fn a_demo_is_inspectable_and_output_never_contains_its_narration() -> anyhow::Re
             );
             for frame in value["frames"].as_array().unwrap() {
                 assert!(PathBuf::from(frame["path"].as_str().unwrap()).is_file());
+                assert_eq!(frame["crop"].as_array().map(Vec::len), Some(4));
             }
-            assert_eq!(value["frames"][0]["crop"].as_array().map(Vec::len), Some(4));
-            assert!(value["frames"][2].get("crop").is_none());
         }
     }
     assert_eq!(fs::read(summary)?, edited);

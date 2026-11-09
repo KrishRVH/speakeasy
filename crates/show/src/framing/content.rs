@@ -42,7 +42,7 @@ impl Content {
         Self { lines, columns }
     }
 
-    pub(super) fn snap(&self, crop: Rect, screen: Screen) -> Rect {
+    pub(super) fn snap(&self, crop: Rect, screen: Screen, within: Rect) -> Rect {
         let (columns, rows) = (self.columns, self.lines.len());
         let gutter = convert::count_ceil(GUTTER / CELL);
         let across = reach(crop.width() * screen.width);
@@ -62,22 +62,30 @@ impl Content {
             across,
             column_empty,
         );
-        let crop = Rect {
-            left: at(left, columns, crop.left),
-            right: at(right, columns, crop.right),
-            ..crop
-        };
+        let crop = bounded(
+            crop,
+            Rect {
+                left: at(left, columns, crop.left),
+                right: at(right, columns, crop.right),
+                ..crop
+            },
+            within,
+        );
         let wide = span(crop.left, crop.right, columns);
         let row_empty = |row: usize| {
             let line = self.lines.get(row).and_then(|line| line.get(wide.clone()));
             sparse(line.unwrap_or_default().iter().copied(), wide.len())
         };
         let (top, bottom) = gutters(tall, rows, 1, down, row_empty);
-        let crop = Rect {
-            top: at(top, rows, crop.top),
-            bottom: at(bottom, rows, crop.bottom),
-            ..crop
-        };
+        let crop = bounded(
+            crop,
+            Rect {
+                top: at(top, rows, crop.top),
+                bottom: at(bottom, rows, crop.bottom),
+                ..crop
+            },
+            within,
+        );
         let lines = self
             .lines
             .get(span(crop.top, crop.bottom, rows))
@@ -89,11 +97,15 @@ impl Content {
             gutter,
             across,
         );
-        let crop = Rect {
-            left: at(left, columns, crop.left),
-            right: at(right, columns, crop.right),
-            ..crop
-        };
+        let crop = bounded(
+            crop,
+            Rect {
+                left: at(left, columns, crop.left),
+                right: at(right, columns, crop.right),
+                ..crop
+            },
+            within,
+        );
         let verticals: Vec<Vec<bool>> = span(crop.left, crop.right, columns)
             .map(|column| {
                 self.lines
@@ -109,11 +121,24 @@ impl Content {
             gutter,
             down,
         );
-        Rect {
-            top: at(top, rows, crop.top),
-            bottom: at(bottom, rows, crop.bottom),
-            ..crop
-        }
+        bounded(
+            crop,
+            Rect {
+                top: at(top, rows, crop.top),
+                bottom: at(bottom, rows, crop.bottom),
+                ..crop
+            },
+            within,
+        )
+    }
+}
+
+fn bounded(crop: Rect, moved: Rect, within: Rect) -> Rect {
+    Rect {
+        left: moved.left.max(within.left).min(crop.left),
+        top: moved.top.max(within.top).min(crop.top),
+        right: moved.right.min(within.right).max(crop.right),
+        bottom: moved.bottom.min(within.bottom).max(crop.bottom),
     }
 }
 

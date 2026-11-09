@@ -7,11 +7,11 @@ use anyhow::anyhow;
 use async_channel::{Receiver, Sender};
 use speakeasy_platform::{
     Display, Frame, OwnedThread, Part, PointerMonitor, PointerSample, Scope, ScreenCapture,
-    ScreenEvent, Taps, Target, WindowGone,
+    ScreenEvent, Taps, Target, WindowGone, WindowLayer, WindowLayout, WindowWatch,
 };
 use speakeasy_show::{
-    Ending, Framing, Image, MAX_FRAME_EDGE, Mark, Moment, Point, SAMPLE_INTERVAL, Size, Span,
-    TakeEvent,
+    Ending, Framing, Image, Layer, Layout, MAX_FRAME_EDGE, MOST_WINDOWS, Mark, Moment, Point, Rect,
+    SAMPLE_INTERVAL, Size, Span, TakeEvent, Window,
 };
 use tokio::sync::watch;
 
@@ -28,6 +28,8 @@ const FIRST_FRAME_WAIT: Duration = Duration::from_secs(3);
 const FRAME_LANE: usize = 2;
 
 const POINTER_LANE: usize = 256;
+
+const LAYOUT_LANE: usize = 4;
 
 const PIN_LANE: usize = 8;
 
@@ -226,10 +228,18 @@ fn record(
                 ScreenCapture::start(target, SAMPLE_INTERVAL, MAX_FRAME_EDGE, frame_lane, movie)?;
             let (sample_lane, samples) = async_channel::bounded(POINTER_LANE);
             let pointer = PointerMonitor::start(target, sample_lane, shortcut)?;
+            let (layout_lane, layouts) = async_channel::bounded(LAYOUT_LANE);
+            let watch = match framing {
+                Framing::Automatic => {
+                    Some(WindowWatch::start(display, SAMPLE_INTERVAL, layout_lane)?)
+                },
+                Framing::Chosen => None,
+            };
             let sources = Sources {
                 frames,
                 samples,
-                stop: stop(&capture, &pointer),
+                layouts,
+                stop: stop(&capture, &pointer, watch.as_ref()),
             };
             take.log = log;
             let footage = take.run(lanes, sources).await?;
@@ -288,6 +298,7 @@ async fn pick(choice: &Receiver<Part>, lanes: &Lanes<'_>) -> Picked {
 struct Sources<S> {
     frames: Receiver<ScreenEvent>,
     samples: Receiver<PointerSample>,
+    layouts: Receiver<WindowLayout>,
     stop: S,
 }
 
@@ -333,6 +344,7 @@ impl<'a> Take<'a> {
         let Sources {
             frames,
             samples,
+            layouts,
             stop,
         } = sources;
 
@@ -394,6 +406,7 @@ impl<'a> Take<'a> {
                         break Some(Err(error));
                     }
                 },
+                Ok(layout) = layouts.recv() => self.arrange(layout),
             }
         };
         stop.await;
@@ -529,6 +542,36 @@ impl<'a> Take<'a> {
         Ok(())
     }
 
+    fn arrange(&mut self, layout: WindowLayout) {
+        let event = TakeEvent::Windows(Layout {
+            at: self.moment(layout.at),
+            windows: layout
+                .windows
+                .into_iter()
+                .take(MOST_WINDOWS)
+                .map(|placed| Window {
+                    id: placed.id,
+                    app: placed.app,
+                    layer: match placed.layer {
+                        WindowLayer::Normal => Layer::Normal,
+                        WindowLayer::Floating => Layer::Floating,
+                        WindowLayer::Menu => Layer::Menu,
+                        WindowLayer::Bar => Layer::Bar,
+                    },
+                    bounds: Rect::from([
+                        placed.part.left,
+                        placed.part.top,
+                        placed.part.right,
+                        placed.part.bottom,
+                    ]),
+                })
+                .collect(),
+        });
+        if self.state.apply(&event).is_ok() {
+            self.log(event);
+        }
+    }
+
     fn pin(&mut self, taps: Taps) -> anyhow::Result<()> {
         let taps = Span::new(self.moment(taps.pressed), self.moment(taps.released));
         let before = self.state.tracker().marks().len();
@@ -596,10 +639,18 @@ fn first_frame_deadline() -> tokio::time::Instant {
     now.checked_add(FIRST_FRAME_WAIT).unwrap_or(now)
 }
 
-async fn stop(capture: &ScreenCapture, pointer: &PointerMonitor) {
+async fn stop(capture: &ScreenCapture, pointer: &PointerMonitor, watch: Option<&WindowWatch>) {
     capture.request_stop();
     pointer.request_stop();
-    tokio::join!(capture.stopped(), pointer.stopped());
+    let watched = watch.map(|watch| {
+        watch.request_stop();
+        watch.stopped()
+    });
+    tokio::join!(capture.stopped(), pointer.stopped(), async {
+        if let Some(watched) = watched {
+            watched.await;
+        }
+    });
 }
 
 #[cfg(test)]
@@ -669,6 +720,10 @@ mod native_tests {
             moments
                 .last()
                 .is_some_and(|last| *last <= footage.recording.duration)
+        );
+        assert!(
+            !footage.journal.layouts().is_empty(),
+            "A screen Show records where the windows were"
         );
         let frame = footage
             .journal

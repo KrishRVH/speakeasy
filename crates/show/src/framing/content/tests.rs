@@ -32,7 +32,11 @@ fn snapped(text: &[[u32; 4]], crop: [f32; 4]) -> Rect {
 }
 
 fn framed(text: &[[u32; 4]], outlines: &[[u32; 4]], crop: [f32; 4]) -> Rect {
-    Content::of(&page(text, outlines), SCREEN).snap(Rect::from(crop), Screen::of(SCREEN))
+    Content::of(&page(text, outlines), SCREEN).snap(
+        Rect::from(crop),
+        Screen::of(SCREEN),
+        Rect::UNIT,
+    )
 }
 
 #[test]
@@ -88,4 +92,13 @@ fn a_line_running_to_the_screen_edge_takes_the_crop_edge_with_it() {
     assert_eq!(crop.left, 0.0, "{crop:?}");
     let crop = snapped(&[[800, 300, 1_436, 312]], [0.3, 0.2, 0.9, 0.6]);
     assert_eq!(crop.right, 1.0, "{crop:?}");
+}
+
+#[test]
+fn snapping_stops_at_the_window_it_frames() {
+    let label = [400, 300, 700, 312];
+    let crop = Rect::from([0.4, 0.2, 0.7, 0.6]);
+    let window = Rect::from([0.35, 0.1, 0.8, 0.7]);
+    let snapped = Content::of(&page(&[label], &[]), SCREEN).snap(crop, Screen::of(SCREEN), window);
+    assert_eq!(snapped, Rect { left: 0.35, ..crop });
 }

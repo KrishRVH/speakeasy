@@ -2,6 +2,7 @@
 pub(crate) mod geometry;
 
 use std::{
+    collections::HashMap,
     fmt, thread,
     time::{Duration, Instant},
 };
@@ -17,6 +18,8 @@ use crate::windows::screen as native;
 use crate::{NativeWindow, StoppableThread};
 
 const POINTER_INTERVAL: Duration = Duration::from_millis(8);
+
+const WINDOW_STEP: Duration = Duration::from_millis(10);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scope {
@@ -332,6 +335,112 @@ impl Samples {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowLayer {
+    Normal,
+    Floating,
+    Menu,
+    Bar,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlacedWindow {
+    pub id: u32,
+    pub app: u32,
+    pub layer: WindowLayer,
+    pub part: Part,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct WindowLayout {
+    pub at: Instant,
+    pub windows: Vec<PlacedWindow>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Listed {
+    pub(crate) window: u64,
+    pub(crate) process: u64,
+    pub(crate) layer: WindowLayer,
+    pub(crate) part: Part,
+}
+
+#[derive(Debug)]
+pub struct WindowWatch {
+    thread: StoppableThread,
+}
+
+impl WindowWatch {
+    pub fn start(
+        display: Display,
+        interval: Duration,
+        layouts: Sender<WindowLayout>,
+    ) -> anyhow::Result<Self> {
+        let thread = StoppableThread::spawn("windows", move |stopping| {
+            let mut watcher = Watcher::default();
+            let mut due = Instant::now();
+            while !stopping.is_closed() && !layouts.is_closed() {
+                let now = Instant::now();
+                if now >= due {
+                    due = now.checked_add(interval).unwrap_or(now);
+                    watcher.deliver(native::stack(display.native), now, &layouts);
+                }
+                thread::sleep(WINDOW_STEP);
+            }
+        })?;
+        Ok(Self { thread })
+    }
+
+    pub fn request_stop(&self) {
+        self.thread.request_stop();
+    }
+
+    pub fn stopped(&self) -> impl Future<Output = ()> + Send + use<> {
+        self.thread.stopped()
+    }
+}
+
+#[derive(Default)]
+struct Watcher {
+    windows: HashMap<u64, u32>,
+    apps: HashMap<u64, u32>,
+    sent: Option<Vec<PlacedWindow>>,
+}
+
+impl Watcher {
+    fn deliver(
+        &mut self,
+        listed: Option<Vec<Listed>>,
+        at: Instant,
+        layouts: &Sender<WindowLayout>,
+    ) {
+        let Some(layout) = listed.and_then(|listed| self.observe(at, listed)) else {
+            return;
+        };
+        if layouts.try_send(layout.clone()).is_ok() {
+            self.sent = Some(layout.windows);
+        }
+    }
+
+    fn observe(&mut self, at: Instant, listed: Vec<Listed>) -> Option<WindowLayout> {
+        let windows: Vec<PlacedWindow> = listed
+            .into_iter()
+            .map(|listed| PlacedWindow {
+                id: opaque(&mut self.windows, listed.window),
+                app: opaque(&mut self.apps, listed.process),
+                layer: listed.layer,
+                part: listed.part,
+            })
+            .collect();
+        (self.sent.as_ref() != Some(&windows)).then_some(WindowLayout { at, windows })
+    }
+}
+
+fn opaque(names: &mut HashMap<u64, u32>, native: u64) -> u32 {
+    let next = u32::try_from(names.len()).unwrap_or(u32::MAX);
+    *names.entry(native).or_insert(next)
+}
+
 impl NativeWindow {
     pub fn configure_overlay(&self, display: Display) -> anyhow::Result<()> {
         native::configure_overlay(self, display.native)
@@ -353,7 +462,7 @@ mod unsupported {
     use anyhow::bail;
     use async_channel::{Receiver, Sender};
 
-    use super::{Part, PointerSample, ScreenEvent, Target};
+    use super::{Listed, Part, PointerSample, ScreenEvent, Target};
     use crate::{MovieTarget, NativeWindow, linux::SHOWS_UNSUPPORTED};
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -381,6 +490,10 @@ mod unsupported {
     }
 
     pub(super) const fn pointer(_: Target, _: crate::MacShortcut) -> Option<PointerSample> {
+        None
+    }
+
+    pub(super) const fn stack(_: Display) -> Option<Vec<Listed>> {
         None
     }
 
@@ -488,5 +601,58 @@ mod tests {
             format!("{frame:?}")
         };
         assert_eq!(shown(0x00), shown(0xFF));
+    }
+
+    #[test]
+    fn window_layouts_carry_opaque_names_and_only_their_changes() {
+        let listed = |window, process, left| Listed {
+            window,
+            process,
+            layer: WindowLayer::Normal,
+            part: Part::between([left, 0.1], [left + 0.3, 0.6]),
+        };
+        let (lane, layouts) = async_channel::bounded(1);
+        let mut watcher = Watcher::default();
+        let at = Instant::now();
+        let first = vec![listed(0x5E2, 4_242, 0.1), listed(0x7A0, 4_242, 0.5)];
+        watcher.deliver(Some(first.clone()), at, &lane);
+        let shown = layouts.try_recv().unwrap();
+        let names: Vec<(u32, u32)> = shown
+            .windows
+            .iter()
+            .map(|window| (window.id, window.app))
+            .collect();
+        assert_eq!(names, [(0, 0), (1, 0)]);
+        watcher.deliver(Some(first), at, &lane);
+        assert!(
+            layouts.try_recv().is_err(),
+            "An unchanged layout is sent once"
+        );
+
+        let raised = vec![
+            listed(0x7A0, 4_242, 0.5),
+            listed(0x900, 77, 0.2),
+            listed(0x5E2, 4_242, 0.1),
+        ];
+        lane.try_send(shown).unwrap();
+        watcher.deliver(Some(raised.clone()), at, &lane);
+        assert_eq!(
+            layouts.try_recv().unwrap().windows.len(),
+            2,
+            "A full lane drops the change"
+        );
+        watcher.deliver(Some(raised), at, &lane);
+        let names: Vec<(u32, u32)> = layouts
+            .try_recv()
+            .unwrap()
+            .windows
+            .iter()
+            .map(|window| (window.id, window.app))
+            .collect();
+        assert_eq!(
+            names,
+            [(1, 0), (2, 1), (0, 0)],
+            "and it arrives once there is room"
+        );
     }
 }

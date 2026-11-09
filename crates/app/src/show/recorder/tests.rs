@@ -13,6 +13,7 @@ struct Feed {
     pins: Sender<Taps>,
     frames: Sender<ScreenEvent>,
     samples: Sender<PointerSample>,
+    layouts: Sender<WindowLayout>,
     started: Instant,
 }
 
@@ -49,6 +50,14 @@ impl Feed {
         self.samples.send(sample).await.unwrap();
     }
 
+    async fn windows(&self, millis: u64, windows: Vec<speakeasy_platform::PlacedWindow>) {
+        let layout = WindowLayout {
+            at: self.at(millis),
+            windows,
+        };
+        self.layouts.send(layout).await.unwrap();
+    }
+
     async fn taps(&self, pressed: u64, released: u64) {
         let taps = Taps {
             pressed: self.at(pressed),
@@ -72,6 +81,7 @@ async fn record_with(
 ) -> (anyhow::Result<Option<Footage>>, Duration) {
     let (frame_lane, frames) = async_channel::bounded(FRAME_LANE);
     let (sample_lane, samples) = async_channel::bounded(POINTER_LANE);
+    let (layout_lane, layouts) = async_channel::bounded(LAYOUT_LANE);
     let (canvas, _) = watch::channel(Canvas::default());
     let (finish, pins, lanes) = lanes(&canvas);
     let start = tokio::time::Instant::now();
@@ -80,11 +90,13 @@ async fn record_with(
         pins,
         frames: frame_lane,
         samples: sample_lane,
+        layouts: layout_lane,
         started: start.into_std(),
     };
     let sources = Sources {
         frames,
         samples,
+        layouts,
         stop: async { tokio::time::sleep(TEARDOWN).await },
     };
     let mut take = Take::new(
@@ -120,6 +132,47 @@ fn failure<T>(recorded: anyhow::Result<T>) -> Option<String> {
 
 async fn wait(millis: u64) {
     tokio::time::sleep(Duration::from_millis(millis)).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn window_layouts_join_the_take_on_its_timeline() -> anyhow::Result<()> {
+    let placed = |id, layer, part| speakeasy_platform::PlacedWindow {
+        id,
+        app: 3,
+        layer,
+        part,
+    };
+    let menu = Part::between([0.1, 0.0], [0.3, 0.4]);
+    let editor = Part::between([0.1, 0.1], [0.6, 0.7]);
+    let (recorded, _) = record(async |feed| {
+        feed.frame(0).await;
+        let windows = vec![
+            placed(1, WindowLayer::Menu, menu),
+            placed(2, WindowLayer::Normal, editor),
+        ];
+        feed.windows(150, windows).await;
+        wait(400).await;
+        feed.finish().await;
+    })
+    .await;
+    let footage = recorded?.context("Finished, not cancelled")?;
+    let window = |id, layer, part: Part| Window {
+        id,
+        app: 3,
+        layer,
+        bounds: Rect::from([part.left, part.top, part.right, part.bottom]),
+    };
+    assert_eq!(
+        footage.journal.layouts(),
+        [Layout {
+            at: Moment::from_millis(150),
+            windows: vec![
+                window(1, Layer::Menu, menu),
+                window(2, Layer::Normal, editor)
+            ],
+        }]
+    );
+    Ok(())
 }
 
 #[tokio::test(start_paused = true)]

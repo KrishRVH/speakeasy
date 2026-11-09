@@ -33,14 +33,19 @@ fn near(one: Rect, other: Rect) -> bool {
 fn a_cropped_frame_is_cut_to_the_crop_it_records_and_keeps_everything_drawn() {
     let chosen = Rect::from([0.1, 0.1, 0.5, 0.5]);
     let click = Point::new(0.62, 0.3);
-    let mut clicked = keyframe(2, Some(chosen));
+    let mut clicked = keyframe(2, None);
     clicked.action = Some(Action::Click {
         at: clicked.at,
         point: click,
     });
+    let planned = Some(Plan {
+        crop: chosen,
+        within: Rect::UNIT,
+    });
     let selection = Selection {
         marks: Vec::new(),
-        keyframes: vec![keyframe(1, Some(chosen)), clicked, keyframe(3, None)],
+        keyframes: vec![keyframe(1, None), clicked, keyframe(3, None)],
+        plans: vec![planned, planned],
     };
     let recording = Recording {
         duration: Moment::from_millis(4_000),

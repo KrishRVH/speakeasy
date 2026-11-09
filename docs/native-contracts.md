@@ -145,8 +145,8 @@ plus content checks bound clipboard replacement races.
 ## Capture buffers, geometry and privacy
 
 Owners: `crates/platform/src/screen.rs`, `screen/geometry.rs`, `windows/screen.rs`,
-`windows/screen/exclusion.rs`, `windows/screen/readback.rs`, `macos/screen.rs`,
-`macos/screen/stream.rs`, `macos/screen/stream/output.rs`; owned-window checks in
+`windows/screen/exclusion.rs`, `windows/screen/layout.rs`, `windows/screen/readback.rs`,
+`macos/screen.rs`, `macos/screen/stream.rs`, `macos/screen/stream/output.rs`; owned-window checks in
 `windows/screen/acceptance.rs` and `windows/screen/acceptance/geometry.rs`.
 
 Windows capture runs on one owner thread with a free-threaded frame pool. The process-lifetime MTA
@@ -173,6 +173,15 @@ stop errors do not. Failure notification precedes potentially blocking cleanup. 
 borrowed only during the call; copied bounded BGRA leaves the callback. Native image buffers stay
 locked through reads. The stream's bounded host-clock calibration and display-geometry checks
 precede frame admission.
+
+A screen Show's window watch lists windows on its own stoppable thread every frame interval and
+sends only changed layouts over a bounded lane, dropping a change the lane cannot take until the
+next interval. It reads bounds, a layer class, and the owning process; never titles, app names, or
+pixels. Windows marks topmost windows other than menus and popups floating; Mac marks levels above
+normal and up to utility floating. Window and process identifiers become small per-watch numbers
+before they leave the thread. Windows walks `EnumWindows` front to back and reads DWM extended frame
+bounds for visible, uncloaked, not minimized windows that accept clicks; Mac reads on-screen
+`CGWindowListCopyWindowInfo` entries. Both leave out Speakeasy's process, as frames do.
 
 Owned-window acceptance creates and destroys its window classes and HWNDs on their owning thread.
 Monitor enumeration writes only to the local vector that remains live throughout the synchronous

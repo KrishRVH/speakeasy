@@ -10,8 +10,8 @@
   Scrawl's test fixtures, and `src/marks/tests.rs` reads strokes drawn in its captures.
 - [Hex](https://github.com/anomalyco/hex), Copyright (c) 2026 Christopher Langton: the activity crop
   planner, edge snapping, and crop scoring from its capture crate, in `src/framing.rs` and
-  `src/framing/`. `src/framing/tests/scrawl-corpus.json` converts its simulated autocrop captures,
-  which Scrawl's corpus script generates.
+  `src/framing/`. `src/framing/tests/scrawl-corpus.json` converts its simulated autocrop captures
+  and their window snapshots, which Scrawl's corpus script generates.
 - [perfect-freehand](https://github.com/steveruizok/perfect-freehand) 1.2.2, Copyright (c) 2021
   Stephen Ruiz Ltd: the stroke outline in `src/ink.rs`.
 

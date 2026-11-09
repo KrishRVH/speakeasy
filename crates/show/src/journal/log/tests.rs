@@ -264,3 +264,61 @@ fn encoding_rejects_a_tile_that_a_reader_cannot_accept() {
     entry.tiles[0].1 = vec![0; 4_096].into();
     assert!(Log::encode(&event).is_err());
 }
+
+#[test]
+fn a_checkpoint_restores_window_layouts_and_refuses_impossible_ones() {
+    let window = |id: u32, layer, bounds: [f32; 4]| Window {
+        id,
+        app: id % 2,
+        layer,
+        bounds: Rect::from(bounds),
+    };
+    let first = Layout {
+        at: Moment::from_millis(100),
+        windows: vec![
+            window(1, Layer::Menu, [0.1, 0.0, 0.3, 0.4]),
+            window(2, Layer::Normal, [0.1, 0.1, 0.6, 0.7]),
+            window(3, Layer::Bar, [0.0, 0.0, 1.0, 0.03]),
+        ],
+    };
+    let second = Layout {
+        at: Moment::from_millis(300),
+        windows: vec![
+            window(4, Layer::Floating, [0.8, 0.05, 0.95, 0.2]),
+            window(2, Layer::Normal, [0.2, 0.1, 0.7, 0.7]),
+        ],
+    };
+    let mut live = Take::new(0, surface(), Framing::Automatic);
+    let mut bytes = Log::header(0, surface(), Framing::Automatic).unwrap();
+    apply(&mut live, &TakeEvent::Windows(first.clone()), &mut bytes);
+    apply(&mut live, &TakeEvent::Windows(second.clone()), &mut bytes);
+    let restored = [first.clone(), second.clone()];
+    assert_eq!(replay(&bytes).unwrap().journal().layouts(), restored);
+
+    let earlier = Layout {
+        at: Moment::from_millis(200),
+        ..first
+    };
+    assert!(live.apply(&TakeEvent::Windows(earlier)).is_err());
+    let outside = Layout {
+        at: Moment::from_millis(400),
+        windows: vec![window(4, Layer::Normal, [0.5, 0.5, 1.2, 0.9])],
+    };
+    assert!(live.apply(&TakeEvent::Windows(outside.clone())).is_err());
+    assert!(Log::encode(&TakeEvent::Windows(outside)).is_err());
+    let crowded = Layout {
+        windows: vec![window(5, Layer::Normal, [0.1, 0.1, 0.2, 0.2]); MOST_WINDOWS + 1],
+        ..second
+    };
+    assert!(Log::encode(&TakeEvent::Windows(crowded)).is_err());
+    let mut unknown = 500_u64.to_le_bytes().to_vec();
+    unknown.extend([1_u32, 6, 0].into_iter().flat_map(u32::to_le_bytes));
+    unknown.push(4);
+    unknown.extend(
+        [0.1_f32, 0.1, 0.2, 0.2]
+            .into_iter()
+            .flat_map(f32::to_le_bytes),
+    );
+    assert!(Log::decode(&framed(WINDOWS, &unknown).unwrap()).is_err());
+    assert_eq!(live.finish().1.layouts(), restored);
+}

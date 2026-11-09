@@ -48,7 +48,7 @@ objc2-app-kit = { workspace = true, features = ["NSAccessibility", "NSAlert", "N
 objc2-application-services = { workspace = true, features = ["AXUIElement", "HIServices"] }
 objc2-av-foundation = { workspace = true, features = ["AVAsset", "AVAssetImageGenerator", "AVAssetResourceLoader", "AVAssetSegmentReport", "AVAssetWriter", "AVAssetWriterInput", "AVCaptureDevice", "AVMediaFormat", "AVVideoSettings", "block2", "dispatch2", "objc2-core-foundation", "objc2-core-graphics", "objc2-core-media", "objc2-uniform-type-identifiers"] }
 objc2-core-foundation = { workspace = true, features = ["CFArray", "CFDictionary", "CFNumber", "CFString"] }
-objc2-core-graphics = { workspace = true, features = ["CGBitmapContext", "CGColorSpace", "CGContext", "CGDirectDisplay", "CGError", "CGEvent", "CGEventSource", "CGEventTypes", "CGGeometry", "CGImage", "CGRemoteOperation", "CGWindow"] }
+objc2-core-graphics = { workspace = true, features = ["CGBitmapContext", "CGColorSpace", "CGContext", "CGDirectDisplay", "CGError", "CGEvent", "CGEventSource", "CGEventTypes", "CGGeometry", "CGImage", "CGRemoteOperation", "CGWindow", "CGWindowLevel"] }
 objc2-core-media = { workspace = true, features = ["CMFormatDescription", "CMSampleBuffer", "CMSync", "CMTime", "objc2", "objc2-core-video"] }
 objc2-core-video = { workspace = true, features = ["CVBase", "CVBuffer", "CVImageBuffer", "CVPixelBuffer", "CVPixelBufferPool", "CVReturn"] }
 objc2-uniform-type-identifiers = { workspace = true, features = ["UTType"] }

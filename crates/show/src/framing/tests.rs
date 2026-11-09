@@ -4,6 +4,7 @@ use super::*;
 use crate::{Reason, recording::spaces};
 
 mod corpus;
+mod windows;
 
 const SCREEN: Size = Size {
     width: 1_440.0,
@@ -38,6 +39,17 @@ fn clicked(surface: Size, clicks: &[(u64, Point)]) -> Recording {
     }
 }
 
+fn crops(
+    recording: &Recording,
+    keyframes: &[Keyframe],
+    changes: &[Vec<Rect>],
+) -> Vec<Option<Rect>> {
+    plan(recording, keyframes, &[], changes, &[])
+        .into_iter()
+        .map(|plan| plan.map(|plan| plan.crop))
+        .collect()
+}
+
 fn part() -> impl Strategy<Value = Rect> {
     (0.0_f32..=1.0, 0.0_f32..=1.0, 0.0_f32..=1.0, 0.0_f32..=1.0).prop_map(|(x0, y0, x1, y1)| Rect {
         left: x0.min(x1),
@@ -63,7 +75,7 @@ fn a_keyframe_without_activity_keeps_the_view_nearest_before_it() {
         keyframe(3, 40_000),
         keyframe(4, 60_000),
     ];
-    let crops = plan(&recording, &keyframes, &[], &[]);
+    let crops = crops(&recording, &keyframes, &[]);
     let [Some(opening), Some(near), Some(talk), Some(far)] = crops[..] else {
         panic!("Every keyframe is cropped: {crops:?}");
     };
@@ -82,7 +94,7 @@ fn a_change_away_from_the_input_does_not_widen_the_view() {
     let ticking = Rect::from([0.9, 0.0, 0.98, 0.03]);
     let panel = Rect::from([0.6, 0.6, 0.9, 0.9]);
     let changes = [vec![opened, ticking], vec![panel]];
-    let crops = plan(&recording, &keyframes, &[], &changes);
+    let crops = crops(&recording, &keyframes, &changes);
     let [Some(working), Some(elsewhere)] = crops[..] else {
         panic!("Both keyframes are cropped: {crops:?}");
     };
@@ -97,15 +109,12 @@ fn a_change_away_from_the_input_does_not_widen_the_view() {
 #[test]
 fn a_keyframe_with_nothing_to_frame_keeps_the_whole_screen() {
     let keyframes = [keyframe(1, 0), keyframe(2, 30_000)];
-    assert_eq!(
-        plan(&clicked(SCREEN, &[]), &keyframes, &[], &[]),
-        [None, None]
-    );
+    assert_eq!(crops(&clicked(SCREEN, &[]), &keyframes, &[]), [None, None]);
     let everywhere = clicked(
         SCREEN,
         &[(0, Point::new(0.0, 0.0)), (0, Point::new(1.0, 1.0))],
     );
-    assert_eq!(plan(&everywhere, &keyframes[..1], &[], &[]), [None]);
+    assert_eq!(crops(&everywhere, &keyframes[..1], &[]), [None]);
 }
 
 proptest! {
@@ -126,7 +135,7 @@ proptest! {
             .zip(1..)
             .map(|(&(at, _), index)| keyframe(index, at))
             .collect();
-        let crops = plan(&clicked(surface, &clicks), &keyframes, &[], &[]);
+        let crops = crops(&clicked(surface, &clicks), &keyframes, &[]);
         prop_assert_eq!(crops.len(), keyframes.len());
         for (crop, &(_, point)) in crops.into_iter().zip(&clicks) {
             let Some(crop) = crop else { continue };
@@ -151,11 +160,12 @@ proptest! {
         let crop = screen.finish(screen.margin(activity));
         prop_assume!(crop != Rect::UNIT);
         let blank = Image::filled(320, 200, [250; 3]).unwrap();
-        if let Some(grown) = fit(crop, Some(drawn), &blank, surface) {
+        let plan = Plan::anywhere(crop);
+        if let Some(grown) = fit(plan, Some(drawn), &blank, surface) {
             prop_assert!(spaces::valid(grown), "{:?}", grown);
             prop_assert!(within(grown, crop), "{:?} {:?}", grown, crop);
             prop_assert!(within(grown, drawn), "{:?} {:?}", grown, drawn);
         }
-        prop_assert_eq!(fit(crop, None, &blank, surface), Some(crop));
+        prop_assert_eq!(fit(plan, None, &blank, surface), Some(crop));
     }
 }

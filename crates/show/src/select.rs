@@ -16,6 +16,7 @@ use self::{
 };
 use crate::{
     Moment, Rect, Span, align, describe,
+    framing::Plan,
     marks::{self, Mark},
     recording::{Action, Recording},
     signature::Sample,
@@ -96,6 +97,7 @@ impl fmt::Debug for Keyframe {
 pub struct Selection {
     pub(crate) marks: Vec<Mark>,
     pub(crate) keyframes: Vec<Keyframe>,
+    pub(crate) plans: Vec<Option<Plan>>,
 }
 
 #[must_use]
@@ -173,7 +175,11 @@ fn select_within(recording: &Recording, samples: &[Sample], most: usize) -> Opti
             crop: None,
         })
         .collect();
-    (!keyframes.is_empty()).then_some(Selection { marks, keyframes })
+    (!keyframes.is_empty()).then_some(Selection {
+        marks,
+        keyframes,
+        plans: Vec::new(),
+    })
 }
 
 struct Candidate {
