@@ -385,7 +385,7 @@ impl Settings {
         let message: SharedString = match &self.notice {
             Some(notice) => notice.text(),
             None if saved => "Saved".into(),
-            None => self.presentation.message.clone().into(),
+            None => self.presentation.message.as_str().into(),
         };
         let service = ui.cx.global::<Services>().service_state();
         let busy = self.unreadable || self.resetting();

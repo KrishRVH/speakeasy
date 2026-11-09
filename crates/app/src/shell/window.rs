@@ -250,15 +250,15 @@ const DISPLAY_CLEARANCE: Pixels = px(180.0);
 const MIN_HEIGHT: Pixels = px(360.0);
 
 fn window_options(cx: &App) -> WindowOptions {
-    let display_height = cx.primary_display().map_or_else(
-        || {
+    let display_height = cx
+        .primary_display()
+        .map(|display| display.bounds().size.height)
+        .or_else(|| {
             cx.displays()
                 .iter()
                 .map(|display| display.bounds().size.height)
                 .min()
-        },
-        |display| Some(display.bounds().size.height),
-    );
+        });
     let height = display_height.map_or(SETTINGS_SIZE.height, |display| {
         (display - DISPLAY_CLEARANCE).clamp(MIN_HEIGHT, SETTINGS_SIZE.height)
     });
@@ -352,7 +352,7 @@ fn tray_hint_marker(settings: &Path, mode: LaunchMode) -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "windows")]
-fn minimize_to_tray(window: &Window, cx: &App) -> anyhow::Result<gpui::Task<()>> {
+fn minimize_to_tray(window: &Window, cx: &App) -> anyhow::Result<Task<()>> {
     let (hide, hidden) = async_channel::bounded(1);
     native_window(window, WINDOW_NAME)?.minimize_to_tray(hide)?;
     Ok(cx.spawn(async move |cx| {

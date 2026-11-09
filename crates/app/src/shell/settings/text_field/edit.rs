@@ -4,6 +4,8 @@ use unicode_segmentation::UnicodeSegmentation as _;
 
 use super::Selection;
 
+const TEXT_LIMIT: usize = 2_048;
+
 pub(super) enum Composition {
     Commit,
     Mark(Option<Range<usize>>),
@@ -139,7 +141,7 @@ impl Edit {
             .or_else(|| self.marked.clone())
             .unwrap_or_else(|| self.selection());
         let retained = self.text.len().saturating_sub(range.len());
-        if retained.saturating_add(text.len()) > 2_048 || text.chars().any(char::is_control) {
+        if retained.saturating_add(text.len()) > TEXT_LIMIT || text.chars().any(char::is_control) {
             return false;
         }
         self.text.replace_range(range.clone(), text);
@@ -282,7 +284,7 @@ mod tests {
         assert!(edit.marked.is_none());
         let unchanged = edit.text.clone();
         assert!(!edit.replace(None, "bad\ninput", Composition::Commit));
-        assert!(!edit.replace(None, &"x".repeat(2_049), Composition::Commit));
+        assert!(!edit.replace(None, &"x".repeat(TEXT_LIMIT + 1), Composition::Commit));
         assert_eq!(edit.text, unchanged);
     }
 

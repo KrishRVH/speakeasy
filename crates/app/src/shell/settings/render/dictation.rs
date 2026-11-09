@@ -35,7 +35,7 @@ impl Settings {
     pub(super) fn shortcut(&self) -> SharedString {
         cfg_select! {
             target_os = "macos" => self.config.mac_shortcut.label().into(),
-            _ => self.presentation.shortcut.to_string().into(),
+            _ => SharedString::from(&self.presentation.shortcut),
         }
     }
 
@@ -142,15 +142,15 @@ impl Settings {
     }
 
     pub(super) const fn mac_shortcut_help(&self) -> &'static str {
+        use speakeasy_platform::MacShortcut;
         match self.config.mac_shortcut {
-            speakeasy_platform::MacShortcut::Function => {
+            MacShortcut::Function => {
                 "External keyboard? Its Fn key may stay inside the keyboard. Choose F13, Right Option, or Right Command if Fn does nothing."
             },
-            speakeasy_platform::MacShortcut::F13 => {
+            MacShortcut::F13 => {
                 "Use your keyboard's F13 key, or map a key to F13 in its keyboard software. Speakeasy reserves F13 while dictation is enabled."
             },
-            speakeasy_platform::MacShortcut::RightOption
-            | speakeasy_platform::MacShortcut::RightCommand => {
+            MacShortcut::RightOption | MacShortcut::RightCommand => {
                 "Hold briefly before adding Space, S, W, A, or V. Quick combinations keep their usual action."
             },
         }
@@ -379,7 +379,7 @@ impl Settings {
                 .iter()
                 .find(|row| row.present && row.device.id == *id)
             {
-                Some(row) => row.device.name.clone().into(),
+                Some(row) => row.device.name.as_str().into(),
                 None if self.microphone_listing.is_some() => "Checking…".into(),
                 None => "Unavailable microphone".into(),
             },
@@ -744,6 +744,6 @@ pub(super) fn level(color: u32, level: f32) -> Div {
 fn file_name(path: &Path) -> SharedString {
     path.file_name().map_or_else(
         || SharedString::from("Not chosen"),
-        |name| name.to_string_lossy().into_owned().into(),
+        |name| name.to_string_lossy().into(),
     )
 }
