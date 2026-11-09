@@ -409,15 +409,6 @@ const COPIED_WITHOUT_NARRATION: &str = "Show copied without narration.";
 
 const DISCONNECTED: &str = "The microphone was disconnected. Reconnect it.";
 
-async fn start_show_listening(h: &mut Harness) -> anyhow::Result<OpenedCapture> {
-    h.input(Input::Press);
-    h.phase(Phase::Recording).await?;
-    let microphone = receive(&h.captures).await?;
-    h.input(Input::Show(Scope::Screen));
-    h.observe(|snapshot| snapshot.show).await?;
-    Ok(microphone)
-}
-
 fn disconnected(id: SessionId) -> CaptureEvent {
     CaptureEvent::Finished(id, Err(anyhow!(DISCONNECTED)))
 }
@@ -762,7 +753,7 @@ async fn an_area_show_finished_before_its_area_was_chosen_saves_and_pastes_nothi
 -> anyhow::Result<()> {
     let mut h = Harness::with_ports(Config::default(), |ports| {
         ports.delayed_finish = true;
-        ports.screen_unchosen = Some(Unchosen::Area);
+        ports.screen_report = ScreenReport::Unchosen(Unchosen::Area);
     })?;
     h.input(Input::Press);
     h.phase(Phase::Recording).await?;

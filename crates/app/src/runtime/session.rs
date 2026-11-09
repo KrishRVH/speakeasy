@@ -20,7 +20,9 @@ use super::{
 };
 use crate::{
     audio::SilentMicrophone,
-    show::{AudioLog, Checkpointing, FrameLog, Kept, Origin, Publication, Reopened, SavedShow},
+    show::{
+        AudioLog, Checkpointing, FrameLog, Kept, Origin, Publication, Release, Reopened, SavedShow,
+    },
     transcript::style::Style,
 };
 
@@ -48,10 +50,15 @@ struct Show {
     audio: Option<AudioLog>,
     frames: Option<FrameLog>,
     checkpoint: Option<Checkpointing>,
-    finished: bool,
-    forfeited: bool,
+    disposition: Disposition,
     origin: Origin,
-    incomplete: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Disposition {
+    Unfinished,
+    Finished,
+    Forfeited,
 }
 
 impl Show {
@@ -61,10 +68,14 @@ impl Show {
             audio: None,
             frames: None,
             checkpoint: None,
-            finished: false,
-            forfeited: false,
+            disposition: Disposition::Unfinished,
             origin: Origin::Live,
-            incomplete: false,
+        }
+    }
+
+    fn conclude(&mut self) {
+        if self.disposition == Disposition::Unfinished {
+            self.disposition = Disposition::Finished;
         }
     }
 
@@ -103,7 +114,9 @@ enum Stage {
     Stopping {
         audio: Duration,
     },
-    Recognizing,
+    Recognizing {
+        incomplete: bool,
+    },
     AwaitingFootage {
         narration: Narration,
         lost: Option<NarrationLoss>,
@@ -169,18 +182,19 @@ impl Session {
         } = reopened;
         let mut show = Show::new(Screen::Spent);
         show.checkpoint = Some(Checkpointing::Held(checkpoint));
-        show.finished = true;
+        show.disposition = Disposition::Finished;
         show.origin = Origin::Recovered { pending };
         self.stage = match speech {
             Some(speech) => {
-                show.incomplete = speech.incomplete;
                 self.recognition.seal(
                     speech.sealed,
                     speech.start,
                     Some(speech.language),
                     Detail::Words,
                 );
-                Stage::Recognizing
+                Stage::Recognizing {
+                    incomplete: speech.incomplete,
+                }
             },
             None => Stage::AwaitingFootage {
                 narration: mem::take(&mut footage.recording.narration),
@@ -212,7 +226,13 @@ impl Session {
 
     pub(super) fn forfeit(&mut self) {
         if let Some(show) = &mut self.show {
-            show.forfeited = true;
+            show.disposition = Disposition::Forfeited;
+        }
+    }
+
+    fn conclude(&mut self) {
+        if let Some(show) = &mut self.show {
+            show.conclude();
         }
     }
 
@@ -222,7 +242,7 @@ impl Session {
             Stage::Recording { .. } => Phase::Recording,
             Stage::Stopping { .. } => Phase::Stopping,
             Stage::Reopening(_)
-            | Stage::Recognizing
+            | Stage::Recognizing { .. }
             | Stage::AwaitingFootage { .. }
             | Stage::Delivering(_) => Phase::Processing,
         }
@@ -260,7 +280,7 @@ impl Session {
     }
 
     pub(super) const fn is_recognizing(&self) -> bool {
-        matches!(self.stage, Stage::Recognizing)
+        matches!(self.stage, Stage::Recognizing { .. })
     }
 
     pub(super) const fn queued_screen(&self) -> Option<Scope> {
@@ -280,10 +300,8 @@ impl Session {
     }
 
     pub(super) fn audio_ready(&mut self, gesture: State, at: Instant) {
-        if gesture == State::Processing
-            && let Some(show) = &mut self.show
-        {
-            show.finished = true;
+        if gesture == State::Processing {
+            self.conclude();
         }
         if matches!(self.stage, Stage::Opening) {
             let audio = at.saturating_duration_since(self.started);
@@ -296,9 +314,7 @@ impl Session {
     }
 
     pub(super) fn finish(&mut self) {
-        if let Some(show) = &mut self.show {
-            show.finished = true;
-        }
+        self.conclude();
         if let Stage::Recording { audio } = self.stage {
             self.stage = Stage::Stopping { audio };
         }
@@ -314,7 +330,7 @@ impl Session {
                     Detail::Text
                 };
                 self.recognition.seal(sealed, start, None, detail);
-                Stage::Recognizing
+                Stage::Recognizing { incomplete: false }
             },
             _ if self.is_show() => Stage::AwaitingFootage {
                 narration: Narration::default(),
@@ -322,6 +338,7 @@ impl Session {
             },
             _ => return false,
         };
+        self.conclude();
         true
     }
 
@@ -375,17 +392,13 @@ impl Session {
     }
 
     fn narrate(&mut self, narration: Narration) {
-        if self.is_recognizing()
+        if let Stage::Recognizing { incomplete } = self.stage
             && let Some(start) = self.recognition.start()
         {
             self.recognition = Recognition::new(self.id);
             self.stage = Stage::AwaitingFootage {
                 narration: narration.delayed(start),
-                lost: self
-                    .show
-                    .as_ref()
-                    .filter(|show| show.incomplete)
-                    .map(|_| NarrationLoss::Incomplete),
+                lost: incomplete.then_some(NarrationLoss::Incomplete),
             };
         }
     }
@@ -418,6 +431,7 @@ impl Session {
             narration: Narration::default(),
             lost: Some(lost),
         };
+        self.conclude();
     }
 
     pub(super) fn insert<F>(&mut self, insert: impl FnOnce(InsertPermit) -> F)
@@ -520,26 +534,20 @@ impl Session {
             return Some(task);
         }
         let mut show = self.show?;
-        let keep = !show.forfeited
-            && (show.finished
-                || !matches!(
-                    self.stage,
-                    Stage::Queued
-                        | Stage::Opening
-                        | Stage::Recording { .. }
-                        | Stage::Stopping { .. }
-                ));
-        let narration = match self.stage {
-            Stage::AwaitingFootage {
-                narration,
-                lost: lost @ (None | Some(NarrationLoss::Incomplete)),
-            } => Some((narration, lost.is_some())),
-            _ => None,
+        let release = match show.disposition {
+            Disposition::Finished => Release::Keep(match self.stage {
+                Stage::AwaitingFootage {
+                    narration,
+                    lost: lost @ (None | Some(NarrationLoss::Incomplete)),
+                } => Some((narration, lost.is_some())),
+                _ => None,
+            }),
+            Disposition::Unfinished | Disposition::Forfeited => Release::Discard,
         };
         show.close_producers();
         let checkpoint = show.checkpoint?;
         Some(tokio::spawn(async move {
-            Delivered::Abandoned(checkpoint.release(keep, narration).await)
+            Delivered::Abandoned(checkpoint.release(release).await)
         }))
     }
 }

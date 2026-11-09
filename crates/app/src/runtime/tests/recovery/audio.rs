@@ -86,7 +86,7 @@ async fn finishing_without_choosing_an_area_discards_the_session_checkpoint() ->
     let root = tempfile::tempdir()?;
     let mut h = Harness::with_ports(Config::default(), |ports| {
         ports.checkpoint_root = Some(root.path().to_owned());
-        ports.screen_unchosen = Some(Unchosen::Area);
+        ports.screen_report = ScreenReport::Unchosen(Unchosen::Area);
     })?;
     start_show(&mut h).await?;
     finish_show(&h);
@@ -137,6 +137,46 @@ async fn a_finished_show_keeps_an_unwind_but_discards_capture_failures() -> anyh
         h.close().await?;
         let listing = show::checkpoint::list(root.path(), SystemTime::now());
         assert_eq!(listing.shows.len(), usize::from(unwound));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_show_whose_audio_stopped_keeps_its_checkpoint_when_revoked() -> anyhow::Result<()> {
+    for quit in [false, true] {
+        let root = tempfile::tempdir()?;
+        let mut h = Harness::with_ports(Config::default(), |ports| {
+            ports.checkpoint_root = Some(root.path().to_owned());
+            ports.screen_report = ScreenReport::Withheld;
+        })?;
+        let (id, microphone) = start_show_listening(&mut h).await?;
+        receive(&h.shows).await?;
+        microphone
+            .send(CaptureEvent::Finished(
+                id,
+                Err(anyhow!("Microphone disconnected")),
+            ))
+            .await?;
+        h.phase(Phase::Processing).await?;
+        if quit {
+            h.runtime.request_stop();
+        } else {
+            change_settings(&h);
+            h.phase(Phase::Cancelled).await?;
+        }
+        h.close().await?;
+        let listing = show::checkpoint::list(root.path(), SystemTime::now());
+        assert!(listing.problems.is_empty());
+        assert_eq!(
+            listing.shows.len(),
+            1,
+            "A Show that ended where its audio stopped lost its checkpoint when {}",
+            if quit {
+                "Speakeasy quit"
+            } else {
+                "settings changed"
+            }
+        );
     }
     Ok(())
 }

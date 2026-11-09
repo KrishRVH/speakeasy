@@ -82,7 +82,7 @@ struct FakePorts {
     insertion: Option<Gate<InsertPermit>>,
     insert_results: Option<Receiver<Inserted>>,
     screen_error: Option<&'static str>,
-    screen_unchosen: Option<Unchosen>,
+    screen_report: ScreenReport,
     screen_retirement: Option<Gate<()>>,
     publication: Option<Gate<()>>,
     show_recovery: Option<Gate<InsertPermit>>,
@@ -135,7 +135,7 @@ impl FakePorts {
             insertion: None,
             insert_results: None,
             screen_error: None,
-            screen_unchosen: None,
+            screen_report: ScreenReport::Footage,
             screen_retirement: None,
             publication: None,
             show_recovery: None,
@@ -240,7 +240,7 @@ impl Ports for FakePorts {
         Ok(FakeScreen {
             id,
             events,
-            unchosen: self.screen_unchosen,
+            report: self.screen_report,
             pins: self.pins.clone(),
             retirement: self.screen_retirement.clone(),
         })
@@ -274,7 +274,7 @@ impl Ports for FakePorts {
         let copy_error = self.copy_error;
         async move {
             if let Some(checkpoint) = checkpoint {
-                checkpoint.release(true, None).await?;
+                checkpoint.release(show::Release::Keep(None)).await?;
             }
             if matches!(origin, show::Origin::Recovered { .. }) {
                 if let Some(gate) = recovery {
@@ -425,19 +425,27 @@ impl Listening for FakeMicrophone {
     }
 }
 
+#[derive(Clone, Copy)]
+enum ScreenReport {
+    Footage,
+    Unchosen(Unchosen),
+    Withheld,
+}
+
 struct FakeScreen {
     id: SessionId,
     events: Sender<ShowEvent>,
-    unchosen: Option<Unchosen>,
+    report: ScreenReport,
     pins: Sender<(SessionId, Taps)>,
     retirement: Option<Gate<()>>,
 }
 
 impl Capturing for FakeScreen {
     fn finish(&self) {
-        let report = match self.unchosen {
-            Some(unchosen) => ShowEvent::Unchosen(self.id, unchosen),
-            None => ShowEvent::Finished(self.id, Ok(footage())),
+        let report = match self.report {
+            ScreenReport::Footage => ShowEvent::Finished(self.id, Ok(footage())),
+            ScreenReport::Unchosen(unchosen) => ShowEvent::Unchosen(self.id, unchosen),
+            ScreenReport::Withheld => return,
         };
         self.events
             .try_send(report)
@@ -836,6 +844,15 @@ async fn start_show(h: &mut Harness) -> anyhow::Result<OpenedShow> {
     h.observe(|snapshot| snapshot.show && snapshot.hands_free)
         .await?;
     receive(&h.shows).await
+}
+
+async fn start_show_listening(h: &mut Harness) -> anyhow::Result<OpenedCapture> {
+    h.input(Input::Press);
+    h.phase(Phase::Recording).await?;
+    let microphone = receive(&h.captures).await?;
+    h.input(Input::Show(Scope::Screen));
+    h.observe(|snapshot| snapshot.show).await?;
+    Ok(microphone)
 }
 
 fn finish_show(h: &Harness) {

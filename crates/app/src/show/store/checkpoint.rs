@@ -585,6 +585,11 @@ pub(crate) enum Checkpointing {
     Held(Checkpoint),
 }
 
+pub(crate) enum Release {
+    Discard,
+    Keep(Option<(Narration, bool)>),
+}
+
 impl Checkpointing {
     pub(crate) async fn close(self) -> anyhow::Result<Option<Checkpoint>> {
         match self {
@@ -593,22 +598,16 @@ impl Checkpointing {
         }
     }
 
-    pub(crate) async fn release(
-        self,
-        keep: bool,
-        narration: Option<(Narration, bool)>,
-    ) -> anyhow::Result<()> {
+    pub(crate) async fn release(self, release: Release) -> anyhow::Result<()> {
         let Some(checkpoint) = self.close().await? else {
             return Ok(());
         };
-        tokio::task::spawn_blocking(move || {
-            if !keep {
-                return checkpoint.discard();
-            }
-            if let Some((narration, incomplete)) = narration {
-                checkpoint.narrate(&narration, incomplete)?;
-            }
-            anyhow::Ok(())
+        tokio::task::spawn_blocking(move || match release {
+            Release::Discard => checkpoint.discard(),
+            Release::Keep(Some((narration, incomplete))) => {
+                checkpoint.narrate(&narration, incomplete)
+            },
+            Release::Keep(None) => Ok(()),
         })
         .await
         .unwrap_or_else(|_private_panic| {
