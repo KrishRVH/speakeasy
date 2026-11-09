@@ -108,7 +108,8 @@ committing paste. That query and XTEST submission are not one atomic server tran
 
 ## Mac event tap and AppKit ownership
 
-Owners: `crates/platform/src/macos.rs`, `macos/clipboard.rs`, `monitor.rs`, `permissions.rs`.
+Owners: `crates/platform/src/macos.rs`, `macos/clipboard.rs`, `macos/status_item.rs`, `monitor.rs`,
+`permissions.rs`.
 
 AppKit window/view operations require the main thread. The platform wrapper retains the NSWindow and
 is not Send. Core Foundation Create-rule results are adopted once; Get-rule references remain
@@ -129,6 +130,13 @@ the pre-event hold explicitly; unrelated events reconcile against HID-system phy
 secondary Fn flag can accompany function keys, so it does not make F13 another modifier chord. The
 insertion worker retains the configured shortcut and polls physical F13 state for both its release
 wait and its final preflight. Its per-request autorelease pool encloses native delivery.
+
+`StatusItem` is created, updated and removed on the main thread and holds its `MainThreadMarker`, so
+it is not Send. It owns the muda menu and retains muda's borrowed NSMenu pointer once, while that
+menu is held, as the status item's own menu. AppKit therefore tracks the menu from the user's own
+click, as for any status item with a menu, rather than from a synthesized `performClick`; muda still
+dispatches item actions as `MenuEvent`s and updates the same NSMenu. Dropping the item removes it
+from the status bar.
 
 Permission queries report consent only; they do not open a microphone, prove device readiness or
 install a hook. The Mac clipboard's private/transient marks precede user content, and change-count

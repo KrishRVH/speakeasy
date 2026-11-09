@@ -1,6 +1,7 @@
 mod clipboard;
 pub(crate) mod movie;
 pub(crate) mod screen;
+mod status_item;
 
 use std::{
     cell::OnceCell,
@@ -45,6 +46,7 @@ use objc2_foundation::{
 use raw_window_handle::{RawWindowHandle, WindowHandle};
 
 pub(super) use self::clipboard::{copy_content, copy_text};
+pub use self::status_item::StatusItem;
 use super::{
     CANCEL_SHORTCUT, DesktopOptions, Input, InputSender, Inserted, Inserter, MacShortcut,
     NativeWindow, OwnFocus, OwnedThread, PILL_MARGIN, PILL_WIDTH, insertion,

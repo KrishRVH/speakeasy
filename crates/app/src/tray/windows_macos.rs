@@ -1,9 +1,10 @@
 use gpui::{App, Global, Task};
+use muda::{CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu};
+#[cfg(target_os = "macos")]
+use speakeasy_platform::StatusItem;
 use speakeasy_platform::{Scope, TrayItem, TrayMenu};
-use tray_icon::{
-    BadIcon, Icon, MouseButton, TrayIcon, TrayIconBuilder, TrayIconEvent,
-    menu::{CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu},
-};
+#[cfg(target_os = "windows")]
+use tray_icon::{Icon, MouseButton, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use super::{
     TrayChanges, TrayCommand, TrayState,
@@ -31,8 +32,13 @@ pub(crate) struct Tray {
 
 impl Global for Tray {}
 
+#[cfg(target_os = "windows")]
+type NativeIcon = TrayIcon;
+#[cfg(target_os = "macos")]
+type NativeIcon = StatusItem;
+
 struct Presenter {
-    icon: TrayIcon,
+    icon: NativeIcon,
     status: MenuItem,
     pause: MenuItem,
     toggle: MenuItem,
@@ -52,10 +58,13 @@ impl Presenter {
     fn present(&mut self, state: &TrayState) {
         best_effort(self.redraw_icon(state.status.indicator, state.theme));
         self.status.set_text(&state.status.description);
-        best_effort(self.icon.set_tooltip(Some(format!(
-            "Speakeasy · {}\nHold {} to dictate",
-            state.status.description, state.shortcut
-        ))));
+        best_effort(set_tooltip(
+            &self.icon,
+            &format!(
+                "Speakeasy · {}\nHold {} to dictate",
+                state.status.description, state.shortcut
+            ),
+        ));
         let TrayMenu {
             pause,
             toggle,
@@ -113,11 +122,7 @@ impl Presenter {
         if self.drawn == Some((indicator, theme)) {
             return Ok(());
         }
-        let image = draw_icon(indicator, theme)?;
-        #[cfg(target_os = "macos")]
-        self.icon.set_icon_templated(Some(image))?;
-        #[cfg(target_os = "windows")]
-        self.icon.set_icon(Some(image))?;
+        set_image(&self.icon, icon::raster(indicator, theme, ICON_STYLE))?;
         self.drawn = Some((indicator, theme));
         Ok(())
     }
@@ -170,7 +175,14 @@ pub(crate) fn install(cx: &mut App) -> anyhow::Result<()> {
         &settings,
         &quit,
     ])?;
-    let icon = build_icon(menu, cx.global::<Services>().config.theme)?;
+    let icon = build_icon(
+        menu,
+        icon::raster(
+            Indicator::Paused,
+            cx.global::<Services>().config.theme,
+            ICON_STYLE,
+        ),
+    )?;
     let (commands, refreshes) = queue_commands(
         [
             (settings.id().clone(), TrayCommand::Settings),
@@ -245,24 +257,41 @@ pub(crate) fn install(cx: &mut App) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn build_icon(menu: Menu, theme: Theme) -> anyhow::Result<TrayIcon> {
-    let image = draw_icon(Indicator::Paused, theme)?;
-    let builder = TrayIconBuilder::new()
+#[cfg(target_os = "windows")]
+fn build_icon(menu: Menu, rgba: Vec<u8>) -> anyhow::Result<NativeIcon> {
+    Ok(TrayIconBuilder::new()
         .with_tooltip("Speakeasy")
-        .with_menu(Box::new(menu));
-    #[cfg(target_os = "macos")]
-    let builder = builder.with_icon_templated(image);
-    #[cfg(target_os = "windows")]
-    let builder = builder.with_icon(image);
-    Ok(builder.build()?)
+        .with_menu(Box::new(menu))
+        .with_icon(Icon::from_rgba(rgba, icon::SIZE, icon::SIZE)?)
+        .build()?)
 }
 
-fn draw_icon(indicator: Indicator, theme: Theme) -> Result<Icon, BadIcon> {
-    Icon::from_rgba(
-        icon::raster(indicator, theme, ICON_STYLE),
-        icon::SIZE,
-        icon::SIZE,
-    )
+#[cfg(target_os = "macos")]
+fn build_icon(menu: Menu, rgba: Vec<u8>) -> anyhow::Result<NativeIcon> {
+    let item = StatusItem::new(menu)?;
+    item.set_template_image(&rgba, icon::SIZE)?;
+    item.set_tooltip("Speakeasy")?;
+    Ok(item)
+}
+
+#[cfg(target_os = "windows")]
+fn set_image(native: &NativeIcon, rgba: Vec<u8>) -> anyhow::Result<()> {
+    Ok(native.set_icon(Some(Icon::from_rgba(rgba, icon::SIZE, icon::SIZE)?))?)
+}
+
+#[cfg(target_os = "macos")]
+fn set_image(native: &NativeIcon, rgba: Vec<u8>) -> anyhow::Result<()> {
+    native.set_template_image(&rgba, icon::SIZE)
+}
+
+#[cfg(target_os = "windows")]
+fn set_tooltip(native: &NativeIcon, tooltip: &str) -> anyhow::Result<()> {
+    Ok(native.set_tooltip(Some(tooltip))?)
+}
+
+#[cfg(target_os = "macos")]
+fn set_tooltip(native: &NativeIcon, tooltip: &str) -> anyhow::Result<()> {
+    native.set_tooltip(tooltip)
 }
 
 fn queue_commands(
@@ -274,14 +303,20 @@ fn queue_commands(
     let items: Vec<_> = items.into_iter().collect();
     let (queue, commands) = async_channel::bounded(COMMAND_BACKLOG);
     let (refresh, refreshes) = async_channel::bounded(1);
-    let menu_queue = queue.clone();
+    #[cfg(target_os = "windows")]
+    open_settings_on_double_click(queue.clone());
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
         if let Some((_, command)) = items.iter().find(|(id, _)| *id == event.id) {
-            offer_menu(&menu_queue, &refresh, command.clone());
+            offer_menu(&queue, &refresh, command.clone());
         } else if let Some(name) = event.id.as_ref().strip_prefix(PRESET_ID) {
-            offer_menu(&menu_queue, &refresh, TrayCommand::Preset(name.to_owned()));
+            offer_menu(&queue, &refresh, TrayCommand::Preset(name.to_owned()));
         }
     }));
+    (commands, refreshes)
+}
+
+#[cfg(target_os = "windows")]
+fn open_settings_on_double_click(queue: async_channel::Sender<TrayCommand>) {
     TrayIconEvent::set_event_handler(Some(move |event| {
         if matches!(
             event,
@@ -293,7 +328,6 @@ fn queue_commands(
             offer(&queue, TrayCommand::Settings);
         }
     }));
-    (commands, refreshes)
 }
 
 fn offer_menu(

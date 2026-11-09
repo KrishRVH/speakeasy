@@ -3,6 +3,7 @@ compile_error!("Speakeasy supports Windows, macOS, and Linux.");
 
 mod clipboard;
 mod desktop;
+mod image;
 mod input;
 mod insertion;
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
@@ -29,6 +30,8 @@ pub use self::linux::{
 };
 #[cfg(target_os = "macos")]
 use self::macos as native;
+#[cfg(target_os = "macos")]
+pub use self::macos::StatusItem;
 #[cfg(target_os = "windows")]
 use self::windows as native;
 #[cfg(target_os = "windows")]

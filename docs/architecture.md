@@ -298,10 +298,14 @@ module unless a test file is named.
   stays, refusals, failure order, and linked folders. Update preparation holds the same
   `updates.lock` outside its removable cache; deleting payloads cannot replace a live lease.
 - **Tray and status**: [tray.rs](../crates/app/src/tray.rs), [tray/](../crates/app/src/tray),
-  [status.rs](../crates/app/src/status.rs), and
-  [platform/src/linux/tray.rs](../crates/platform/src/linux/tray.rs) mirror service state. The tray
-  follows runtime snapshots and observes `Services` itself, so settings such as the theme need no
-  snapshot to reach it; tray.rs's tests check that and when each menu entry acts.
+  [status.rs](../crates/app/src/status.rs),
+  [platform/src/linux/tray.rs](../crates/platform/src/linux/tray.rs), and
+  [platform/src/macos/status_item.rs](../crates/platform/src/macos/status_item.rs) mirror service
+  state. Windows and macOS share one muda menu; Windows shows it through `tray-icon`, where a
+  double-click opens Settings, and macOS assigns it to its own status item, so AppKit opens it from
+  the user's click instead of the synthesized click `tray-icon` sends. The tray follows runtime
+  snapshots and observes `Services` itself, so settings such as the theme need no snapshot to reach
+  it; tray.rs's tests check that and when each menu entry acts.
   [shell/recovery.rs](../crates/app/src/shell/recovery.rs) copies or opens the last Show off the UI
   thread.
 - **Instance and relaunch**: [instance.rs](../crates/app/src/instance.rs) owns the lock and the

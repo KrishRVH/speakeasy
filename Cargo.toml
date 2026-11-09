@@ -56,6 +56,7 @@ gpui_windows = { package = "gpui-pre-windows", version = "=0.3.11", default-feat
 image = { version = "0.25.10", default-features = false }
 libc = "0.2.189"
 libloading = "0.8.9"
+muda = { version = "0.21.2", default-features = false }
 objc2 = "0.6.5"
 objc2-app-kit = { version = "0.3.2", default-features = false }
 objc2-application-services = { version = "0.3.2", default-features = false }

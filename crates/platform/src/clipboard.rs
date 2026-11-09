@@ -1,5 +1,7 @@
 use anyhow::{Context as _, ensure};
 
+use crate::image::encode_png;
+
 const EDGE_LIMIT: u32 = 4096;
 
 pub struct ClipboardContent {
@@ -93,19 +95,7 @@ fn png(width: u32, height: u32, mut pixels: Vec<u8>) -> anyhow::Result<Vec<u8>> 
     for [blue, _, red, _] in pixels.as_chunks_mut::<4>().0 {
         std::mem::swap(blue, red);
     }
-    let mut png = Vec::new();
-    let mut encoder = png::Encoder::new(&mut png, width, height);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-    encoder.set_compression(png::Compression::Fast);
-    let mut writer = encoder
-        .write_header()
-        .context("Cannot encode clipboard image")?;
-    writer
-        .write_image_data(&pixels)
-        .context("Cannot encode clipboard image")?;
-    writer.finish().context("Cannot finish clipboard image")?;
-    Ok(png)
+    encode_png(width, height, &pixels).context("Cannot encode clipboard image")
 }
 
 #[cfg(any(target_os = "windows", test))]

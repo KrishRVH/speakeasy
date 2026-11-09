@@ -42,8 +42,9 @@ block2.workspace = true
 core-foundation.workspace = true
 core-graphics.workspace = true
 dispatch2.workspace = true
+muda.workspace = true
 objc2.workspace = true
-objc2-app-kit = { workspace = true, features = ["NSAccessibility", "NSAlert", "NSApplication", "NSEvent", "NSPanel", "NSPasteboard", "NSPasteboardItem", "NSResponder", "NSRunningApplication", "NSScreen", "NSView", "NSWindow", "NSWorkspace", "libc"] }
+objc2-app-kit = { workspace = true, features = ["NSAccessibility", "NSAlert", "NSApplication", "NSButton", "NSControl", "NSEvent", "NSImage", "NSMenu", "NSPanel", "NSPasteboard", "NSPasteboardItem", "NSResponder", "NSRunningApplication", "NSScreen", "NSStatusBar", "NSStatusBarButton", "NSStatusItem", "NSView", "NSWindow", "NSWorkspace", "libc"] }
 objc2-application-services = { workspace = true, features = ["AXUIElement", "HIServices"] }
 objc2-av-foundation = { workspace = true, features = ["AVAsset", "AVAssetImageGenerator", "AVAssetResourceLoader", "AVAssetSegmentReport", "AVAssetWriter", "AVAssetWriterInput", "AVCaptureDevice", "AVMediaFormat", "AVVideoSettings", "block2", "dispatch2", "objc2-core-foundation", "objc2-core-graphics", "objc2-core-media", "objc2-uniform-type-identifiers"] }
 objc2-core-foundation = { workspace = true, features = ["CFArray", "CFDictionary", "CFNumber", "CFString"] }
