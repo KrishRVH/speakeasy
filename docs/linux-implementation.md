@@ -201,7 +201,7 @@ compositor or editor support. See
 
 A Wayland surface keeps its first role for its lifetime, so the pill is created as a layer-shell
 surface through GPUI's
-[`WindowKind::LayerShell`](https://docs.rs/crate/gpui-pre/0.3.11/source/src/platform/layer_shell.rs),
+[`WindowKind::LayerShell`](https://docs.rs/crate/gpui-pre/0.3.12/source/src/platform/layer_shell.rs),
 and the display server is chosen before any window opens: GPUI on X11 opens a layer-shell request as
 an ordinary window instead of failing. The compositor picks a layer surface's output when it is
 created and may close it at any time. A surface whose role object is destroyed keeps that role type

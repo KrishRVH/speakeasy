@@ -251,13 +251,10 @@ fn validate(
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
         change.sample < CHANGE_LIMIT
-            && previous.map_or_else(
-                || change.sample == 0,
-                |previous| {
-                    change.sample > previous.sample
-                        && (change.content != previous.content || change.part != previous.part)
-                }
-            ),
+            && previous.map_or(change.sample == 0, |previous| {
+                change.sample > previous.sample
+                    && (change.content != previous.content || change.part != previous.part)
+            }),
         "Video crop geometry is not in sample order"
     );
     let [x, y, right, bottom] = change.part;

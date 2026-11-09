@@ -238,11 +238,11 @@ impl Quality {
             reference_words,
             word_errors,
             word_error_rate: (reference_words > 0)
-                .then(|| word_errors as f64 / reference_words as f64),
+                .then_some(word_errors as f64 / reference_words as f64),
             formatting_reference_words,
             formatting_word_errors,
             formatting_word_error_rate: (formatting_reference_words > 0)
-                .then(|| formatting_word_errors as f64 / formatting_reference_words as f64),
+                .then_some(formatting_word_errors as f64 / formatting_reference_words as f64),
         }
     }
 }

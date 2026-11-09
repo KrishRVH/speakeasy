@@ -8,12 +8,12 @@ comment marks each patched item, and new source files say so in their first line
 | Directory           | Release                                                                       | Archive SHA-256                                                    |
 | ------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | `accesskit_windows` | [accesskit_windows 0.34.0](https://crates.io/crates/accesskit_windows/0.34.0) | `106c2b961215864d1c2e703ee63269c25c4e80a577ffb2c1017b9c17dcdf83a1` |
-| `gpui-pre`          | [gpui-pre 0.3.11](https://crates.io/crates/gpui-pre/0.3.11)                   | `9303c771abf2acff2a96d706f69d9a82088c4770173a07cce88f0002431d887d` |
-| `gpui-pre-apple`    | [gpui-pre-apple 0.3.11](https://crates.io/crates/gpui-pre-apple/0.3.11)       | `8c0bea8ffa563d3a1ada533e148bb55be7fb873c178979e889a3d1204f8e1b91` |
-| `gpui-pre-linux`    | [gpui-pre-linux 0.3.11](https://crates.io/crates/gpui-pre-linux/0.3.11)       | `79cac5cbd3485c1e3db8eafd5dc69019188f5cb0a39846946af772efa386f624` |
-| `gpui-pre-macos`    | [gpui-pre-macos 0.3.11](https://crates.io/crates/gpui-pre-macos/0.3.11)       | `d7410cfdaa1fa55a414346cc492d18ce340e3a8b6d0ac3213b984ed690c82b92` |
-| `gpui-pre-wgpu`     | [gpui-pre-wgpu 0.3.11](https://crates.io/crates/gpui-pre-wgpu/0.3.11)         | `211cf352de1a0b0c9bea3f105df5572ce1d2c899389b924a888e5af36b50f93d` |
-| `gpui-pre-windows`  | [gpui-pre-windows 0.3.11](https://crates.io/crates/gpui-pre-windows/0.3.11)   | `5141a3db59bab761a16ab19529fe4117a86e91922e8fc00af6dfc4829cb1744d` |
+| `gpui-pre`          | [gpui-pre 0.3.12](https://crates.io/crates/gpui-pre/0.3.12)                   | `29db89613527079737f53752eab27fb65c9a7dd94979256c65a0e590c9fd34d8` |
+| `gpui-pre-apple`    | [gpui-pre-apple 0.3.12](https://crates.io/crates/gpui-pre-apple/0.3.12)       | `a460605ec4e8cbcc9b213462a84b1d6cc3efe4ed8f0e18669659f07b2d5c6aec` |
+| `gpui-pre-linux`    | [gpui-pre-linux 0.3.12](https://crates.io/crates/gpui-pre-linux/0.3.12)       | `54bab418d0b7c027af9495f278619b46887362b3bd6446e246c87c5b0fa167df` |
+| `gpui-pre-macos`    | [gpui-pre-macos 0.3.12](https://crates.io/crates/gpui-pre-macos/0.3.12)       | `2de7d3f4ad51ac387e822495db363fcc1188d349793365731d054444c4cb06ee` |
+| `gpui-pre-wgpu`     | [gpui-pre-wgpu 0.3.12](https://crates.io/crates/gpui-pre-wgpu/0.3.12)         | `dc76608d385f6d0dcbad44504b1bf669dac3b7d7ffa2885acdb7c1c358caf852` |
+| `gpui-pre-windows`  | [gpui-pre-windows 0.3.12](https://crates.io/crates/gpui-pre-windows/0.3.12)   | `7201762420222d5b5ce5bdf0056996199212a3349bfb2457a3a0238c688681f3` |
 
 The hashes match the `cksum` crates.io publishes for each release. To see every change, unpack
 the archive (`curl -sL https://static.crates.io/crates/NAME/NAME-VERSION.crate | tar xz`) and
@@ -45,7 +45,10 @@ app liveness for `AsyncApp`, and `App::shutdown` ordering.
   [Linux native acceptance](../docs/linux-implementation.md#native-acceptance-still-required) cover
   Wayland.
 - `Cargo.toml` builds `image` with only the formats GPUI's `ImageFormat` names, dropping the dds,
-  exr, ff, hdr, qoi, and tga decoders and rayon. This saves size; it is not a contract.
+  exr, ff, hdr, qoi, and tga decoders and image's rayon feature. Cargo unifies features, so the
+  `gpui-pre-apple`, `gpui-pre-macos`, `gpui-pre-wgpu`, and `gpui-pre-windows` manifests carry the
+  same patch; `cargo tree -e features -i image --target all` lists only those formats. This saves
+  size; it is not a contract.
 
 ## gpui-pre-apple
 

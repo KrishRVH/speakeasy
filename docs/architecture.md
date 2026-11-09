@@ -689,7 +689,7 @@ module unless a test file is named.
   Mac distribution fails closed around notarization, and
   [tests/test_update_signing.py](../tests/test_update_signing.py) that signed update metadata binds
   the installer and version.
-- **Dependency patches**: the root Cargo patch selects patched GPUI 0.3.11 (`gpui-pre`) crates and
+- **Dependency patches**: the root Cargo patch selects patched GPUI 0.3.12 (`gpui-pre`) crates and
   AccessKit Windows 0.34.0; [the vendor index](../vendor/README.md) records each patched contract
   and the checks that cover it, and [platform/tests/](../crates/platform/tests) runs the portable
   ones.
