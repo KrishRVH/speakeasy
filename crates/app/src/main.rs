@@ -91,7 +91,11 @@ impl Invocation {
                     }
                 },
                 Some("--demo-tray") => mode = LaunchMode::DemoTray,
+                Some("--config") if settings.is_some() => bail!("Use --config only once."),
                 Some("--config") => settings = Some(paths::settings_argument(args.next())?),
+                Some("--toggle" | "--cancel") if request.is_some() => {
+                    bail!("Use one desktop command: --toggle or --cancel.")
+                },
                 Some("--toggle") => request = Some(Request::Toggle),
                 Some("--cancel") => request = Some(Request::Cancel),
                 Some("--help" | "-h") => return Ok(Self::Help),
@@ -498,6 +502,26 @@ mod tests {
         assert!(parse(&["--config", ""]).is_err());
         assert!(parse(&["--config", "/"]).is_err());
         Ok(())
+    }
+
+    #[test]
+    fn a_launch_takes_one_settings_file_and_one_desktop_command() {
+        for (args, rejected) in [
+            (
+                &["--config", "a.json", "--config", "b.json"][..],
+                "--config only once",
+            ),
+            (&["--toggle", "--cancel"], "one desktop command"),
+            (&["--cancel", "--cancel"], "one desktop command"),
+        ] {
+            let error = parse(args).err().map(|error| error.to_string());
+            assert!(
+                error
+                    .as_deref()
+                    .is_some_and(|error| error.contains(rejected)),
+                "{args:?} gave {error:?}"
+            );
+        }
     }
 
     #[test]
