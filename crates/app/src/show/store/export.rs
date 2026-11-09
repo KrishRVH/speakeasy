@@ -220,7 +220,7 @@ fn guide(
     writeln!(out, "# Speakeasy Show\n")?;
     writeln!(
         out,
-        "Unzip this archive before opening its files. Start with [the saved summary](summary.md), then open the contact sheets below. The summary is preserved exactly as saved, including your edits; any machine-local paths in it may be stale. Use this guide's relative links on this machine.\n"
+        "Unzip this archive before opening its files. Open the contact sheets below in order, then read [the saved summary](summary.md). The summary is preserved exactly as saved, including your edits; any machine-local paths in it may be stale. Use this guide's relative links on this machine.\n"
     )?;
     writeln!(
         out,
