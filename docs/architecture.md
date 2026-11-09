@@ -75,18 +75,21 @@ module unless a test file is named.
   [stream/tests.rs](../crates/app/src/audio/stream/tests.rs) use synthetic samples; microphones.rs
   checks that a scan the driver blocks serves the next request. The energy gate retains audio after
   100 ms of audible windows, with a floor near −70 dBFS for quiet microphones. PCM stays unchanged.
-  Background noise above the floor can also qualify. Callbacks count themselves as publishing before
-  reading the capture mode. Finish/cancel and that count share sequentially consistent ordering; the
-  drain advances the mode, then waits for publishing callbacks before sealing audio. Mode only
-  advances, so a late finish cannot undo cancellation.
+  Background noise above the floor can also qualify. The gate and the meter measure energy around
+  each window's mean, so a microphone's DC offset is neither sound nor level. Callbacks count
+  themselves as publishing before reading the capture mode. Finish/cancel and that count share
+  sequentially consistent ordering; the drain advances the mode, then waits for publishing callbacks
+  before sealing audio. Mode only advances, so a late finish cannot undo cancellation.
 - **Sound cues**: [sounds.rs](../crates/app/src/sounds.rs) plays the cues the owner asks for through
   `Ports::cue` on an owned output thread, which `Ports::hold_cues` keeps open through each session.
   A recording may overhear a cue, so [speech.rs](../crates/app/src/audio/speech.rs) hears only the
-  voice band beneath it, through [lowpass.rs](../crates/app/src/lowpass.rs). Strong voice-band
-  energy qualifies directly; quieter voice must also contribute at least one percent of the
-  whole-band energy. Both bands must exceed the quiet floor, so filter ringing alone cannot qualify
-  through that relative test. [sounds/tests.rs](../crates/app/src/sounds/tests.rs) drives the player
-  against a fake device and, opt-in, plays every cue on the default output;
+  voice band beneath it, through [lowpass.rs](../crates/app/src/lowpass.rs), which starts settled at
+  the first window's mean rather than its first sample, so an offset is no step and a cue already
+  sounding still starts from rest. Strong voice-band energy qualifies directly; quieter voice must
+  also contribute at least one percent of the whole-band energy. Both bands must exceed the quiet
+  floor, so filter ringing alone cannot qualify through that relative test.
+  [sounds/tests.rs](../crates/app/src/sounds/tests.rs) drives the player against a fake device and,
+  opt-in, plays every cue on the default output;
   [speech/tests.rs](../crates/app/src/audio/speech/tests.rs) runs the real cues through the gate at
   full scale; [runtime/tests/cues.rs](../crates/app/src/runtime/tests/cues.rs) checks which moments
   sound and when the output is held.

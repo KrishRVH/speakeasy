@@ -96,6 +96,7 @@ impl Feed {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audio::fixture::square_wave;
 
     #[test]
     fn feed_starts_with_gated_padding_and_keeps_every_sample_through_finish() {
@@ -107,7 +108,7 @@ mod tests {
         speech.extend(&audio);
         feed.offer(SessionId::FIRST, &events, &audio, &speech, rate);
         assert!(reports.try_recv().is_err(), "Quiet opened a stream");
-        audio.extend(std::iter::repeat_n(2000_i16.to_le_bytes(), 1600).flatten());
+        audio.extend(square_wave(2000).take(1600).flat_map(i16::to_le_bytes));
         speech.extend(&audio);
         let start = speech.retained(audio.len()).unwrap().start;
         feed.offer(SessionId::FIRST, &events, &audio, &speech, rate);
@@ -127,8 +128,9 @@ mod tests {
     #[test]
     fn backpressure_retries_the_cursor_and_completion_preserves_the_entire_tail() {
         for retry in [false, true] {
-            let audio: Vec<u8> = std::iter::repeat_n(2000_i16.to_le_bytes(), 48_000)
-                .flatten()
+            let audio: Vec<u8> = square_wave(2000)
+                .take(48_000)
+                .flat_map(i16::to_le_bytes)
                 .collect();
             let mut speech = Audibility::new(16_000);
             speech.extend(&audio);

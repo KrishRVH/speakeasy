@@ -20,6 +20,12 @@ impl Lowpass {
             .iter_mut()
             .fold(sample, |sample, section| section.filter(sample))
     }
+
+    pub(crate) fn settle(&mut self, level: f64) {
+        for section in &mut self.0 {
+            section.settle(level);
+        }
+    }
 }
 
 struct Biquad {
@@ -44,6 +50,11 @@ impl Biquad {
             s1: 0.0,
             s2: 0.0,
         }
+    }
+
+    fn settle(&mut self, level: f64) {
+        self.s1 = (1.0 - self.b0) * level;
+        self.s2 = (self.b0 - self.a2) * level;
     }
 
     fn filter(&mut self, sample: f64) -> f64 {
@@ -76,6 +87,15 @@ mod tests {
         ] {
             let gain = gain(300.0, hz);
             assert!((low..high).contains(&gain), "{hz} Hz passed at {gain}");
+        }
+    }
+
+    #[test]
+    fn a_settled_filter_holds_a_constant_level_without_a_transient() {
+        let mut filter = Lowpass::new(300.0, 48_000.0).unwrap();
+        filter.settle(0.25);
+        for _ in 0..960 {
+            assert!((filter.filter(0.25) - 0.25).abs() < 1e-12);
         }
     }
 

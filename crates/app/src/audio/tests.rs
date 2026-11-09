@@ -51,6 +51,34 @@ fn speech_ceiling_relaxes_six_decibels_a_second_within_its_bounds() {
 }
 
 #[test]
+fn the_meter_rests_on_a_constant_offset_and_follows_speech_around_it() {
+    let level = |samples: &mut dyn Iterator<Item = f32>| {
+        let mut meter = LevelMeter::new();
+        meter.since = Instant::now().checked_sub(METER_INTERVAL).unwrap();
+        samples.for_each(|sample| meter.add(sample));
+        meter.take_level().unwrap()
+    };
+    let speech = || {
+        fixture::square_wave(1_000)
+            .take(640)
+            .map(|sample| f32::from(sample) / 32_768.0)
+    };
+    assert_eq!(
+        level(&mut std::iter::repeat_n(0.05, 640)).to_bits(),
+        0.0_f32.to_bits()
+    );
+    let spoken = level(&mut speech());
+    assert!(
+        spoken > 0.5,
+        "The fixture must register as speech, or this test proves nothing"
+    );
+    assert!(near(
+        level(&mut speech().map(|sample| sample + 0.05)),
+        spoken
+    ));
+}
+
+#[test]
 fn stopped_startup_returns_without_audio() {
     let records_nothing = |events: &Sender<CaptureEvent>, control: &Arc<Control>| {
         matches!(
@@ -313,8 +341,7 @@ fn pcm_chunks_wrap_clamp_invalid_samples_and_enforce_the_limit() -> anyhow::Resu
     let mut pcm = Pcm16::with_reservation(0, 3);
     let mut meter = LevelMeter::new();
     consume_pcm(&mut ring, &mut pcm, &mut meter);
-    assert_eq!(meter.samples, 3);
-    assert_eq!(meter.energy, 1.25);
+    assert!((meter.power.mean_square() - 1.0 / 6.0).abs() < 1e-12);
     let expected = [16383_i16, 0, 32767]
         .into_iter()
         .flat_map(i16::to_le_bytes)

@@ -247,13 +247,13 @@ mod tests {
     use anyhow::Context as _;
 
     use super::*;
-    use crate::audio::stream::MAX_SAMPLE_RATE;
+    use crate::audio::{fixture::square_wave, stream::MAX_SAMPLE_RATE};
 
     fn pcm_from(segments: &[(usize, i16)]) -> Pcm16 {
         let mut pcm = Pcm16::with_reservation(0, usize::MAX);
         for &(samples, amplitude) in segments {
-            for _ in 0..samples {
-                pcm.push(amplitude);
+            for sample in square_wave(amplitude).take(samples) {
+                pcm.push(sample);
             }
         }
         pcm
@@ -384,10 +384,14 @@ mod tests {
             limit: usize::MAX,
         };
         let speech = WAV_HEADER_BYTES + bytes_in(rate * 40)..WAV_HEADER_BYTES + bytes_in(rate * 50);
-        pcm.bytes[speech]
+        for (pair, sample) in pcm.bytes[speech]
             .as_chunks_mut::<SAMPLE_BYTES>()
             .0
-            .fill(3000_i16.to_le_bytes());
+            .iter_mut()
+            .zip(square_wave(3000))
+        {
+            *pair = sample.to_le_bytes();
+        }
         let padding = rate / 2;
         let kept = bytes_in(rate * 40 - padding)..bytes_in(rate * 50 + padding);
         let expected = pcm.audio()[kept].to_vec();

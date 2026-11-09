@@ -2,6 +2,7 @@ use anyhow::Context as _;
 use speakeasy_show::Take;
 
 use super::*;
+use crate::audio::fixture::square_wave;
 
 async fn interrupted() -> anyhow::Result<(tempfile::TempDir, Interrupted)> {
     interrupted_with_audio(false).await
@@ -27,7 +28,15 @@ async fn interrupted_with_audio(
     ));
     if keep_audio {
         assert!(audio.begin(8_000, Duration::ZERO, "fr".into()));
-        assert!(audio.finish(&[0xB8, 0x0B].repeat(8_000), &[]));
+        assert!(
+            audio.finish(
+                &square_wave(3000)
+                    .take(8_000)
+                    .flat_map(i16::to_le_bytes)
+                    .collect::<Vec<_>>(),
+                &[]
+            )
+        );
     } else {
         drop(audio);
     }

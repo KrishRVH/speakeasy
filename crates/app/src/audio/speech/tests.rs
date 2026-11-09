@@ -3,7 +3,10 @@ use std::{f64::consts::TAU, iter};
 use proptest::prelude::*;
 
 use super::*;
-use crate::{audio::stream::MAX_SAMPLE_RATE, sounds::Cue};
+use crate::{
+    audio::{fixture::square_wave, stream::MAX_SAMPLE_RATE},
+    sounds::Cue,
+};
 
 const RATE: u32 = 16_000;
 const SECOND: usize = 32_000;
@@ -27,7 +30,7 @@ fn audio(segments: &[(usize, i16)]) -> Vec<u8> {
     encode(
         segments
             .iter()
-            .flat_map(|&(bytes, amplitude)| iter::repeat_n(amplitude, bytes / SAMPLE_BYTES)),
+            .flat_map(|&(bytes, amplitude)| square_wave(amplitude).take(bytes / SAMPLE_BYTES)),
     )
 }
 
@@ -225,6 +228,26 @@ fn the_cues_a_recording_hears_stay_out_of_the_voice_band_even_at_full_scale() {
 }
 
 #[test]
+fn a_recording_that_opens_on_a_sounding_cue_does_not_hear_it_as_speech() {
+    for cue in [Cue::Start, Cue::Show] {
+        let peak = decode(cue.pcm()).map(i16::unsigned_abs).max().unwrap();
+        let opened_at = decode(cue.pcm())
+            .position(|sample| sample.unsigned_abs() == peak)
+            .unwrap();
+        let recording = encode(
+            decode(cue.pcm())
+                .skip(opened_at)
+                .map(|sample| sample / 10)
+                .chain(iter::repeat_n(0, 48_000)),
+        );
+        let mut speech = Audibility::new(48_000);
+        speech.expect_cue(&[]);
+        speech.complete(&recording);
+        assert_eq!(speech.audible, 0, "{cue:?}");
+    }
+}
+
+#[test]
 fn a_cue_during_a_recording_counts_only_by_its_voice_band_from_where_it_was_asked_for() {
     let recording = [
         audio(&[(SECOND, 3000), (SECOND, 0)]),
@@ -280,6 +303,29 @@ fn soft_voice_survives_the_gate_with_and_without_a_cue_notice() {
             speech.retained(recording.len()),
             Some(0..recording.len()),
             "Soft voice was discarded with cue notice {cue}"
+        );
+    }
+}
+
+#[test]
+fn a_constant_offset_neither_counts_as_speech_nor_moves_its_edges() {
+    let offset = |recording: &[u8]| encode(decode(recording).map(|sample| sample + 1_000));
+    let quiet = audio(&[(SECOND * 2, 0)]);
+    let spoken = audio(&[(SECOND * 2, 0), (SECOND, 3000), (SECOND * 2, 0)]);
+    for cue in [false, true] {
+        let retained = |recording: &[u8]| {
+            let mut speech = Audibility::new(RATE);
+            if cue {
+                speech.expect_cue(&[]);
+            }
+            speech.complete(recording);
+            speech.retained(recording.len())
+        };
+        assert_eq!(retained(&offset(&quiet)), None, "cue notice {cue}");
+        assert_eq!(
+            retained(&offset(&spoken)),
+            Some(SECOND * 3 / 2..SECOND * 7 / 2),
+            "cue notice {cue}"
         );
     }
 }

@@ -138,3 +138,10 @@ fn feed(
     }
     true
 }
+
+pub(crate) fn square_wave(amplitude: i16) -> impl Iterator<Item = i16> {
+    let half = [amplitude; 10];
+    half.into_iter()
+        .chain(half.map(i16::saturating_neg))
+        .cycle()
+}

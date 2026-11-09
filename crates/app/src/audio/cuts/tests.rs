@@ -1,13 +1,15 @@
 use proptest::prelude::*;
 
 use super::*;
-use crate::audio::pcm::Pcm16;
+use crate::audio::{fixture::square_wave, pcm::Pcm16};
 
 fn audio(bursts: &[(usize, usize)]) -> Vec<i16> {
     bursts
         .iter()
         .flat_map(|&(speech, quiet)| {
-            std::iter::repeat_n(2000, speech).chain(std::iter::repeat_n(0, quiet))
+            square_wave(2000)
+                .take(speech)
+                .chain(std::iter::repeat_n(0, quiet))
         })
         .collect()
 }

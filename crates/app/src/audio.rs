@@ -11,6 +11,7 @@ mod stream;
 pub(crate) mod fixture;
 
 use std::{
+    mem,
     panic::{self, AssertUnwindSafe},
     sync::Arc,
     thread::{self, Thread},
@@ -36,7 +37,7 @@ use self::{
     control::{Control, Mode},
     cuts::Cuts,
     pcm::{Pcm16, samples_in},
-    speech::Audibility,
+    speech::{AcPower, Audibility},
     stream::{CallbackState, build_stream, capture_failure, microphone_error, rate_and_channels},
 };
 use crate::{
@@ -468,8 +469,7 @@ impl<D> Recorder<D> {
 }
 
 struct LevelMeter {
-    energy: f64,
-    samples: u32,
+    power: AcPower,
     since: Instant,
     scale: SpeechScale,
 }
@@ -477,16 +477,14 @@ struct LevelMeter {
 impl LevelMeter {
     fn new() -> Self {
         Self {
-            energy: 0.0,
-            samples: 0,
+            power: AcPower::default(),
             since: Instant::now(),
             scale: SpeechScale::default(),
         }
     }
 
     fn add(&mut self, sample: f32) {
-        self.energy += f64::from(sample * sample);
-        self.samples = self.samples.saturating_add(1);
+        self.power.add(f64::from(sample));
     }
 
     fn take_level(&mut self) -> Option<f32> {
@@ -499,9 +497,7 @@ impl LevelMeter {
             clippy::cast_possible_truncation,
             reason = "The display meter intentionally converts bounded normalized RMS to f32; PCM remains independently encoded"
         )]
-        let rms = (self.energy / f64::from(self.samples.max(1))).sqrt() as f32;
-        self.energy = 0.0;
-        self.samples = 0;
+        let rms = mem::take(&mut self.power).mean_square().sqrt() as f32;
         self.since = now;
         Some(self.scale.level(rms, elapsed))
     }

@@ -60,23 +60,33 @@ impl Audibility {
     }
 
     fn classify(&mut self, window: &[u8]) {
-        let (mut whole, mut voice) = (0.0, 0.0);
-        for pair in window.as_chunks::<SAMPLE_BYTES>().0 {
-            let sample = f64::from(i16::from_le_bytes(*pair)) / 32_768.0;
-            let low = self
-                .voice
-                .as_mut()
-                .map_or(sample, |band| band.filter(sample));
-            whole += sample * sample;
-            voice += low * low;
-        }
-        let samples = (window.len() / SAMPLE_BYTES) as f64;
-        let minimum = AUDIBLE_RMS.powi(2) * samples;
+        let samples = || {
+            window
+                .as_chunks::<SAMPLE_BYTES>()
+                .0
+                .iter()
+                .map(|pair| f64::from(i16::from_le_bytes(*pair)) / 32_768.0)
+        };
+        let whole: AcPower = samples().collect();
+        let voice = match self.voice.as_mut() {
+            Some(band) => {
+                if self.scanned == 0 {
+                    band.settle(whole.mean());
+                }
+                samples()
+                    .map(|sample| band.filter(sample))
+                    .collect::<AcPower>()
+                    .mean_square()
+            },
+            None => whole.mean_square(),
+        };
+        let whole = whole.mean_square();
+        let floor = AUDIBLE_RMS.powi(2);
         let audible = if self.scanned < self.cue_until {
-            voice >= CUE_VOICE_RMS.powi(2) * samples
-                || (whole >= minimum && voice >= minimum && voice >= whole * MINIMUM_VOICE_FRACTION)
+            voice >= CUE_VOICE_RMS.powi(2)
+                || (whole >= floor && voice >= floor && voice >= whole * MINIMUM_VOICE_FRACTION)
         } else {
-            whole >= minimum
+            whole >= floor
         };
         let end = self.scanned.saturating_add(window.len());
         if audible {
@@ -110,6 +120,38 @@ impl Audibility {
             length
         };
         Some(start..end)
+    }
+}
+
+#[derive(Default)]
+pub(super) struct AcPower {
+    sum: f64,
+    squares: f64,
+    samples: u32,
+}
+
+impl AcPower {
+    pub(super) fn add(&mut self, sample: f64) {
+        self.sum += sample;
+        self.squares += sample * sample;
+        self.samples = self.samples.saturating_add(1);
+    }
+
+    fn mean(&self) -> f64 {
+        self.sum / f64::from(self.samples.max(1))
+    }
+
+    pub(super) fn mean_square(&self) -> f64 {
+        let mean = self.mean();
+        (self.squares / f64::from(self.samples.max(1)) - mean * mean).max(0.0)
+    }
+}
+
+impl FromIterator<f64> for AcPower {
+    fn from_iter<I: IntoIterator<Item = f64>>(samples: I) -> Self {
+        let mut power = Self::default();
+        samples.into_iter().for_each(|sample| power.add(sample));
+        power
     }
 }
 

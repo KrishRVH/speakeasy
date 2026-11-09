@@ -90,15 +90,15 @@ or dismiss a later session.
 
 The audio envelope keeps 24 recent levels and paints the grille in one canvas, mirrored outward from
 the newest level; bars near the slot's rounded ends stay inside its curve. Capture supplies a 32 ms
-RMS level squared on a decibel scale from a fixed −54 dBFS floor to a ceiling that jumps to each
-louder window and relaxes 6 dB per second, held between −30 and −10 dBFS. The loudest recent
-syllables reach full height on quiet and hot microphones alike; the UI animates between levels. Pill
-animation follows native display frames within the
-[frame budget](performance.md#implementation-constraints). Delayed frames skip expired deadlines,
-and springs advance by the actual elapsed time. Silence settles to short bars. Demo mode alone
-supplies simulated levels. Reduced motion, from Settings or the OS, snaps transitions, the lid, and
-level changes, uses one level bar, and keeps the processing highlight still. During capture, a timer
-wakes the pill for each second of its clock and countdown.
+RMS level, taken around the window's mean so a DC offset rests at the floor, squared on a decibel
+scale from a fixed −54 dBFS floor to a ceiling that jumps to each louder window and relaxes 6 dB per
+second, held between −30 and −10 dBFS. The loudest recent syllables reach full height on quiet and
+hot microphones alike; the UI animates between levels. Pill animation follows native display frames
+within the [frame budget](performance.md#implementation-constraints). Delayed frames skip expired
+deadlines, and springs advance by the actual elapsed time. Silence settles to short bars. Demo mode
+alone supplies simulated levels. Reduced motion, from Settings or the OS, snaps transitions, the
+lid, and level changes, uses one level bar, and keeps the processing highlight still. During
+capture, a timer wakes the pill for each second of its clock and countdown.
 
 ## Sounds
 
