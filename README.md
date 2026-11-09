@@ -657,8 +657,8 @@ checks before readiness and explains how to choose another engine in Settings
 
 **Parakeet** is the default: NVIDIA's Parakeet TDT 0.6B v3, run by NeMo-Speech.cpp. It detects the
 language automatically and needs microphone audio at 8–96 kHz. Setup chooses its build, and **Prefer
-GPU** switches between the GPU and the CPU. After a five-minute recording the GPU worker holds about
-3.8 GB of memory until **Pause** releases it. The model is by NVIDIA, under
+GPU** switches between the GPU and the CPU. The GPU worker keeps its memory between recordings until
+**Pause** releases it. The model is by NVIDIA, under
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 
 Long Parakeet dictation starts recognition at pauses while you keep speaking, reducing the work left
