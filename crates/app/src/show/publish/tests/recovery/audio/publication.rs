@@ -13,8 +13,7 @@ async fn durable_voiced_publication_retires_checkpoint_after_a_crash_before_disc
     let (_input, active) = permit();
     let saved = persist(
         None,
-        captured.recording,
-        captured.journal,
+        captured,
         Some(&checkpoint),
         checkpoint::Publication::Narrated,
         &active,

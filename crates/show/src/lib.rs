@@ -7,6 +7,7 @@ mod demo;
 mod describe;
 mod draw;
 mod error;
+mod framing;
 mod geometry;
 mod image;
 pub mod ink;
@@ -30,6 +31,7 @@ pub use crate::{
     demo::Demo,
     draw::video::{AnnotationReport, Annotations, VideoViewport},
     error::Error,
+    framing::Framing,
     geometry::{Point, Rect},
     image::Image,
     journal::{

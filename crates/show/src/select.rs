@@ -15,7 +15,7 @@ use self::{
     groups::group_marks,
 };
 use crate::{
-    Moment, Span, align, describe,
+    Moment, Rect, Span, align, describe,
     marks::{self, Mark},
     recording::{Action, Recording},
     signature::Sample,
@@ -54,6 +54,8 @@ pub struct Keyframe {
     pub marks: Range<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub action: Option<Action>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crop: Option<Rect>,
 }
 
 impl Keyframe {
@@ -77,6 +79,7 @@ impl fmt::Debug for Keyframe {
             said: _,
             marks,
             action,
+            crop,
         } = self;
         f.debug_struct("Keyframe")
             .field("index", index)
@@ -84,6 +87,7 @@ impl fmt::Debug for Keyframe {
             .field("reason", reason)
             .field("marks", marks)
             .field("action", action)
+            .field("crop", crop)
             .finish_non_exhaustive()
     }
 }
@@ -166,6 +170,7 @@ fn select_within(recording: &Recording, samples: &[Sample], most: usize) -> Opti
             said,
             marks: candidate.basis.marks(),
             action: candidate.basis.action(),
+            crop: None,
         })
         .collect();
     (!keyframes.is_empty()).then_some(Selection { marks, keyframes })

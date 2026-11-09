@@ -9,9 +9,14 @@ async fn checkpoint(parent: &Path) -> anyhow::Result<Checkpoint> {
         width: 80.0,
         height: 60.0,
     };
-    let (checkpoint, mut writer) =
-        crate::show::Keeper::fixture(parent, SystemTime::now(), 1 << 20, surface)?;
-    let mut take = Take::new(1 << 20, surface);
+    let (checkpoint, mut writer) = crate::show::Keeper::fixture(
+        parent,
+        SystemTime::now(),
+        1 << 20,
+        surface,
+        speakeasy_show::Framing::Automatic,
+    )?;
+    let mut take = Take::new(1 << 20, surface, speakeasy_show::Framing::Automatic);
     assert!(
         writer.send(take.arrive(Moment::from_millis(100), || Some(desktop(
             80, 60, 0, 0, false
@@ -29,8 +34,80 @@ async fn checkpoint(parent: &Path) -> anyhow::Result<Checkpoint> {
 }
 
 fn footage(checkpoint: &Checkpoint) -> anyhow::Result<Footage> {
-    let (recording, journal) = checkpoint.replay()?.finish();
-    Ok(Footage { recording, journal })
+    let take = checkpoint.replay()?;
+    let framing = take.framing();
+    let (recording, journal) = take.finish();
+    Ok(Footage {
+        recording,
+        journal,
+        framing,
+    })
+}
+
+async fn clicked_checkpoint(
+    parent: &Path,
+    framing: speakeasy_show::Framing,
+) -> anyhow::Result<Checkpoint> {
+    let (width, height) = (1_600, 1_000);
+    let surface = Size {
+        width: width as f32,
+        height: height as f32,
+    };
+    let budget = speakeasy_show::Log::MAX_BUDGET;
+    let (checkpoint, mut writer) =
+        crate::show::Keeper::fixture(parent, SystemTime::now(), budget, surface, framing)?;
+    let mut take = Take::new(budget, surface, framing);
+    let frame = |at: u64| Some(desktop(width, height, 0, 0, at > 1_000));
+    assert!(writer.send(take.arrive(Moment::START, || frame(0))?));
+    for (at, pressed) in [(1_000, true), (1_080, false)] {
+        let click = TakeEvent::Pointer {
+            part: Rect::from([0.0, 0.0, 1.0, 1.0]),
+            at: Moment::from_millis(at),
+            point: Point::new(0.15, 0.2),
+            drawing: false,
+            pressed,
+        };
+        take.apply(&click)?;
+        assert!(writer.send(click));
+    }
+    assert!(writer.send(take.arrive(Moment::from_millis(1_200), || frame(1_200))?));
+    assert!(writer.send(take.end(Moment::from_millis(2_000), Ending::Finished)));
+    assert!(writer.close().await);
+    checkpoint
+        .close()
+        .await?
+        .context("Fixture checkpoint is missing")
+}
+
+#[tokio::test]
+async fn recovery_frames_a_show_as_its_recording_chose() -> anyhow::Result<()> {
+    for framing in [
+        speakeasy_show::Framing::Automatic,
+        speakeasy_show::Framing::Chosen,
+    ] {
+        let parent = tempfile::tempdir()?;
+        drop(clicked_checkpoint(parent.path(), framing).await?);
+        let interrupted = store::checkpoint::list(parent.path(), SystemTime::now())
+            .shows
+            .remove(0);
+        let (_input, permit) = permit();
+        let Published::Recovered { show, .. } =
+            recover_with(interrupted, &permit, || Ok(parent.path().to_owned()))?
+        else {
+            bail!("Recovery did not publish");
+        };
+        let manifest = Manifest::parse(&fs::read(show.directory().join(Manifest::FILE))?)?;
+        let cropped = manifest
+            .keyframes()
+            .iter()
+            .any(|keyframe| keyframe.crop.is_some());
+        assert_eq!(
+            cropped,
+            framing == speakeasy_show::Framing::Automatic,
+            "{framing:?}"
+        );
+    }
+    Ok(())
 }
 
 #[tokio::test]

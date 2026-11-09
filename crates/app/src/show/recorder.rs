@@ -10,7 +10,8 @@ use speakeasy_platform::{
     ScreenEvent, Taps, Target, WindowGone,
 };
 use speakeasy_show::{
-    Ending, Image, MAX_FRAME_EDGE, Mark, Moment, Point, SAMPLE_INTERVAL, Size, Span, TakeEvent,
+    Ending, Framing, Image, MAX_FRAME_EDGE, Mark, Moment, Point, SAMPLE_INTERVAL, Size, Span,
+    TakeEvent,
 };
 use tokio::sync::watch;
 
@@ -195,10 +196,21 @@ fn record(
             };
             let display = target.display();
             let part = target.part();
+            let framing = match scope {
+                Scope::Screen => Framing::Automatic,
+                Scope::Window | Scope::Area => Framing::Chosen,
+            };
             lanes.canvas.send_replace(Canvas::covering(display, part));
-            let mut take = Take::new(started, display.size, part, lanes.canvas, (id, events));
+            let mut take = Take::new(
+                started,
+                display.size,
+                part,
+                framing,
+                lanes.canvas,
+                (id, events),
+            );
             if let Some(writer) = &mut log
-                && !writer.begin(JOURNAL_BUDGET, surface(display.size, part))
+                && !writer.begin(JOURNAL_BUDGET, surface(display.size, part), framing)
             {
                 take.warn_checkpoint();
             }
@@ -296,6 +308,7 @@ impl<'a> Take<'a> {
         started: Instant,
         size: [f32; 2],
         part: Part,
+        framing: Framing,
         canvas: &'a watch::Sender<Canvas>,
         notices: (SessionId, Sender<ShowEvent>),
     ) -> Self {
@@ -305,7 +318,7 @@ impl<'a> Take<'a> {
             display: size,
             part,
             placed_at: started,
-            state: speakeasy_show::Take::new(JOURNAL_BUDGET, surface(size, part)),
+            state: speakeasy_show::Take::new(JOURNAL_BUDGET, surface(size, part), framing),
             log: None,
             notices,
             checkpoint_warned: false,
@@ -554,8 +567,13 @@ impl<'a> Take<'a> {
         if self.state.journal().is_empty() {
             return Err(anyhow!(NOTHING_RECORDED));
         }
+        let framing = self.state.framing();
         let (recording, journal) = self.state.finish();
-        Ok(Footage { recording, journal })
+        Ok(Footage {
+            recording,
+            journal,
+            framing,
+        })
     }
 }
 

@@ -86,6 +86,29 @@ fn the_more_menu_opens_once_per_press_and_keyboard_skips_unavailable_actions() {
 }
 
 #[tokio::test]
+async fn a_cropped_keyframe_says_so_and_where_the_whole_screen_is() -> anyhow::Result<()> {
+    let root = Source::Demo.load()?;
+    let (rows, _) = list(&root.directory)?;
+    let detail = Detail::open(&rows[0].directory, library::Mode::Keyframes)?;
+    let cropped = detail.frames.iter().filter(|frame| frame.cropped).count();
+    assert!(cropped > 0 && cropped < detail.frames.len(), "{cropped}");
+    let note = "Cropped to where you worked";
+    for frame in &detail.frames {
+        let alone = frame.caption(detail.frames.len(), false);
+        let pointed = frame.caption(detail.frames.len(), true);
+        assert_eq!(alone.ends_with(note), frame.cropped, "{alone}");
+        assert_eq!(
+            pointed.ends_with(&format!(
+                "{note}; All retained frames shows the whole screen"
+            )),
+            frame.cropped,
+            "{pointed}"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn the_demo_is_isolated_and_damage_does_not_hide_the_current_summary() -> anyhow::Result<()> {
     let root = Source::Demo.load()?;
     assert!(root.fixture.is_some());

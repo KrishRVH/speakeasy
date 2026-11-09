@@ -9,9 +9,12 @@ mod read;
 pub use read::Unreadable;
 
 use crate::{
-    Ending, Error, Image, Keyframe, Mark, Moment, NarrationLoss, Recording, Selection, Typeface,
+    Ending, Error, Image, Keyframe, Mark, Moment, NarrationLoss, Recording, Rect, Selection,
+    Typeface,
     describe::{Count, Marker},
     draw::{self, Badge, Corner},
+    framing,
+    locate::PixelRect,
     parallel, sheet,
 };
 
@@ -80,17 +83,38 @@ pub fn compose<E: From<Error> + Send>(
     frame: impl Fn(Moment) -> Result<Image, E> + Sync,
     typeface: &Typeface,
 ) -> Result<Bundle, E> {
-    let Selection { marks, keyframes } = selection;
+    let Selection {
+        marks,
+        mut keyframes,
+    } = selection;
     let mut sheets = Vec::new();
     let mut frames = Vec::with_capacity(keyframes.len());
+    let mut crops = Vec::with_capacity(keyframes.len());
     for (number, page) in sheet::pages(&keyframes).enumerate() {
-        let annotated = parallel::map(page, |keyframe| {
-            let mut image = frame(keyframe.at)?;
-            let corner = draw::annotate(&mut image, keyframe, &recording, &marks, typeface);
-            Ok((image, corner))
-        })
-        .into_iter()
-        .collect::<Result<Vec<(Image, Corner)>, E>>()?;
+        let (annotated, cropped): (Vec<(Image, Corner)>, Vec<Option<Rect>>) =
+            parallel::map(page, |keyframe| {
+                let mut image = frame(keyframe.at)?;
+                let drawn = draw::annotate(&mut image, keyframe, &recording, &marks, typeface);
+                let crop = keyframe
+                    .crop
+                    .and_then(|crop| framing::fit(crop, drawn.extent(), &image, recording.surface))
+                    .map(|crop| PixelRect::covering(crop, image.width(), image.height()))
+                    .filter(|pixels| {
+                        pixels.width < image.width() || pixels.height < image.height()
+                    });
+                Ok(match crop {
+                    Some(pixels) => {
+                        let part = pixels.part(image.width(), image.height());
+                        ((pixels.cut(image)?, drawn.corner(part)), Some(part))
+                    },
+                    None => ((image, drawn.corner(Rect::UNIT)), None),
+                })
+            })
+            .into_iter()
+            .collect::<Result<Vec<_>, E>>()?
+            .into_iter()
+            .unzip();
+        crops.extend(cropped);
         sheets.push(File {
             name: sheet_file(number),
             contents: sheet::render(
@@ -123,6 +147,9 @@ pub fn compose<E: From<Error> + Send>(
         for file in encoded {
             frames.push(file?);
         }
+    }
+    for (keyframe, crop) in keyframes.iter_mut().zip(crops) {
+        keyframe.crop = crop;
     }
     Ok(Bundle {
         manifest: Manifest {
@@ -260,6 +287,30 @@ impl fmt::Display for Summary<'_> {
                 file(&last.file())
             ),
         }?;
+        let cropped: Vec<usize> = keyframes
+            .iter()
+            .filter(|keyframe| keyframe.crop.is_some())
+            .map(|keyframe| keyframe.index)
+            .collect();
+        match cropped.as_slice() {
+            [] => {},
+            [only] => writeln!(
+                f,
+                "Frame #{only} is cropped to the area the user worked in; the timeline gives the \
+                 crop as a fraction of the screen."
+            )?,
+            _ if cropped.len() == keyframes.len() => writeln!(
+                f,
+                "Every keyframe is cropped to the area the user worked in; the timeline gives \
+                 each crop as a fraction of the screen."
+            )?,
+            several => writeln!(
+                f,
+                "Frames {} are cropped to the area the user worked in; the timeline gives each \
+                 crop as a fraction of the screen.",
+                Frames(several)
+            )?,
+        }
         if let Some(Retrieval { command, id }) = retrieval {
             writeln!(
                 f,
@@ -277,8 +328,35 @@ impl fmt::Display for Summary<'_> {
                 frames = Code(format!("show frames {id} --json")),
                 skill = Code("show skill"),
             )?;
+            if !cropped.is_empty() {
+                writeln!(
+                    f,
+                    "For the whole screen behind a cropped frame, run {} with that frame's time.",
+                    Code(format!(
+                        "show frame {id} --at M:SS.mmm --out NEW.png --json"
+                    ))
+                )?;
+            }
         }
         Ok(())
+    }
+}
+
+struct Frames<'a>(&'a [usize]);
+
+impl fmt::Display for Frames<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            [] => Ok(()),
+            [only] => write!(f, "#{only}"),
+            [first, last] => write!(f, "#{first} and #{last}"),
+            [rest @ .., last] => {
+                for index in rest {
+                    write!(f, "#{index}, ")?;
+                }
+                write!(f, "and #{last}")
+            },
+        }
     }
 }
 

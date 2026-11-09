@@ -802,6 +802,7 @@ fn debugging_a_keyframe_never_prints_what_was_said() {
             said: Some(said.to_owned()),
             marks: 0..0,
             action: None,
+            crop: None,
         };
         format!("{keyframe:?}")
     };

@@ -3,7 +3,7 @@ use std::{fs, io, path::Path, time::Instant};
 use anyhow::bail;
 use speakeasy_platform::{InputSender, InsertPermit};
 use speakeasy_show::{
-    Image, Journal, Manifest, Moment, Narration, Point, Size, Span, Tracker, Word,
+    Image, Journal, Manifest, Moment, Narration, Point, Rect, Size, Span, Tracker, Word,
 };
 
 use super::*;
@@ -143,6 +143,7 @@ impl Rehearsal {
         Footage {
             recording: self.tracker.finish(Moment::from_millis(ended)),
             journal: self.journal,
+            framing: Framing::Automatic,
         }
     }
 }
@@ -384,6 +385,61 @@ fn a_show_publishes_a_complete_private_bundle() -> anyhow::Result<()> {
 }
 
 #[test]
+fn only_a_screen_show_crops_its_frames_to_the_activity() -> anyhow::Result<()> {
+    let (width, height) = (1_600, 1_000);
+    for framing in [Framing::Automatic, Framing::Chosen] {
+        let mut show = Rehearsal::new(width, height);
+        for at in (0..4_000).step_by(200) {
+            show.frame(at, desktop(width, height, 0, 0, at >= 1_200));
+        }
+        show.pointer(1_000, 0.15, 0.2, false, true);
+        show.pointer(1_080, 0.15, 0.2, false, false);
+        let root = tempfile::tempdir()?;
+        let (_input, permit) = permit();
+        let Published::Saved { show, .. } = publish_with(
+            None,
+            Footage {
+                framing,
+                ..show.finish(4_000)
+            },
+            None,
+            Origin::Live,
+            &permit,
+            || Ok(root.path().to_owned()),
+            |_| Ok(()),
+        )?
+        else {
+            bail!("An active permit saves the Show");
+        };
+        let directory = show.folder()?.context("The Show was saved")?;
+        let manifest = Manifest::parse(&fs::read(directory.join("show.json"))?)?;
+        let mut cropped = 0;
+        for keyframe in manifest.keyframes() {
+            let file = keyframe.file();
+            let crop = keyframe
+                .crop
+                .unwrap_or_else(|| Rect::from([0.0, 0.0, 1.0, 1.0]));
+            let (wide, tall) = png_size(&fs::read(directory.join(&file))?);
+            assert!(
+                (wide as f32 - (crop.right - crop.left) * width as f32).abs() < 0.5
+                    && (tall as f32 - (crop.bottom - crop.top) * height as f32).abs() < 0.5,
+                "{file} is {wide}×{tall} for {crop:?}"
+            );
+            cropped += usize::from(keyframe.crop.is_some());
+        }
+        let automatic = framing == Framing::Automatic;
+        assert_eq!(
+            cropped > 0,
+            automatic,
+            "{framing:?} cropped {cropped} frames"
+        );
+        let summary = show.summary()?.context("The Show kept its summary")?;
+        assert_eq!(summary.contains("cropped to the area"), automatic);
+    }
+    Ok(())
+}
+
+#[test]
 fn a_show_that_cannot_be_copied_stays_saved() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let shows = root.path().join("shows");
@@ -553,8 +609,10 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
             SystemTime::now(),
             speakeasy_show::Log::MAX_BUDGET,
             surface,
+            Framing::Automatic,
         )?;
-        let mut take = speakeasy_show::Take::new(speakeasy_show::Log::MAX_BUDGET, surface);
+        let mut take =
+            speakeasy_show::Take::new(speakeasy_show::Log::MAX_BUDGET, surface, Framing::Automatic);
         let mut timings = Vec::new();
         for (index, image) in images.into_iter().enumerate() {
             let at = Moment::from_millis(u64::try_from(index)? * 200);
@@ -613,6 +671,7 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
     let Footage {
         mut recording,
         journal,
+        ..
     } = footage;
     recording.narration = narration;
     let selection = select(&recording, journal.samples()).context("Selected")?;

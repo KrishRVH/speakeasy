@@ -486,6 +486,7 @@ fn footage() -> Box<Footage> {
             ..Recording::default()
         },
         journal,
+        framing: speakeasy_show::Framing::Automatic,
     })
 }
 

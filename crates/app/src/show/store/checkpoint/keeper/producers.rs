@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use async_channel::{Receiver, Sender};
-use speakeasy_show::{Size, TakeEvent};
+use speakeasy_show::{Framing, Size, TakeEvent};
 use zeroize::Zeroizing;
 
 use super::{FrameRecord, audio};
@@ -93,8 +93,12 @@ impl FrameLog {
         }
     }
 
-    pub(crate) fn begin(&mut self, budget: usize, surface: Size) -> bool {
-        self.offer(FrameRecord::Begin { budget, surface })
+    pub(crate) fn begin(&mut self, budget: usize, surface: Size, framing: Framing) -> bool {
+        self.offer(FrameRecord::Begin {
+            budget,
+            surface,
+            framing,
+        })
     }
 
     pub(crate) fn send(&mut self, event: TakeEvent) -> bool {

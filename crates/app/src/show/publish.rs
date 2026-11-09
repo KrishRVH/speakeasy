@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::{Context as _, anyhow};
 use speakeasy_platform::InsertPermit;
-use speakeasy_show::{Journal, NarrationLoss, Recording, Typeface, compose, select};
+use speakeasy_show::{Framing, NarrationLoss, Typeface, compose, select};
 
 use super::{
     Checkpoint, Interrupted, SavedShow, recorder::NOTHING_RECORDED, store, store::checkpoint,
@@ -87,9 +87,8 @@ fn publish_with(
     parent: impl FnOnce() -> anyhow::Result<PathBuf>,
     copy: impl FnOnce(&str) -> anyhow::Result<()>,
 ) -> anyhow::Result<Published> {
-    let Footage { recording, journal } = footage;
-    let ending = recording.ending;
-    let lost = recording.narration_lost;
+    let ending = footage.recording.ending;
+    let lost = footage.recording.narration_lost;
     let completion = match lost {
         Some(NarrationLoss::AudioStopped | NarrationLoss::NotTranscribed) => {
             checkpoint::Publication::Pending
@@ -106,7 +105,7 @@ fn publish_with(
             reason = "A failed checkpoint write keeps recovery audio; this bundle still carries the narration"
         )]
         let _ = checkpoint.narrate(
-            &recording.narration,
+            &footage.recording.narration,
             lost == Some(NarrationLoss::Incomplete),
         );
     }
@@ -126,8 +125,7 @@ fn publish_with(
             .is_some_and(|checkpoint| checkpoint.has_audio().unwrap_or(true));
     let result = persist(
         command,
-        recording,
-        journal,
+        footage,
         checkpoint.as_ref(),
         completion,
         permit,
@@ -184,7 +182,9 @@ pub(crate) async fn reopen(interrupted: Interrupted) -> anyhow::Result<Reopened>
 fn reopen_with(interrupted: Interrupted) -> anyhow::Result<Reopened> {
     let checkpoint = interrupted.lock()?;
     let pending = checkpoint.pending()?;
-    let (mut recording, journal) = checkpoint.replay()?.finish();
+    let take = checkpoint.replay()?;
+    let framing = take.framing();
+    let (mut recording, journal) = take.finish();
     let mut speech = None;
 
     match checkpoint.narration() {
@@ -211,7 +211,11 @@ fn reopen_with(interrupted: Interrupted) -> anyhow::Result<Reopened> {
         },
     }
     Ok(Reopened {
-        footage: Footage { recording, journal },
+        footage: Footage {
+            recording,
+            journal,
+            framing,
+        },
         checkpoint,
         speech,
         pending,
@@ -237,8 +241,7 @@ struct Persisted {
 
 fn persist(
     command: Option<&Path>,
-    recording: Recording,
-    journal: Journal,
+    footage: Footage,
     checkpoint: Option<&Checkpoint>,
     completion: checkpoint::Publication,
     permit: &InsertPermit,
@@ -248,9 +251,18 @@ fn persist(
     if cancelled() {
         return Ok(None);
     }
+    let Footage {
+        recording,
+        journal,
+        framing,
+    } = footage;
     let duration = recording.duration;
     let voiced = recording.narration_lost != Some(NarrationLoss::AudioSilent);
     let selection = select(&recording, journal.samples()).context(NOTHING_RECORDED)?;
+    let selection = match framing {
+        Framing::Automatic => selection.framed(&recording, journal.samples()),
+        Framing::Chosen => selection,
+    };
     let typeface = Typeface::parse(crate::BRAND_FONT_FILE)?;
     let bundle = compose(
         recording,

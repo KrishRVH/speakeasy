@@ -15,7 +15,7 @@ use movie::Writing;
 pub(crate) use producers::{AudioLog, FrameLog};
 use producers::{Credit, Producer};
 use speakeasy_platform::{MovieTarget, StoppableThread};
-use speakeasy_show::{Log, Size, TakeEvent};
+use speakeasy_show::{Framing, Log, Size, TakeEvent};
 
 use super::{Checkpoint, audio};
 
@@ -43,6 +43,7 @@ impl Keeper {
         recorded: SystemTime,
         budget: usize,
         surface: Size,
+        framing: Framing,
     ) -> anyhow::Result<(Self, FrameLog)> {
         let parent = parent.to_owned();
         let Kept {
@@ -52,7 +53,7 @@ impl Keeper {
         } = Self::start(move || Ok(parent), recorded)?;
         drop(audio);
         anyhow::ensure!(
-            frames.begin(budget, surface),
+            frames.begin(budget, surface, framing),
             "Synthetic frame log did not begin"
         );
         Ok((keeper, frames))
@@ -114,6 +115,7 @@ enum FrameRecord {
     Begin {
         budget: usize,
         surface: Size,
+        framing: Framing,
     },
     Movie {
         started: Instant,
@@ -240,10 +242,16 @@ fn frame(
 ) -> anyhow::Result<()> {
     let bytes = record.bytes();
     match record {
-        FrameRecord::Begin { budget, surface } => {
-            input
-                .storage
-                .begin(directory, super::LOG, &Log::header(budget, surface)?)?;
+        FrameRecord::Begin {
+            budget,
+            surface,
+            framing,
+        } => {
+            input.storage.begin(
+                directory,
+                super::LOG,
+                &Log::header(budget, surface, framing)?,
+            )?;
         },
         FrameRecord::Movie { started, returned } => {
             anyhow::ensure!(

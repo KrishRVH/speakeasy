@@ -9,6 +9,7 @@ fn pointer_geometry_does_not_wait_for_a_still_or_rewind_when_one_arrives() -> an
         started,
         [1_000.0, 500.0],
         Part::WHOLE,
+        speakeasy_show::Framing::Automatic,
         &canvas,
         (SessionId::FIRST, async_channel::bounded(1).0),
     );
@@ -53,6 +54,7 @@ fn later_frames_do_not_change_queued_pointer_distance_thresholds() -> anyhow::Re
         started,
         [1_000.0, 500.0],
         Part::WHOLE,
+        speakeasy_show::Framing::Automatic,
         &canvas,
         (SessionId::FIRST, async_channel::bounded(1).0),
     );

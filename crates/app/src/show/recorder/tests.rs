@@ -91,6 +91,7 @@ async fn record_with(
         start.into_std(),
         [1_000.0, 500.0],
         Part::WHOLE,
+        speakeasy_show::Framing::Automatic,
         &canvas,
         (SessionId::FIRST, async_channel::bounded(1).0),
     );

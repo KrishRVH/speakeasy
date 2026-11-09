@@ -24,7 +24,8 @@ async fn interrupted_with_audio(
         Size {
             width: 80.0,
             height: 60.0
-        }
+        },
+        speakeasy_show::Framing::Automatic
     ));
     if keep_audio {
         assert!(audio.begin(8_000, Duration::ZERO, "fr".into()));
@@ -46,6 +47,7 @@ async fn interrupted_with_audio(
             width: 80.0,
             height: 60.0,
         },
+        speakeasy_show::Framing::Automatic,
     );
     let event = take.arrive(Moment::from_millis(100), || {
         Some(Image::from_bgra(2, 2, [3, 2, 1, 255].repeat(4)).unwrap())

@@ -10,8 +10,14 @@ fn surface() -> Size {
 }
 
 async fn capture(parent: &Path, at: SystemTime) -> anyhow::Result<Checkpoint> {
-    let (checkpoint, mut writer) = Keeper::fixture(parent, at, 1_000, surface())?;
-    let mut take = Take::new(1_000, surface());
+    let (checkpoint, mut writer) = Keeper::fixture(
+        parent,
+        at,
+        1_000,
+        surface(),
+        speakeasy_show::Framing::Automatic,
+    )?;
+    let mut take = Take::new(1_000, surface(), speakeasy_show::Framing::Automatic);
     let event = take.arrive(Moment::from_millis(100), || {
         Some(Image::from_bgra(2, 2, [3, 2, 1, 255].repeat(4)).unwrap())
     })?;

@@ -244,6 +244,7 @@ mod tests {
             said: None,
             marks: 0..2,
             action,
+            crop: None,
         };
         let click = Action::Click {
             at: Moment::from_millis(1_000),

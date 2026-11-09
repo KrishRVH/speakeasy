@@ -1,7 +1,7 @@
 use serde::Serialize;
 
 use crate::{
-    Error, Image, Moment, Rect, SourceFrame, Typeface, convert,
+    Error, Image, Moment, Point, Rect, SourceFrame, Typeface, convert,
     draw::{Badge, Corner},
     sheet,
 };
@@ -12,6 +12,41 @@ pub struct PixelRect {
     pub top: u32,
     pub width: u32,
     pub height: u32,
+}
+
+impl PixelRect {
+    pub(crate) fn covering(part: Rect, width: u32, height: u32) -> Self {
+        let edge = |fraction: f32, extent: u32, round: fn(f32) -> f32| {
+            convert::pixels(round(fraction * extent as f32)).min(extent)
+        };
+        let left = edge(part.left, width, f32::floor).min(width.saturating_sub(1));
+        let top = edge(part.top, height, f32::floor).min(height.saturating_sub(1));
+        let right = edge(part.right, width, f32::ceil);
+        let bottom = edge(part.bottom, height, f32::ceil);
+        Self {
+            left,
+            top,
+            width: right.saturating_sub(left).max(1),
+            height: bottom.saturating_sub(top).max(1),
+        }
+    }
+
+    pub(crate) fn part(self, width: u32, height: u32) -> Rect {
+        let (across, down) = (width.max(1) as f32, height.max(1) as f32);
+        Rect::from_origin(
+            Point::new(self.left as f32 / across, self.top as f32 / down),
+            self.width as f32 / across,
+            self.height as f32 / down,
+        )
+    }
+
+    pub(crate) fn cut(self, image: Image) -> Result<Image, Error> {
+        if self.width == image.width() && self.height == image.height() {
+            Ok(image)
+        } else {
+            image.cropped(self.left, self.top, self.width, self.height)
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -109,23 +144,7 @@ pub fn crop_image(image: Image, crop: Option<Rect>) -> Result<(Image, Option<Pix
     let height = (rect.height() * 1.4).clamp(0.2, 1.0);
     let left = (rect.center().x - width / 2.0).clamp(0.0, 1.0 - width);
     let top = (rect.center().y - height / 2.0).clamp(0.0, 1.0 - height);
-    let x =
-        convert::pixels((left * image.width() as f32).floor()).min(image.width().saturating_sub(1));
-    let y = convert::pixels((top * image.height() as f32).floor())
-        .min(image.height().saturating_sub(1));
-    let right = convert::pixels(((left + width) * image.width() as f32).ceil()).min(image.width());
-    let bottom =
-        convert::pixels(((top + height) * image.height() as f32).ceil()).min(image.height());
-    let pixels = PixelRect {
-        left: x,
-        top: y,
-        width: right.saturating_sub(x).max(1),
-        height: bottom.saturating_sub(y).max(1),
-    };
-    let cropped = if pixels.width == image.width() && pixels.height == image.height() {
-        image
-    } else {
-        image.cropped(pixels.left, pixels.top, pixels.width, pixels.height)?
-    };
-    Ok((cropped, Some(pixels)))
+    let part = Rect::from_origin(Point::new(left, top), width, height);
+    let pixels = PixelRect::covering(part, image.width(), image.height());
+    Ok((pixels.cut(image)?, Some(pixels)))
 }

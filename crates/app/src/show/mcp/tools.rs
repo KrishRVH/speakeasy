@@ -228,7 +228,7 @@ fn image(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
             .collect();
         (
             png,
-            json!({"show": directory, "keyframe": number, "atMs": frame.at.as_millis(), "marks": marks, "annotations": true}),
+            json!({"show": directory, "keyframe": number, "atMs": frame.at.as_millis(), "marks": marks, "crop": frame.crop, "annotations": true}),
         )
     } else {
         let query = query.ok_or("A source image needs a time, mark or phrase")?;

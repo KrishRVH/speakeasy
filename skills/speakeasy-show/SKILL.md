@@ -44,6 +44,12 @@ path. `./ID` forces a relative path; an ID never falls back to a different folde
    labels, and the folder name when discussing several Shows. A mark with no saved frame has no
    corresponding image; another nearby image does not prove what it pointed at.
 
+A screen Show crops keyframes to the area the user worked in. Inspection and `show.json` give a
+cropped frame's `crop` as `[left, top, right, bottom]` fractions of the screen; mark bounds and
+pointer positions in `show.json` remain fractions of the whole screen. Something outside a crop may
+still have been on screen: export the whole screen at that frame's time with `show frame --at` below
+before concluding it was absent.
+
 Speech recognition can mishear names; prefer the spelling visible on screen. A frame shows its own
 timestamp, not every moment until the next frame. For a missing moment, run
 `speakeasy show frames "BUNDLE_PATH" --json` to inspect available source times and coverage. Then

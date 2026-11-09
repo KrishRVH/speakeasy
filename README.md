@@ -136,11 +136,16 @@ same bundle.
 Speakeasy picks the keyframes your ink, clicks, and words point at, annotates them, and writes a
 bundle of keyframes, contact sheets, `summary.md`, and `show.json`. A Show keeps up to 36 keyframes
 spread across the whole recording, at most six to a sheet, and the summary names each sheet's
-frames. The pill says **Show copied** and the summary is on the clipboard: paste it into your agent,
-and the summary tells the agent how to read the Show. Shows record on Windows, and experimentally on
-Mac, but not on Linux. On Windows, streaming and screen-sharing apps such as Sunshine, OBS, or a
-video-call app don't see Speakeasy's windows or ink while a Show records; the keyframes still carry
-the ink.
+frames. A screen Show crops each keyframe to where you worked: your ink and pins, your clicks and
+drags, and what they changed, with room around them and edges moved clear of nearby text. A keyframe
+with nothing to frame keeps the nearest view; one whose crop would cover most of the screen stays
+whole. Window and area Shows keep the framing you chose. The summary names cropped frames,
+`show.json` gives each keyframe's `crop` as left, top, right, and bottom fractions of the screen,
+and the retained frames still hold the whole screen. The pill says **Show copied** and the summary
+is on the clipboard: paste it into your agent, and the summary tells the agent how to read the Show.
+Shows record on Windows, and experimentally on Mac, but not on Linux. On Windows, streaming and
+screen-sharing apps such as Sunshine, OBS, or a video-call app don't see Speakeasy's windows or ink
+while a Show records; the keyframes still carry the ink.
 
 Windows Shows and Mac screen and area Shows also save silent H.264 video in `recording.mp4`,
 targeting 30 frames per second at up to 2560 pixels per edge. Windows video follows the chosen
@@ -171,6 +176,7 @@ Contact sheet: `…\speakeasy\shows\20261020T143205Z\contact-sheet.png`
 - #4 (0:12) [③ pinned, clicked] “Now I click reduce motion and nothing happens.”
 - #5 (0:17) [dragged right] “Dragging the text size slider works, though.”
 Full-size keyframes: `…\speakeasy\shows\20261020T143205Z\frames\frame-01.png` to `…\speakeasy\shows\20261020T143205Z\frames\frame-05.png`. Timeline: `…\speakeasy\shows\20261020T143205Z\show.json`.
+Frames #1, #2, #4, and #5 are cropped to the area the user worked in; the timeline gives each crop as a fraction of the screen.
 ```
 
 A Show records only what you name. With no window to record under the pointer, or if you finish
@@ -198,11 +204,12 @@ Home/End to jump to the first/last frame, and Escape to close. Missing frames, e
 lost narration stay visible; the viewer never substitutes another Show when the selected one expires
 or is deleted. Choose **All retained frames** to inspect moments outside the selected keyframes.
 Coverage shows the sample count and longest gap; the journal thins frames under memory pressure, so
-this is sampled evidence rather than video. Switching modes keeps the nearest frame at or before the
-current time. Source images have no annotations. In **All retained frames**, numbered mark buttons
-jump to the sample at or before the mark. The viewer reports both the mark time and the actual
-sample time. If retained frames cannot be saved, the selected keyframes still save and Speakeasy
-reports the loss.
+this is sampled evidence rather than video. A cropped keyframe's caption says so, and points to
+**All retained frames** for the whole screen. Switching modes keeps the nearest frame at or before
+the current time. Source images have no annotations. In **All retained frames**, numbered mark
+buttons jump to the sample at or before the mark. The viewer reports both the mark time and the
+actual sample time. If retained frames cannot be saved, the selected keyframes still save and
+Speakeasy reports the loss.
 
 On Windows and macOS, choose **Video** to scrub the recorded timeline or step through its actual
 samples. Numbered marks and timed narration jump to their recorded times. The displayed timestamp

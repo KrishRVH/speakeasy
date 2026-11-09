@@ -234,6 +234,7 @@ fn a_video_reference_requests_inside_the_displayed_sample_instead_of_rounding_in
         number: 2,
         at: Moment::from_millis(283),
         marker: String::new(),
+        cropped: false,
         file: crate::show::preview::Content::Video {
             span: Duration::from_nanos(33_333_333)..Duration::from_nanos(66_666_666),
             annotations: Moment::from_millis(1000),
@@ -316,6 +317,7 @@ fn video_seeking_and_request_captions_preserve_submillisecond_order() -> anyhow:
                 number: index + 1,
                 at: Moment::from_millis(250).saturating_add(at),
                 marker: String::new(),
+                cropped: false,
                 file: crate::show::preview::Content::Video {
                     span: at..at.saturating_add(Duration::from_nanos(33_333_300)),
                     annotations: Moment::from_millis(1000),

@@ -48,6 +48,7 @@ async fn capture_finish_flushes_end_before_handoff() -> anyhow::Result<()> {
             width: 1_000.0,
             height: 500.0,
         },
+        speakeasy_show::Framing::Automatic,
     )?;
     let (footage, _) = record_with(
         |take| take.log = Some(log),
@@ -80,6 +81,7 @@ async fn invalid_late_events_keep_the_frames_and_checkpoint_already_recorded() -
             width: 1_000.0,
             height: 500.0,
         },
+        speakeasy_show::Framing::Automatic,
     )?;
     let (recorded, _) = record_with(
         |take| {

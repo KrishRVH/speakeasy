@@ -6,6 +6,8 @@ use crate::{
     recording::tests::words, select, signature::tests::signature, typeface::tests::typeface,
 };
 
+mod framing;
+
 #[test]
 fn show_json_keeps_its_wire_format() {
     let click = Action::Click {
@@ -77,6 +79,7 @@ fn show_json_keeps_its_wire_format() {
                 said: Some("Look here.".to_owned()),
                 marks: 0..1,
                 action: None,
+                crop: None,
             },
             Keyframe {
                 index: 2,
@@ -86,6 +89,7 @@ fn show_json_keeps_its_wire_format() {
                 said: None,
                 marks: 0..0,
                 action: Some(click),
+                crop: None,
             },
             Keyframe {
                 index: 3,
@@ -95,6 +99,7 @@ fn show_json_keeps_its_wire_format() {
                 said: None,
                 marks: 0..0,
                 action: None,
+                crop: None,
             },
         ],
     };
@@ -190,6 +195,7 @@ fn the_summary_says_how_to_read_every_sheet_and_sets_each_full_path_apart() {
                 said: None,
                 marks: 0..0,
                 action: None,
+                crop: None,
             })
             .collect(),
     };
@@ -387,6 +393,7 @@ fn a_failed_frame_stops_loading_before_the_next_sheet() {
                 said: None,
                 marks: 0..0,
                 action: None,
+                crop: None,
             })
             .collect(),
     };

@@ -15,8 +15,8 @@ fn begin(root: &Path) -> anyhow::Result<Kept> {
 }
 
 fn record_frame(frames: &mut FrameLog) -> anyhow::Result<()> {
-    assert!(frames.begin(1_000, surface()));
-    let mut take = Take::new(1_000, surface());
+    assert!(frames.begin(1_000, surface(), speakeasy_show::Framing::Automatic));
+    let mut take = Take::new(1_000, surface(), speakeasy_show::Framing::Automatic);
     assert!(frames.send(take.arrive(Moment::START, || {
         Some(Image::from_bgra(2, 2, [1, 2, 3, 255].repeat(4)).unwrap())
     })?));
@@ -62,7 +62,7 @@ async fn a_frame_failure_does_not_stop_the_audio_stream() -> anyhow::Result<()> 
         mut frames,
         mut audio,
     } = begin(root.path())?;
-    assert!(frames.begin(0, Size::default()));
+    assert!(frames.begin(0, Size::default(), speakeasy_show::Framing::Automatic));
     assert!(!frames.close().await);
     assert!(audio.begin(8_000, Duration::ZERO, "en".into()));
     assert!(audio.finish(&[5, 0], &[]));
@@ -132,7 +132,7 @@ async fn failed_frame_and_closed_audio_lanes_cannot_unlock_a_native_movie() -> a
     record_frame(&mut frames)?;
     let target = frames.movie(Instant::now()).await.unwrap();
 
-    assert!(frames.begin(1_000, surface()));
+    assert!(frames.begin(1_000, surface(), speakeasy_show::Framing::Automatic));
     assert!(!frames.close().await);
     drop(audio);
     let closing = keeper.close();

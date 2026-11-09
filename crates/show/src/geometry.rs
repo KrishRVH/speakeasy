@@ -174,6 +174,44 @@ impl Rect {
     }
 
     #[must_use]
+    pub(crate) const fn is_finite(self) -> bool {
+        self.left.is_finite()
+            && self.top.is_finite()
+            && self.right.is_finite()
+            && self.bottom.is_finite()
+    }
+
+    #[must_use]
+    pub(crate) fn area(self) -> f32 {
+        self.width().max(0.0) * self.height().max(0.0)
+    }
+
+    #[must_use]
+    pub(crate) fn intersection(self, other: Self) -> Self {
+        Self {
+            left: self.left.max(other.left),
+            top: self.top.max(other.top),
+            right: self.right.min(other.right),
+            bottom: self.bottom.min(other.bottom),
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn overlap(self, other: Self) -> f32 {
+        let shared = self.intersection(other).area();
+        let joined = self.area() + other.area() - shared;
+        if joined > 0.0 { shared / joined } else { 0.0 }
+    }
+
+    #[must_use]
+    pub(crate) fn encloses(self, other: Self) -> bool {
+        self.left <= other.left
+            && self.top <= other.top
+            && self.right >= other.right
+            && self.bottom >= other.bottom
+    }
+
+    #[must_use]
     pub(crate) fn expanded_within(self, margin: f32, bounds: Self) -> Self {
         Self {
             left: (self.left - margin).max(bounds.left),

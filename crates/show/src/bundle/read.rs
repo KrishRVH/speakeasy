@@ -3,7 +3,10 @@ use std::fmt;
 use serde::Deserialize;
 
 use super::{Bundle, Manifest, sheet_file};
-use crate::{Keyframe, Mark, Moment, Reason, Recording, select::MOST_KEYFRAMES, sheet};
+use crate::{
+    Keyframe, Mark, Moment, Reason, Recording, Rect, recording::spaces, select::MOST_KEYFRAMES,
+    sheet,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Unreadable {
@@ -130,6 +133,12 @@ impl Manifest {
             require(
                 frame.marks.end <= self.marks.len(),
                 "a frame refers to a mark that does not exist",
+            )?;
+            require(
+                frame
+                    .crop
+                    .is_none_or(|crop| crop != Rect::UNIT && spaces::valid(crop)),
+                "a frame crop must be a part of the screen",
             )?;
             if !frame.marks.is_empty() {
                 require(

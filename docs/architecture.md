@@ -433,6 +433,22 @@ module unless a test file is named.
   precedes the first chosen anchor. Selection caps at 36 keyframes, merges crowded mark groups, and
   spreads remaining frames across the recording. Float-to-pixel conversions saturate outside their
   integer range and map NaN to zero.
+- **Show framing**: [framing.rs](../crates/show/src/framing.rs) crops screen-Show keyframes; window
+  and area Shows record `Framing::Chosen` in the checkpoint header and keep their frames whole. Each
+  keyframe's slice runs halfway to its neighbors. Its activity is the drawn ink, pins, and click
+  focus plus clicks and drags in the slice, joined by changed regions within 40 points of that
+  input; with no input, any changed region frames it. The crop pads the activity by 0.28 of the
+  screen's geometric mean side, grows to 320 by 200 points and to a quarter of the screen's width or
+  height, and stays whole at 85% coverage. A keyframe without activity takes the nearest earlier
+  crop, else the next. Neighbors whose union overlaps by 60% share one crop. Geometry is the only
+  input; no window titles or app names. [signature.rs](../crates/show/src/signature.rs) supplies
+  changed regions from pooled samples, ignoring pointer-sized changes. Composition grows a crop to
+  everything drawn, then [framing/content.rs](../crates/show/src/framing/content.rs) moves edges
+  outward, never inward, into empty gutters and past lines and borders that cross them, within 120
+  points or 60% of the crop. The cut covers whole pixels, and `show.json` records the exact part
+  cut. [framing/tests/corpus.rs](../crates/show/src/framing/tests/corpus.rs) scores the planner on
+  Scrawl's 13 simulated captures: every must-see target stays in frame and no capture scores below
+  its uncropped frames. The neighboring tests check crop invariants and snapping.
 - **Show bundle format**: [bundle.rs](../crates/show/src/bundle.rs) and
   [describe.rs](../crates/show/src/describe.rs).
   [bundle/tests.rs](../crates/show/src/bundle/tests.rs) checks paginated sheets and pins
@@ -443,8 +459,9 @@ module unless a test file is named.
   and unavailable commands are omitted. Existing summaries are never regenerated.
   [bundle/read.rs](../crates/show/src/bundle/read.rs) validates format versions and references
   without I/O, accepts only the current format, exposes sheet membership, and strips private decoder
-  messages from failures. Its [tests](../crates/show/src/bundle/read/tests.rs) reject broken
-  references and exercise generated manifest mutations and sheet sizes.
+  messages from failures. A keyframe `crop` must be a proper part of the unit square. Its
+  [tests](../crates/show/src/bundle/read/tests.rs) reject broken references and exercise generated
+  manifest mutations and sheet sizes.
 - **Show store**: [show/store.rs](../crates/app/src/show/store.rs) names, writes, and expires
   bundles, and [store/recall.rs](../crates/app/src/show/store/recall.rs) reads a saved one back; it
   also discovers and inspects saved Shows without changing them.
@@ -519,7 +536,8 @@ module unless a test file is named.
   [checkpoint/tests.rs](../crates/app/src/show/store/checkpoint/tests.rs) exercises damaged
   siblings, expiry, lock ownership, and durable discard/publication markers.
   [journal/log.rs](../crates/show/src/journal/log.rs) shares live/replay admission, thinning, and
-  pointer folding; checksums and bounded records stop replay at its first damaged event. Property
+  pointer folding; its header records the budget, surface, and framing, so recovery crops as the
+  live Show would; checksums and bounded records stop replay at its first damaged event. Property
   tests compare replayed frames, timing, and annotations with live state. The journal stores
   lossless changed tiles and thins samples and tiles together, retaining the first and last held
   frames. Each thinning doubles admission stride; skipped arrivals need no pixel preparation. Its

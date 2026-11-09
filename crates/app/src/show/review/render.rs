@@ -601,21 +601,17 @@ impl Review {
             .detail
             .as_ref()
             .map_or(&[][..], |detail| detail.frames.as_slice());
+        let whole_screen = self
+            .detail
+            .as_ref()
+            .is_some_and(|detail| detail.source_available);
         let count = frames.len();
         let caption = if self.mode == Mode::Video {
             self.video_caption()
         } else {
             frames.get(index).map_or_else(
                 || "No saved frame available".into(),
-                |frame| {
-                    format!(
-                        "#{} of {count} · {} · {} ms{}",
-                        frame.number,
-                        frame.at,
-                        frame.at.as_millis(),
-                        frame.marker
-                    )
-                },
+                |frame| frame.caption(count, whole_screen),
             )
         };
         div()

@@ -144,10 +144,28 @@ pub(super) struct Frame {
     pub number: usize,
     pub at: Moment,
     pub marker: String,
+    pub cropped: bool,
     pub file: Content,
 }
 
 impl Frame {
+    pub(super) fn caption(&self, count: usize, whole_screen: bool) -> String {
+        let crop = match (self.cropped, whole_screen) {
+            (false, _) => "",
+            (true, false) => " · Cropped to where you worked",
+            (true, true) => {
+                " · Cropped to where you worked; All retained frames shows the whole screen"
+            },
+        };
+        format!(
+            "#{} of {count} · {} · {} ms{}{crop}",
+            self.number,
+            self.at,
+            self.at.as_millis(),
+            self.marker
+        )
+    }
+
     pub(super) fn presentation(&self) -> std::time::Duration {
         let start = self.at.since(Moment::START);
         match &self.file {
@@ -344,6 +362,7 @@ fn keyframes(manifest: &Manifest) -> Vec<Frame> {
             number: frame.index,
             at: frame.at,
             marker: frame.marker(manifest.marks()),
+            cropped: frame.crop.is_some(),
             file: Content::Png(frame.file()),
         })
         .collect()
@@ -359,6 +378,7 @@ fn retained(source: Source) -> Vec<Frame> {
             number: index.saturating_add(1),
             at,
             marker: String::new(),
+            cropped: false,
             file: Content::Source {
                 index: Arc::clone(&source),
             },
@@ -386,6 +406,7 @@ fn sampled(
             number: index.saturating_add(1),
             at: origin.saturating_add(sample.at),
             marker: String::new(),
+            cropped: false,
             file: Content::Video {
                 span: sample.at..end,
                 annotations,

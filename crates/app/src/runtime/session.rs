@@ -568,6 +568,7 @@ mod tests {
         session.screen_recorded(Box::new(Footage {
             recording: Recording::default(),
             journal: Journal::new(),
+            framing: speakeasy_show::Framing::Automatic,
         }));
         session.stage = Stage::AwaitingFootage {
             narration: Narration::default(),

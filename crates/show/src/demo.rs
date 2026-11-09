@@ -100,7 +100,9 @@ impl Demo {
             })
         })
         .collect::<Result<Vec<_>, Error>>()?;
-        let selection = select(&recording, &samples).ok_or_else(Error::unsampled)?;
+        let selection = select(&recording, &samples)
+            .ok_or_else(Error::unsampled)?
+            .framed(&recording, &samples);
         compose(
             recording,
             selection,
@@ -464,6 +466,7 @@ Contact sheet: `{}`
 - #4 (0:12) [③ pinned, clicked] “Now I click reduce motion and nothing happens.”
 - #5 (0:17) [dragged right] “Dragging the text size slider works, though.”
 Full-size keyframes: `{}` to `{}`. Timeline: `{}`.
+Frames #1, #2, #4, and #5 are cropped to the area the user worked in; the timeline gives each crop as a fraction of the screen.
 ",
                 directory.display(),
                 directory.join("contact-sheet.png").display(),

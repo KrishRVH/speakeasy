@@ -208,6 +208,8 @@ fn a_demo_is_inspectable_and_output_never_contains_its_narration() -> anyhow::Re
             for frame in value["frames"].as_array().unwrap() {
                 assert!(PathBuf::from(frame["path"].as_str().unwrap()).is_file());
             }
+            assert_eq!(value["frames"][0]["crop"].as_array().map(Vec::len), Some(4));
+            assert!(value["frames"][2].get("crop").is_none());
         }
     }
     assert_eq!(fs::read(summary)?, edited);
@@ -318,6 +320,7 @@ async fn interrupted_listing_has_distinct_identity_and_original_expiry_without_r
             width: 80.0,
             height: 60.0,
         },
+        speakeasy_show::Framing::Automatic,
     )?;
     assert!(writer.close().await);
     let checkpoint = checkpoint
@@ -389,6 +392,7 @@ async fn checkpoint_damage_is_reported_beside_readable_saved_shows() -> anyhow::
             width: 80.0,
             height: 60.0,
         },
+        speakeasy_show::Framing::Automatic,
     )?;
     assert!(writer.close().await);
     let checkpoint = checkpoint

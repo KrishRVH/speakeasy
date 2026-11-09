@@ -17,7 +17,8 @@ fn fixture() -> Value {
         "keyframes": [
             {"index": 1, "at": 200, "reason": "mark", "event": "PRIVATE_EVENT",
                 "said": "PRIVATE_SPEECH", "marks": [0, 1]},
-            {"index": 2, "at": 2500, "reason": "sceneChange", "event": "changed", "marks": [0, 0]}
+            {"index": 2, "at": 2500, "reason": "sceneChange", "event": "changed", "marks": [0, 0],
+                "crop": [0.1, 0.2, 0.6, 0.7]}
         ]
     })
 }
@@ -69,6 +70,10 @@ fn broken_references_and_order_are_rejected() {
         ("/keyframes/0/marks", json!([0, 2])),
         ("/keyframes/0/marks", json!([2, 2])),
         ("/keyframes/0/reason", json!("click")),
+        ("/keyframes/1/crop", json!([0.6, 0.2, 0.1, 0.7])),
+        ("/keyframes/1/crop", json!([0.1, -0.2, 0.6, 0.7])),
+        ("/keyframes/1/crop", json!([0.1, 0.2, 0.6, 1.7])),
+        ("/keyframes/1/crop", json!([0, 0, 1, 1])),
         ("/marks/0/number", json!(2)),
         ("/marks/0/strokes", json!([0, 2])),
     ];

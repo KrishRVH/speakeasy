@@ -12,8 +12,8 @@ async fn with_audio(parent: &Path) -> anyhow::Result<Checkpoint> {
         width: 80.0,
         height: 60.0,
     };
-    assert!(frames.begin(1 << 20, surface));
-    let mut take = Take::new(1 << 20, surface);
+    assert!(frames.begin(1 << 20, surface, speakeasy_show::Framing::Automatic));
+    let mut take = Take::new(1 << 20, surface, speakeasy_show::Framing::Automatic);
     assert!(
         frames.send(take.arrive(Moment::from_millis(100), || Some(desktop(
             80, 60, 0, 0, false

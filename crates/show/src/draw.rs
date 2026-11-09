@@ -44,64 +44,159 @@ pub(crate) struct Badge {
     pub time: String,
 }
 
+pub(crate) struct Shown<'a> {
+    pub ink: Vec<Vec<Point>>,
+    pub focus: Option<Point>,
+    pub labels: Vec<&'a Mark>,
+}
+
+impl<'a> Shown<'a> {
+    pub(crate) fn on(keyframe: &Keyframe, recording: &Recording, marks: &'a [Mark]) -> Self {
+        let own = keyframe.marks_in(marks);
+        let owned = |index: usize| own.iter().any(|mark| mark.strokes.contains(&index));
+        let recent =
+            |span: Span| span.start() <= keyframe.at && keyframe.at.since(span.end()) <= RECENT_INK;
+        let ink = recording
+            .strokes
+            .iter()
+            .enumerate()
+            .filter_map(|(index, stroke)| {
+                if owned(index) {
+                    Some(stroke.path().collect())
+                } else if own.is_empty() && recent(stroke.span()) {
+                    Some(stroke.path_until(keyframe.at).collect())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let focus = keyframe
+            .action
+            .map(Action::point)
+            .or_else(|| nearest_click(&recording.actions, keyframe.at))
+            .filter(|point| point.is_finite());
+        let recent_marks = marks
+            .iter()
+            .filter(|mark| own.is_empty() && recent(mark.span));
+        Self {
+            ink,
+            focus,
+            labels: own.iter().chain(recent_marks).collect(),
+        }
+    }
+
+    pub(crate) fn points(&self) -> impl Iterator<Item = Point> {
+        let anchors = self.labels.iter().flat_map(|mark| match mark.shape {
+            Shape::Pin { point } => vec![point],
+            _ => vec![
+                Point::new(mark.bounds.left, mark.bounds.top),
+                Point::new(mark.bounds.right, mark.bounds.bottom),
+            ],
+        });
+        self.ink
+            .iter()
+            .flatten()
+            .copied()
+            .chain(self.focus)
+            .chain(anchors)
+    }
+}
+
+pub(crate) struct Drawn {
+    occupied: Vec<Point>,
+    focus: Option<Point>,
+    extent: Option<Rect>,
+}
+
+impl Drawn {
+    pub(crate) const fn extent(&self) -> Option<Rect> {
+        self.extent
+    }
+
+    pub(crate) fn corner(&self, view: Rect) -> Corner {
+        let within = |point: &Point| {
+            Point::new(
+                (point.x - view.left) / view.width(),
+                (point.y - view.top) / view.height(),
+            )
+        };
+        let in_top_left = |point: Point| point.x < BADGE_SIDE && point.y < BADGE_BAND;
+        let in_top_right = |point: Point| point.x > 1.0 - BADGE_SIDE && point.y < BADGE_BAND;
+        let crowded_left = self
+            .focus
+            .iter()
+            .chain(&self.occupied)
+            .map(within)
+            .any(in_top_left);
+        if crowded_left && !self.focus.iter().map(within).any(in_top_right) {
+            Corner::Right
+        } else {
+            Corner::Left
+        }
+    }
+}
+
 pub(crate) fn annotate(
     image: &mut Image,
     keyframe: &Keyframe,
     recording: &Recording,
     marks: &[Mark],
     typeface: &Typeface,
-) -> Corner {
+) -> Drawn {
+    let shown = Shown::on(keyframe, recording, marks);
     let (width, height) = (image.width() as f32, image.height() as f32);
     let detail = ink::detail(width, height);
     let pen = ink::pen(width, height);
-    let own = keyframe.marks_in(marks);
-    let shown = |index: usize| own.iter().any(|mark| mark.strokes.contains(&index));
-    let recent =
-        |span: Span| span.start() <= keyframe.at && keyframe.at.since(span.end()) <= RECENT_INK;
-    let mut ink_points: Vec<Point> = Vec::new();
-    let mut canvas = image.as_mut();
-    for (index, stroke) in recording.strokes.iter().enumerate() {
-        let path: Vec<Point> = if shown(index) {
-            stroke.path().collect()
-        } else if own.is_empty() && recent(stroke.span()) {
-            stroke.path_until(keyframe.at).collect()
-        } else {
-            continue;
+    let mut occupied: Vec<Point> = Vec::new();
+    let mut extent: Option<Rect> = None;
+    let mut cover = |pixels: Rect| {
+        let part = Rect {
+            left: pixels.left / width,
+            top: pixels.top / height,
+            right: pixels.right / width,
+            bottom: pixels.bottom / height,
         };
+        extent = Some(extent.map_or(part, |extent| extent.union(part)));
+    };
+    let mut canvas = image.as_mut();
+    for path in &shown.ink {
         let pixels: Vec<Point> = path
             .iter()
             .map(|point| point.scaled(width, height))
             .collect();
-        fill(
-            &mut canvas,
-            closed_curve(&ink::outline(&pixels, pen)),
-            ink::COLOR,
-        );
-        ink_points.extend(path);
+        let outline = ink::outline(&pixels, pen);
+        if let Some(outlined) = Rect::bounding(outline.iter().copied()) {
+            cover(outlined);
+        }
+        fill(&mut canvas, closed_curve(&outline), ink::COLOR);
+        occupied.extend(path);
     }
-    let focus = keyframe
-        .action
-        .map(Action::point)
-        .or_else(|| nearest_click(&recording.actions, keyframe.at));
-    if let Some(point) = focus.filter(|point| point.is_finite()) {
-        ripple(&mut canvas, point.scaled(width, height), detail);
+    let bounds = Rect::from_origin(Point::default(), width, height);
+    if let Some(point) = shown.focus {
+        let center = point.scaled(width, height);
+        ripple(&mut canvas, center, detail);
+        cover(
+            Rect::at(center)
+                .expanded_within((CLICK_RING + CLICK_LINE + CLICK_EDGE) * detail, bounds),
+        );
     }
     let radius = ink::label_radius(width, height);
-    let recent_marks = marks
-        .iter()
-        .filter(|mark| own.is_empty() && recent(mark.span));
-    for mark in own.iter().chain(recent_marks) {
+    for mark in &shown.labels {
         let center = mark.label_center(width, height, radius);
         label(&mut canvas, mark, center, radius, typeface);
-        ink_points.push(Point::new(center.x / width, center.y / height));
+        cover(Rect::at(center).expanded_within(radius, bounds));
+        if let Shape::Pin { point } = mark.shape {
+            cover(
+                Rect::at(point.scaled(width, height))
+                    .expanded_within(ink::PIN_DOT * radius, bounds),
+            );
+        }
+        occupied.push(Point::new(center.x / width, center.y / height));
     }
-    let in_top_left = |point: &Point| point.x < BADGE_SIDE && point.y < BADGE_BAND;
-    let in_top_right = |point: &Point| point.x > 1.0 - BADGE_SIDE && point.y < BADGE_BAND;
-    let crowded_left = focus.iter().chain(&ink_points).any(in_top_left);
-    if crowded_left && !focus.iter().any(in_top_right) {
-        Corner::Right
-    } else {
-        Corner::Left
+    Drawn {
+        occupied,
+        focus: shown.focus,
+        extent,
     }
 }
 
@@ -386,6 +481,7 @@ mod tests {
                 said: None,
                 marks: own,
                 action: None,
+                crop: None,
             };
             let mut image = Image::filled(width, height, [128; 3]).unwrap();
             annotate(&mut image, &keyframe, &recording, &marks, &typeface());
@@ -417,6 +513,7 @@ mod tests {
                 at: Moment::from_millis(1_000),
                 point,
             }),
+            crop: None,
         };
         let mut image = Image::filled(width, height, screen).unwrap();
         annotate(

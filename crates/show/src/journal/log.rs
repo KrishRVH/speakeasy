@@ -3,9 +3,11 @@ use super::{
     record::{Cursor, RECORD_OVERHEAD, framed, payload, require},
     tiles,
 };
-use crate::{Ending, Image, Moment, Point, Recording, Rect, Signature, Size, Span, Tracker};
+use crate::{
+    Ending, Framing, Image, Moment, Point, Recording, Rect, Signature, Size, Span, Tracker,
+};
 
-const MAGIC: &[u8; 8] = b"SPKLOG02";
+const MAGIC: &[u8; 8] = b"SPKLOG03";
 const EDGE: usize = super::MAX_FRAME_EDGE as usize;
 const RECORD_LIMIT: usize = 40 << 20;
 const EVENT_OVERHEAD: usize = 64;
@@ -17,6 +19,9 @@ const ARRIVAL: u8 = 4;
 const END: u8 = 5;
 const POINTER_GAP: u8 = 6;
 const POINTER: u8 = 7;
+
+const AUTOMATIC: u8 = 0;
+const CHOSEN: u8 = 1;
 
 #[derive(Clone, Debug)]
 pub enum TakeEvent {
@@ -56,19 +61,26 @@ impl TakeEvent {
 pub struct Take {
     journal: Journal,
     tracker: Tracker,
+    framing: Framing,
     latest: Moment,
     ending: Option<Ending>,
 }
 
 impl Take {
     #[must_use]
-    pub fn new(budget: usize, surface: Size) -> Self {
+    pub fn new(budget: usize, surface: Size, framing: Framing) -> Self {
         Self {
             journal: Journal::with_budget(budget),
             tracker: Tracker::new(surface),
+            framing,
             latest: Moment::START,
             ending: None,
         }
+    }
+
+    #[must_use]
+    pub const fn framing(&self) -> Framing {
+        self.framing
     }
 
     #[must_use]
@@ -178,10 +190,10 @@ pub struct Log;
 
 impl Log {
     pub const HEADER_BYTES: usize =
-        MAGIC.len() + RECORD_OVERHEAD + size_of::<u64>() + 2 * size_of::<f32>();
+        MAGIC.len() + RECORD_OVERHEAD + size_of::<u64>() + 2 * size_of::<f32>() + size_of::<u8>();
     pub const MAX_BUDGET: usize = 384 << 20;
 
-    pub fn header(budget: usize, surface: Size) -> Result<Vec<u8>, SourceError> {
+    pub fn header(budget: usize, surface: Size, framing: Framing) -> Result<Vec<u8>, SourceError> {
         require(
             budget <= Self::MAX_BUDGET,
             "checkpoint memory budget is too large",
@@ -191,6 +203,10 @@ impl Log {
         data.extend_from_slice(&(budget as u64).to_le_bytes());
         data.extend_from_slice(&surface.width.to_le_bytes());
         data.extend_from_slice(&surface.height.to_le_bytes());
+        data.push(match framing {
+            Framing::Automatic => AUTOMATIC,
+            Framing::Chosen => CHOSEN,
+        });
         Ok([MAGIC.as_slice(), &framed(HEADER, &data)?].concat())
     }
 
@@ -212,7 +228,12 @@ impl Log {
             height: f32::from_le_bytes(data.take()?),
         };
         valid_surface(surface)?;
-        Ok(Take::new(budget, surface))
+        let framing = match data.take()? {
+            [AUTOMATIC] => Framing::Automatic,
+            [CHOSEN] => Framing::Chosen,
+            _ => return Err(SourceError("checkpoint framing is unknown")),
+        };
+        Ok(Take::new(budget, surface, framing))
     }
 
     pub fn record_size(header: &[u8]) -> Result<usize, SourceError> {

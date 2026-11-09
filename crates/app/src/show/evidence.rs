@@ -7,7 +7,7 @@ use std::{
 };
 
 use serde::Serialize;
-use speakeasy_show::{Bundle, Ending, Manifest, NarrationLoss, Reason};
+use speakeasy_show::{Bundle, Ending, Manifest, NarrationLoss, Reason, Rect};
 
 use super::store::{
     address, checkpoint,
@@ -143,6 +143,8 @@ pub(super) struct Frame {
     pub(super) at_ms: u64,
     pub(super) reason: Reason,
     pub(super) marks: Vec<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) crop: Option<Rect>,
     pub(super) path: PathBuf,
 }
 
@@ -188,6 +190,7 @@ impl Detail {
                         .iter()
                         .map(|mark| mark.number)
                         .collect(),
+                    crop: frame.crop,
                     path: entry.file(&frame.file()),
                 })
                 .collect(),

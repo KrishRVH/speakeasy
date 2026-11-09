@@ -46,8 +46,8 @@ proptest! {
         colors in prop::collection::vec(any::<u8>(), 1..35),
         budget in 0..2_000_usize,
     ) {
-        let mut live = Take::new(budget, surface());
-        let mut bytes = Log::header(budget, surface()).unwrap();
+        let mut live = Take::new(budget, surface(), Framing::Automatic);
+        let mut bytes = Log::header(budget, surface(), Framing::Automatic).unwrap();
         for (index, color) in colors.into_iter().enumerate() {
             let at = Moment::from_millis(u64::try_from(index).unwrap().saturating_mul(100));
             let shade = f32::from(color);
@@ -101,8 +101,8 @@ proptest! {
 
 #[test]
 fn every_torn_tail_recovers_only_whole_events_and_keeps_an_honest_ending() {
-    let mut live = Take::new(1_000, surface());
-    let mut bytes = Log::header(1_000, surface()).unwrap();
+    let mut live = Take::new(1_000, surface(), Framing::Automatic);
+    let mut bytes = Log::header(1_000, surface(), Framing::Automatic).unwrap();
     let image = live
         .arrive(Moment::from_millis(100), || {
             Some(Image::filled(2, 2, [42; 3]).unwrap())
@@ -141,14 +141,22 @@ fn every_torn_tail_recovers_only_whole_events_and_keeps_an_honest_ending() {
         assert_eq!(take.finish().0.ending, Ending::ScreenStopped);
     }
     assert!(replay(&bytes).unwrap().ended());
-    bytes[..8].copy_from_slice(b"SPKLOG01");
+    bytes[..8].copy_from_slice(b"SPKLOG02");
     assert!(replay(&bytes).is_err());
 }
 
 #[test]
+fn a_checkpoint_keeps_who_frames_the_recording() {
+    for framing in [Framing::Automatic, Framing::Chosen] {
+        let header = Log::header(0, surface(), framing).unwrap();
+        assert_eq!(Log::start(&header).unwrap().framing(), framing);
+    }
+}
+
+#[test]
 fn malformed_events_cannot_change_the_good_prefix_or_print_pixels() {
-    let mut take = Take::new(0, surface());
-    let mut bytes = Log::header(0, surface()).unwrap();
+    let mut take = Take::new(0, surface(), Framing::Automatic);
+    let mut bytes = Log::header(0, surface(), Framing::Automatic).unwrap();
     let mut arrivals = Vec::new();
     for n in 0..3_u64 {
         let event = take
@@ -163,14 +171,14 @@ fn malformed_events_cannot_change_the_good_prefix_or_print_pixels() {
         replay(&bytes).unwrap().journal().samples().len(),
         take.journal().samples().len()
     );
-    let mut orphan = Take::new(0, surface());
+    let mut orphan = Take::new(0, surface(), Framing::Automatic);
     assert!(
         orphan.apply(&arrivals[1]).is_err(),
         "A changed-tile frame needs the frame it changes"
     );
     assert!(orphan.journal().is_empty());
     let before = take.journal().samples().len();
-    let mut fresh = Take::new(100, surface());
+    let mut fresh = Take::new(100, surface(), Framing::Automatic);
     let event = fresh
         .arrive(Moment::from_millis(400), || {
             Some(Image::filled(2, 2, [1; 3]).unwrap())
@@ -197,7 +205,7 @@ fn malformed_events_cannot_change_the_good_prefix_or_print_pixels() {
 
 #[test]
 fn arrivals_after_end_or_the_time_limit_never_prepare_pixels() {
-    let mut take = Take::new(1_000, surface());
+    let mut take = Take::new(1_000, surface(), Framing::Automatic);
     assert!(
         take.arrive(Moment::from_millis(360_001), || panic!(
             "Invalid arrival prepared pixels"
@@ -231,17 +239,17 @@ fn high_entropy_tiles_round_trip_even_when_compression_expands_them() {
             .collect(),
     )
     .unwrap();
-    let mut live = Take::new(1 << 20, surface());
+    let mut live = Take::new(1 << 20, surface(), Framing::Automatic);
     let event = live.arrive(Moment::START, || Some(image.clone())).unwrap();
     let encoded = Log::encode(&event).unwrap();
-    let mut replayed = Take::new(1 << 20, surface());
+    let mut replayed = Take::new(1 << 20, surface(), Framing::Automatic);
     replayed.apply(&Log::decode(&encoded).unwrap()).unwrap();
     assert_eq!(replayed.journal().frame_at(Moment::START), Some(image));
 }
 
 #[test]
 fn encoding_rejects_a_tile_that_a_reader_cannot_accept() {
-    let mut take = Take::new(1_000, surface());
+    let mut take = Take::new(1_000, surface(), Framing::Automatic);
     let mut event = take
         .arrive(Moment::START, || {
             Some(Image::from_bgra(2, 2, vec![0; 16]).unwrap())

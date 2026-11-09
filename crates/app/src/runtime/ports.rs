@@ -5,7 +5,7 @@ use std::{
 
 use async_channel::Sender;
 use speakeasy_platform::{Delivery, InsertPermit, Inserted, Scope, Taps};
-use speakeasy_show::{Ending, Journal, Narration, NarrationLoss, Recording};
+use speakeasy_show::{Ending, Framing, Journal, Narration, NarrationLoss, Recording};
 use tokio::sync::{mpsc, oneshot, watch};
 use zeroize::{Zeroize, Zeroizing};
 
@@ -120,6 +120,7 @@ pub(crate) enum Unchosen {
 pub(crate) struct Footage {
     pub recording: Recording,
     pub journal: Journal,
+    pub framing: Framing,
 }
 
 #[derive(Clone, Copy, Default)]

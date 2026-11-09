@@ -17,6 +17,15 @@ pub(crate) const SCENE: f32 = 0.08;
 
 const CELL_CHANGE: f32 = 0.04;
 
+const POOL: usize = 2;
+const POOLED_COLUMNS: usize = COLUMNS / POOL;
+const POOLED_ROWS: usize = ROWS / POOL;
+const POOLED_CELLS: usize = POOLED_COLUMNS * POOLED_ROWS;
+
+const SMALLEST_REGION: usize = 2;
+
+const MOST_REGIONS: usize = 8;
+
 const SAMPLES_PER_CELL_SIDE: usize = 4;
 
 #[derive(Clone, Debug)]
@@ -101,6 +110,31 @@ impl Signature {
         changed as f32 / rows.len().saturating_mul(columns.len()).max(1) as f32
     }
 
+    pub(crate) fn changed(&self, other: &Self) -> Changed {
+        let differences: Vec<f32> = self.differences(other).collect();
+        let lines = differences.as_chunks::<COLUMNS>().0;
+        let mut cells = Box::new([false; POOLED_CELLS]);
+        for (pooled, pair) in cells
+            .as_chunks_mut::<POOLED_COLUMNS>()
+            .0
+            .iter_mut()
+            .zip(lines.chunks(POOL))
+        {
+            for (column, cell) in pooled.iter_mut().enumerate() {
+                let columns =
+                    column.saturating_mul(POOL)..column.saturating_add(1).saturating_mul(POOL);
+                let block = pair
+                    .iter()
+                    .flat_map(|line| line.get(columns.clone()).unwrap_or_default());
+                let (sum, count) = block.fold((0.0_f32, 0.0_f32), |(sum, count), difference| {
+                    (sum + difference, count + 1.0)
+                });
+                *cell = sum / count.max(1.0) > CELL_CHANGE;
+            }
+        }
+        Changed { cells }
+    }
+
     fn region(&self, rows: &Range<usize>, columns: &Range<usize>) -> impl Iterator<Item = u8> {
         self.cells
             .as_chunks::<COLUMNS>()
@@ -124,7 +158,87 @@ impl Signature {
     }
 }
 
-fn spans(length: usize, parts: usize) -> Vec<Range<usize>> {
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct Changed {
+    cells: Box<[bool; POOLED_CELLS]>,
+}
+
+impl fmt::Debug for Changed {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Changed").finish_non_exhaustive()
+    }
+}
+
+impl Changed {
+    pub(crate) fn none() -> Self {
+        Self {
+            cells: Box::new([false; POOLED_CELLS]),
+        }
+    }
+
+    pub(crate) fn include(&mut self, other: &Self) {
+        for (cell, &changed) in self.cells.iter_mut().zip(other.cells.iter()) {
+            *cell |= changed;
+        }
+    }
+
+    pub(crate) fn regions(&self) -> Vec<Rect> {
+        let mut seen = [false; POOLED_CELLS];
+        let mut regions: Vec<Rect> = (0..POOLED_CELLS)
+            .filter_map(|start| self.region(start, &mut seen))
+            .collect();
+        regions.sort_by(|one, other| other.area().total_cmp(&one.area()));
+        regions.truncate(MOST_REGIONS);
+        regions
+    }
+
+    fn region(&self, start: usize, seen: &mut [bool; POOLED_CELLS]) -> Option<Rect> {
+        let changed = |cell: usize| self.cells.get(cell) == Some(&true);
+        let first = seen
+            .get_mut(start)
+            .filter(|visited| !**visited && changed(start))?;
+        *first = true;
+        let (mut size, mut bounds, mut pending) = (0_usize, cell_rect(start), vec![start]);
+        while let Some(cell) = pending.pop() {
+            size = size.saturating_add(1);
+            bounds = bounds.union(cell_rect(cell));
+            for neighbor in neighbors(cell).filter(|&neighbor| changed(neighbor)) {
+                if let Some(visited @ false) = seen.get_mut(neighbor) {
+                    *visited = true;
+                    pending.push(neighbor);
+                }
+            }
+        }
+        (size >= SMALLEST_REGION).then_some(bounds)
+    }
+}
+
+fn cell_rect(cell: usize) -> Rect {
+    let (row, column) = (cell / POOLED_COLUMNS, cell % POOLED_COLUMNS);
+    Rect::from([
+        column as f32 / POOLED_COLUMNS as f32,
+        row as f32 / POOLED_ROWS as f32,
+        column.saturating_add(1) as f32 / POOLED_COLUMNS as f32,
+        row.saturating_add(1) as f32 / POOLED_ROWS as f32,
+    ])
+}
+
+fn neighbors(cell: usize) -> impl Iterator<Item = usize> {
+    let (row, column) = (cell / POOLED_COLUMNS, cell % POOLED_COLUMNS);
+    let near =
+        |center: usize, last: usize| center.saturating_sub(1)..=center.saturating_add(1).min(last);
+    near(row, POOLED_ROWS.saturating_sub(1)).flat_map(move |near_row| {
+        near(column, POOLED_COLUMNS.saturating_sub(1))
+            .map(move |near_column| {
+                near_row
+                    .saturating_mul(POOLED_COLUMNS)
+                    .saturating_add(near_column)
+            })
+            .filter(move |&neighbor| neighbor != cell)
+    })
+}
+
+pub(crate) fn spans(length: usize, parts: usize) -> Vec<Range<usize>> {
     let scale = length as f32 / parts as f32;
     (0..parts)
         .map(|part| {
@@ -234,5 +348,25 @@ pub(crate) mod tests {
         );
         assert!(base.region_change(&opened, Rect::from([0.0, 0.0, 0.5, 0.33])) > 0.95);
         assert!(base.region_change(&opened, Rect::from([0.6, 0.5, 1.0, 1.0])) < f32::EPSILON);
+    }
+
+    #[test]
+    fn a_pointer_sized_change_marks_no_region_and_each_opened_panel_marks_its_own() {
+        let base = Signature::of(&gray(40, 640, 360));
+        let pointer = with_patch(640, 360, [312.0, 172.0, 318.0, 178.0]);
+        assert_eq!(base.changed(&pointer).regions(), []);
+        let mut changed = base.changed(&with_patch(640, 360, [0.0, 0.0, 320.0, 120.0]));
+        let [panel] = changed.regions()[..] else {
+            panic!("One panel opened");
+        };
+        assert!(
+            panel.encloses(Rect::from([0.0, 0.0, 0.5, 0.33]))
+                && Rect::from([0.0, 0.0, 0.52, 0.36]).encloses(panel),
+            "{panel:?}"
+        );
+        changed.include(&base.changed(&with_patch(640, 360, [480.0, 240.0, 640.0, 360.0])));
+        let regions = changed.regions();
+        assert_eq!(regions.len(), 2, "{regions:?}");
+        assert!(regions.contains(&panel));
     }
 }

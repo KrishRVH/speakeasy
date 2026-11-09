@@ -559,6 +559,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
             width: 80.0,
             height: 60.0,
         },
+        speakeasy_show::Framing::Automatic,
     )?;
     ensure!(writer.close().await, "Synthetic checkpoint did not close");
     let checkpoint = checkpoint
