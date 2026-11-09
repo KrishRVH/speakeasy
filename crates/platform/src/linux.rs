@@ -93,7 +93,7 @@ impl Monitor {
 
     #[expect(
         clippy::unused_self,
-        reason = "Linux insertion threads belong to the desktop thread, which joins them before exiting, so none outlives the one InputMonitor joins"
+        reason = "InputMonitor awaits every platform's Monitor through this method; Linux insertion threads belong to the desktop thread InputMonitor already joins, so nothing else remains to await"
     )]
     pub(crate) fn stopped(&self) -> impl Future<Output = ()> + Send + use<> {
         std::future::ready(())

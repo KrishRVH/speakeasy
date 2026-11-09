@@ -251,7 +251,7 @@ pub(super) async fn run(
     requests: Receiver<Insertion>,
     stopping: &Receiver<Infallible>,
 ) -> anyhow::Result<()> {
-    let (connection, screen) = connect()?;
+    let (connection, screen) = XCBConnection::connect(None)?;
     let root = connection
         .setup()
         .roots
@@ -401,10 +401,6 @@ fn focus_is_external(
         window = next;
     }
     Ok(false)
-}
-
-fn connect() -> anyhow::Result<(XCBConnection, usize)> {
-    Ok(XCBConnection::connect(None)?)
 }
 
 fn intern(connection: &XCBConnection, name: &[u8]) -> anyhow::Result<Atom> {

@@ -5,7 +5,7 @@ use x11rb::{
     xcb_ffi::XCBConnection,
 };
 
-use super::{connect, has_external_target, intern};
+use super::{has_external_target, intern};
 use crate::{
     InputSender, InsertPermit, OwnedThread,
     clipboard::copy_when,
@@ -192,7 +192,7 @@ pub(super) struct Clipboard {
 
 impl Clipboard {
     pub(super) fn open() -> anyhow::Result<Self> {
-        let (connection, _) = connect()?;
+        let (connection, _) = XCBConnection::connect(None)?;
         let selection = intern(&connection, b"CLIPBOARD")?;
         Ok(Self {
             connection,

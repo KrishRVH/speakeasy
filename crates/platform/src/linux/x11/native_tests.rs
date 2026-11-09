@@ -12,13 +12,14 @@ use x11rb::{
         xproto::{self, ConnectionExt as _},
         xtest::ConnectionExt as _,
     },
+    xcb_ffi::XCBConnection,
 };
 use xkbcommon::xkb::Keysym;
 
 use super::{
     Keyboard,
     clipboard::{Clipboard, ClipboardAccess as _},
-    connect, intern,
+    intern,
 };
 use crate::{DesktopOptions, Input, InputSender};
 
@@ -46,7 +47,7 @@ async fn a_keyboard_switch_keeps_shortcuts_and_a_remap_stops_them() -> anyhow::R
         matches!(ready, Input::DesktopReady { .. }),
         "Desktop setup gave {ready:?}"
     );
-    let (connection, _) = connect()?;
+    let (connection, _) = XCBConnection::connect(None)?;
     let keyboard = Keyboard::load(&connection)?;
     let key = |kind, symbol| -> anyhow::Result<()> {
         let code = keyboard.keycode(symbol)?;
@@ -106,7 +107,7 @@ async fn a_shortcut_another_app_holds_stops_input_naming_the_shortcut() -> anyho
     if !on_private_display("a_shortcut_another_app_holds_stops_input_naming_the_shortcut")? {
         return Ok(());
     }
-    let (connection, screen) = connect()?;
+    let (connection, screen) = XCBConnection::connect(None)?;
     let root = connection
         .setup()
         .roots
@@ -150,7 +151,7 @@ fn a_fresh_clipboard_owns_its_first_copy() -> anyhow::Result<()> {
     if !on_private_display("a_fresh_clipboard_owns_its_first_copy")? {
         return Ok(());
     }
-    let (connection, screen) = connect()?;
+    let (connection, screen) = XCBConnection::connect(None)?;
     let root = connection
         .setup()
         .roots
