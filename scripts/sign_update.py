@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Sign the exact Windows update manifest with the key embedded in the application."""
 
 import argparse
