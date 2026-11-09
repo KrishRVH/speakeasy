@@ -1,3 +1,5 @@
+use std::panic::{self, AssertUnwindSafe};
+
 use anyhow::Context as _;
 use async_channel::{Receiver, Sender};
 use x11rb::{
@@ -34,16 +36,19 @@ impl ClipboardWorker {
         let thread = OwnedThread::spawn("x11-clipboard", {
             let input = input.clone();
 
-            move || match open() {
-                Ok(clipboard) => {
-                    opened.send(());
-                    serve_clipboard(clipboard, &incoming);
-                },
-                Err(error) => {
-                    input.fail(format!(
+            move || {
+                let served = panic::catch_unwind(AssertUnwindSafe(|| {
+                    serve_clipboard(open, opened, &incoming)
+                }));
+                match served {
+                    Ok(Ok(())) => {},
+                    Ok(Err(error)) => input.fail(format!(
                         "X11 clipboard is unavailable: {error}. Check your desktop connection, then resume dictation."
-                    ));
-                },
+                    )),
+                    Err(_) => input.fail(
+                        "X11 clipboard stopped unexpectedly. Resume dictation to reconnect.".into(),
+                    ),
+                }
             }
         })?;
         Ok(Self {
@@ -244,10 +249,17 @@ impl ClipboardAccess for Clipboard {
     }
 }
 
-fn serve_clipboard(mut clipboard: impl ClipboardAccess, requests: &Receiver<ClipboardRequest>) {
+fn serve_clipboard<C: ClipboardAccess>(
+    open: impl FnOnce() -> anyhow::Result<C>,
+    opened: Reply<()>,
+    requests: &Receiver<ClipboardRequest>,
+) -> anyhow::Result<()> {
+    let mut clipboard = open()?;
+    opened.send(());
     while let Ok(request) = requests.recv_blocking() {
         request.perform(&mut clipboard);
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -372,6 +384,41 @@ mod tests {
             !input.is_closed(),
             "Clipboard retirement closed input before the desktop thread could report why"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_panicking_clipboard_thread_answers_its_request_and_reports_why() -> anyhow::Result<()>
+    {
+        struct PanickingClipboard;
+
+        impl ClipboardAccess for PanickingClipboard {
+            fn external_target(&self, _: HostSession) -> anyhow::Result<bool> {
+                Ok(false)
+            }
+
+            fn set_text(&mut self, _: &str, _: &InsertPermit) -> anyhow::Result<Option<Window>> {
+                panic::resume_unwind(Box::new("private payload"))
+            }
+
+            fn owns(&self, _: Window) -> anyhow::Result<bool> {
+                Ok(false)
+            }
+        }
+
+        let (events, received) = async_channel::bounded(4);
+        let input = InputSender::new(events);
+        let worker = ClipboardWorker::spawn(input.clone(), || Ok(PanickingClipboard))?;
+        worker.ready().await?;
+        let permit = input.begin().context("Recording")?;
+        let answer = tokio::time::timeout(PATIENCE, worker.set_text("fixture".into(), permit))
+            .await
+            .context("The clipboard request was left waiting")?;
+        assert!(answer.is_err());
+        match tokio::time::timeout(PATIENCE, received.recv()).await? {
+            Ok(Input::Unavailable(reason)) => assert!(!reason.contains("private payload")),
+            other => bail!("The stopped clipboard thread did not report why: {other:?}"),
+        }
         Ok(())
     }
 }
