@@ -13,7 +13,7 @@ pub(crate) use audio::{KeptAudio, MAX_CUES};
 pub(crate) use keeper::{AudioLog, FrameLog, Keeper, Kept};
 use speakeasy_show::{Log, Narration, Take};
 
-use super::{Staged, age, recall, sync_directory};
+use super::{Staged, age, entry_exists, recall, remove_if_present, sync_directory};
 
 const ROOT: &str = ".checkpoints";
 const LOG: &str = "take.log";
@@ -217,7 +217,7 @@ impl Checkpoint {
             .map_err(|error| error.error)?;
         sync_directory(&self.directory)?;
 
-        remove(&self.directory.join(PUBLISHED))?;
+        remove_if_present(&self.directory.join(PUBLISHED))?;
         sync_directory(&self.directory)?;
         Ok(())
     }
@@ -248,11 +248,7 @@ impl Checkpoint {
     }
 
     pub(crate) fn has_audio(&self) -> anyhow::Result<bool> {
-        match fs::symlink_metadata(self.directory.join(audio::FILE)) {
-            Ok(_) => Ok(true),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
-            Err(error) => Err(error.into()),
-        }
+        Ok(entry_exists(&self.directory.join(audio::FILE))?)
     }
 
     pub(in crate::show) fn pending(&self) -> anyhow::Result<bool> {
@@ -260,11 +256,7 @@ impl Checkpoint {
     }
 
     fn retired(&self, now: SystemTime) -> anyhow::Result<bool> {
-        let discarded = match fs::symlink_metadata(self.directory.join(DISCARDED)) {
-            Ok(_) => true,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => false,
-            Err(error) => return Err(error.into()),
-        };
+        let discarded = entry_exists(&self.directory.join(DISCARDED))?;
         Ok(discarded
             || age::expires_at(self.id()?).is_none_or(|expiry| expiry <= now)
             || match self.publication()? {
@@ -381,7 +373,7 @@ impl Checkpoint {
             super::movie::HEADER,
             super::movie::geometry::FILE,
         ] {
-            remove(&self.directory.join(name))
+            remove_if_present(&self.directory.join(name))
                 .context("Cannot remove Show content; close files open in the Show's folder")?;
         }
         sync_directory(&self.directory)?;
@@ -416,10 +408,8 @@ pub(super) fn discard_published(
         .and_then(super::address::ShowId::parse)
         .context(DAMAGED)?;
     let path = parent.join(ROOT).join(id.as_str());
-    match fs::symlink_metadata(&path) {
-        Ok(_) => {},
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error).context(DAMAGED),
+    if !entry_exists(&path).context(DAMAGED)? {
+        return Ok(None);
     }
     let checkpoint = lock(&path).context(DAMAGED)?.context(
         "This Show is still recording or recovering. Let it finish, then try deleting it again.",
@@ -486,7 +476,8 @@ fn visit(
 ) -> Vec<Problem> {
     let root = parent.join(ROOT);
     let entries = match entries(&root) {
-        Ok(entries) => entries,
+        Ok(Some(entries)) => entries,
+        Ok(None) => return Vec::new(),
         Err(error) => {
             return vec![Problem {
                 directory: root,
@@ -495,7 +486,7 @@ fn visit(
         },
     };
     let mut problems = Vec::new();
-    for entry in entries.into_iter().flatten() {
+    for entry in entries {
         let directory = entry
             .as_ref()
             .map_or_else(|_| root.clone(), fs::DirEntry::path);
@@ -589,14 +580,6 @@ struct StoredNarration<N> {
     incomplete: bool,
 }
 
-fn remove(path: &Path) -> io::Result<()> {
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
-    }
-}
-
 pub(crate) enum Checkpointing {
     Writing(Keeper),
     Held(Checkpoint),
@@ -647,8 +630,8 @@ fn regular(path: &Path) -> io::Result<()> {
     }
 }
 
-fn read_complete(file: &mut File, bytes: &mut [u8]) -> io::Result<bool> {
-    match file.read_exact(bytes) {
+fn read_complete(reader: &mut impl io::Read, bytes: &mut [u8]) -> io::Result<bool> {
+    match reader.read_exact(bytes) {
         Ok(()) => Ok(true),
         Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => Ok(false),
         Err(error) => Err(error),

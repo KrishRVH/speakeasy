@@ -1,5 +1,5 @@
 use std::{
-    fs::{self, File},
+    fs::File,
     io::{self, Read as _, Write as _},
     path::Path,
     time::{Duration, SystemTime},
@@ -11,7 +11,7 @@ use serde::Serialize;
 use super::{
     KEPT_FOR, Staged,
     checkpoint::audio::{self, KeptAudio},
-    recall, sync_directory,
+    recall, remove_if_present, sync_directory,
 };
 
 const FILE: &str = "voice.log";
@@ -120,17 +120,15 @@ pub(crate) fn read(directory: &Path, now: SystemTime) -> anyhow::Result<Voice> {
 
 pub(super) fn expire(directory: &Path, now: SystemTime) -> io::Result<()> {
     if deadline(directory)?.is_some_and(|expires| now >= expires) {
-        match fs::remove_file(directory.join(FILE)) {
-            Ok(()) => {},
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {},
-            Err(error) => return Err(error),
-        }
+        remove_if_present(&directory.join(FILE))?;
     }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
 
     #[test]

@@ -191,12 +191,8 @@ pub(super) fn stage(
         write_flushed(&staging.path().join(&file.name), &file.contents)
             .map_err(cannot_save(parent))?;
     }
-
-    #[cfg(unix)]
-    for folder in folders {
-        fs::File::open(folder)
-            .and_then(|folder| folder.sync_all())
-            .map_err(cannot_save(parent))?;
+    for folder in &folders {
+        sync_directory(folder).map_err(cannot_save(parent))?;
     }
     Ok(Staged {
         staging,
@@ -324,10 +320,8 @@ fn retire_expired(
 
 fn retire(parent: &Path, directory: &Path, name: &str) -> io::Result<PathBuf> {
     let destination = parent.join(format!("{EXPIRED_PREFIX}{name}"));
-    match fs::symlink_metadata(&destination) {
-        Ok(_) => return Err(ErrorKind::AlreadyExists.into()),
-        Err(error) if error.kind() == ErrorKind::NotFound => {},
-        Err(error) => return Err(error),
+    if entry_exists(&destination)? {
+        return Err(ErrorKind::AlreadyExists.into());
     }
     fs::rename(directory, &destination)?;
     Ok(destination)
@@ -359,10 +353,21 @@ fn expired(entry: &fs::DirEntry, cutoff: &str, now: SystemTime) -> io::Result<bo
 }
 
 pub(super) fn pinned(path: &Path) -> io::Result<bool> {
-    match fs::symlink_metadata(path.join(PIN)) {
+    entry_exists(&path.join(PIN))
+}
+
+fn entry_exists(path: &Path) -> io::Result<bool> {
+    match fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
         Err(error) => Err(error),
+    }
+}
+
+fn remove_if_present(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        removed => removed,
     }
 }
 

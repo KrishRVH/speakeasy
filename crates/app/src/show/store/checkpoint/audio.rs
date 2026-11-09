@@ -7,6 +7,7 @@ use std::{
 use anyhow::{Context as _, ensure};
 use zeroize::Zeroizing;
 
+use super::read_complete;
 use crate::audio::MAX_SAMPLE_RATE as MAX_RATE;
 
 pub(super) const MAGIC: &[u8; 8] = b"SPKAUD01";
@@ -181,7 +182,7 @@ fn decode(mut file: impl io::Read, bytes: usize) -> anyhow::Result<KeptAudio> {
 
 fn next(file: &mut impl io::Read) -> anyhow::Result<Option<Zeroizing<Vec<u8>>>> {
     let mut length = [0; 4];
-    if !complete(file, &mut length)? {
+    if !read_complete(file, &mut length)? {
         return Ok(None);
     }
     let length = usize::try_from(u32::from_le_bytes(length))?;
@@ -190,21 +191,13 @@ fn next(file: &mut impl io::Read) -> anyhow::Result<Option<Zeroizing<Vec<u8>>>> 
     }
     let mut bytes = Zeroizing::new(vec![0; length]);
     let mut checksum = [0; 4];
-    if !complete(file, &mut bytes)?
-        || !complete(file, &mut checksum)?
+    if !read_complete(file, &mut bytes)?
+        || !read_complete(file, &mut checksum)?
         || crc32fast::hash(&bytes) != u32::from_le_bytes(checksum)
     {
         return Ok(None);
     }
     Ok(Some(bytes))
-}
-
-fn complete(file: &mut impl io::Read, bytes: &mut [u8]) -> io::Result<bool> {
-    match file.read_exact(bytes) {
-        Ok(()) => Ok(true),
-        Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => Ok(false),
-        Err(error) => Err(error),
-    }
 }
 
 fn take<const N: usize>(bytes: &mut &[u8]) -> anyhow::Result<[u8; N]> {

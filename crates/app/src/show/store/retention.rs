@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::Context as _;
 
-use super::{PIN, age, pinned};
+use super::{PIN, age, pinned, remove_if_present};
 
 pub(crate) struct Deleted {
     pub checkpoint: Option<PathBuf>,
@@ -143,11 +143,7 @@ pub(crate) fn set_kept(parent: &Path, directory: &Path, kept: bool) -> io::Resul
             Err(error) => return Err(error),
         }
     } else {
-        match fs::remove_file(pin) {
-            Ok(()) => {},
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {},
-            Err(error) => return Err(error),
-        }
+        remove_if_present(&pin)?;
     }
     super::sync_directory(directory)?;
     Retention::read(directory)
