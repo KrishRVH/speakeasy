@@ -84,7 +84,9 @@ impl Sample {
         let sample = samples.get(index).context("Movie has no retained sample")?;
         ensure!(
             (1..=1_000_000_000).contains(&prefix.timescale)
-                && sample.ticks <= u64::from(prefix.timescale).saturating_mul(360),
+                && sample.ticks
+                    <= u64::from(prefix.timescale)
+                        .saturating_mul(MoviePrefix::DURATION_LIMIT.as_secs()),
             "Movie sample timestamp is out of range"
         );
         Ok(Self {
