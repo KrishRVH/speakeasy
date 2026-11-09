@@ -15,11 +15,11 @@ only voice level, processing, and submission move. Red means on air: each theme'
 appears only while capture is open, and its `lamp` accent never signals recording.
 
 `crates/app/src/theme.rs` defines four themes. Jet & Champagne is the default; Emerald Lounge, Iris,
-and Midnight Chrome are selectable in Settings, and choosing one recolors Settings, the pill, and
-the tray at once. The wordmark is Josefin Sans SemiBold, embedded under the SIL Open Font License,
-and the line is “Say the word.” App icons are rendered from the SVG sources in `packaging/brand`;
-the Windows and macOS icons omit the ornament at 32 px and below, and Linux installs the full
-scalable icon.
+and Midnight Chrome are selectable in Settings, and choosing one recolors Settings, the pill, Shows,
+and the tray at once. The wordmark is Josefin Sans SemiBold, embedded under the SIL Open Font
+License, and the line is “Say the word.” App icons come from the SVG sources in `packaging/brand`:
+the committed Windows and macOS icon files omit the ornament at 32 px and below, and Linux installs
+the full scalable icon.
 
 Inside the windows the ornament recedes: the icon, the pill, and the jewels carry the Deco, while
 Settings and Shows read as calm panels. Both draw their controls from one kit in
@@ -176,21 +176,21 @@ split by a vertical facet for paused, and a warn jewel with a center facet for a
 renders a template icon, so recording also adds a solid jewel and every state differs by shape. On
 Windows and Linux a faint keyline keeps the lamp color legible on light taskbars. The menu shows
 current status and engine, Pause/Resume, Start/Finish, Cancel, Settings, and Quit; Finish and Cancel
-name a Show while it records and are disabled while it is saved. Before any engine is set up, the
-menu says so and Resume waits for setup. It never animates while idle. On Windows and macOS, Show
-screen and Show area… follow Cancel and act whenever Start would: each starts a hands-free Show
-without the shortcut, of the display under the pointer or of an area dragged out on it, which then
-behaves like any other. There is no window entry, since the pointer is on the menu. Copy last Show
-and Open last Show follow them, before Settings; they act once a Show is saved and between
-recordings, paused included, until Quit begins or either finds that Show gone. Errors remain
-accessible in Settings after the pill's notice expires: its commands and status line stay in view
-below the scrolling controls.
+name a Show while it records, and Start and Cancel Show are disabled while it saves. Before any
+engine is set up, the menu says so and Resume waits for setup. It never animates while idle. On
+Windows and macOS, Show screen and Show area… follow Paste last dictation, Dictation style, and
+Preset and act whenever Start would: each starts a hands-free Show without the shortcut, of the
+display under the pointer or of an area dragged out on it, which then behaves like any other. There
+is no window entry, since the pointer is on the menu. Copy last Show and Open last Show follow them,
+before Settings; they act once a Show is saved and between recordings, paused included, until Quit
+begins or either finds that Show gone. Errors remain accessible in Settings after the pill's notice
+expires: its commands and status line stay in view below the scrolling controls.
 
 Paste last dictation is available between sessions when one result remains in memory. V during an
 ordinary Windows/macOS hold abandons that pending recording and pastes the previous result; repeated
-keydown events do not repeat insertion. Windows/macOS also offer Style and saved Preset submenus.
-Style selects the next recording and appears in the pill when non-Prose. Preset choices require idle
-dictation and last for the session without changing saved settings.
+keydown events do not repeat insertion. Windows/macOS also offer Dictation style and saved Preset
+submenus. Style selects the next recording and appears in the pill when non-Prose. Preset choices
+require idle dictation and last for the session without changing saved settings.
 
 ## Reviewing Shows
 
@@ -204,21 +204,22 @@ Show count and Refresh; each row shows age, duration, and frame count, with tags
 interrupted, pending or lost narration, early-ending, and damaged status. A soft fill and a lamp bar
 mark the selected Show. With no Shows, Windows and macOS explain how to record one, with S, W, and A
 as keycaps. The selected Show's header carries its retention and status tags, Send to agent as the
-main action, Copy summary, Keep Show or Allow expiry, and a More actions menu for the image copy,
-Open folder, video, export, and Delete Show commands; the menu dims actions that are unavailable.
-Below the header come warnings, a segmented switch for the frame source, one keyframe with its time
-and numbered marks, frame chips, and a Summary or Narration switch over the current summary as inert
-plain text. An interrupted Show leads with its recovery action; Discard stays apart as a destructive
-outline, and its confirmation adds a Cannot be undone tag, Cancel, and a filled Discard permanently.
-Delete Show opens the same confirmation treatment for a saved Show, names its folder ID, and
-explains that saved files and associated recovery audio are removed even when kept. Exported copies
-stay. Cancel or Escape dismisses confirmation; changing Shows or refreshing invalidates it. An old
-confirmation cannot delete a newly selected Show. Deletion clears the removed selection and pixels;
-completion leaves another selected Show and its notice unchanged. Focus rings appear only after
-keyboard input. Up/Down selects Shows, Left/Right steps frames, Home/End selects the first/last
-frame, and Escape closes. While the menu is open, Up/Down move through its available actions and
-Escape closes only the menu. Tab and Shift+Tab move through controls; Enter or Space activates them.
-Closing releases the view and its images.
+main action and Copy summary on Windows and macOS, Keep Show or Allow expiry (Allow cleanup once
+overdue), and a More actions menu for the image copy, Open folder, video, export, and Delete Show
+commands; the menu dims actions that are unavailable. Below the header come warnings, a segmented
+switch for the frame source, one keyframe with its time and numbered marks, frame chips, and a
+Summary or Narration switch over the current summary as inert plain text. An interrupted Show leads
+with its recovery action; Discard stays apart as a destructive outline, and its confirmation adds a
+Cannot be undone tag, Cancel, and a filled Discard permanently. Delete Show opens the same
+confirmation treatment for a saved Show, names its folder ID, and explains that saved files and
+associated recovery audio are removed even when kept. Exported copies stay. Cancel or Escape
+dismisses the Delete confirmation; changing Shows or refreshing invalidates it. An old confirmation
+cannot delete a newly selected Show. Deletion clears the removed selection and pixels; completion
+leaves another selected Show and its notice unchanged. Focus rings appear only after keyboard input.
+Up/Down selects Shows, Left/Right steps frames, Page Up/Page Down jumps ten seconds, Home/End
+selects the first/last frame, and Escape closes. While the menu is open, Up/Down move through its
+available actions and Escape closes only the menu. Tab and Shift+Tab move through controls; Enter or
+Space activates them. Closing releases the view and its images.
 
 Refresh rereads the library. Regaining focus checks that the selected folder still exists and
 rereads its summary; external edits are never overwritten. Copy summary reads the file again on

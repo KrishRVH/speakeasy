@@ -59,12 +59,12 @@ module unless a test file is named.
   recovery. Style is frozen at session admission;
   [transcript/style.rs](../crates/app/src/transcript/style.rs) applies deterministic local casing
   after corrections, while Verbatim bypasses filler removal. Show narration keeps its own policy.
-  [shell/choices.rs](../crates/app/src/shell/choices.rs) owns transient style and saved-preset
-  selection. Tray and command presets validate off the UI thread, leave saved settings unchanged,
-  and require owner confirmation while idle. Generation, saved-configuration epoch, session counter,
-  and caller lifetime reject stale results. The runtime keeps its saved configuration baseline
-  separate from effective preset choices, including after Resume. Text-only choices reuse the
-  worker; engine changes reload it.
+  [shell/choices.rs](../crates/app/src/shell/choices.rs) routes control commands and owns
+  saved-preset selection; Services holds the transient style. Tray and command presets validate off
+  the UI thread, leave saved settings unchanged, and require owner confirmation while idle.
+  Generation, saved-configuration epoch, session counter, and caller lifetime reject stale results.
+  The runtime keeps its saved configuration baseline separate from effective preset choices,
+  including after Resume. Text-only choices reuse the worker; engine changes reload it.
 - **Audio capture**: [audio.rs](../crates/app/src/audio.rs) with
   [control.rs](../crates/app/src/audio/control.rs), [stream.rs](../crates/app/src/audio/stream.rs),
   [pcm.rs](../crates/app/src/audio/pcm.rs), [speech.rs](../crates/app/src/audio/speech.rs), and
@@ -103,7 +103,7 @@ module unless a test file is named.
   owner and worker on public audio, opt-in.
   [local_speech/streaming.rs](../crates/app/src/local_speech/streaming.rs) owns the authenticated
   loopback WebSocket and bounded final wait. Its tests cover final-only delivery, abandoned feeds,
-  malformed replies, authentication, and listener ownership.
+  and malformed replies; local_speech/tests.rs covers authentication and listener ownership.
 - **Model choices and hints**: [models.rs](../crates/app/src/models.rs) owns curated identities and
   engine language adaptation. [recognition_terms.rs](../crates/app/src/recognition_terms.rs)
   validates bounded recognition hints independently of transcript corrections. Hints travel per
@@ -254,10 +254,11 @@ module unless a test file is named.
   [shutdown.rs](../crates/app/src/shell/shutdown.rs), [save.rs](../crates/app/src/shell/save.rs),
   [window.rs](../crates/app/src/shell/window.rs), and [main.rs](../crates/app/src/main.rs). Mac
   native quit requests enter the same drain through GPUI's termination delegate. A pending request
-  cannot bypass cleanup by arriving again; only the drained owner approves termination. GPUI's quit
-  after the last window closes is off, so a compositor closing the pill cannot skip the drain.
-  Requests nested inside a foreground task or application borrow are canceled before draining, so
-  their native call can return. This can cancel a macOS logout request. The opt-in
+  cannot bypass cleanup by arriving again; only the drained owner approves termination.
+  [application.rs](../crates/app/src/application.rs) turns off GPUI's quit after the last window
+  closes, so a compositor closing the pill cannot skip the drain. Requests nested inside a
+  foreground task or application borrow are canceled before draining, so their native call can
+  return. This can cancel a macOS logout request. The opt-in
   [Mac acceptance](../crates/app/src/shell/shutdown/mac_acceptance.rs) holds an accepted Show write
   across external, nested, repeated, and app-owned quit, checking foreground frames and instance
   release without devices or input. [save/tests.rs](../crates/app/src/shell/save/tests.rs) checks
@@ -275,24 +276,24 @@ module unless a test file is named.
   unlocks permission assistance even when native shortcut access prevents the runtime from starting.
   A nonblank private result unlocks completion; leaving practice clears its receipt and text. The
   guide never asks for Show permissions or claims to verify external text delivery. Skip and Finish
-  write an empty `.onboarded` marker beside the selected settings file on an owned worker, without
-  saving or replacing settings. Failed writes remain visible and retryable; shutdown drains an
-  accepted write. Startup opens an unfinished guide even after automatic model setup saved a valid
-  configuration. Replay preserves settings. Demo replay uses synthetic text without microphone
-  access or a completion write. State and file tests cover blocked transitions and marker failures;
-  the Settings native interaction test walks the simulated guide and checks text cleanup and
-  preservation of edits.
+  write an empty marker, the selected settings file's name plus `.onboarded`, beside it on an owned
+  worker, without saving or replacing settings. Failed writes remain visible and retryable; shutdown
+  drains an accepted write. Startup opens an unfinished guide even after automatic model setup saved
+  a valid configuration. Replay preserves settings. Demo replay uses synthetic text without
+  microphone access or a completion write. State and file tests cover blocked transitions and marker
+  failures; the Settings native interaction test walks the simulated guide and checks text cleanup
+  and preservation of edits.
 - **Setup**: [setup.rs](../crates/app/src/setup.rs) and [setup/](../crates/app/src/setup) choose,
   download, verify, and unpack engines and report which managed models are already downloaded; a
   full install is opt-in.
 - **Reset**: [reset.rs](../crates/app/src/reset.rs) holds `setup.lock` and `updates.lock` in the
   data root through deletion, refuses while another copy holds either, and deletes engines, models,
-  downloads, and updates folders, and deletes the settings file last, through a settings link. A
-  linked folder loses only its link; Shows and the finished-guide marker stay, and a repeated purge
-  succeeds. Services pauses dictation, retires the runtime, and purges on an owned thread that Quit
-  drains; nothing resumes until it exits, and a failed purge restores the previous settings.
-  Settings refuses reset during setup, saves, or a held Windows update and refuses setup while
-  settings are unreadable or a reset runs. On success it adopts default settings as its saved
+  downloads, and updates folders, and deletes the settings file last, following a settings symlink
+  to its target. A linked folder loses only its link; Shows and the finished-guide marker stay, and
+  a repeated purge succeeds. Services pauses dictation, retires the runtime, and purges on an owned
+  thread that Quit drains; nothing resumes until it exits, and a failed purge restores the previous
+  settings. Settings refuses reset during setup, saves, or a held Windows update and refuses setup
+  while settings are unreadable or a reset runs. On success it adopts default settings as its saved
   baseline and starts automatic setup; as on a new install, the first complete save enables
   dictation, even if it was paused. [reset/tests.rs](../crates/app/src/reset/tests.rs) covers what
   stays, refusals, failure order, and linked folders. Update preparation holds the same
@@ -325,13 +326,14 @@ module unless a test file is named.
   for, and [show/command.rs](../crates/app/src/show/command.rs) parses `show` commands. Its
   [output.rs](../crates/app/src/show/command/output.rs) projects metadata without private text,
   including exact managed IDs and expiry dates. `show keep` changes retention for one explicit
-  managed Show; inspection stays read-only.
-  [command/tests.rs](../crates/app/src/show/command/tests.rs) inspects simulated Shows, checks
-  failure output, and exercises the embedded [agent skill](../skills/speakeasy-show/SKILL.md). The
-  Windows package's [console entry](../crates/app/src/bin/speakeasy-cli.rs) relays Show and control
-  commands and version requests to the sibling app, with inherited handles, arguments, and working
-  directory, and waits for its exit. [cli.rs](../crates/app/tests/cli.rs) checks the process
-  boundary without opening devices or the app. Help and refused launch options never spawn a child.
+  managed Show and `show discard` permanently removes one interrupted checkpoint; inspection stays
+  read-only. [command/tests.rs](../crates/app/src/show/command/tests.rs) inspects simulated Shows,
+  checks failure output, and exercises the embedded
+  [agent skill](../skills/speakeasy-show/SKILL.md). The Windows package's
+  [console entry](../crates/app/src/bin/speakeasy-cli.rs) relays Show and control commands and
+  version requests to the sibling app, with inherited handles, arguments, and working directory, and
+  waits for its exit. [cli.rs](../crates/app/tests/cli.rs) checks the process boundary without
+  opening devices or the app. Help and refused launch options never spawn a child.
   [check-package.sh](../scripts/check-package.sh) launches every release package before upload.
 - **Agent evidence**: [show/evidence.rs](../crates/app/src/show/evidence.rs) shares inspection and
   temporal queries between CLI and [show/mcp.rs](../crates/app/src/show/mcp.rs). MCP exposes three
@@ -494,7 +496,8 @@ module unless a test file is named.
   screen promotion and after the last captured image by holding the boundary frame. Clipped captions
   contain only intersecting words. The plain-text subtitle decoder receives neutral style resets
   after braces and backslashes so markup-like narration stays literal through `mov_text` encoding.
-  Missing voice and annotation coverage are reported. CLI and Review share this exporter;
+  Missing voice and annotation coverage are reported. The
+  [`show video` command](../crates/app/src/show/command/video.rs) and Review share this exporter;
   cancellation kills and reaps both FFmpeg children before staging is removed. Raw audio, captions,
   and source copies use the managed Shows folder's private staging; the existing one-hour sweep
   reclaims crash leftovers. Only the final MP4 stages beside its chosen destination for publication
@@ -658,17 +661,17 @@ module unless a test file is named.
   transforms and aperture cropping. Both readers release native I/O before returning; cancellation
   is checked between native calls and Mac waits for image-generation completion after cancelling.
   Canvas and buffer bounds are checked, and output is top-down opaque BGRA with the actual decoded
-  timestamp. The [video command](../crates/app/src/show/command/source/video.rs) reports
-  session-relative time and separate annotation coverage, including recovered tails. `--annotated`
-  shares the preview renderer at the exact decoded session time, reports omitted primitives, and
-  refuses samples without geometry or annotation coverage. Annotation rendering precedes cropping.
-  It refuses crops unless the actual decoded sample’s saved source rectangle matches the mark’s
-  coordinate proof. Crops expand within the fitted content, with output coordinates reported in the
-  full canvas. Missing geometry permits only unannotated, uncropped video. Opt-in synthetic checks
-  cover seek direction, orientation, cancellation, file replacement, and exports beyond the
-  annotation journal. Synthetic encoder checks decode irregular captures sample by sample, reject
-  future images, and exercise quiet fragments, same-tick coalescing, cancellation, and partial
-  progress after a stall.
+  timestamp. The [`show frame --video` source](../crates/app/src/show/command/source/video.rs)
+  reports session-relative time and separate annotation coverage, including recovered tails.
+  `--annotated` shares the preview renderer at the exact decoded session time, reports omitted
+  primitives, and refuses samples without geometry or annotation coverage. Annotation rendering
+  precedes cropping. It refuses crops unless the actual decoded sample’s saved source rectangle
+  matches the mark’s coordinate proof. Crops expand within the fitted content, with output
+  coordinates reported in the full canvas. Missing geometry permits only unannotated, uncropped
+  video. Opt-in synthetic checks cover seek direction, orientation, cancellation, file replacement,
+  and exports beyond the annotation journal. Synthetic encoder checks decode irregular captures
+  sample by sample, reject future images, and exercise quiet fragments, same-tick coalescing,
+  cancellation, and partial progress after a stall.
 
   Windows converts sRGB RGB32 through an explicit
   [native processor](../crates/platform/src/windows/movie/convert.rs) into limited-range BT.709
@@ -798,7 +801,7 @@ stateDiagram-v2
     Stopping --> AwaitingFootage: Show audio stops or was all zeros; narration lost
     Recognizing --> AwaitingFootage: Show model or retry fails; narration lost
     AwaitingFootage --> Delivering: footage recorded; publish
-    Delivering --> [*]: Done / Copied / Cancelled / Error
+    Delivering --> [*]: Done / Copied / Cancelled / Failed
     Recording --> [*]: cancel; retire microphone and discard pieces
     Recognizing --> [*]: cancel; revoke permit and recover active final request
 ```

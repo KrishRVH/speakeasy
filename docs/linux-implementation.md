@@ -12,7 +12,9 @@ them unavailable. [Architecture](architecture.md) maps the modules and the invar
 
 Linux selects its input adapter from the host session. An available `DISPLAY` can belong to Xwayland
 and does not establish desktop-wide X11 input access. Rendering and input use separate connections
-and can use different protocols.
+and can use different protocols. The Wayland path still needs Xwayland: it checks focus through an
+owned X connection, which also copies text when the Clipboard portal is unavailable, and **Desktop
+bindings** with **Copy for manual paste** use the X11 adapter outright.
 
 | Desktop path             | Shortcut handling                                                     | Insertion                                                         |
 | ------------------------ | --------------------------------------------------------------------- | ----------------------------------------------------------------- |
@@ -27,9 +29,9 @@ Settings shows the actual accepted dictate and cancel bindings. A chord another 
 grabs stops desktop access with an error naming that shortcut, dictation or cancel. X11 releases its
 active keyboard grab immediately after a trigger, returning unrelated keys to the focused editor.
 Portal activations and deactivations are consumed in message order, with repeated activations
-ignored while held. Settings applies binding changes automatically. After changing external desktop
-bindings or the keyboard map, pause and resume dictation; desktop command bindings with manual paste
-depend on no keyboard map.
+ignored while held. Settings applies binding changes automatically. After rebinding Speakeasy's
+shortcuts in the desktop's own settings or changing the keyboard map, pause and resume dictation;
+desktop command bindings with manual paste depend on no keyboard map.
 
 ## Owned preparation and insertion
 
@@ -42,10 +44,11 @@ Portals use the installed `io.github.krvh.speakeasy.desktop` launcher identity. 
 registers it before other portal calls; a portal that predates the host registry identifies
 Speakeasy from its launcher. See the [installation instructions](../README.md#linux-experimental).
 
-Wayland requests keyboard access and optional Clipboard access, except for **Copy for manual
-paste**, and never screen capture. Restore credentials are single-use, private 0600 files under the
-XDG state directory. They are absent from settings and diagnostics. Frontend restart, session
-closure, device pause, and disconnect invalidate usable state.
+Except with **Copy for manual paste**, which opens no RemoteDesktop session, Wayland requests
+keyboard access and optional Clipboard access, and never screen capture. Restore credentials are
+single-use, private 0600 files under the XDG state directory. They are absent from settings and
+diagnostics. Frontend restart, session closure, device pause, and disconnect invalidate usable
+state.
 
 Insertion follows the shared commit permit and cancellation rules in
 [cross-module invariants](architecture.md#cross-module-invariants). Immediately before submitting
@@ -224,7 +227,7 @@ describe host GPU drivers, while a
 does not establish inference compatibility. Preserve the
 [installer layout](https://github.com/NVIDIA/NeMo-Speech.cpp/blob/v0.2.0/scripts/install.sh) and
 [RPATH definitions](https://github.com/NVIDIA/NeMo-Speech.cpp/blob/v0.2.0/CMakeLists.txt);
-`setup.rs` owns the model's URL and checksum, and `setup/engine.rs` owns the engines'.
+`setup.rs` owns the models' URLs and checksums, and `setup/engine.rs` owns the engines'.
 
 ## Native acceptance still required
 

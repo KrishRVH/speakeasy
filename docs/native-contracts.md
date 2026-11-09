@@ -84,8 +84,8 @@ evidence.
 ## Linux desktop and transfer ownership
 
 Owners: `crates/platform/src/linux.rs`, `linux/ei.rs`, `linux/portal.rs`,
-`linux/portal/insertion.rs`, `linux/portal/transfer.rs`, `linux/x11/clipboard.rs`,
-`linux/x11/paste.rs`.
+`linux/portal/insertion.rs`, `linux/portal/transfer.rs`, `linux/token.rs`, `linux/x11.rs`,
+`linux/x11/clipboard.rs`, `linux/x11/paste.rs`.
 
 `linux::watch_readable` gives readiness registration its own duplicated descriptor, owned for the
 entire `AsyncFd` lifetime. Both the libei and X11 adapters use this registration.
@@ -177,11 +177,12 @@ precede frame admission.
 A screen Show's window watch lists windows on its own stoppable thread every frame interval and
 sends only changed layouts over a bounded lane, dropping a change the lane cannot take until the
 next interval. It reads bounds, a layer class, and the owning process; never titles, app names, or
-pixels. Windows marks topmost windows other than menus and popups floating; Mac marks levels above
-normal and up to utility floating. Window and process identifiers become small per-watch numbers
-before they leave the thread. Windows walks `EnumWindows` front to back and reads DWM extended frame
-bounds for visible, uncloaked, not minimized windows that accept clicks; Mac reads on-screen
-`CGWindowListCopyWindowInfo` entries. Both leave out Speakeasy's process, as frames do.
+pixels. Windows marks topmost windows other than taskbars, menus, and popups floating; Mac marks
+levels above normal and up to utility floating. Window and process identifiers become small
+per-watch numbers before they leave the thread. Windows walks `EnumWindows` front to back and reads
+DWM extended frame bounds for visible, uncloaked, not minimized windows that accept clicks; Mac
+reads on-screen `CGWindowListCopyWindowInfo` entries. Both leave out Speakeasy's process, as frames
+do.
 
 Owned-window acceptance creates and destroys its window classes and HWNDs on their owning thread.
 Monitor enumeration writes only to the local vector that remains live throughout the synchronous

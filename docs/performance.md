@@ -21,9 +21,9 @@ when the full interaction remains correct.
   application-owned Quit keep the UI responsive.
 - Cancelling or promoting dictation to a Show discards piece results while their worker finishes; no
   partial text reaches insertion. The next session can wait behind that one piece. Cancelling final
-  inference on GPU reuses a worker only after it transcribes a second of silence within two seconds.
-  Failed checks and cancelled final CPU inference retire the worker. A retained worker may keep its
-  largest model buffers until Pause releases it.
+  inference on GPU, or a Nemotron stream on either device, reuses a worker only after it transcribes
+  a second of silence within two seconds. Failed checks and other cancelled final CPU inference
+  retire the worker. A retained worker may keep its largest model buffers until Pause releases it.
 - The audio callback allocates nothing and writes to a bounded single-producer, single-consumer
   ring. Consumer-side PCM starts with a ten-second reservation and cannot grow past five minutes.
   Callback sample count, owner timer, and consumer limit defend the bound independently.

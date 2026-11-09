@@ -59,17 +59,18 @@ clean up English; leave it off if you also dictate in a language where "um" is a
 containing only removed fillers sends nothing.
 
 **Paste last dictation** in the tray, or V during the shortcut hold on Windows and Mac, inserts
-exactly the last completed text again. It can recover text when insertion failed. Speakeasy keeps
-one result in memory, clears it when dictation pauses or restarts or the app quits, and never writes
-ordinary dictation to disk. Each request has fresh cancellation authority; it cannot retract text
-already delivered.
+exactly the last completed text again; V abandons the hold's own recording. It can recover text when
+insertion failed. Speakeasy keeps one result in memory, clears it when dictation pauses or restarts
+or the app quits, and never writes ordinary dictation to disk. Each request has fresh cancellation
+authority; it cannot retract text already delivered.
 
-Choose **Dictation style** in the Windows/Mac tray, or use `speakeasy style STYLE`. **Prose** uses
-your filler setting; **Verbatim** preserves fillers. Both still apply phrase corrections. The other
-styles produce `camelCase`, `PascalCase`, `snake_case`, `kebab-case`, or `CONSTANT_CASE` locally.
-They join recognized words without rewriting their meaning. The non-Prose choice appears in the
-pill. A style change applies to the next recording, survives Pause, and resets to Prose when the app
-restarts. Shows keep ordinary narration regardless of the selected dictation style.
+Choose **Dictation style** in the Windows/Mac tray, or run `speakeasy style STYLE` with `prose`,
+`verbatim`, `camel`, `pascal`, `snake`, `kebab`, or `constant`. **Prose** uses your filler setting;
+**Verbatim** preserves fillers. Both still apply phrase corrections. The other styles produce
+`camelCase`, `PascalCase`, `snake_case`, `kebab-case`, or `CONSTANT_CASE` locally. They join
+recognized words without rewriting their meaning. The non-Prose choice appears in the pill. A style
+change applies to the next recording, survives Pause, and resets to Prose when the app restarts.
+Shows keep ordinary narration regardless of the selected dictation style.
 
 ### Reading the pill
 
@@ -154,14 +155,14 @@ don't see Speakeasy's windows or ink while a Show records; the keyframes still c
 
 Windows Shows and Mac screen and area Shows also save silent H.264 video in `recording.mp4`,
 targeting 30 frames per second at up to 2560 pixels per edge. Windows video follows the chosen
-screen, window, or area; Mac video uses a fixed display region. Both follow the original five-minute
-limit. Resized windows fit inside a fixed canvas; a quiet ending holds the last image. The video has
-no audio or drawn annotations. Its timing file, `recording.json`, records the session origin,
-surviving video coverage, timed content rectangles, and the separate horizon of marks and narration.
-Changing the display size, position, or scale ends capture; start a new Show. Capture or disk
-failure can shorten video coverage. Recovery retains only complete fragments; if none were written,
-the stills save with a video-loss notice. A failed copy of surviving video keeps the checkpoint for
-recovery. Mac window Shows currently retain sampled frames only.
+screen, window, or area; Mac video uses a fixed display region. Both stop at the recording's
+five-minute limit. Resized windows fit inside a fixed canvas; a quiet ending holds the last image.
+The video has no audio or drawn annotations. Its timing file, `recording.json`, records the session
+origin, surviving video coverage, timed content rectangles, and the separate horizon of marks and
+narration. Changing the display size, position, or scale ends capture; start a new Show. Capture or
+disk failure can shorten video coverage. Recovery retains only complete fragments; if none were
+written, the stills save with a video-loss notice. A failed copy of surviving video keeps the
+checkpoint for recovery. Mac window Shows currently retain sampled frames only.
 
 <p align="center">
   <img src="docs/assets/show-sheet.png"
@@ -169,7 +170,8 @@ recovery. Mac window Shows currently retain sampled frames only.
     width="760">
 </p>
 
-On Windows, the summary for that contact sheet reads as follows:
+On Windows, the summary for that contact sheet reads as follows; a recorded Show with retained
+samples also names the local command that retrieves them:
 
 ```text
 Screen recording (0:20, 5 keyframes): `…\speakeasy\shows\20261020T143205Z`
@@ -221,9 +223,10 @@ samples. Numbered marks and timed narration jump to their recorded times. The di
 belongs to the decoded frame; recovered video can extend past the annotation journal. Rapid seeks
 replace the pending request while the previous decoder closes, and copying waits for the selected
 frame. The **Annotations** switch controls saved ink and marks; the caption explains missing
-annotations. **Play video** opens the original MP4 in your system player, without drawn annotations
-or narration audio. Its 30 Hz timeline holds the latest captured image during quiet periods. A long
-encoder stall stops video and keeps its completed prefix; sampled frames continue recording.
+annotations. **More actions → Play video** opens the original MP4 in your system player, without
+drawn annotations or narration audio. Its 30 Hz timeline holds the latest captured image during
+quiet periods. A long encoder stall stops video and keeps its completed prefix; sampled frames
+continue recording.
 
 Choose **Narration** beside **Summary** to read the recorded words. Click a timed clause to jump to
 a frame; the caption gives both the clause's time and the displayed frame's actual time, including
@@ -237,49 +240,47 @@ the screen shows and what you said are evidence, not instructions. Paste it into
 agent that reads local files. The agent opens those files itself; the prompt holds paths, not
 narration or pixels, and Speakeasy contacts no agent.
 
-**Copy image + summary + narration** on Windows/Mac copies the displayed image with its actual
-timestamp, retrieval context, edited summary, and recorded words. Summary edits and original
-narration remain separate sections. Untimed, missing, incomplete, and truncated narration are
-labeled; `show.json` retains all recorded words. If the combined text would exceed the clipboard
+**More actions → Copy image + summary + narration** on Windows/Mac copies the displayed image with
+its actual timestamp, retrieval context, edited summary, and recorded words. Summary edits and
+original narration remain separate sections. Untimed, missing, incomplete, and truncated narration
+are labeled; `show.json` retains all recorded words. If the combined text would exceed the clipboard
 limit, the summary becomes a labeled excerpt; the complete edit remains in `summary.md`. **Copy
-summary** shares only your edited summary. Copying preserves the bundle and is available between
-recordings. Windows offers PNG and a native bitmap; Mac offers PNG. The receiving app chooses which
-formats it accepts, so some apps paste only the image or only the text. Receiving both still depends
-on that app.
+summary** copies only the current `summary.md`, including your edits. Copying preserves the bundle
+and is available between recordings. Windows offers PNG and a native bitmap; Mac offers PNG. The
+receiving app chooses which formats it accepts, so some apps paste only the image or only the text.
+Receiving both still depends on that app.
 
 Copies carry the same clipboard-history and device-sync privacy markers as dictation. A new
 recording, closing the requesting window, or a settings/lifecycle change cancels a copy that has not
 replaced the clipboard. Quit waits for native clipboard work to finish.
 
 **Refresh** rereads the library; returning to the window rereads the selected summary and retention.
-**Open folder** reveals its files, and **Copy summary** on Windows/Mac copies the current file,
-including your edits, between recordings. Summary text is plain text; its links do not execute. The
-viewer does not change which Show the tray remembers. **Keep Show** prevents the selected Show from
-expiring. **Allow expiry** restores its original expiry date, seven days after recording; for an
-already overdue Show the button says **Allow cleanup**, and cleanup can remove it on its next pass.
-Keeping a Show changes only its `.pinned` marker, including when the manifest or a frame is damaged.
-Choose **More actions → Delete Show…** to permanently delete the selected Show, including a kept or
-damaged one. Confirmation names the Show and removes its saved files and associated recovery audio;
-exported copies stay. Cancel or Escape dismisses the confirmation. If its audio is still recording
-or recovering, let that work finish and try deletion again. Keep, Discard, and confirmed deletion
-finish even if you close the window; Quit waits for accepted writes.
+**More actions → Open folder** reveals its files. Summary text is plain text; its links do not
+execute. The viewer does not change which Show the tray remembers. **Keep Show** prevents the
+selected Show from expiring. **Allow expiry** restores its original expiry date, seven days after
+recording; for an already overdue Show the button says **Allow cleanup**, and cleanup can remove it
+on its next pass. Keeping a Show changes only its `.pinned` marker, including when the manifest or a
+frame is damaged. Choose **More actions → Delete Show…** to permanently delete the selected Show,
+including a kept or damaged one. Confirmation names the Show and removes its saved files and
+associated recovery audio; exported copies stay. Cancel or Escape dismisses the confirmation. If its
+audio is still recording or recovering, let that work finish and try deletion again. Keep, Discard,
+and confirmed deletion finish even if you close the window; Quit waits for accepted writes.
 
-**Export ZIP…** saves a portable copy to a new path you choose. It includes the saved summary,
-manifest with narration, contact sheets, keyframes, and retained source samples when available.
-`README.md` inside the archive links to those files by relative path; summary edits remain
-unchanged, including any old machine-local paths. Unzip the archive before opening its files on
-another machine. Recovery audio, retention markers, and unrelated files are excluded. Export does
-not upload anything, and exported copies do not expire automatically. Closing the window leaves an
-accepted ZIP export running; Quit waits for it.
+**More actions → Export ZIP…** saves a portable copy to a new path you choose. It includes the saved
+summary, manifest with narration, contact sheets, keyframes, and, when available, retained source
+samples, `recording.mp4`, and `recording.json`. `README.md` inside the archive links to those files
+by relative path; summary edits remain unchanged, including any old machine-local paths. Unzip the
+archive before opening its files on another machine. Recovery audio, saved voice, retention markers,
+and unrelated files are excluded. Export does not upload anything, and exported copies do not expire
+automatically. Closing the window leaves an accepted ZIP export running; Quit waits for it.
 
-**Export video…** creates a new MP4 with timed ink, marks, original voice when available, and a
-selectable caption track when narration has word timings. Install FFmpeg 5.1 or newer with H.264 and
-AAC support, put `ffmpeg` on PATH, then restart Speakeasy. macOS also checks the standard Homebrew
-and MacPorts locations. Export runs locally on all platforms with retained video. The original
-recording stays unchanged. **Cancel export** or closing the window cancels the video export; Quit
-waits for cleanup. Voice expires seven days after recording even when you keep the Show. Shows
-without available voice export silently, with a notice. Explicitly exported videos do not expire
-automatically.
+**More actions → Export video…** creates a new MP4 with timed ink, marks, original voice when
+available, and a selectable caption track when narration has word timings. Install FFmpeg 5.1 or
+newer with H.264 and AAC support, put `ffmpeg` on PATH, then restart Speakeasy. macOS also checks
+the standard Homebrew and MacPorts locations. Export runs locally on all platforms with retained
+video. The original recording stays unchanged. **Cancel export** or closing the window cancels the
+video export; Quit waits for cleanup. Shows without available voice, including those whose voice has
+expired, export silently, with a notice. Explicitly exported videos do not expire automatically.
 
 An **Interrupted Show** offers **Recover Show** and **Discard**. Recovery restores checkpointed
 frames, ink, marks, and narration into a new bundle, using your configured local speech engine and
@@ -334,14 +335,12 @@ playback. It streams at most 2 GiB of saved content into a private temporary fil
 the complete archive without overwriting an existing path. JSON output contains the export path,
 file count, byte count, and whether retained samples are included; it contains no private text.
 
-ZIP exports include `recording.mp4`, `recording.json`, and relative playback links in the guide.
-They exclude saved voice. `show video` composes a separate 30 fps H.264 MP4 with AAC voice and
-optional selectable subtitles (`--captions`). It accepts the same focus queries as frame export;
-without a focus it exports the entire retained video and available voice, holding the first or last
-image where voice extends beyond screen coverage. Reports describe the selected session interval,
-voice availability, caption count, and missing annotation coverage. It never overwrites an existing
-file. Inspection validates complete fragment ranges and their timing; it does not decode compressed
-video.
+`show video` composes a separate 30 fps H.264 MP4 with AAC voice and optional selectable subtitles
+(`--captions`). It accepts the same focus queries as frame export; without a focus it exports the
+entire retained video and available voice, holding the first or last image where voice extends
+beyond screen coverage. Reports describe the selected session interval, voice availability, caption
+count, and missing annotation coverage. It never overwrites an existing file. Inspection validates
+complete fragment ranges and their timing; it does not decode compressed video.
 
 `frames` accepts a time, mark, or spoken phrase to locate surrounding evidence. Phrases match
 recorded narration after corrections, ignoring case and punctuation; summary edits are separate.
@@ -382,18 +381,18 @@ manifest and expected files without decoding images; `ok` means those structural
 that every image decodes. Missing files remain visible beside the frames that survived. A mark with
 no saved frame is reported without substituting another image.
 
-`list` and `inspect` offer readable text without `--json`. JSON reports `ok`, `damaged`, or
-`unsupported` status; `list` also reports `interrupted` or `narrationPending`, plus `id` and
-`expiresAt`. An ID is non-null only when the directory is confirmed to be a managed Show.
-`expiresAt` is the UTC time the Show becomes eligible for cleanup, or null when kept, unmanaged, or
-unavailable; deletion occurs during a later cleanup pass. The `pinned` field describes retention,
-not numbered pin marks. If the manifest cannot be read, duration, counts, and pin status are null,
-and inspection omits its detail fields and frame tables. Inspection exits with status 1 for damage
-or an unsupported format, after printing its findings. A listing succeeds even when individual Shows
-are damaged. An unreadable Shows folder fails the command; a missing one is an empty listing. The
-recording's `narrationLost` field is absent when no narration loss was reported, or `audioStopped`,
-`audioSilent`, `notTranscribed`, or `incomplete`. `incomplete` means recovery transcribed the
-surviving audio prefix; its text and timings cover only that prefix.
+`list` and `inspect` offer readable text without `--json`. Their JSON reports each Show's `id`,
+`status`, `pinned`, and `expiresAt`. Status is `ok`, `damaged`, or `unsupported`; `list` can also
+report `interrupted` or `narrationPending`. An ID is non-null only when the directory is confirmed
+to be a managed Show. `expiresAt` is the UTC time the Show becomes eligible for cleanup, or null
+when kept, unmanaged, or unavailable; deletion occurs during a later cleanup pass. The `pinned`
+field describes retention, not numbered pin marks. If the manifest cannot be read, duration, counts,
+and pin status are null, and inspection omits its detail fields and frame tables. Inspection exits
+with status 1 for damage or an unsupported format, after printing its findings. A listing succeeds
+even when individual Shows are damaged. An unreadable Shows folder fails the command; a missing one
+is an empty listing. `narrationLost` is `audioStopped`, `audioSilent`, `notTranscribed`, or
+`incomplete`; with no reported loss, `show.json` omits it and `inspect` reports null. `incomplete`
+means recovery transcribed the surviving audio prefix; its text and timings cover only that prefix.
 
 Manifests are limited to 16 MiB and summaries to 1 MiB. Only the current format, 3, is read and
 written; unknown fields are ignored. Other formats are reported as unsupported and left untouched.
@@ -420,22 +419,24 @@ speakeasy preset "Coding"
 
 Each command accepts `--config PATH` for that app instance and returns JSON. Exit 0 means the owner
 acknowledged the action, 1 means refused, and 2 means unavailable or uncertain; an acknowledgement
-does not prove transcription or insertion completed. Start creates a hands-free ordinary dictation;
-stop and cancel require its exact session token, which expires with that session or app restart.
-Busy starts, stale tokens, and commands targeting Shows or private practice are refused. Read status
-after an uncertain result instead of blindly retrying. `style` changes the next-recording default;
-`dictation start --style` overrides only that recording. These explicit commands work on all three
-platforms; Linux's desktop-binding `--toggle` and `--cancel` still require Desktop bindings.
+does not prove transcription or insertion completed. Invalid arguments print an error instead of
+JSON and also exit 2. Start creates a hands-free ordinary dictation; stop and cancel require its
+exact session token, which expires with that session or app restart. Busy starts, stale tokens, and
+commands targeting Shows or private practice are refused. Read status after an uncertain result
+instead of blindly retrying. `style` changes the next-recording default; `dictation start --style`
+overrides only that recording. These explicit commands work on all three platforms; Linux's
+desktop-binding `--toggle` and `--cancel` still require Desktop bindings.
 
 `show skill` prints the [agent reading guide](skills/speakeasy-show/SKILL.md) embedded in the
-installed binary. Save it as `SKILL.md` in a skill folder your agent loads. It explains the reading
-order, numbered references, private-file handling, and source-frame retrieval. `frames` reports
-retained timestamps, sampling stride, and the longest gap. `frame` requires an explicit focus
-(`--at`, `--mark`, or `--phrase`) and a new PNG path; it exports the image at or before the resolved
-time, or the first image when the request precedes capture. Its metadata reports both requested and
-actual times. It refuses times after the Show ends and never overwrites a file. These commands
-cannot retrieve discarded frames or retry lost narration. `speakeasy show --help` lists their
-options.
+installed binary. `show skill --install DIR` writes it to `DIR/speakeasy-show/SKILL.md` for an agent
+that loads skills from `DIR`; it leaves an identical copy alone and never overwrites an edited one.
+The guide explains the reading order, numbered references, private-file handling, and source-frame
+retrieval. `frames` reports retained timestamps, sampling stride, and the longest gap. `frame`
+requires an explicit focus (`--at`, `--mark`, or `--phrase`) and a new PNG path; it exports the
+image at or before the resolved time, or the first image when the request precedes capture. Its
+metadata reports both requested and actual times. It refuses times after the Show ends and never
+overwrites a file. These commands cannot retrieve discarded frames or retry lost narration.
+`speakeasy show --help` lists their options.
 
 `list` gives interrupted Shows distinct `interrupted:ID` identifiers and null duration/frame counts;
 it does not replay their logs. `speakeasy show discard "interrupted:ID" --json` permanently removes
@@ -448,12 +449,12 @@ Recovery uses the last complete event; a crash, storage failure, or a full bound
 leave a shorter recording. Recording continues in memory if checkpointing stops, with a local
 notice. Recognized narration and export voice are saved durably before the checkpoint is retired. A
 save failure leaves the checkpoint available for recovery; a copy failure leaves the saved bundle
-available in the library. Cancelling, quitting, pausing, changing settings, or losing desktop input
-during an unfinished recording discards its checkpoint. Once you finish a Show, those interruptions
-leave its checkpoint recoverable, including while capture stops, the checkpoint flushes, narration
-transcribes, or publication saves the bundle. Hidden incomplete saves are removed once they are at
-least an hour old. Cleanup hides expired Shows before deleting their files and retries interrupted
-deletions on its next pass.
+available in the library. Cancelling, quitting, pausing, changing settings, or losing access to
+desktop input during an unfinished recording discards its checkpoint. Once you finish a Show, those
+interruptions leave its checkpoint recoverable, including while capture stops, the checkpoint
+flushes, narration transcribes, or publication saves the bundle. Hidden incomplete saves are removed
+once they are at least an hour old. Cleanup hides expired Shows before deleting their files and
+retries interrupted deletions on its next pass.
 
 ## What's said here stays here
 
@@ -465,12 +466,13 @@ deletions on its next pass.
   Show is written to the `shows` folder beside the engine and model, readable only by you. Speakeasy
   deletes Shows and interrupted checkpoints over seven days old when it starts and hourly while it
   runs; a file named `.pinned` in a saved Show's folder keeps it. A checkpoint holds up to 1 GiB of
-  frames and pointer events plus 128 MiB of audio. After transcription, saved Shows retain private
-  voice for explicit video export until seven days after the original recording. Keeping a Show does
-  not extend voice retention. Export refuses expired voice even before cleanup runs; cleanup deletes
-  voice from kept Shows too. Pending recovery audio is removed on cancellation, discard, or expiry.
-  Ordinary dictation stays in memory. Saved bundles can include up to 512 MiB of retained source
-  frames in addition to their selected images and private voice.
+  frames and pointer events, 128 MiB of audio, and 384 MiB of silent video. After transcription,
+  saved Shows retain private voice for explicit video export until seven days after the original
+  recording. Keeping a Show does not extend voice retention. Export refuses expired voice even
+  before cleanup runs; cleanup deletes voice from kept Shows too. Pending recovery audio is removed
+  on cancellation, discard, or expiry. Ordinary dictation stays in memory. Saved bundles can include
+  up to 512 MiB of retained source frames and 384 MiB of video in addition to their selected images
+  and private voice.
 - Windows clipboard history and cloud clipboard skip what Speakeasy puts on the clipboard, pasted
   dictation and Show summaries alike, as do Universal Clipboard and Mac clipboard managers that
   honor transient data.
@@ -521,8 +523,7 @@ The guide shows your configured shortcut and microphone activity, then waits for
 before offering the ready screen. Practice stays private; the final screen explains how to check
 text delivery in your own editor. **Skip setup** returns to Settings without stopping an active
 download. Unfinished setup opens again on launch; **General → Setup guide → Replay** brings the
-guide back without resetting your settings. In `--demo`, replay uses simulated words and never opens
-a microphone.
+guide back without resetting your settings; Replay is unavailable in `--demo`.
 
 Then hold <kbd>Ctrl</kbd> + <kbd>Win</kbd> (Windows), <kbd>Fn</kbd> (Mac), or <kbd>Ctrl</kbd> +
 <kbd>Super</kbd> + <kbd>Space</kbd> (Linux) in an editor and speak.
@@ -533,27 +534,28 @@ holds phrase corrections and recognition hints. **General** holds the theme, mot
 permissions, updates, the setup guide, and **Start over…**. Leaving Dictation ends private practice
 and clears its text.
 
-**General → Privacy** shows microphone access, and on macOS Accessibility and screen permission,
-without prompting or capturing anything. Permission status refreshes when Settings comes to the
-front; **Open settings** opens the matching system page on macOS and Windows. Linux's **Microphone
-help** opens the setup guide. Windows and Linux access stays **Checked when used**, because a
-privacy setting alone cannot prove access. An allowed permission does not prove the hardware or
-another app works. **Start practice** under your shortcut lets you use the real shortcut and
-microphone while your words appear only in Settings. Nothing is pasted, copied, or saved, and
-practice cannot record a Show. **End practice**, hiding the window, losing focus, or changing
-settings ends practice and clears its text. To check delivery, end practice and dictate into an
-editor; practice does not verify another app's input or clipboard behavior.
+**General → Privacy** shows microphone access, screen access for Shows on Windows and Mac, and
+Accessibility on Mac, without prompting or capturing anything. Permission status refreshes when
+Settings comes to the front, and a blocked Mac permission offers **Open settings** for its system
+page. Windows and Linux access stays **Checked when used**, because a privacy setting alone cannot
+prove access. The setup guide's permission step offers **Open settings** on Windows and Mac, and
+Linux's **Microphone help** opens this README's Linux section. An allowed permission does not prove
+the hardware or another app works. **Start practice** under your shortcut lets you use the real
+shortcut and microphone while your words appear only in Settings. Nothing is pasted, copied, or
+saved, and practice cannot record a Show. **End practice**, hiding the window, losing focus, or
+changing settings ends practice and clears its text. To check delivery, end practice and dictate
+into an editor; practice does not verify another app's input or clipboard behavior.
 
 **Check for updates** under General contacts the repository's latest-release endpoint on GitHub only
 when clicked. It sends no recordings, settings, or device details. **Release notes** opens that
 version's official download page; checking never installs or runs an update.
 
-Windows builds with a configured update signing key also offer **Download** for an installed copy.
-The download verifies the signed version and installer bytes before offering **Install and
-restart**. Finish or cancel recording first; installation waits for pending work and settings saves
-to finish. It preserves the installation folder and selected settings file. Portable or moved copies
-use the release page. Downloading and installing always require separate actions. Builds without an
-embedded signing key offer the release page only.
+Windows builds with a configured update signing key also offer **Download**. It works for an
+installed copy; a portable or moved copy reports that it updates from the release page. The download
+verifies the signed version and installer bytes before offering **Install and restart**. Finish or
+cancel recording first; installation waits for pending work and settings saves to finish. It
+preserves the installation folder and selected settings file. Downloading and installing always
+require separate actions. Builds without an embedded signing key offer the release page only.
 
 Downloads come from pinned GitHub and Hugging Face URLs and are checked against their SHA-256 before
 use. They live in `%LOCALAPPDATA%\speakeasy` on Windows and
@@ -602,8 +604,9 @@ sudo apt-get install libasound2-dev libfontconfig1-dev libfreetype6-dev libx11-d
 
 Download the x86_64 AppImage or tar archive from the release. The application targets glibc 2.35 or
 later and needs a Wayland compositor with layer shell (KDE Plasma, sway, Hyprland, niri) or X11 or
-Xwayland, plus Vulkan and desktop audio support. It shares audio, engines, the session owner,
-Settings and the pill with Windows and Mac. Native GNOME/KDE/X11 acceptance is pending; see
+Xwayland, plus Vulkan and desktop audio support. Dictation on Wayland also needs Xwayland, which
+Speakeasy uses to check focus. It shares audio, engines, the session owner, Settings and the pill
+with Windows and Mac. Native GNOME/KDE/X11 acceptance is pending; see
 [implementation and acceptance](docs/linux-implementation.md) for support limits.
 
 The defaults are **Ctrl+Super+Space** to hold or double-tap for hands-free and **Ctrl+Super+Escape**
@@ -640,7 +643,8 @@ avoid requesting keyboard-control access. The optional `linux` settings object h
 and `cancel` chords in portal syntax, such as `CTRL+LOGO+space`: X11 grabs them, and Wayland
 requests them as preferred triggers. It also holds `external_shortcut`, which Shortcuts sets. The
 top-level `text_delivery` setting holds the **Insert text by** choice: `paste`, `terminal_paste`,
-`type`, or `copy`. Pause and resume dictation after changing bindings or keyboard maps.
+`type`, or `copy`. After rebinding Speakeasy's shortcuts in your desktop's settings or changing
+keyboard layouts, pause and resume dictation.
 
 A tray host is optional: without one, closing Settings quits and the launcher reopens the app.
 Configuration lives under `$XDG_CONFIG_HOME/speakeasy`, downloads under `$XDG_DATA_HOME/speakeasy`,
@@ -787,9 +791,10 @@ releases the shortcut and the model until you resume.
 
 ### Text delivery
 
-By default the text is pasted through the clipboard and stays there. **Keep clipboard** types the
-text as direct input instead, which some editors reject. Protected fields and elevated Windows apps
-may refuse either method, and no OS submission can confirm that an editor accepted the text.
+By default the text is pasted through the clipboard and stays there. On Windows and Mac, **Keep
+clipboard** types the text as direct input instead, which some editors reject; Linux offers **Insert
+text by**, described above. Protected fields and elevated Windows apps may refuse either method, and
+no OS submission can confirm that an editor accepted the text.
 
 ## Build and verify
 
@@ -830,10 +835,10 @@ paused clock exercises gesture deadlines and the five-minute cap.
   `SPEAKEASY_MAC_NOTARY_PROFILE` to a stored `notarytool` keychain profile. Packaging then signs
   with hardened runtime and the microphone entitlement, submits to Apple, staples the accepted
   ticket, and checks Gatekeeper before emitting the ZIP and DMG. Incomplete settings or rejected
-  notarization fail the build. CI remains locally signed until those credentials are configured; no
-  credentials belong in the repository. Moving from a local signature to Developer ID can require
-  granting microphone, Accessibility, and screen recording permissions again; check them after
-  replacing the app.
+  notarization fail the build. The release workflow provisions neither publisher credential, so it
+  builds unsigned Windows and locally signed Mac packages; no credentials belong in the repository.
+  Moving from a local signature to Developer ID can require granting microphone, Accessibility, and
+  screen recording permissions again; check them after replacing the app.
 - Verified Windows updates use an Ed25519 key independently of publisher signing. Commit only the
   32-byte public key as hexadecimal in `packaging/update-key.pub`; store its PKCS#8 PEM private key
   as the repository's `SPEAKEASY_UPDATE_PRIVATE_KEY` Actions secret, with a maintainer-held backup.
@@ -850,8 +855,8 @@ paused clock exercises gesture deadlines and the five-minute cap.
   `scripts/check-installer.ps1 -Installer <setup.exe>` tests both running executables, parent wait
   and timeout, staged-file retention, upgrade/relaunch, and uninstall on disposable GitHub Actions
   Windows runners. It uses owned demo windows without devices and preserves settings, model files,
-  edited Shows, and other copies' sign-in entries. The Check workflow's optional `installer` input
-  runs these checks with the current packaged build.
+  edited Shows, and other copies' sign-in entries. Release packaging runs it, and the Check
+  workflow's optional `installer` input runs it with the current packaged build.
 - On macOS, `bash scripts/check-update-macos.sh` builds the opt-in `native-acceptance` feature and
   opens owned demo windows. It holds an accepted Show write during external, nested, repeated, and
   app-owned quit requests, then checks rendering callbacks, configuration preservation, and instance
@@ -875,9 +880,9 @@ paused clock exercises gesture deadlines and the five-minute cap.
   then hides the pill. It needs Xvfb, x11-utils, and a Vulkan driver.
   `bash scripts/check-rendering-linux.sh` runs, in an Ubuntu 26.04 Docker container with stock Mesa,
   the opt-in `native_pill_` tests of the pill's window hints, input shape, visibility, and
-  reopening, the Show review acceptance, the native rendering example, and that demo check on a
-  release binary it builds; `--packages` checks the AppImage and tar launchers that
-  `package-linux.sh` builds instead.
+  reopening, the Show review and Settings acceptance tests below, the native rendering example, and
+  that demo check on a release binary it builds; `--packages` checks the AppImage and tar launchers
+  that `package-linux.sh` builds instead.
   [Linux implementation](docs/linux-implementation.md#setup-and-distribution) explains the Mesa
   requirement.
 - `cargo run --locked -p speakeasy --example check_native_rendering -- --native-gui` opens an owned
@@ -907,7 +912,7 @@ paused clock exercises gesture deadlines and the five-minute cap.
 - On macOS, set `SPEAKEASY_MAC_MOVIE_DIRECTORY` to a new artifact directory and run
   `cargo test --locked -p speakeasy-platform native_mac_movie_encoding -- --ignored --test-threads=1`.
   It checks native H.264 fragments, held and irregular timing, resized content, colors, bounded
-  output, cancellation, and file closure using generated pixels. The optional `movie` workflow
+  output, cancellation, and file closure using generated pixels. The Check workflow's `movie` input
   includes this check. On Windows, `native_mac_movies_preserve_colors_and_timestamps` reads those
   same fixtures from `SPEAKEASY_MAC_MOVIE_DIRECTORY`.
 - `cargo run --locked -p speakeasy-platform --example mac_capture -- --owned-screen` explicitly opts
@@ -922,9 +927,9 @@ paused clock exercises gesture deadlines and the five-minute cap.
   through the native reader, and forces storage failure. The `windows::movie::tests::timing::`
   filter checks irregular capture timing, coalescing, quiet fragments before finalization,
   cancellation during catch-up, and the surviving prefix after a stall. The separate
-  `a_cancelled_active_movie_releases_its_file_without_a_new_frame` filter checks cancellation and
-  file release. These checks use generated pixels and access no microphone, screen, input, or
-  clipboard.
+  `a_cancelled_active_movie_releases_its_file_without_a_new_frame` filter, which the Check
+  workflow's `movie` input also runs on macOS, checks cancellation and file release. These checks
+  use generated pixels and access no microphone, screen, input, or clipboard.
 - The Windows platform filter `target_geometry_tracks_an_owned_window_without_sampling_input`, with
   `--ignored --test-threads=1`, moves and hides an owned window, verifies current target bounds
   against a fixed area, and reports geometry lookup timings. It accesses no microphone, screen
@@ -997,6 +1002,8 @@ Versions carry no pre-release or build suffix, and a released version and its ta
   Settings, and interaction contracts.
 - [Linux implementation](docs/linux-implementation.md): desktop adapters, packaging, and the native
   acceptance Linux still needs.
+- [Native contracts](docs/native-contracts.md): FFI, callback and handle lifetimes, and
+  native-thread ownership.
 - [Performance](docs/performance.md): constraints, profiling methods, and native measurement limits.
 - [Remote dictation](docs/remote-dictation.md): routing a remote microphone to Speakeasy.
 
@@ -1006,8 +1013,9 @@ Speakeasy is free and open source under the [MIT License](LICENSE). Josefin Sans
 [SIL Open Font License](crates/app/assets/JosefinSans-OFL.txt), the cue sounds are cut from
 hollandm's CC0 [kalimba recordings](https://freesound.org/people/hollandm/packs/38696/) on
 Freesound, `speakeasy-show` adapts MIT-licensed code credited in its
-[notice](crates/show/NOTICE.md), and the patched GPUI crates under `vendor/` keep their
-[Apache 2.0 license](vendor/gpui-pre/LICENSE-APACHE). Every package includes `LICENSE`, the font
-license, that notice, and `THIRD-PARTY-NOTICES.txt`, which packaging generates with `cargo about`
-from the crates built for that platform and the licenses
+[notice](crates/show/NOTICE.md), and the patched crates under `vendor/` keep their upstream
+licenses: [Apache 2.0](vendor/gpui-pre/LICENSE-APACHE) for GPUI, and MIT or Apache 2.0 with
+BSD-3-Clause for [AccessKit's Windows adapter](vendor/accesskit_windows/Cargo.toml). Every package
+includes `LICENSE`, the font license, that notice, and `THIRD-PARTY-NOTICES.txt`, which packaging
+generates with `cargo about` from the crates built for that platform and the licenses
 [packaging/about.toml](packaging/about.toml) accepts.
