@@ -45,7 +45,7 @@ impl Engine {
 #[serde(default, deny_unknown_fields)]
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "Each flag persists an independent user preference that can be toggled separately"
+    reason = "Each flag is an independent saved preference; every combination is valid"
 )]
 pub(crate) struct Config {
     #[serde(skip_serializing_if = "LinuxSettings::is_default")]

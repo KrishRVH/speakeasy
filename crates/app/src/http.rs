@@ -7,13 +7,13 @@ pub(crate) enum Trust {
 
 #[expect(
     clippy::disallowed_methods,
-    reason = "the one place that constructs reqwest clients; Linux reqwest has no built-in rustls provider"
+    reason = "The one place that constructs reqwest clients; Linux reqwest has no built-in rustls provider"
 )]
 #[cfg_attr(
     not(target_os = "linux"),
     expect(
         clippy::unnecessary_wraps,
-        reason = "callers share the Linux signature, whose TLS setup can fail"
+        reason = "Callers share the Linux signature, whose TLS setup can fail"
     )
 )]
 pub(crate) fn client_builder(trust: Trust) -> anyhow::Result<ClientBuilder> {

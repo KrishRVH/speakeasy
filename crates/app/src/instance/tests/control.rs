@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    control::{Command, Disposition, Reply, Status},
+    control::{Command, Disposition, MAX_BYTES, Reply, Status},
     transcript::style::Style,
 };
 
@@ -191,7 +191,8 @@ fn oversized_control_frames_are_refused_before_reading_the_body() -> anyhow::Res
     let (_instance, requests) = Instance::acquire(&path)?.context("First owner missing")?;
     let mut client = connect(&path.with_file_name(PORT_FILE))?;
     client.write_all(&[CONTROL])?;
-    client.write_all(&4097_u16.to_be_bytes())?;
+    let oversized = u16::try_from(MAX_BYTES)?.saturating_add(1);
+    client.write_all(&oversized.to_be_bytes())?;
     let reply = Reply::decode(&read_frame(&mut client)?).unwrap();
     assert_eq!(reply.result, Disposition::Refused);
     assert!(requests.try_recv().is_err());

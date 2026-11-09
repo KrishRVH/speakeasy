@@ -371,9 +371,7 @@ async fn an_engine_that_died_while_idle_names_the_remedy_its_exit_proves() -> an
     let (_directory, mut speech, _listener) = shell_engine("kill -s ILL $$").await?;
     speech.child.wait().await?;
     let wav = audio::silent_wav(16_000, Duration::from_secs(1))?;
-    let transcribed = speech
-        .transcribe(wav, "en", &crate::recognition_terms::Terms::default())
-        .await;
+    let transcribed = speech.transcribe(wav, "en", &Terms::default()).await;
     speech.stop().await;
     let error = transcribed.err().context("The exited engine transcribed")?;
     assert!(error.to_string().contains("CPU instructions"), "{error}");

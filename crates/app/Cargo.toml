@@ -52,7 +52,7 @@ embed-resource.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gpui_linux = { workspace = true, features = ["wayland", "x11"] }
-# Setup downloads over rustls on ring with the system trust store; http.rs supplies the provider.
+# HTTPS uses rustls on ring with the system trust store; http.rs supplies the provider.
 reqwest = { workspace = true, features = ["rustls-no-provider"] }
 rustls.workspace = true
 rustls-platform-verifier.workspace = true
@@ -71,7 +71,7 @@ tray-icon.workspace = true
 
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 muda.workspace = true
-# Setup downloads over the operating system's TLS stack and trust store.
+# HTTPS uses the operating system's TLS stack and trust store.
 reqwest = { workspace = true, features = ["native-tls"] }
 
 [lints]

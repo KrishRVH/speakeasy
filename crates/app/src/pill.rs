@@ -25,6 +25,7 @@ use crate::{
     gpui_ext::{EntityUpdate, Presence, defer_presence, follow},
     runtime::{Meter, Phase, Snapshot},
     theme::Theme,
+    transcript::style::Style,
 };
 
 const METER_BARS: usize = 24;
@@ -401,7 +402,7 @@ struct Scene {
     draw_hint: Option<Duration>,
     hands_free: bool,
     show: bool,
-    style: crate::transcript::style::Style,
+    style: Style,
     ending: Ending,
     narration_lost: Option<NarrationLoss>,
     clock: Clock,
@@ -448,7 +449,7 @@ impl Scene {
     }
 
     fn shows_style(&self) -> bool {
-        self.is_capturing() && !self.show && self.style != crate::transcript::style::Style::Prose
+        self.is_capturing() && !self.show && self.style != Style::Prose
     }
 
     fn shows_clock(&self) -> bool {
@@ -630,7 +631,7 @@ fn placement(cx: &App) -> anyhow::Result<(WindowKind, Bounds<Pixels>)> {
 #[cfg(target_os = "linux")]
 #[expect(
     clippy::unnecessary_wraps,
-    reason = "Windows' native pill configuration can fail; callers share one signature"
+    reason = "Native pill configuration can fail on Windows and macOS; Linux shares that signature"
 )]
 fn configure(window: &Window) -> anyhow::Result<()> {
     window.set_input_region(Some(&[]));

@@ -60,7 +60,7 @@ fn help() -> ExitCode {
          speakeasy-cli --version\n\n\
          Control commands return JSON: exit 0 acknowledged, 1 refused, 2 unknown or not \
          running.\n\
-         show --help lists the Show tools. Start the desktop app with speakeasy."
+         show --help lists the Show commands. Start the desktop app with speakeasy."
     ) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => fail(format!("Cannot write help: {error}"), 1),

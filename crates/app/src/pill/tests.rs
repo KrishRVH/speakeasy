@@ -101,7 +101,7 @@ fn recording(elapsed: Duration) -> Scene {
         draw_hint: None,
         hands_free: true,
         show: false,
-        style: crate::transcript::style::Style::Prose,
+        style: Style::Prose,
         ending: Ending::Finished,
         narration_lost: None,
         clock: Clock::new(elapsed),

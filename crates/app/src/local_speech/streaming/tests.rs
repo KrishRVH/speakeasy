@@ -135,7 +135,7 @@ async fn a_committed_stream_cannot_wait_forever_for_its_final() -> anyhow::Resul
         message = server.next() => assert!(matches!(message, Some(Ok(Message::Text(_))))),
     }
     tokio::time::pause();
-    tokio::time::advance(Duration::from_secs(11)).await;
+    tokio::time::advance(FINAL_TIMEOUT.saturating_add(Duration::from_secs(1))).await;
     let error = timeout(Duration::from_secs(1), recognizer)
         .await?
         .unwrap_err();
