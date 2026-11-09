@@ -368,7 +368,8 @@ impl Review {
                         confirm: Action::ConfirmDelete(offer),
                         label: "Delete permanently",
                     },
-                    !self.can_delete(),
+                    self.can_dismiss(),
+                    self.can_delete(),
                     kit,
                     palette,
                     cx,
@@ -955,7 +956,8 @@ impl Review {
                                 confirm: Action::ConfirmDiscard,
                                 label: "Discard permanently",
                             },
-                            busy,
+                            self.can_dismiss(),
+                            !busy,
                             kit,
                             palette,
                             cx,
@@ -1125,7 +1127,8 @@ struct Confirmation {
 
 fn confirm(
     confirmation: Confirmation,
-    busy: bool,
+    can_cancel: bool,
+    can_confirm: bool,
     kit: Kit<'_>,
     palette: &Palette,
     cx: &Context<'_, Review>,
@@ -1151,7 +1154,7 @@ fn confirm(
                     confirmation.cancel,
                     "Cancel",
                     Weight::Secondary,
-                    !busy,
+                    can_cancel,
                     cx,
                 ))
                 .child(command(
@@ -1159,7 +1162,7 @@ fn confirm(
                     confirmation.confirm,
                     confirmation.label,
                     Weight::ConfirmDestroy,
-                    !busy,
+                    can_confirm,
                     cx,
                 )),
         )

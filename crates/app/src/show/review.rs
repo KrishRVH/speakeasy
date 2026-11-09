@@ -781,14 +781,20 @@ impl Review {
         self.write = Some(Write::Discarding { _task: task });
     }
 
-    fn dismiss(&mut self) {
+    const fn can_dismiss(&self) -> bool {
         match self.confirm {
-            Some(Confirm::Delete(_)) => self.confirm = None,
-            Some(Confirm::Discard) if self.can_change_interrupted() => {
-                self.confirm = None;
-                self.notice = None;
-            },
-            Some(Confirm::Discard) | None => {},
+            Some(Confirm::Delete(_)) => true,
+            Some(Confirm::Discard) => self.can_change_interrupted(),
+            None => false,
+        }
+    }
+
+    fn dismiss(&mut self) {
+        if !self.can_dismiss() {
+            return;
+        }
+        if self.confirm.take() == Some(Confirm::Discard) {
+            self.notice = None;
         }
     }
 

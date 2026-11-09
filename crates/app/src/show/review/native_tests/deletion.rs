@@ -52,8 +52,21 @@ pub(super) async fn exercise(
     cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))?;
     window.update(cx, |view, _, cx| view.act(Action::Delete(offered), cx))?;
     assert!(first.is_dir());
+    window.update(cx, |view, _, _| {
+        view.export = Some(Export::Choosing {
+            _task: Task::ready(()),
+        });
+        assert!(!view.can_delete(), "An export left deletion available");
+        assert!(
+            view.can_dismiss(),
+            "An export disabled the delete confirmation's Cancel"
+        );
+    })?;
     key(window, "escape", cx)?;
-    window.read_with(cx, |view, _| assert!(view.confirm.is_none()))?;
+    window.update(cx, |view, _, _| {
+        assert!(view.confirm.is_none());
+        view.export = None;
+    })?;
 
     window.update(cx, |view, _, cx| view.act(Action::Delete(offered), cx))?;
     select(window, second, cx).await?;

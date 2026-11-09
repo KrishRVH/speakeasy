@@ -379,13 +379,14 @@ module unless a test file is named.
   through [edits.rs](../crates/app/src/show/edits.rs); Quit awaits them, and an immutable fixture
   lease keeps preview storage alive until completion. The view runs one library write (Keep,
   Recover, Discard, or Delete) at a time, and each write's control is enabled by the same check its
-  action applies; a running discard keeps its confirmation until it finishes. Recovery enters the
-  session owner's shielded publication stage through a bounded request lane. Recovering retained
-  audio uses the configured local speech worker; recovery opens no microphone and performs no
-  clipboard work. The [video timeline](../crates/app/src/show/review/timeline.rs) uses complete
-  fragment sample times for stepping and seeking. Lookups and captions preserve the decoder's clock:
-  100 ns on Windows and nanoseconds on macOS; Evidence copying emits a retrieval query only when a
-  whole millisecond lies inside the displayed sample. During seeking, the previous video image stays
+  action applies. A running discard keeps its confirmation, which Cancel and Escape leave in place,
+  until the discard finishes or a selection change or refresh clears it. Recovery enters the session
+  owner's shielded publication stage through a bounded request lane. Recovering retained audio uses
+  the configured local speech worker; recovery opens no microphone and performs no clipboard work.
+  The [video timeline](../crates/app/src/show/review/timeline.rs) uses complete fragment sample
+  times for stepping and seeking. Lookups and captions preserve the decoder's clock: 100 ns on
+  Windows and nanoseconds on macOS; Evidence copying emits a retrieval query only when a whole
+  millisecond lies inside the displayed sample. During seeking, the previous video image stays
   visible and copying is disabled. [review/tests.rs](../crates/app/src/show/review/tests.rs) checks
   navigation, damage, and private text boundaries. Opt-in
   [native_tests.rs](../crates/app/src/show/review/native_tests.rs) exercises the real view with
