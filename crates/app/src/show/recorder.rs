@@ -383,7 +383,7 @@ impl<'a> Take<'a> {
                         },
                         Ok(ScreenEvent::MovieStopped) => {
                             let (id, events) = &self.notices;
-                            #[expect(clippy::let_underscore_must_use, reason = "A departed session no longer observes this capture's status")]
+                            #[expect(clippy::let_underscore_must_use, reason = "A departed owner no longer observes this capture's status; a full lane must not stall screen capture")]
                             let _ = events.try_send(ShowEvent::MovieStopped(*id));
                             continue;
                         },

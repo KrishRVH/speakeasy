@@ -324,11 +324,11 @@ impl Storage {
         Ok(())
     }
 
-    fn append(&mut self, bytes: &[u8], limit: u64, records: usize) -> anyhow::Result<()> {
+    fn append(&mut self, bytes: &[u8], byte_limit: u64, record_limit: usize) -> anyhow::Result<()> {
         self.size = self.size.saturating_add(u64::try_from(bytes.len())?);
         self.records = self.records.saturating_add(1);
         anyhow::ensure!(
-            self.size <= limit && self.records <= records,
+            self.size <= byte_limit && self.records <= record_limit,
             "Show checkpoint reached its storage limit"
         );
         self.file
