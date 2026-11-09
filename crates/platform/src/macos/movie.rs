@@ -126,12 +126,9 @@ struct Request {
 
 impl Request {
     fn start(asset: &AVAsset, size: [u32; 2], sample: Sample) -> anyhow::Result<Self> {
-        let time = unsafe {
-            CMTime::new(
-                i64::try_from(sample.ticks)?,
-                i32::try_from(sample.timescale)?,
-            )
-        };
+        let ticks = i64::try_from(sample.ticks)?;
+        let timescale = i32::try_from(sample.timescale)?;
+        let time = unsafe { CMTime::new(ticks, timescale) };
         let (sender, reply) = mpsc::sync_channel(1);
         let handler = RcBlock::new(
             move |image: *mut CGImage, at: CMTime, error: *mut NSError| {

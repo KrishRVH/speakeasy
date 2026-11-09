@@ -13,8 +13,11 @@ use block2::RcBlock;
 use dispatch2::{DispatchQueue, DispatchRetained};
 use objc2::{AllocAnyThread as _, rc::Retained, runtime::ProtocolObject};
 use objc2_core_graphics::{CGDirectDisplayID, CGDisplayPixelsHigh, CGDisplayPixelsWide};
+use objc2_core_media::CMTime;
 use objc2_foundation::NSError;
-use objc2_screen_capture_kit::{SCStream, SCStreamOutputType};
+use objc2_screen_capture_kit::{
+    SCStream, SCStreamErrorCode, SCStreamErrorDomain, SCStreamOutputType,
+};
 use tokio::runtime;
 
 use super::{Failure, PATIENCE, Source, answer, display_bounds, refused};
@@ -183,12 +186,10 @@ struct Stream {
 impl Stream {
     fn new(source: &Source, part: Part, interval: Duration) -> Result<Self, Failure> {
         let configuration = source.configuration(part).ok_or(Failure::DisplayLost)?;
+        let nanos = i64::try_from(interval.as_nanos()).map_err(|_overflow| Failure::Unstarted)?;
 
         let size = unsafe {
-            configuration.setMinimumFrameInterval(objc2_core_media::CMTime::new(
-                i64::try_from(interval.as_nanos()).map_err(|_overflow| Failure::Unstarted)?,
-                1_000_000_000,
-            ));
+            configuration.setMinimumFrameInterval(CMTime::new(nanos, 1_000_000_000));
             configuration.setQueueDepth(3);
             configuration.setCapturesAudio(false);
             [configuration.width(), configuration.height()]
@@ -305,10 +306,10 @@ fn completion_result(error: Option<&NSError>, operation: Operation) -> Result<()
         return Ok(());
     };
 
-    let domain = unsafe { objc2_screen_capture_kit::SCStreamErrorDomain };
+    let domain = unsafe { SCStreamErrorDomain };
     if operation == Operation::Stop
         && *error.domain() == *domain
-        && error.code() == objc2_screen_capture_kit::SCStreamErrorCode::AttemptToStopStreamState.0
+        && error.code() == SCStreamErrorCode::AttemptToStopStreamState.0
     {
         return Ok(());
     }

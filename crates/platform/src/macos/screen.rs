@@ -124,9 +124,7 @@ struct Described {
 
 pub(crate) fn window_under_pointer(display: Display) -> anyhow::Result<Option<(Window, Part)>> {
     let pointer = pointer_location().context(NO_POINTER)?;
-    let options =
-        CGWindowListOption::OptionOnScreenOnly | CGWindowListOption::ExcludeDesktopElements;
-    let listed = windows(options, kCGNullWindowID).context("Cannot list windows. Try again.")?;
+    let listed = on_screen_windows().context("Cannot list windows. Try again.")?;
     Ok(listed
         .into_iter()
         .find(|window| window.layer == 0 && window.alpha > 0.0 && window.bounds.contains(pointer))
@@ -138,9 +136,7 @@ pub(crate) fn window_under_pointer(display: Display) -> anyhow::Result<Option<(W
 }
 
 pub(crate) fn stack(display: Display) -> Option<Vec<Listed>> {
-    let options =
-        CGWindowListOption::OptionOnScreenOnly | CGWindowListOption::ExcludeDesktopElements;
-    let listed = windows(options, kCGNullWindowID)?;
+    let listed = on_screen_windows()?;
     Some(
         listed
             .into_iter()
@@ -198,6 +194,13 @@ fn place(target: Target) -> Result<Place, WindowGone> {
         .part_covered_by(described.bounds)
         .map(Place::Covers)
         .ok_or(WindowGone::OffScreen)
+}
+
+fn on_screen_windows() -> Option<Vec<Described>> {
+    windows(
+        CGWindowListOption::OptionOnScreenOnly | CGWindowListOption::ExcludeDesktopElements,
+        kCGNullWindowID,
+    )
 }
 
 fn windows(options: CGWindowListOption, window: CGWindowID) -> Option<Vec<Described>> {

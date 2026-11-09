@@ -4,18 +4,14 @@ use super::*;
 
 #[test]
 fn only_a_native_already_stopped_error_acknowledges_stop() {
-    let domain = unsafe { objc2_screen_capture_kit::SCStreamErrorDomain };
-    let code = objc2_screen_capture_kit::SCStreamErrorCode::AttemptToStopStreamState.0;
+    let domain = unsafe { SCStreamErrorDomain };
+    let code = SCStreamErrorCode::AttemptToStopStreamState.0;
 
     let (stopped, unrelated, refused) = unsafe {
         (
             NSError::errorWithDomain_code_userInfo(domain, code, None),
             NSError::errorWithDomain_code_userInfo(ns_string!("SyntheticError"), code, None),
-            NSError::errorWithDomain_code_userInfo(
-                domain,
-                objc2_screen_capture_kit::SCStreamErrorCode::UserDeclined.0,
-                None,
-            ),
+            NSError::errorWithDomain_code_userInfo(domain, SCStreamErrorCode::UserDeclined.0, None),
         )
     };
     assert!(completion_result(Some(&stopped), Operation::Stop).is_ok());

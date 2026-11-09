@@ -1,11 +1,11 @@
 mod timing;
 
-use std::{fs::File, mem::MaybeUninit, os::unix::fs::MetadataExt as _, time::Duration};
+use std::{fs::File, time::Duration};
 
 use speakeasy_show::MoviePrefix;
 
 use super::*;
-use crate::movie::encode::Codec as _;
+use crate::{macos::movie::tests::assert_released, movie::encode::Codec as _};
 
 #[test]
 #[ignore = "Opt in: native file-fed encoder and decoder; synthetic pixels only"]
@@ -24,7 +24,7 @@ fn native_mac_movie_encoding() -> anyhow::Result<()> {
     ] {
         let path = directory.join(format!("{name}.mp4"));
         let mut encoder = Codec::open(&path, size, 384 << 20)?;
-        let descriptor = encoder.output.file_identity();
+        let (descriptor, opened) = encoder.output.file_identity();
         let patterns = [0, 1].map(|index| crate::movie::tests::color_frame(index, size));
         let started = Instant::now();
         for index in 0..count {
@@ -40,7 +40,7 @@ fn native_mac_movie_encoding() -> anyhow::Result<()> {
             )?);
         }
         encoder.finish()?;
-        assert_closed(descriptor);
+        assert_released(descriptor, &opened);
         let prefix = inspect(&path)?;
         let length = std::fs::metadata(&path)?.len();
         assert!(!prefix.truncated);
@@ -61,7 +61,7 @@ fn native_mac_movie_encoding() -> anyhow::Result<()> {
     }
     let path = directory.join("cancelled.mp4");
     let mut encoder = Codec::open(&path, [320, 240], 384 << 20)?;
-    let descriptor = encoder.output.file_identity();
+    let (descriptor, opened) = encoder.output.file_identity();
     let pixels = crate::movie::tests::color_frame(0, [320, 240]).bgra;
     for index in 0..90 {
         assert!(encoder.write(&pixels, index, &mut || false)?);
@@ -82,14 +82,14 @@ fn native_mac_movie_encoding() -> anyhow::Result<()> {
     assert!(!encoder.write(&pixels, submitted, &mut || true)?);
     assert_eq!(encoder.frames, submitted);
     drop(encoder);
-    assert_closed(descriptor);
+    assert_released(descriptor, &opened);
     let prefix = inspect(&path)?;
     assert!(prefix.frames > 0 && prefix.frames <= submitted);
 
     let path = directory.join("capped.mp4");
     let limit = std::fs::metadata(directory.join("moving.mp4"))?.len() / 2;
     let mut encoder = Codec::open(&path, [320, 240], limit)?;
-    let descriptor = encoder.output.file_identity();
+    let (descriptor, opened) = encoder.output.file_identity();
     for index in 0..120 {
         if encoder
             .write(
@@ -107,7 +107,7 @@ fn native_mac_movie_encoding() -> anyhow::Result<()> {
         finished.is_err(),
         "A failed segment must never finalize successfully"
     );
-    assert_closed(descriptor);
+    assert_released(descriptor, &opened);
     assert!(std::fs::metadata(&path)?.len() <= limit);
     let prefix = inspect(&path)?;
     assert!(prefix.frames > 0 && prefix.frames < 120);
@@ -117,23 +117,4 @@ fn native_mac_movie_encoding() -> anyhow::Result<()> {
 
 fn inspect(path: &Path) -> anyhow::Result<MoviePrefix> {
     crate::movie::tests::prefix(&mut File::open(path)?)
-}
-
-fn assert_closed((descriptor, previous): (std::os::fd::RawFd, std::fs::Metadata)) {
-    let mut current = MaybeUninit::<libc::stat>::uninit();
-
-    let status = unsafe { libc::fstat(descriptor, current.as_mut_ptr()) };
-    if status == 0 {
-        let current = unsafe { current.assume_init() };
-        assert!(
-            u64::try_from(current.st_dev).ok() != Some(previous.dev())
-                || current.st_ino != previous.ino(),
-            "Encoder retained its file"
-        );
-    } else {
-        assert_eq!(
-            std::io::Error::last_os_error().raw_os_error(),
-            Some(libc::EBADF)
-        );
-    }
 }

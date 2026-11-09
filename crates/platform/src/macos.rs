@@ -91,8 +91,8 @@ pub(super) fn start(
         reason = "The event tap and AppKit lifecycle callbacks share the same narrowly locked policy; see SharedPolicy"
     )]
     let policy = Arc::new(SharedPolicy {
-        shortcut: options.mac_shortcut,
-        policy: Mutex::new(keyboard::Mac::new(options.mac_shortcut)),
+        shortcut,
+        policy: Mutex::new(keyboard::Mac::new(shortcut)),
     });
     let observers = lifecycle_observers(&input, &policy);
     let control = Arc::new(MonitorControl::default());
@@ -301,25 +301,27 @@ fn shortcut_tap<'tap>(
     policy: &'tap SharedPolicy,
     port: &'tap TapPort,
 ) -> anyhow::Result<CGEventTap<'tap>> {
+    let callback = move |_, kind, event: &CGEvent| {
+        panic::catch_unwind(AssertUnwindSafe(|| {
+            observe(input, policy, port, kind, event)
+        }))
+        .unwrap_or_else(|_| {
+            input.close();
+            CallbackResult::Keep
+        })
+    };
+    let events = vec![
+        CGEventType::KeyDown,
+        CGEventType::KeyUp,
+        CGEventType::FlagsChanged,
+    ];
     unsafe {
         CGEventTap::new_unchecked(
             CGEventTapLocation::Session,
             CGEventTapPlacement::HeadInsertEventTap,
             CGEventTapOptions::Default,
-            vec![
-                CGEventType::KeyDown,
-                CGEventType::KeyUp,
-                CGEventType::FlagsChanged,
-            ],
-            move |_, kind, event| {
-                panic::catch_unwind(AssertUnwindSafe(|| {
-                    observe(input, &mut policy.lock(), policy.shortcut, port, kind, event)
-                }))
-                .unwrap_or_else(|_| {
-                    input.close();
-                    CallbackResult::Keep
-                })
-            },
+            events,
+            callback,
         )
     }
     .map_err(|()| {
@@ -341,14 +343,19 @@ extern "C" fn on_run_loop_entry(
     }
 }
 
+#[expect(
+    clippy::significant_drop_tightening,
+    reason = "Delivery stays under the policy lock so the owner receives inputs in decision order"
+)]
 fn observe(
     input: &InputSender,
-    policy: &mut keyboard::Mac,
-    shortcut: MacShortcut,
+    policy: &SharedPolicy,
     port: &TapPort,
     kind: CGEventType,
     event: &CGEvent,
 ) -> CallbackResult {
+    let shortcut = policy.shortcut;
+    let mut policy = policy.lock();
     if matches!(
         kind,
         CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput
@@ -381,15 +388,7 @@ fn observe(
         CGEventType::FlagsChanged => MacEvent::FlagsChanged { code, held },
         _ => return CallbackResult::Keep,
     };
-    let decision = policy.observe(
-        key_event,
-        || {
-            u16::try_from(shortcut.key_code()).is_ok_and(|code| {
-                cg::CGEventSource::key_state(cg::CGEventSourceStateID::HIDSystemState, code)
-            })
-        },
-        Instant::now(),
-    );
+    let decision = policy.observe(key_event, || shortcut_key_down(shortcut), Instant::now());
     decision.deliver(input);
     if decision.swallows() {
         CallbackResult::Drop
@@ -401,7 +400,7 @@ fn observe(
 impl NativeWindow {
     #[expect(
         clippy::unnecessary_wraps,
-        reason = "Windows and X11 configuration can fail; callers share one signature on every platform"
+        reason = "Windows pill configuration can fail; the app configures the pill through one signature on Windows and macOS"
     )]
     pub fn configure_pill(&self) -> anyhow::Result<()> {
         let window = &self.native.ns_window;
@@ -478,11 +477,15 @@ pub(super) fn modifiers_for(shortcut: MacShortcut) -> Modifiers {
         cg::CGEventSource::flags_state(cg::CGEventSourceStateID::CombinedSessionState).0,
     );
     if shortcut == MacShortcut::F13 {
-        held.talk = u16::try_from(shortcut.key_code()).is_ok_and(|code| {
-            cg::CGEventSource::key_state(cg::CGEventSourceStateID::HIDSystemState, code)
-        });
+        held.talk = shortcut_key_down(shortcut);
     }
     held
+}
+
+fn shortcut_key_down(shortcut: MacShortcut) -> bool {
+    u16::try_from(shortcut.key_code()).is_ok_and(|code| {
+        cg::CGEventSource::key_state(cg::CGEventSourceStateID::HIDSystemState, code)
+    })
 }
 
 pub(super) struct Insert {

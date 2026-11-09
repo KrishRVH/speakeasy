@@ -1,8 +1,12 @@
 use std::{
     cell::Cell,
+    fs::Metadata,
     io::{Read as _, Seek as _},
     mem::MaybeUninit,
-    os::{fd::AsRawFd as _, unix::fs::MetadataExt as _},
+    os::{
+        fd::{AsRawFd as _, RawFd},
+        unix::fs::MetadataExt as _,
+    },
     path::Path,
     time::Instant,
 };
@@ -30,18 +34,26 @@ fn read(
     let sample = prefix.samples()[index];
     let descriptor = file.as_raw_fd();
     let frame = crate::read_movie_frame(file, &prefix, sample.at, cancelled)?;
+    assert_released(descriptor, &metadata);
+    Ok(frame)
+}
 
+pub(super) fn assert_released(descriptor: RawFd, opened: &Metadata) {
     let mut current = MaybeUninit::<libc::stat>::uninit();
     let status = unsafe { libc::fstat(descriptor, current.as_mut_ptr()) };
     if status == 0 {
         let current = unsafe { current.assume_init() };
         assert!(
-            u64::try_from(current.st_dev).ok() != Some(metadata.dev())
-                || current.st_ino != metadata.ino(),
-            "Movie retained its input"
+            u64::try_from(current.st_dev).ok() != Some(opened.dev())
+                || current.st_ino != opened.ino(),
+            "A native movie owner retained its file"
+        );
+    } else {
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::EBADF)
         );
     }
-    Ok(frame)
 }
 
 #[test]
