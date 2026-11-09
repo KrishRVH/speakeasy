@@ -53,7 +53,7 @@ pub fn read_movie_frame(
     }
     #[cfg(target_os = "windows")]
     {
-        crate::windows::read_movie_frame(file, prefix.bytes, prefix.size, at, &cancelled)
+        crate::windows::movie::read::frame(file, prefix.bytes, prefix.size, at, &cancelled)
     }
     #[cfg(target_os = "macos")]
     {

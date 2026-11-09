@@ -6,15 +6,14 @@ use windows_sys::Win32::{
     },
 };
 
-use super::{Display, class_name, exclusion::top_level_windows, frame_bounds, is_cloaked};
+use super::{
+    BAR_CLASSES, DESKTOP_CLASSES, Display, class_name, exclusion::top_level_windows, frame_bounds,
+    is_cloaked,
+};
 use crate::{
     screen::{Listed, WindowLayer, geometry::Bounds},
     windows::window_process,
 };
-
-const DESKTOP_CLASSES: [&str; 2] = ["Progman", "WorkerW"];
-
-const BAR_CLASSES: [&str; 2] = ["Shell_TrayWnd", "Shell_SecondaryTrayWnd"];
 
 const MENU_CLASS: &str = "#32768";
 

@@ -27,12 +27,12 @@ impl Drop for Lock<'_> {
 }
 
 pub(super) fn read(sample: &IMFSample, stride: i32, size: [u32; 2]) -> anyhow::Result<Vec<u8>> {
-    unsafe {
-        let buffer = sample.ConvertToContiguousBuffer()?;
-        let (mut start, mut scanline) = (std::ptr::null_mut(), std::ptr::null_mut());
-        let mut length = 0;
-        let mut pitch = stride;
-        let (lock, offset) = if let Ok(rows) = buffer.cast::<IMF2DBuffer2>() {
+    let buffer = unsafe { sample.ConvertToContiguousBuffer()? };
+    let (mut start, mut scanline) = (std::ptr::null_mut(), std::ptr::null_mut());
+    let mut length = 0;
+    let mut pitch = stride;
+    let (lock, offset) = if let Ok(rows) = buffer.cast::<IMF2DBuffer2>() {
+        unsafe {
             rows.Lock2DSize(
                 MF2DBuffer_LockFlags_Read,
                 &raw mut scanline,
@@ -40,33 +40,35 @@ pub(super) fn read(sample: &IMFSample, stride: i32, size: [u32; 2]) -> anyhow::R
                 &raw mut start,
                 &raw mut length,
             )?;
-            let lock = Lock::Rows(rows);
-            let offset = scanline
-                .addr()
-                .checked_sub(start.addr())
-                .context("Video scanline lies outside its buffer")?;
-            (lock, offset)
+        }
+        let lock = Lock::Rows(rows);
+        let offset = scanline
+            .addr()
+            .checked_sub(start.addr())
+            .context("Video scanline lies outside its buffer")?;
+        (lock, offset)
+    } else {
+        unsafe { buffer.Lock(&raw mut start, None, Some(&raw mut length))? };
+        let lock = Lock::Flat(&buffer);
+        let offset = if pitch < 0 {
+            usize::try_from(size[1].saturating_sub(1))?
+                .checked_mul(usize::try_from(pitch.unsigned_abs())?)
+                .context("Video row offset overflowed")?
         } else {
-            buffer.Lock(&raw mut start, None, Some(&raw mut length))?;
-            let lock = Lock::Flat(&buffer);
-            let offset = if pitch < 0 {
-                usize::try_from(size[1].saturating_sub(1))?
-                    .checked_mul(usize::try_from(pitch.unsigned_abs())?)
-                    .context("Video row offset overflowed")?
-            } else {
-                0
-            };
-            (lock, offset)
+            0
         };
-        ensure!(
-            !start.is_null() && length <= 128 << 20,
-            "Decoded video buffer is invalid"
-        );
-        let bytes = std::slice::from_raw_parts(start, usize::try_from(length)?);
-        let pixels = copy(bytes, offset, pitch, size)?;
-        drop(lock);
-        Ok(pixels)
-    }
+        (lock, offset)
+    };
+    ensure!(
+        !start.is_null() && length <= 128 << 20,
+        "Decoded video buffer is invalid"
+    );
+    let length = usize::try_from(length)?;
+
+    let bytes = unsafe { std::slice::from_raw_parts(start, length) };
+    let pixels = copy(bytes, offset, pitch, size)?;
+    drop(lock);
+    Ok(pixels)
 }
 
 fn copy(

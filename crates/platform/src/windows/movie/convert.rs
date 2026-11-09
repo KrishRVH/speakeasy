@@ -84,52 +84,55 @@ impl Converter {
     }
 
     fn output(&self) -> anyhow::Result<Option<IMFSample>> {
-        unsafe {
-            let info = self.0.GetOutputStreamInfo(0)?;
-            let native_allocation = (MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0
-                | MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES.0)
-                .cast_unsigned();
-            let supplied = if info.dwFlags & native_allocation == 0 {
-                ensure!(
-                    (1..=64 << 20).contains(&info.cbSize),
-                    "Video conversion buffer is out of range"
-                );
+        let info = unsafe { self.0.GetOutputStreamInfo(0)? };
+        let native_allocation = (MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0
+            | MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES.0)
+            .cast_unsigned();
+        let supplied = if info.dwFlags & native_allocation == 0 {
+            ensure!(
+                (1..=64 << 20).contains(&info.cbSize),
+                "Video conversion buffer is out of range"
+            );
+
+            unsafe {
                 let sample = MFCreateSample()?;
                 sample.AddBuffer(&MFCreateAlignedMemoryBuffer(
                     info.cbSize,
                     info.cbAlignment.saturating_sub(1),
                 )?)?;
                 Some(sample)
-            } else {
-                None
-            };
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "The generated COM output structure requires ManuallyDrop fields; Output releases both references on every path"
-            )]
-            let mut output = Output(MFT_OUTPUT_DATA_BUFFER {
-                pSample: ManuallyDrop::new(supplied),
-                ..MFT_OUTPUT_DATA_BUFFER::default()
-            });
-            let mut status = 0;
-            match self
-                .0
-                .ProcessOutput(0, std::slice::from_mut(&mut output.0), &raw mut status)
-            {
-                Err(error) if error.code() == MF_E_TRANSFORM_NEED_MORE_INPUT => return Ok(None),
-                result => result?,
             }
-            ensure!(
-                status == 0 && output.0.dwStatus == 0,
-                "Video conversion changed its output contract"
-            );
-            output
-                .0
-                .pSample
-                .take()
-                .map(Some)
-                .context("Video conversion returned no frame")
+        } else {
+            None
+        };
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "The generated COM output structure requires ManuallyDrop fields; Output releases both references on every path"
+        )]
+        let mut output = Output(MFT_OUTPUT_DATA_BUFFER {
+            pSample: ManuallyDrop::new(supplied),
+            ..MFT_OUTPUT_DATA_BUFFER::default()
+        });
+        let mut status = 0;
+
+        let processed = unsafe {
+            self.0
+                .ProcessOutput(0, std::slice::from_mut(&mut output.0), &raw mut status)
+        };
+        match processed {
+            Err(error) if error.code() == MF_E_TRANSFORM_NEED_MORE_INPUT => return Ok(None),
+            result => result?,
         }
+        ensure!(
+            status == 0 && output.0.dwStatus == 0,
+            "Video conversion changed its output contract"
+        );
+        output
+            .0
+            .pSample
+            .take()
+            .map(Some)
+            .context("Video conversion returned no frame")
     }
 }
 

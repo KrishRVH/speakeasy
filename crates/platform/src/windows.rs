@@ -44,7 +44,6 @@ use windows_sys::{
 pub(crate) use self::{
     input::{Monitor, start},
     insertion::{Insert, copy_content, copy_text},
-    movie::read::frame as read_movie_frame,
 };
 #[cfg(test)]
 use crate::NativeWindow;
@@ -171,10 +170,9 @@ impl Window {
     }
 
     fn restyle(&self, index: WINDOW_LONG_PTR_INDEX, change: impl FnOnce(u32) -> u32) {
-        unsafe {
-            let style = GetWindowLongW(self.hwnd, index).cast_unsigned();
-            SetWindowLongW(self.hwnd, index, change(style).cast_signed());
-        }
+        let style = change(unsafe { GetWindowLongW(self.hwnd, index) }.cast_unsigned());
+
+        unsafe { SetWindowLongW(self.hwnd, index, style.cast_signed()) };
     }
 }
 

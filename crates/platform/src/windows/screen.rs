@@ -92,12 +92,9 @@ const TICKS_PER_SECOND: i128 = 10_000_000;
 
 const COMPOSITION_MARGIN: Duration = Duration::from_millis(50);
 
-const SHELL_CLASSES: [&str; 4] = [
-    "Progman",
-    "WorkerW",
-    "Shell_TrayWnd",
-    "Shell_SecondaryTrayWnd",
-];
+const DESKTOP_CLASSES: [&str; 2] = ["Progman", "WorkerW"];
+
+const BAR_CLASSES: [&str; 2] = ["Shell_TrayWnd", "Shell_SecondaryTrayWnd"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Display {
@@ -153,7 +150,8 @@ pub(crate) fn window_under_pointer(display: Display) -> anyhow::Result<Option<(W
     let Some(window) = top_level_at(pointer_location().context(NO_POINTER)?) else {
         return Ok(None);
     };
-    if is_own_window(window) || SHELL_CLASSES.contains(&class_name(window).as_str()) {
+    let shell = [DESKTOP_CLASSES, BAR_CLASSES];
+    if is_own_window(window) || shell.as_flattened().contains(&class_name(window).as_str()) {
         return Ok(None);
     }
     let window = Window(window as isize);

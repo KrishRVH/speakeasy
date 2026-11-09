@@ -209,19 +209,22 @@ impl Drop for Locked<'_> {
 fn sample(pixels: &[u8], at: Duration, duration: Duration) -> anyhow::Result<IMFSample> {
     let bytes = u32::try_from(pixels.len())?;
 
+    let buffer = unsafe { MFCreateMemoryBuffer(bytes)? };
+    {
+        let mut pointer = std::ptr::null_mut();
+        let mut capacity = 0;
+
+        unsafe { buffer.Lock(&raw mut pointer, Some(&raw mut capacity), None)? };
+        let _locked = Locked(&buffer);
+        ensure!(
+            !pointer.is_null() && capacity >= bytes,
+            "The movie encoder returned a short buffer"
+        );
+
+        unsafe { std::ptr::copy_nonoverlapping(pixels.as_ptr(), pointer, pixels.len()) };
+    }
+
     unsafe {
-        let buffer = MFCreateMemoryBuffer(bytes)?;
-        {
-            let mut pointer = std::ptr::null_mut();
-            let mut capacity = 0;
-            buffer.Lock(&raw mut pointer, Some(&raw mut capacity), None)?;
-            let _locked = Locked(&buffer);
-            ensure!(
-                !pointer.is_null() && capacity >= bytes,
-                "The movie encoder returned a short buffer"
-            );
-            std::ptr::copy_nonoverlapping(pixels.as_ptr(), pointer, pixels.len());
-        }
         buffer.SetCurrentLength(bytes)?;
         let sample = MFCreateSample()?;
         sample.AddBuffer(&buffer)?;

@@ -36,7 +36,7 @@ pub(crate) fn frame(
 ) -> anyhow::Result<Option<MovieFrame>> {
     decode(file, bytes, size, at, cancelled).map_err(|error| {
         if let Some(native) = error.downcast_ref::<windows::core::Error>() {
-            anyhow::anyhow!("Windows could not decode this video ({:?})", native.code())
+            anyhow::anyhow!("Windows could not decode this video ({})", native.code())
         } else {
             error
         }

@@ -85,7 +85,7 @@ fn pending_images_and_quiet_output_keep_capture_and_presentation_distinct() -> a
                     .write(
                         &frame(320, 240, shade),
                         Duration::from_millis(ms),
-                        &mut || { false }
+                        &mut || false
                     )?
                     .is_continue()
             );
