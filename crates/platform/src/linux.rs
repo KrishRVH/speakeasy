@@ -180,7 +180,7 @@ fn spawn(
                 input.fail(match error.downcast_ref::<Actionable>() {
                     Some(actionable) => actionable.0.to_owned(),
                     None => format!(
-                        "Linux desktop access stopped: {error}. Check desktop permissions, or choose Shortcuts: Desktop bindings, Insert: Copy for manual paste, or both in Settings, then resume."
+                        "Linux desktop access stopped: {error}. Check desktop permissions, or in Settings set Shortcuts to Desktop bindings, Insert text by to Copy for manual paste, or both, then resume."
                     ),
                 });
             },

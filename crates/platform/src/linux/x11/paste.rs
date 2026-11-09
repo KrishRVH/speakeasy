@@ -130,7 +130,7 @@ impl Paster {
         }
         if request.delivery == Delivery::Direct {
             return Ok(Inserted::Unavailable(
-                "Direct text input is unavailable on this X11 desktop. Choose Insert: Paste in Settings.",
+                "Direct text input is unavailable on this X11 desktop. Set Insert text by to a Paste option in Settings.",
             ));
         }
         match self.copy_after_release(request)? {
