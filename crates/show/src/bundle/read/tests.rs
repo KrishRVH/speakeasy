@@ -125,15 +125,23 @@ proptest! {
             "index": index, "at": index, "reason": "sceneChange", "event": "", "marks": [0, 0]
         })).collect());
         let manifest = parse(&value).unwrap();
-        let numbers: Vec<_> = manifest.sheets().flat_map(|(_, frames)| frames.iter().map(|frame| frame.index)).collect();
+        let numbers: Vec<_> = manifest
+            .sheets()
+            .flat_map(|(_, frames)| frames.iter().map(|frame| frame.index))
+            .collect();
         prop_assert_eq!(numbers, (1..=count).collect::<Vec<_>>());
         let paths: Vec<_> = manifest.files().collect();
         prop_assert_eq!(paths.len(), count.saturating_add(count.div_ceil(6)).saturating_add(2));
-        prop_assert!(paths.iter().all(|path| !path.contains("..")));
+        let distinct: std::collections::BTreeSet<_> = paths.iter().collect();
+        prop_assert_eq!(distinct.len(), paths.len());
     }
 
     #[test]
-    fn truncated_or_mutated_manifests_do_not_panic(cut in 0_usize..2048, at in 0_usize..2048, byte in any::<u8>()) {
+    fn truncated_or_mutated_manifests_do_not_panic(
+        cut in 0_usize..2048,
+        at in 0_usize..2048,
+        byte in any::<u8>(),
+    ) {
         let mut bytes = serde_json::to_vec(&fixture()).unwrap();
         if let Some(target) = bytes.get_mut(at) { *target = byte; }
         bytes.truncate(cut);

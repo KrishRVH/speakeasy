@@ -137,7 +137,7 @@ fn torn_sources_and_damaged_tiles_never_produce_partial_images() {
 
 #[test]
 fn short_but_validly_compressed_tiles_cannot_fill_missing_pixels_with_black() {
-    let tile = super::super::Tile {
+    let tile = Tile {
         left: 0,
         top: 0,
         width: 2,

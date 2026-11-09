@@ -93,7 +93,7 @@ proptest! {
     fn arbitrary_records_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..20_000)) {
         #[expect(
             clippy::let_underscore_must_use,
-            reason = "The property requires arbitrary bytes to return without panicking, whether decoding succeeds or fails"
+            reason = "The property only requires decoding to return; either outcome passes"
         )]
         let _ = Log::decode(&bytes);
     }
@@ -200,7 +200,15 @@ fn malformed_events_cannot_change_the_good_prefix_or_print_pixels() {
     let mut corrupt = Log::encode(&event).unwrap();
     corrupt[20] ^= 0xFF;
     assert!(Log::decode(&corrupt).is_err());
-    assert!(!format!("{event:?}").contains("signature"));
+    let arrival = |shade| {
+        let event = Take::new(100, surface(), Framing::Automatic)
+            .arrive(Moment::START, || {
+                Some(Image::filled(2, 2, [shade; 3]).unwrap())
+            })
+            .unwrap();
+        format!("{event:?}")
+    };
+    assert_eq!(arrival(0), arrival(255));
 }
 
 #[test]

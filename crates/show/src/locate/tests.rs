@@ -83,13 +83,15 @@ proptest! {
         mut millis in prop::collection::vec(0_u64..300_000, 0..100),
         start in 0_u64..300_000,
         end in 0_u64..300_000,
+        offset in 0_u64..300_000,
         most in 1_usize..13,
     ) {
         millis.sort_unstable();
         millis.dedup();
         let moments: Vec<_> = millis.into_iter().map(Moment::from_millis).collect();
         let window = Span::new(Moment::from_millis(start), Moment::from_millis(end));
-        let anchor = window.start();
+        let anchor = Moment::from_millis(window.start().as_millis().saturating_add(offset))
+            .min(window.end());
         let samples = pick(&moments, window, anchor, most);
         prop_assert!(samples.times.len() <= most);
         prop_assert!(samples.times.is_sorted_by(|earlier, later| earlier < later));
@@ -137,11 +139,19 @@ fn cropped_evidence_preserves_pixels_times_and_bounded_loads() {
             height: 21
         })
     );
-    let image = Image::filled(3, 2, [11, 22, 33]).unwrap();
+    let red = |width, height, levels: &[u8]| {
+        let rgba = levels
+            .iter()
+            .flat_map(|&level| [level, 0, 0, 255])
+            .collect();
+        Image::from_rgba(width, height, rgba).unwrap()
+    };
+    let image = red(3, 2, &[10, 20, 30, 40, 50, 60]);
     assert_eq!(
         image.cropped(1, 0, 2, 2).unwrap(),
-        Image::filled(2, 2, [11, 22, 33]).unwrap()
+        red(2, 2, &[20, 30, 50, 60])
     );
+    assert_eq!(image.cropped(0, 1, 2, 1).unwrap(), red(2, 1, &[40, 50]));
     assert!(image.cropped(2, 0, 2, 2).is_err());
     assert!(
         Evidence::compose::<crate::Error>(

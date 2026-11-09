@@ -111,7 +111,8 @@ impl Case {
                             "Normal" => Layer::Normal,
                             "Floating" => Layer::Floating,
                             "Menu" => Layer::Menu,
-                            _ => Layer::Bar,
+                            "Bar" => Layer::Bar,
+                            other => panic!("{other} is not a window layer"),
                         },
                         bounds: placed.bounds,
                     })

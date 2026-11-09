@@ -70,7 +70,10 @@ fn rejected_fragments_never_contribute_header_corrections() {
 
 proptest::proptest! {
     #[test]
-    fn arbitrary_ranges_only_change_the_intersecting_header(start in 0_usize..1200, length in 0_usize..1200) {
+    fn arbitrary_ranges_only_change_the_intersecting_header(
+        start in 0_usize..1200,
+        length in 0_usize..1200,
+    ) {
         let (original, flag) = padded(fixture::movie().bytes, 0, &[0; 4], None);
         let prefix = inspect(&original).unwrap();
         let start = start.min(original.len());
