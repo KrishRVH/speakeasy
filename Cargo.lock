@@ -4810,7 +4810,7 @@ dependencies = [
 
 [[package]]
 name = "speakeasy"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -4854,14 +4854,14 @@ dependencies = [
 
 [[package]]
 name = "speakeasy-core"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "proptest",
 ]
 
 [[package]]
 name = "speakeasy-platform"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -4904,7 +4904,7 @@ dependencies = [
 
 [[package]]
 name = "speakeasy-show"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "crc32fast",
  "fdeflate",

@@ -21,7 +21,7 @@ gpui-pre-wgpu = { path = "vendor/gpui-pre-wgpu" }
 gpui-pre-windows = { path = "vendor/gpui-pre-windows" }
 
 [workspace.package]
-version = "0.10.1"
+version = "0.11.0"
 edition = "2024"
 rust-version = "1.99.1"
 license = "MIT"

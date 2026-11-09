@@ -1,26 +1,37 @@
 # Release notes
 
-Speakeasy 0.10.1 adds F13 dictation for external Mac keyboards and fixes races in reset and Show
-review.
+Speakeasy 0.11.0 frames screen-Show keyframes around the work you did, deletes saved Shows, and
+names a microphone that sends only silence.
 
-- **External Mac keyboards.** Choose F13 in Settings or the setup guide, then use the keyboard's F13
-  key or map a spare key to F13 in its keyboard software. This addresses keyboards such as the
-  Keychron Q6 Ultra 8K whose Fn key switches firmware layers without sending a key to macOS.
-  Speakeasy cannot observe that firmware-only Fn key. F13 supports hold-to-talk, double-tap
-  hands-free, and Show gestures; repeats do not restart dictation or interrupt Shift pins. Text
-  delivery waits for the selected shortcut to be released. Fn, Right Option, and Right Command
-  remain available.
-- **Stable microphone choices.** An open microphone menu keeps each row attached to its device when
-  devices refresh, so a click cannot select a different microphone.
-- **Reliable Show review.** Delayed clicks in a refreshed Show list cannot open a different Show.
-  Retained source frames with a mismatched recording timeline are unavailable; saved keyframes and
-  edited summaries remain readable. The agent reading guide accurately describes the edited summary
-  and recorded narration included by the copy action.
-- **Reset and updates.** Reset holds both setup and update locks until deletion finishes. The update
-  lock lives outside the removable cache, preventing another copy from starting an update while
-  reset removes its files.
-- **Cleanup evaluation.** The public-fixture accuracy harness can compare recognition with cleanup
-  enabled and disabled, measuring errors introduced and corrected by cleanup separately.
+- **Keyframes framed around your work.** A screen Show crops each keyframe to where you worked: your
+  ink, pins, clicks, and drags, and what they changed. When that input falls in one or two windows,
+  the keyframe frames those windows whole, with their app's open menus and dialogs, so a label
+  beside the control you clicked stays in frame. With nothing to point at, the front window frames
+  the keyframe. A crop that would cover most of the screen stays whole, and window and area Shows
+  keep the framing you chose. To frame windows, a Show notes where windows sit and which belong to
+  the same app, never their titles, app names, or contents, and only its private recovery checkpoint
+  keeps those positions. In the Shows window, **Whole screen** beside a cropped keyframe's caption
+  opens the retained frame at that moment.
+- **Show format.** `show.json` keyframes gain an optional `crop`, given as left, top, right, and
+  bottom fractions of the screen, and `narrationLost` can be `audioSilent`. The summary,
+  `show inspect`, the MCP keyframe tool, and the review caption name cropped frames. Tools that read
+  `show.json` should accept both.
+- **Delete Shows.** **More actions → Delete Show…** permanently deletes the selected Show, including
+  a kept or damaged one, with its saved files and recovery audio. Exported copies stay.
+- **Silent microphones.** A muted or privacy-blocked microphone that sends only digital silence now
+  gets an error naming the mute switch, privacy settings, and the microphone choice, in place of "No
+  speech detected". A Show still saves without narration and says why. A microphone that idles at a
+  constant offset no longer pins the level meter or defeats silence trimming.
+- **Mac menu bar over full-screen apps.** The menu bar menu opens while a full-screen app owns the
+  Space.
+- **Clearer Shows window.** The Shows window changes its library one step at a time, and each button
+  is enabled only when its action can run: **Keep Show** waits for a recovery or discard, and
+  **Refresh** for a deletion, where both used to look available and do nothing. Escape dismisses an
+  open Discard confirmation in place of closing the window.
+- **Smaller fixes.** The exported archive's guide opens the contact sheets first, like the summary
+  and Send to agent. Linux insertion errors name the **Insert text by** control. A launch refuses a
+  repeated `--config` or both `--toggle` and `--cancel`. Packages no longer build image decoders
+  Speakeasy never uses.
 
 Hold-to-talk, double-tap hands-free, and the five-minute recording limit remain. Recognition stays
 local, with no accounts, telemetry, dictation history, or automatic uploads. Managed Shows expire
