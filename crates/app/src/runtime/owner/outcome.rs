@@ -77,9 +77,11 @@ impl Outcome {
                 ..
             } => "Narrated copy saved. The original Show is unchanged.".into(),
             Self::Recovered { preservation, .. } => match preservation.narration_lost {
-                Some(NarrationLoss::NotTranscribed | NarrationLoss::AudioStopped) => {
-                    "Show recovered without narration. Find it in Shows."
-                },
+                Some(
+                    NarrationLoss::NotTranscribed
+                    | NarrationLoss::AudioStopped
+                    | NarrationLoss::AudioSilent,
+                ) => "Show recovered without narration. Find it in Shows.",
                 Some(NarrationLoss::Incomplete) => {
                     "Show recovered with incomplete narration. Find it in Shows."
                 },

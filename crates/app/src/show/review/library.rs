@@ -326,6 +326,9 @@ fn lost(loss: NarrationLoss) -> String {
             "Narration is incomplete: only audio that reached the checkpoint was recovered."
         },
         NarrationLoss::AudioStopped => "The microphone stopped, so this Show has no narration.",
+        NarrationLoss::AudioSilent => {
+            "The microphone sent only silence, so this Show has no narration."
+        },
         NarrationLoss::NotTranscribed => {
             "Your speech couldn't be transcribed, so this Show has no narration."
         },

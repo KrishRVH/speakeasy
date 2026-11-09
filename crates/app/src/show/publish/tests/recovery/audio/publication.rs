@@ -142,3 +142,47 @@ async fn durable_bundle_retires_checkpoint_even_when_narration_checkpoint_write_
     assert!(!interrupted.directory().join("audio.log").exists());
     Ok(())
 }
+
+#[tokio::test]
+async fn only_audio_that_may_hold_speech_is_kept_for_retry_or_as_voice() -> anyhow::Result<()> {
+    for (lost, retry, voiced) in [
+        (None, false, true),
+        (Some(NarrationLoss::AudioStopped), true, false),
+        (Some(NarrationLoss::NotTranscribed), true, false),
+        (Some(NarrationLoss::AudioSilent), false, false),
+    ] {
+        let root = tempfile::tempdir()?;
+        let checkpoint = with_audio(root.path()).await?;
+        let captured = narrated(footage(&checkpoint)?, Narration::default(), lost);
+        let (_input, active) = permit();
+        let Published::Saved {
+            show, preservation, ..
+        } = publish_with(
+            None,
+            captured,
+            Some(checkpoint),
+            Origin::Live,
+            &active,
+            || Ok(root.path().to_owned()),
+            |_| Ok(()),
+        )?
+        else {
+            bail!("The {lost:?} Show was not saved");
+        };
+        assert_eq!(preservation.audio_kept, retry, "{lost:?}");
+        assert_eq!(
+            store::checkpoint::list(root.path(), SystemTime::now())
+                .shows
+                .len(),
+            usize::from(retry),
+            "{lost:?}"
+        );
+        let voice = store::voice::read(show.directory(), SystemTime::now())?;
+        assert_eq!(
+            matches!(voice.status(), store::voice::Status::Available),
+            voiced,
+            "{lost:?}"
+        );
+    }
+    Ok(())
+}

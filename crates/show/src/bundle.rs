@@ -194,6 +194,10 @@ impl fmt::Display for Summary<'_> {
                  later steps are missing.",
                 recording.duration
             )?,
+            Some(NarrationLoss::AudioSilent) => writeln!(
+                f,
+                "The microphone sent only silence; what the user said is missing."
+            )?,
             Some(NarrationLoss::NotTranscribed) => writeln!(
                 f,
                 "The user's speech could not be transcribed; what the user said is missing."

@@ -4,6 +4,7 @@ use super::{
     ports::{PUBLISH_STOPPED, Unchosen},
     *,
 };
+use crate::audio::SilentMicrophone;
 
 #[tokio::test(start_paused = true)]
 async fn a_show_finishes_on_the_release_after_the_shortcut_is_pressed_again() -> anyhow::Result<()>
@@ -456,6 +457,30 @@ async fn a_show_whose_audio_stops_ends_there_and_is_copied_with_the_remedy() -> 
     );
     h.input(Input::Release);
     start_show(&mut h).await?;
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_show_whose_microphone_sent_only_silence_is_copied_with_the_remedy() -> anyhow::Result<()>
+{
+    let mut h = Harness::with_ports(Config::default(), |ports| ports.delayed_finish = true)?;
+    let (id, microphone) = start_show_listening(&mut h).await?;
+    receive(&h.shows).await?;
+    finish_show(&h);
+    h.phase(Phase::Stopping).await?;
+    microphone
+        .send(CaptureEvent::Finished(id, Err(SilentMicrophone.into())))
+        .await?;
+    h.phase(Phase::Copied).await?;
+    let snapshot = h.snapshot();
+    assert_eq!(
+        (snapshot.ending, snapshot.narration_lost),
+        (Ending::Finished, Some(NarrationLoss::AudioSilent))
+    );
+    assert_eq!(
+        snapshot.message,
+        format!("{COPIED_WITHOUT_NARRATION} {SilentMicrophone}")
+    );
     h.close().await
 }
 

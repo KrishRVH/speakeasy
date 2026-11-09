@@ -422,7 +422,7 @@ impl<P: Ports> Owner<P> {
                 }
             },
             CaptureEvent::Finished(_, Err(error)) => {
-                if session.audio_stopped() {
+                if session.audio_failed(&error) {
                     self.notice = Some(Notice::NarrationLost(error.to_string()));
                     self.conclude_capture();
                 } else {

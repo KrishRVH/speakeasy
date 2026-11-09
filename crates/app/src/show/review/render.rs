@@ -750,6 +750,9 @@ impl Review {
                     "Only part of the audio was recovered; it contains no recognized words."
                 },
                 NarrationLoss::AudioStopped => "The microphone stopped. Narration is missing.",
+                NarrationLoss::AudioSilent => {
+                    "The microphone sent only silence. Narration is missing."
+                },
                 NarrationLoss::NotTranscribed => {
                     "Speech could not be transcribed. Narration is missing."
                 },
@@ -954,9 +957,9 @@ fn status(row: &Row) -> impl Iterator<Item = (&'static str, Tone)> {
         },
         row.narration_lost.map(|lost| match lost {
             NarrationLoss::Incomplete => ("Narration incomplete", Tone::Muted),
-            NarrationLoss::AudioStopped | NarrationLoss::NotTranscribed => {
-                ("No narration", Tone::Muted)
-            },
+            NarrationLoss::AudioStopped
+            | NarrationLoss::AudioSilent
+            | NarrationLoss::NotTranscribed => ("No narration", Tone::Muted),
         }),
         (row.early && matches!(row.kind, Kind::Saved)).then_some(("Ended early", Tone::Warn)),
         match row.health {

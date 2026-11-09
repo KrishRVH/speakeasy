@@ -19,6 +19,7 @@ use super::{
     recognition::{Detail, Recognition, Request, Ticket, Transcript},
 };
 use crate::{
+    audio::SilentMicrophone,
     show::{AudioLog, Checkpointing, FrameLog, Kept, Origin, Publication, Reopened, SavedShow},
     transcript::style::Style,
 };
@@ -389,11 +390,15 @@ impl Session {
         }
     }
 
-    pub(super) fn audio_stopped(&mut self) -> bool {
+    pub(super) fn audio_failed(&mut self, failure: &anyhow::Error) -> bool {
         let listened = self.is_show()
             && matches!(self.stage, Stage::Recording { .. } | Stage::Stopping { .. });
         if listened {
-            self.go_on_without_narration(NarrationLoss::AudioStopped);
+            self.go_on_without_narration(if failure.is::<SilentMicrophone>() {
+                NarrationLoss::AudioSilent
+            } else {
+                NarrationLoss::AudioStopped
+            });
         }
         listened
     }
@@ -640,11 +645,15 @@ mod tests {
         };
         let mut dictation = opened(false);
         dictation.audio_ready(State::Held, Instant::now());
-        assert!(!dictation.audio_stopped(), "Dictation has nothing left");
+        let stopped = anyhow::anyhow!("Microphone disconnected");
+        assert!(
+            !dictation.audio_failed(&stopped),
+            "Dictation has nothing left"
+        );
 
         let mut show = opened(true);
         assert!(
-            !show.audio_stopped(),
+            !show.audio_failed(&stopped),
             "A microphone that never listened fails with its remedy"
         );
         show.audio_ready(State::Held, Instant::now());
@@ -654,7 +663,7 @@ mod tests {
         );
         show.finish();
         assert!(
-            show.audio_stopped(),
+            show.audio_failed(&stopped),
             "Audio can still stop while the capture seals it"
         );
         assert_eq!(lost(&show), Some(NarrationLoss::AudioStopped));
@@ -662,8 +671,17 @@ mod tests {
         let mut show = opened(true);
         show.audio_ready(State::Held, Instant::now());
         show.finish();
+        assert!(show.audio_failed(&SilentMicrophone.into()));
+        assert_eq!(lost(&show), Some(NarrationLoss::AudioSilent));
+
+        let mut show = opened(true);
+        show.audio_ready(State::Held, Instant::now());
+        show.finish();
         assert!(show.captured(Some(Sealed::default())));
-        assert!(!show.audio_stopped(), "Sealed audio can no longer stop");
+        assert!(
+            !show.audio_failed(&stopped),
+            "Sealed audio can no longer stop"
+        );
         assert!(show.request().is_some());
         assert!(!show.not_transcribed(), "Speech keeps its one retry");
         assert!(show.failed(Ticket {

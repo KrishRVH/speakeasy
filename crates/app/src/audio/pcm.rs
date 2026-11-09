@@ -55,6 +55,10 @@ impl Pcm16 {
         self.limit.saturating_sub(self.samples())
     }
 
+    pub(super) fn long_enough(&self, rate: u32) -> bool {
+        self.samples() >= samples_in(MINIMUM_RECORDING, rate)
+    }
+
     pub(super) fn push(&mut self, sample: i16) {
         let required = self.bytes.len().saturating_add(SAMPLE_BYTES);
         if required > self.bytes.capacity() {
@@ -75,7 +79,7 @@ impl Pcm16 {
         mut speech: Audibility,
         rate: u32,
     ) -> anyhow::Result<Option<Sealed>> {
-        if self.samples() < samples_in(MINIMUM_RECORDING, rate) {
+        if !self.long_enough(rate) {
             return Ok(None);
         }
         speech.complete(self.audio());

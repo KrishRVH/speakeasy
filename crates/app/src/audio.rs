@@ -11,14 +11,14 @@ mod stream;
 pub(crate) mod fixture;
 
 use std::{
-    mem,
+    fmt, mem,
     panic::{self, AssertUnwindSafe},
     sync::Arc,
     thread::{self, Thread},
     time::{Duration, Instant},
 };
 
-use anyhow::{Context as _, anyhow};
+use anyhow::{Context as _, anyhow, ensure};
 use async_channel::{Receiver, Sender};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rtrb::{Consumer, RingBuffer};
@@ -258,6 +258,7 @@ struct Recorder<D = LiveStream> {
     rate: u32,
     cuts: Option<Cuts>,
     live: live::Feed,
+    sounded: bool,
     #[cfg(test)]
     profile: Option<fixture::Profile>,
 }
@@ -342,6 +343,7 @@ impl<D> Recorder<D> {
             rate,
             cuts,
             live,
+            sounded: false,
             #[cfg(test)]
             profile: None,
         }
@@ -370,6 +372,7 @@ impl<D> Recorder<D> {
             rate,
             cuts,
             live,
+            sounded,
             ..
         } = self;
         let outcome = drained.and_then(|()| {
@@ -378,6 +381,7 @@ impl<D> Recorder<D> {
             }
 
             capture_failure(control, &errors)?;
+            ensure!(sounded || !pcm.long_enough(rate), SilentMicrophone);
             speech.complete(pcm.audio());
             live.finish(pcm.audio());
             let partition = cuts.and_then(|cuts| cuts.finish(&speech, pcm.audio().len()));
@@ -420,7 +424,7 @@ impl<D> Recorder<D> {
                 control.finish();
                 control.quiesce();
             }
-            consume_pcm(&mut self.ring, &mut self.pcm, &mut meter);
+            self.sounded |= consume_pcm(&mut self.ring, &mut self.pcm, &mut meter);
 
             if !ready && self.pcm.samples() > 0 {
                 ready = true;
@@ -552,10 +556,11 @@ fn select_device(
     )
 }
 
-fn consume_pcm(ring: &mut Consumer<f32>, pcm: &mut Pcm16, meter: &mut LevelMeter) {
+fn consume_pcm(ring: &mut Consumer<f32>, pcm: &mut Pcm16, meter: &mut LevelMeter) -> bool {
     let Ok(chunk) = ring.read_chunk(ring.slots()) else {
-        return;
+        return false;
     };
+    let mut sounded = false;
     let (first, second) = chunk.as_slices();
     for &sample in first.iter().chain(second).take(pcm.room()) {
         let sample = if sample.is_finite() {
@@ -563,6 +568,7 @@ fn consume_pcm(ring: &mut Consumer<f32>, pcm: &mut Pcm16, meter: &mut LevelMeter
         } else {
             0.0
         };
+        sounded |= sample != 0.0;
         meter.add(sample);
         #[expect(
             clippy::cast_possible_truncation,
@@ -572,7 +578,22 @@ fn consume_pcm(ring: &mut Consumer<f32>, pcm: &mut Pcm16, meter: &mut LevelMeter
         pcm.push(encoded);
     }
     chunk.commit_all();
+    sounded
 }
+
+#[derive(Debug)]
+pub(crate) struct SilentMicrophone;
+
+impl fmt::Display for SilentMicrophone {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        out.write_str(
+            "The microphone sent only silence. Check that it isn't muted or blocked in privacy \
+             settings, or choose another microphone in Settings.",
+        )
+    }
+}
+
+impl std::error::Error for SilentMicrophone {}
 
 fn abandoned(control: &Control, events: &Sender<CaptureEvent>) -> bool {
     control.mode() == Mode::Cancelled || events.is_closed()

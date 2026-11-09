@@ -75,11 +75,13 @@ module unless a test file is named.
   [stream/tests.rs](../crates/app/src/audio/stream/tests.rs) use synthetic samples; microphones.rs
   checks that a scan the driver blocks serves the next request. The energy gate retains audio after
   100 ms of audible windows, with a floor near −70 dBFS for quiet microphones. PCM stays unchanged.
-  Background noise above the floor can also qualify. The gate and the meter measure energy around
-  each window's mean, so a microphone's DC offset is neither sound nor level. Callbacks count
-  themselves as publishing before reading the capture mode. Finish/cancel and that count share
-  sequentially consistent ordering; the drain advances the mode, then waits for publishing callbacks
-  before sealing audio. Mode only advances, so a late finish cannot undo cancellation.
+  Background noise above the floor can also qualify. The gate measures energy around each window's
+  mean, so a microphone's DC offset never counts as sound. A recording long enough to seal whose
+  every sample was exactly zero, judged before PCM16 rounding, fails with `SilentMicrophone`, which
+  names the mute switch, privacy settings, and the microphone choice. Callbacks count themselves as
+  publishing before reading the capture mode. Finish/cancel and that count share sequentially
+  consistent ordering; the drain advances the mode, then waits for publishing callbacks before
+  sealing audio. Mode only advances, so a late finish cannot undo cancellation.
 - **Sound cues**: [sounds.rs](../crates/app/src/sounds.rs) plays the cues the owner asks for through
   `Ports::cue` on an owned output thread, which `Ports::hold_cues` keeps open through each session.
   A recording may overhear a cue, so [speech.rs](../crates/app/src/audio/speech.rs) hears only the
@@ -504,10 +506,11 @@ module unless a test file is named.
   checkpoint deletion cannot offer duplicate recovery. If checkpoint storage never opens, in-memory
   footage remains publishable. A lost checkpoint completion stops publication; an unknown checkpoint
   state cannot become an apparently complete bundle. Untranscribed audio keeps a published
-  checkpoint visible as Narration pending. A retry creates a new bundle. Unfinished cancellation
-  records discard before deletion; private audio, narration, frame, and movie files are removed
-  before the lock, so blocked deletion remains available to cleanup. Audio retains the original
-  seven-day expiry regardless of a saved bundle's Keep marker. Discovery isolates damaged
+  checkpoint visible as Narration pending; a silent microphone's audio holds nothing to retry or
+  export, so its checkpoint retires without keeping voice. A retry creates a new bundle. Unfinished
+  cancellation records discard before deletion; private audio, narration, frame, and movie files are
+  removed before the lock, so blocked deletion remains available to cleanup. Audio retains the
+  original seven-day expiry regardless of a saved bundle's Keep marker. Discovery isolates damaged
   checkpoints so healthy entries remain visible and saved bundles still expire.
   [checkpoint/tests.rs](../crates/app/src/show/store/checkpoint/tests.rs) exercises damaged
   siblings, expiry, lock ownership, and durable discard/publication markers.
@@ -731,9 +734,9 @@ Capture starts on the first shortcut press, and the five-minute cap holds whatev
 `owner.rs` handles one message, advances ready work, and presents a snapshot. A `Session` holds its
 permit and one stage. A failure or a settings change ends it from any stage, and so does
 cancellation, except for a finished Show being saved. A Show whose microphone has listened outlives
-losing its narration: when audio capture stops, the model fails to load, or transcription fails its
-one retry, it goes on to its footage with no narration and the reason beside it, where dictation
-fails:
+losing its narration: when audio capture stops, the microphone sent only silence, the model fails to
+load, or transcription fails its one retry, it goes on to its footage with no narration and the
+reason beside it, where dictation fails:
 
 ```mermaid
 stateDiagram-v2
@@ -755,7 +758,7 @@ stateDiagram-v2
     Stopping --> AwaitingFootage: silent Show; empty narration
     Recognizing --> AwaitingFootage: Show narration
     Recording --> AwaitingFootage: Show audio stops; narration lost
-    Stopping --> AwaitingFootage: Show audio stops; narration lost
+    Stopping --> AwaitingFootage: Show audio stops or was all zeros; narration lost
     Recognizing --> AwaitingFootage: Show model or retry fails; narration lost
     AwaitingFootage --> Delivering: footage recorded; publish
     Delivering --> [*]: Done / Copied / Cancelled / Error

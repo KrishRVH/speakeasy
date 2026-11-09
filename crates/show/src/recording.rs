@@ -69,6 +69,7 @@ impl Ending {
 pub enum NarrationLoss {
     Incomplete,
     AudioStopped,
+    AudioSilent,
     NotTranscribed,
 }
 

@@ -78,6 +78,50 @@ fn the_meter_rests_on_a_constant_offset_and_follows_speech_around_it() {
     ));
 }
 
+fn record_constant(level: f32, samples: usize) -> anyhow::Result<Option<Sealed>> {
+    let (mut producer, ring) = RingBuffer::new(samples.max(1));
+    producer.push_entire_slice(&vec![level; samples])?;
+    let (_errors, stream_errors) = async_channel::bounded(1);
+    let (events, _reports) = async_channel::bounded(64);
+    let (_cues, cues) = async_channel::unbounded();
+    let (_keep, keep) = async_channel::bounded(1);
+    let (_whole, whole) = async_channel::bounded(1);
+    let control = Control::default();
+    control.finish();
+    Recorder::new(
+        (),
+        ring,
+        stream_errors,
+        Instant::now(),
+        16_000,
+        RecognitionMode::Whole,
+    )
+    .record(
+        SessionId::FIRST,
+        &events,
+        &control,
+        &Requests { cues, keep, whole },
+    )
+    .outcome
+}
+
+#[test]
+fn only_exact_digital_silence_long_enough_to_seal_names_the_microphone() -> anyhow::Result<()> {
+    let failure = record_constant(0.0, 8_000)
+        .err()
+        .context("A microphone that sent only zeros read as no speech")?;
+    assert!(failure.is::<SilentMicrophone>());
+    assert!(
+        record_constant(f32::NAN, 8_000).is_err_and(|failure| failure.is::<SilentMicrophone>())
+    );
+    assert!(
+        record_constant(1e-6, 8_000)?.is_none(),
+        "Quiet input below one PCM16 step still came from a live microphone"
+    );
+    assert!(record_constant(0.0, 1_600)?.is_none());
+    Ok(())
+}
+
 #[test]
 fn stopped_startup_returns_without_audio() {
     let records_nothing = |events: &Sender<CaptureEvent>, control: &Arc<Control>| {
@@ -340,7 +384,7 @@ fn pcm_chunks_wrap_clamp_invalid_samples_and_enforce_the_limit() -> anyhow::Resu
     producer.push_entire_slice(&[0.5, f32::NAN, 2.0, -2.0])?;
     let mut pcm = Pcm16::with_reservation(0, 3);
     let mut meter = LevelMeter::new();
-    consume_pcm(&mut ring, &mut pcm, &mut meter);
+    assert!(consume_pcm(&mut ring, &mut pcm, &mut meter));
     assert!((meter.power.mean_square() - 1.0 / 6.0).abs() < 1e-12);
     let expected = [16383_i16, 0, 32767]
         .into_iter()

@@ -94,7 +94,9 @@ fn publish_with(
         Some(NarrationLoss::AudioStopped | NarrationLoss::NotTranscribed) => {
             checkpoint::Publication::Pending
         },
-        Some(NarrationLoss::Incomplete) | None => checkpoint::Publication::Narrated,
+        Some(NarrationLoss::Incomplete | NarrationLoss::AudioSilent) | None => {
+            checkpoint::Publication::Narrated
+        },
     };
     if completion == checkpoint::Publication::Narrated
         && let Some(checkpoint) = &checkpoint
@@ -247,6 +249,7 @@ fn persist(
         return Ok(None);
     }
     let duration = recording.duration;
+    let voiced = recording.narration_lost != Some(NarrationLoss::AudioSilent);
     let selection = select(&recording, journal.samples()).context(NOTHING_RECORDED)?;
     let typeface = Typeface::parse(crate::BRAND_FONT_FILE)?;
     let bundle = compose(
@@ -284,6 +287,7 @@ fn persist(
         None => false,
     };
     if completion == checkpoint::Publication::Narrated
+        && voiced
         && let Some(checkpoint) = checkpoint
     {
         checkpoint.retain_voice(&staged)?;
