@@ -11,7 +11,7 @@ mod text_field;
 mod updates;
 mod vocabulary;
 
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{mem, path::PathBuf, sync::Arc, time::Duration};
 
 use async_channel::Receiver;
 use gpui::{App, BorrowAppContext, Context, ElementId, SharedString, Task, Window};
@@ -54,8 +54,7 @@ pub(super) struct Settings {
     file_picker: Option<Task<()>>,
     microphone_listing: Option<Task<()>>,
     preview: Option<Task<()>>,
-    setup: Option<Installing>,
-    retiring_setup: Option<(Setup, Task<()>)>,
+    download: Download,
     saving: Option<Task<()>>,
     saves: SaveQueue,
     saved: Option<Task<()>>,
@@ -90,6 +89,36 @@ struct Installing {
     _follow: Task<()>,
 }
 
+enum Download {
+    Idle,
+    Installing(Installing),
+    Pausing { setup: Setup, _retirement: Task<()> },
+}
+
+impl Download {
+    const fn is_busy(&self) -> bool {
+        !matches!(self, Self::Idle)
+    }
+
+    const fn is_pausing(&self) -> bool {
+        matches!(self, Self::Pausing { .. })
+    }
+
+    const fn installing(&self) -> Option<&Installing> {
+        match self {
+            Self::Installing(installing) => Some(installing),
+            Self::Idle | Self::Pausing { .. } => None,
+        }
+    }
+
+    const fn setup(&self) -> Option<&Setup> {
+        match self {
+            Self::Installing(Installing { setup, .. }) | Self::Pausing { setup, .. } => Some(setup),
+            Self::Idle => None,
+        }
+    }
+}
+
 impl Settings {
     pub(super) fn new(
         config: Config,
@@ -117,8 +146,7 @@ impl Settings {
             file_picker: None,
             microphone_listing: None,
             preview: None,
-            setup: None,
-            retiring_setup: None,
+            download: Download::Idle,
             saving: None,
             saves,
             saved: None,
@@ -308,8 +336,7 @@ impl Settings {
         let services = cx.global::<Services>();
         !services.mode.is_demo()
             && !services.is_quitting()
-            && self.setup.is_none()
-            && self.retiring_setup.is_none()
+            && !self.download.is_busy()
             && self.saving.is_none()
             && !self.resetting()
             && !self.update.holds_download()
@@ -528,9 +555,10 @@ impl Settings {
     }
 
     fn toggle_setup(&mut self, cx: &Context<'_, Self>) {
-        match self.setup.take() {
-            Some(Installing { setup, .. }) => self.pause_setup(setup, cx),
-            None => self.start_setup(cx),
+        match mem::replace(&mut self.download, Download::Idle) {
+            Download::Installing(Installing { setup, .. }) => self.pause_setup(setup, cx),
+            Download::Idle => self.start_setup(cx),
+            pausing @ Download::Pausing { .. } => self.download = pausing,
         }
     }
 
@@ -541,8 +569,7 @@ impl Settings {
     fn install_model(&mut self, model: Model, cx: &Context<'_, Self>) {
         if cx.global::<Services>().is_quitting()
             || is_demo(cx)
-            || self.setup.is_some()
-            || self.retiring_setup.is_some()
+            || self.download.is_busy()
             || self.unreadable
             || self.resetting()
         {
@@ -569,7 +596,7 @@ impl Settings {
             let outcome = outcome.await;
             this.update_if_alive(cx, |view, cx| view.finish_setup(outcome, cx));
         });
-        self.setup = Some(Installing {
+        self.download = Download::Installing(Installing {
             model,
             setup,
             _follow: follow_setup,
@@ -582,11 +609,16 @@ impl Settings {
         let retirement = cx.spawn(async move |this, cx| {
             stopped.await;
             this.update_if_alive(cx, |view, cx| {
-                view.retiring_setup = None;
+                if view.download.is_pausing() {
+                    view.download = Download::Idle;
+                }
                 cx.notify();
             });
         });
-        self.retiring_setup = Some((setup, retirement));
+        self.download = Download::Pausing {
+            setup,
+            _retirement: retirement,
+        };
         self.notice = Some(Notice::Note(
             "Download paused. It resumes where it stopped.".into(),
         ));
@@ -597,7 +629,9 @@ impl Settings {
         outcome: Option<anyhow::Result<Installed>>,
         cx: &mut Context<'_, Self>,
     ) {
-        self.setup = None;
+        if self.download.installing().is_some() {
+            self.download = Download::Idle;
+        }
         self.downloaded = crate::setup::downloaded();
         match outcome {
             Some(Ok(installed)) => {
@@ -616,10 +650,7 @@ impl Settings {
     }
 
     fn request_setup_stops(&self) {
-        if let Some(installing) = &self.setup {
-            installing.setup.request_stop();
-        }
-        if let Some((setup, _)) = &self.retiring_setup {
+        if let Some(setup) = self.download.setup() {
             setup.request_stop();
         }
     }
@@ -708,16 +739,10 @@ impl Settings {
 
     pub(super) fn drained(&mut self) -> bool {
         let update_drained = self.update.drained();
-        self.setup = self
-            .setup
-            .take()
-            .filter(|installing| !installing.setup.is_finished());
-        self.retiring_setup = self
-            .retiring_setup
-            .take()
-            .filter(|(setup, _)| !setup.is_finished());
-        self.setup.is_none()
-            && self.retiring_setup.is_none()
+        if self.download.setup().is_some_and(Setup::is_finished) {
+            self.download = Download::Idle;
+        }
+        !self.download.is_busy()
             && self.onboarding_completion.is_none()
             && self.saves.is_idle()
             && update_drained

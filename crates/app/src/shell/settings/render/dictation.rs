@@ -404,7 +404,7 @@ impl Settings {
                 false,
             ),
             Some(Speech::Own) => ("Your own engine · Choose its files".into(), true),
-            None if self.setup.is_some() => ("Setting up…".into(), false),
+            None if self.download.installing().is_some() => ("Setting up…".into(), false),
             None => ("Not set up".into(), true),
         }
     }
@@ -446,10 +446,10 @@ impl Settings {
         let kit = ui.kit();
         let speech = Speech::of(&self.config, self.own_engine);
         let installing = self
-            .setup
-            .as_ref()
+            .download
+            .installing()
             .map(|installing| (installing.model, installing.setup.progress()));
-        let busy = self.setup.is_some() || self.retiring_setup.is_some();
+        let busy = self.download.is_busy();
         let card = |action: Action,
                     title: &'static str,
                     about: &'static str,

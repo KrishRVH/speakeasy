@@ -258,8 +258,8 @@ impl Settings {
         }
         if self.config.needs_engine() && !self.own_engine && !self.resetting() {
             let progress = self
-                .setup
-                .as_ref()
+                .download
+                .installing()
                 .map(|installing| installing.setup.progress());
             let controls = match progress {
                 Some(progress) => div()
@@ -279,7 +279,7 @@ impl Settings {
                     "Set up automatically",
                     Action::Setup,
                     Weight::Primary,
-                    self.retiring_setup.is_none(),
+                    !self.download.is_busy(),
                 )),
             };
             return Some(kit.banner(

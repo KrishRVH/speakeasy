@@ -65,7 +65,7 @@ impl Editor {
 
 impl Settings {
     const fn presets_busy(&self) -> bool {
-        self.setup.is_some() || self.retiring_setup.is_some() || self.file_picker.is_some()
+        self.download.is_busy() || self.file_picker.is_some()
     }
 
     pub(super) fn edit_preset(
