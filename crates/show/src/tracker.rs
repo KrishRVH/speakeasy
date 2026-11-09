@@ -18,12 +18,9 @@ pub struct Tracker {
     surface: Size,
     space: Option<Space>,
     generation: Option<u64>,
-    drawn_space: Option<Space>,
-    last_drawn_space: Option<Space>,
     spaces: Spaces,
     pointer: Option<InkPoint>,
-    drawing: Vec<InkPoint>,
-    deliberate: bool,
+    ink: Option<Ink>,
     press: Button,
     pin_after: Option<Moment>,
     shift_down: Option<Moment>,
@@ -31,6 +28,45 @@ pub struct Tracker {
     strokes: Vec<Stroke>,
     pins: Vec<Pin>,
     actions: Vec<Action>,
+}
+
+#[derive(Debug)]
+struct Ink {
+    points: Vec<InkPoint>,
+    deliberate: bool,
+    space: Option<Space>,
+    last_space: Option<Space>,
+}
+
+impl Ink {
+    fn start(point: InkPoint, space: Option<Space>) -> Self {
+        Self {
+            points: vec![point],
+            deliberate: false,
+            space,
+            last_space: space,
+        }
+    }
+
+    fn extend(&mut self, point: InkPoint, space: Option<Space>, surface: Size) {
+        if self.space != space {
+            self.space = None;
+        }
+        self.last_space = space;
+        self.deliberate |= self.points.first().is_some_and(|first| {
+            pixels(surface, first.point, point.point) >= SHORTEST_STROKE_PIXELS
+        });
+        self.points.push(point);
+    }
+
+    fn continuation(&self) -> Option<Self> {
+        self.points.last().map(|&joint| Self {
+            points: vec![joint],
+            deliberate: self.deliberate,
+            space: self.last_space,
+            last_space: self.last_space,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -57,16 +93,13 @@ impl Tracker {
             surface,
             space: None,
             generation: Some(0),
-            drawn_space: None,
-            last_drawn_space: None,
             spaces: Spaces {
                 strokes: Vec::new(),
                 pins: Vec::new(),
                 actions: Vec::new(),
             },
             pointer: None,
-            drawing: Vec::new(),
-            deliberate: false,
+            ink: None,
             press: Button::Up,
             pin_after: None,
             shift_down: None,
@@ -147,7 +180,10 @@ impl Tracker {
 
     #[must_use]
     pub fn drawing(&self) -> &[InkPoint] {
-        if self.deliberate { &self.drawing } else { &[] }
+        self.ink
+            .as_ref()
+            .filter(|ink| ink.deliberate)
+            .map_or(&[], |ink| &ink.points)
     }
 
     #[must_use]
@@ -207,30 +243,32 @@ impl Tracker {
         }
     }
 
-    fn draw(&mut self, ink: InkPoint) {
+    fn draw(&mut self, point: InkPoint) {
         let spaced = self
-            .drawing
-            .last()
-            .is_none_or(|last| pixels(self.surface, last.point, ink.point) >= INK_SPACING_PIXELS);
+            .ink
+            .as_ref()
+            .and_then(|ink| ink.points.last())
+            .is_none_or(|last| pixels(self.surface, last.point, point.point) >= INK_SPACING_PIXELS);
         if !spaced {
             return;
         }
-        if self.drawing.len() >= MOST_STROKE_POINTS {
+        if self
+            .ink
+            .as_ref()
+            .is_some_and(|ink| ink.points.len() >= MOST_STROKE_POINTS)
+        {
             self.cut();
         }
-        if self.drawing.is_empty() {
-            self.drawn_space = self.space;
-        } else if self.drawn_space != self.space {
-            self.drawn_space = None;
+        let deliberate = if let Some(ink) = &mut self.ink {
+            ink.extend(point, self.space, self.surface);
+            ink.deliberate
+        } else {
+            self.ink = Some(Ink::start(point, self.space));
+            false
+        };
+        if deliberate {
+            self.use_shift(point.at);
         }
-        self.last_drawn_space = self.space;
-        self.deliberate |= self.drawing.first().is_some_and(|first| {
-            pixels(self.surface, first.point, ink.point) >= SHORTEST_STROKE_PIXELS
-        });
-        if self.deliberate {
-            self.use_shift(ink.at);
-        }
-        self.drawing.push(ink);
     }
 
     fn use_shift(&mut self, at: Moment) {
@@ -243,24 +281,24 @@ impl Tracker {
     }
 
     fn cut(&mut self) {
-        let (joint, deliberate) = (self.drawing.last().copied(), self.deliberate);
-        let space = self.last_drawn_space;
-        self.lift();
-        self.drawing.extend(joint);
-        self.drawn_space = space;
-        self.last_drawn_space = space;
-        self.deliberate = deliberate;
+        if let Some(ink) = self.ink.take() {
+            self.ink = ink.continuation();
+            self.keep(ink);
+        }
     }
 
     fn lift(&mut self) {
-        let points = mem::take(&mut self.drawing);
-        let space = self.drawn_space.take();
-        self.last_drawn_space = None;
-        if mem::take(&mut self.deliberate)
-            && let Some(stroke) = Stroke::new(points)
+        if let Some(ink) = self.ink.take() {
+            self.keep(ink);
+        }
+    }
+
+    fn keep(&mut self, ink: Ink) {
+        if ink.deliberate
+            && let Some(stroke) = Stroke::new(ink.points)
         {
             self.strokes.push(stroke);
-            self.spaces.strokes.push(space);
+            self.spaces.strokes.push(ink.space);
         }
     }
 
