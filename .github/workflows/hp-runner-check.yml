@@ -1,0 +1,42 @@
+name: HP runner verification
+on:
+  workflow_dispatch:
+    inputs:
+      denial_test:
+        description: Test that a rejected event stops the worker before any later step
+        type: boolean
+        default: false
+permissions: {}
+jobs:
+  verify:
+    if: github.actor == 'KrishRVH' && github.triggering_actor == 'KrishRVH' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, Windows, X64, hp, speakeasy]
+    timeout-minutes: 5
+    steps:
+      - name: Verify standard account and tools
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+          $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+          if ($env:RUNNER_NAME -ne 'hp-speakeasy-windows') { throw 'Wrong runner' }
+          if ($identity.Name -notmatch '\\hp-speakeasy$') { throw 'Wrong account' }
+          if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Administrator account rejected' }
+          git --version
+          if ($LASTEXITCODE -ne 0) { throw 'Git failed' }
+          Write-Output "PowerShell $($PSVersionTable.PSVersion); dedicated standard account verified"
+      - name: Exercise rejection of a pull-request event
+        if: inputs.denial_test
+        shell: pwsh
+        run: |
+          $env:GITHUB_EVENT_NAME = 'pull_request'
+          & 'C:\ProgramData\HP-SpeakeasyRunnerPolicy\Assert-Job.ps1'
+          throw 'Policy failed to terminate the rejected worker'
+      - name: Verify job completion
+        if: always()
+        shell: pwsh
+        env:
+          DENIAL_TEST: ${{ inputs.denial_test }}
+        run: |
+          if ($env:DENIAL_TEST -eq 'true') { throw 'Denied worker incorrectly executed an always() step' }
+          Write-Output 'Owner job completed successfully'
