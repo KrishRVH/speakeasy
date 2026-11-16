@@ -122,11 +122,6 @@ url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-windows-x
 checksum = "sha256:0f20ce6674d4f2dbcc8c5d59fdf99f7ba45f8c3b367e0f5781cbfa30a1c78d99"
 url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-windows-x64-baseline.zip"
 
-[[tools."cargo:https://github.com/ammkrn/nanoda_lib"]]
-version = "rev:3a2407216ee84a75f9e1aead6803d0578be06ae7"
-backend = "cargo:https://github.com/ammkrn/nanoda_lib"
-specifiers = ["rev:3a2407216ee84a75f9e1aead6803d0578be06ae7"]
-
 [[tools."github:EmbarkStudios/cargo-about"]]
 version = "0.9.3"
 backend = "github:EmbarkStudios/cargo-about"
@@ -319,58 +314,6 @@ checksum = "sha256:ba35ee0ce14ace65cd8c7aaa9613adb7d2644b0fe3866e85131eb4c269786
 url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.151/cargo-nextest-0.9.151-x86_64-pc-windows-msvc.zip"
 url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/703606896"
 provenance = "github-attestations"
-
-[[tools."http:lean"]]
-version = "4.34.1"
-backend = "http:lean"
-specifiers = ["4.34.1"]
-
-[tools."http:lean".options]
-strip_components = "1"
-
-[tools."http:lean"."platforms.linux-arm64"]
-checksum = "sha256:fdb974c2cdb4627e090d5d4007b913e09d13c4868720fb5594e22808b3de9e37"
-url = "https://github.com/leanprover/lean4/releases/download/v4.34.1/lean-4.34.1-linux_aarch64.tar.zst"
-
-[tools."http:lean"."platforms.linux-arm64-musl"]
-checksum = "sha256:fdb974c2cdb4627e090d5d4007b913e09d13c4868720fb5594e22808b3de9e37"
-url = "https://github.com/leanprover/lean4/releases/download/v4.34.1/lean-4.34.1-linux_aarch64.tar.zst"
-
-[tools."http:lean"."platforms.linux-x64"]
-checksum = "sha256:47bf4bbd78f70c2e9670598ab7124d92b6efb7330ff33e5fbb4030f6fd72e4e4"
-url = "https://github.com/leanprover/lean4/releases/download/v4.34.1/lean-4.34.1-linux.tar.zst"
-
-[tools."http:lean"."platforms.linux-x64-baseline"]
-checksum = "sha256:47bf4bbd78f70c2e9670598ab7124d92b6efb7330ff33e5fbb4030f6fd72e4e4"
-url = "https://github.com/leanprover/lean4/releases/download/v4.34.1/lean-4.34.1-linux.tar.zst"
-
-[tools."http:lean"."platforms.linux-x64-musl"]
-checksum = "sha256:47bf4bbd78f70c2e9670598ab7124d92b6efb7330ff33e5fbb4030f6fd72e4e4"
-url = "https://github.com/leanprover/lean4/releases/download/v4.34.1/lean-4.34.1-linux.tar.zst"
-
-[tools."http:lean"."platforms.linux-x64-musl-baseline"]
-checksum = "sha256:47bf4bbd78f70c2e9670598ab7124d92b6efb7330ff33e5fbb4030f6fd72e4e4"
-url = "https://github.com/leanprover/lean4/releases/download/v4.34.1/lean-4.34.1-linux.tar.zst"
-
-[tools."http:lean"."platforms.macos-arm64"]
-checksum = "sha256:65f22a4f047738ec742667b3247e836a86ebf06eabc12655c3dee00637e37866"
-url = "https://github.com/leanprover/lean4/releases/download/v4.34.1/lean-4.34.1-darwin_aarch64.tar.zst"
-
-[tools."http:lean"."platforms.macos-x64"]
-checksum = "sha256:c2fee70250444e46c1106a27bddfef948d1e563eef431eaac05bb946b2f73d3a"
-url = "https://github.com/leanprover/lean4/releases/download/v4.34.1/lean-4.34.1-darwin.tar.zst"
-
-[tools."http:lean"."platforms.macos-x64-baseline"]
-checksum = "sha256:c2fee70250444e46c1106a27bddfef948d1e563eef431eaac05bb946b2f73d3a"
-url = "https://github.com/leanprover/lean4/releases/download/v4.34.1/lean-4.34.1-darwin.tar.zst"
-
-[tools."http:lean"."platforms.windows-x64"]
-checksum = "sha256:667394ecf6708a228221eb4919c0bdb419966b7408bcf3089a9096a6f4ae62c9"
-url = "https://github.com/leanprover/lean4/releases/download/v4.34.1/lean-4.34.1-windows.tar.zst"
-
-[tools."http:lean"."platforms.windows-x64-baseline"]
-checksum = "sha256:667394ecf6708a228221eb4919c0bdb419966b7408bcf3089a9096a6f4ae62c9"
-url = "https://github.com/leanprover/lean4/releases/download/v4.34.1/lean-4.34.1-windows.tar.zst"
 
 [[tools.lychee]]
 version = "0.24.2"

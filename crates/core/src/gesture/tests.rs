@@ -15,6 +15,8 @@ enum Event {
     Abandon,
     Complete,
     Finish,
+    Deliver,
+    Save,
 }
 
 impl Event {
@@ -30,6 +32,8 @@ impl Event {
         Self::Abandon,
         Self::Complete,
         Self::Finish,
+        Self::Deliver,
+        Self::Save,
     ];
 
     fn apply(self, gesture: &mut Gesture, now: Moment) {
@@ -61,6 +65,12 @@ impl Event {
             Self::Finish => {
                 gesture.finish();
             },
+            Self::Deliver => {
+                gesture.deliver();
+            },
+            Self::Save => {
+                gesture.save();
+            },
         }
     }
 }
@@ -78,7 +88,7 @@ fn capture_start(gesture: &Gesture) -> Option<Moment> {
 
 proptest! {
     #[test]
-    fn arbitrary_event_sequences_keep_capture_bounded_and_a_saving_show_saved(
+    fn arbitrary_event_sequences_never_restart_or_overrun_capture_and_keep_a_saving_show(
         events in prop::collection::vec(
             (prop::sample::select(Event::ALL), 0_u32..600_000),
             0..128,
@@ -89,9 +99,13 @@ proptest! {
         for (event, elapsed) in events {
             now = now.after(nanos(Duration::from_millis(u64::from(elapsed))));
             let saving = gesture.phase == Phase::Saving;
+            let before = capture_start(&gesture);
             event.apply(&mut gesture, now);
 
             gesture.tick(now);
+            if let (Some(before), Some(after)) = (before, capture_start(&gesture)) {
+                prop_assert_eq!(after, before, "{:?} restarted the recording clock", event);
+            }
             if saving && !matches!(event, Event::Abandon | Event::Complete) {
                 prop_assert_eq!(
                     gesture.phase,

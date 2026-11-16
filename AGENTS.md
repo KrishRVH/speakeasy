@@ -33,9 +33,6 @@ project's profile; dependency licenses are checked only where packaging must cit
   (`speakeasy-platform`) native adapters, including screen capture and the overlay window;
   `crates/app` (`speakeasy`) GPUI, the session owner, audio capture, the local worker, and Show
   recording and publishing. Only platform may use unsafe code.
-- `formal/` restates the session machine and the service lifecycle in Lean under the Lean standards;
-  change each together with its model. The [formal model](docs/architecture.md#formal-model) lists
-  the proofs, the conformance check, and its bounds.
 - Project-owned Rust contains no source comments. Keep native safety and thread-lifetime contracts
   in [native contracts](docs/native-contracts.md); vendored code follows its upstream policy.
 - Give session state one owner. Move cross-thread work over channels; callbacks cannot stop a newer

@@ -3,17 +3,11 @@ mod canonical;
 mod invariants;
 mod oracle;
 
-use std::{
-    collections::HashMap,
-    env,
-    fs::File,
-    io::{self, BufWriter, Write},
-    mem, thread,
-};
+use std::{collections::HashMap, env, mem, thread};
 
 use self::{
     alphabet::{CONFIGS, Step, steps},
-    canonical::{Fnv, key},
+    canonical::key,
     oracle::{Abstract, Oracle},
 };
 use super::{Event, Flow, Machine, Now, RecognitionMode, SessionId};
@@ -64,39 +58,31 @@ struct Broken {
     reason: String,
 }
 
-struct Report {
-    states: usize,
-    transitions: u64,
-    bounded: u64,
-    digests: Vec<u64>,
-}
-
 struct Search {
     index: HashMap<u128, usize>,
     parents: Vec<Option<(usize, String)>>,
     next: Vec<(usize, Explored)>,
-    report: Report,
+    transitions: u64,
+    bounded: u64,
 }
 
 impl Search {
-    fn reach(&mut self, source: usize, label: &str, reached: Reached) -> String {
-        let (explored, found) = match reached {
-            Reached::Stopped => return "stopped".to_owned(),
-            Reached::Failed(_) => return "failed".to_owned(),
-            Reached::State(explored, found) => (explored, found),
+    fn reach(&mut self, source: usize, label: String, reached: Reached) {
+        self.transitions = self.transitions.saturating_add(1);
+        let Reached::State(explored, found) = reached else {
+            return;
         };
-        if let Some(&known) = self.index.get(&found) {
-            return known.to_string();
+        if self.index.contains_key(&found) {
+            return;
         }
         if explored.machine.retiring.len() > RETIRING {
-            self.report.bounded = self.report.bounded.saturating_add(1);
-            return "bounded".to_owned();
+            self.bounded = self.bounded.saturating_add(1);
+            return;
         }
         let state = self.parents.len();
         self.index.insert(found, state);
-        self.parents.push(Some((source, label.to_owned())));
+        self.parents.push(Some((source, label)));
         self.next.push((state, *explored));
-        state.to_string()
     }
 }
 
@@ -229,7 +215,7 @@ fn path(parents: &[Option<(usize, String)>], mut state: usize) -> Vec<String> {
     path
 }
 
-fn explore(depth_limit: Option<usize>) -> Report {
+fn explore(depth_limit: Option<usize>) {
     let mut start = Oracle::new(Vec::new(), Vec::new());
     let machine = Machine::new(TIMING, CONFIGS[0], false, (), None, &mut start);
     let initial = Explored {
@@ -241,12 +227,8 @@ fn explore(depth_limit: Option<usize>) -> Report {
         index: HashMap::from([(initial.key(), 0)]),
         parents: vec![None],
         next: Vec::new(),
-        report: Report {
-            states: 1,
-            transitions: 0,
-            bounded: 0,
-            digests: Vec::new(),
-        },
+        transitions: 0,
+        bounded: 0,
     };
     let mut level = vec![(0_usize, initial)];
     let mut depth = 0_usize;
@@ -263,41 +245,19 @@ fn explore(depth_limit: Option<usize>) -> Report {
                     broken.reason, broken.effects
                 )
             });
-            let mut digest = Fnv::default();
             for successor in successors {
-                let reached = search.reach(*source, &successor.label, successor.reached);
-                digest.line(&format!(
-                    "{} [{}] -> {reached}",
-                    successor.label, successor.effects
-                ));
-                search.report.transitions = search.report.transitions.saturating_add(1);
+                search.reach(*source, successor.label, successor.reached);
             }
-            search.report.digests.push(digest.finish());
         }
-        search.report.states = search.parents.len();
         eprintln!(
-            "depth {depth}: {} states, {} transitions, {} next",
-            search.report.states,
-            search.report.transitions,
+            "depth {depth}: {} states, {} transitions, {} bounded, {} next",
+            search.parents.len(),
+            search.transitions,
+            search.bounded,
             search.next.len()
         );
         level = mem::take(&mut search.next);
         depth = depth.saturating_add(1);
-    }
-    search.report
-}
-
-impl Report {
-    fn write(&self, out: &mut impl Write) -> io::Result<()> {
-        writeln!(
-            out,
-            "states {} transitions {} bounded {}",
-            self.states, self.transitions, self.bounded
-        )?;
-        for (state, digest) in self.digests.iter().enumerate() {
-            writeln!(out, "{state} {digest:016x}")?;
-        }
-        out.flush()
     }
 }
 
@@ -312,11 +272,5 @@ fn every_ordering_of_events_keeps_the_machine_sound() {
         ),
         Err(_) => Some(SMOKE_DEPTH),
     };
-    let report = explore(depth);
-    if let Some(path) = env::var_os("SPEAKEASY_EXPLORE_REPORT") {
-        let file = File::create(path).expect("The report file opens");
-        report
-            .write(&mut BufWriter::new(file))
-            .expect("The report is written");
-    }
+    explore(depth);
 }

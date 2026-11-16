@@ -34,7 +34,9 @@ module unless a test file is named.
 
 - **Gestures and deadlines**: [core/src/gesture.rs](../crates/core/src/gesture.rs) turns timestamped
   shortcut transitions into actions and deadlines, and decides what each cancel or interruption does
-  to a Show. [runtime/tests/dictation.rs](../crates/app/src/runtime/tests/dictation.rs) and
+  to a Show. [gesture/tests.rs](../crates/core/src/gesture/tests.rs) runs generated event sequences
+  and checks that no step restarts a recording's clock or lets it outlast the limit.
+  [runtime/tests/dictation.rs](../crates/app/src/runtime/tests/dictation.rs) and
   [shows.rs](../crates/app/src/runtime/tests/shows.rs) drive the owner on paused Tokio time with
   production deadlines.
 - **Session machine**: [core/src/machine.rs](../crates/core/src/machine.rs), with
@@ -43,15 +45,13 @@ module unless a test file is named.
   [outcome.rs](../crates/core/src/machine/outcome.rs), makes every session decision. `Machine::step`
   takes one event at one moment and reaches the world only through an `Env`'s queries and effects. A
   `Payload` names what the machine carries without reading it: the app's audio, text, and permits,
-  or nothing in the explorer and the Lean model.
-  [session/tests.rs](../crates/core/src/machine/session/tests.rs) and
+  or nothing in the explorer. [session/tests.rs](../crates/core/src/machine/session/tests.rs) and
   [recognition/tests.rs](../crates/core/src/machine/recognition/tests.rs) check a session's stages
   and early recognition, and [machine/tests.rs](../crates/core/src/machine/tests.rs) which saved
   Show is remembered; [explore.rs](../crates/core/src/machine/explore.rs) tries every ordering of
-  events and answers within the formal model's bounds, checking
-  [invariants.rs](../crates/core/src/machine/explore/invariants.rs) at each state and transition.
-  The [formal model](#formal-model) proves the machine's contracts and checks that the Rust and Lean
-  machines agree.
+  events and answers within the bounds [exhaustive exploration](#exhaustive-exploration) lists,
+  checking [invariants.rs](../crates/core/src/machine/explore/invariants.rs) at each state and
+  transition.
 - **Session owner**: [runtime.rs](../crates/app/src/runtime.rs) and
   [runtime/owner.rs](../crates/app/src/runtime/owner.rs) interpret the machine: the owner answers
   its queries and performs its effects through the [ports.rs](../crates/app/src/runtime/ports.rs)
@@ -280,7 +280,8 @@ module unless a test file is named.
   ordered writes and edits made during one;
   [lifecycle/tests.rs](../crates/core/src/lifecycle/tests.rs) checks terminal Quit and Pause or a
   resume check around Save, and [lifecycle/explore.rs](../crates/core/src/lifecycle/explore.rs)
-  tries every ordering of lifecycle operations, as the [formal model](#formal-model) describes.
+  tries every ordering of lifecycle operations, as [exhaustive exploration](#exhaustive-exploration)
+  describes.
 - **Start at login**: [windows/login.rs](../crates/platform/src/windows/login.rs) writes or deletes
   the Windows Run value and reads Windows' Startup apps approval of it;
   [main.rs](../crates/app/src/main.rs) decides which launches touch it, and
@@ -886,71 +887,50 @@ server emits final results before its commit acknowledgement. Malformed or inter
 back to the same model's whole-recording request. HTTP and WebSocket requests share listener checks,
 language adaptation, and hint snapshots; neither logs private engine responses.
 
-## Formal model
+## Exhaustive exploration
 
-[formal/](../formal) is a Lean project that restates `speakeasy_core::machine` with every payload
-erased, and `speakeasy_core::lifecycle` with owners and restarts reduced to the numbers naming them.
-[Spec/Machine.lean](../formal/Speakeasy/Spec/Machine.lean) mirrors the Rust machine one operation at
-a time, and `Run.step` mirrors `Machine::step`; a scripted environment answers every query, so a
-theorem quantified over the script covers every answer the owner can give.
+The session machine and the service lifecycle are pure, so test-only explorers try every ordering of
+events against them and check each state and transition.
 
-- [Current.lean](../formal/Speakeasy/Current.lean) proves `Run.step_current`: when the live session
-  is the latest and owns its recognition, every event and every answer keeps it so.
-  `Run.played_current` carries that from the start through every sequence of events, so the theorems
-  below that assume it hold in every reachable state.
-- [Safety.lean](../formal/Speakeasy/Safety.lean) proves that handling a microphone or screen event
-  for any other session changes nothing, and that a transcript for one only frees the worker; a
-  failed one may also reload the model. A delivery result while no session awaits one, a cleanup
-  result for a session that is not retiring, and a retirement report for a recorder that is not
-  retiring change nothing. After every step the app survives, other apps' cues are held exactly
-  while a session runs with sounds on. Cleanup's policy keeps a Show's bundle only when it finished.
-- [Gesture.lean](../formal/Speakeasy/Gesture.lean) proves hold-to-talk, double-tap hands-free, and
-  Escape leaving a Show alone while its key is up. A tick at the limit finishes any recording, and
-  no gesture step restarts a recording's clock, so the limit counts from the first press.
-- [Lifecycle.lean](../formal/Speakeasy/Lifecycle.lean) proves that every lifecycle operation except
-  retirement keeps the owners it holds, and starting never replaces them. A check runs for the epoch
-  `validate` returns. Quitting is final, and retirement applies the restart queued last at most
-  once. Right after a pause, unless the app is quitting, no save enables dictation and no settings
-  check completes; only a resume, a queued restart, or a fresh start clears the pause flag.
+[machine/explore.rs](../crates/core/src/machine/explore.rs) offers, in each state, every event the
+owner can deliver there: input, control commands, presets, settings, and the microphone, screen,
+worker, delivery, and cleanup results the state admits.
+[oracle.rs](../crates/core/src/machine/explore/oracle.rs) answers each query every way it admits.
+The search runs breadth-first and merges states by the key
+[canonical.rs](../crates/core/src/machine/explore/canonical.rs) builds. The key ranks session ids by
+age, measures moments back from the clock up to the limit, reduces an outcome to the phase it shows,
+and marks a ticket for an ended session stale. At every state and transition,
+[invariants.rs](../crates/core/src/machine/explore/invariants.rs) checks that:
 
-The proofs are constructive: every theorem depends on `propext` and `Quot.sound` at most.
-`mise run lean:standards:check` runs the Lean standards gate: the audit rejects classical choice,
-unfinished proofs, and undocumented declarations, three independent kernels recheck every
-declaration, and an offline rebuild must reproduce every output. Plausible checks the invariant on
-generated event sequences in `lake test`.
+- the live session is the latest, and an event for an earlier session never moves it;
+- the microphone, screen, worker, and cleanups belong to sessions that exist;
+- other apps' cues are held exactly while a session runs with sounds on;
+- deliveries never overlap, and a Show or practice never inserts text;
+- an earlier Show never replaces a later remembered one.
 
-A proof covers the model, so conformance ties the model to the code. The Rust explorer and
-[SpeakeasyMain.lean](../formal/SpeakeasyMain.lean) list the same events in the same order: input,
-control commands, presets, settings, and the microphone, screen, worker, delivery, and cleanup
-results each state admits, with every answer each query admits. Each explores breadth-first and
-numbers states by a canonical key. The key ranks session ids by age, measures moments back from the
-clock up to the limit, reduces an outcome to the phase it shows, and marks a ticket for an ended
-session stale. Each expanded state yields an FNV-1a digest of its transitions, effects, and
-successors. `mise run lean:conform` explores both to a fixed point and requires byte-identical
-reports: 1,430,956 states and 127,475,062 transitions. Rust keys states by a 128-bit hash and Lean
-by the canonical text itself, so an identical report also rules out a hash collision.
-
-The lifecycle explorers try every operation from every state, with every answer to its queries, and
-print each state and transition with whether it advanced the epoch; the reports must match line for
-line: 13 states and 143 transitions. They erase owner and restart tokens and compare epochs only by
-equality, as the lifecycle does, so the search covers every ordering of lifecycle operations without
-bounds, short of 2^64 settings changes wrapping an epoch back to a stale check's.
-
-The model trusts the owner where an event names no session. The owner keeps one delivery at a time
-and reports a retired session's result as `abandoned`, so each `delivered` result belongs to the
-session awaiting it. The worker answers each transcription with the detail it was asked for, so a
-Show never receives dictation text.
+A failure prints the path of events that reached it. `mise run rust:test` explores five events deep,
+and `mise run rust:explore` explores to a fixed point: 1,430,956 states and 127,475,062 transitions
+in about a minute.
 
 The explored space has bounds. Timing scales to a one-tick tap, two-tick double tap, and three-tick
 limit. Three settings cover sounds on and off, each recognition mode, and GPU probing. A state with
 more than two sessions retiring is counted, not expanded. The explorer offers each event only where
 the owner can deliver it: a checkpoint loss only to a Show, and a model load only while one runs.
-GPUI views, the ports, and native adapters stay outside the model; the owner's tests cover them.
 
-`mise run standards:check` runs the Lean gate and `lean:conform`, and each skips while its sources
-are unchanged; `mise run --force` reruns one. `mise run rust:test` explores the whole lifecycle and
-the session machine five events deep, and `SPEAKEASY_EXPLORE_DEPTH`, a depth or `all`, takes the
-session machine further.
+The machine trusts the owner where an event names no session. The owner keeps one delivery at a time
+and reports a retired session's result as `abandoned`, so each `delivered` result belongs to the
+session awaiting it. The worker picks the transcript's kind from the request, so a Show never
+receives dictation text.
+
+[lifecycle/explore.rs](../crates/core/src/lifecycle/explore.rs) tries every lifecycle operation from
+every state with every answer to its queries. It erases owner and restart tokens and compares epochs
+only by equality, as the lifecycle does, so its 13 states cover every ordering without bounds, short
+of 2^64 settings changes wrapping an epoch back to a stale check's. Every operation except
+retirement keeps the owners the lifecycle holds and never starts owners over others. Quitting is
+final, retirement applies the restart queued last, and right after a pause no save enables
+dictation.
+
+GPUI views, the ports, and native adapters stay outside the explorers; the owner's tests cover them.
 
 ## Verification
 

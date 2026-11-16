@@ -36,8 +36,6 @@ node_modules/
 .venv/
 __pycache__/
 /target/
-# Lake dependency checkouts and build output
-/formal/.lake/
 
 # Native build output outside target/
 *.dll

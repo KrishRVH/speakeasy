@@ -1,4 +1,4 @@
-use std::{collections::HashMap, env, fmt::Write as _, fs};
+use std::collections::HashMap;
 
 use super::{ConfigEpoch, Lifecycle, State};
 
@@ -69,26 +69,6 @@ fn key(lifecycle: &Tokens) -> String {
         State::Quitting(Some(_)) => "quitting(owners)",
     };
     format!("{state} held={}", lifecycle.held)
-}
-
-fn queries(lifecycle: &Tokens) -> String {
-    let previous = ConfigEpoch(lifecycle.epoch.0.wrapping_sub(1));
-    let answers = [
-        lifecycle.is_running(|_| false),
-        lifecycle.is_running(|_| true),
-        lifecycle.save_may_enable(lifecycle.epoch, |_| false),
-        lifecycle.save_may_enable(lifecycle.epoch, |_| true),
-        lifecycle.save_may_enable(previous, |_| false),
-        lifecycle.save_may_enable(previous, |_| true),
-        lifecycle.active().is_some(),
-        lifecycle.retiring().is_some(),
-        lifecycle.is_pausing(),
-        lifecycle.is_quitting(),
-    ];
-    answers
-        .iter()
-        .map(|answer| if *answer { '1' } else { '0' })
-        .collect()
 }
 
 fn started<E>(result: Result<bool, E>) -> String {
@@ -167,11 +147,14 @@ fn check(before: &Tokens, event: &str, after: &Tokens, result: &str) {
         );
     }
     if event == "pause" && !before.is_quitting() {
-        assert_eq!(
-            queries(after).get(2..6),
-            Some("0000"),
-            "a save after Pause would enable dictation"
-        );
+        for saved in [before.epoch, after.epoch] {
+            for live in [false, true] {
+                assert!(
+                    !after.save_may_enable(saved, |_| live),
+                    "a save after Pause would enable dictation"
+                );
+            }
+        }
     }
 }
 
@@ -179,41 +162,18 @@ fn check(before: &Tokens, event: &str, after: &Tokens, result: &str) {
 fn every_ordering_of_lifecycle_events_keeps_owners_until_they_retire() {
     let mut states = vec![Tokens::default()];
     let mut index = HashMap::from([(key(&states[0]), 0_usize)]);
-    let mut report = String::new();
-    let mut transitions = 0_usize;
     let mut expanded = 0;
     while let Some(lifecycle) = states.get(expanded).map(copy) {
-        writeln!(
-            report,
-            "{expanded} {} {}",
-            key(&lifecycle),
-            queries(&lifecycle)
-        )
-        .unwrap();
         for (event, apply) in EVENTS {
             let mut after = copy(&lifecycle);
             let result = apply(&mut after);
             check(&lifecycle, event, &after, &result);
-            let epoch = if after.epoch == lifecycle.epoch {
-                "kept"
-            } else {
-                "advanced"
-            };
             let next = states.len();
-            let successor = *index.entry(key(&after)).or_insert(next);
-            if successor == next {
+            if *index.entry(key(&after)).or_insert(next) == next {
                 states.push(after);
             }
-            transitions += 1;
-            writeln!(report, "  {event} {result} {successor} {epoch}").unwrap();
         }
         expanded += 1;
     }
-    let report = format!(
-        "lifecycle states {} transitions {transitions}\n{report}",
-        states.len()
-    );
-    if let Ok(path) = env::var("SPEAKEASY_LIFECYCLE_REPORT") {
-        fs::write(path, report).unwrap();
-    }
+    eprintln!("{} lifecycle states", states.len());
 }

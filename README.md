@@ -809,10 +809,10 @@ formatters and autofixes, and `mise tasks` lists the focused checks.
 Default tests drive the real session owner with mocked microphone, inference, and insertion, and a
 paused clock exercises gesture deadlines and the five-minute cap.
 [AGENTS.md](AGENTS.md#tests-and-review) sets what they may touch. Every session decision lives in
-one state machine, and every pause, restart, and quit decision in the service lifecycle, each with a
-Lean model. The gate proves their contracts and explores every ordering of events through the Rust
-and Lean versions, which must agree on every state: the whole lifecycle, and the session machine
-within scaled bounds that the [formal model](docs/architecture.md#formal-model) lists. See the
+one state machine, and every pause, restart, and quit decision in the service lifecycle. Tests try
+every ordering of events against both within the bounds
+[exhaustive exploration](docs/architecture.md#exhaustive-exploration) lists, and
+`mise run rust:explore` runs the full session search. See the
 [architecture change and test map](docs/architecture.md#change-and-test-map), and
 [verification](docs/architecture.md#verification) for opt-in tests and their fixtures.
 

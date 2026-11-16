@@ -8,27 +8,6 @@ use crate::gesture::Moment;
 
 pub(super) const STALE: SessionId = SessionId::new(0);
 
-#[derive(Clone, Copy)]
-pub(super) struct Fnv(u64);
-
-impl Default for Fnv {
-    fn default() -> Self {
-        Self(0xCBF2_9CE4_8422_2325)
-    }
-}
-
-impl Fnv {
-    pub(super) fn line(&mut self, line: &str) {
-        for byte in line.bytes().chain(*b"\n") {
-            self.0 = (self.0 ^ u64::from(byte)).wrapping_mul(0x0100_0000_01B3);
-        }
-    }
-
-    pub(super) const fn finish(self) -> u64 {
-        self.0
-    }
-}
-
 pub(super) fn ids(machine: &Machine<Abstract>) -> Vec<SessionId> {
     ids_in(&format!("{:?}", shown(machine)))
 }
