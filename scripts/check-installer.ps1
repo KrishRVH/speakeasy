@@ -1,10 +1,10 @@
-# Disposable CI runners only: install, update, and uninstall; demo opens no devices.
+# CI runners without Speakeasy state only: install, update, and uninstall; demo opens no devices.
 param(
     [Parameter(Mandatory = $true)][string]$Installer
 )
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true' -or !$env:RUNNER_TEMP) {
-    throw 'Installer acceptance requires a disposable GitHub Actions runner.'
+    throw 'Installer acceptance runs only on a GitHub Actions runner.'
 }
 $Installer = (Resolve-Path $Installer).Path
 $work = Join-Path $env:RUNNER_TEMP ('speakeasy-installer-' + [guid]::NewGuid())
@@ -230,7 +230,7 @@ try {
 } finally {
     if (Test-Path (Join-Path $app 'unins000.exe')) { Invoke-Uninstall }
     Remove-ItemProperty -Path $runKey -Name 'Speakeasy' -ErrorAction SilentlyContinue
-    # The guard admitted only a fresh data directory on a disposable runner; every fixture is ours.
+    # The guard admitted only a fresh data directory and no sign-in entry; every fixture is ours.
     Remove-Item -LiteralPath $data -Force -Recurse
     Remove-Item -LiteralPath $work -Force -Recurse
 }

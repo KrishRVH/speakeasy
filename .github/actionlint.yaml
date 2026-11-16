@@ -1,0 +1,6 @@
+# Labels of the project's self-hosted runners: the Windows PC and the Mac mini.
+self-hosted-runner:
+  labels:
+    - hp
+    - speakeasy
+    - speakeasy-mac-mini

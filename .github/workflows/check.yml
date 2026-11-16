@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       installer:
-        description: Build and test the Windows installer on the disposable runner
+        description: Build and test the Windows installer on the Windows runner
         type: boolean
         default: false
       mac_updates:
@@ -15,13 +15,16 @@ on:
         type: boolean
         default: false
       screen:
-        description: With movie, explicitly opt into owned-window Mac screen capture without saving pixels
+        description:
+          With movie, explicitly opt into owned-window Mac screen capture without saving pixels
         type: boolean
         default: false
       movie_fixture_run:
-        description: With movie, reuse the synthetic Windows movies of the run with this ID for a focused Mac decoder check
+        description:
+          With movie, reuse the synthetic Windows movies of the run with this ID for a focused Mac
+          decoder check
         type: string
-        default: ''
+        default: ""
   push:
     branches: [main]
 
@@ -33,15 +36,21 @@ concurrency:
   cancel-in-progress: true
 
 # The local gate runs on Linux, where the app cannot build for macOS or for Windows' MSVC target
-# without their SDKs, so its code for those systems compiles and runs here.
+# without their SDKs, so its code for those systems compiles and runs here, on the project's
+# self-hosted Windows PC and Mac mini.
 jobs:
   native:
+    name: native (${{ matrix.system }})
     if: ${{ !inputs.mac_updates && (!inputs.movie || !inputs.movie_fixture_run) }}
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2025, macos-15]
-    runs-on: ${{ matrix.os }}
+        include:
+          - system: windows
+            runner: [self-hosted, Windows, X64, hp, speakeasy]
+          - system: macos
+            runner: [speakeasy-mac-mini]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
@@ -50,7 +59,7 @@ jobs:
           install_args: rust github:nextest-rs/nextest
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          key: check-${{ matrix.os }}
+          key: check-${{ matrix.system }}
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - name: Check macOS movie playback
         if: runner.os == 'macOS' && inputs.movie
@@ -89,7 +98,7 @@ jobs:
 
   mac-updates:
     if: ${{ inputs.mac_updates }}
-    runs-on: macos-15
+    runs-on: speakeasy-mac-mini
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
@@ -98,16 +107,18 @@ jobs:
           install_args: rust
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          key: check-macos-15
+          key: check-macos
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - name: Check owned Mac quit and update cleanup
         timeout-minutes: 10
         run: bash scripts/check-update-macos.sh
 
   movie-colors:
-    if: ${{ always() && inputs.movie && (needs.native.result == 'success' || inputs.movie_fixture_run != '') }}
+    if:
+      ${{ always() && inputs.movie && (needs.native.result == 'success' || inputs.movie_fixture_run
+      != '') }}
     needs: native
-    runs-on: macos-15
+    runs-on: speakeasy-mac-mini
     permissions:
       contents: read
       actions: read
@@ -119,7 +130,7 @@ jobs:
           install_args: rust
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          key: check-macos-15
+          key: check-macos
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: windows-movie

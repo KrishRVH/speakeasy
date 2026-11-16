@@ -261,7 +261,8 @@ module unless a test file is named.
   cancellation, and cache/file lifetime. Owned-window
   [shutdown tests](../crates/app/src/shell/shutdown/native_tests.rs) hold an accepted Show write to
   check graceful handoff and forced teardown. `scripts/check-installer.ps1` exercises installation
-  on disposable runners. [Build and verify](../README.md#build-and-verify) owns signing setup.
+  on CI runners without Speakeasy state. [Build and verify](../README.md#build-and-verify) owns
+  signing setup.
 - **Pause, reconfigure, quit, and saves**: [shell.rs](../crates/app/src/shell.rs),
   [services.rs](../crates/app/src/shell/services.rs),
   [core/src/lifecycle.rs](../crates/core/src/lifecycle.rs),

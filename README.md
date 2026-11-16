@@ -857,16 +857,17 @@ within scaled bounds that the [formal model](docs/architecture.md#formal-model) 
   embedded agent skill, and checks that a missing frame produces findings and a failure status. The
   release workflow runs it on the portable packages and Mac DMG before upload.
   `scripts/check-installer.ps1 -Installer <setup.exe>` tests both running executables, parent wait
-  and timeout, staged-file retention, upgrade/relaunch, and uninstall on disposable GitHub Actions
-  Windows runners. It uses owned demo windows without devices and preserves settings, model files,
-  edited Shows, and other copies' sign-in entries. Release packaging runs it, and the Check
-  workflow's optional `installer` input runs it with the current packaged build.
+  and timeout, staged-file retention, upgrade/relaunch, and uninstall on a GitHub Actions Windows
+  runner. It refuses a runner that already has Speakeasy data or a sign-in entry, and removes what
+  it creates. It uses owned demo windows without devices and preserves settings, model files, edited
+  Shows, and other copies' sign-in entries. Release packaging runs it, and the Check workflow's
+  optional `installer` input runs it with the current packaged build.
 - On macOS, `bash scripts/check-update-macos.sh` builds the opt-in `native-acceptance` feature and
   opens owned demo windows. It holds an accepted Show write during external, nested, repeated, and
   app-owned quit requests, then checks rendering callbacks, configuration preservation, and instance
   release. It uses no microphone, capture, input injection, or clipboard. The Check workflow's
-  `mac_updates` input runs this on a disposable Mac runner. Default builds and release packages omit
-  the acceptance entry points.
+  `mac_updates` input runs this on the self-hosted Mac mini. Default builds and release packages
+  omit the acceptance entry points.
 - `scripts/check-demo-windows.ps1 -Executable <speakeasy.exe>` checks that the demo pill stays
   non-activating and passes clicks through, and that closing Shows keeps Settings open. It also
   checks Settings through Windows UI Automation with synthetic Unicode input: roles, selection,
@@ -924,7 +925,7 @@ within scaled bounds that the [formal model](docs/architecture.md#formal-model) 
   synthetic window and an overlapping excluded window. It checks their pixels in memory,
   presentation timestamps, and stop/restart; it writes no pixels and accesses no microphone,
   clipboard, or input hooks. Set both `movie=true` and `screen=true` in the Check workflow to run it
-  on the disposable Mac runner. Screen Recording permission is required.
+  on the self-hosted Mac mini. Screen Recording permission is required.
 - On Windows, set `SPEAKEASY_MOVIE_PROBE_DIRECTORY` to an empty artifact directory and run
   `cargo test --locked -p speakeasy-platform encode_synthetic_movie_fragments --release -- --ignored --test-threads=1`.
   It exercises the native movie adapter with generated pixels, checks motion and quiet-tail timing
