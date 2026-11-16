@@ -48,9 +48,10 @@ module unless a test file is named.
   [recognition/tests.rs](../crates/core/src/machine/recognition/tests.rs) check a session's stages
   and early recognition, and [machine/tests.rs](../crates/core/src/machine/tests.rs) which saved
   Show is remembered; [explore.rs](../crates/core/src/machine/explore.rs) tries every ordering of
-  events and answers, checking [invariants.rs](../crates/core/src/machine/explore/invariants.rs) at
-  each state and transition. The [formal model](#formal-model) proves the machine's contracts and
-  checks that the Rust and Lean machines agree.
+  events and answers within the formal model's bounds, checking
+  [invariants.rs](../crates/core/src/machine/explore/invariants.rs) at each state and transition.
+  The [formal model](#formal-model) proves the machine's contracts and checks that the Rust and Lean
+  machines agree.
 - **Session owner**: [runtime.rs](../crates/app/src/runtime.rs) and
   [runtime/owner.rs](../crates/app/src/runtime/owner.rs) interpret the machine: the owner answers
   its queries and performs its effects through the [ports.rs](../crates/app/src/runtime/ports.rs)
@@ -263,7 +264,7 @@ module unless a test file is named.
   on disposable runners. [Build and verify](../README.md#build-and-verify) owns signing setup.
 - **Pause, reconfigure, quit, and saves**: [shell.rs](../crates/app/src/shell.rs),
   [services.rs](../crates/app/src/shell/services.rs),
-  [lifecycle.rs](../crates/app/src/shell/lifecycle.rs),
+  [core/src/lifecycle.rs](../crates/core/src/lifecycle.rs),
   [shutdown.rs](../crates/app/src/shell/shutdown.rs), [save.rs](../crates/app/src/shell/save.rs),
   [window.rs](../crates/app/src/shell/window.rs), and [main.rs](../crates/app/src/main.rs). Mac
   native quit requests enter the same drain through GPUI's termination delegate. A pending request
@@ -275,8 +276,10 @@ module unless a test file is named.
   [Mac acceptance](../crates/app/src/shell/shutdown/mac_acceptance.rs) holds an accepted Show write
   across external, nested, repeated, and app-owned quit, checking foreground frames and instance
   release without devices or input. [save/tests.rs](../crates/app/src/shell/save/tests.rs) checks
-  ordered writes and edits made during one; lifecycle.rs's tests check terminal Quit and Pause or a
-  resume check around Save.
+  ordered writes and edits made during one;
+  [lifecycle/tests.rs](../crates/core/src/lifecycle/tests.rs) checks terminal Quit and Pause or a
+  resume check around Save, and [lifecycle/explore.rs](../crates/core/src/lifecycle/explore.rs)
+  tries every ordering of lifecycle operations, as the [formal model](#formal-model) describes.
 - **Start at login**: [windows/login.rs](../crates/platform/src/windows/login.rs) writes or deletes
   the Windows Run value and reads Windows' Startup apps approval of it;
   [main.rs](../crates/app/src/main.rs) decides which launches touch it, and
@@ -885,9 +888,10 @@ language adaptation, and hint snapshots; neither logs private engine responses.
 ## Formal model
 
 [formal/](../formal) is a Lean project that restates `speakeasy_core::machine` with every payload
-erased. [Spec/Machine.lean](../formal/Speakeasy/Spec/Machine.lean) mirrors the Rust machine one
-operation at a time, and `Run.step` mirrors `Machine::step`; a scripted environment answers every
-query, so a theorem quantified over the script covers every answer the owner can give.
+erased, and `speakeasy_core::lifecycle` with owners and restarts reduced to the numbers naming them.
+[Spec/Machine.lean](../formal/Speakeasy/Spec/Machine.lean) mirrors the Rust machine one operation at
+a time, and `Run.step` mirrors `Machine::step`; a scripted environment answers every query, so a
+theorem quantified over the script covers every answer the owner can give.
 
 - [Current.lean](../formal/Speakeasy/Current.lean) proves `Run.step_current`: when the live session
   is the latest and owns its recognition, every event and every answer keeps it so.
@@ -902,6 +906,11 @@ query, so a theorem quantified over the script covers every answer the owner can
 - [Gesture.lean](../formal/Speakeasy/Gesture.lean) proves hold-to-talk, double-tap hands-free, and
   Escape leaving a Show alone while its key is up. A tick at the limit finishes any recording, and
   no gesture step restarts a recording's clock, so the limit counts from the first press.
+- [Lifecycle.lean](../formal/Speakeasy/Lifecycle.lean) proves that every lifecycle operation except
+  retirement keeps the owners it holds, and starting never replaces them. A check runs for the epoch
+  `validate` returns. Quitting is final, and retirement applies the restart queued last at most
+  once. Right after a pause, unless the app is quitting, no save enables dictation and no settings
+  check completes; only a resume, a queued restart, or a fresh start clears the pause flag.
 
 The proofs are constructive: every theorem depends on `propext` and `Quot.sound` at most.
 `mise run lean:standards:check` runs the Lean standards gate: the audit rejects classical choice,
@@ -920,6 +929,12 @@ successors. `mise run lean:conform` explores both to a fixed point and requires 
 reports: 1,430,956 states and 127,475,062 transitions. Rust keys states by a 128-bit hash and Lean
 by the canonical text itself, so an identical report also rules out a hash collision.
 
+The lifecycle explorers try every operation from every state, with every answer to its queries, and
+print each state and transition with whether it advanced the epoch; the reports must match line for
+line: 13 states and 143 transitions. They erase owner and restart tokens and compare epochs only by
+equality, as the lifecycle does, so the search covers every ordering of lifecycle operations without
+bounds, short of 2^64 settings changes wrapping an epoch back to a stale check's.
+
 The model trusts the owner where an event names no session. The owner keeps one delivery at a time
 and reports a retired session's result as `abandoned`, so each `delivered` result belongs to the
 session awaiting it. The worker answers each transcription with the detail it was asked for, so a
@@ -932,8 +947,9 @@ the owner can deliver it: a checkpoint loss only to a Show, and a model load onl
 GPUI views, the ports, and native adapters stay outside the model; the owner's tests cover them.
 
 `mise run standards:check` runs the Lean gate and `lean:conform`, and each skips while its sources
-are unchanged; `mise run --force` reruns one. `mise run rust:test` explores five events deep, and
-`SPEAKEASY_EXPLORE_DEPTH`, a depth or `all`, takes it further.
+are unchanged; `mise run --force` reruns one. `mise run rust:test` explores the whole lifecycle and
+the session machine five events deep, and `SPEAKEASY_EXPLORE_DEPTH`, a depth or `all`, takes the
+session machine further.
 
 ## Verification
 

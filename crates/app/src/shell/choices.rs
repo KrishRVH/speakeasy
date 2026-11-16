@@ -1,6 +1,7 @@
 use gpui::{App, Task};
+use speakeasy_core::lifecycle::ConfigEpoch;
 
-use super::{Services, lifecycle::ConfigEpoch};
+use super::Services;
 use crate::{
     config::{Change, Config, ValidConfig},
     control::{Call, Command, Disposition, Reply, Status},

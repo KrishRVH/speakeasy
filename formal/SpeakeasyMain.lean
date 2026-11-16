@@ -1,5 +1,6 @@
 module
 
+import Speakeasy.Spec.Lifecycle
 import Speakeasy.Spec.Machine
 import Std.Data.HashMap.Raw
 
@@ -12,8 +13,9 @@ order, every answer the environment can give, the same effect text, and the same
 states. It prints one FNV-1a digest of each expanded state's transitions, so comparing its
 output with the Rust explorer's shows the two machines agree on every transition explored.
 
-The argument is the search depth. String formatting stays here, outside the constructive
-library.
+The argument is the search depth, or `lifecycle` to explore the service lifecycle model the
+way `crates/core/src/lifecycle/explore.rs` explores the Rust lifecycle, printing every state and
+transition. String formatting stays here, outside the constructive library.
 -/
 
 open Speakeasy
@@ -732,11 +734,146 @@ def explore : Nat → Search → List Explored → Search × Bool
 /-- The most levels an unbounded exploration may take before it reports a failure. -/
 def unbounded : Nat := 4096
 
+/-- The epoch a settings check runs for, or the current epoch when none runs. -/
+def checkingEpoch (lifecycle : Lifecycle) : UInt64 :=
+  match lifecycle.state with
+  | .validating epoch => epoch
+  | .disabled | .running _ | .stopping _ _ | .quitting _ => lifecycle.epoch
+
+/-- A token no owner or restart the lifecycle holds uses. -/
+def freshToken (lifecycle : Lifecycle) : Nat :=
+  match lifecycle.owners, lifecycle.pending with
+  | none, none => 1
+  | some owners, none => owners + 1
+  | none, some restart => restart + 1
+  | some owners, some restart => max owners restart + 1
+
+/-- The canonical text of a lifecycle state: its shape, whether a check is current, and whether
+dictation is held. Owner and restart tokens are erased, and epochs matter only by equality. -/
+def lifecycleKey (lifecycle : Lifecycle) : String :=
+  let state : String := match lifecycle.state with
+    | .disabled => "disabled"
+    | .validating epoch =>
+      if epoch == lifecycle.epoch then "validating(current)" else "validating(stale)"
+    | .running _ => "running"
+    | .stopping _ none => "stopping"
+    | .stopping _ (some _) => "stopping(pending)"
+    | .quitting none => "quitting"
+    | .quitting (some _) => "quitting(owners)"
+  s!"{state} held={lifecycle.held}"
+
+/-- The lifecycle's answer to every query, one digit each, with saves at the current epoch and
+the one before it. -/
+def lifecycleQueries (lifecycle : Lifecycle) : String :=
+  let previous : UInt64 := lifecycle.epoch - 1
+  let answers : List Bool :=
+    [lifecycle.isRunning false, lifecycle.isRunning true,
+      lifecycle.saveMayEnable lifecycle.epoch false, lifecycle.saveMayEnable lifecycle.epoch true,
+      lifecycle.saveMayEnable previous false, lifecycle.saveMayEnable previous true,
+      lifecycle.active.isSome, lifecycle.retiring.isSome, lifecycle.isPausing,
+      lifecycle.isQuitting]
+  String.join (answers.map (fun (answer : Bool) => if answer then "1" else "0"))
+
+/-- The text of a start's result. -/
+def startText : Option Bool → String
+  | some started => toString started
+  | none => "failed"
+
+/-- The lifecycle events both explorers try, in order, each with the text of its result. -/
+def lifecycleEvents : List (String × (Lifecycle → String × Lifecycle)) :=
+  [("reconfigure", fun (lifecycle : Lifecycle) =>
+      (toString lifecycle.reconfigure.1, lifecycle.reconfigure.2)),
+    ("validate", fun (lifecycle : Lifecycle) =>
+      let result : Option UInt64 × Lifecycle := lifecycle.validate
+      (match result.1 with
+        | some epoch => if epoch == result.2.epoch then "some" else "some(other)"
+        | none => "none",
+        result.2)),
+    ("validated(checking)", fun (lifecycle : Lifecycle) =>
+      let result : Bool × Lifecycle := lifecycle.validated (checkingEpoch lifecycle)
+      (toString result.1, result.2)),
+    ("validated(other)", fun (lifecycle : Lifecycle) =>
+      let result : Bool × Lifecycle := lifecycle.validated (checkingEpoch lifecycle + 1)
+      (toString result.1, result.2)),
+    ("start(launched)", fun (lifecycle : Lifecycle) =>
+      let result : Option Bool × Lifecycle := lifecycle.start (some (freshToken lifecycle))
+      (startText result.1, result.2)),
+    ("start(failed)", fun (lifecycle : Lifecycle) =>
+      let result : Option Bool × Lifecycle := lifecycle.start none
+      (startText result.1, result.2)),
+    ("queue", fun (lifecycle : Lifecycle) =>
+      let result : Bool × Lifecycle := lifecycle.queue (freshToken lifecycle)
+      (toString result.1, result.2)),
+    ("pause", fun (lifecycle : Lifecycle) => (toString lifecycle.pause.1, lifecycle.pause.2)),
+    ("start_fresh", fun (lifecycle : Lifecycle) => ("()", lifecycle.startFresh)),
+    ("quit", fun (lifecycle : Lifecycle) => (toString lifecycle.quit.1, lifecycle.quit.2)),
+    ("retired", fun (lifecycle : Lifecycle) =>
+      (if lifecycle.retired.1.isSome then "pending" else "none", lifecycle.retired.2))]
+
+/-- A lifecycle exploration: the states in the order found, their keys, and the report lines,
+latest first. -/
+structure LifecycleSearch where
+  /-- The states in the order found. -/
+  states : List Lifecycle
+  /-- Each state's key, in the same order. -/
+  keys : List String
+  /-- The report lines so far, latest first. -/
+  lines : List String
+  /-- The transitions explored. -/
+  transitions : Nat
+
+/-- The position of `key` in `keys`, counting from `start`. -/
+def position (key : String) : List String → Nat → Option Nat
+  | [], _ => none
+  | found :: rest, start => if found == key then some start else position key rest (start + 1)
+
+/-- Record one transition from a lifecycle state, numbering a successor not seen before, with
+whether it advanced the epoch. -/
+def lifecycleTransition (lifecycle : Lifecycle) (search : LifecycleSearch)
+    (event : String × (Lifecycle → String × Lifecycle)) : LifecycleSearch :=
+  let result : String × Lifecycle := event.2 lifecycle
+  let found : String := lifecycleKey result.2
+  let numbered : Nat × LifecycleSearch := match position found search.keys 0 with
+    | some successor => (successor, search)
+    | none =>
+      (search.keys.length,
+        { search with keys := search.keys ++ [found], states := search.states ++ [result.2] })
+  let epoch : String := if result.2.epoch == lifecycle.epoch then "kept" else "advanced"
+  { numbered.2 with
+    lines := s!"  {event.1} {result.1} {numbered.1} {epoch}" :: numbered.2.lines,
+    transitions := numbered.2.transitions + 1 }
+
+/-- Expand lifecycle states in the order found until none is left, or until `fuel` runs out;
+the flag says whether the exploration finished. -/
+def exploreLifecycle : Nat → Nat → LifecycleSearch → LifecycleSearch × Bool
+  | 0, _, search => (search, false)
+  | fuel + 1, expanded, search =>
+    match search.states[expanded]? with
+    | none => (search, true)
+    | some lifecycle =>
+      let header : String :=
+        s!"{expanded} {lifecycleKey lifecycle} {lifecycleQueries lifecycle}"
+      exploreLifecycle fuel (expanded + 1)
+        (lifecycleEvents.foldl (lifecycleTransition lifecycle)
+          { search with lines := header :: search.lines })
+
 public section
 
-/-- Explores to the depth given as the only argument, or everywhere for `all`, and prints the
-digests. -/
+/-- Explores the session machine to the depth given as the only argument, or everywhere for
+`all`, and prints the digests; `lifecycle` explores the service lifecycle and prints its report. -/
 def main (args : List String) : IO UInt32 := do
+  if args == ["lifecycle"] then
+    let (search, complete) := exploreLifecycle 1000 0
+      { states := [Lifecycle.initial], keys := [lifecycleKey Lifecycle.initial], lines := [],
+        transitions := 0 }
+    if !complete then
+      IO.eprintln "lifecycle exploration did not finish"
+      return 1
+    let stdout : IO.FS.Stream ← IO.getStdout
+    stdout.putStrLn s!"lifecycle states {search.states.length} transitions {search.transitions}"
+    for line in search.lines.reverse do
+      stdout.putStrLn line
+    return 0
   let depth : Option (Option Nat) := match args with
     | ["all"] => some none
     | [depth] => depth.toNat?.map some
@@ -761,7 +898,7 @@ def main (args : List String) : IO UInt32 := do
       state := state + 1
     pure 0
   | none =>
-    IO.eprintln "usage: speakeasy_model DEPTH|all"
+    IO.eprintln "usage: speakeasy_model DEPTH|all|lifecycle"
     pure 2
 
 end

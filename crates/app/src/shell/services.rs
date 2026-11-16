@@ -2,12 +2,14 @@ use std::path::PathBuf;
 
 use anyhow::{Context as _, anyhow};
 use gpui::{App, BorrowAppContext, Global, Task, WindowHandle};
-use speakeasy_core::machine::{ModelState, Phase};
+use speakeasy_core::{
+    lifecycle::{ConfigEpoch, Lifecycle},
+    machine::{ModelState, Phase},
+};
 use speakeasy_platform::{FocusReport, Input, InputMonitor, OwnedThread};
 use tokio::sync::watch;
 
 use super::{
-    lifecycle::{ConfigEpoch, Lifecycle},
     settings::Settings,
     window::{self, reveal},
 };

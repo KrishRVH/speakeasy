@@ -1,6 +1,5 @@
 mod choices;
 mod demo;
-mod lifecycle;
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 mod recovery;
 mod save;

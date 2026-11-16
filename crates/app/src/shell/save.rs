@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
 use async_channel::Receiver;
+use speakeasy_core::lifecycle::ConfigEpoch;
 use speakeasy_platform::OwnedThread;
 
-use super::lifecycle::ConfigEpoch;
 use crate::config::{Config, ValidConfig};
 
 pub(super) struct SavedConfig {

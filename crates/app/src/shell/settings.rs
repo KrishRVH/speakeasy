@@ -15,15 +15,13 @@ use std::{mem, path::PathBuf, sync::Arc, time::Duration};
 
 use async_channel::Receiver;
 use gpui::{App, BorrowAppContext, Context, ElementId, SharedString, Task, Window};
-use speakeasy_core::machine::ModelState;
+use speakeasy_core::{lifecycle::ConfigEpoch, machine::ModelState};
 use speakeasy_platform::{FileFilter, Permissions};
 use tokio::sync::watch;
 use updates::Update;
 
 use super::{
-    Services, demo,
-    lifecycle::ConfigEpoch,
-    request_quit,
+    Services, demo, request_quit,
     save::{SaveProgress, SaveQueue, SavedConfig},
     window::choose_file,
 };

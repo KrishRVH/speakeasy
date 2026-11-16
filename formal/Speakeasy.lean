@@ -2,6 +2,7 @@ module
 
 public import Speakeasy.Current
 public import Speakeasy.Gesture
+public import Speakeasy.Lifecycle
 public import Speakeasy.Safety
 
 /-!

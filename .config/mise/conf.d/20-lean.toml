@@ -87,13 +87,15 @@ depends = ["lean:fmt:check", "lean:lint", "lean:test", "lean:kernel", "lean:repr
 # A proof covers the Lean model; this check ties the model to the Rust machine by exploring both
 # to a fixed point. It reruns only after the machine, the model, or the toolchain changes.
 [tasks."lean:conform"]
-description = "Explore every state of the Rust and Lean session machines and require identical reports"
+description = "Explore every state of the Rust and Lean session machines and lifecycles and require identical reports"
 depends = ["lean:build"]
 sources = ["crates/core/Cargo.toml", "crates/core/src/**/*.rs", "Cargo.lock", "rust-toolchain.toml", "formal/*.lean", "formal/Speakeasy/**/*.lean", "formal/lakefile.toml", "formal/lake-manifest.json", "formal/lean-toolchain", ".config/mise/conf.d/20-lean.toml"]
 outputs = { auto = true }
 run = [
-  "mkdir -p artifacts/machine && rm -f artifacts/machine/rust.txt artifacts/machine/lean.txt",
-  "SPEAKEASY_EXPLORE_DEPTH=all SPEAKEASY_EXPLORE_REPORT=$PWD/artifacts/machine/rust.txt cargo test --locked --release -p speakeasy-core --lib machine::explore",
+  "mkdir -p artifacts/machine && rm -f artifacts/machine/rust.txt artifacts/machine/lean.txt artifacts/machine/lifecycle-rust.txt artifacts/machine/lifecycle-lean.txt",
+  "SPEAKEASY_EXPLORE_DEPTH=all SPEAKEASY_EXPLORE_REPORT=$PWD/artifacts/machine/rust.txt SPEAKEASY_LIFECYCLE_REPORT=$PWD/artifacts/machine/lifecycle-rust.txt cargo test --locked --release -p speakeasy-core --lib -- machine::explore lifecycle::explore",
   "formal/.lake/build/bin/speakeasy_model all > artifacts/machine/lean.txt",
+  "formal/.lake/build/bin/speakeasy_model lifecycle > artifacts/machine/lifecycle-lean.txt",
   "cmp artifacts/machine/rust.txt artifacts/machine/lean.txt",
+  "cmp artifacts/machine/lifecycle-rust.txt artifacts/machine/lifecycle-lean.txt",
 ]
