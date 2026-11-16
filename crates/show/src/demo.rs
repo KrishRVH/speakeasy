@@ -7,7 +7,7 @@ use tiny_skia::{
 
 use crate::{
     Action, Bundle, Ending, Error, Image, InkPoint, Layer, Layout, Moment, Narration, Pin, Point,
-    Recording, Rect, SAMPLE_INTERVAL, Size, Span, Stroke, Typeface, Window, Word, compose,
+    Recording, Rect, SAMPLE_INTERVAL, Size, Spaces, Span, Stroke, Typeface, Window, Word, compose,
     draw::{paint, rounded},
     select,
     signature::{Sample, Signature},
@@ -396,7 +396,7 @@ fn recording() -> Recording {
         ],
         narration: narration(),
         narration_lost: None,
-        spaces: crate::Spaces::default(),
+        spaces: Spaces::default(),
     }
 }
 
@@ -463,7 +463,7 @@ mod tests {
     use std::path::Path;
 
     use super::*;
-    use crate::typeface::tests::typeface;
+    use crate::{Manifest, Shape, typeface::tests::typeface};
 
     #[test]
     fn the_demo_tells_its_story_in_five_keyframes() {
@@ -494,14 +494,14 @@ Every keyframe is cropped to the area the user worked in; the timeline gives eac
         );
         let marks = &expected.marks;
         assert_eq!(marks.len(), 3);
-        assert_eq!(marks[0].shape, crate::Shape::Circle);
+        assert_eq!(marks[0].shape, Shape::Circle);
         assert!(
-            matches!(marks[1].shape, crate::Shape::Arrow { .. }),
+            matches!(marks[1].shape, Shape::Arrow { .. }),
             "{:?}",
             marks[1].shape
         );
         assert!(
-            matches!(marks[2].shape, crate::Shape::Pin { .. }),
+            matches!(marks[2].shape, Shape::Pin { .. }),
             "{:?}",
             marks[2].shape
         );
@@ -522,7 +522,7 @@ Every keyframe is cropped to the area the user worked in; the timeline gives eac
         assert_eq!(files[6].contents, summary.as_bytes());
         let sheet = Image::decode_png(&files[0].contents);
         assert!(sheet.width().max(sheet.height()) <= 1_600);
-        let manifest: crate::Manifest = crate::Manifest::parse(&files[7].contents).unwrap();
+        let manifest = Manifest::parse(&files[7].contents).unwrap();
         assert_eq!(manifest, expected);
     }
 }

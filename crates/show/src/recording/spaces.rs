@@ -23,8 +23,7 @@ pub struct Spaces {
 }
 
 impl Spaces {
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.strokes.is_empty() && self.pins.is_empty() && self.actions.is_empty()
     }
 
