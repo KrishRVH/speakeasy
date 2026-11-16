@@ -4,14 +4,17 @@ use std::{
 };
 
 use gpui::BackgroundExecutor;
-use speakeasy_core::gesture::RECORDING_LIMIT;
+use speakeasy_core::{
+    gesture::RECORDING_LIMIT,
+    machine::{ModelState, Phase},
+};
 use speakeasy_platform::{Display, Part};
 use speakeasy_show::{Mark, Moment, Point, Rect, Shape, Span};
 use tokio::sync::watch;
 
 use crate::{
     pill::COUNTDOWN,
-    runtime::{Meter, ModelState, Phase, Snapshot},
+    runtime::{Meter, Snapshot},
     show::Canvas,
 };
 

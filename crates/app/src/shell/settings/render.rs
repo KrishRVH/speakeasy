@@ -6,13 +6,13 @@ use gpui::{
     AnyElement, App, ClickEvent, Context, Div, KeyDownEvent, MouseDownEvent, SharedString,
     Stateful, Window, div, prelude::*, px, rgb,
 };
+use speakeasy_core::machine::ModelState;
 use speakeasy_platform::Permission;
 
 use super::{Action, Notice, Reset, Settings, is_demo, menu::Menu, navigation::Page, permissions};
 use crate::{
     controls::{Kit, Tone, Weight, facet, hollow, icon, popover},
     icons,
-    runtime::ModelState,
     setup::Progress,
     shell::Services,
     status::{Indicator, ServiceState},

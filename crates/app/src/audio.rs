@@ -22,7 +22,10 @@ use anyhow::{Context as _, anyhow, ensure};
 use async_channel::{Receiver, Sender};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rtrb::{Consumer, RingBuffer};
-use speakeasy_core::gesture::RECORDING_LIMIT;
+use speakeasy_core::{
+    gesture::RECORDING_LIMIT,
+    machine::{RecognitionMode, SessionId},
+};
 use speakeasy_platform::OwnedThread;
 
 #[cfg(test)]
@@ -41,7 +44,7 @@ use self::{
     stream::{CallbackState, build_stream, capture_failure, microphone_error, rate_and_channels},
 };
 use crate::{
-    runtime::ports::{CaptureEvent, Capturing, Listening, RecognitionMode, Sealed, SessionId},
+    runtime::ports::{CaptureEvent, Capturing, Listening, Sealed},
     show::AudioLog,
 };
 

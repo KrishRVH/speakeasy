@@ -1,11 +1,12 @@
 use std::{f64::consts::TAU, iter};
 
 use proptest::prelude::*;
+use speakeasy_core::machine::Cue;
 
 use super::*;
 use crate::{
     audio::{fixture::square_wave, stream::MAX_SAMPLE_RATE},
-    sounds::Cue,
+    sounds,
 };
 
 const RATE: u32 = 16_000;
@@ -208,12 +209,15 @@ fn a_voice_beneath_a_cue_still_counts() {
 #[test]
 fn the_cues_a_recording_hears_stay_out_of_the_voice_band_even_at_full_scale() {
     for cue in [Cue::Start, Cue::Show] {
-        let peak = decode(cue.pcm()).map(i16::unsigned_abs).max().unwrap();
+        let peak = decode(sounds::pcm(cue))
+            .map(i16::unsigned_abs)
+            .max()
+            .unwrap();
         for loudest in [327, 3276, 32_767] {
             for delay in [0, 48, 480, 912] {
                 let recording = encode(
                     iter::repeat_n(0, delay)
-                        .chain(decode(cue.pcm()).map(|sample| {
+                        .chain(decode(sounds::pcm(cue)).map(|sample| {
                             i16::try_from(i32::from(sample) * loudest / i32::from(peak)).unwrap()
                         }))
                         .chain(iter::repeat_n(0, 48_000)),
@@ -230,12 +234,15 @@ fn the_cues_a_recording_hears_stay_out_of_the_voice_band_even_at_full_scale() {
 #[test]
 fn a_recording_that_opens_on_a_sounding_cue_does_not_hear_it_as_speech() {
     for cue in [Cue::Start, Cue::Show] {
-        let peak = decode(cue.pcm()).map(i16::unsigned_abs).max().unwrap();
-        let opened_at = decode(cue.pcm())
+        let peak = decode(sounds::pcm(cue))
+            .map(i16::unsigned_abs)
+            .max()
+            .unwrap();
+        let opened_at = decode(sounds::pcm(cue))
             .position(|sample| sample.unsigned_abs() == peak)
             .unwrap();
         let recording = encode(
-            decode(cue.pcm())
+            decode(sounds::pcm(cue))
                 .skip(opened_at)
                 .map(|sample| sample / 10)
                 .chain(iter::repeat_n(0, 48_000)),

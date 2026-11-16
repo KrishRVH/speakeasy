@@ -1,12 +1,13 @@
 use std::{sync::PoisonError, time::SystemTime};
 
 use anyhow::ensure;
+use speakeasy_core::machine::Cue;
 use tokio::time::timeout;
 
 use super::{pcm::SAMPLE_BYTES, *};
 use crate::{
     show::{Keeper, Kept},
-    sounds::Cue,
+    sounds,
     testing::{PATIENCE, still_pending},
 };
 
@@ -398,8 +399,7 @@ fn pcm_chunks_wrap_clamp_invalid_samples_and_enforce_the_limit() -> anyhow::Resu
 
 #[test]
 fn a_cue_noticed_after_its_first_samples_arrive_still_counts_only_by_its_voice_band() {
-    let loud_show_cue: Vec<u8> = Cue::Show
-        .pcm()
+    let loud_show_cue: Vec<u8> = sounds::pcm(Cue::Show)
         .as_chunks::<SAMPLE_BYTES>()
         .0
         .iter()

@@ -1,12 +1,13 @@
 use std::time::SystemTime;
 
 use anyhow::Context as _;
+use speakeasy_core::machine::Cue;
 use zeroize::Zeroizing;
 
 use super::*;
 use crate::{
     show::{Keeper, Kept},
-    sounds::Cue,
+    sounds,
 };
 
 #[tokio::test]
@@ -31,8 +32,7 @@ async fn promotion_keeps_buffered_audio_and_cues_and_replays_the_live_speech_gat
         }
         cues.try_send(())?;
         pcm.extend(
-            Cue::Show
-                .pcm()
+            sounds::pcm(Cue::Show)
                 .as_chunks::<2>()
                 .0
                 .iter()

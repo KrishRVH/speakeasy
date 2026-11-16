@@ -139,7 +139,7 @@ fn recordings_resample_by_interpolating_between_samples() {
         [0.0, 0.0625, 0.125, 0.1875, 0.25, 0.3125, 0.375, 0.1875]
     );
 
-    let cue = Cue::Copied.pcm();
+    let cue = pcm(Cue::Copied);
     let rendered = resample(cue, NonZeroU32::new(44_100).unwrap());
     assert_eq!(rendered.len(), cue.len() / 2 * 44_100 / 48_000);
 }

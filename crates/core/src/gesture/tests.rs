@@ -32,7 +32,7 @@ impl Event {
         Self::Finish,
     ];
 
-    fn apply(self, gesture: &mut Gesture, now: Instant) {
+    fn apply(self, gesture: &mut Gesture, now: Moment) {
         match self {
             Self::Press => {
                 gesture.press(now);
@@ -65,7 +65,7 @@ impl Event {
     }
 }
 
-fn capture_start(gesture: &Gesture) -> Option<Instant> {
+fn capture_start(gesture: &Gesture) -> Option<Moment> {
     match gesture.phase {
         Phase::Held { started }
         | Phase::PendingTap { started, .. }
@@ -74,20 +74,6 @@ fn capture_start(gesture: &Gesture) -> Option<Instant> {
         | Phase::ShowArmed { started } => Some(started),
         Phase::Idle | Phase::Processing | Phase::Saving => None,
     }
-}
-
-#[test]
-fn unrepresentable_recording_deadline_expires_immediately() {
-    let latest = (0..u64::BITS).rev().fold(Instant::now(), |latest, shift| {
-        latest
-            .checked_add(Duration::from_secs(1_u64 << shift))
-            .unwrap_or(latest)
-    });
-    assert!(latest.checked_add(RECORDING_LIMIT).is_none());
-    let mut gesture = Gesture::default();
-    assert_eq!(gesture.press(latest), Some(Action::Start));
-    assert_eq!(gesture.deadline(), Some(latest));
-    assert_eq!(gesture.tick(latest), Some(Action::Finish));
 }
 
 proptest! {
@@ -99,11 +85,9 @@ proptest! {
         )
     ) {
         let mut gesture = Gesture::default();
-        let mut now = Instant::now();
+        let mut now = Moment::default();
         for (event, elapsed) in events {
-            now = now
-                .checked_add(Duration::from_millis(u64::from(elapsed)))
-                .expect("The generated sequence spans less than one day");
+            now = now.after(nanos(Duration::from_millis(u64::from(elapsed))));
             let saving = gesture.phase == Phase::Saving;
             event.apply(&mut gesture, now);
 
@@ -117,7 +101,7 @@ proptest! {
                 );
             }
             if let Some(started) = capture_start(&gesture) {
-                let limit = started.checked_add(RECORDING_LIMIT).expect("Bounded test clock");
+                let limit = started.after(nanos(RECORDING_LIMIT));
                 let deadline = gesture.deadline().expect("Active capture retains its deadline");
                 prop_assert!(started <= now && now < deadline && deadline <= limit);
             } else {
@@ -129,61 +113,75 @@ proptest! {
 
 #[test]
 fn single_tap_finishes_but_double_tap_keeps_the_original_capture() {
-    let start = Instant::now();
+    let start = Moment::default();
     let mut gesture = Gesture::default();
     assert_eq!(gesture.press(start), Some(Action::Start));
-    gesture.release(start + TAP);
-    assert_eq!(gesture.tick(start + TAP + DOUBLE_TAP), Some(Action::Finish));
+    gesture.release(start.after(nanos(TAP)));
+    assert_eq!(
+        gesture.tick(start.after(nanos(TAP)).after(nanos(DOUBLE_TAP))),
+        Some(Action::Finish)
+    );
     gesture.complete();
-    let start = start + Duration::from_secs(1);
+    let start = start.after(nanos(Duration::from_secs(1)));
     gesture.press(start);
-    gesture.release(start + TAP);
-    let just_before_expiry = (start + TAP + DOUBLE_TAP)
-        .checked_sub(Duration::from_millis(1))
-        .unwrap();
+    gesture.release(start.after(nanos(TAP)));
+    let just_before_expiry = start.after(nanos(TAP)).after(
+        nanos(DOUBLE_TAP)
+            .checked_sub(nanos(Duration::from_millis(1)))
+            .unwrap(),
+    );
     assert_eq!(gesture.press(just_before_expiry), None);
     assert_eq!(gesture.phase, Phase::HandsFree { started: start });
 }
 
 #[test]
 fn locking_a_hold_keeps_its_capture_until_the_next_press() {
-    let start = Instant::now();
+    let start = Moment::default();
     let mut gesture = Gesture::default();
     assert_eq!(gesture.press(start), Some(Action::Start));
     gesture.lock();
-    assert_eq!(gesture.release(start + Duration::from_secs(1)), None);
+    assert_eq!(
+        gesture.release(start.after(nanos(Duration::from_secs(1)))),
+        None
+    );
     assert_eq!(gesture.phase, Phase::HandsFree { started: start });
     gesture.lock();
     assert_eq!(
-        gesture.press(start + Duration::from_secs(2)),
+        gesture.press(start.after(nanos(Duration::from_secs(2)))),
         Some(Action::Finish)
     );
 }
 
 #[test]
 fn expiration_wins_over_second_press_and_capture_is_capped() {
-    let start = Instant::now();
+    let start = Moment::default();
     let mut gesture = Gesture::default();
     gesture.press(start);
-    gesture.release(start + TAP);
+    gesture.release(start.after(nanos(TAP)));
     assert_eq!(
-        gesture.press(start + TAP + DOUBLE_TAP),
+        gesture.press(start.after(nanos(TAP)).after(nanos(DOUBLE_TAP))),
         Some(Action::Finish)
     );
     assert_eq!(gesture.state(), State::Processing);
     gesture.complete();
-    assert_eq!(gesture.press(start + Duration::from_secs(1)), None);
-    gesture.release(start + Duration::from_secs(1));
-    let second_press = start + Duration::from_secs(2);
+    assert_eq!(
+        gesture.press(start.after(nanos(Duration::from_secs(1)))),
+        None
+    );
+    gesture.release(start.after(nanos(Duration::from_secs(1))));
+    let second_press = start.after(nanos(Duration::from_secs(2)));
     gesture.press(second_press);
-    let limit = second_press + RECORDING_LIMIT;
+    let limit = second_press.after(nanos(RECORDING_LIMIT));
     assert_eq!(gesture.tick(limit), Some(Action::Finish));
-    assert_eq!(gesture.release(limit + Duration::from_secs(1)), None);
+    assert_eq!(
+        gesture.release(limit.after(nanos(Duration::from_secs(1)))),
+        None
+    );
 }
 
 #[test]
 fn cancel_requires_release_and_late_completion_cannot_end_new_capture() {
-    let start = Instant::now();
+    let start = Moment::default();
     let mut gesture = Gesture::default();
     gesture.press(start);
     assert_eq!(gesture.cancel(), Some(Action::Cancel));
@@ -196,8 +194,8 @@ fn cancel_requires_release_and_late_completion_cannot_end_new_capture() {
 
 #[test]
 fn a_show_finishes_on_the_release_after_a_fresh_press() {
-    let start = Instant::now();
-    let at = |seconds| start + Duration::from_secs(seconds);
+    let start = Moment::default();
+    let at = |seconds| start.after(nanos(Duration::from_secs(seconds)));
     let mut gesture = Gesture::default();
     assert_eq!(gesture.press(start), Some(Action::Start));
     gesture.show();
@@ -227,18 +225,18 @@ fn a_show_finishes_on_the_release_after_a_fresh_press() {
 
 #[test]
 fn a_show_keeps_its_capture_start_and_finishes_at_the_limit_even_while_armed() {
-    let start = Instant::now();
-    let limit = start + RECORDING_LIMIT;
+    let start = Moment::default();
+    let limit = start.after(nanos(RECORDING_LIMIT));
     let mut gesture = Gesture::default();
     gesture.press(start);
     gesture.show();
     assert_eq!(gesture.deadline(), Some(limit));
-    gesture.release(start + Duration::from_secs(1));
-    gesture.press(start + Duration::from_secs(2));
+    gesture.release(start.after(nanos(Duration::from_secs(1))));
+    gesture.press(start.after(nanos(Duration::from_secs(2))));
     assert_eq!(gesture.deadline(), Some(limit));
     assert_eq!(gesture.tick(limit), Some(Action::Finish));
     assert_eq!(
-        gesture.release(limit + Duration::from_secs(1)),
+        gesture.release(limit.after(nanos(Duration::from_secs(1)))),
         None,
         "The release finished the Show a second time"
     );
@@ -251,7 +249,7 @@ fn a_show_keeps_its_capture_start_and_finishes_at_the_limit_even_while_armed() {
 
 #[test]
 fn escape_cancels_a_show_only_while_the_shortcut_is_held() {
-    let start = Instant::now();
+    let start = Moment::default();
     let mut gesture = Gesture::default();
     gesture.press(start);
     gesture.show();
@@ -281,7 +279,7 @@ fn escape_cancels_a_show_only_while_the_shortcut_is_held() {
 
 #[test]
 fn only_abandoning_discards_a_show_being_saved() {
-    let start = Instant::now();
+    let start = Moment::default();
     let mut gesture = Gesture::default();
     gesture.press(start);
     gesture.show();
@@ -296,7 +294,7 @@ fn only_abandoning_discards_a_show_being_saved() {
 
 #[test]
 fn an_interruption_finishes_a_recording_show_however_the_shortcut_stands() {
-    let start = Instant::now();
+    let start = Moment::default();
     let finishes = |gesture: &mut Gesture, stance: &str| {
         assert_eq!(gesture.interrupt(), Some(Action::Finish), "{stance}");
         assert_eq!(gesture.phase, Phase::Saving, "{stance}");
@@ -324,7 +322,7 @@ fn an_interruption_finishes_a_recording_show_however_the_shortcut_stands() {
 
 #[test]
 fn escape_cancel_and_interruptions_discard_dictation_recording_or_processing() {
-    let start = Instant::now();
+    let start = Moment::default();
     let mut gesture = Gesture::default();
     let discards: [fn(&mut Gesture) -> Option<Action>; 3] =
         [Gesture::escape, Gesture::cancel, Gesture::interrupt];
@@ -340,7 +338,7 @@ fn escape_cancel_and_interruptions_discard_dictation_recording_or_processing() {
 #[test]
 fn recovery_owns_saving_until_completion_or_explicit_abandonment() {
     let mut gesture = Gesture::default();
-    let now = Instant::now();
+    let now = Moment::default();
     assert!(gesture.save());
     assert!(!gesture.save());
     assert_eq!(gesture.state(), State::Processing);
@@ -365,7 +363,7 @@ fn recovery_owns_saving_until_completion_or_explicit_abandonment() {
 #[test]
 fn explicit_delivery_excludes_capture_and_remains_cancellable() {
     let mut gesture = Gesture::default();
-    let now = Instant::now();
+    let now = Moment::default();
     assert!(gesture.deliver());
     assert!(!gesture.deliver());
     assert_eq!(gesture.press(now), None);

@@ -16,14 +16,14 @@ use gpui::{
     WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind, WindowOptions, point,
     prelude::*, px, size,
 };
-use speakeasy_core::{gesture::RECORDING_LIMIT, motion::Spring};
+use speakeasy_core::{gesture::RECORDING_LIMIT, machine::Phase, motion::Spring};
 use speakeasy_platform::{PILL_HEIGHT, PILL_WIDTH};
 use speakeasy_show::{Ending, NarrationLoss};
 use tokio::sync::watch;
 
 use crate::{
     gpui_ext::{EntityUpdate, Presence, defer_presence, follow},
-    runtime::{Meter, Phase, Snapshot},
+    runtime::{Meter, Snapshot},
     theme::Theme,
     transcript::style::Style,
 };

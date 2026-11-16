@@ -4,6 +4,7 @@ use std::{
 };
 
 use async_channel::Sender;
+use speakeasy_core::machine::{Cue, RecognitionMode, SessionId};
 use speakeasy_platform::{Delivery, InsertPermit, Inserted, Scope, Taps};
 use speakeasy_show::{Ending, Framing, Journal, Narration, NarrationLoss, Recording};
 use tokio::sync::{mpsc, oneshot, watch};
@@ -13,31 +14,12 @@ use crate::{
     config::Config,
     recognition_terms::Terms,
     show::{AudioLog, FrameLog, Interrupted, Kept, Publication, Reopened, SavedShow},
-    sounds::Cue,
 };
 
 pub(crate) const STARTUP_CANCELLED: &str = "Local model startup cancelled";
 
 pub(crate) const PUBLISH_STOPPED: &str =
     "Saving the Show stopped unexpectedly. Start the Show again.";
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct SessionId(u64);
-
-impl SessionId {
-    #[cfg(test)]
-    pub(crate) const FIRST: Self = Self(1);
-
-    pub(super) fn next(self) -> Option<Self> {
-        self.0.checked_add(1).map(Self)
-    }
-}
-
-impl From<SessionId> for u64 {
-    fn from(id: SessionId) -> Self {
-        id.0
-    }
-}
 
 pub(crate) enum CaptureEvent {
     Streaming(SessionId, LiveAudio),
@@ -46,26 +28,6 @@ pub(crate) enum CaptureEvent {
     Level(SessionId, f32),
     Piece(SessionId, u32, Sealed),
     Finished(SessionId, anyhow::Result<Option<Sealed>>),
-}
-
-impl CaptureEvent {
-    pub(super) const fn session(&self) -> SessionId {
-        match self {
-            Self::Streaming(session, _)
-            | Self::Ready(session)
-            | Self::CheckpointLost(session)
-            | Self::Level(session, _)
-            | Self::Piece(session, _, _)
-            | Self::Finished(session, _) => *session,
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RecognitionMode {
-    Whole,
-    Segmented,
-    Streaming,
 }
 
 pub(crate) struct LiveAudio {
@@ -98,17 +60,6 @@ pub(crate) enum ShowEvent {
     MovieStopped(SessionId),
     Finished(SessionId, anyhow::Result<Box<Footage>>),
     Unchosen(SessionId, Unchosen),
-}
-
-impl ShowEvent {
-    pub(super) const fn session(&self) -> SessionId {
-        match self {
-            Self::Finished(session, _)
-            | Self::Unchosen(session, _)
-            | Self::MovieStopped(session)
-            | Self::CheckpointLost(session) => *session,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

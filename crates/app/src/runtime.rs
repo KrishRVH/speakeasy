@@ -1,8 +1,7 @@
 mod device;
+mod native;
 mod owner;
 pub(crate) mod ports;
-mod recognition;
-mod session;
 mod worker;
 
 use std::{
@@ -13,6 +12,7 @@ use std::{
 };
 
 use async_channel::{Receiver, Sender, TrySendError};
+use speakeasy_core::machine::{Cue, ModelState, Phase, RecognitionMode, SessionId};
 use speakeasy_platform::{
     Delivery, Input, InputMonitor, InputSender, InsertPermit, Inserted, Inserter, OwnFocus,
     OwnedThread, Scope,
@@ -24,14 +24,14 @@ use tokio::{
 };
 use zeroize::Zeroizing;
 
-use self::ports::{CaptureEvent, Ports, Published, RecognitionMode, SessionId, ShowEvent};
+use self::ports::{CaptureEvent, Ports, Published, ShowEvent};
 use crate::{
     audio::Capture,
     config::{Change, Config, ValidConfig},
     control::{Call, Reply},
     local_speech::LocalSpeech,
     show::{self, Canvas, Interrupted, SavedShow, ScreenRecorder},
-    sounds::{Cue, Sounds},
+    sounds::Sounds,
     transcript::style::Style,
 };
 
@@ -40,65 +40,6 @@ pub(crate) const LOADING: &str = "Loading local model…";
 const SHOW_COPIED: &str = "Show copied. Paste it into your coding agent.";
 
 const SHOW_GONE: &str = "The last Show has expired or was deleted.";
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Phase {
-    Idle,
-    Starting,
-    Recording,
-    Stopping,
-    Processing,
-    Done,
-    Copied,
-    Notice,
-    Empty,
-    Cancelled,
-    Unchosen,
-    Error,
-}
-
-impl Phase {
-    pub(crate) const fn name(self) -> &'static str {
-        match self {
-            Self::Idle => "idle",
-            Self::Starting => "starting",
-            Self::Recording => "recording",
-            Self::Stopping => "stopping",
-            Self::Processing => "processing",
-            Self::Done => "done",
-            Self::Copied => "copied",
-            Self::Notice => "notice",
-            Self::Empty => "empty",
-            Self::Cancelled => "cancelled",
-            Self::Unchosen => "unchosen",
-            Self::Error => "error",
-        }
-    }
-
-    pub(crate) const fn is_active(self) -> bool {
-        matches!(
-            self,
-            Self::Starting | Self::Recording | Self::Stopping | Self::Processing
-        )
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ModelState {
-    Loading,
-    Ready,
-    Unavailable,
-}
-
-impl ModelState {
-    pub(crate) const fn name(self) -> &'static str {
-        match self {
-            Self::Loading => "loading",
-            Self::Ready => "ready",
-            Self::Unavailable => "unavailable",
-        }
-    }
-}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct SnapshotEpoch(u64);

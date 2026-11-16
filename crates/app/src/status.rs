@@ -1,8 +1,10 @@
 use std::borrow::Cow;
 
+use speakeasy_core::machine::{ModelState, Phase};
+
 use crate::{
     config::Engine,
-    runtime::{LOADING, ModelState, Phase, Snapshot},
+    runtime::{LOADING, Snapshot},
 };
 
 pub(crate) const PAUSING: &str = "Pausing dictation…";

@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context as _, anyhow};
 use gpui::{App, BorrowAppContext, Global, Task, WindowHandle};
+use speakeasy_core::machine::{ModelState, Phase};
 use speakeasy_platform::{FocusReport, Input, InputMonitor, OwnedThread};
 use tokio::sync::watch;
 
@@ -17,7 +18,7 @@ use crate::{
     config::{Change, Config, ValidConfig},
     instance::{Event, Instance, Request},
     pill::Pill,
-    runtime::{self, Meter, ModelState, Phase, Report, Runtime, Snapshot},
+    runtime::{self, Meter, Report, Runtime, Snapshot},
     show::{Canvas, review::Review},
     status::{PAUSED, PAUSING, QUITTING, RESETTING, ServiceState, Status, UNCONFIGURED},
     transcript::style::Style,

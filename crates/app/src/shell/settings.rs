@@ -15,6 +15,7 @@ use std::{mem, path::PathBuf, sync::Arc, time::Duration};
 
 use async_channel::Receiver;
 use gpui::{App, BorrowAppContext, Context, ElementId, SharedString, Task, Window};
+use speakeasy_core::machine::ModelState;
 use speakeasy_platform::{FileFilter, Permissions};
 use tokio::sync::watch;
 use updates::Update;
@@ -31,7 +32,7 @@ use crate::{
     config::{Config, Engine, TextDelivery},
     gpui_ext::{EntityUpdate, WindowUpdate, follow},
     models::Model,
-    runtime::{ModelState, Snapshot},
+    runtime::Snapshot,
     setup::{Installed, Setup},
     status::Indicator,
     theme::Theme,

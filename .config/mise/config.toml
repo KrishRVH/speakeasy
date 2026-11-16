@@ -197,7 +197,7 @@ depends = ["rust:standards", "py:standards", "shell:standards", "md:standards"]
 
 [tasks."standards:check"]
 description = "Run the final local gate"
-depends = ["rust:standards:check", "py:standards:check", "shell:standards:check", "md:standards:check", "ci:lint", "hygiene"]
+depends = ["rust:standards:check", "lean:standards:check", "lean:conform", "py:standards:check", "shell:standards:check", "md:standards:check", "ci:lint", "hygiene"]
 
 [tasks."ci:lint"]
 description = "Lint the GitHub Actions workflows"

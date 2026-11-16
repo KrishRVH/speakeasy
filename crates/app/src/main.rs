@@ -41,13 +41,14 @@ use std::{
 
 use anyhow::bail;
 use gpui::{App, BorrowAppContext};
+use speakeasy_core::machine::Phase;
 use speakeasy_platform::{CANCEL_SHORTCUT, SHORTCUT};
 use tokio::sync::watch;
 
 use crate::{
     config::{Config, Startup, ValidConfig},
     instance::{Event, Instance, Request},
-    runtime::{Meter, Phase, Report, Snapshot},
+    runtime::{Meter, Report, Snapshot},
     shell::{LaunchMode, Services},
     transcript::style::Style,
 };

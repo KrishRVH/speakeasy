@@ -1,16 +1,17 @@
 use std::{future::pending, mem, time::Duration};
 
 use anyhow::{anyhow, ensure};
+use speakeasy_core::machine::{Detail, Request, Source, Ticket, Transcript};
 use tokio::{
     sync::watch,
     task::{JoinError, JoinHandle},
     time::timeout,
 };
+use zeroize::Zeroizing;
 
 use super::{
-    ModelState,
-    ports::{Ports, STARTUP_CANCELLED, SessionId, Speech},
-    recognition::{Detail, Part, Request, Source, Ticket, Transcript},
+    native::Native,
+    ports::{Ports, STARTUP_CANCELLED, Speech},
 };
 use crate::{
     config::Config,
@@ -42,25 +43,6 @@ impl<W: Speech> Worker<W> {
         }))
     }
 
-    pub(super) const fn model(&self) -> ModelState {
-        match self {
-            Self::Unavailable => ModelState::Unavailable,
-            Self::Loading(_) => ModelState::Loading,
-            Self::Ready(_) | Self::Transcribing { .. } => ModelState::Ready,
-        }
-    }
-
-    pub(super) const fn is_transcribing(&self) -> bool {
-        matches!(self, Self::Transcribing { .. })
-    }
-
-    pub(super) fn is_streaming(&self, session: SessionId) -> bool {
-        let Self::Transcribing { ticket, .. } = self else {
-            return false;
-        };
-        ticket.session == session && ticket.part == Part::Stream
-    }
-
     pub(super) async fn completed(&mut self) -> Completion<W> {
         let completion = match self {
             Self::Loading(job) => Completion::Loaded(joined(
@@ -84,14 +66,6 @@ impl<W: Speech> Worker<W> {
         completion
     }
 
-    pub(super) fn revive<P: Ports<Speech = W>>(&mut self, ports: &P, config: &Config) -> bool {
-        let unavailable = matches!(self, Self::Unavailable);
-        if unavailable {
-            *self = Self::load(ports, config);
-        }
-        unavailable
-    }
-
     pub(super) fn reload<P: Ports<Speech = W>>(&mut self, ports: &P, config: &Config) {
         let previous = self.take_cancelled();
         *self = Self::Loading(Job::spawn(|cancelled| {
@@ -104,12 +78,13 @@ impl<W: Speech> Worker<W> {
         }));
     }
 
-    pub(super) fn recover<P: Ports<Speech = W>>(&mut self, ports: &P, config: &Config) {
-        let streaming =
-            matches!(self, Self::Transcribing { ticket, .. } if ticket.part == Part::Stream);
+    pub(super) fn recover<P: Ports<Speech = W>>(
+        &mut self,
+        ports: &P,
+        config: &Config,
+        probe: bool,
+    ) {
         let previous = self.take_cancelled();
-
-        let probe = config.use_gpu || streaming;
         *self = Self::Loading(Job::spawn(|mut cancelled| {
             let load = ports.load(config.clone(), cancelled.clone());
             async move {
@@ -122,7 +97,7 @@ impl<W: Speech> Worker<W> {
         }));
     }
 
-    pub(super) fn transcribe(&mut self, config: &Config, next: impl FnOnce() -> Option<Request>) {
+    pub(super) fn transcribe(&mut self, config: &Config, request: Request<Native>) {
         let mut worker = match mem::take(self) {
             Self::Ready(worker) => worker,
             other => {
@@ -130,15 +105,12 @@ impl<W: Speech> Worker<W> {
                 return;
             },
         };
-        let Some(request) = next() else {
-            *self = Self::Ready(worker);
-            return;
-        };
-        let language = request
-            .language
-            .as_deref()
-            .unwrap_or(&config.language)
-            .to_owned();
+        let language = match &request.source {
+            Source::Audio(clip) => clip.language.as_deref(),
+            Source::Live(_) => None,
+        }
+        .unwrap_or(&config.language)
+        .to_owned();
         let fillers = config.fillers(&language);
         let corrections = config.vocabulary.clone();
         let terms = config.recognition_terms.clone();
@@ -146,10 +118,10 @@ impl<W: Speech> Worker<W> {
             ticket: request.ticket,
             job: Job::spawn(|mut cancelled| async move {
                 let heard = async {
-                    match request.audio {
-                        Source::Wav(mut audio) => transcript_of(
+                    match request.source {
+                        Source::Audio(mut clip) => transcript_of(
                             &mut worker,
-                            mem::take(&mut audio.wav),
+                            mem::take(&mut *clip.wav),
                             &language,
                             request.detail,
                             fillers,
@@ -158,10 +130,10 @@ impl<W: Speech> Worker<W> {
                         )
                         .await
                         .map(Transcription::Heard),
-                        Source::Stream(audio) => {
+                        Source::Live(audio) => {
                             let text = worker.transcribe_stream(audio, &language, &terms).await?;
                             Ok(text
-                                .map(Transcript::Text)
+                                .map(|text| Transcript::Text(Zeroizing::new(text)))
                                 .map_or(Transcription::Abandoned, Transcription::Heard))
                         },
                     }
@@ -241,12 +213,12 @@ impl<W: Speech> Worker<W> {
 pub(super) enum Completion<W> {
     Abandoned(Ticket, W),
     Loaded(anyhow::Result<W>),
-    Transcribed(Ticket, anyhow::Result<(W, Transcript)>),
+    Transcribed(Ticket, anyhow::Result<(W, Transcript<Native>)>),
 }
 
 pub(super) enum Transcription {
     Abandoned,
-    Heard(Transcript),
+    Heard(Transcript<Native>),
     Cancelled,
 }
 
@@ -287,9 +259,11 @@ async fn transcript_of<W: Speech>(
     fillers: Fillers,
     corrections: &[Correction],
     terms: &Terms,
-) -> anyhow::Result<Transcript> {
+) -> anyhow::Result<Transcript<Native>> {
     Ok(match detail {
-        Detail::Text => Transcript::Text(worker.transcribe(wav, language, terms).await?),
+        Detail::Text => Transcript::Text(Zeroizing::new(
+            worker.transcribe(wav, language, terms).await?,
+        )),
         Detail::Words => {
             let narration = worker.transcribe_words(wav, language, terms).await?;
             Transcript::Words(

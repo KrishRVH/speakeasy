@@ -5,6 +5,7 @@ use std::{
 
 use anyhow::anyhow;
 use async_channel::{Receiver, Sender};
+use speakeasy_core::machine::SessionId;
 use speakeasy_platform::{
     Display, Frame, OwnedThread, Part, PointerMonitor, PointerSample, Scope, ScreenCapture,
     ScreenEvent, Taps, Target, WindowGone, WindowLayer, WindowLayout, WindowWatch,
@@ -18,7 +19,7 @@ use tokio::sync::watch;
 use super::{FrameLog, overlay::Canvas};
 use crate::runtime::{
     self,
-    ports::{Capturing, Footage, Pinning, SessionId, ShowEvent, Unchosen},
+    ports::{Capturing, Footage, Pinning, ShowEvent, Unchosen},
 };
 
 const JOURNAL_BUDGET: usize = speakeasy_show::Log::MAX_BUDGET;

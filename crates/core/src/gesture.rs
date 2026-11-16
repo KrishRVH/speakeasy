@@ -9,6 +9,65 @@ const TAP: Duration = Duration::from_millis(220);
 
 const DOUBLE_TAP: Duration = Duration::from_millis(300);
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Moment(u64);
+
+impl Moment {
+    #[must_use]
+    pub fn since(origin: Instant, now: Instant) -> Self {
+        Self(nanos(now.saturating_duration_since(origin)))
+    }
+
+    #[must_use]
+    pub const fn nanos(self) -> u64 {
+        self.0
+    }
+
+    #[must_use]
+    pub const fn after(self, nanos: u64) -> Self {
+        Self(self.0.saturating_add(nanos))
+    }
+
+    const fn elapsed_since(self, earlier: Self) -> u64 {
+        self.0.saturating_sub(earlier.0)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Timing {
+    tap: u64,
+    double_tap: u64,
+    limit: u64,
+}
+
+impl Timing {
+    pub const DICTATION: Self = Self {
+        tap: nanos(TAP),
+        double_tap: nanos(DOUBLE_TAP),
+        limit: nanos(RECORDING_LIMIT),
+    };
+
+    #[must_use]
+    pub const fn new(tap: u64, double_tap: u64, limit: u64) -> Self {
+        Self {
+            tap,
+            double_tap,
+            limit,
+        }
+    }
+
+    #[must_use]
+    pub const fn limit(self) -> u64 {
+        self.limit
+    }
+}
+
+impl Default for Timing {
+    fn default() -> Self {
+        Self::DICTATION
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum State {
     Idle,
@@ -25,13 +84,22 @@ pub enum Action {
     Cancel,
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Gesture {
     phase: Phase,
     down: bool,
+    timing: Timing,
 }
 
 impl Gesture {
+    #[must_use]
+    pub fn new(timing: Timing) -> Self {
+        Self {
+            timing,
+            ..Self::default()
+        }
+    }
+
     pub fn deliver(&mut self) -> bool {
         if self.phase != Phase::Idle {
             return false;
@@ -61,7 +129,7 @@ impl Gesture {
         }
     }
 
-    pub fn press(&mut self, now: Instant) -> Option<Action> {
+    pub fn press(&mut self, now: Moment) -> Option<Action> {
         let expired = self.tick(now);
         let already_down = mem::replace(&mut self.down, true);
         if already_down || expired.is_some() {
@@ -87,11 +155,11 @@ impl Gesture {
         }
     }
 
-    pub fn release(&mut self, now: Instant) -> Option<Action> {
+    pub fn release(&mut self, now: Moment) -> Option<Action> {
         let expired = self.tick(now);
         self.down = false;
         match self.phase {
-            Phase::Held { started } if now.duration_since(started) <= TAP => {
+            Phase::Held { started } if now.elapsed_since(started) <= self.timing.tap => {
                 self.phase = Phase::PendingTap {
                     started,
                     released: now,
@@ -120,7 +188,7 @@ impl Gesture {
         }
     }
 
-    pub fn toggle(&mut self, now: Instant) -> Option<Action> {
+    pub fn toggle(&mut self, now: Moment) -> Option<Action> {
         match self.phase {
             Phase::Idle => {
                 self.phase = Phase::HandsFree { started: now };
@@ -136,20 +204,22 @@ impl Gesture {
     }
 
     #[must_use]
-    pub fn deadline(&self) -> Option<Instant> {
+    pub fn deadline(&self) -> Option<Moment> {
         match self.phase {
             Phase::Idle | Phase::Processing | Phase::Saving => None,
             Phase::Held { started }
             | Phase::HandsFree { started }
             | Phase::Show { started }
-            | Phase::ShowArmed { started } => Some(expiry(started, RECORDING_LIMIT)),
-            Phase::PendingTap { started, released } => {
-                Some(expiry(started, RECORDING_LIMIT).min(expiry(released, DOUBLE_TAP)))
-            },
+            | Phase::ShowArmed { started } => Some(started.after(self.timing.limit)),
+            Phase::PendingTap { started, released } => Some(
+                started
+                    .after(self.timing.limit)
+                    .min(released.after(self.timing.double_tap)),
+            ),
         }
     }
 
-    pub fn tick(&mut self, now: Instant) -> Option<Action> {
+    pub fn tick(&mut self, now: Moment) -> Option<Action> {
         if self.deadline().is_some_and(|deadline| now >= deadline) {
             self.finish()
         } else {
@@ -204,32 +274,33 @@ impl Gesture {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 enum Phase {
     #[default]
     Idle,
     Held {
-        started: Instant,
+        started: Moment,
     },
     PendingTap {
-        started: Instant,
-        released: Instant,
+        started: Moment,
+        released: Moment,
     },
     HandsFree {
-        started: Instant,
+        started: Moment,
     },
     Show {
-        started: Instant,
+        started: Moment,
     },
     ShowArmed {
-        started: Instant,
+        started: Moment,
     },
     Processing,
     Saving,
 }
 
-fn expiry(start: Instant, after: Duration) -> Instant {
-    start.checked_add(after).unwrap_or(start)
+const fn nanos(duration: Duration) -> u64 {
+    let whole = duration.as_secs().saturating_mul(1_000_000_000);
+    whole.saturating_add(duration.subsec_nanos() as u64)
 }
 
 #[cfg(test)]

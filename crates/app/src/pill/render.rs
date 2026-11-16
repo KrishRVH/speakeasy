@@ -1,7 +1,7 @@
 use gpui::{
     AnyElement, BoxShadow, Div, SharedString, canvas, div, point, prelude::*, px, rgb, rgba,
 };
-use speakeasy_core::motion::Spring;
+use speakeasy_core::{machine::Phase, motion::Spring};
 
 use super::{
     Content, LID_CLOSED, Pill, RECORDING_WIDTH, SHADOW_BLUR, SHADOW_OFFSET, SHADOW_ROOM, Scene,
@@ -10,7 +10,6 @@ use super::{
 use crate::{
     controls::{caps, facet, hollow, icon},
     icons,
-    runtime::Phase,
     theme::{Palette, alpha},
 };
 

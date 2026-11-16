@@ -1,10 +1,11 @@
 use std::time::Duration;
 
 use async_channel::{Receiver, Sender};
+use speakeasy_core::machine::SessionId;
 
 use super::{pcm::Pcm16, speech::Audibility};
 use crate::{
-    runtime::ports::{CaptureEvent, Sealed, SessionId},
+    runtime::ports::{CaptureEvent, Sealed},
     show::{
         AudioLog,
         checkpoint::{KeptAudio, MAX_CUES},

@@ -10,6 +10,7 @@ use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
 use rtrb::{Consumer, Producer, RingBuffer};
+use speakeasy_core::machine::Cue;
 use speakeasy_platform::OwnedThread;
 
 use crate::lowpass::Lowpass;
@@ -22,29 +23,18 @@ const LINGER: Duration = Duration::from_secs(10);
 const RATE: u64 = 48_000;
 const VOICES: usize = 4;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Cue {
-    Start,
-    Stop,
-    Cancel,
-    Show,
-    Copied,
+const fn wav(cue: Cue) -> &'static [u8] {
+    match cue {
+        Cue::Start => START,
+        Cue::Stop => STOP,
+        Cue::Cancel => CANCEL,
+        Cue::Show => SHOW,
+        Cue::Copied => COPIED,
+    }
 }
 
-impl Cue {
-    const fn wav(self) -> &'static [u8] {
-        match self {
-            Self::Start => START,
-            Self::Stop => STOP,
-            Self::Cancel => CANCEL,
-            Self::Show => SHOW,
-            Self::Copied => COPIED,
-        }
-    }
-
-    pub(crate) fn pcm(self) -> &'static [u8] {
-        self.wav().get(WAV_HEADER..).unwrap_or_default()
-    }
+pub(crate) fn pcm(cue: Cue) -> &'static [u8] {
+    wav(cue).get(WAV_HEADER..).unwrap_or_default()
 }
 
 const START: &[u8] = include_bytes!("../assets/sounds/start.wav");
@@ -279,7 +269,7 @@ struct Bank {
 
 impl Bank {
     fn render(rate: NonZeroU32) -> Self {
-        let render = |cue: Cue| resample(cue.pcm(), rate);
+        let render = |cue: Cue| resample(pcm(cue), rate);
         Self {
             start: render(Cue::Start),
             stop: render(Cue::Stop),

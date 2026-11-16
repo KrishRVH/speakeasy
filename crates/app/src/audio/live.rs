@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use speakeasy_core::machine::SessionId;
 use tokio::sync::{mpsc, oneshot};
 use zeroize::Zeroizing;
 
@@ -7,7 +8,7 @@ use super::{
     pcm::{bytes_in, samples_in},
     speech::Audibility,
 };
-use crate::runtime::ports::{CaptureEvent, LiveAudio, SessionId};
+use crate::runtime::ports::{CaptureEvent, LiveAudio};
 
 const FRAME: Duration = Duration::from_millis(100);
 const QUEUED_FRAMES: usize = 20;

@@ -1,0 +1,1676 @@
+#[cfg(not(test))]
+macro_rules! redacted {
+    ($($name:ident),+ $(,)?) => {
+        $(impl<P: $crate::machine::Payload> ::std::fmt::Debug for $name<P> {
+            fn fmt(&self, formatter: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                formatter.debug_struct(stringify!($name)).finish_non_exhaustive()
+            }
+        })+
+    };
+}
+
+#[cfg(test)]
+mod fixture;
+mod outcome;
+mod recognition;
+mod session;
+
+use std::ops::ControlFlow;
+
+use self::session::{Purpose, Session};
+pub use self::{
+    outcome::{Failure, Notice, Outcome, Refusal},
+    recognition::{Detail, Part, Partition, Request, Source, Ticket, Transcript},
+    session::{Kept, Origin, Publication, Recognized, Release, Reopened, Sealed},
+};
+use crate::gesture::{Action, Gesture, Moment, State, Timing};
+
+#[cfg(not(test))]
+pub trait Cargo {}
+
+#[cfg(not(test))]
+impl<T> Cargo for T {}
+
+#[cfg(test)]
+pub trait Cargo: Clone + std::fmt::Debug {}
+
+#[cfg(test)]
+impl<T: Clone + std::fmt::Debug> Cargo for T {}
+
+pub trait Payload {
+    type Config: Cargo;
+    type Text: Cargo + Clone;
+    type Style: Cargo + Copy + Default;
+    type Permit: Cargo;
+    type Instant: Cargo + Copy;
+    type Span: Cargo + Copy;
+    type Audio: Cargo + Clone;
+    type Range: Cargo;
+    type Live: Cargo;
+    type Heard: Cargo + Clone + Default;
+    type Narration: Cargo + Default;
+    type Footage: Cargo;
+    type Checkpoint: Cargo;
+    type AudioLog: Cargo;
+    type FrameLog: Cargo;
+    type Scope: Cargo + Copy;
+    type Pending: Cargo;
+    type Interrupted: Cargo;
+    type Receipt: Cargo;
+    type Practice: Cargo + Clone;
+    type Taps: Cargo;
+    type Level: Cargo;
+    type Shown: Cargo;
+    type Saved: Cargo + Default;
+    type Recovered: Cargo;
+    type Unchosen: Cargo;
+    type Call: Cargo;
+
+    fn settings(config: &Self::Config) -> Settings;
+
+    fn reloads(current: &Self::Config, next: &Self::Config) -> bool;
+
+    fn offset(started: Self::Instant, at: Self::Instant) -> Self::Span;
+
+    fn shift(span: Self::Span, by: Self::Span) -> Self::Span;
+
+    fn delay(narration: Self::Narration, by: Self::Span) -> Self::Narration;
+
+    fn append(text: &mut Self::Heard, next: Self::Heard);
+}
+
+pub trait Env<P: Payload> {
+    fn admit(&mut self) -> Option<P::Permit>;
+
+    fn style(&mut self) -> P::Style;
+
+    fn shield(&mut self, permit: &P::Permit) -> bool;
+
+    fn revoke(&mut self, permit: &P::Permit);
+
+    fn closed(&mut self) -> bool;
+
+    fn keep(&mut self, started: P::Instant) -> Keeping<P>;
+
+    fn record_microphone(
+        &mut self,
+        session: SessionId,
+        config: &P::Config,
+        mode: RecognitionMode,
+    ) -> Result<(), P::Text>;
+
+    fn record_screen(
+        &mut self,
+        session: SessionId,
+        started: P::Instant,
+        scope: P::Scope,
+        frames: Option<P::FrameLog>,
+    ) -> Result<(), P::Text>;
+
+    fn finish(&mut self, recorder: Recorder);
+
+    fn retire(&mut self, recorder: Recorder);
+
+    fn listen_whole(&mut self);
+
+    fn expect_cue(&mut self);
+
+    fn keep_audio(&mut self, log: P::AudioLog, start: P::Span, config: &P::Config) -> bool;
+
+    fn pin(&mut self, taps: P::Taps);
+
+    fn meter(&mut self, session: SessionId, level: P::Level);
+
+    fn load(&mut self, config: &P::Config);
+
+    fn reload(&mut self, config: &P::Config);
+
+    fn recover(&mut self, config: &P::Config, probe: bool);
+
+    fn cut(&mut self, audio: &P::Audio, range: &P::Range) -> Option<P::Audio>;
+
+    fn transcribe(&mut self, request: Request<P>, config: &P::Config);
+
+    fn compose(&mut self, heard: P::Heard, style: P::Style, config: &P::Config)
+    -> Option<P::Heard>;
+
+    fn insert(&mut self, text: P::Heard, permit: &P::Permit, config: &P::Config);
+
+    fn ready(&mut self, practice: &P::Practice) -> bool;
+
+    fn refuse_practice(&mut self, practice: P::Practice);
+
+    fn practise(&mut self, practice: &P::Practice, permit: &P::Permit, text: P::Heard) -> bool;
+
+    fn publish(
+        &mut self,
+        publication: Publication<P>,
+        permit: &P::Permit,
+        receipt: Option<P::Receipt>,
+    );
+
+    fn reopen(&mut self, interrupted: P::Interrupted);
+
+    fn refuse_recovery(&mut self, receipt: P::Receipt, failure: &Failure<P>);
+
+    fn retire_delivery(&mut self, session: SessionId);
+
+    fn release(&mut self, session: SessionId, checkpoint: P::Checkpoint, release: Release<P>);
+
+    fn remember(&mut self, shown: P::Shown);
+
+    fn announce(&mut self);
+
+    fn cue(&mut self, cue: Cue);
+
+    fn hold_cues(&mut self, held: bool);
+
+    fn respond(&mut self, call: P::Call, reply: Result<Status<P>, Refusal>);
+
+    fn close_input(&mut self);
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SessionId(u64);
+
+impl SessionId {
+    pub const FIRST: Self = Self(1);
+
+    #[must_use]
+    pub const fn new(raw: u64) -> Self {
+        Self(raw)
+    }
+
+    #[must_use]
+    pub const fn next(self) -> Option<Self> {
+        match self.0.checked_add(1) {
+            Some(raw) => Some(Self(raw)),
+            None => None,
+        }
+    }
+}
+
+impl From<SessionId> for u64 {
+    fn from(id: SessionId) -> Self {
+        id.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Phase {
+    Idle,
+    Starting,
+    Recording,
+    Stopping,
+    Processing,
+    Done,
+    Copied,
+    Notice,
+    Empty,
+    Cancelled,
+    Unchosen,
+    Error,
+}
+
+impl Phase {
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Starting => "starting",
+            Self::Recording => "recording",
+            Self::Stopping => "stopping",
+            Self::Processing => "processing",
+            Self::Done => "done",
+            Self::Copied => "copied",
+            Self::Notice => "notice",
+            Self::Empty => "empty",
+            Self::Cancelled => "cancelled",
+            Self::Unchosen => "unchosen",
+            Self::Error => "error",
+        }
+    }
+
+    #[must_use]
+    pub const fn is_active(self) -> bool {
+        matches!(
+            self,
+            Self::Starting | Self::Recording | Self::Stopping | Self::Processing
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ModelState {
+    Loading,
+    Ready,
+    Unavailable,
+}
+
+impl ModelState {
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Loading => "loading",
+            Self::Ready => "ready",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum NarrationLoss {
+    Incomplete,
+    AudioStopped,
+    AudioSilent,
+    NotTranscribed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Cue {
+    Start,
+    Stop,
+    Cancel,
+    Show,
+    Copied,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RecognitionMode {
+    Whole,
+    Segmented,
+    Streaming,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Recorder {
+    Microphone,
+    Screen,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Settings {
+    pub play_sounds: bool,
+    pub recognition: RecognitionMode,
+    pub probe: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Flow {
+    Running,
+    Failed,
+    Stopped,
+}
+
+#[cfg_attr(test, derive(Debug))]
+pub struct Now<P: Payload> {
+    pub moment: Moment,
+    pub instant: P::Instant,
+}
+
+impl<P: Payload> Clone for Now<P> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<P: Payload> Copy for Now<P> {}
+
+#[cfg_attr(test, derive(Clone, Debug))]
+pub struct Status<P: Payload> {
+    pub phase: Phase,
+    pub model: ModelState,
+    pub desktop_ready: bool,
+    pub session: Option<SessionId>,
+    pub preset: Option<P::Text>,
+    pub last_dictation: bool,
+}
+
+#[cfg_attr(test, derive(Clone, Debug))]
+pub enum Keeping<P: Payload> {
+    Kept(Kept<P>),
+    Unneeded,
+    Lost,
+}
+
+#[cfg_attr(test, derive(Clone, Debug))]
+pub enum Event<P: Payload> {
+    Stop,
+    InputLost,
+    Input(Input<P>),
+    Report(Report<P>),
+    Configure(P::Config),
+    Control {
+        call: P::Call,
+        command: Command<P>,
+    },
+    Preset {
+        call: P::Call,
+        name: P::Text,
+        config: P::Config,
+        session: SessionId,
+        changed: bool,
+    },
+    Capture(SessionId, Capture<P>),
+    Show(SessionId, Screening<P>),
+    Worker(Completion<P>),
+    Delivered(Delivered<P>),
+    Abandoned(SessionId, Delivered<P>),
+    Retired(Recorder),
+    Recover {
+        interrupted: P::Interrupted,
+        receipt: P::Receipt,
+    },
+    Practice(P::Practice),
+    PracticeClosed,
+    Timer,
+}
+
+#[cfg_attr(test, derive(Clone, Debug))]
+pub enum Input<P: Payload> {
+    Press,
+    Release,
+    Lock,
+    Show(P::Scope),
+    Pin(P::Taps),
+    Escape,
+    Cancel,
+    Interrupt,
+    Toggle,
+    PasteLast,
+    StartShow(P::Scope),
+    Unavailable(P::Text),
+    DesktopReady,
+}
+
+#[cfg_attr(test, derive(Clone, Debug))]
+pub enum Report<P: Payload> {
+    Failed(P::Text),
+    Recurring(P::Text),
+    ShowCopied,
+    ShowGone,
+}
+
+#[cfg_attr(test, derive(Clone, Debug))]
+pub enum Command<P: Payload> {
+    Status,
+    Start(Option<P::Style>),
+    Stop(Option<SessionId>),
+    Cancel(Option<SessionId>),
+    PasteLast,
+    Unsupported,
+}
+
+#[cfg_attr(test, derive(Clone, Debug))]
+pub enum Capture<P: Payload> {
+    Streaming(P::Live),
+    Ready,
+    CheckpointLost,
+    Level(P::Level),
+    Piece(u32, P::Audio),
+    Finished(Result<Option<Sealed<P>>, Unheard<P>>),
+}
+
+#[cfg_attr(test, derive(Clone, Debug))]
+pub struct Unheard<P: Payload> {
+    pub silent: bool,
+    pub text: P::Text,
+}
+
+#[cfg_attr(test, derive(Clone, Debug))]
+pub enum Screening<P: Payload> {
+    CheckpointLost,
+    MovieStopped,
+    Finished(Result<P::Footage, Stopped<P>>),
+    Unchosen(P::Unchosen),
+}
+
+#[cfg_attr(test, derive(Clone, Debug))]
+pub struct Stopped<P: Payload> {
+    pub unwound: bool,
+    pub text: P::Text,
+}
+
+#[cfg_attr(test, derive(Clone, Debug))]
+pub enum Completion<P: Payload> {
+    Abandoned(Ticket),
+    Loaded(Result<(), P::Text>),
+    Transcribed(Ticket, Result<Transcript<P>, P::Text>),
+}
+
+#[cfg_attr(test, derive(Clone, Debug))]
+pub enum Delivered<P: Payload> {
+    Inserted(Inserted<P>),
+    Published(Published<P>),
+    Abandoned(Result<(), P::Text>),
+    Reopened(Result<Reopened<P>, P::Text>),
+    Panicked,
+}
+
+#[cfg_attr(test, derive(Clone, Debug))]
+pub enum Inserted<P: Payload> {
+    Sent,
+    Copied(P::Text),
+    Unavailable(P::Text),
+    Cancelled,
+    Failed,
+}
+
+#[cfg_attr(test, derive(Clone, Debug))]
+pub enum Published<P: Payload> {
+    Saved {
+        shown: P::Shown,
+        saved: P::Saved,
+        copied: Result<(), P::Text>,
+    },
+    Recovered {
+        shown: P::Shown,
+        recovered: P::Recovered,
+    },
+    Cancelled,
+    Failed(P::Text),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Worker {
+    Unavailable,
+    Loading,
+    Ready,
+    Transcribing(Ticket),
+}
+
+impl Worker {
+    const fn model(self) -> ModelState {
+        match self {
+            Self::Unavailable => ModelState::Unavailable,
+            Self::Loading => ModelState::Loading,
+            Self::Ready | Self::Transcribing(_) => ModelState::Ready,
+        }
+    }
+
+    fn is_streaming(self, session: SessionId) -> bool {
+        matches!(self, Self::Transcribing(Ticket { session: streaming, part: Part::Stream }) if streaming == session)
+    }
+
+    fn revive<P: Payload>(&mut self, config: &P::Config, env: &mut impl Env<P>) -> bool {
+        let unavailable = *self == Self::Unavailable;
+        if unavailable {
+            env.load(config);
+            *self = Self::Loading;
+        }
+        unavailable
+    }
+
+    fn recover<P: Payload>(&mut self, config: &P::Config, probe: bool, env: &mut impl Env<P>) {
+        let streaming = matches!(
+            self,
+            Self::Transcribing(Ticket {
+                part: Part::Stream,
+                ..
+            })
+        );
+        env.recover(config, probe || streaming);
+        *self = Self::Loading;
+    }
+
+    fn transcribe<P: Payload>(
+        &mut self,
+        session: &mut Session<P>,
+        config: &P::Config,
+        env: &mut impl Env<P>,
+    ) {
+        if *self != Self::Ready {
+            return;
+        }
+        if let Some(request) = session.request(env) {
+            *self = Self::Transcribing(request.ticket);
+            env.transcribe(request, config);
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Device {
+    Free,
+    Open,
+    Retiring,
+}
+
+#[cfg_attr(test, derive(Clone, Debug))]
+struct Latest<P: Payload> {
+    id: SessionId,
+    started: P::Instant,
+    show: bool,
+    style: P::Style,
+}
+
+#[cfg_attr(test, derive(Clone, Debug))]
+pub struct Machine<P: Payload> {
+    config: P::Config,
+    gesture: Gesture,
+    desktop_ready: bool,
+    latest: Latest<P>,
+    session: Option<Session<P>>,
+    practice: Option<P::Practice>,
+    preset: Option<P::Text>,
+    last_dictation: Option<P::Heard>,
+    remembered: Option<SessionId>,
+    worker: Worker,
+    microphone: Device,
+    screen: Device,
+    retiring: Vec<SessionId>,
+    cues_held: bool,
+    outcome: Outcome<P>,
+    notice: Option<Notice<P>>,
+}
+
+impl<P: Payload> Machine<P> {
+    #[must_use]
+    pub fn new(
+        timing: Timing,
+        config: P::Config,
+        desktop_ready: bool,
+        started: P::Instant,
+        preset: Option<P::Text>,
+        env: &mut impl Env<P>,
+    ) -> Self {
+        env.load(&config);
+        Self {
+            config,
+            gesture: Gesture::new(timing),
+            desktop_ready,
+            latest: Latest {
+                id: SessionId::default(),
+                started,
+                show: false,
+                style: P::Style::default(),
+            },
+            session: None,
+            practice: None,
+            preset,
+            last_dictation: None,
+            remembered: None,
+            worker: Worker::Loading,
+            microphone: Device::Free,
+            screen: Device::Free,
+            retiring: Vec::new(),
+            cues_held: false,
+            outcome: Outcome::Idle,
+            notice: Some(Notice::LoadingModel),
+        }
+    }
+
+    pub fn step(&mut self, now: Now<P>, event: Event<P>, env: &mut impl Env<P>) -> Flow {
+        match self.handle(now, event, env) {
+            ControlFlow::Continue(()) => {
+                self.advance(env);
+                self.hold_cues(env);
+                Flow::Running
+            },
+            ControlFlow::Break(flow) => flow,
+        }
+    }
+
+    pub fn shut_down(&mut self, env: &mut impl Env<P>) {
+        env.close_input();
+        self.abandon(env);
+    }
+
+    pub fn drained(&mut self, session: SessionId, delivered: Delivered<P>) -> Option<P::Shown> {
+        let shown = saved_anyway(self.remembered, session, delivered)?;
+        self.remembered = Some(session);
+        Some(shown)
+    }
+
+    #[must_use]
+    pub fn deadline(&self) -> Option<Moment> {
+        self.gesture.deadline()
+    }
+
+    #[must_use]
+    pub const fn is_idle(&self) -> bool {
+        self.session.is_none()
+    }
+
+    #[must_use]
+    pub const fn practice(&self) -> Option<&P::Practice> {
+        self.practice.as_ref()
+    }
+
+    #[must_use]
+    pub const fn last_dictation(&self) -> Option<&P::Heard> {
+        self.last_dictation.as_ref()
+    }
+
+    #[must_use]
+    pub const fn session(&self) -> SessionId {
+        self.latest.id
+    }
+
+    #[must_use]
+    pub const fn started(&self) -> P::Instant {
+        self.latest.started
+    }
+
+    #[must_use]
+    pub const fn style(&self) -> P::Style {
+        self.latest.style
+    }
+
+    #[must_use]
+    pub fn phase(&self) -> Phase {
+        self.session
+            .as_ref()
+            .map_or_else(|| self.outcome.phase(), Session::phase)
+    }
+
+    #[must_use]
+    pub fn hands_free(&self) -> bool {
+        self.gesture.state() == State::HandsFree
+    }
+
+    #[must_use]
+    pub const fn shows(&self) -> bool {
+        self.latest.show || matches!(self.outcome, Outcome::ShowCopied(_))
+    }
+
+    #[must_use]
+    pub const fn outcome(&self) -> &Outcome<P> {
+        &self.outcome
+    }
+
+    #[must_use]
+    pub const fn notice(&self) -> Option<&Notice<P>> {
+        self.notice.as_ref()
+    }
+
+    #[must_use]
+    pub const fn preset(&self) -> Option<&P::Text> {
+        self.preset.as_ref()
+    }
+
+    #[must_use]
+    pub const fn model(&self) -> ModelState {
+        self.worker.model()
+    }
+
+    #[must_use]
+    pub const fn desktop_ready(&self) -> bool {
+        self.desktop_ready
+    }
+
+    #[must_use]
+    pub fn status(&self) -> Status<P> {
+        Status {
+            phase: self.phase(),
+            model: self.worker.model(),
+            desktop_ready: self.desktop_ready,
+            session: self.control_session(),
+            preset: self.preset.clone(),
+            last_dictation: self.last_dictation.is_some(),
+        }
+    }
+
+    fn handle(&mut self, now: Now<P>, event: Event<P>, env: &mut impl Env<P>) -> ControlFlow<Flow> {
+        let action = match event {
+            Event::Stop => return ControlFlow::Break(Flow::Stopped),
+            Event::InputLost => return self.stop_with_failure(Failure::InputLost, env),
+            Event::Input(input) => self.handle_input(now, input, env)?,
+            Event::Report(report) => {
+                self.report(report, env);
+                None
+            },
+            Event::Configure(config) => {
+                self.configure(config, env);
+                None
+            },
+            Event::Control { call, command } => return self.control(now, call, command, env),
+            Event::Preset {
+                call,
+                name,
+                config,
+                session,
+                changed,
+            } => {
+                let refused = self.adopt_preset(name, config, session, changed, env);
+                env.respond(call, refused.map_or_else(|| Ok(self.status()), Err));
+                None
+            },
+            Event::Capture(session, capture) => {
+                self.handle_capture(now, session, capture, env);
+                None
+            },
+            Event::Show(session, screening) => self.handle_show(session, screening, env),
+            Event::Worker(completion) => {
+                self.handle_worker(completion, env);
+                None
+            },
+            Event::Delivered(delivered) => {
+                self.handle_delivered(delivered, env);
+                None
+            },
+            Event::Abandoned(session, delivered) => {
+                self.handle_abandoned(session, delivered, env);
+                None
+            },
+            Event::Retired(recorder) => {
+                let device = self.device(recorder);
+                if *device == Device::Retiring {
+                    *device = Device::Free;
+                }
+                None
+            },
+            Event::Recover {
+                interrupted,
+                receipt,
+            } => return self.start_recovery(now, interrupted, receipt, env),
+            Event::Practice(practice) => {
+                self.arm_practice(practice, env);
+                None
+            },
+            Event::PracticeClosed => {
+                self.end_practice(env);
+                None
+            },
+            Event::Timer => self.gesture.tick(now.moment),
+        };
+        self.handle_action(now, action, env)
+    }
+
+    fn handle_input(
+        &mut self,
+        now: Now<P>,
+        input: Input<P>,
+        env: &mut impl Env<P>,
+    ) -> ControlFlow<Flow, Option<Action>> {
+        let ready = self.desktop_ready;
+        let action = match input {
+            Input::Press if ready => self.gesture.press(now.moment),
+            Input::Toggle if ready => self.gesture.toggle(now.moment),
+            Input::PasteLast if ready => {
+                self.paste_last(now, env)?;
+                None
+            },
+            Input::StartShow(scope) if ready && self.gesture.state() == State::Idle => {
+                self.end_practice(env);
+                let start = self.gesture.toggle(now.moment);
+                self.handle_action(now, start, env)?;
+                self.start_show(scope, env);
+                None
+            },
+            Input::Press | Input::Toggle | Input::PasteLast | Input::StartShow(_) => None,
+            Input::Release => self.gesture.release(now.moment),
+            Input::Lock => {
+                self.gesture.lock();
+                None
+            },
+            Input::Show(scope) => {
+                self.start_show(scope, env);
+                None
+            },
+            Input::Pin(taps) => {
+                if self.screen == Device::Open {
+                    env.pin(taps);
+                }
+                None
+            },
+            Input::Escape => self.gesture.escape(),
+            Input::Cancel => self.gesture.cancel(),
+            Input::Interrupt => match self.gesture.interrupt() {
+                Some(Action::Cancel) => {
+                    self.discard(env);
+                    None
+                },
+                finish => finish,
+            },
+            Input::Unavailable(text) => return self.stop_with_failure(Failure::Said(text), env),
+            Input::DesktopReady => {
+                self.desktop_ready = true;
+                None
+            },
+        };
+        ControlFlow::Continue(action)
+    }
+
+    fn stop_with_failure<T>(
+        &mut self,
+        failure: Failure<P>,
+        env: &mut impl Env<P>,
+    ) -> ControlFlow<Flow, T> {
+        self.fail(failure, env);
+        ControlFlow::Break(Flow::Failed)
+    }
+
+    fn report(&mut self, report: Report<P>, env: &mut impl Env<P>) {
+        if self.session.is_some() {
+            return;
+        }
+        if !matches!(report, Report::Recurring(_)) {
+            env.announce();
+        }
+        self.outcome = match report {
+            Report::Failed(text) | Report::Recurring(text) => Outcome::Failed(Failure::Said(text)),
+            Report::ShowCopied => Outcome::ShowCopied(P::Saved::default()),
+            Report::ShowGone => Outcome::ShowGone,
+        };
+    }
+
+    fn configure(&mut self, config: P::Config, env: &mut impl Env<P>) {
+        self.practice = None;
+        self.preset = None;
+        let cancelled = self.gesture.abandon().is_some();
+        self.apply_settings(config, env);
+        self.outcome = if cancelled {
+            self.cue(Cue::Cancel, env);
+            Outcome::Cancelled
+        } else {
+            Outcome::Idle
+        };
+    }
+
+    fn apply_settings(&mut self, config: P::Config, env: &mut impl Env<P>) {
+        let reload = P::reloads(&self.config, &config);
+        self.config = config;
+        if reload {
+            env.reload(&self.config);
+            self.worker = Worker::Loading;
+        }
+        self.abandon(env);
+        self.worker.revive(&self.config, env);
+        self.notice = Some(if self.worker.model() == ModelState::Ready {
+            Notice::SettingsApplied
+        } else {
+            Notice::LoadingModel
+        });
+    }
+
+    fn handle_capture(
+        &mut self,
+        now: Now<P>,
+        id: SessionId,
+        capture: Capture<P>,
+        env: &mut impl Env<P>,
+    ) {
+        let gesture = self.gesture.state();
+        let stream_ready = self.worker == Worker::Ready;
+        let Some(session) = self
+            .session
+            .as_mut()
+            .filter(|session| session.id == id && session.is_capturing())
+        else {
+            return;
+        };
+        match capture {
+            Capture::Streaming(audio) => {
+                if stream_ready {
+                    session.stream(audio);
+                }
+            },
+            Capture::Piece(number, audio) => session.piece(number, audio),
+            Capture::CheckpointLost => self.warn(Notice::CheckpointLost),
+            Capture::Ready => {
+                session.audio_ready(gesture, now.instant);
+                let cue = if session.is_show() {
+                    Cue::Show
+                } else {
+                    Cue::Start
+                };
+                if session.is_recording() {
+                    self.cue_heard(cue, env);
+                }
+            },
+            Capture::Level(level) => env.meter(id, level),
+            Capture::Finished(Ok(sealed)) => {
+                let delivers = session.captured(sealed);
+                self.conclude_capture(env);
+                if !delivers {
+                    self.end_session(Outcome::Empty, env);
+                }
+            },
+            Capture::Finished(Err(unheard)) => {
+                if session.audio_failed(unheard.silent) {
+                    self.notice = Some(Notice::NarrationLost(unheard.text));
+                    self.conclude_capture(env);
+                } else {
+                    self.fail(Failure::Said(unheard.text), env);
+                }
+            },
+        }
+    }
+
+    fn conclude_capture(&mut self, env: &mut impl Env<P>) {
+        self.retire(Recorder::Microphone, env);
+        self.finish(Recorder::Screen, env);
+        if self.gesture.finish().is_some() {
+            self.cue(Cue::Stop, env);
+        }
+    }
+
+    fn handle_worker(&mut self, completion: Completion<P>, env: &mut impl Env<P>) {
+        self.worker = Worker::Unavailable;
+        match completion {
+            Completion::Abandoned(ticket) => {
+                self.worker = Worker::Ready;
+                if let Some(session) = &mut self.session {
+                    session.failed(ticket);
+                }
+            },
+            Completion::Loaded(Ok(())) => {
+                self.worker = Worker::Ready;
+                if matches!(
+                    self.notice,
+                    Some(Notice::LoadingModel | Notice::WarmupFailed(_))
+                ) {
+                    self.notice = None;
+                }
+            },
+            Completion::Loaded(Err(text)) => {
+                if self.session_survives_warmup_failure() {
+                    if !matches!(self.notice, Some(Notice::NarrationLost(_))) {
+                        self.notice = Some(Notice::WarmupFailed(text));
+                    }
+                } else if self.session.as_mut().is_some_and(Session::not_transcribed) {
+                    self.notice = Some(Notice::WarmupFailed(text));
+                } else {
+                    self.fail(Failure::Said(text), env);
+                }
+            },
+            Completion::Transcribed(ticket, Ok(transcript)) => {
+                self.worker = Worker::Ready;
+                if let Some(text) = self
+                    .session
+                    .as_mut()
+                    .and_then(|session| session.heard(ticket, transcript))
+                {
+                    self.insert_transcript(text, env);
+                }
+            },
+            Completion::Transcribed(ticket, Err(text)) => {
+                let replaced = self.worker.revive(&self.config, env);
+                let Some(session) = self
+                    .session
+                    .as_mut()
+                    .filter(|session| session.accepts(ticket))
+                else {
+                    return;
+                };
+                if replaced && session.is_transcribing() {
+                    self.notice = Some(Notice::LoadingModel);
+                }
+                if !session.failed(ticket) {
+                    if session.not_transcribed() {
+                        self.notice = Some(Notice::NarrationLost(text));
+                    } else {
+                        self.fail(Failure::Said(text), env);
+                    }
+                }
+            },
+        }
+    }
+
+    fn session_survives_warmup_failure(&self) -> bool {
+        self.session
+            .as_ref()
+            .is_some_and(|session| !session.awaits_worker())
+    }
+
+    fn insert_transcript(&mut self, heard: P::Heard, env: &mut impl Env<P>) {
+        let Some(session) = self
+            .session
+            .as_mut()
+            .filter(|session| session.is_recognizing())
+        else {
+            return;
+        };
+        let Some(text) = env.compose(heard, session.style, &self.config) else {
+            self.end_session(Outcome::Empty, env);
+            return;
+        };
+        if let Purpose::Practice(practice) = &session.purpose {
+            let delivered = env.practise(practice, &session.permit, text);
+            self.end_session(
+                if delivered {
+                    Outcome::Practiced
+                } else {
+                    Outcome::Cancelled
+                },
+                env,
+            );
+        } else {
+            session.pending_text = Some(text.clone());
+            session.insert(text, &self.config, env);
+        }
+    }
+
+    fn start_show(&mut self, scope: P::Scope, env: &mut impl Env<P>) {
+        let held = matches!(self.gesture.state(), State::Held | State::HandsFree);
+        let Some(session) = self.session.as_mut() else {
+            return;
+        };
+        if !held || !session.turn_into_show(scope, env) {
+            return;
+        }
+        if self.microphone == Device::Open {
+            env.listen_whole();
+        }
+        let recording = session.is_recording();
+        match env.keep(session.started) {
+            Keeping::Kept(kept) => session.keep(kept),
+            Keeping::Unneeded => {},
+            Keeping::Lost => self.warn(Notice::CheckpointLost),
+        }
+        self.latest.show = true;
+        if recording {
+            self.cue_heard(Cue::Show, env);
+        }
+        self.gesture.show();
+    }
+
+    fn handle_show(
+        &mut self,
+        id: SessionId,
+        screening: Screening<P>,
+        env: &mut impl Env<P>,
+    ) -> Option<Action> {
+        let session = self
+            .session
+            .as_mut()
+            .filter(|session| session.id == id && session.is_show())?;
+        match screening {
+            Screening::CheckpointLost => {
+                self.warn(Notice::CheckpointLost);
+                None
+            },
+            Screening::MovieStopped => {
+                self.warn(Notice::MovieStopped);
+                None
+            },
+            Screening::Finished(Ok(footage)) => {
+                session.screen_recorded(footage);
+                self.retire(Recorder::Screen, env);
+                self.gesture.finish()
+            },
+            Screening::Finished(Err(stopped)) => {
+                if !stopped.unwound {
+                    session.forfeit();
+                }
+                self.fail(Failure::Said(stopped.text), env);
+                None
+            },
+            Screening::Unchosen(unchosen) => {
+                session.forfeit();
+                self.gesture.abandon();
+                self.discard(env);
+                self.cue(Cue::Cancel, env);
+                self.outcome = Outcome::Unchosen(unchosen);
+                None
+            },
+        }
+    }
+
+    fn handle_delivered(&mut self, delivered: Delivered<P>, env: &mut impl Env<P>) {
+        if !self.session.as_ref().is_some_and(Session::awaits_delivery) {
+            return;
+        }
+        let show = self.session.as_ref().is_some_and(Session::is_show);
+        let remembered = matches!(
+            &delivered,
+            Delivered::Inserted(
+                Inserted::Sent | Inserted::Copied(_) | Inserted::Unavailable(_) | Inserted::Failed
+            ) | Delivered::Panicked
+        );
+        if remembered
+            && let Some(text) = self
+                .session
+                .as_mut()
+                .and_then(|session| session.pending_text.take())
+        {
+            self.last_dictation = Some(text);
+        }
+        let mut outcome = match delivered {
+            Delivered::Reopened(Ok(reopened)) => {
+                if let Some(session) = &mut self.session {
+                    session.reopened(reopened);
+                }
+                return;
+            },
+            Delivered::Inserted(Inserted::Sent) => Outcome::Done,
+            Delivered::Inserted(Inserted::Copied(text)) => Outcome::Copied(text),
+            Delivered::Published(Published::Saved {
+                shown,
+                saved,
+                copied,
+            }) => {
+                self.remember(shown, self.latest.id, env);
+                match copied {
+                    Ok(()) => Outcome::ShowCopied(saved),
+                    Err(error) => Outcome::Failed(Failure::NotCopied {
+                        saved,
+                        error,
+                        failure: self.notice.as_ref().and_then(Notice::failure).cloned(),
+                    }),
+                }
+            },
+            Delivered::Inserted(Inserted::Cancelled)
+            | Delivered::Published(Published::Cancelled)
+            | Delivered::Abandoned(Ok(())) => Outcome::Cancelled,
+            Delivered::Inserted(Inserted::Unavailable(text)) => {
+                Outcome::Failed(Failure::Undelivered {
+                    said: Some(text),
+                    replay: false,
+                })
+            },
+            Delivered::Published(Published::Recovered { shown, recovered }) => {
+                self.remember(shown, self.latest.id, env);
+                Outcome::Recovered(recovered)
+            },
+            Delivered::Abandoned(Err(text))
+            | Delivered::Published(Published::Failed(text))
+            | Delivered::Reopened(Err(text)) => Outcome::Failed(Failure::Said(text)),
+            Delivered::Panicked if show => Outcome::Failed(Failure::PublishStopped),
+            Delivered::Inserted(Inserted::Failed) | Delivered::Panicked => {
+                Outcome::Failed(Failure::Undelivered {
+                    said: None,
+                    replay: false,
+                })
+            },
+        };
+        if !show
+            && remembered
+            && self.last_dictation.is_some()
+            && let Outcome::Failed(Failure::Undelivered { replay, .. }) = &mut outcome
+        {
+            *replay = true;
+        }
+        if let Outcome::Failed(failure) = &outcome
+            && let Some(receipt) = self.session.as_mut().and_then(Session::take_receipt)
+        {
+            env.refuse_recovery(receipt, failure);
+        }
+        if matches!(outcome, Outcome::Copied(_) | Outcome::ShowCopied(_)) {
+            self.cue(Cue::Copied, env);
+        }
+        self.end_session(outcome, env);
+    }
+
+    fn remember(&mut self, shown: P::Shown, session: SessionId, env: &mut impl Env<P>) {
+        env.remember(shown);
+        self.remembered = Some(session);
+    }
+
+    fn handle_action(
+        &mut self,
+        now: Now<P>,
+        action: Option<Action>,
+        env: &mut impl Env<P>,
+    ) -> ControlFlow<Flow> {
+        match action {
+            Some(Action::Start) => return self.start_session(now, env),
+            Some(Action::Finish) => {
+                self.finish(Recorder::Microphone, env);
+                self.finish(Recorder::Screen, env);
+                if let Some(session) = &mut self.session {
+                    session.finish();
+                }
+                self.cue(Cue::Stop, env);
+            },
+            Some(Action::Cancel) => {
+                self.discard(env);
+                self.cue(Cue::Cancel, env);
+            },
+            None => {},
+        }
+        ControlFlow::Continue(())
+    }
+
+    fn start_session(&mut self, now: Now<P>, env: &mut impl Env<P>) -> ControlFlow<Flow> {
+        let Some(permit) = env.admit() else {
+            self.gesture.abandon();
+            return ControlFlow::Continue(());
+        };
+        let Some(id) = self.latest.id.next() else {
+            return ControlFlow::Break(Flow::Stopped);
+        };
+        let style = env.style();
+        self.latest = Latest {
+            id,
+            started: now.instant,
+            show: false,
+            style,
+        };
+        self.outcome = Outcome::Idle;
+        self.notice = None;
+        let mut session = Session::new(id, permit, now.instant, style);
+        if let Some(practice) = &self.practice {
+            session.purpose = Purpose::Practice(practice.clone());
+        }
+        self.session = Some(session);
+        ControlFlow::Continue(())
+    }
+
+    fn paste_last(&mut self, now: Now<P>, env: &mut impl Env<P>) -> ControlFlow<Flow> {
+        if self.practice.is_some() {
+            return ControlFlow::Continue(());
+        }
+        let Some(text) = self.last_dictation.clone() else {
+            if self.session.is_none() {
+                self.outcome = Outcome::NothingToPaste;
+            }
+            return ControlFlow::Continue(());
+        };
+        if matches!(self.gesture.state(), State::Held | State::HandsFree)
+            && self
+                .session
+                .as_ref()
+                .is_some_and(|session| !session.is_show() && !session.is_practice())
+        {
+            self.gesture.abandon();
+            self.abandon(env);
+            self.worker.revive(&self.config, env);
+        }
+        if self.session.is_some() {
+            return ControlFlow::Continue(());
+        }
+        if !self.gesture.deliver() {
+            return ControlFlow::Continue(());
+        }
+        self.start_session(now, env)?;
+        if let Some(session) = &mut self.session {
+            session.purpose = Purpose::Replay;
+            session.insert(text, &self.config, env);
+        }
+        ControlFlow::Continue(())
+    }
+
+    fn arm_practice(&mut self, practice: P::Practice, env: &mut impl Env<P>) {
+        if self.session.is_some() {
+            env.refuse_practice(practice);
+        } else if env.ready(&practice) {
+            self.practice = Some(practice);
+        }
+    }
+
+    fn end_practice(&mut self, env: &mut impl Env<P>) {
+        self.practice = None;
+        if self.session.as_ref().is_some_and(Session::is_practice) {
+            self.gesture.abandon();
+            self.discard(env);
+            self.cue(Cue::Cancel, env);
+        }
+    }
+
+    fn start_recovery(
+        &mut self,
+        now: Now<P>,
+        interrupted: P::Interrupted,
+        receipt: P::Receipt,
+        env: &mut impl Env<P>,
+    ) -> ControlFlow<Flow> {
+        if !self.gesture.save() {
+            return ControlFlow::Continue(());
+        }
+        let Some(permit) = env.admit() else {
+            self.gesture.abandon();
+            return ControlFlow::Continue(());
+        };
+        let Some(id) = self.latest.id.next() else {
+            return ControlFlow::Break(Flow::Stopped);
+        };
+        if !env.shield(&permit) {
+            self.gesture.abandon();
+            return ControlFlow::Continue(());
+        }
+        let style = P::Style::default();
+        self.latest = Latest {
+            id,
+            started: now.instant,
+            show: true,
+            style,
+        };
+        self.outcome = Outcome::Idle;
+        self.notice = None;
+        env.reopen(interrupted);
+        self.session = Some(Session::recovering(id, permit, now.instant, style, receipt));
+        ControlFlow::Continue(())
+    }
+
+    fn settings(&self) -> Settings {
+        P::settings(&self.config)
+    }
+
+    fn hold_cues(&mut self, env: &mut impl Env<P>) {
+        let held = self.settings().play_sounds && self.session.is_some();
+        if held != self.cues_held {
+            self.cues_held = held;
+            env.hold_cues(held);
+        }
+    }
+
+    fn cue(&self, cue: Cue, env: &mut impl Env<P>) {
+        if self.settings().play_sounds {
+            env.cue(cue);
+        }
+    }
+
+    fn cue_heard(&self, cue: Cue, env: &mut impl Env<P>) {
+        if self.settings().play_sounds {
+            if self.microphone == Device::Open {
+                env.expect_cue();
+            }
+            env.cue(cue);
+        }
+    }
+
+    fn end_session(&mut self, outcome: Outcome<P>, env: &mut impl Env<P>) {
+        if let Some(session) = self.session.take() {
+            env.revoke(&session.permit);
+        }
+        self.gesture.complete();
+        self.clear_warning();
+        self.outcome = outcome;
+    }
+
+    fn discard(&mut self, env: &mut impl Env<P>) {
+        self.abandon(env);
+        self.worker.revive(&self.config, env);
+        self.outcome = Outcome::Cancelled;
+    }
+
+    fn abandon(&mut self, env: &mut impl Env<P>) {
+        self.clear_warning();
+        let Some(session) = self.session.take() else {
+            return;
+        };
+        env.revoke(&session.permit);
+        if session.is_show() {
+            self.retire(Recorder::Screen, env);
+        }
+        if session.is_capturing() {
+            self.retire(Recorder::Microphone, env);
+        }
+        if (session.is_transcribing() && matches!(self.worker, Worker::Transcribing(_)))
+            || self.worker.is_streaming(session.id)
+        {
+            self.worker
+                .recover(&self.config, self.settings().probe, env);
+        }
+        let id = session.id;
+        if session.into_cleanup(env) {
+            self.retiring.push(id);
+        }
+    }
+
+    fn fail(&mut self, failure: Failure<P>, env: &mut impl Env<P>) {
+        self.gesture.abandon();
+        self.abandon(env);
+        self.outcome = Outcome::Failed(failure);
+    }
+
+    fn advance(&mut self, env: &mut impl Env<P>) {
+        self.open_queued_capture(env);
+        self.attach_audio(env);
+        self.open_queued_screen(env);
+        self.start_transcription(env);
+        self.start_publishing(env);
+    }
+
+    fn warn(&mut self, warning: Notice<P>) {
+        if self
+            .notice
+            .as_ref()
+            .is_none_or(|notice| notice.failure().is_none())
+        {
+            self.notice = Some(warning);
+        }
+    }
+
+    fn clear_warning(&mut self) {
+        if self.notice.as_ref().is_some_and(Notice::is_warning) {
+            self.notice = None;
+        }
+    }
+
+    const fn device(&mut self, recorder: Recorder) -> &mut Device {
+        match recorder {
+            Recorder::Microphone => &mut self.microphone,
+            Recorder::Screen => &mut self.screen,
+        }
+    }
+
+    fn finish(&mut self, recorder: Recorder, env: &mut impl Env<P>) {
+        if *self.device(recorder) == Device::Open {
+            env.finish(recorder);
+        }
+    }
+
+    fn retire(&mut self, recorder: Recorder, env: &mut impl Env<P>) {
+        let device = self.device(recorder);
+        if *device == Device::Open {
+            *device = Device::Retiring;
+            env.retire(recorder);
+        }
+    }
+
+    fn open(&mut self, recorder: Recorder, env: &mut impl Env<P>) {
+        *self.device(recorder) = Device::Open;
+        if self.gesture.state() == State::Processing {
+            env.finish(recorder);
+        }
+    }
+
+    fn attach_audio(&mut self, env: &mut impl Env<P>) {
+        let Some((log, start)) = self.session.as_mut().and_then(Session::take_audio_log) else {
+            return;
+        };
+        let kept = self.microphone == Device::Open && env.keep_audio(log, start, &self.config);
+        if !kept {
+            self.warn(Notice::CheckpointLost);
+        }
+    }
+
+    fn open_queued_capture(&mut self, env: &mut impl Env<P>) {
+        if self.microphone != Device::Free {
+            return;
+        }
+        let Some(session) = self.session.as_mut().filter(|session| session.is_queued()) else {
+            return;
+        };
+        if env.closed() {
+            return;
+        }
+        let mode = if session.is_show() {
+            RecognitionMode::Whole
+        } else {
+            P::settings(&self.config).recognition
+        };
+        match env.record_microphone(session.id, &self.config, mode) {
+            Ok(()) => {
+                session.opened();
+                self.open(Recorder::Microphone, env);
+            },
+            Err(text) => self.fail(Failure::Said(text), env),
+        }
+    }
+
+    fn open_queued_screen(&mut self, env: &mut impl Env<P>) {
+        if self.screen != Device::Free {
+            return;
+        }
+        let Some(session) = self.session.as_mut() else {
+            return;
+        };
+        let Some(scope) = session.queued_screen() else {
+            return;
+        };
+        if env.closed() {
+            return;
+        }
+        let frames = session.take_frame_log();
+        match env.record_screen(session.id, session.started, scope, frames) {
+            Ok(()) => {
+                session.screen_opened();
+                self.open(Recorder::Screen, env);
+            },
+            Err(text) => {
+                session.forfeit();
+                self.fail(Failure::Said(text), env);
+            },
+        }
+    }
+
+    fn start_transcription(&mut self, env: &mut impl Env<P>) {
+        if let Some(text) = self.session.as_mut().and_then(Session::complete) {
+            self.insert_transcript(text, env);
+        }
+        let Some(session) = self.session.as_mut() else {
+            return;
+        };
+        if session.awaits_worker() && self.worker.revive(&self.config, env) {
+            self.notice = Some(Notice::LoadingModel);
+        }
+        self.worker.transcribe(session, &self.config, env);
+    }
+
+    fn start_publishing(&mut self, env: &mut impl Env<P>) {
+        if let Some(session) = &mut self.session {
+            session.publish(env);
+        }
+    }
+
+    fn handle_abandoned(&mut self, id: SessionId, delivered: Delivered<P>, env: &mut impl Env<P>) {
+        let Some(index) = self.retiring.iter().position(|retiring| *retiring == id) else {
+            return;
+        };
+        self.retiring.remove(index);
+        match delivered {
+            Delivered::Abandoned(Err(text)) => {
+                if self.session.is_none() && self.latest.id == id {
+                    self.outcome = Outcome::Failed(Failure::RecoveryStorage(text));
+                }
+            },
+            delivered => {
+                if let Some(shown) = saved_anyway(self.remembered, id, delivered) {
+                    self.remember(shown, id, env);
+                }
+            },
+        }
+    }
+
+    fn control(
+        &mut self,
+        now: Now<P>,
+        call: P::Call,
+        command: Command<P>,
+        env: &mut impl Env<P>,
+    ) -> ControlFlow<Flow> {
+        let refused = match command {
+            Command::Status => None,
+            Command::Start(style) => {
+                if self.session.is_some() || self.practice.is_some() {
+                    Some(Refusal::Busy)
+                } else if !self.desktop_ready || self.worker.model() != ModelState::Ready {
+                    Some(Refusal::NotReady)
+                } else {
+                    let action = self.gesture.toggle(now.moment);
+                    self.handle_action(now, action, env)?;
+                    if let Some(style) = style
+                        && let Some(session) = &mut self.session
+                    {
+                        session.style = style;
+                        self.latest.style = style;
+                    }
+                    self.control_session()
+                        .is_none()
+                        .then_some(Refusal::StartStopped)
+                }
+            },
+            Command::Stop(token) | Command::Cancel(token)
+                if token.is_none() || self.control_session() != token =>
+            {
+                Some(Refusal::NotActive)
+            },
+            Command::Stop(_) => {
+                let action = self.gesture.finish();
+                self.handle_action(now, action, env)?;
+                None
+            },
+            Command::Cancel(_) => {
+                let action = self.gesture.cancel();
+                self.handle_action(now, action, env)?;
+                None
+            },
+            Command::PasteLast => {
+                if self.session.is_some() || self.practice.is_some() {
+                    Some(Refusal::PasteBusy)
+                } else if !self.desktop_ready {
+                    Some(Refusal::PasteNotReady)
+                } else if self.last_dictation.is_none() {
+                    Some(Refusal::NothingToPaste)
+                } else {
+                    self.paste_last(now, env)?;
+                    let replaying = self
+                        .session
+                        .as_ref()
+                        .is_some_and(|session| matches!(session.purpose, Purpose::Replay));
+                    (!replaying).then_some(Refusal::PasteStopped)
+                }
+            },
+            Command::Unsupported => Some(Refusal::Unsupported),
+        };
+        env.respond(call, refused.map_or_else(|| Ok(self.status()), Err));
+        ControlFlow::Continue(())
+    }
+
+    fn adopt_preset(
+        &mut self,
+        name: P::Text,
+        config: P::Config,
+        session: SessionId,
+        changed: bool,
+        env: &mut impl Env<P>,
+    ) -> Option<Refusal> {
+        if self.session.is_some() || self.practice.is_some() {
+            return Some(Refusal::PresetBusy);
+        }
+        if self.latest.id != session || changed {
+            return Some(Refusal::PresetStale);
+        }
+        self.apply_settings(config, env);
+        self.preset = Some(name);
+        None
+    }
+
+    fn control_session(&self) -> Option<SessionId> {
+        self.session
+            .as_ref()
+            .filter(|session| !session.is_show() && matches!(session.purpose, Purpose::Dictation))
+            .map(|session| session.id)
+    }
+}
+
+fn saved_anyway<P: Payload>(
+    remembered: Option<SessionId>,
+    session: SessionId,
+    delivered: Delivered<P>,
+) -> Option<P::Shown> {
+    let Delivered::Published(Published::Saved { shown, .. } | Published::Recovered { shown, .. }) =
+        delivered
+    else {
+        return None;
+    };
+    remembered
+        .is_none_or(|later| later < session)
+        .then_some(shown)
+}
+
+#[cfg(not(test))]
+redacted!(
+    Now, Status, Keeping, Event, Input, Report, Command, Capture, Unheard, Screening, Stopped,
+    Completion, Delivered, Inserted, Published, Machine,
+);
+
+#[cfg(test)]
+mod tests;
+
+#[cfg(test)]
+mod explore;

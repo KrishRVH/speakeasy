@@ -11,6 +11,7 @@ use gpui::{
     Size, Task, Window, WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind,
     WindowOptions, canvas, div, point, prelude::*, px, relative, white,
 };
+use speakeasy_core::machine::Phase;
 use speakeasy_platform::{Display, NativeWindow, Part};
 use speakeasy_show::{Ending, Mark, Point, Shape, ink};
 use tokio::sync::watch;
@@ -18,7 +19,7 @@ use tokio::sync::watch;
 use crate::{
     BRAND_FONT,
     gpui_ext::{EntityUpdate, WindowUpdate, defer_native, follow},
-    runtime::{Phase, Snapshot},
+    runtime::Snapshot,
 };
 
 const HOLD: Duration = Duration::from_millis(650);

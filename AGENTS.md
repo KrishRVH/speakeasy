@@ -28,10 +28,14 @@ project's profile; dependency licenses are checked only where packaging must cit
 - Maximize shared Rust core code across Windows, macOS, and Linux throughout the codebase. Keep
   common behavior, state, policies, and tests in shared modules; isolate OS differences in native
   adapters. Reuse existing modules before adding platform-specific implementations.
-- `crates/core` (`speakeasy-core`) owns pure gestures and motion; `crates/show` (`speakeasy-show`)
-  pure Show composition, no I/O; `crates/platform` (`speakeasy-platform`) native adapters, including
-  screen capture and the overlay window; `crates/app` (`speakeasy`) GPUI, the session owner, audio
-  capture, the local worker, and Show recording and publishing. Only platform may use unsafe code.
+- `crates/core` (`speakeasy-core`) owns pure gestures, motion, and the session machine;
+  `crates/show` (`speakeasy-show`) pure Show composition, no I/O; `crates/platform`
+  (`speakeasy-platform`) native adapters, including screen capture and the overlay window;
+  `crates/app` (`speakeasy`) GPUI, the session owner, audio capture, the local worker, and Show
+  recording and publishing. Only platform may use unsafe code.
+- `formal/` restates the session machine in Lean under the Lean standards; change the machine and
+  its model together. The [formal model](docs/architecture.md#formal-model) lists the proofs, the
+  conformance check, and its bounds.
 - Project-owned Rust contains no source comments. Keep native safety and thread-lifetime contracts
   in [native contracts](docs/native-contracts.md); vendored code follows its upstream policy.
 - Give session state one owner. Move cross-thread work over channels; callbacks cannot stop a newer

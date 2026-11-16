@@ -1,6 +1,5 @@
 use std::{future::pending, mem, time::Duration};
 
-use speakeasy_core::gesture::State;
 use speakeasy_platform::Taps;
 use tokio::task::JoinHandle;
 
@@ -19,15 +18,8 @@ pub(super) enum Device<R> {
 }
 
 impl<R: Capturing> Device<R> {
-    pub(super) const fn is_free(&self) -> bool {
-        matches!(self, Self::Free)
-    }
-
-    pub(super) fn open(&mut self, recording: R, gesture: State) {
-        debug_assert!(self.is_free());
-        if gesture == State::Processing {
-            recording.finish();
-        }
+    pub(super) fn open(&mut self, recording: R) {
+        debug_assert!(matches!(self, Self::Free));
         *self = Self::Open(recording);
     }
 

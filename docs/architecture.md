@@ -37,14 +37,27 @@ module unless a test file is named.
   to a Show. [runtime/tests/dictation.rs](../crates/app/src/runtime/tests/dictation.rs) and
   [shows.rs](../crates/app/src/runtime/tests/shows.rs) drive the owner on paused Tokio time with
   production deadlines.
-- **Session owner**: [runtime.rs](../crates/app/src/runtime.rs),
-  [runtime/owner.rs](../crates/app/src/runtime/owner.rs),
-  [session.rs](../crates/app/src/runtime/session.rs),
-  [device.rs](../crates/app/src/runtime/device.rs),
-  [worker.rs](../crates/app/src/runtime/worker.rs),
-  [recognition.rs](../crates/app/src/runtime/recognition.rs), and the
-  [ports.rs](../crates/app/src/runtime/ports.rs) seam own a session's authority, devices, and
-  worker. [runtime/tests.rs](../crates/app/src/runtime/tests.rs) hosts the owner on fakes;
+- **Session machine**: [core/src/machine.rs](../crates/core/src/machine.rs), with
+  [session.rs](../crates/core/src/machine/session.rs),
+  [recognition.rs](../crates/core/src/machine/recognition.rs), and
+  [outcome.rs](../crates/core/src/machine/outcome.rs), makes every session decision. `Machine::step`
+  takes one event at one moment and reaches the world only through an `Env`'s queries and effects. A
+  `Payload` names what the machine carries without reading it: the app's audio, text, and permits,
+  or nothing in the explorer and the Lean model.
+  [session/tests.rs](../crates/core/src/machine/session/tests.rs) and
+  [recognition/tests.rs](../crates/core/src/machine/recognition/tests.rs) check a session's stages
+  and early recognition, and [machine/tests.rs](../crates/core/src/machine/tests.rs) which saved
+  Show is remembered; [explore.rs](../crates/core/src/machine/explore.rs) tries every ordering of
+  events and answers, checking [invariants.rs](../crates/core/src/machine/explore/invariants.rs) at
+  each state and transition. The [formal model](#formal-model) proves the machine's contracts and
+  checks that the Rust and Lean machines agree.
+- **Session owner**: [runtime.rs](../crates/app/src/runtime.rs) and
+  [runtime/owner.rs](../crates/app/src/runtime/owner.rs) interpret the machine: the owner answers
+  its queries and performs its effects through the [ports.rs](../crates/app/src/runtime/ports.rs)
+  seam, and [native.rs](../crates/app/src/runtime/native.rs) supplies the app's payload.
+  [device.rs](../crates/app/src/runtime/device.rs) and
+  [worker.rs](../crates/app/src/runtime/worker.rs) hold a session's devices and worker.
+  [runtime/tests.rs](../crates/app/src/runtime/tests.rs) hosts the owner on fakes;
   [tests/model.rs](../crates/app/src/runtime/tests/model.rs) checks device and worker release, and
   that text reaches only the session that spoke it, over generated input, settings changes and
   engine faults included. [tests/recognition.rs](../crates/app/src/runtime/tests/recognition.rs)
@@ -868,6 +881,59 @@ Only final events enter the session, and text waits for capture to seal. The pin
 server emits final results before its commit acknowledgement. Malformed or interrupted streams fall
 back to the same model's whole-recording request. HTTP and WebSocket requests share listener checks,
 language adaptation, and hint snapshots; neither logs private engine responses.
+
+## Formal model
+
+[formal/](../formal) is a Lean project that restates `speakeasy_core::machine` with every payload
+erased. [Spec/Machine.lean](../formal/Speakeasy/Spec/Machine.lean) mirrors the Rust machine one
+operation at a time, and `Run.step` mirrors `Machine::step`; a scripted environment answers every
+query, so a theorem quantified over the script covers every answer the owner can give.
+
+- [Current.lean](../formal/Speakeasy/Current.lean) proves `Run.step_current`: when the live session
+  is the latest and owns its recognition, every event and every answer keeps it so.
+  `Run.played_current` carries that from the start through every sequence of events, so the theorems
+  below that assume it hold in every reachable state.
+- [Safety.lean](../formal/Speakeasy/Safety.lean) proves that handling a microphone or screen event
+  for any other session changes nothing, and that a transcript for one only frees the worker; a
+  failed one may also reload the model. A delivery result while no session awaits one, a cleanup
+  result for a session that is not retiring, and a retirement report for a recorder that is not
+  retiring change nothing. After every step the app survives, other apps' cues are held exactly
+  while a session runs with sounds on. Cleanup's policy keeps a Show's bundle only when it finished.
+- [Gesture.lean](../formal/Speakeasy/Gesture.lean) proves hold-to-talk, double-tap hands-free, and
+  Escape leaving a Show alone while its key is up. A tick at the limit finishes any recording, and
+  no gesture step restarts a recording's clock, so the limit counts from the first press.
+
+The proofs are constructive: every theorem depends on `propext` and `Quot.sound` at most.
+`mise run lean:standards:check` runs the Lean standards gate: the audit rejects classical choice,
+unfinished proofs, and undocumented declarations, three independent kernels recheck every
+declaration, and an offline rebuild must reproduce every output. Plausible checks the invariant on
+generated event sequences in `lake test`.
+
+A proof covers the model, so conformance ties the model to the code. The Rust explorer and
+[SpeakeasyMain.lean](../formal/SpeakeasyMain.lean) list the same events in the same order: input,
+control commands, presets, settings, and the microphone, screen, worker, delivery, and cleanup
+results each state admits, with every answer each query admits. Each explores breadth-first and
+numbers states by a canonical key. The key ranks session ids by age, measures moments back from the
+clock up to the limit, reduces an outcome to the phase it shows, and marks a ticket for an ended
+session stale. Each expanded state yields an FNV-1a digest of its transitions, effects, and
+successors. `mise run lean:conform` explores both to a fixed point and requires byte-identical
+reports: 1,430,956 states and 127,475,062 transitions. Rust keys states by a 128-bit hash and Lean
+by the canonical text itself, so an identical report also rules out a hash collision.
+
+The model trusts the owner where an event names no session. The owner keeps one delivery at a time
+and reports a retired session's result as `abandoned`, so each `delivered` result belongs to the
+session awaiting it. The worker answers each transcription with the detail it was asked for, so a
+Show never receives dictation text.
+
+The explored space has bounds. Timing scales to a one-tick tap, two-tick double tap, and three-tick
+limit. Three settings cover sounds on and off, each recognition mode, and GPU probing. A state with
+more than two sessions retiring is counted, not expanded. The explorer offers each event only where
+the owner can deliver it: a checkpoint loss only to a Show, and a model load only while one runs.
+GPUI views, the ports, and native adapters stay outside the model; the owner's tests cover them.
+
+`mise run standards:check` runs the Lean gate and `lean:conform`, and each skips while its sources
+are unchanged; `mise run --force` reruns one. `mise run rust:test` explores five events deep, and
+`SPEAKEASY_EXPLORE_DEPTH`, a depth or `all`, takes it further.
 
 ## Verification
 

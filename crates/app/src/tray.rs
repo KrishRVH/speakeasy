@@ -5,6 +5,7 @@ mod linux;
 mod windows_macos;
 
 use gpui::{App, AsyncApp, Subscription};
+use speakeasy_core::machine::Phase;
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 use speakeasy_platform::Scope;
 use speakeasy_platform::{Input, TrayItem, TrayMenu};
@@ -17,7 +18,7 @@ pub(crate) use self::windows_macos::{Tray, install};
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 use crate::transcript::style::Style;
 use crate::{
-    runtime::{Phase, Snapshot},
+    runtime::Snapshot,
     shell::{self, Services},
     status::{ServiceState, Status},
     theme::Theme,
