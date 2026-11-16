@@ -23,7 +23,7 @@ pub(crate) fn for_dictation(
     style.apply(Vocabulary::new(corrections).text(&for_insertion(heard, style.fillers(configured))))
 }
 
-pub(crate) fn for_insertion(text: &str, fillers: Fillers) -> String {
+fn for_insertion(text: &str, fillers: Fillers) -> String {
     let mut output = String::with_capacity(text.len());
     for token in text.split_whitespace() {
         if fillers == Fillers::Remove
