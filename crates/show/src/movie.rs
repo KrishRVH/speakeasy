@@ -137,15 +137,7 @@ impl MoviePrefix {
                 break;
             }
             let bytes = input.bytes(atom.payload..atom.end)?;
-            let fragment = match fragment(
-                &bytes,
-                atom.payload,
-                position,
-                &data,
-                &track,
-                sequence,
-                decoded,
-            ) {
+            let fragment = match fragment(&bytes, &atom, &data, &track, sequence, decoded) {
                 Ok(fragment) => fragment,
                 Err(error) => {
                     if result.frames == 0 {
@@ -246,6 +238,7 @@ impl<E: From<MovieError>, F: FnMut(Range<u64>) -> Result<Vec<u8>, E>> Input<F> {
         };
         Ok(Some(Atom {
             kind,
+            start,
             payload: start.saturating_add(header),
             end,
         }))
@@ -307,8 +300,7 @@ struct Fragment {
 
 fn fragment(
     bytes: &[u8],
-    payload: u64,
-    start: u64,
+    moof: &Atom,
     data: &Atom,
     track: &Track,
     sequence: u32,
@@ -340,7 +332,7 @@ fn fragment(
             flags & tfhd::BASE_IS_MOOF != 0,
             "Movie fragment has no data base",
         )?;
-        start
+        moof.start
     };
     require(
         header
@@ -366,7 +358,7 @@ fn fragment(
         decoded,
         times: Vec::new(),
         normalization: (flags == tfhd::BASE_OFFSET && header.rest() == [0; 4]).then_some(
-            payload
+            moof.payload
                 .saturating_add(track_box.payload)
                 .saturating_add(header_box.payload)
                 .saturating_add(3),

@@ -2,6 +2,7 @@ use super::MovieError;
 
 pub(super) struct Atom {
     pub kind: [u8; 4],
+    pub start: u64,
     pub payload: u64,
     pub end: u64,
 }
