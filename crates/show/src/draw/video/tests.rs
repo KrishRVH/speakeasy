@@ -1,5 +1,5 @@
 use super::*;
-use crate::{InkPoint, Size, Spaces, Span, Tracker, typeface::tests::typeface};
+use crate::{InkPoint, Point, Size, Spaces, Span, Tracker, typeface::tests::typeface};
 
 mod integrity;
 

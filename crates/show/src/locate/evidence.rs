@@ -136,12 +136,7 @@ pub fn crop_image(image: Image, crop: Option<Rect>) -> Result<(Image, Option<Pix
     let Some(rect) = crop else {
         return Ok((image, None));
     };
-    if ![rect.left, rect.top, rect.right, rect.bottom]
-        .iter()
-        .all(|edge| (0.0..=1.0).contains(edge))
-        || rect.left > rect.right
-        || rect.top > rect.bottom
-    {
+    if !rect.is_within_unit() {
         return Err(Error::invalid(
             "The mark has invalid bounds; export an uncropped frame instead",
         ));

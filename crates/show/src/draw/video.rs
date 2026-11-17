@@ -7,7 +7,7 @@ use tiny_skia::{PixmapPaint, Transform};
 
 use super::{RECENT_INK, RIPPLE_REACH, closed_curve, fill, label, ripple};
 use crate::{
-    Action, Error, Image, Mark, Moment, Point, Recording, Rect, Shape, Stroke, Typeface, ink,
+    Action, Error, Image, Mark, Moment, Recording, Rect, Shape, Stroke, Typeface, ink,
     locate::PixelRect,
     recording::spaces::{self, Space},
 };
@@ -255,19 +255,7 @@ fn consistent(recording: &Recording, marks: &[Mark]) -> bool {
                 },
                 Shape::Tap | Shape::Circle | Shape::Underline | Shape::Scribble => true,
             };
-            let Rect {
-                left,
-                top,
-                right,
-                bottom,
-            } = mark.bounds;
-            mark.span.end() <= *duration
-                && drawn
-                && placed
-                && left <= right
-                && top <= bottom
-                && Rect::UNIT.contains(Point::new(left, top))
-                && Rect::UNIT.contains(Point::new(right, bottom))
+            mark.span.end() <= *duration && drawn && placed && mark.bounds.is_within_unit()
         })
 }
 

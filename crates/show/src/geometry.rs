@@ -212,6 +212,11 @@ impl Rect {
     }
 
     #[must_use]
+    pub(crate) fn is_within_unit(self) -> bool {
+        self.left <= self.right && self.top <= self.bottom && Self::UNIT.encloses(self)
+    }
+
+    #[must_use]
     pub(crate) fn expanded_within(self, margin: f32, bounds: Self) -> Self {
         Self {
             left: (self.left - margin).max(bounds.left),
@@ -293,5 +298,32 @@ mod tests {
             Point::new(0.5, f32::INFINITY),
         ];
         assert!(!outside.into_iter().any(|point| Rect::UNIT.contains(point)));
+    }
+
+    #[test]
+    fn a_unit_region_is_ordered_finite_and_inside_the_square() {
+        let inside = [
+            [0.0, 0.0, 1.0, 1.0],
+            [0.3, 0.7, 0.3, 0.7],
+            [0.1, 0.2, 0.4, 0.9],
+        ];
+        assert!(
+            inside
+                .into_iter()
+                .all(|edges| Rect::from(edges).is_within_unit())
+        );
+        let outside = [
+            [0.4, 0.2, 0.1, 0.9],
+            [0.1, 0.9, 0.4, 0.2],
+            [-0.01, 0.2, 0.4, 0.9],
+            [0.1, 0.2, 1.01, 0.9],
+            [0.1, f32::NAN, 0.4, 0.9],
+            [0.1, 0.2, 0.4, f32::INFINITY],
+        ];
+        assert!(
+            !outside
+                .into_iter()
+                .any(|edges| Rect::from(edges).is_within_unit())
+        );
     }
 }
