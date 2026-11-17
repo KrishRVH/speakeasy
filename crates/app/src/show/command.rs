@@ -377,7 +377,8 @@ fn demo(directory: Option<PathBuf>, out: &mut impl io::Write) -> anyhow::Result<
         Some(directory) => directory,
         None => store::fresh_directory(&store::private_directory()?, SystemTime::now())?,
     };
-    let (_, summary) = store::stage(&directory, bundle, None)?.persist()?;
+    let wsl = speakeasy_platform::wsl();
+    let (_, summary) = store::stage(&directory, bundle, None, wsl.as_ref())?.persist()?;
     write!(out, "{summary}")?;
     Ok(())
 }

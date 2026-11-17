@@ -21,6 +21,7 @@ mod process;
 mod screen;
 #[cfg(target_os = "windows")]
 mod windows;
+mod wsl;
 
 #[cfg(target_os = "linux")]
 use self::linux as native;
@@ -55,6 +56,7 @@ pub use self::{
         Display, Frame, Part, PlacedWindow, PointerMonitor, PointerSample, Scope, ScreenCapture,
         ScreenEvent, Target, WindowGone, WindowLayer, WindowLayout, WindowWatch,
     },
+    wsl::wsl,
 };
 
 pub const PILL_WIDTH: u16 = 400;

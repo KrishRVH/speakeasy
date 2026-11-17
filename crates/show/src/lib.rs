@@ -25,10 +25,11 @@ mod sheet;
 mod signature;
 mod tracker;
 mod typeface;
+mod wsl;
 
 pub use crate::{
     align::{TimedClause, timed_clauses},
-    bundle::{Bundle, File, Manifest, Retrieval, Unreadable, compose},
+    bundle::{Bundle, File, Location, Manifest, Unreadable, compose},
     demo::Demo,
     draw::video::{AnnotationReport, Annotations, VideoViewport},
     error::Error,
@@ -51,4 +52,5 @@ pub use crate::{
     signature::{Sample, Signature},
     tracker::Tracker,
     typeface::Typeface,
+    wsl::Wsl,
 };

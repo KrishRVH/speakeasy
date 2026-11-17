@@ -258,7 +258,7 @@ async fn unavailable_checkpoint_preserves_in_memory_publication_and_cancellation
         let (footage, narration) = rehearse(80, 60);
         let mut copied = false;
         let result = publish_with(
-            None,
+            Handoff::default(),
             narrated(footage, narration.clone(), None),
             checkpoint,
             Origin::Live,
@@ -308,7 +308,7 @@ fn a_show_publishes_a_complete_private_bundle() -> anyhow::Result<()> {
     let (_input, permit) = permit();
     let mut clipboard = None;
     let published = publish_with(
-        None,
+        Handoff::default(),
         narrated(footage, narration.clone(), None),
         None,
         Origin::Live,
@@ -397,7 +397,7 @@ fn only_a_screen_show_crops_its_frames_to_the_activity() -> anyhow::Result<()> {
         let root = tempfile::tempdir()?;
         let (_input, permit) = permit();
         let Published::Saved { show, .. } = publish_with(
-            None,
+            Handoff::default(),
             Footage {
                 framing,
                 ..show.finish(4_000)
@@ -446,7 +446,7 @@ fn a_show_that_cannot_be_copied_stays_saved() -> anyhow::Result<()> {
     let (_input, permit) = permit();
     let (footage, narration) = rehearse(32, 20);
     let published = publish_with(
-        None,
+        Handoff::default(),
         narrated(footage, narration, None),
         None,
         Origin::Live,
@@ -481,7 +481,7 @@ fn a_cancelled_show_never_reaches_the_disk() -> anyhow::Result<()> {
     let unprepared = || bail!("A cancelled Show never prepares its folder");
     let (footage, narration) = rehearse(32, 20);
     let published = publish_with(
-        None,
+        Handoff::default(),
         narrated(footage, narration, None),
         None,
         Origin::Live,
@@ -507,7 +507,7 @@ fn a_show_cancelled_before_staging_never_writes_its_files() -> anyhow::Result<()
     };
     let (footage, narration) = rehearse(32, 20);
     let published = publish_with(
-        None,
+        Handoff::default(),
         narrated(footage, narration, None),
         None,
         Origin::Live,
@@ -527,7 +527,7 @@ fn a_show_that_lost_its_narration_says_why_in_its_files() -> anyhow::Result<()> 
     let lost = NarrationLoss::AudioStopped;
     let mut clipboard = None;
     let published = publish_with(
-        None,
+        Handoff::default(),
         narrated(footage, Narration::default(), Some(lost)),
         None,
         Origin::Live,
@@ -694,6 +694,7 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
             duration: Moment::from_millis(60_000),
             command: None,
         }),
+        None,
     )?;
     assert!(!staged.source_lost);
     staged.persist()?;
@@ -725,7 +726,10 @@ fn retrieval_is_advertised_only_when_both_source_and_command_are_available() -> 
         let (_input, permit) = permit();
         let mut copied = String::new();
         let published = publish_with(
-            available.then_some(command.as_path()),
+            Handoff {
+                command: available.then_some(command.as_path()),
+                wsl: None,
+            },
             narrated(footage, narration, None),
             None,
             Origin::Live,
@@ -750,8 +754,14 @@ fn retrieval_is_advertised_only_when_both_source_and_command_are_available() -> 
             fs::read_to_string(show.directory().join("summary.md"))?
         );
         assert_eq!(copied.contains("Local command:"), available && source_ok);
+        let id = show.directory().file_name().unwrap().to_str().unwrap();
+        assert!(
+            copied.contains(&format!(
+                "Show ID: `{id}`. An agent with Speakeasy's MCP tools can open this Show by that ID."
+            )),
+            "{copied}"
+        );
         if available && source_ok {
-            let id = show.directory().file_name().unwrap().to_str().unwrap();
             assert!(copied.contains(&format!("show frames {id} --json")));
             assert!(copied.contains(&format!("``{}``", command.display())));
         }

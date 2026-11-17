@@ -211,7 +211,7 @@ fn a_bundle_appears_whole_under_a_fresh_name() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let parent = root.path().join("shows");
     let first = fresh_directory(&parent, at(1_792_420_563))?;
-    let (saved, summary) = stage(&first, bundle()?, None)?.persist()?;
+    let (saved, summary) = stage(&first, bundle()?, None, None)?.persist()?;
     assert_eq!(
         saved.folder()?,
         Some(first.as_path()),
@@ -225,7 +225,7 @@ fn a_bundle_appears_whole_under_a_fresh_name() -> anyhow::Result<()> {
     assert!(summary.contains(&first.display().to_string()));
     assert!(first.join("frames/frame-01.png").is_file());
     assert!(
-        stage(&first, bundle()?, None).is_err(),
+        stage(&first, bundle()?, None, None).is_err(),
         "An existing bundle is never replaced"
     );
     #[cfg(unix)]
@@ -235,7 +235,7 @@ fn a_bundle_appears_whole_under_a_fresh_name() -> anyhow::Result<()> {
     }
     let second = fresh_directory(&parent, at(1_792_420_563))?;
     assert_eq!(second.file_name(), Some("20261019T143603Z-2".as_ref()));
-    drop(stage(&second, bundle()?, None)?);
+    drop(stage(&second, bundle()?, None, None)?);
     assert_eq!(
         names(&parent)?,
         ["20261019T143603Z"],
@@ -265,10 +265,11 @@ fn a_saved_show_reads_back_as_its_folder_holds_it_until_it_is_gone() -> anyhow::
     let root = tempfile::tempdir()?;
     let parent = root.path().join("shows");
     let folder = fresh_directory(&parent, at(1_792_420_563))?;
-    let (show, summary) = stage(&folder, bundle()?, None)?.persist()?;
+    let (show, summary) = stage(&folder, bundle()?, None, None)?.persist()?;
     let (newer, _) = stage(
         &fresh_directory(&parent, at(1_792_420_564))?,
         bundle()?,
+        None,
         None,
     )?
     .persist()?;
@@ -303,7 +304,7 @@ fn a_show_that_cannot_be_saved_names_the_shows_folder_and_a_remedy() -> anyhow::
     let root = tempfile::tempdir()?;
     let blocked = root.path().join("shows");
     fs::write(&blocked, b"a file where the folder belongs")?;
-    let message = stage(&blocked.join("20261019T143603Z"), bundle()?, None)
+    let message = stage(&blocked.join("20261019T143603Z"), bundle()?, None, None)
         .err()
         .context("A Show was staged beneath a file")?
         .to_string();

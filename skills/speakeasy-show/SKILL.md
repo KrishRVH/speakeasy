@@ -81,8 +81,10 @@ coverage at the decoded time. Read the report's omitted-annotation fields before
 complete. On other hosts, inspect `recording.mp4` with an available video tool and preserve its
 session origin from `recording.json`. Report decoder failures as unavailable evidence.
 
-A **Send to agent** prompt names the Show folder, its contact sheets in order, and `summary.md`. It
-carries paths, not the Show's text: open those files as in the steps above.
+A **Send to agent** prompt names the Show ID and folder, its contact sheets in order, and
+`summary.md`. It carries paths, not the Show's text: open those files as in the steps above, or name
+that ID to a configured Speakeasy MCP server. In WSL, read the files from the folder the prompt or
+summary gives for WSL; the other paths are Windows paths to the same files.
 
 A **Copy image + summary + narration** reference names the displayed frame and may also name the
 narration or mark time that selected it. Cite the displayed frame's timestamp; the requested time

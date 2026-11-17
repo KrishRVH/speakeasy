@@ -12,7 +12,7 @@ async fn durable_voiced_publication_retires_checkpoint_after_a_crash_before_disc
     );
     let (_input, active) = permit();
     let saved = persist(
-        None,
+        Handoff::default(),
         captured,
         Some(&checkpoint),
         checkpoint::Publication::Narrated,
@@ -49,7 +49,7 @@ async fn failed_or_cancelled_narrated_copy_keeps_new_narration_recoverable() -> 
         let (_input, active) = permit();
         assert!(matches!(
             publish_with(
-                None,
+                Handoff::default(),
                 captured,
                 Some(checkpoint),
                 Origin::Live,
@@ -76,7 +76,7 @@ async fn failed_or_cancelled_narrated_copy_keeps_new_narration_recoverable() -> 
             input.cancel();
         }
         let result = publish_with(
-            None,
+            Handoff::default(),
             captured,
             Some(reopened.checkpoint),
             Origin::Recovered { pending: true },
@@ -118,7 +118,7 @@ async fn durable_bundle_retires_checkpoint_even_when_narration_checkpoint_write_
     let (_input, active) = permit();
     assert!(matches!(
         publish_with(
-            None,
+            Handoff::default(),
             captured,
             Some(checkpoint),
             Origin::Live,
@@ -157,7 +157,7 @@ async fn only_audio_that_may_hold_speech_is_kept_for_retry_or_as_voice() -> anyh
         let Published::Saved {
             show, preservation, ..
         } = publish_with(
-            None,
+            Handoff::default(),
             captured,
             Some(checkpoint),
             Origin::Live,

@@ -49,7 +49,7 @@ async fn failed_save_keeps_durable_narration_and_original_voice() -> anyhow::Res
     let (_input, permit) = permit();
     assert!(
         publish_with(
-            None,
+            Handoff::default(),
             captured,
             Some(checkpoint),
             Origin::Live,
@@ -94,7 +94,7 @@ async fn pending_retry_preserves_edits_and_failure_does_not_publish_another_copy
         },
         ..
     } = publish_with(
-        None,
+        Handoff::default(),
         captured,
         Some(checkpoint),
         Origin::Live,
@@ -125,7 +125,7 @@ async fn pending_retry_preserves_edits_and_failure_does_not_publish_another_copy
     let (_input, retry) = permit();
     assert!(
         publish_with(
-            None,
+            Handoff::default(),
             captured,
             Some(reopened.checkpoint),
             Origin::Recovered { pending: true },
@@ -151,7 +151,7 @@ async fn pending_retry_preserves_edits_and_failure_does_not_publish_another_copy
         },
         ..
     } = publish_with(
-        None,
+        Handoff::default(),
         captured,
         Some(reopened.checkpoint),
         Origin::Recovered { pending: true },
@@ -194,7 +194,7 @@ async fn kept_bundle_cannot_extend_audio_expiry_and_discard_audio_leaves_it_unto
             },
             ..
         } = publish_with(
-            None,
+            Handoff::default(),
             captured,
             Some(checkpoint),
             Origin::Live,

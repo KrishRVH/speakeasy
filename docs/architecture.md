@@ -441,17 +441,18 @@ module unless a test file is named.
   another Show's notice. The shell supplies copy availability and routes accepted writes and
   recovery while the view owns result receipts. [copy.rs](../crates/app/src/show/copy.rs) owns
   explicit review/tray copies through native cleanup, including the Send to agent prompt, which
-  names the folder, each manifest contact sheet in order, and `summary.md` but carries no Show text.
-  It retains the displayed image snapshot, reads or encodes off the UI thread, and rejects dropped
-  receipts, lifecycle cancellation, and any newer input generation before native replacement. Copies
-  made while paused are cancelled before an owner starts. Quit drains the worker, and a replacement
-  waits for its predecessor to finish. [copy/tests.rs](../crates/app/src/show/copy/tests.rs) checks
-  those races with fake native access; the owned-window review test checks the actual visual request
-  through an injected copy action without touching the clipboard, and keyboard routing in the More
-  actions menu, where Escape closes the menu rather than the window. That menu relies on GPUI's
-  dispatch order: the root's capture-phase mouse-down runs before the popover's mouse-down-out, so
-  pressing the trigger of an open menu closes it, and a capture-phase key-up activates the
-  highlighted action and stops propagation before the focused trigger's keyboard click.
+  names the Show ID, the folder and its WSL path when mapped, each manifest contact sheet in order,
+  and `summary.md` but carries no Show text. It retains the displayed image snapshot, reads or
+  encodes off the UI thread, and rejects dropped receipts, lifecycle cancellation, and any newer
+  input generation before native replacement. Copies made while paused are cancelled before an owner
+  starts. Quit drains the worker, and a replacement waits for its predecessor to finish.
+  [copy/tests.rs](../crates/app/src/show/copy/tests.rs) checks those races with fake native access;
+  the owned-window review test checks the actual visual request through an injected copy action
+  without touching the clipboard, and keyboard routing in the More actions menu, where Escape closes
+  the menu rather than the window. That menu relies on GPUI's dispatch order: the root's
+  capture-phase mouse-down runs before the popover's mouse-down-out, so pressing the trigger of an
+  open menu closes it, and a capture-phase key-up activates the highlighted action and stops
+  propagation before the focused trigger's keyboard click.
 - **Show composition**: [crates/show/src](../crates/show/src), notably
   [locate.rs](../crates/show/src/locate.rs) resolves phrases and marks to exact recorded spans;
   [locate/evidence.rs](../crates/show/src/locate/evidence.rs) renders bounded source sheets and mark
@@ -516,11 +517,17 @@ module unless a test file is named.
 - **Show bundle format**: [bundle.rs](../crates/show/src/bundle.rs) and
   [describe.rs](../crates/show/src/describe.rs).
   [bundle/tests.rs](../crates/show/src/bundle/tests.rs) checks paginated sheets and pins
-  `show.json`; the demo's summary in demo.rs pins what agents read. Retrieval notes take an explicit
-  command and ID. The store writes source frames before rendering the summary, so a failed optional
-  source write never advertises retrieval. [paths.rs](../crates/app/src/paths.rs) finds the console
-  sibling on Windows, the original AppImage on Linux, or a durable app executable; temporary mounts
-  and unavailable commands are omitted. Existing summaries are never regenerated.
+  `show.json`; the demo's summary in demo.rs pins what agents read. A `Location` carries the folder,
+  its ID, and an optional WSL mapping: every summary names the ID before any retrieval note, and a
+  mapped folder gets a WSL line after any ending or narration notice, so those stay on the second
+  line. [wsl.rs](../crates/show/src/wsl.rs) parses `wsl.conf` as WSL does (first value wins, `#`
+  comments outside quotes, invalid lines skipped) and maps only lettered-drive paths under an
+  absolute automount root; [platform wsl.rs](../crates/platform/src/wsl.rs) finds the default
+  distribution's settings and gives up rather than guess. Retrieval notes take an explicit command.
+  The store writes source frames before rendering the summary, so a failed optional source write
+  never advertises retrieval. [paths.rs](../crates/app/src/paths.rs) finds the console sibling on
+  Windows, the original AppImage on Linux, or a durable app executable; temporary mounts and
+  unavailable commands are omitted. Existing summaries are never regenerated.
   [bundle/read.rs](../crates/show/src/bundle/read.rs) validates format versions and references
   without I/O, accepts only the current format, exposes sheet membership, and strips private decoder
   messages from failures. A keyframe `crop` must be a proper part of the unit square. Its

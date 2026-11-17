@@ -70,7 +70,9 @@ fn a_cropped_frame_is_cut_to_the_crop_it_records_and_keeps_everything_drawn() {
     };
     assert!(near(first, chosen), "{first:?}");
     assert!(grown.encloses(chosen) && grown.contains(click), "{grown:?}");
-    let (_, files) = bundle.into_files(Path::new("show"), None).unwrap();
+    let (_, files) = bundle
+        .into_files(super::located(Path::new("show")), None)
+        .unwrap();
     for (index, crop) in crops.into_iter().enumerate() {
         let crop = crop.unwrap_or(Rect::UNIT);
         let name = format!("frames/frame-{:02}.png", index + 1);
@@ -95,7 +97,7 @@ fn a_cropped_frame_is_cut_to_the_crop_it_records_and_keeps_everything_drawn() {
 #[test]
 fn the_summary_names_cropped_frames_and_how_to_see_the_whole_screen() {
     let part = Some(Rect::from([0.1, 0.1, 0.6, 0.6]));
-    let summary = |crops: &[Option<Rect>], retrieval| {
+    let summary = |crops: &[Option<Rect>], command| {
         let manifest = Manifest {
             version: Manifest::VERSION,
             recording: Recording {
@@ -111,15 +113,12 @@ fn the_summary_names_cropped_frames_and_how_to_see_the_whole_screen() {
         };
         Summary {
             manifest: &manifest,
-            directory: Path::new("show"),
-            retrieval,
+            location: super::located(Path::new("ID")),
+            command,
         }
         .to_string()
     };
-    let retrieval = Some(Retrieval {
-        command: Path::new("speakeasy"),
-        id: "ID",
-    });
+    let command = Some(Path::new("speakeasy"));
     let named = [
         (vec![None, part], "Frame #2 is cropped"),
         (vec![part, None, part], "Frames #1 and #3 are cropped"),
@@ -131,11 +130,11 @@ fn the_summary_names_cropped_frames_and_how_to_see_the_whole_screen() {
     ];
     let whole = "`show frame ID --at M:SS.mmm --out NEW.png --json`";
     for (crops, line) in named {
-        let summary = summary(&crops, retrieval);
+        let summary = summary(&crops, command);
         assert!(summary.contains(line), "{summary}");
         assert!(summary.contains(whole), "{summary}");
     }
-    let uncropped = summary(&[None, None], retrieval);
+    let uncropped = summary(&[None, None], command);
     assert!(!uncropped.contains("cropped"), "{uncropped}");
     assert!(!summary(&[part], None).contains("show frame"));
 }

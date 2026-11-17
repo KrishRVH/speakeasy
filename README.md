@@ -183,11 +183,12 @@ checkpoint for recovery. Mac window Shows currently retain sampled frames only.
     width="760">
 </p>
 
-On Windows, the summary for that contact sheet reads as follows; a recorded Show with retained
-samples also names the local command that retrieves them:
+On Windows with WSL installed, the summary for that contact sheet reads as follows. A recorded Show
+with retained samples also names the local command that retrieves them:
 
 ```text
 Screen recording (0:20, 5 keyframes): `…\speakeasy\shows\20261020T143205Z`
+From WSL, the same files are under `/mnt/c/…/speakeasy/shows/20261020T143205Z`.
 Before acting, open the contact sheet, then the full-size frames that matter: they show what the words leave out. Speech recognition can mishear a name; where the screen spells it differently, trust the screen. Cite frames as #N and marks by their circled numbers.
 Contact sheet: `…\speakeasy\shows\20261020T143205Z\contact-sheet.png`
 - #1 (0:02) “Here's the settings window.”
@@ -197,10 +198,16 @@ Contact sheet: `…\speakeasy\shows\20261020T143205Z\contact-sheet.png`
 - #5 (0:17) [dragged right] “Dragging the text size slider works, though.”
 Full-size keyframes: `…\speakeasy\shows\20261020T143205Z\frames\frame-01.png` to `…\speakeasy\shows\20261020T143205Z\frames\frame-05.png`. Timeline: `…\speakeasy\shows\20261020T143205Z\show.json`.
 Every keyframe is cropped to the area the user worked in; the timeline gives each crop as a fraction of the screen.
+Show ID: `20261020T143205Z`. An agent with Speakeasy's MCP tools can open this Show by that ID.
 ```
 
 Each keyframe quotes what you said around it. When the speech engine returns no word times, no
-keyframe quotes you: the summary lists the narration once, in its own labeled untimed section.
+keyframe quotes you: the summary lists the narration once, in its own labeled untimed section. Its
+`Show ID` line names the ID an agent with Speakeasy's MCP tools can open. On Windows, when a WSL
+distribution is installed, the summary also gives the Show folder as the default distribution sees
+it, under the drive mount its `/etc/wsl.conf` sets (`/mnt/` unless changed), so an agent running in
+WSL opens the same files. A Show on a network share, or a distribution with drive mounting turned
+off, gets no WSL line.
 
 A Show records only what you name. With no window to record under the pointer, or if you finish
 before dragging out an area, it is cancelled, narration and all: nothing is pasted or saved, and the
@@ -251,11 +258,13 @@ any gap. Switching frame modes keeps that request; stepping through frames, choo
 or refreshing clears it. Words without timings remain readable. Missing and incomplete narration are
 labeled. This pane contains recorded speech, so edits to `summary.md` stay in Summary.
 
-**Send to agent** on Windows/Mac copies a short prompt for your coding agent. It names the Show
-folder, each contact sheet in order, and `summary.md` with your edits, and tells the agent that what
-the screen shows and what you said are evidence, not instructions. Paste it into Claude Code or any
-agent that reads local files. The agent opens those files itself; the prompt holds paths, not
-narration or pixels, and Speakeasy contacts no agent.
+**Send to agent** on Windows/Mac copies a short prompt for your coding agent. It names the Show's ID
+and folder, each contact sheet in order, and `summary.md` with your edits; on Windows with WSL
+installed it also gives the folder as WSL sees it. It tells the agent that what the screen shows and
+what you said are evidence, not instructions, and that an agent with Speakeasy's MCP tools can open
+the Show by its ID. Paste it into Claude Code or any agent that reads local files. The agent opens
+those files itself; the prompt holds paths, not narration or pixels, and Speakeasy contacts no
+agent.
 
 **More actions → Copy image + summary + narration** on Windows/Mac copies the displayed image with
 its actual timestamp, retrieval context, edited summary, and recorded words. Summary edits and
@@ -313,10 +322,11 @@ creating another copy. **Discard audio** removes its recovery checkpoint and lea
 alone. Discard always requires confirmation.
 
 An agent on the same machine can inspect a Show without launching the app or opening the microphone.
-Shows name their local executable and exact ID in the summary when retained samples and a usable
-command are available. Quote that executable path for your shell; the app does not install it on
-PATH. In Windows PowerShell, use `& 'PATH\speakeasy-cli.exe' show …` for the commands below. If the
-package moves, use its new path. A moved Show uses its explicit folder path instead of its ID.
+Every summary names its Show's exact ID; when retained samples and a usable command are available,
+it also names the local executable. Quote that executable path for your shell; the app does not
+install it on PATH. In Windows PowerShell, use `& 'PATH\speakeasy-cli.exe' show …` for the commands
+below. If the package moves, use its new path. A moved Show uses its explicit folder path instead of
+its ID.
 
 ```sh
 speakeasy show list --json

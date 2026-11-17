@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::{Context as _, anyhow};
 use speakeasy_platform::InsertPermit;
-use speakeasy_show::{Framing, NarrationLoss, Typeface, compose, select};
+use speakeasy_show::{Framing, NarrationLoss, Typeface, Wsl, compose, select};
 
 use super::{
     Checkpoint, Interrupted, SavedShow, recorder::NOTHING_RECORDED, store, store::checkpoint,
@@ -25,6 +25,12 @@ pub(crate) enum Origin {
     Recovered {
         pending: bool,
     },
+}
+
+#[derive(Clone, Copy, Default)]
+struct Handoff<'a> {
+    command: Option<&'a Path>,
+    wsl: Option<&'a Wsl>,
 }
 
 pub(crate) struct Reopened {
@@ -64,8 +70,13 @@ pub(crate) async fn publish(
         None => None,
     };
     tokio::task::spawn_blocking(move || {
+        let command = crate::paths::command();
+        let wsl = speakeasy_platform::wsl();
         publish_with(
-            crate::paths::command().as_deref(),
+            Handoff {
+                command: command.as_deref(),
+                wsl: wsl.as_ref(),
+            },
             footage,
             checkpoint,
             origin,
@@ -79,7 +90,7 @@ pub(crate) async fn publish(
 }
 
 fn publish_with(
-    command: Option<&Path>,
+    handoff: Handoff<'_>,
     footage: Footage,
     checkpoint: Option<Checkpoint>,
     origin: Origin,
@@ -124,7 +135,7 @@ fn publish_with(
             .as_ref()
             .is_some_and(|checkpoint| checkpoint.has_audio().unwrap_or(true));
     let result = persist(
-        command,
+        handoff,
         footage,
         checkpoint.as_ref(),
         completion,
@@ -240,7 +251,7 @@ struct Persisted {
 }
 
 fn persist(
-    command: Option<&Path>,
+    handoff: Handoff<'_>,
     footage: Footage,
     checkpoint: Option<&Checkpoint>,
     completion: checkpoint::Publication,
@@ -291,8 +302,9 @@ fn persist(
         Some(store::Retained {
             journal: &journal,
             duration,
-            command,
+            command: handoff.command,
         }),
+        handoff.wsl,
     )?;
     let movie_lost = match checkpoint {
         Some(checkpoint) => checkpoint.retain_movie(&mut staged, duration)?,

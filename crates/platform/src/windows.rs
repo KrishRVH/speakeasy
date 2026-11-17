@@ -5,6 +5,7 @@ pub(crate) mod installation;
 pub(crate) mod login;
 pub(crate) mod movie;
 mod presentation;
+pub(crate) mod registry;
 pub(crate) mod screen;
 
 use std::{

@@ -1,52 +1,27 @@
-use std::{ffi::OsString, io, os::windows::ffi::OsStringExt as _, path::PathBuf};
+use std::{io, path::PathBuf};
 
 use anyhow::{Context as _, bail, ensure};
-use windows_sys::Win32::{
-    Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS},
-    System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_SZ, RRF_SUBKEY_WOW6464KEY, RegGetValueW},
-};
 
-use super::to_wide;
+use super::registry;
 
 const INVALID: &str = "The Windows installation path is invalid.";
 
 pub fn installed_directory() -> anyhow::Result<Option<PathBuf>> {
-    let key = to_wide(
+    let path = match registry::text(
         r"Software\Microsoft\Windows\CurrentVersion\Uninstall\io.github.krvh.speakeasy_is1",
-    );
-    let value = to_wide("InstallLocation");
-    let mut buffer = vec![0_u16; 32_768];
-    let mut length = u32::try_from(buffer.len().saturating_mul(2))?;
-
-    let status = unsafe {
-        RegGetValueW(
-            HKEY_CURRENT_USER,
-            key.as_ptr(),
-            value.as_ptr(),
-            RRF_RT_REG_SZ | RRF_SUBKEY_WOW6464KEY,
-            std::ptr::null_mut(),
-            buffer.as_mut_ptr().cast(),
-            &raw mut length,
-        )
+        "InstallLocation",
+    ) {
+        Ok(path) => path,
+        Err(error) if error.kind() == io::ErrorKind::InvalidData => bail!(INVALID),
+        Err(error) => {
+            return Err(error).context(
+                "Cannot read the Windows installation. Open the release page to update manually.",
+            );
+        },
     };
-    if status == ERROR_FILE_NOT_FOUND {
+    let Some(path) = path.map(PathBuf::from) else {
         return Ok(None);
-    }
-    if status != ERROR_SUCCESS {
-        return Err(io::Error::from_raw_os_error(status.cast_signed())).context(
-            "Cannot read the Windows installation. Open the release page to update manually.",
-        );
-    }
-    ensure!(length.is_multiple_of(2), INVALID);
-    let units = usize::try_from(length / 2)?;
-    let text = buffer
-        .get(..units)
-        .context("The Windows installation path is too long.")?;
-    let Some((0, path)) = text.split_last() else {
-        bail!(INVALID);
     };
-    ensure!(!path.contains(&0), INVALID);
-    let path = PathBuf::from(OsString::from_wide(path));
     ensure!(
         path.is_absolute(),
         "The Windows installation path is not absolute."

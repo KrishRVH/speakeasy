@@ -466,14 +466,15 @@ mod tests {
     use std::path::Path;
 
     use super::*;
-    use crate::{Manifest, Shape, typeface::tests::typeface};
+    use crate::{Location, Manifest, Shape, typeface::tests::typeface};
 
     #[test]
     fn the_demo_tells_its_story_in_five_keyframes() {
         let bundle = Demo::new(typeface()).bundle((720, 450)).unwrap();
         let expected = bundle.manifest.clone();
         let directory = Path::new("shows").join("demo");
-        let (summary, files) = bundle.into_files(&directory, None).unwrap();
+        let location = Location::new(&directory, None).unwrap();
+        let (summary, files) = bundle.into_files(location, None).unwrap();
         assert_eq!(
             summary,
             format!(
@@ -487,6 +488,7 @@ Contact sheet: `{}`
 - #5 (0:17) [dragged right] “Dragging the text size slider works, though.”
 Full-size keyframes: `{}` to `{}`. Timeline: `{}`.
 Every keyframe is cropped to the area the user worked in; the timeline gives each crop as a fraction of the screen.
+Show ID: `demo`. An agent with Speakeasy's MCP tools can open this Show by that ID.
 ",
                 directory.display(),
                 directory.join("contact-sheet.png").display(),
@@ -535,7 +537,8 @@ Every keyframe is cropped to the area the user worked in; the timeline gives eac
         untimed.narration = Narration::Text(NARRATION.map(|(_, phrase)| phrase).join(" "));
         let bundle = Demo::new(typeface()).compose(untimed, (720, 450)).unwrap();
         let directory = Path::new("shows").join("demo");
-        let (summary, _) = bundle.into_files(&directory, None).unwrap();
+        let location = Location::new(&directory, None).unwrap();
+        let (summary, _) = bundle.into_files(location, None).unwrap();
         assert_eq!(
             summary,
             format!(
@@ -550,6 +553,7 @@ Untimed narration (the speech engine gave no word times, so no keyframe owns it)
 “Here's the settings window. When I open Appearance, the theme picker is here, but look, this label runs under the save button. Now I click reduce motion and nothing happens. Dragging the text size slider works, though.”
 Full-size keyframes: `{}` to `{}`. Timeline: `{}`.
 Every keyframe is cropped to the area the user worked in; the timeline gives each crop as a fraction of the screen.
+Show ID: `demo`. An agent with Speakeasy's MCP tools can open this Show by that ID.
 ",
                 directory.display(),
                 directory.join("contact-sheet.png").display(),

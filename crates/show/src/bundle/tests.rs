@@ -8,6 +8,10 @@ use crate::{
 
 mod framing;
 
+fn located(directory: &Path) -> Location<'_> {
+    Location::new(directory, None).unwrap()
+}
+
 #[test]
 fn show_json_keeps_its_wire_format() {
     let click = Action::Click {
@@ -201,9 +205,9 @@ fn the_summary_says_how_to_read_every_sheet_and_sets_each_full_path_apart() {
     };
     let directory = Path::new("My Shows").join("show 1");
     let summary = Summary {
-        retrieval: None,
         manifest: &manifest,
-        directory: &directory,
+        location: located(&directory),
+        command: None,
     }
     .to_string();
     let lines: Vec<&str> = summary.lines().collect();
@@ -239,17 +243,79 @@ fn the_summary_says_how_to_read_every_sheet_and_sets_each_full_path_apart() {
         ]
     );
     assert_eq!(
-        lines.last().copied(),
-        Some(
+        lines[lines.len() - 2..],
+        [
             format!(
                 "Full-size keyframes: {} to {}. Timeline: {}.",
                 file(&["frames", "frame-01.png"]),
                 file(&["frames", "frame-07.png"]),
                 file(&["show.json"])
-            )
-            .as_str()
+            ),
+            "Show ID: `show 1`. An agent with Speakeasy's MCP tools can open this Show by that ID."
+                .to_owned()
+        ]
+    );
+}
+
+#[test]
+fn the_summary_names_the_show_id_and_its_folder_as_wsl_sees_it() {
+    let manifest = Manifest {
+        version: Manifest::VERSION,
+        recording: Recording {
+            duration: Moment::from_millis(1_000),
+            ending: Ending::WindowClosed,
+            ..Recording::default()
+        },
+        marks: Vec::new(),
+        keyframes: vec![Keyframe {
+            index: 1,
+            at: Moment::from_millis(500),
+            reason: Reason::Middle,
+            event: "middle".to_owned(),
+            said: None,
+            marks: 0..0,
+            action: None,
+            crop: None,
+        }],
+    };
+    let wsl = Wsl::configured("[automount]\nroot = /windir\n");
+    let summary = |directory: &str, wsl| {
+        Summary {
+            manifest: &manifest,
+            location: Location::new(Path::new(directory), wsl).unwrap(),
+            command: None,
+        }
+        .to_string()
+    };
+    let drive = "C:/Users/Ada/AppData/Local/speakeasy/shows/20261117T093000Z";
+    let mapped = summary(drive, Some(&wsl));
+    let lines: Vec<&str> = mapped.lines().collect();
+    assert_eq!(
+        lines[1..3],
+        [
+            "The recorded window closed at 0:01, before the user finished the Show; later steps \
+             are missing.",
+            "From WSL, the same files are under \
+             `/windir/c/Users/Ada/AppData/Local/speakeasy/shows/20261117T093000Z`."
+        ]
+    );
+    assert_eq!(
+        lines.last().copied(),
+        Some(
+            "Show ID: `20261117T093000Z`. An agent with Speakeasy's MCP tools can open this \
+             Show by that ID."
         )
     );
+    for unmapped in [
+        summary(drive, None),
+        summary("//server/share/20261117T093000Z", Some(&wsl)),
+    ] {
+        assert!(!unmapped.contains("WSL"), "{unmapped}");
+        assert!(
+            unmapped.contains("Show ID: `20261117T093000Z`."),
+            "{unmapped}"
+        );
+    }
 }
 
 #[test]
@@ -274,7 +340,7 @@ fn summary_and_manifest(recording: Recording) -> (String, serde_json::Value) {
         &typeface(),
     )
     .unwrap();
-    let (summary, files) = bundle.into_files(Path::new("show"), None).unwrap();
+    let (summary, files) = bundle.into_files(located(Path::new("show")), None).unwrap();
     let manifest = files
         .iter()
         .find(|file| file.name == Manifest::FILE)
@@ -495,7 +561,7 @@ fn contact_sheets_cover_every_frame_once_in_readable_pages() {
             .iter()
             .map(Keyframe::file)
             .collect();
-        let (summary, files) = bundle.into_files(directory, None).unwrap();
+        let (summary, files) = bundle.into_files(located(directory), None).unwrap();
         let sheets: Vec<&File> = files
             .iter()
             .filter(|file| file.name.starts_with("contact-sheet"))

@@ -173,7 +173,7 @@ async fn revoking_finished_publication_or_recovery_keeps_its_checkpoint() -> any
     let captured = footage(&checkpoint)?;
     assert!(matches!(
         publish_with(
-            None,
+            Handoff::default(),
             captured,
             Some(checkpoint),
             Origin::Live,
@@ -196,7 +196,7 @@ async fn failed_publication_keeps_recoverable_frames_and_success_cleans_up() -> 
     let checkpoint = checkpoint(parent.path()).await?;
     assert!(
         publish_with(
-            None,
+            Handoff::default(),
             footage(&checkpoint)?,
             Some(checkpoint),
             Origin::Live,
@@ -214,7 +214,7 @@ async fn failed_publication_keeps_recoverable_frames_and_success_cleans_up() -> 
     let (_input, active) = permit();
     assert!(matches!(
         publish_with(
-            None,
+            Handoff::default(),
             captured,
             Some(checkpoint),
             Origin::Live,
@@ -241,7 +241,7 @@ fn optional_source_failure_still_saves_selected_keyframes_and_reports_the_loss()
     footage.recording.duration = Moment::from_millis(360_001);
     let (_input, permit) = permit();
     let result = publish_with(
-        None,
+        Handoff::default(),
         narrated(footage, narration, None),
         None,
         Origin::Live,
@@ -279,7 +279,7 @@ fn recover_with(
     let reopened = reopen_with(interrupted)?;
     assert!(reopened.speech.is_none());
     publish_with(
-        None,
+        Handoff::default(),
         reopened.footage,
         Some(reopened.checkpoint),
         Origin::Recovered {

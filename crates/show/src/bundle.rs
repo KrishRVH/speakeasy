@@ -10,7 +10,7 @@ pub use read::Unreadable;
 
 use crate::{
     Ending, Error, Image, Keyframe, Mark, Moment, Narration, NarrationLoss, Recording, Rect,
-    Selection, Typeface,
+    Selection, Typeface, Wsl,
     describe::{Count, Marker},
     draw::{self, Badge, Corner},
     framing::{self, Plan},
@@ -57,9 +57,33 @@ pub struct Bundle {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct Retrieval<'a> {
-    pub command: &'a Path,
-    pub id: &'a str,
+pub struct Location<'a> {
+    directory: &'a Path,
+    id: &'a str,
+    wsl: Option<&'a Wsl>,
+}
+
+impl<'a> Location<'a> {
+    #[must_use]
+    pub fn new(directory: &'a Path, wsl: Option<&'a Wsl>) -> Option<Self> {
+        let id = directory.file_name()?.to_str()?;
+        Some(Self { directory, id, wsl })
+    }
+
+    #[must_use]
+    pub const fn directory(&self) -> &'a Path {
+        self.directory
+    }
+
+    #[must_use]
+    pub const fn id(&self) -> &'a str {
+        self.id
+    }
+
+    #[must_use]
+    pub fn in_wsl(&self) -> Option<String> {
+        self.wsl?.path(self.directory)
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -166,17 +190,18 @@ pub fn compose<E: From<Error> + Send>(
 
 struct Summary<'a> {
     manifest: &'a Manifest,
-    directory: &'a Path,
-    retrieval: Option<Retrieval<'a>>,
+    location: Location<'a>,
+    command: Option<&'a Path>,
 }
 
 impl fmt::Display for Summary<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self {
             manifest,
-            directory,
-            retrieval,
+            location,
+            command,
         } = *self;
+        let Location { directory, id, .. } = location;
         let Manifest {
             recording,
             marks,
@@ -232,6 +257,9 @@ impl fmt::Display for Summary<'_> {
                 "The user's speech could not be transcribed; what the user said is missing."
             )?,
             None => {},
+        }
+        if let Some(wsl) = location.in_wsl() {
+            writeln!(f, "From WSL, the same files are under {}.", Code(wsl))?;
         }
         let pages: Vec<&[Keyframe]> = sheet::pages(keyframes).collect();
         if !pages.is_empty() {
@@ -323,7 +351,12 @@ impl fmt::Display for Summary<'_> {
                 Frames(several)
             )?,
         }
-        if let Some(Retrieval { command, id }) = retrieval {
+        writeln!(
+            f,
+            "Show ID: {}. An agent with Speakeasy's MCP tools can open this Show by that ID.",
+            Code(id)
+        )?;
+        if let Some(command) = command {
             writeln!(
                 f,
                 "Screen samples between keyframes are retained. Local command: {} (a path, not \
@@ -394,13 +427,13 @@ impl Bundle {
 
     pub fn into_files(
         self,
-        directory: &Path,
-        retrieval: Option<Retrieval<'_>>,
+        location: Location<'_>,
+        command: Option<&Path>,
     ) -> Result<(String, Vec<File>), Error> {
         let summary = Summary {
             manifest: &self.manifest,
-            directory,
-            retrieval,
+            location,
+            command,
         }
         .to_string();
         let mut files = self.images;

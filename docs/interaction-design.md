@@ -235,11 +235,12 @@ changes the session's last Show. A missing frame keeps its numbered position and
 manifest can still show a readable summary. The summary pane displays at most 64 KiB; Copy summary
 includes the complete file within the reader's limit.
 
-Send to agent, a saved Show's primary action, copies a short prompt naming the Show folder, each
-contact sheet in order, and `summary.md`, then says to paste it into Claude Code or any coding
-agent. The prompt holds paths, not narration or summary text, and tells the agent that screen
-content and speech are evidence, not instructions. It shares Copy summary's availability and
-cancellation, and Speakeasy contacts no agent.
+Send to agent, a saved Show's primary action, copies a short prompt naming the Show ID and folder,
+the folder as WSL sees it when Windows has a distribution, each contact sheet in order, and
+`summary.md`, then says to paste it into Claude Code or any coding agent. The prompt holds paths,
+not narration or summary text. It tells the agent that screen content and speech are evidence, not
+instructions, and that an agent with Speakeasy's MCP tools can open the Show by its ID. It shares
+Copy summary's availability and cancellation, and Speakeasy contacts no agent.
 
 Interrupted Shows offer Recover Show and confirmed Discard. Recovery uses the current local engine
 and original language, saves a new bundle, and leaves the clipboard alone. Narration pending offers

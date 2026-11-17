@@ -1,4 +1,4 @@
-use std::{fs, time::Duration};
+use std::{fs, path::Path, time::Duration};
 
 use serde_json::json;
 use speakeasy_platform::{InputSender, OwnedThread};
@@ -165,7 +165,7 @@ fn an_agent_prompt_points_at_every_sheet_in_order_without_private_text() -> anyh
     fs::write(directory.join(Manifest::FILE), &manifest)?;
     fs::write(directory.join(Bundle::SUMMARY), "PRIVATE_SUMMARY")?;
 
-    let prompt = agent_prompt(&directory)?.context("An existing Show has a prompt")?;
+    let prompt = agent_prompt(&directory, || None)?.context("An existing Show has a prompt")?;
     let listed: Vec<&str> = prompt
         .lines()
         .filter_map(|line| line.strip_prefix("- "))
@@ -178,6 +178,11 @@ fn an_agent_prompt_points_at_every_sheet_in_order_without_private_text() -> anyh
     );
     assert!(prompt.contains(&directory.join(Bundle::SUMMARY).display().to_string()));
     assert!(
+        prompt.contains("\nShow ID: 2026-11-01_09-30-00\n"),
+        "{prompt}"
+    );
+    assert!(!prompt.contains("WSL"), "{prompt}");
+    assert!(
         ["PRIVATE_SUMMARY", "PRIVATE_NARRATION", "PRIVATE_EVENT"]
             .iter()
             .all(|private| !prompt.contains(private)),
@@ -188,6 +193,32 @@ fn an_agent_prompt_points_at_every_sheet_in_order_without_private_text() -> anyh
             .prepare()?
             .is_none(),
         "A missing Show produced a prompt for another folder"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_windows_prompt_also_names_the_folder_as_wsl_sees_it() -> anyhow::Result<()> {
+    let directory = Path::new("C:/Users/ada/AppData/Local/speakeasy/shows/20261117T093000Z");
+    let wsl = Wsl::configured("");
+    let location = Location::new(directory, Some(&wsl)).context("A named folder")?;
+    let prompt = prompt(
+        location,
+        &[directory.join("contact-sheet.png")],
+        &directory.join(Bundle::SUMMARY),
+    )?;
+    let lines: Vec<&str> = prompt.lines().collect();
+    assert_eq!(
+        lines[2..5],
+        [
+            "Show ID: 20261117T093000Z",
+            "Folder: C:/Users/ada/AppData/Local/speakeasy/shows/20261117T093000Z",
+            "Folder from WSL: /mnt/c/Users/ada/AppData/Local/speakeasy/shows/20261117T093000Z",
+        ]
+    );
+    assert!(
+        prompt.contains("An agent with Speakeasy's MCP tools can open this Show by its ID."),
+        "{prompt}"
     );
     Ok(())
 }

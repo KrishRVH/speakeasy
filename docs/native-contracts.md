@@ -44,13 +44,19 @@ application state changes remain on the Services or session owner.
 ## Windows handles, hooks, windows and dialogs
 
 Owners: `crates/platform/src/windows.rs`, `windows/input.rs`, `windows/insertion.rs`,
-`windows/dialog.rs`, `windows/presentation.rs`, `windows/login.rs`, `windows/installation.rs`.
+`windows/dialog.rs`, `windows/presentation.rs`, `windows/login.rs`, `windows/installation.rs`,
+`windows/registry.rs`, `wsl.rs`.
 
 `take_handle` accepts only a fresh unowned kernel-object handle from an API that reports failure
 with null and requires `CloseHandle`; it is not an adopter for pseudo-handles, window handles, or
 APIs using `INVALID_HANDLE_VALUE`. The OwnedHandle closes it exactly once. Native byte/UTF-16
 buffers have checked ABI lengths and remain alive through the synchronous call. Registry strings are
-bounded, terminated and validated before becoming an installation path.
+bounded and terminated, then validated before becoming an installation path or a WSL share name: the
+default distribution's key holds only hex digits, braces, and hyphens, and its name only letters,
+digits, `.`, `_`, and `-`. Reading `/etc/wsl.conf` through `\\wsl.localhost` or `\\wsl$` can start
+the WSL VM and block for seconds, so only worker threads detect WSL: publication's blocking task,
+the copy worker, and the CLI. The file is bounded to 64 KiB; an unreadable or oversized file gives
+no WSL path.
 
 Windows presentation/subclass operations run on the HWND's owning thread. `Window::new` verifies
 that ownership. A subclass is removed during native destruction. Low-level hook callbacks without a

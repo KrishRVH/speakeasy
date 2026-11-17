@@ -9,7 +9,7 @@ use std::{
 
 use anyhow::Context as _;
 use gpui::App;
-use speakeasy_show::{Bundle, Journal, Moment, Retrieval};
+use speakeasy_show::{Bundle, Journal, Location, Moment, Wsl};
 
 const KEPT_FOR: Duration = Duration::from_hours(7 * 24);
 
@@ -160,12 +160,15 @@ pub(super) fn stage(
     directory: &Path,
     bundle: Bundle,
     retained: Option<Retained<'_>>,
+    wsl: Option<&Wsl>,
 ) -> anyhow::Result<Staged> {
     anyhow::ensure!(
         !directory.exists(),
         "{} already exists, and a Show never replaces one",
         directory.display()
     );
+    let location = Location::new(directory, wsl)
+        .context("A Show's folder needs a name made of Unicode text")?;
     let parent = directory
         .parent()
         .context("A Show's directory needs a parent")?;
@@ -173,13 +176,10 @@ pub(super) fn stage(
     let source_lost = retained.as_ref().is_some_and(|retained| {
         source::write(staging.path(), retained.journal, retained.duration).is_err()
     });
-    let retrieval = retained.filter(|_| !source_lost).and_then(|retained| {
-        Some(Retrieval {
-            command: retained.command?,
-            id: directory.file_name()?.to_str()?,
-        })
-    });
-    let (summary, files) = bundle.into_files(directory, retrieval)?;
+    let command = retained
+        .and_then(|retained| retained.command)
+        .filter(|_| !source_lost);
+    let (summary, files) = bundle.into_files(location, command)?;
     let folders: BTreeSet<PathBuf> = files
         .iter()
         .filter_map(|file| Some(staging.path().join(&file.name).parent()?.to_owned()))
