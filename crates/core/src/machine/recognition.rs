@@ -92,7 +92,7 @@ enum Early<P: Payload> {
 }
 
 #[cfg_attr(test, derive(Clone, Debug))]
-enum Audio<P: Payload> {
+enum Portion<P: Payload> {
     Whole,
     Tail(Option<P::Range>),
 }
@@ -109,7 +109,7 @@ struct Final<P: Payload> {
     audio: P::Audio,
     start: P::Span,
     detail: Detail,
-    mode: Audio<P>,
+    portion: Portion<P>,
     progress: Progress,
     retried: bool,
 }
@@ -155,7 +155,7 @@ impl<P: Payload> Recognition<P> {
     pub(super) fn whole(&mut self) {
         self.early = Early::Whole;
         if let Some(final_part) = &mut self.final_part {
-            final_part.mode = Audio::Whole;
+            final_part.portion = Portion::Whole;
         }
     }
 
@@ -166,24 +166,24 @@ impl<P: Payload> Recognition<P> {
         start: P::Span,
         detail: Detail,
     ) {
-        let mode = match (&self.early, detail, partition) {
-            (Early::Streaming(_), Detail::Text, _) => Audio::Whole,
+        let portion = match (&self.early, detail, partition) {
+            (Early::Streaming(_), Detail::Text, _) => Portion::Whole,
             (Early::Segmented(pieces), Detail::Text, Some(partition))
                 if usize::try_from(partition.pieces).ok() == Some(pieces.len())
                     && partition.pieces > 0 =>
             {
-                Audio::Tail(partition.tail)
+                Portion::Tail(partition.tail)
             },
             _ => {
                 self.whole();
-                Audio::Whole
+                Portion::Whole
             },
         };
         self.final_part = Some(Final {
             audio,
             start,
             detail,
-            mode,
+            portion,
             progress: Progress::Waiting,
             retried: false,
         });
@@ -216,18 +216,18 @@ impl<P: Payload> Recognition<P> {
             .final_part
             .as_mut()
             .filter(|part| part.progress == Progress::Waiting)?;
-        let audio = match &final_part.mode {
-            Audio::Tail(None) => return None,
-            Audio::Tail(Some(range)) => {
+        let audio = match &final_part.portion {
+            Portion::Tail(None) => return None,
+            Portion::Tail(Some(range)) => {
                 if let Some(tail) = cut(&final_part.audio, range) {
                     tail
                 } else {
-                    final_part.mode = Audio::Whole;
+                    final_part.portion = Portion::Whole;
                     self.early = Early::Whole;
                     final_part.audio.clone()
                 }
             },
-            Audio::Whole => final_part.audio.clone(),
+            Portion::Whole => final_part.audio.clone(),
         };
         final_part.progress = Progress::Sent;
         Some(Request::Final {
@@ -265,7 +265,7 @@ impl<P: Payload> Recognition<P> {
                 let final_part = self.final_part.as_mut()?;
                 final_part.progress = Progress::Done;
                 Some(match transcript {
-                    Transcript::Text(tail) if matches!(final_part.mode, Audio::Tail(_)) => {
+                    Transcript::Text(tail) if matches!(final_part.portion, Portion::Tail(_)) => {
                         Transcript::Text(self.join(tail))
                     },
                     transcript => transcript,
@@ -304,7 +304,7 @@ impl<P: Payload> Recognition<P> {
         let Early::Segmented(pieces) = &self.early else {
             return None;
         };
-        if !matches!(final_part.mode, Audio::Tail(None))
+        if !matches!(final_part.portion, Portion::Tail(None))
             || pieces.iter().any(|piece| !matches!(piece, Job::Heard(_)))
         {
             return None;
