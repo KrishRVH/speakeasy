@@ -183,7 +183,8 @@ fn summaries_keep_per_tag_damage_and_silence_errors() {
         .collect();
     let corpus: corpus::Corpus =
         serde_json::from_value(serde_json::json!({"clips": clips})).unwrap();
-    let summary = serde_json::to_value(corpus.summarize(&reports)).unwrap();
+    let results: Vec<_> = corpus.clips.iter().zip(reports).collect();
+    let summary = serde_json::to_value(corpus::Summary::new(&results)).unwrap();
     assert_eq!(summary["overall"]["raw"]["word_errors"], 1);
     let policies = summary["overall"]["policies"].as_array().unwrap();
     let candidate = policies

@@ -24,6 +24,7 @@ const STARTUP_TIMEOUT: Duration = local_speech::STARTUP_TIMEOUT
     .saturating_mul(2)
     .saturating_add(Duration::from_secs(5));
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+const RECORDING_TIMEOUT: Duration = Duration::from_secs(310);
 const PHASE_TIMEOUT: Duration = Duration::from_secs(2);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -32,7 +33,6 @@ struct Fixture {
     loaded: Sender<()>,
     inserted: Sender<(Instant, String)>,
     replay: Option<Replay>,
-    requests: Option<Sender<Inference>>,
 }
 
 impl Ports for Fixture {
@@ -51,34 +51,29 @@ impl Ports for Fixture {
         recognition: RecognitionMode,
         events: Sender<CaptureEvent>,
     ) -> anyhow::Result<FixtureDevice> {
-        let capture = self
-            .replay
-            .as_ref()
-            .map(|replay| {
-                audio::fixture::replay(
-                    id,
-                    &self.wav,
-                    if replay.segmenting {
-                        recognition
-                    } else {
-                        RecognitionMode::Whole
-                    },
-                    replay.speed,
-                    events.clone(),
-                    replay.finished.clone(),
-                    replay.statistics.clone(),
-                )
-            })
-            .transpose()?;
-        if capture.is_none() {
+        let Some(replay) = &self.replay else {
             events.try_send(CaptureEvent::Ready(id))?;
-        }
-        Ok(FixtureDevice {
-            capture,
+            return Ok(FixtureDevice::Whole {
+                id,
+                wav: self.wav.clone(),
+                events,
+            });
+        };
+        let recognition = if replay.segmenting {
+            recognition
+        } else {
+            RecognitionMode::Whole
+        };
+        audio::fixture::replay(
             id,
-            wav: self.wav.clone(),
+            &self.wav,
+            recognition,
+            replay.speed,
             events,
-        })
+            replay.finished.clone(),
+            replay.statistics.clone(),
+        )
+        .map(FixtureDevice::Replaying)
     }
 
     fn keep(&self, _: SystemTime) -> anyhow::Result<Option<show::Kept>> {
@@ -119,11 +114,11 @@ impl Ports for Fixture {
         cancelled: watch::Receiver<bool>,
     ) -> impl Future<Output = anyhow::Result<MeasuredSpeech>> + Send + 'static {
         let loaded = self.loaded.clone();
-        let requests = self.requests.clone();
+        let inferences = self.replay.as_ref().map(|replay| replay.inferences.clone());
         async move {
             let worker = LocalSpeech::start(config, cancelled).await?;
             loaded.send(()).await?;
-            Ok(MeasuredSpeech { worker, requests })
+            Ok(MeasuredSpeech { worker, inferences })
         }
     }
 
@@ -148,35 +143,35 @@ impl Ports for Fixture {
     fn hold_cues(&self, _: bool) {}
 }
 
-struct FixtureDevice {
-    capture: Option<Capture>,
-    id: SessionId,
-    wav: Vec<u8>,
-    events: Sender<CaptureEvent>,
+enum FixtureDevice {
+    Replaying(Capture),
+    Whole {
+        id: SessionId,
+        wav: Vec<u8>,
+        events: Sender<CaptureEvent>,
+    },
 }
 
 impl Capturing for FixtureDevice {
     fn finish(&self) {
-        if let Some(capture) = &self.capture {
-            capture.finish();
-            return;
+        match self {
+            Self::Replaying(capture) => capture.finish(),
+            Self::Whole { id, wav, events } => {
+                let sealed = Sealed {
+                    wav: wav.clone(),
+                    trimmed: Duration::ZERO,
+                    audible: audio::wav_duration(wav).expect("Fixture audio has a WAV header"),
+                    partition: None,
+                };
+                events
+                    .try_send(CaptureEvent::Finished(*id, Ok(Some(sealed))))
+                    .expect("Capture lane has room for fixture audio");
+            },
         }
-        let finished = CaptureEvent::Finished(
-            self.id,
-            Ok(Some(Sealed {
-                wav: self.wav.clone(),
-                trimmed: Duration::ZERO,
-                audible: audio::wav_duration(&self.wav).expect("Fixture audio has a WAV header"),
-                partition: None,
-            })),
-        );
-        self.events
-            .try_send(finished)
-            .expect("Capture lane has room for fixture audio");
     }
 
     async fn retire(self) {
-        if let Some(capture) = self.capture {
+        if let Self::Replaying(capture) = self {
             capture.retire().await;
         }
     }
@@ -184,7 +179,7 @@ impl Capturing for FixtureDevice {
 
 impl Listening for FixtureDevice {
     fn whole(&self) {
-        if let Some(capture) = &self.capture {
+        if let Self::Replaying(capture) = self {
             capture.whole();
         }
     }
@@ -194,7 +189,7 @@ impl Listening for FixtureDevice {
     }
 
     fn expect_cue(&self) {
-        if let Some(capture) = &self.capture {
+        if let Self::Replaying(capture) = self {
             capture.expect_cue();
         }
     }
@@ -248,7 +243,6 @@ async fn profile_fixture_dictation() -> anyhow::Result<()> {
         loaded,
         inserted,
         replay: None,
-        requests: None,
     };
     let runtime = Runtime::start_with(
         config,
@@ -258,7 +252,7 @@ async fn profile_fixture_dictation() -> anyhow::Result<()> {
         fixture,
     )?;
     wait_for_signal(&ready, &mut updates, STARTUP_TIMEOUT).await?;
-    let startup_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let startup_ms = milliseconds(started.elapsed());
     let mut requests_ms = Vec::new();
     for _ in 0..5 {
         runtime.input.deliver(Input::Toggle);
@@ -266,7 +260,7 @@ async fn profile_fixture_dictation() -> anyhow::Result<()> {
         let requested = Instant::now();
         runtime.input.deliver(Input::Toggle);
         wait_for_signal(&submitted, &mut updates, REQUEST_TIMEOUT).await?;
-        requests_ms.push(requested.elapsed().as_secs_f64() * 1000.0);
+        requests_ms.push(milliseconds(requested.elapsed()));
         wait_for_phase(&mut updates, Phase::Done).await?;
     }
     let stopped = Instant::now();
@@ -277,7 +271,7 @@ async fn profile_fixture_dictation() -> anyhow::Result<()> {
         serde_json::json!({
             "startup_ms": startup_ms,
             "stop_to_fake_insert_ms": requests_ms,
-            "shutdown_ms": stopped.elapsed().as_secs_f64() * 1000.0,
+            "shutdown_ms": milliseconds(stopped.elapsed()),
         })
     );
     Ok(())
@@ -288,6 +282,7 @@ struct Replay {
     segmenting: bool,
     finished: Sender<Instant>,
     statistics: Sender<Statistics>,
+    inferences: Sender<Inference>,
 }
 
 #[derive(serde::Serialize)]
@@ -299,7 +294,7 @@ struct Inference {
 
 struct MeasuredSpeech {
     worker: LocalSpeech,
-    requests: Option<Sender<Inference>>,
+    inferences: Option<Sender<Inference>>,
 }
 
 impl Speech for MeasuredSpeech {
@@ -318,25 +313,18 @@ impl Speech for MeasuredSpeech {
         language: &str,
         terms: &Terms,
     ) -> anyhow::Result<String> {
-        let measurement = self
-            .requests
-            .as_ref()
-            .map(|_| {
-                Ok::<_, anyhow::Error>((
-                    audio::wav_duration(&wav)?.as_secs_f64() * 1000.0,
-                    sha256(&wav),
-                ))
-            })
-            .transpose()?;
+        let Some(inferences) = &self.inferences else {
+            return self.worker.transcribe(wav, language, terms).await;
+        };
+        let audio_ms = milliseconds(audio::wav_duration(&wav)?);
+        let sha256 = sha256(&wav);
         let started = Instant::now();
         let text = self.worker.transcribe(wav, language, terms).await?;
-        if let Some(((audio_ms, sha256), reports)) = measurement.zip(self.requests.as_ref()) {
-            reports.try_send(Inference {
-                audio_ms,
-                elapsed_ms: started.elapsed().as_secs_f64() * 1000.0,
-                sha256,
-            })?;
-        }
+        inferences.try_send(Inference {
+            audio_ms,
+            elapsed_ms: milliseconds(started.elapsed()),
+            sha256,
+        })?;
         Ok(text)
     }
 
@@ -384,7 +372,7 @@ async fn profile_recording_dictation() -> anyhow::Result<()> {
                     "id": case.id, "tags": case.tags, "report": report,
                 })
             );
-            results.push(report);
+            results.push((case, report));
         }
         eprintln!(
             "Recording fixture corpus: {}",
@@ -392,7 +380,7 @@ async fn profile_recording_dictation() -> anyhow::Result<()> {
                 "corpus_sha256": corpus.sha256,
                 "word_scoring": corpus::WORD_SCORING,
                 "speed": speed, "segmenting": segmenting,
-                "summary": corpus.summarize(&results),
+                "summary": corpus::Summary::new(&results),
             })
         );
     } else {
@@ -440,7 +428,7 @@ async fn recording(
     let (inserted, submitted) = async_channel::bounded(1);
     let (finished, ended) = async_channel::bounded(1);
     let (statistics, drained) = async_channel::bounded(1);
-    let (requests, measurements) = async_channel::unbounded();
+    let (inferences, measured) = async_channel::unbounded();
     let (output, mut updates) = watch::channel(Snapshot::default());
     let (meter, _) = watch::channel(Meter::default());
     let fixture = Fixture {
@@ -452,8 +440,8 @@ async fn recording(
             segmenting,
             finished,
             statistics,
+            inferences,
         }),
-        requests: Some(requests),
     };
     let started = Instant::now();
     let (recognition_config, style) = cleanup.prepare(config);
@@ -467,9 +455,9 @@ async fn recording(
 
     let result = async {
         wait_for_signal(&ready, &mut updates, STARTUP_TIMEOUT).await?;
-        let startup_ms = started.elapsed().as_secs_f64() * 1000.0;
+        let startup_ms = milliseconds(started.elapsed());
         runtime.input.deliver(Input::Toggle);
-        let stopped = wait_for_signal(&ended, &mut updates, Duration::from_secs(310)).await?;
+        let stopped = wait_for_signal(&ended, &mut updates, RECORDING_TIMEOUT).await?;
         let phase = timeout(
             REQUEST_TIMEOUT,
             updates.wait_for(|snapshot| {
@@ -489,16 +477,16 @@ async fn recording(
             let (at, text) = submitted.try_recv()?;
             (Some(at), text)
         };
-        let stats = timeout(PHASE_TIMEOUT, drained.recv()).await??;
-        Ok::<_, anyhow::Error>((startup_ms, stopped, inserted, text, stats))
+        let capture = timeout(PHASE_TIMEOUT, drained.recv()).await??;
+        Ok::<_, anyhow::Error>((startup_ms, stopped, inserted, text, capture))
     }
     .await;
     let shutdown = Instant::now();
     runtime.request_stop();
     timeout(SHUTDOWN_TIMEOUT, runtime.stopped()).await?;
-    let shutdown_ms = shutdown.elapsed().as_secs_f64() * 1000.0;
+    let shutdown_ms = milliseconds(shutdown.elapsed());
     let (startup_ms, stopped, inserted, text, capture) = result?;
-    let requests: Vec<_> = std::iter::from_fn(|| measurements.try_recv().ok()).collect();
+    let requests: Vec<_> = std::iter::from_fn(|| measured.try_recv().ok()).collect();
     let total_inference_ms =
         (!continuous).then(|| requests.iter().map(|request| request.elapsed_ms).sum());
     Ok(Report {
@@ -508,7 +496,7 @@ async fn recording(
         startup_ms,
         shutdown_ms,
         stop_to_fake_insert_ms: inserted
-            .map(|at| at.saturating_duration_since(stopped).as_secs_f64() * 1000.0),
+            .map(|at| milliseconds(at.saturating_duration_since(stopped))),
         wav_sha256,
         reference_sha256,
         requests,
@@ -516,6 +504,10 @@ async fn recording(
         evaluation: cleanup.evaluate(&clip.reference, &text, config),
         total_inference_ms,
     })
+}
+
+fn milliseconds(duration: Duration) -> f64 {
+    duration.as_secs_f64() * 1000.0
 }
 
 fn sha256(bytes: &[u8]) -> String {

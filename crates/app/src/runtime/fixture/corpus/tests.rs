@@ -78,8 +78,8 @@ fn corpus_verifies_both_files_and_rejects_duplicate_cases() -> anyhow::Result<()
     let corpus = Corpus::read(&path)?;
     let case_read = corpus.clips.first().unwrap();
     case_read.load(temp.path())?;
-    let reports = [report("public words", "public", Some(7.0), 1)];
-    let Summary::Production { overall, by_tag } = corpus.summarize(&reports) else {
+    let results = [(case_read, report("public words", "public", Some(7.0), 1))];
+    let Summary::Production { overall, by_tag } = Summary::new(&results) else {
         panic!("Production summary required");
     };
     assert_eq!(overall.quality.word_errors, 1);

@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, collections::BTreeMap, ffi::OsStr, path::Path};
+use std::{cmp::Ordering, collections::BTreeMap, ffi::OsStr, iter, path::Path};
 
 use serde::Serialize;
 
@@ -59,18 +59,16 @@ impl Cleanup {
             Self::Production => Evaluation::Production(Score::new(reference, text)),
             Self::Raw { candidate } => {
                 let raw = Score::new(reference, text);
-                let mut policies = vec![Policy::new("current", reference, text, &raw, current)];
-                if let Some(candidate) = candidate {
+                let baseline = Policy::new("current", reference, text, &raw, current);
+                let candidate = candidate.as_deref().map(|candidate| {
                     let mut scored = Policy::new("candidate", reference, text, &raw, candidate);
-                    scored.versus_current = policies
-                        .first()
-                        .map(|current| Outcome::new(&scored.score, &current.score));
-                    policies.push(scored);
-                }
+                    scored.versus_current = Some(Outcome::new(&scored.score, &baseline.score));
+                    scored
+                });
                 Evaluation::Raw {
                     cleanup: "raw-replay",
                     raw,
-                    policies,
+                    policies: iter::once(baseline).chain(candidate).collect(),
                 }
             },
         }
@@ -301,44 +299,41 @@ impl Metrics {
                 .count(),
             raw: Quality::new(reports.iter().map(|report| report.evaluation.score())),
             policies: grouped
-                .into_values()
-                .filter_map(|policies| {
-                    let name = policies.first()?.name;
-                    Some(PolicyMetrics {
-                        name,
-                        quality: Quality::new(policies.iter().map(|policy| &policy.score)),
-                        versus_raw: Outcomes::new(
-                            policies.iter().map(|policy| policy.versus_raw.outcome),
-                        ),
-                        versus_current: policies
-                            .iter()
-                            .any(|policy| policy.versus_current.is_some())
-                            .then(|| {
-                                Outcomes::new(
-                                    policies.iter().filter_map(|policy| policy.versus_current),
-                                )
-                            }),
-                        changed_clips: policies
-                            .iter()
-                            .filter(|policy| policy.versus_raw.changed)
-                            .count(),
-                        damaged_clips: policies
-                            .iter()
-                            .filter(|policy| policy.versus_raw.outcome.words == Change::Loss)
-                            .count(),
-                        introduced_tokens: policies
-                            .iter()
-                            .map(|policy| policy.versus_raw.introduced_tokens)
-                            .sum(),
-                        removed_reference_words: policies
-                            .iter()
-                            .map(|policy| policy.versus_raw.removed_reference_words)
-                            .sum(),
-                        digit_tokens_lost: policies
-                            .iter()
-                            .map(|policy| policy.versus_raw.digit_tokens_lost)
-                            .sum(),
-                    })
+                .into_iter()
+                .map(|(name, policies)| PolicyMetrics {
+                    name,
+                    quality: Quality::new(policies.iter().map(|policy| &policy.score)),
+                    versus_raw: Outcomes::new(
+                        policies.iter().map(|policy| policy.versus_raw.outcome),
+                    ),
+                    versus_current: policies
+                        .iter()
+                        .any(|policy| policy.versus_current.is_some())
+                        .then(|| {
+                            Outcomes::new(
+                                policies.iter().filter_map(|policy| policy.versus_current),
+                            )
+                        }),
+                    changed_clips: policies
+                        .iter()
+                        .filter(|policy| policy.versus_raw.changed)
+                        .count(),
+                    damaged_clips: policies
+                        .iter()
+                        .filter(|policy| policy.versus_raw.outcome.words == Change::Loss)
+                        .count(),
+                    introduced_tokens: policies
+                        .iter()
+                        .map(|policy| policy.versus_raw.introduced_tokens)
+                        .sum(),
+                    removed_reference_words: policies
+                        .iter()
+                        .map(|policy| policy.versus_raw.removed_reference_words)
+                        .sum(),
+                    digit_tokens_lost: policies
+                        .iter()
+                        .map(|policy| policy.versus_raw.digit_tokens_lost)
+                        .sum(),
                 })
                 .collect(),
         }

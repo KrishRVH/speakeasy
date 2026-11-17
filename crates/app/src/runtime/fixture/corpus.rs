@@ -52,15 +52,8 @@ impl Corpus {
         );
         let mut ids = BTreeSet::new();
         for case in &corpus.clips {
-            let label = |value: &str| {
-                !value.is_empty()
-                    && value.len() <= 80
-                    && value
-                        .bytes()
-                        .all(|byte| byte.is_ascii_alphanumeric() || b"-_".contains(&byte))
-            };
             anyhow::ensure!(
-                label(&case.id) && case.tags.iter().all(|tag| label(tag)),
+                is_label(&case.id) && case.tags.iter().all(|tag| is_label(tag)),
                 "Corpus IDs and tags need short ASCII labels"
             );
             anyhow::ensure!(ids.insert(&case.id), "Corpus clip IDs must be unique");
@@ -68,36 +61,14 @@ impl Corpus {
         corpus.sha256 = sha256(&bytes);
         Ok(corpus)
     }
+}
 
-    pub(super) fn summarize(&self, reports: &[Report]) -> Summary {
-        let mut groups = BTreeMap::<&str, Vec<&Report>>::new();
-        for (case, report) in self.clips.iter().zip(reports) {
-            for tag in &case.tags {
-                groups.entry(tag).or_default().push(report);
-            }
-        }
-        if reports
-            .first()
-            .is_some_and(|report| matches!(report.evaluation, paired::Evaluation::Raw { .. }))
-        {
-            Summary::Raw {
-                cleanup: "raw-replay",
-                overall: paired::Metrics::new(reports.iter()),
-                by_tag: groups
-                    .into_iter()
-                    .map(|(tag, rows)| (tag.to_owned(), paired::Metrics::new(rows.into_iter())))
-                    .collect(),
-            }
-        } else {
-            Summary::Production {
-                overall: Metrics::new(reports.iter()),
-                by_tag: groups
-                    .into_iter()
-                    .map(|(tag, rows)| (tag.to_owned(), Metrics::new(rows.into_iter())))
-                    .collect(),
-            }
-        }
-    }
+fn is_label(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 80
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-_".contains(&byte))
 }
 
 impl Case {
@@ -169,6 +140,39 @@ pub(super) enum Summary {
     },
 }
 
+impl Summary {
+    pub(super) fn new(results: &[(&Case, Report)]) -> Self {
+        let mut groups = BTreeMap::<&str, Vec<&Report>>::new();
+        for (case, report) in results {
+            for tag in &case.tags {
+                groups.entry(tag).or_default().push(report);
+            }
+        }
+        let reports = results.iter().map(|(_, report)| report);
+        if results
+            .first()
+            .is_some_and(|(_, report)| matches!(report.evaluation, paired::Evaluation::Raw { .. }))
+        {
+            Self::Raw {
+                cleanup: "raw-replay",
+                overall: paired::Metrics::new(reports),
+                by_tag: groups
+                    .into_iter()
+                    .map(|(tag, rows)| (tag.to_owned(), paired::Metrics::new(rows.into_iter())))
+                    .collect(),
+            }
+        } else {
+            Self::Production {
+                overall: Metrics::new(reports),
+                by_tag: groups
+                    .into_iter()
+                    .map(|(tag, rows)| (tag.to_owned(), Metrics::new(rows.into_iter())))
+                    .collect(),
+            }
+        }
+    }
+}
+
 #[derive(Serialize)]
 pub(super) struct Metrics {
     clips: usize,
@@ -190,9 +194,8 @@ impl Metrics {
             .collect();
         latency.sort_by(f64::total_cmp);
         let percentile = |percent: usize| {
-            latency
-                .get((latency.len().saturating_mul(percent).div_ceil(100)).saturating_sub(1))
-                .copied()
+            let rank = latency.len().saturating_mul(percent).div_ceil(100);
+            latency.get(rank.saturating_sub(1)).copied()
         };
         Self {
             clips: reports.len(),
@@ -219,43 +222,31 @@ pub(super) struct Quality {
 }
 
 impl Quality {
-    pub(super) fn new<'a>(scores: impl Iterator<Item = &'a Score>) -> Self {
-        let scores: Vec<_> = scores.collect();
-        let reference_words = scores
-            .iter()
-            .map(|score| score.reference_words)
-            .sum::<usize>();
-        let word_errors = scores.iter().map(|score| score.word_errors).sum::<usize>();
-        let formatting_reference_words = scores
-            .iter()
-            .map(|score| score.formatting_reference_words)
-            .sum::<usize>();
-        let formatting_word_errors = scores
-            .iter()
-            .map(|score| score.formatting_word_errors)
-            .sum::<usize>();
+    pub(super) fn new<'a>(scores: impl Iterator<Item = &'a Score> + Clone) -> Self {
+        let total = |count: fn(&Score) -> usize| -> usize { scores.clone().map(count).sum() };
+        let rate =
+            |errors: usize, words: usize| (words > 0).then_some(errors as f64 / words as f64);
+        let reference_words = total(|score| score.reference_words);
+        let word_errors = total(|score| score.word_errors);
+        let formatting_reference_words = total(|score| score.formatting_reference_words);
+        let formatting_word_errors = total(|score| score.formatting_word_errors);
         Self {
             reference_words,
             word_errors,
-            word_error_rate: (reference_words > 0)
-                .then_some(word_errors as f64 / reference_words as f64),
+            word_error_rate: rate(word_errors, reference_words),
             formatting_reference_words,
             formatting_word_errors,
-            formatting_word_error_rate: (formatting_reference_words > 0)
-                .then_some(formatting_word_errors as f64 / formatting_reference_words as f64),
+            formatting_word_error_rate: rate(formatting_word_errors, formatting_reference_words),
         }
     }
 }
 
 fn distance<T: PartialEq>(expected: &[T], heard: &[T]) -> usize {
-    let mut row: Vec<_> = (0..=heard.len()).collect();
+    let mut row: Vec<_> = (1..=heard.len()).collect();
     for (i, word) in expected.iter().enumerate() {
-        let mut previous = row.first().copied().unwrap_or(0);
-        if let Some(first) = row.first_mut() {
-            *first = i.saturating_add(1);
-        }
+        let mut previous = i;
         let mut left = i.saturating_add(1);
-        for (cell, actual) in row.iter_mut().skip(1).zip(heard) {
+        for (cell, actual) in row.iter_mut().zip(heard) {
             let above = *cell;
             *cell = above
                 .saturating_add(1)
