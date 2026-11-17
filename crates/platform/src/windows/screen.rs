@@ -582,16 +582,13 @@ impl Capture {
             self.readback = Readback::new(&self.device, source, self.longest_edge)?;
         }
         let [left, top, ..] = crop;
-        let bgra = self.readback.read(&self.context, &texture, [left, top])?;
+        let image = self.readback.read(&self.context, &texture, [left, top])?;
         if self.part()? != part {
             return Ok(None);
         }
-        let [width, height] = self.readback.size();
         Ok(Some(Frame {
             at,
-            width,
-            height,
-            bgra,
+            image,
             part: part_of_box(crop, self.content),
         }))
     }

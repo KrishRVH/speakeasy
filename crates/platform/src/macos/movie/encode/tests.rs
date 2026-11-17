@@ -33,7 +33,7 @@ fn native_mac_movie_encoding() -> anyhow::Result<()> {
                 std::thread::sleep(due.saturating_sub(started.elapsed()));
             }
             assert!(encoder.write(
-                &patterns[picture.pattern(index)].bgra,
+                patterns[picture.pattern(index)].image.pixels(),
                 u32::try_from(index)?,
                 &mut || false
             )?);
@@ -61,9 +61,9 @@ fn native_mac_movie_encoding() -> anyhow::Result<()> {
     let path = directory.join("cancelled.mp4");
     let mut encoder = Codec::open(&path, [320, 240], 384 << 20)?;
     let (descriptor, opened) = encoder.output.file_identity();
-    let pixels = crate::movie::tests::color_frame(0, [320, 240]).bgra;
+    let image = crate::movie::tests::color_frame(0, [320, 240]).image;
     for index in 0..90 {
-        assert!(encoder.write(&pixels, index, &mut || false)?);
+        assert!(encoder.write(image.pixels(), index, &mut || false)?);
     }
     let waiting = Instant::now();
     loop {
@@ -78,7 +78,7 @@ fn native_mac_movie_encoding() -> anyhow::Result<()> {
         std::thread::sleep(Duration::from_millis(2));
     }
     let submitted = encoder.frames;
-    assert!(!encoder.write(&pixels, submitted, &mut || true)?);
+    assert!(!encoder.write(image.pixels(), submitted, &mut || true)?);
     assert_eq!(encoder.frames, submitted);
     drop(encoder);
     assert_released(descriptor, &opened);
@@ -92,7 +92,9 @@ fn native_mac_movie_encoding() -> anyhow::Result<()> {
     for index in 0..120 {
         if encoder
             .write(
-                &crate::movie::tests::color_frame(index, [320, 240]).bgra,
+                crate::movie::tests::color_frame(index, [320, 240])
+                    .image
+                    .pixels(),
                 u32::try_from(index)?,
                 &mut || false,
             )

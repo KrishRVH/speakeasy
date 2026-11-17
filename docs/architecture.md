@@ -739,7 +739,9 @@ module unless a test file is named.
   video. Opt-in synthetic checks cover seek direction, orientation, cancellation, file replacement,
   and exports beyond the annotation journal. Synthetic encoder checks decode irregular captures
   sample by sample, reject future images, and exercise quiet fragments, same-tick coalescing,
-  cancellation, and partial progress after a stall.
+  cancellation, and partial progress after a stall. Captured and decoded frames carry a
+  [`BgraImage`](../crates/platform/src/image.rs), whose nonzero size matches its tightly packed
+  bytes.
 
   Windows converts sRGB RGB32 through an explicit
   [native processor](../crates/platform/src/windows/movie/convert.rs) into limited-range BT.709

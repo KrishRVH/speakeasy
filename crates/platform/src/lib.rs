@@ -46,6 +46,7 @@ pub use self::{
         DesktopOptions, FileFilter, InputMonitor, LinuxPaste, MacShortcut, NativeWindow,
         attach_stdio, copy_text, prepare, reduced_motion, secure_input, show_startup_error,
     },
+    image::BgraImage,
     input::{IdleInput, Input, InputSender, InsertPermit, Taps},
     insertion::{Delivery, FocusReport, Inserted, Inserter, OwnFocus},
     movie::{MovieControl, MovieEvent, MovieFrame, MovieTarget, read_movie_frame},

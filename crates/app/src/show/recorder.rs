@@ -482,7 +482,8 @@ impl<'a> Take<'a> {
         self.place(frame.part, frame.at)?;
         let at = self.moment(frame.at);
         let event = self.state.arrive(at, || {
-            Image::from_bgra(frame.width, frame.height, frame.bgra).ok()
+            let [width, height] = frame.image.size();
+            Image::from_bgra(width, height, frame.image.into_pixels()).ok()
         })?;
         self.log(event);
         Ok(())

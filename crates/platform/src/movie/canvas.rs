@@ -42,17 +42,14 @@ impl Canvas {
     }
 
     pub(crate) fn paint(&mut self, frame: &Frame) -> anyhow::Result<()> {
-        let source = [frame.width, frame.height];
-        ensure!(
-            within_limits(source) && length(source)? == frame.bgra.len(),
-            "Invalid movie frame"
-        );
+        let source = frame.image.size();
+        ensure!(within_limits(source), "Invalid movie frame");
         if source == self.size {
-            self.pixels.copy_from_slice(&frame.bgra);
+            self.pixels.copy_from_slice(frame.image.pixels());
             self.content = [0, 0, source[0], source[1]];
         } else {
             self.pixels.fill(0);
-            self.content = fit(&frame.bgra, source, &mut self.pixels, self.size)?;
+            self.content = fit(frame.image.pixels(), source, &mut self.pixels, self.size)?;
         }
         self.part = frame.part;
         Ok(())

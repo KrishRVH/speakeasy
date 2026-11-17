@@ -47,7 +47,7 @@ use objc2_screen_capture_kit::{
 use tokio::{runtime, time};
 
 use crate::{
-    NativeWindow,
+    BgraImage, NativeWindow,
     screen::{
         self, Frame, Listed, Part, PointerSample, Region, ScreenEvent, Target, WindowGone,
         WindowLayer,
@@ -513,9 +513,7 @@ fn frame(sample: &CMSampleBuffer, part: Part, captured: Instant) -> Option<Frame
     )?;
     Some(Frame {
         at: captured,
-        width: width.try_into().ok()?,
-        height: height.try_into().ok()?,
-        bgra,
+        image: BgraImage::new([width.try_into().ok()?, height.try_into().ok()?], bgra)?,
         part,
     })
 }

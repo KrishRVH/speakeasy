@@ -77,7 +77,7 @@ fn decode(
     let Some(decoded) = select(&reader, size, ticks, cancelled)? else {
         return Ok(None);
     };
-    let bgra = pixels::read(&decoded.sample, decoded.stride, size)?;
+    let image = pixels::read(&decoded.sample, decoded.stride, size)?;
     if cancelled() {
         return Ok(None);
     }
@@ -87,8 +87,7 @@ fn decode(
                 .checked_mul(100)
                 .context("Video timestamp overflowed")?,
         ),
-        size,
-        bgra,
+        image,
     }))
 }
 

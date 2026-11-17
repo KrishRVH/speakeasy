@@ -374,7 +374,7 @@ fn gpu_halving_reads_back_exact_pixels() -> anyhow::Result<()> {
         for (origin @ [left, top], size) in [([0, 0], source), quarter] {
             for longest_edge in [u32::MAX, 2560, 960] {
                 let readback = Readback::new(&device, size, longest_edge)?;
-                let bgra = readback.read(&context, &frame, origin)?;
+                let image = readback.read(&context, &frame, origin)?;
                 let [width, height] = readback.size();
                 let level = readback.level();
                 let expected: Vec<u8> = (0..height)
@@ -382,7 +382,7 @@ fn gpu_halving_reads_back_exact_pixels() -> anyhow::Result<()> {
                     .flat_map(|[x, y]| block_color(left + (x << level), top + (y << level)))
                     .collect();
                 assert!(
-                    bgra == expected,
+                    image.pixels() == expected,
                     "{size:?} at {origin:?} of {source:?} read back at {:?}",
                     readback.size()
                 );
@@ -649,9 +649,10 @@ impl Crop {
             display_left.checked_add(left).unwrap(),
             display_top.checked_add(top).unwrap(),
         ];
-        let scale = width.checked_div(frame.width.cast_signed()).unwrap();
+        let [frame_width, frame_height] = frame.image.size();
+        let scale = width.checked_div(frame_width.cast_signed()).unwrap();
         ensure!(
-            scale > 0 && frame.height.cast_signed().checked_mul(scale).unwrap() == height,
+            scale > 0 && frame_height.cast_signed().checked_mul(scale).unwrap() == height,
             "The frame does not match its part of the display"
         );
         let frame_pixels =
@@ -661,8 +662,8 @@ impl Crop {
         let crop_width = frame_pixels(area.right.checked_sub(area.left).unwrap());
         let crop_height = frame_pixels(area.bottom.checked_sub(area.top).unwrap());
         let end_column = column.checked_add(crop_width).unwrap();
-        let frame_width = frame.width as usize;
-        let (pixels, _) = frame.bgra.as_chunks::<BYTES_PER_PIXEL>();
+        let frame_width = frame_width as usize;
+        let (pixels, _) = frame.image.pixels().as_chunks::<BYTES_PER_PIXEL>();
         let bgra = pixels
             .chunks_exact(frame_width)
             .skip(row)

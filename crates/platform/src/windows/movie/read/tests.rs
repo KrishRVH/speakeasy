@@ -49,17 +49,18 @@ fn recovered_movie_seeks_preserve_pixels_time_and_file_ownership() -> anyhow::Re
                     "Requested time replaced the actual decoded timestamp"
                 );
             }
-            assert_eq!(frame.bgra.len(), 1280 * 720 * 4);
+            assert_eq!(frame.image.size(), [1280, 720]);
             assert!(
                 frame
-                    .bgra
+                    .image
+                    .pixels()
                     .as_chunks::<4>()
                     .0
                     .iter()
                     .all(|pixel| pixel[3] == 255)
             );
             if name == "moving.mp4" && ms == 0 {
-                check_orientation(&frame.bgra);
+                check_orientation(frame.image.pixels());
             }
         }
         #[expect(

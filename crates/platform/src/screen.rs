@@ -15,7 +15,7 @@ use self::unsupported as native;
 use crate::macos::screen as native;
 #[cfg(target_os = "windows")]
 use crate::windows::screen as native;
-use crate::{NativeWindow, StoppableThread};
+use crate::{BgraImage, NativeWindow, StoppableThread};
 
 const POINTER_INTERVAL: Duration = Duration::from_millis(8);
 
@@ -134,30 +134,11 @@ impl Target {
     }
 }
 
+#[derive(Debug)]
 pub struct Frame {
     pub at: Instant,
-    pub width: u32,
-    pub height: u32,
-    pub bgra: Vec<u8>,
+    pub image: BgraImage,
     pub part: Part,
-}
-
-impl fmt::Debug for Frame {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self {
-            at,
-            width,
-            height,
-            bgra: _,
-            part,
-        } = self;
-        f.debug_struct("Frame")
-            .field("at", at)
-            .field("width", width)
-            .field("height", height)
-            .field("part", part)
-            .finish_non_exhaustive()
-    }
 }
 
 #[derive(Debug)]
@@ -593,9 +574,7 @@ mod tests {
         let shown = |shade: u8| {
             let frame = Frame {
                 at,
-                width: 2,
-                height: 2,
-                bgra: vec![shade; 16],
+                image: BgraImage::new([2, 2], vec![shade; 16]).unwrap(),
                 part: Part::WHOLE,
             };
             format!("{frame:?}")

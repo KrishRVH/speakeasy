@@ -142,7 +142,7 @@ impl Recording {
         frame: &Frame,
         stopping: &Receiver<Infallible>,
     ) -> anyhow::Result<Option<Self>> {
-        let canvas = Canvas::new([frame.width, frame.height])?;
+        let canvas = Canvas::new(frame.image.size())?;
         if target.cancelled() || !target.begin(frame.at, canvas.size(), stopping) {
             return Ok(None);
         }

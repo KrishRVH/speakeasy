@@ -18,19 +18,10 @@ use speakeasy_show::{MAX_FRAME_EDGE, MoviePrefix};
 
 pub(crate) const RECORDING_LIMIT: Duration = Duration::from_secs(300);
 
+#[derive(Debug)]
 pub struct MovieFrame {
     pub at: Duration,
-    pub size: [u32; 2],
-    pub bgra: Vec<u8>,
-}
-
-impl fmt::Debug for MovieFrame {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("MovieFrame")
-            .field("at", &self.at)
-            .field("size", &self.size)
-            .finish_non_exhaustive()
-    }
+    pub image: crate::BgraImage,
 }
 
 pub fn read_movie_frame(
@@ -260,13 +251,11 @@ pub(crate) mod tests {
     use super::*;
 
     pub(crate) fn frame(width: u32, height: u32, shade: u8) -> crate::Frame {
+        let pixels = [shade, shade, shade, 255]
+            .repeat(usize::try_from(u64::from(width).saturating_mul(u64::from(height))).unwrap());
         crate::Frame {
             at: Instant::now(),
-            width,
-            height,
-            bgra: [shade, shade, shade, 255].repeat(
-                usize::try_from(u64::from(width).saturating_mul(u64::from(height))).unwrap(),
-            ),
+            image: crate::BgraImage::new([width, height], pixels).unwrap(),
             part: crate::Part::WHOLE,
         }
     }
@@ -318,23 +307,17 @@ pub(crate) mod tests {
         }
         crate::Frame {
             at: Instant::now(),
-            width: size[0],
-            height: size[1],
-            bgra,
+            image: crate::BgraImage::new(size, bgra).unwrap(),
             part: crate::Part::WHOLE,
         }
     }
 
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     pub(crate) fn check_colors(frame: &MovieFrame, index: usize) {
-        assert!(matches!(
-            frame.size,
-            [320, 240] | [1280, 720] | [2560, 1440]
-        ));
-        let [width, height] = frame.size.map(|edge| usize::try_from(edge).unwrap());
-        let (pixels, remainder) = frame.bgra.as_chunks::<4>();
-        assert_eq!(remainder, b"");
-        assert_eq!(pixels.len(), width.checked_mul(height).unwrap());
+        let size = frame.image.size();
+        assert!(matches!(size, [320, 240] | [1280, 720] | [2560, 1440]));
+        let [width, height] = size.map(|edge| usize::try_from(edge).unwrap());
+        let pixels = frame.image.pixels().as_chunks::<4>().0;
         assert!(pixels.iter().all(|pixel| pixel[3] == 255));
         let near = |x: usize, y: usize, expected: [u8; 3]| {
             let row = height.checked_mul(y).unwrap() / 240;
@@ -361,7 +344,7 @@ pub(crate) mod tests {
                 "Synthetic pixel at ({x}, {y}) changed color, orientation, or sample"
             );
         }
-        if frame.size == [1280, 720] {
+        if size == [1280, 720] {
             for (x, shade) in [(200, 64), (250, 128)] {
                 assert!(
                     near(x, 200, [shade; 3]),

@@ -37,7 +37,7 @@ fn irregular_captures_never_appear_before_their_capture_time() -> anyhow::Result
     for (ticks, duration) in sample_times(&path)? {
         let at = Duration::from_nanos(u64::try_from(ticks)?.saturating_mul(100));
         let decoded = decode(&path, [320, 240], at)?;
-        let shade = decoded.bgra[(120 * 320 + 160) * 4];
+        let shade = decoded.image.pixels()[(120 * 320 + 160) * 4];
         let source = inputs
             .iter()
             .enumerate()
@@ -114,7 +114,7 @@ fn pending_images_and_quiet_output_keep_capture_and_presentation_distinct() -> a
         let expected: u8 = if stop { 40 } else { 120 };
 
         assert!(
-            decoded.bgra[0].abs_diff(expected) <= 8,
+            decoded.image.pixels()[0].abs_diff(expected) <= 8,
             "An unpresented or superseded image reached the video"
         );
     }
@@ -150,7 +150,7 @@ fn pending_images_and_quiet_output_keep_capture_and_presentation_distinct() -> a
         std::thread::sleep(Duration::from_millis(25));
     }
     let decoded = decode(&interrupted, [320, 240], Duration::from_millis(500))?;
-    assert!(decoded.bgra[0].abs_diff(80) <= 8);
+    assert!(decoded.image.pixels()[0].abs_diff(80) <= 8);
     encoder.finish()?;
     Ok(())
 }

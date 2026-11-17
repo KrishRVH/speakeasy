@@ -36,9 +36,7 @@ pub(super) fn verify(directory: &Path) -> anyhow::Result<()> {
     let part = Part::between([0.2, 0.1], [0.7, 0.6]);
     let resized = crate::Frame {
         at: Instant::now(),
-        width: 160,
-        height: 120,
-        bgra: [90, 140, 200, 255].repeat(160 * 120),
+        image: crate::BgraImage::new([160, 120], [90, 140, 200, 255].repeat(160 * 120)).unwrap(),
         part,
     };
     assert!(
@@ -83,7 +81,7 @@ pub(super) fn verify(directory: &Path) -> anyhow::Result<()> {
             ] {
                 let offset = 320_usize.checked_mul(y).unwrap().checked_add(x).unwrap();
                 assert!(
-                    frame.bgra.as_chunks::<4>().0[offset][..3]
+                    frame.image.pixels().as_chunks::<4>().0[offset][..3]
                         .iter()
                         .zip(expected)
                         .all(|(actual, expected)| actual.abs_diff(expected) < 12)

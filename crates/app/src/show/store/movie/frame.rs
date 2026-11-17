@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use serde::Serialize;
+use speakeasy_platform::BgraImage;
 use speakeasy_show::{
     AnnotationReport, Annotations, Image, Moment, Rect, Typeface, VideoViewport, locate::PixelRect,
 };
@@ -59,8 +60,7 @@ pub(crate) struct Crop {
 
 pub(crate) struct Sample {
     pub at: Duration,
-    pub size: [u32; 2],
-    pub bgra: Vec<u8>,
+    pub image: BgraImage,
     viewport: Option<VideoViewport>,
     through: Moment,
 }
@@ -75,7 +75,8 @@ impl Sample {
         if cancelled() {
             return Ok(None);
         }
-        let mut image = Image::from_bgra(self.size[0], self.size[1], self.bgra)?;
+        let [width, height] = self.image.size();
+        let mut image = Image::from_bgra(width, height, self.image.into_pixels())?;
         let status = match annotations {
             None => AnnotationState::Off,
             Some(_) if self.at > self.through.since(Moment::START) => {
@@ -171,8 +172,7 @@ impl Reading {
         let viewport = geometry::viewport(&self.movie, frame.at);
         Ok(Some(Sample {
             at: Duration::from_millis(self.movie.metadata.origin_ms).saturating_add(frame.at),
-            size: frame.size,
-            bgra: frame.bgra,
+            image: frame.image,
             viewport,
             through,
         }))

@@ -91,10 +91,10 @@ fn video(
     let frame = movie::Reading::open(directory, through)?
         .sample(at, cancelled)?
         .context(CANCELLED)?;
-    let (at, [width, height]) = (frame.at, frame.size);
+    let (at, [width, height]) = (frame.at, frame.image.size());
     let (pixels, annotations) = match (annotated, scene) {
-        (false, _) => (frame.bgra, AnnotationState::Off),
-        (true, None) => (frame.bgra, AnnotationState::Unavailable),
+        (false, _) => (frame.image.into_pixels(), AnnotationState::Off),
+        (true, None) => (frame.image.into_pixels(), AnnotationState::Unavailable),
         (true, Some(scene)) => {
             let rendered = frame
                 .render(Some(scene), None, cancelled)?

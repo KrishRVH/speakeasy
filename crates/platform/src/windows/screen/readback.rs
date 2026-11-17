@@ -19,7 +19,10 @@ use windows::Win32::{
     },
 };
 
-use crate::screen::geometry::{fit, pack_rows};
+use crate::{
+    BgraImage,
+    screen::geometry::{fit, pack_rows},
+};
 
 pub(super) const BYTES_PER_PIXEL: usize = 4;
 
@@ -106,6 +109,7 @@ impl Readback {
         self.source
     }
 
+    #[cfg(test)]
     pub(super) const fn size(&self) -> [u32; 2] {
         self.size
     }
@@ -120,7 +124,7 @@ impl Readback {
         context: &ID3D11DeviceContext,
         frame: &ID3D11Texture2D,
         [left, top]: [u32; 2],
-    ) -> windows::core::Result<Vec<u8>> {
+    ) -> windows::core::Result<BgraImage> {
         let [width, height] = self.source;
         let region = D3D11_BOX {
             left,
@@ -204,7 +208,7 @@ impl<'a> Mapping<'a> {
         })
     }
 
-    fn pack(&self, size: [u32; 2]) -> windows::core::Result<Vec<u8>> {
+    fn pack(&self, size: [u32; 2]) -> windows::core::Result<BgraImage> {
         let [width, height] = size.map(|edge| edge as usize);
         let row = width.saturating_mul(BYTES_PER_PIXEL);
         let pitch = self.mapped.RowPitch as usize;
@@ -214,7 +218,9 @@ impl<'a> Mapping<'a> {
         let length = mapped_len(pitch, row, height).ok_or(E_UNEXPECTED)?;
 
         let bytes = unsafe { slice::from_raw_parts(self.mapped.pData.cast::<u8>(), length) };
-        pack_rows(bytes, pitch, width, height).ok_or_else(|| E_UNEXPECTED.into())
+        pack_rows(bytes, pitch, width, height)
+            .and_then(|pixels| BgraImage::new(size, pixels))
+            .ok_or_else(|| E_UNEXPECTED.into())
     }
 }
 

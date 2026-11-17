@@ -41,10 +41,11 @@ fn encode_synthetic_movie_fragments() -> anyhow::Result<()> {
         canvas::Canvas::new([1280, 720])?,
         FILE_LIMIT,
     )?;
-    let mut image = frame(1280, 720, 240);
+    let mut picture = frame(1280, 720, 240);
     let start = Instant::now();
     for number in 0..120_u32 {
-        for (index, pixel) in image.bgra.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+        let pixels = picture.image.pixels_mut().as_chunks_mut::<4>().0;
+        for (index, pixel) in pixels.iter_mut().enumerate() {
             let x = u32::try_from(index % 1280)?;
             let y = u32::try_from(index / 1280)?;
             let ink = x.wrapping_add(number.wrapping_mul(11)) % 127 < 3
@@ -57,7 +58,7 @@ fn encode_synthetic_movie_fragments() -> anyhow::Result<()> {
         }
         assert!(
             moving
-                .write(&image, wait_for_sample(start, number), &mut || false)?
+                .write(&picture, wait_for_sample(start, number), &mut || false)?
                 .is_continue()
         );
     }
@@ -104,14 +105,15 @@ fn encode_synthetic_movie_fragments() -> anyhow::Result<()> {
     let mut failed = false;
     let start = Instant::now();
     for number in 0..900_u32 {
-        for (index, pixel) in image.bgra.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+        let pixels = picture.image.pixels_mut().as_chunks_mut::<4>().0;
+        for (index, pixel) in pixels.iter_mut().enumerate() {
             let shade = u8::try_from(
                 (index.wrapping_add(usize::try_from(number)?.wrapping_mul(997))) % 251,
             )?;
             *pixel = [shade, shade, shade, 255];
         }
         if capped
-            .write(&image, wait_for_sample(start, number), &mut || false)
+            .write(&picture, wait_for_sample(start, number), &mut || false)
             .is_err()
         {
             failed = true;

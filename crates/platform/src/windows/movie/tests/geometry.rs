@@ -100,7 +100,7 @@ fn receipts_describe_presented_layouts_and_exclude_superseded_inputs() -> anyhow
             .find(|(sample, _, _)| usize::try_from(*sample).unwrap() <= index)
             .unwrap()
             .1;
-        for (offset, pixel) in frame.bgra.as_chunks::<4>().0.iter().enumerate() {
+        for (offset, pixel) in frame.image.pixels().as_chunks::<4>().0.iter().enumerate() {
             let x = u32::try_from(offset % 320)?;
             let y = u32::try_from(offset / 320)?;
             let inside = (left..left + width).contains(&x) && (top..top + height).contains(&y);

@@ -24,7 +24,7 @@ use objc2_core_media::{CMTime, CMTimeFlags};
 use objc2_foundation::{NSError, NSUnderlyingErrorKey};
 use speakeasy_show::MoviePrefix;
 
-use crate::MovieFrame;
+use crate::{BgraImage, MovieFrame};
 
 pub(crate) fn frame(
     input: File,
@@ -189,8 +189,7 @@ fn decoded(
     let image = image.ok_or_else(|| undecodable(error))?;
     Ok(MovieFrame {
         at: sample.timestamp(at)?,
-        size,
-        bgra: pixels(image, size)?,
+        image: pixels(image, size)?,
     })
 }
 
@@ -211,7 +210,7 @@ fn undecodable(error: Option<&NSError>) -> anyhow::Error {
     }
 }
 
-fn pixels(image: &CGImage, size: [u32; 2]) -> anyhow::Result<Vec<u8>> {
+fn pixels(image: &CGImage, size: [u32; 2]) -> anyhow::Result<BgraImage> {
     let [width, height] = size.map(|edge| edge as usize);
     ensure!(
         CGImage::width(Some(image)) == width && CGImage::height(Some(image)) == height,
@@ -254,5 +253,5 @@ fn pixels(image: &CGImage, size: [u32; 2]) -> anyhow::Result<Vec<u8>> {
     for pixel in pixels.as_chunks_mut::<4>().0 {
         pixel[3] = 255;
     }
-    Ok(pixels)
+    BgraImage::new(size, pixels).context("Decoded video pixels do not match its canvas")
 }

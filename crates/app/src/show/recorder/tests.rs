@@ -1,4 +1,5 @@
 use anyhow::Context as _;
+use speakeasy_platform::BgraImage;
 use speakeasy_show::{Action, Pin};
 
 use super::*;
@@ -116,9 +117,7 @@ fn whole_screen(started: Instant, canvas: &watch::Sender<Canvas>) -> Take<'_> {
 fn still(at: Instant, part: Part) -> Frame {
     Frame {
         at,
-        width: 4,
-        height: 4,
-        bgra: vec![0x80; 64],
+        image: BgraImage::new([4, 4], vec![0x80; 64]).unwrap(),
         part,
     }
 }

@@ -166,13 +166,13 @@ fn crops_use_the_decoded_sample_and_expand_inside_content_instead_of_letterboxin
         .collect();
     let frame = |at| speakeasy_platform::MovieFrame {
         at,
-        size: SIZE,
-        bgra: pixels.clone(),
+        image: speakeasy_platform::BgraImage::new(SIZE, pixels.clone()).unwrap(),
     };
     let crop = |movie: &super::super::Inspected, frame: speakeasy_platform::MovieFrame, bounds| {
         let viewport = viewport(movie, frame.at);
+        let [width, height] = frame.image.size();
         super::crop(
-            Image::from_bgra(frame.size[0], frame.size[1], frame.bgra)?,
+            Image::from_bgra(width, height, frame.image.into_pixels())?,
             viewport,
             bounds,
         )

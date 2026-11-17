@@ -247,20 +247,13 @@ mod native {
                     "Owned native screen capture failed; check Screen Recording permission"
                 );
             };
-            ensure!(
-                frame.part == part && frame.width > 0 && frame.height > 0,
-                "Owned capture changed its fixed region"
-            );
+            ensure!(frame.part == part, "Owned capture changed its fixed region");
             ensure!(
                 frame.at <= Instant::now() && previous.is_none_or(|last| frame.at > last),
                 "Native timestamps are not monotonic presentation times"
             );
             previous = Some(frame.at);
-            let area = usize::try_from(frame.width)?.checked_mul(usize::try_from(frame.height)?);
-            let pixels = match frame.bgra.as_chunks::<4>() {
-                (pixels, []) if Some(pixels.len()) == area => pixels,
-                _ => anyhow::bail!("Owned capture pixels do not match its dimensions"),
-            };
+            let pixels = frame.image.pixels().as_chunks::<4>().0;
             let patterns = [[20, 30, 230], [30, 220, 20]];
             let matched = patterns.iter().position(|pattern| {
                 pixels.iter().all(|pixel| {

@@ -17,12 +17,10 @@ fn resized_frames_clear_old_pixels_and_keep_aspect_ratio() -> anyhow::Result<()>
         assert_eq!(&row[4..12], &[75, 75, 75, 255].repeat(2));
         assert_eq!(&row[12..], &[0; 4]);
     }
-    let mut invalid = frame(4, 4, 0);
-    invalid.bgra.pop();
-    assert!(canvas.paint(&invalid).is_err());
     assert!(Canvas::new([u32::MAX, 1]).is_err());
     let mut grid = frame(8, 8, 0);
-    for (index, pixel) in grid.bgra.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+    let pixels = grid.image.pixels_mut().as_chunks_mut::<4>().0;
+    for (index, pixel) in pixels.iter_mut().enumerate() {
         let shade = if index % 2 == 0 { 0 } else { 255 };
         *pixel = [shade, shade, shade, 255];
     }

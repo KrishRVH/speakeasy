@@ -6,6 +6,8 @@ use windows::{
     core::Interface as _,
 };
 
+use crate::BgraImage;
+
 enum Lock<'a> {
     Flat(&'a IMFMediaBuffer),
     Rows(IMF2DBuffer2),
@@ -26,7 +28,7 @@ impl Drop for Lock<'_> {
     }
 }
 
-pub(super) fn read(sample: &IMFSample, stride: i32, size: [u32; 2]) -> anyhow::Result<Vec<u8>> {
+pub(super) fn read(sample: &IMFSample, stride: i32, size: [u32; 2]) -> anyhow::Result<BgraImage> {
     let buffer = unsafe { sample.ConvertToContiguousBuffer()? };
     let (mut start, mut scanline) = (std::ptr::null_mut(), std::ptr::null_mut());
     let mut length = 0;
@@ -68,7 +70,7 @@ pub(super) fn read(sample: &IMFSample, stride: i32, size: [u32; 2]) -> anyhow::R
     let bytes = unsafe { std::slice::from_raw_parts(start, length) };
     let pixels = copy(bytes, offset, pitch, size)?;
     drop(lock);
-    Ok(pixels)
+    BgraImage::new(size, pixels).context("Decoded video pixels do not match its canvas")
 }
 
 fn copy(
