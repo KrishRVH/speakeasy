@@ -7,7 +7,7 @@ use gpui::{
 use speakeasy_show::NarrationLoss;
 
 use super::{
-    Action, Collection, Confirm, CopyKind, Direction, Export, ExportKind, ImageState, Kind,
+    Action, Collection, Confirm, CopyKind, Direction, Export, ExportKind, ImageState, JUMP, Kind,
     Modality, Mode, Pane, Review, Write, discard_warning,
     library::{Detail, Key, Row},
     narration::{self, Narration},
@@ -37,7 +37,6 @@ const DELETE_SHOW: &str = "This removes its images, video, summary, narration, a
     recovery audio, even if kept. Exported copies stay.";
 const RECORD_HINT: &str =
     "Hold your shortcut and press S, W, or A to record your screen, a window, or an area.";
-const KEYS_HINT: &str = "Page Up / Page Down: jump 10 seconds · Home / End: first / last frame";
 
 pub(super) const NEARBY_FRAMES: usize = 10;
 const SHOWN_FRAMES: usize = 2 * NEARBY_FRAMES + 1;
@@ -498,7 +497,10 @@ impl Review {
             .when(matches!(self.mode, Mode::Source | Mode::Video), |body| {
                 body.child(self.marks(kit, cx))
             })
-            .child(kit.detail(KEYS_HINT))
+            .child(kit.detail(format!(
+                "Page Up / Page Down: jump {} seconds · Home / End: first / last frame",
+                JUMP.as_secs()
+            )))
             .child(
                 div().flex().child(
                     kit.segmented("show-panes", "Show text")
