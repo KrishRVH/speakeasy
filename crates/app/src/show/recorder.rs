@@ -359,12 +359,12 @@ impl<'a> Take<'a> {
                         break None;
                     }
                     if !self.state.journal().is_empty() {
-                        break Some(Ok((runtime::now(), Ending::Finished)));
+                        break Some(Ok(Ending::Finished));
                     }
                     finished_by.get_or_insert_with(first_frame_deadline);
                 },
                 () = tokio::time::sleep_until(finished_by.unwrap_or_else(tokio::time::Instant::now)),
-                    if finished_by.is_some() => break Some(Ok((runtime::now(), Ending::Finished))),
+                    if finished_by.is_some() => break Some(Ok(Ending::Finished)),
                 event = frames.recv() => {
                     let (ending, failure) = match event {
                         Ok(ScreenEvent::Frame(frame)) => {
@@ -372,7 +372,7 @@ impl<'a> Take<'a> {
                                 break Some(Err(error));
                             }
                             if finished_by.is_some() && !self.state.journal().is_empty() {
-                                break Some(Ok((runtime::now(), Ending::Finished)));
+                                break Some(Ok(Ending::Finished));
                             }
                             continue;
                         },
@@ -392,7 +392,7 @@ impl<'a> Take<'a> {
                     break Some(if self.state.journal().is_empty() {
                         Err(failure)
                     } else {
-                        Ok((runtime::now(), ending))
+                        Ok(ending)
                     });
                 },
                 Ok(sample) = samples.recv() => {
@@ -408,21 +408,22 @@ impl<'a> Take<'a> {
                 Ok(layout) = layouts.recv() => self.arrange(layout),
             }
         };
+        let at = runtime::now();
         stop.await;
         let ended = ended.map(|result| {
-            result.and_then(|(at, ending)| {
+            result.and_then(|ending| {
                 std::iter::from_fn(|| samples.try_recv().ok())
                     .filter(|sample| sample.at() <= at)
                     .try_for_each(|sample| self.pointer(sample))?;
-                Ok((at, ending))
+                Ok(ending)
             })
         });
-        let (at, ending) = match ended {
-            Some(Ok(end)) => end,
+        let ending = match ended {
+            Some(Ok(ending)) => ending,
             Some(Err(_invalid_event)) if !self.state.journal().is_empty() => {
                 self.abandon_log().await;
                 self.warn_checkpoint();
-                (runtime::now(), Ending::ScreenStopped)
+                Ending::ScreenStopped
             },
             Some(Err(error)) => {
                 self.abandon_log().await;

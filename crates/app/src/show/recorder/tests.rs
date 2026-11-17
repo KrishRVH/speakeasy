@@ -291,6 +291,39 @@ async fn a_capture_that_fails_or_stops_keeps_its_frames_marked_early_or_says_wha
 }
 
 #[tokio::test(start_paused = true)]
+async fn an_invalid_observation_ends_the_take_where_it_arrived_not_after_teardown()
+-> anyhow::Result<()> {
+    #[derive(Debug, Clone, Copy)]
+    enum Invalid {
+        BeyondTheLimit,
+        QueuedBehindFinish,
+    }
+    for invalid in [Invalid::BeyondTheLimit, Invalid::QueuedBehindFinish] {
+        let (recorded, _) = record(async |feed| {
+            feed.frame(0).await;
+            wait(700).await;
+            match invalid {
+                Invalid::BeyondTheLimit => feed.pointer(360_001, 0.5, 0.5, false, false).await,
+                Invalid::QueuedBehindFinish => {
+                    feed.pointer(650, f32::NAN, 0.5, false, false).await;
+                    feed.finish().await;
+                },
+            }
+        })
+        .await;
+        let recording = recorded?
+            .context("Footage recorded before the invalid observation")?
+            .recording;
+        assert_eq!(
+            (recording.duration, recording.ending),
+            (Moment::from_millis(700), Ending::ScreenStopped),
+            "{invalid:?}"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_window_that_closes_or_goes_off_screen_ends_the_take_with_its_frames_or_says_so()
 -> anyhow::Result<()> {
     for (gone, ending, without_frames) in [
