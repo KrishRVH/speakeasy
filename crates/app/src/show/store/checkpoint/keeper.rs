@@ -137,7 +137,7 @@ struct Input<T> {
     records: Receiver<T>,
     credits: Sender<Credit>,
     flushed: Sender<bool>,
-    storage: Storage,
+    storage: Option<Storage>,
 }
 
 impl<T> Input<T> {
@@ -151,9 +151,30 @@ impl<T> Input<T> {
                 records,
                 credits,
                 flushed,
-                storage: Storage::default(),
+                storage: None,
             },
         )
+    }
+
+    fn begin(&mut self, directory: &Path, name: &str, header: &[u8]) -> anyhow::Result<()> {
+        anyhow::ensure!(self.storage.is_none(), "Show checkpoint stream began twice");
+        self.storage = Some(Storage::create(directory, name, header)?);
+        Ok(())
+    }
+
+    fn append(&mut self, bytes: &[u8], byte_limit: u64, record_limit: usize) -> anyhow::Result<()> {
+        self.storage
+            .as_mut()
+            .context("Show checkpoint stream has no header")?
+            .append(bytes, byte_limit, record_limit)
+    }
+
+    fn settle(&mut self, bytes: usize) -> anyhow::Result<()> {
+        if let Some(storage) = &mut self.storage {
+            storage.drain(self.records.is_empty())?;
+        }
+        self.acknowledge(bytes);
+        Ok(())
     }
 
     fn acknowledge(&self, bytes: usize) {
@@ -165,12 +186,15 @@ impl<T> Input<T> {
     }
 
     fn finish(mut self, complete: bool) {
-        let synced = self.storage.flush();
+        let synced = self
+            .storage
+            .as_mut()
+            .is_none_or(|storage| storage.flush().is_ok());
         #[expect(
             clippy::let_underscore_must_use,
             reason = "Only a producer explicitly closing its lane waits for a flush receipt"
         )]
-        let _ = self.flushed.try_send(complete && synced.is_ok());
+        let _ = self.flushed.try_send(complete && synced);
     }
 }
 
@@ -246,7 +270,7 @@ fn frame(
             surface,
             framing,
         } => {
-            input.storage.begin(
+            input.begin(
                 directory,
                 super::LOG,
                 &Log::header(budget, surface, framing)?,
@@ -254,7 +278,7 @@ fn frame(
         },
         FrameRecord::Movie { started, returned } => {
             anyhow::ensure!(
-                input.storage.file.is_some() && movie.is_none(),
+                input.storage.is_some() && movie.is_none(),
                 "Movie needs a new checkpoint stream"
             );
             let (writing, target) = Writing::new(directory, started)?;
@@ -267,14 +291,10 @@ fn frame(
             let _ = returned.try_send(target);
         },
         FrameRecord::Event(event) => {
-            input
-                .storage
-                .append(&Log::encode(&event)?, super::FILE_LIMIT, super::EVENT_LIMIT)?;
+            input.append(&Log::encode(&event)?, super::FILE_LIMIT, super::EVENT_LIMIT)?;
         },
     }
-    input.storage.drain(input.records.is_empty())?;
-    input.acknowledge(bytes);
-    Ok(())
+    input.settle(bytes)
 }
 
 fn sound(
@@ -283,44 +303,31 @@ fn sound(
     record: audio::Record,
 ) -> anyhow::Result<()> {
     if matches!(record, audio::Record::Begin { .. }) {
-        input.storage.begin(directory, audio::FILE, audio::MAGIC)?;
+        input.begin(directory, audio::FILE, audio::MAGIC)?;
     }
-    input
-        .storage
-        .append(&record.encode()?, audio::FILE_LIMIT, audio::MAX_RECORDS)?;
-    input.storage.drain(input.records.is_empty())?;
-    input.acknowledge(record.bytes());
-    Ok(())
+    input.append(&record.encode()?, audio::FILE_LIMIT, audio::MAX_RECORDS)?;
+    input.settle(record.bytes())
 }
 
 struct Storage {
-    file: Option<BufWriter<File>>,
+    file: BufWriter<File>,
     size: u64,
     records: usize,
     synced: Instant,
 }
 
-impl Default for Storage {
-    fn default() -> Self {
-        Self {
-            file: None,
-            size: 0,
-            records: 0,
-            synced: Instant::now(),
-        }
-    }
-}
-
 impl Storage {
-    fn begin(&mut self, directory: &Path, name: &str, header: &[u8]) -> anyhow::Result<()> {
-        anyhow::ensure!(self.file.is_none(), "Show checkpoint stream began twice");
+    fn create(directory: &Path, name: &str, header: &[u8]) -> anyhow::Result<Self> {
         let mut file = File::create_new(directory.join(name))?;
         file.write_all(header)?;
         file.sync_all()?;
         super::sync_directory(directory)?;
-        self.size = u64::try_from(header.len())?;
-        self.file = Some(BufWriter::new(file));
-        Ok(())
+        Ok(Self {
+            file: BufWriter::new(file),
+            size: u64::try_from(header.len())?,
+            records: 0,
+            synced: Instant::now(),
+        })
     }
 
     fn append(&mut self, bytes: &[u8], byte_limit: u64, record_limit: usize) -> anyhow::Result<()> {
@@ -330,10 +337,7 @@ impl Storage {
             self.size <= byte_limit && self.records <= record_limit,
             "Show checkpoint reached its storage limit"
         );
-        self.file
-            .as_mut()
-            .context("Show checkpoint stream has no header")?
-            .write_all(bytes)?;
+        self.file.write_all(bytes)?;
         Ok(())
     }
 
@@ -341,17 +345,15 @@ impl Storage {
         if self.synced.elapsed() >= SYNC_INTERVAL {
             self.flush()?;
             self.synced = Instant::now();
-        } else if empty && let Some(file) = &mut self.file {
-            file.flush()?;
+        } else if empty {
+            self.file.flush()?;
         }
         Ok(())
     }
 
     fn flush(&mut self) -> anyhow::Result<()> {
-        if let Some(file) = &mut self.file {
-            file.flush()?;
-            file.get_ref().sync_data()?;
-        }
+        self.file.flush()?;
+        self.file.get_ref().sync_data()?;
         Ok(())
     }
 }
