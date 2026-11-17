@@ -97,7 +97,7 @@ impl Settings {
             prepared: demo
                 || (!self.config.needs_engine() && !self.unsaved(cx) && self.saving.is_none()),
             running: demo || cx.global::<Services>().is_running(),
-            recognized: !self.practice.text.trim().is_empty(),
+            recognized: self.practice.recognized(),
         })
     }
 

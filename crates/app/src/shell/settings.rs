@@ -330,6 +330,10 @@ impl Settings {
         matches!(self.reset, Reset::Running { .. })
     }
 
+    const fn locked(&self) -> bool {
+        self.unreadable || self.resetting()
+    }
+
     fn can_reset(&self, cx: &App) -> bool {
         let services = cx.global::<Services>();
         !services.mode.is_demo()
@@ -397,8 +401,7 @@ impl Settings {
         let services = cx.global::<Services>();
         if services.is_quitting()
             || services.mode.is_demo()
-            || self.unreadable
-            || self.resetting()
+            || self.locked()
             || !self.config_complete()
             || !self.saves.needs_save(&self.config)
         {
@@ -589,8 +592,7 @@ impl Settings {
         if cx.global::<Services>().is_quitting()
             || is_demo(cx)
             || self.engine_work.is_busy()
-            || self.unreadable
-            || self.resetting()
+            || self.locked()
         {
             return;
         }

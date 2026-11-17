@@ -27,6 +27,10 @@ impl Practice {
     pub(super) fn stop(&mut self) {
         *self = Self::default();
     }
+
+    pub(super) fn recognized(&self) -> bool {
+        !self.text.trim().is_empty()
+    }
 }
 
 impl Settings {

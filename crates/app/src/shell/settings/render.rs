@@ -388,16 +388,15 @@ impl Settings {
             None => self.presentation.message.as_str().into(),
         };
         let service = ui.cx.global::<Services>().service_state();
-        let busy = self.unreadable || self.resetting();
         let (label, action, weight, enabled) = match service {
-            ServiceState::Paused if !busy && !is_demo(ui.cx) => {
+            ServiceState::Paused if !self.locked() && !is_demo(ui.cx) => {
                 ("Resume", Action::Resume, Weight::Primary, true)
             },
             _ => (
                 "Pause",
                 Action::Pause,
                 Weight::Quiet,
-                service == ServiceState::Running && !busy,
+                service == ServiceState::Running && !self.locked(),
             ),
         };
         div()
