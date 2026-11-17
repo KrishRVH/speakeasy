@@ -13,6 +13,7 @@ use speakeasy_platform::OwnedThread;
 use tokio::{
     io::{AsyncReadExt as _, AsyncWriteExt as _},
     net::TcpStream as AsyncStream,
+    runtime::Runtime,
     task::JoinSet,
 };
 
@@ -87,14 +88,19 @@ impl Instance {
                 return Err(error).with_context(|| format!("Cannot lock {}", lock_file.display()));
             },
         }
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
-        listener.set_nonblocking(true)?;
-        let address = listener.local_addr()?;
-        let (Endpoint { nonce, .. }, port_file) = Endpoint::publish(address.port(), directory)?;
+        let (runtime, listener) = listen()?;
+        let (Endpoint { nonce, .. }, port_file) =
+            Endpoint::publish(listener.local_addr()?.port(), directory)?;
         let (requests, received) = async_channel::bounded(1);
         let server = OwnedThread::spawn("instance-server", {
             let requests = requests.clone();
-            move || serve(listener, nonce, &requests)
+            move || {
+                runtime.block_on(accept_connections(
+                    || async { listener.accept().await.map(|(stream, _)| stream) },
+                    nonce,
+                    &requests,
+                ));
+            }
         })?;
         let instance = Self {
             requests,
@@ -225,26 +231,17 @@ fn reveal_running(path: &Path) -> anyhow::Result<()> {
     bail!("Speakeasy is already running. Open Settings from its {icon} icon.");
 }
 
-fn serve(listener: TcpListener, nonce: u128, requests: &Sender<Event>) {
-    let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+fn listen() -> io::Result<(Runtime, tokio::net::TcpListener)> {
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+    listener.set_nonblocking(true)?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
-        .build()
-    else {
-        requests.close();
-        return;
+        .build()?;
+    let listener = {
+        let _context = runtime.enter();
+        tokio::net::TcpListener::from_std(listener)?
     };
-    runtime.block_on(async {
-        let Ok(listener) = tokio::net::TcpListener::from_std(listener) else {
-            requests.close();
-            return;
-        };
-        accept_connections(
-            || async { listener.accept().await.map(|(stream, _)| stream) },
-            nonce,
-            requests,
-        )
-        .await;
-    });
+    Ok((runtime, listener))
 }
 
 async fn accept_connections<F>(
