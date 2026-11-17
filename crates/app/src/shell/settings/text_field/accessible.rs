@@ -91,7 +91,7 @@ impl Document {
             .all(|(start, end)| u8::try_from(end.saturating_sub(*start)).is_ok());
         representable.then_some(Self {
             field,
-            revision: edit.generation,
+            revision: edit.revision,
             starts,
             len,
         })

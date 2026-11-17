@@ -20,7 +20,7 @@ pub(super) enum Direction {
 #[derive(Default)]
 pub(super) struct Edit {
     pub(super) text: String,
-    pub(super) generation: u64,
+    pub(super) revision: u64,
     pub(super) cursor: usize,
     anchor: usize,
     pub(super) marked: Option<Range<usize>>,
@@ -144,7 +144,7 @@ impl Edit {
             return false;
         }
         self.text.replace_range(range.clone(), text);
-        self.generation = self.generation.wrapping_add(1);
+        self.revision = self.revision.wrapping_add(1);
         let end = range.start.saturating_add(text.len());
         self.marked = matches!(composition, Composition::Mark(_))
             .then_some(range.start..end)
@@ -164,7 +164,7 @@ impl Edit {
 
     pub(super) fn set_text(&mut self, text: String) {
         self.text = text;
-        self.generation = self.generation.wrapping_add(1);
+        self.revision = self.revision.wrapping_add(1);
         self.cursor = self.text.len();
         self.anchor = self.cursor;
         self.marked = None;

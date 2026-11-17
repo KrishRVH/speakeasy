@@ -209,7 +209,7 @@ impl TextField {
             Some(Request::Select(selection)) => self.select_accessible(selection, window, cx),
             Some(Request::Reveal(span)) => {
                 self.viewport
-                    .reveal(span, self.edit.generation, self.edit.ends());
+                    .reveal(span, self.edit.revision, self.edit.ends());
                 cx.notify();
             },
             None => {},
@@ -482,7 +482,7 @@ impl Render for TextField {
                                 let input = field.read(cx);
                                 let line = input.shape(window);
                                 let viewport = input.viewport.layout(
-                                    input.edit.generation,
+                                    input.edit.revision,
                                     input.edit.ends(),
                                     |offset| line.x_for_index(offset),
                                     bounds.size.width,
