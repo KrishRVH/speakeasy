@@ -57,7 +57,7 @@ fn a_movie_survives_still_backpressure_and_closes_at_the_session_deadline() -> a
             sample, accepted, ..
         }) = control.next().await
         else {
-            anyhow::bail!("Synthetic movie did not request its content rectangle");
+            bail!("Synthetic movie did not request its content rectangle");
         };
         assert_eq!(sample, 0);
         accepted.send(true).await?;

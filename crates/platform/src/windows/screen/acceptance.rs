@@ -815,12 +815,11 @@ impl Scene {
 impl Drop for Scene {
     fn drop(&mut self) {
         self.close.close();
-        if let Some(painter) = self.painter.take() {
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "A panicking painter has already failed the test, and its windows died with its thread"
-            )]
-            let _ = painter.join();
+        if let Some(painter) = self.painter.take()
+            && let Err(panic) = painter.join()
+            && !thread::panicking()
+        {
+            std::panic::resume_unwind(panic);
         }
     }
 }

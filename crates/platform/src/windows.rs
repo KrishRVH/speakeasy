@@ -205,53 +205,51 @@ fn to_wide(text: &str) -> Vec<u16> {
 }
 
 #[cfg(test)]
-fn with_foreign_window<O: Send + 'static, T>(
-    on_owner: impl FnOnce(HWND) -> O + Send + 'static,
+fn with_foreign_window<O: Send, T>(
+    on_owner: impl FnOnce(HWND) -> O + Send,
     elsewhere: impl FnOnce(HWND) -> T,
 ) -> anyhow::Result<(O, T)> {
-    use std::{ptr::null, sync::mpsc, thread};
+    use std::{convert::Infallible, ptr::null, sync::mpsc, thread};
 
     use windows_sys::Win32::{
         System::LibraryLoader::GetModuleHandleW,
         UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, HWND_MESSAGE},
     };
 
-    let (created, window) = mpsc::channel();
-    let (release, released) = mpsc::channel::<()>();
-    let owner = thread::spawn(move || -> anyhow::Result<()> {
-        let hwnd = unsafe {
-            CreateWindowExW(
-                0,
-                w!("STATIC"),
-                null(),
-                0,
-                0,
-                0,
-                0,
-                0,
-                HWND_MESSAGE,
-                null_mut(),
-                GetModuleHandleW(null()),
-                null(),
-            )
-        };
-        ensure!(!hwnd.is_null(), "Cannot create the test window");
-        if created.send((hwnd as isize, on_owner(hwnd))).is_ok() {
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "A closed lane means the calling thread is gone, so the window can go too"
-            )]
-            let _ = released.recv();
-        }
+    thread::scope(|scope| {
+        let (created, window) = mpsc::channel();
+        let (release, released) = mpsc::channel::<Infallible>();
+        let owner = scope.spawn(move || -> anyhow::Result<()> {
+            let hwnd = unsafe {
+                CreateWindowExW(
+                    0,
+                    w!("STATIC"),
+                    null(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    HWND_MESSAGE,
+                    null_mut(),
+                    GetModuleHandleW(null()),
+                    null(),
+                )
+            };
+            ensure!(!hwnd.is_null(), "Cannot create the test window");
+            if created.send((hwnd as isize, on_owner(hwnd))).is_ok() {
+                let Err(_released) = released.recv();
+            }
 
-        unsafe { DestroyWindow(hwnd) };
-        Ok(())
-    });
-    let (hwnd, from_owner) = window.recv()?;
-    let from_here = elsewhere(hwnd as HWND);
-    release.send(())?;
-    owner.join().expect("The window's owner thread panicked")?;
-    Ok((from_owner, from_here))
+            unsafe { DestroyWindow(hwnd) };
+            Ok(())
+        });
+        let (hwnd, from_owner) = window.recv()?;
+        let from_here = elsewhere(hwnd as HWND);
+        drop(release);
+        owner.join().expect("The window's owner thread panicked")?;
+        Ok((from_owner, from_here))
+    })
 }
 
 #[cfg(test)]
