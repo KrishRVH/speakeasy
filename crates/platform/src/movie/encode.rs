@@ -169,7 +169,7 @@ impl<C: Codec> Encoder<C> {
 
 #[derive(Clone, Copy)]
 pub(crate) enum Clock {
-    #[cfg(target_os = "macos")]
+    #[cfg(not(target_os = "windows"))]
     Nanoseconds,
     #[cfg(target_os = "windows")]
     HundredNanoseconds,
@@ -178,7 +178,7 @@ pub(crate) enum Clock {
 impl Clock {
     fn quantize(self, at: Duration) -> Duration {
         match self {
-            #[cfg(target_os = "macos")]
+            #[cfg(not(target_os = "windows"))]
             Self::Nanoseconds => at,
             #[cfg(target_os = "windows")]
             Self::HundredNanoseconds => {
@@ -189,7 +189,7 @@ impl Clock {
 
     pub(crate) fn time(self, index: u32) -> Duration {
         let (ticks, unit) = match self {
-            #[cfg(target_os = "macos")]
+            #[cfg(not(target_os = "windows"))]
             Self::Nanoseconds => (1_000_000_000, 1),
             #[cfg(target_os = "windows")]
             Self::HundredNanoseconds => (10_000_000, 100),
@@ -202,3 +202,6 @@ impl Clock {
         )
     }
 }
+
+#[cfg(test)]
+mod tests;
