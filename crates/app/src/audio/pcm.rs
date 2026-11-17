@@ -90,9 +90,8 @@ impl Pcm16 {
         let audible = duration_of(speech.audible(), rate);
         self.retain_audio(range);
         self.release_excess_capacity();
-        let wav = self.into_wav(rate)?;
         Ok(Some(Sealed {
-            wav,
+            wav: Zeroizing::new(self.into_wav(rate)?),
             trimmed,
             audible,
             partition: None,
@@ -162,15 +161,17 @@ impl Drop for Pcm16 {
     }
 }
 
-fn encode(audio: &[u8], rate: u32) -> anyhow::Result<Vec<u8>> {
+fn encode(audio: &[u8], rate: u32) -> anyhow::Result<Zeroizing<Vec<u8>>> {
     let header = wav_header(audio.len(), rate).context(INCOMPLETE_HEADER)?;
-    let mut wav = Vec::with_capacity(WAV_HEADER_BYTES.saturating_add(audio.len()));
+    let mut wav = Zeroizing::new(Vec::with_capacity(
+        WAV_HEADER_BYTES.saturating_add(audio.len()),
+    ));
     wav.extend_from_slice(&header);
     wav.extend_from_slice(audio);
     Ok(wav)
 }
 
-pub(crate) fn wav_tail(wav: &[u8], range: Range<usize>) -> anyhow::Result<Vec<u8>> {
+pub(crate) fn wav_tail(wav: &[u8], range: Range<usize>) -> anyhow::Result<Zeroizing<Vec<u8>>> {
     let audio = wav
         .get(WAV_HEADER_BYTES..)
         .filter(|audio| range.end == audio.len())

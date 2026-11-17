@@ -47,7 +47,7 @@ async fn segmentation_admits_only_nemo_dictation_regardless_of_language() -> any
 
 fn partitioned(pieces: u32) -> anyhow::Result<Sealed> {
     Ok(Sealed {
-        wav: silent_wav(16_000, Duration::from_secs(1))?,
+        wav: Zeroizing::new(silent_wav(16_000, Duration::from_secs(1))?),
         trimmed: Duration::ZERO,
         audible: SPOKEN,
         partition: Some(Partition {
@@ -107,7 +107,7 @@ async fn a_nonempty_tail_keeps_every_piece_and_cleans_across_the_final_boundary(
             .send(CaptureEvent::Piece(id, number, sealed()))
             .await?;
         h.transcribe_next_as(text).await?;
-        assert_eq!(receive(&requests).await?, sealed().wav);
+        assert_eq!(receive(&requests).await?, *sealed().wav);
     }
     assert!(still_pending(h.pasted.recv()).await);
     let mut audio = silent_wav(16_000, Duration::from_secs(2))?;
@@ -117,7 +117,7 @@ async fn a_nonempty_tail_keeps_every_piece_and_cleans_across_the_final_boundary(
         .send(CaptureEvent::Finished(
             id,
             Ok(Some(Sealed {
-                wav: audio.clone(),
+                wav: Zeroizing::new(audio.clone()),
                 trimmed: Duration::ZERO,
                 audible: SPOKEN,
                 partition: Some(Partition {
@@ -267,7 +267,7 @@ const BRIEF: Duration = Duration::from_millis(900);
 
 fn heard_for(audible: Duration) -> Sealed {
     Sealed {
-        wav: vec![1, 2],
+        wav: Zeroizing::new(vec![1, 2]),
         trimmed: Duration::ZERO,
         audible,
         partition: None,

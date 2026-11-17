@@ -482,7 +482,7 @@ const SPOKEN: Duration = Duration::from_secs(2);
 
 fn sealed() -> Sealed {
     Sealed {
-        wav: vec![1, 2],
+        wav: Zeroizing::new(vec![1, 2]),
         trimmed: Duration::ZERO,
         audible: SPOKEN,
         partition: None,

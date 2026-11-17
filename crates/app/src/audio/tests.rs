@@ -3,6 +3,7 @@ use std::{sync::PoisonError, time::SystemTime};
 use anyhow::{bail, ensure};
 use speakeasy_core::machine::Cue;
 use tokio::time::timeout;
+use zeroize::Zeroizing;
 
 use super::{pcm::SAMPLE_BYTES, stream::STALL, *};
 use crate::{
@@ -305,7 +306,7 @@ async fn sealed_audio_is_reported_before_device_teardown_and_retirement_waits() 
     let capture = Capture::spawn(SessionId::FIRST, events, move |_, _, _| {
         Ok(Captured {
             outcome: Outcome::Finished(Ok(Some(Sealed {
-                wav: vec![1, 2],
+                wav: Zeroizing::new(vec![1, 2]),
                 trimmed: Duration::ZERO,
                 audible: Duration::ZERO,
                 partition: None,
@@ -321,7 +322,7 @@ async fn sealed_audio_is_reported_before_device_teardown_and_retirement_waits() 
     let pending = pending_until_released(capture.retire(), &release).await?;
     tearing_down??;
     assert!(
-        matches!(report?, Ok(CaptureEvent::Finished(SessionId::FIRST, Ok(Some(sealed)))) if sealed.wav == [1, 2])
+        matches!(report?, Ok(CaptureEvent::Finished(SessionId::FIRST, Ok(Some(sealed)))) if *sealed.wav == [1, 2])
     );
     assert!(pending, "Retirement acknowledged before device teardown");
     Ok(())

@@ -1,6 +1,5 @@
-use std::mem;
-
 use proptest::prelude::*;
+use zeroize::Zeroizing;
 
 use super::*;
 use crate::audio::{
@@ -24,7 +23,7 @@ fn replay(
     chunk: usize,
     fail_every: usize,
     cue: bool,
-) -> (Vec<u8>, Vec<u8>, Option<Partition>, usize) {
+) -> (Zeroizing<Vec<u8>>, Vec<u8>, Option<Partition>, usize) {
     let mut pcm = Pcm16::with_reservation(samples.len(), samples.len());
     let mut speech = Audibility::new(1000);
     let mut cuts = Cuts::new(1000);
@@ -50,12 +49,12 @@ fn replay(
     }
     speech.complete(pcm.audio());
     let partition = cuts.finish(&speech, pcm.audio().len());
-    let mut sealed = pcm.seal(speech, 1000).unwrap().unwrap();
+    let sealed = pcm.seal(speech, 1000).unwrap().unwrap();
     if let Some(partition) = &partition {
         let tail = WAV_HEADER_BYTES.checked_add(partition.tail.start).unwrap();
         pieces.extend_from_slice(&sealed.wav[tail..]);
     }
-    (mem::take(&mut sealed.wav), pieces, partition, minimum)
+    (sealed.wav, pieces, partition, minimum)
 }
 
 proptest! {

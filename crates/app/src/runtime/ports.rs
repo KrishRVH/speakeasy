@@ -8,7 +8,7 @@ use speakeasy_core::machine::{Cue, RecognitionMode, SessionId};
 use speakeasy_platform::{Delivery, InsertPermit, Inserted, Scope, Taps};
 use speakeasy_show::{Ending, Framing, Journal, Narration, NarrationLoss, Recording};
 use tokio::sync::{mpsc, oneshot, watch};
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroizing;
 
 use crate::{
     config::Config,
@@ -42,9 +42,8 @@ pub(crate) struct LiveAudio {
     pub tail: oneshot::Receiver<Zeroizing<Vec<u8>>>,
 }
 
-#[derive(Default)]
 pub(crate) struct Sealed {
-    pub wav: Vec<u8>,
+    pub wav: Zeroizing<Vec<u8>>,
     pub trimmed: Duration,
     pub audible: Duration,
     pub partition: Option<Partition>,
@@ -54,12 +53,6 @@ pub(crate) struct Sealed {
 pub(crate) struct Partition {
     pub pieces: u32,
     pub tail: Range<usize>,
-}
-
-impl Drop for Sealed {
-    fn drop(&mut self) {
-        self.wav.zeroize();
-    }
 }
 
 pub(crate) enum ShowEvent {

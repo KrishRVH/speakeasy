@@ -99,11 +99,11 @@ pub(super) struct Clip {
 }
 
 impl Clip {
-    pub(super) fn heard(mut sealed: Sealed, language: Option<Box<str>>) -> Self {
+    pub(super) fn heard(Sealed { wav, audible, .. }: Sealed, language: Option<Box<str>>) -> Self {
         Self {
-            wav: Zeroizing::new(mem::take(&mut sealed.wav)),
+            wav,
             language,
-            audible: sealed.audible,
+            audible,
         }
     }
 }
@@ -228,18 +228,24 @@ const fn machine_loss(loss: NarrationLoss) -> machine::NarrationLoss {
     }
 }
 
-pub(super) fn sealed(mut sealed: Sealed) -> machine::Sealed<Native> {
-    let trimmed = sealed.trimmed;
-    let partition = sealed
-        .partition
-        .take()
-        .map(|Partition { pieces, tail }| machine::Partition {
+pub(super) fn sealed(
+    Sealed {
+        wav,
+        trimmed,
+        audible,
+        partition,
+    }: Sealed,
+) -> machine::Sealed<Native> {
+    machine::Sealed {
+        audio: Clip {
+            wav,
+            language: None,
+            audible,
+        },
+        trimmed,
+        partition: partition.map(|Partition { pieces, tail }| machine::Partition {
             pieces,
             tail: (!tail.is_empty()).then_some(tail),
-        });
-    machine::Sealed {
-        audio: Clip::heard(sealed, None),
-        trimmed,
-        partition,
+        }),
     }
 }

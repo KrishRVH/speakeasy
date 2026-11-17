@@ -417,7 +417,7 @@ type Job = (Vec<u8>, TranscriptReply);
 
 fn spoken_by(id: SessionId, pieces: u32) -> Sealed {
     Sealed {
-        wav: u64::from(id).to_le_bytes().to_vec(),
+        wav: Zeroizing::new(u64::from(id).to_le_bytes().to_vec()),
         trimmed: Duration::ZERO,
         audible: SPOKEN,
         partition: (pieces > 0).then_some(ports::Partition { pieces, tail: 8..8 }),

@@ -457,9 +457,8 @@ impl<P: Ports> Env<Native> for World<P> {
     }
 
     fn cut(&mut self, clip: &Clip, range: &Range<usize>) -> Option<Clip> {
-        let wav = audio::wav_tail(&clip.wav, range.clone()).ok()?;
         Some(Clip {
-            wav: Zeroizing::new(wav),
+            wav: audio::wav_tail(&clip.wav, range.clone()).ok()?,
             language: clip.language.clone(),
             audible: clip.audible,
         })

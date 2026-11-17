@@ -124,7 +124,7 @@ async fn recording_while_worker_recovers_skips_stream_and_preserves_whole_audio(
     timeout(PATIENCE, new.frames.closed()).await?;
     recovered.send(Ok(())).await?;
     h.finish_as("Complete recording").await?;
-    assert_eq!(receive(&requests).await?, sealed().wav);
+    assert_eq!(receive(&requests).await?, *sealed().wav);
     assert_eq!(receive(&h.pasted).await?, "Complete recording");
     h.close().await
 }
