@@ -1,7 +1,12 @@
+use std::mem;
+
 use proptest::prelude::*;
 
 use super::*;
-use crate::audio::{fixture::square_wave, pcm::Pcm16};
+use crate::audio::{
+    fixture::square_wave,
+    pcm::{Pcm16, WAV_HEADER_BYTES},
+};
 
 fn audio(bursts: &[(usize, usize)]) -> Vec<i16> {
     bursts
@@ -45,12 +50,12 @@ fn replay(
     }
     speech.complete(pcm.audio());
     let partition = cuts.finish(&speech, pcm.audio().len());
-    let sealed = pcm.seal(speech, 1000).unwrap().unwrap();
+    let mut sealed = pcm.seal(speech, 1000).unwrap().unwrap();
     if let Some(partition) = &partition {
-        pieces
-            .extend_from_slice(&sealed.wav[44_usize.checked_add(partition.tail.start).unwrap()..]);
+        let tail = WAV_HEADER_BYTES.checked_add(partition.tail.start).unwrap();
+        pieces.extend_from_slice(&sealed.wav[tail..]);
     }
-    (sealed.wav.clone(), pieces, partition, minimum)
+    (mem::take(&mut sealed.wav), pieces, partition, minimum)
 }
 
 proptest! {
@@ -75,7 +80,7 @@ proptest! {
         let sealed = baseline.seal(gate, 1000).unwrap().unwrap();
         prop_assert_eq!(&wav, &sealed.wav);
         if partition.is_some() {
-            prop_assert_eq!(pieces, &wav[44..]);
+            prop_assert_eq!(pieces, &wav[WAV_HEADER_BYTES..]);
             prop_assert!(minimum >= 40_000);
         }
     }
@@ -93,10 +98,10 @@ fn short_recordings_do_not_cut_and_small_audible_tails_remain_in_the_tail() {
     let resumed = audio(&[(21_000, 1100), (20, 1100)]);
     let (wav, pieces, partition, _) = replay(&resumed, 20, 0, false);
     let tail = partition.unwrap().tail;
-    assert_eq!(pieces, &wav[44..]);
+    assert_eq!(pieces, &wav[WAV_HEADER_BYTES..]);
     assert_eq!(tail.len(), 2240);
     assert!(
-        wav.len() > 44 + 43_000,
+        wav.len() > WAV_HEADER_BYTES + 43_000,
         "The short final word still belongs to the recorded audio"
     );
 }

@@ -11,8 +11,6 @@ use crate::{
     testing::{PATIENCE, still_pending},
 };
 
-const METER_WINDOW: Duration = Duration::from_millis(32);
-
 fn rms(dbfs: f32) -> f32 {
     10.0_f32.powf(dbfs / 20.0)
 }
@@ -24,21 +22,24 @@ fn near(actual: f32, expected: f32) -> bool {
 #[test]
 fn speech_levels_sink_in_pauses_and_peak_at_the_loudest_recent_window() {
     let mut scale = SpeechScale::default();
-    assert_eq!(scale.level(0.0, METER_WINDOW).to_bits(), 0.0_f32.to_bits());
-    assert!(near(scale.level(rms(-30.0), METER_WINDOW), 1.0));
-    assert!(near(scale.level(rms(-42.0), METER_WINDOW), 0.25));
     assert_eq!(
-        scale.level(rms(-60.0), METER_WINDOW).to_bits(),
+        scale.level(0.0, METER_INTERVAL).to_bits(),
         0.0_f32.to_bits()
     );
-    assert!(near(scale.level(1.0, METER_WINDOW), 1.0));
-    assert!(near(scale.level(rms(-32.0), METER_WINDOW), 0.25));
+    assert!(near(scale.level(rms(-30.0), METER_INTERVAL), 1.0));
+    assert!(near(scale.level(rms(-42.0), METER_INTERVAL), 0.25));
+    assert_eq!(
+        scale.level(rms(-60.0), METER_INTERVAL).to_bits(),
+        0.0_f32.to_bits()
+    );
+    assert!(near(scale.level(1.0, METER_INTERVAL), 1.0));
+    assert!(near(scale.level(rms(-32.0), METER_INTERVAL), 0.25));
 }
 
 #[test]
 fn speech_ceiling_relaxes_six_decibels_a_second_within_its_bounds() {
     let mut scale = SpeechScale::default();
-    assert!(near(scale.level(rms(-10.0), METER_WINDOW), 1.0));
+    assert!(near(scale.level(rms(-10.0), METER_INTERVAL), 1.0));
     assert_eq!(
         scale.level(rms(-60.0), Duration::from_secs(1)).to_bits(),
         0.0_f32.to_bits()

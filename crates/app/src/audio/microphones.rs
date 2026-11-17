@@ -71,7 +71,7 @@ fn enumerate_microphones() -> Listing {
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::mpsc, thread, time::Duration};
+    use std::sync::mpsc;
 
     use anyhow::{Context as _, bail};
     use tokio::time::timeout;
@@ -93,19 +93,15 @@ mod tests {
         })?;
 
         drop(abandoned);
-        let driver = thread::spawn(move || {
-            thread::sleep(Duration::from_millis(50));
-            release.send(())
-        });
         let waiting = MicrophoneScan::share(&mut current, || {
             bail!("A second scan started while one was enumerating")
         })?;
         let exited = current.as_ref().context("No scan is held")?.exited();
+        release.send(())?;
         let devices = timeout(PATIENCE, waiting.recv()).await???;
         assert_eq!(devices.len(), 1);
         assert_eq!(devices[0].id, "usb");
         timeout(PATIENCE, exited).await?;
-        driver.join().unwrap()?;
         let fresh = MicrophoneScan::share(&mut current, || Ok(Vec::new()))?;
         assert!(timeout(PATIENCE, fresh.recv()).await???.is_empty());
         Ok(())

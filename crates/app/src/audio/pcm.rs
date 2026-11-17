@@ -6,7 +6,7 @@ use zeroize::{Zeroize, Zeroizing};
 use super::speech::Audibility;
 use crate::runtime::ports::Sealed;
 
-const WAV_HEADER_BYTES: usize = 44;
+pub(super) const WAV_HEADER_BYTES: usize = 44;
 const SAMPLE_RATE_OFFSET: usize = 24;
 pub(super) const SAMPLE_BYTES: usize = 2;
 const MINIMUM_RECORDING: Duration = Duration::from_millis(200);
