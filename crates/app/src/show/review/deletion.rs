@@ -53,11 +53,7 @@ impl Review {
         self.write = Some(Write::Deleting {
             directory: directory.clone(),
             _task: cx.spawn(async move |view, cx| {
-                let result = receipt
-                    .recv()
-                    .await
-                    .map_err(anyhow::Error::from)
-                    .and_then(|result| result);
+                let result = receipt.recv().await.map_err(anyhow::Error::from).flatten();
                 view.update_if_alive(cx, |view, cx| view.delete_finished(&directory, result, cx));
             }),
         });

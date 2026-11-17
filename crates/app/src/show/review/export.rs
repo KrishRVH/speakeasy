@@ -40,10 +40,7 @@ impl Review {
             Some(&format!("{name}.{extension}")),
         );
         let task = cx.spawn(async move |view, cx| {
-            let result = prompt
-                .await
-                .map_err(anyhow::Error::from)
-                .and_then(|result| result);
+            let result = prompt.await.map_err(anyhow::Error::from).flatten();
             view.update_if_alive(cx, |view, cx| {
                 view.export = None;
                 match result {
@@ -111,11 +108,7 @@ impl Review {
             .into(),
         );
         let task = cx.spawn(async move |view, cx| {
-            let result = receipt
-                .recv()
-                .await
-                .map_err(anyhow::Error::from)
-                .and_then(|result| result);
+            let result = receipt.recv().await.map_err(anyhow::Error::from).flatten();
             view.update_if_alive(cx, |view, cx| {
                 view.export = None;
                 if view.library.is_selected(&directory) {

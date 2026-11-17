@@ -541,11 +541,7 @@ impl Review {
         self.write = Some(Write::Keeping {
             directory: key.directory.clone(),
             _task: cx.spawn(async move |view, cx| {
-                let result = receipt
-                    .recv()
-                    .await
-                    .map_err(io::Error::other)
-                    .and_then(|result| result);
+                let result = receipt.recv().await.map_err(io::Error::other).flatten();
                 view.update_if_alive(cx, |view, cx| {
                     view.write = None;
                     view.kept(&key.directory, result, cx);
@@ -740,11 +736,7 @@ impl Review {
             return;
         }
         let task = cx.spawn(async move |view, cx| {
-            let result = receipt
-                .recv()
-                .await
-                .map_err(anyhow::Error::from)
-                .and_then(|result| result);
+            let result = receipt.recv().await.map_err(anyhow::Error::from).flatten();
             view.update_if_alive(cx, |view, cx| {
                 view.write = None;
                 if view.confirm == Some(Confirm::Discard) {
