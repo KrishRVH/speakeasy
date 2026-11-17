@@ -17,12 +17,16 @@ pub(crate) fn hidden_command(program: impl AsRef<OsStr>) -> Command {
     command
 }
 
-#[expect(
-    clippy::let_underscore_must_use,
-    reason = "Killing an exited child fails harmlessly, and waiting reaps it either way"
-)]
 pub(crate) async fn kill_and_reap(child: &mut Child) {
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "Killing a child that already exited fails harmlessly; the wait still reaps it"
+    )]
     let _ = child.start_kill();
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "Cleanup has no one to tell; Tokio reaps a child whose wait failed once its handle drops"
+    )]
     let _ = child.wait().await;
 }
 
