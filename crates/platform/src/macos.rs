@@ -84,7 +84,7 @@ pub(super) fn start(
     let shortcut = options.mac_shortcut;
     let (insertion, inserter) =
         insertion::Worker::start(input.clone(), own_focus, move |request| {
-            objc2::rc::autoreleasepool(|_| insertion::deliver(&mut Insert { shortcut }, request))
+            objc2::rc::autoreleasepool(|_| insertion::settle(Insert { shortcut }, request))
         })?;
     #[expect(
         clippy::disallowed_types,
@@ -492,6 +492,7 @@ struct Insert {
 }
 
 impl insertion::NativeInsert for Insert {
+    type Contents = clipboard::Saved;
     type Keys = Vec<CGEvent>;
     type Lease = clipboard::Lease;
     type Mark = isize;
@@ -500,8 +501,16 @@ impl insertion::NativeInsert for Insert {
         Ok(clipboard::acquire())
     }
 
+    fn save(&mut self, lease: &clipboard::Lease) -> Option<clipboard::Saved> {
+        clipboard::save(lease)
+    }
+
     fn write(&mut self, lease: clipboard::Lease, text: &str) -> anyhow::Result<()> {
         clipboard::write(lease, text)
+    }
+
+    fn restore(&mut self, contents: clipboard::Saved, mark: &isize) -> anyhow::Result<()> {
+        objc2::rc::autoreleasepool(|_| clipboard::restore(clipboard::acquire(), &contents, *mark))
     }
 
     fn mark(&mut self) -> isize {

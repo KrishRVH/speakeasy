@@ -8,14 +8,14 @@ fn delivery_waits_on_its_native_shortcut_and_rechecks_it_before_sending() -> any
             let mut native = Fake::new();
             native.releases = releases.into();
             let request = request(delivery)?;
-            assert_eq!(deliver(&mut native, &request)?, Inserted::Sent);
+            assert_eq!(deliver(&mut native, &request)?.0, Inserted::Sent);
             assert!(native.sent());
         }
         let mut native = Fake::new();
         native.releases = [true, false].into();
         let request = request(delivery)?;
         assert_eq!(
-            deliver(&mut native, &request)?,
+            deliver(&mut native, &request)?.0,
             delivery.preflight(EXTERNAL_FOCUS, HELD).unwrap()
         );
         assert!(!native.sent());
@@ -31,7 +31,7 @@ fn a_submitted_insertion_presses_return_only_after_its_text_lands() -> anyhow::R
             enter: Enter::Pressed,
             ..request(delivery)?
         };
-        assert_eq!(deliver(&mut native, &request)?, Inserted::Sent);
+        assert_eq!(deliver(&mut native, &request)?.0, Inserted::Sent);
         assert_eq!(
             native.steps.iter().rev().take(2).collect::<Vec<_>>(),
             [&Step::Send(Keys::Return), &Step::ShortcutReleased]
@@ -47,7 +47,7 @@ fn a_submitted_insertion_presses_return_only_after_its_text_lands() -> anyhow::R
 
         let mut blocked = Fake::new();
         blocked.external_focus = !EXTERNAL_FOCUS;
-        let refused = deliver(&mut blocked, &request)?;
+        let refused = deliver(&mut blocked, &request)?.0;
         assert_ne!(refused, Inserted::Sent);
         assert!(!blocked.steps.contains(&Step::Send(Keys::Return)));
     }
@@ -62,7 +62,7 @@ fn return_waits_for_focus_and_released_keys_after_the_text_lands() -> anyhow::Re
     };
     let mut native = Fake::new();
     native.releases = [true, true, false].into();
-    assert_eq!(deliver(&mut native, &request)?, RETURN_WITHHELD);
+    assert_eq!(deliver(&mut native, &request)?.0, RETURN_WITHHELD);
     assert!(native.sent());
     assert!(!native.steps.contains(&Step::Send(Keys::Return)));
     Ok(())

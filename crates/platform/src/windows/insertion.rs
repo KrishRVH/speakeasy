@@ -15,6 +15,26 @@ use crate::{ClipboardContent, Inserted, clipboard, insertion::NativeInsert};
 
 const PRIVATE_FORMATS: [&str; 2] = ["CanIncludeInClipboardHistory", "CanUploadToCloudClipboard"];
 
+const CONCEALED: &str = "ExcludeClipboardContentFromMonitorProcessing";
+
+const SYNTHESIZED: [u32; 2] = [
+    clipboard_win::formats::CF_BITMAP,
+    clipboard_win::formats::CF_PALETTE,
+];
+
+const HANDLES: [u32; 6] = [
+    clipboard_win::formats::CF_METAFILEPICT,
+    clipboard_win::formats::CF_ENHMETAFILE,
+    clipboard_win::formats::CF_OWNERDISPLAY,
+    clipboard_win::formats::CF_DSPBITMAP,
+    clipboard_win::formats::CF_DSPMETAFILEPICT,
+    clipboard_win::formats::CF_DSPENHMETAFILE,
+];
+
+const PRIVATE_AND_GDI: std::ops::RangeInclusive<u32> = 0x0200..=0x03FF;
+
+const SAVED_BYTES: usize = 64 << 20;
+
 pub(crate) fn copy_text(text: &str) -> anyhow::Result<()> {
     write_clipboard(open_clipboard()?, text, None)
 }
@@ -26,6 +46,46 @@ pub(crate) fn copy_content(
     clipboard::copy_when(authorized, open_clipboard, |lease| {
         write_clipboard(lease, &content.text, content.image.as_ref())
     })
+}
+
+fn saved_formats() -> Option<Vec<(u32, Vec<u8>)>> {
+    let concealed = clipboard_win::raw::register_format(CONCEALED)?.get();
+    let private =
+        PRIVATE_FORMATS.map(|name| clipboard_win::raw::register_format(name).map(NonZeroU32::get));
+    let mut size = 0_usize;
+    let mut saved = Vec::new();
+    for format in clipboard_win::raw::EnumFormats::new() {
+        if format == concealed || HANDLES.contains(&format) || PRIVATE_AND_GDI.contains(&format) {
+            return None;
+        }
+        if SYNTHESIZED.contains(&format) || private.contains(&Some(format)) {
+            continue;
+        }
+        let mut data = Vec::new();
+        clipboard_win::raw::get_vec(format, &mut data).ok()?;
+        size = size
+            .checked_add(data.len())
+            .filter(|size| *size <= SAVED_BYTES)?;
+        saved.push((format, data));
+    }
+    (!saved.is_empty()).then_some(saved)
+}
+
+fn restore_clipboard(saved: &[(u32, Vec<u8>)], mark: Option<NonZeroU32>) -> anyhow::Result<()> {
+    let _clipboard = open_clipboard()?;
+    if clipboard_win::raw::seq_num() != mark {
+        return Ok(());
+    }
+    clipboard_win::raw::empty()?;
+    for name in PRIVATE_FORMATS {
+        let format = clipboard_win::raw::register_format(name)
+            .context("Cannot register a clipboard format")?;
+        clipboard_win::raw::set_without_clear(format.get(), &0_u32.to_ne_bytes())?;
+    }
+    for (format, data) in saved {
+        clipboard_win::raw::set_without_clear(*format, data)?;
+    }
+    Ok(())
 }
 
 fn write_clipboard(
@@ -73,6 +133,7 @@ pub(super) enum Keys {
 }
 
 impl NativeInsert for Insert {
+    type Contents = Vec<(u32, Vec<u8>)>;
     type Keys = Keys;
     type Lease = clipboard_win::Clipboard;
     type Mark = Option<NonZeroU32>;
@@ -81,8 +142,20 @@ impl NativeInsert for Insert {
         open_clipboard()
     }
 
+    fn save(&mut self, _lease: &clipboard_win::Clipboard) -> Option<Vec<(u32, Vec<u8>)>> {
+        saved_formats()
+    }
+
     fn write(&mut self, lease: clipboard_win::Clipboard, text: &str) -> anyhow::Result<()> {
         write_clipboard(lease, text, None)
+    }
+
+    fn restore(
+        &mut self,
+        contents: Vec<(u32, Vec<u8>)>,
+        mark: &Option<NonZeroU32>,
+    ) -> anyhow::Result<()> {
+        restore_clipboard(&contents, *mark)
     }
 
     fn mark(&mut self) -> Option<NonZeroU32> {
@@ -171,7 +244,7 @@ impl NativeInsert for Insert {
                 let sent = send_input(&input)?;
                 if sent != input.len() {
                     return Ok(Inserted::Unavailable(
-                        "Typing was blocked or cut short. Turn off Keep clipboard in Settings to paste.",
+                        "Typing was blocked or cut short. Turn off Type instead of paste in Settings.",
                     ));
                 }
                 Ok(Inserted::Sent)
@@ -274,6 +347,68 @@ mod tests {
             !insert.holds(TEXT, &mark)?,
             "A copy with no text must read as a change even under its own mark"
         );
+        assert_restores_only_what_it_replaced(&mut insert)
+    }
+
+    fn assert_restores_only_what_it_replaced(insert: &mut Insert) -> anyhow::Result<()> {
+        let html = clipboard_win::raw::register_format("HTML Format")
+            .context("Cannot register a clipboard format")?;
+        copy_previous(html, false)?;
+        let lease = insert.acquire()?;
+        let saved = insert
+            .save(&lease)
+            .context("Ordinary text and HTML were not saved")?;
+        insert.write(lease, TEXT)?;
+        let mark = insert.mark();
+        insert.restore(saved, &mark)?;
+        {
+            let _clipboard = open_clipboard()?;
+            let mut text = Vec::new();
+            clipboard_win::raw::get_string(&mut text)?;
+            assert_eq!(text, b"previous", "The replaced text did not return");
+            let mut markup = Vec::new();
+            clipboard_win::raw::get_vec(html.get(), &mut markup)?;
+            assert_eq!(
+                markup, b"<b>previous</b>",
+                "The replaced HTML did not return"
+            );
+        }
+
+        let lease = insert.acquire()?;
+        let saved = insert
+            .save(&lease)
+            .context("The previous copy was not saved")?;
+        insert.write(lease, TEXT)?;
+        let mark = insert.mark();
+        copy_without_text()?;
+        insert.restore(saved, &mark)?;
+        {
+            let _clipboard = open_clipboard()?;
+            assert!(
+                clipboard_win::raw::is_format_avail(image_format()?.get()),
+                "A restore replaced a newer copy"
+            );
+        }
+
+        copy_previous(html, true)?;
+        let lease = insert.acquire()?;
+        assert!(
+            insert.save(&lease).is_none(),
+            "A concealed copy was kept to restore"
+        );
+        Ok(())
+    }
+
+    fn copy_previous(html: NonZeroU32, concealed: bool) -> anyhow::Result<()> {
+        let _clipboard = open_clipboard()?;
+        clipboard_win::raw::empty()?;
+        if concealed {
+            let format = clipboard_win::raw::register_format(CONCEALED)
+                .context("Cannot register a clipboard format")?;
+            clipboard_win::raw::set_without_clear(format.get(), &[0])?;
+        }
+        clipboard_win::raw::set_without_clear(html.get(), b"<b>previous</b>")?;
+        clipboard_win::raw::set_string_with("previous", clipboard_win::options::NoClear)?;
         Ok(())
     }
 

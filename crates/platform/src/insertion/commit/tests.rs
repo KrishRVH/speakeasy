@@ -2,7 +2,9 @@ use std::{collections::VecDeque, panic};
 
 use anyhow::Context as _;
 
-use super::{CLIPBOARD_CHANGED, CLIPBOARD_CHANGED_BEFORE_PASTE, NativeInsert, Worker, insert};
+use super::{
+    CLIPBOARD_CHANGED, CLIPBOARD_CHANGED_BEFORE_PASTE, NativeInsert, Worker, insert, settle,
+};
 use crate::{
     InputSender, InsertPermit, PATIENCE,
     insertion::{
@@ -16,6 +18,7 @@ mod delivery;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Step {
     Acquire,
+    Save,
     Write,
     Mark,
     Holds,
@@ -24,6 +27,7 @@ enum Step {
     ExternalFocus,
     ShortcutReleased,
     Send(Keys),
+    Restore,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,6 +35,8 @@ enum Keys {
     Insert(Delivery),
     Return,
 }
+
+const WRITTEN: u8 = 200;
 
 struct Fake {
     steps: Vec<Step>,
@@ -40,6 +46,7 @@ struct Fake {
     holds: bool,
     external_focus: bool,
     releases: VecDeque<bool>,
+    restored: Option<async_channel::Sender<u8>>,
 }
 
 impl Fake {
@@ -52,6 +59,7 @@ impl Fake {
             holds: true,
             external_focus: EXTERNAL_FOCUS,
             releases: VecDeque::new(),
+            restored: None,
         }
     }
 
@@ -73,6 +81,7 @@ impl Fake {
 }
 
 impl NativeInsert for Fake {
+    type Contents = u8;
     type Keys = Keys;
     type Lease = ();
     type Mark = u8;
@@ -82,8 +91,25 @@ impl NativeInsert for Fake {
         Ok(())
     }
 
+    fn save(&mut self, (): &()) -> Option<u8> {
+        self.reach(Step::Save);
+        Some(self.clipboard)
+    }
+
     fn write(&mut self, (): (), _: &str) -> anyhow::Result<()> {
         self.reach(Step::Write);
+        self.clipboard = WRITTEN;
+        Ok(())
+    }
+
+    fn restore(&mut self, contents: u8, mark: &u8) -> anyhow::Result<()> {
+        self.reach(Step::Restore);
+        if *mark == self.clipboard {
+            self.clipboard = contents;
+        }
+        if let Some(restored) = &self.restored {
+            restored.try_send(self.clipboard)?;
+        }
         Ok(())
     }
 
@@ -141,13 +167,14 @@ fn paste_checks_the_clipboard_again_after_focus_and_sends_once() -> anyhow::Resu
     let permit = permit()?;
     let mut native = Fake::new();
     assert_eq!(
-        insert(&mut native, "text", &permit, Delivery::Paste, &unfocused())?,
+        insert(&mut native, "text", &permit, Delivery::Paste, &unfocused())?.0,
         Inserted::Sent
     );
     assert_eq!(
         native.steps,
         [
             Step::Acquire,
+            Step::Save,
             Step::Write,
             Step::Mark,
             Step::Holds,
@@ -163,11 +190,81 @@ fn paste_checks_the_clipboard_again_after_focus_and_sends_once() -> anyhow::Resu
 }
 
 #[test]
+fn only_a_sent_paste_hands_back_the_clipboard_it_replaced() -> anyhow::Result<()> {
+    let mut native = Fake::new();
+    let (_, saved) = insert(
+        &mut native,
+        "text",
+        &permit()?,
+        Delivery::Paste,
+        &unfocused(),
+    )?;
+    let saved = saved.context("A sent paste forgot the clipboard it replaced")?;
+    assert_eq!((saved.contents, saved.mark), (0, WRITTEN));
+
+    let mut native = Fake {
+        external_focus: OWN_FOCUS,
+        ..Fake::new()
+    };
+    let (_, kept) = insert(
+        &mut native,
+        "text",
+        &permit()?,
+        Delivery::Paste,
+        &unfocused(),
+    )?;
+    assert!(
+        kept.is_none(),
+        "Text left to paste by hand would be replaced"
+    );
+
+    let mut native = Fake::new();
+    let (_, typed) = insert(
+        &mut native,
+        "text",
+        &permit()?,
+        Delivery::Direct,
+        &unfocused(),
+    )?;
+    assert!(typed.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_clipboard_returns_after_the_reply_unless_it_changed_again() -> anyhow::Result<()> {
+    for changed in [false, true] {
+        let (events, _receiver) = async_channel::bounded(1);
+        let (restored, restoring) = async_channel::bounded(1);
+        let (_worker, inserter) =
+            Worker::start(InputSender::new(events), unfocused(), move |request| {
+                let native = Fake {
+                    clipboard: 7,
+                    changes_clipboard_at: changed.then_some(Step::Restore),
+                    restored: Some(restored.clone()),
+                    ..Fake::new()
+                };
+                settle(native, request)
+            })?;
+        let sent = inserter
+            .insert("text".into(), permit()?, Delivery::Paste, Enter::Withheld)
+            .await?;
+        assert_eq!(sent, Inserted::Sent);
+        assert!(
+            restoring.try_recv().is_err(),
+            "The reply waited for the restore"
+        );
+        let clipboard = tokio::time::timeout(PATIENCE, restoring.recv()).await??;
+        assert_eq!(clipboard == 7, !changed, "changed: {changed}");
+    }
+    Ok(())
+}
+
+#[test]
 fn direct_input_never_touches_the_clipboard() -> anyhow::Result<()> {
     let permit = permit()?;
     let mut native = Fake::new();
     assert_eq!(
-        insert(&mut native, "text", &permit, Delivery::Direct, &unfocused())?,
+        insert(&mut native, "text", &permit, Delivery::Direct, &unfocused())?.0,
         Inserted::Sent
     );
     assert_eq!(
@@ -191,7 +288,7 @@ fn escape_while_another_app_holds_the_clipboard_prevents_the_write() -> anyhow::
         ..Fake::new()
     };
     assert_eq!(
-        insert(&mut native, "text", &permit, Delivery::Paste, &unfocused())?,
+        insert(&mut native, "text", &permit, Delivery::Paste, &unfocused())?.0,
         Inserted::Cancelled
     );
     assert_eq!(native.steps, [Step::Acquire]);
@@ -206,7 +303,7 @@ fn a_clipboard_that_lost_the_text_is_never_pasted() -> anyhow::Result<()> {
         ..Fake::new()
     };
     assert_eq!(
-        insert(&mut native, "text", &permit, Delivery::Paste, &unfocused())?,
+        insert(&mut native, "text", &permit, Delivery::Paste, &unfocused())?.0,
         CLIPBOARD_CHANGED
     );
     assert!(!native.sent());
@@ -222,7 +319,7 @@ fn a_clipboard_change_during_the_final_checks_is_never_pasted() -> anyhow::Resul
         ..Fake::new()
     };
     assert_eq!(
-        insert(&mut native, "text", &permit, Delivery::Paste, &unfocused())?,
+        insert(&mut native, "text", &permit, Delivery::Paste, &unfocused())?.0,
         CLIPBOARD_CHANGED_BEFORE_PASTE
     );
     assert!(!native.sent());
@@ -238,7 +335,7 @@ fn own_focus_leaves_the_text_copied_without_spending_authority() -> anyhow::Resu
         ..Fake::new()
     };
     assert!(matches!(
-        insert(&mut native, "text", &permit, Delivery::Paste, &unfocused())?,
+        insert(&mut native, "text", &permit, Delivery::Paste, &unfocused())?.0,
         Inserted::Copied(_)
     ));
     assert!(!native.sent());
@@ -254,13 +351,7 @@ fn a_focused_speakeasy_window_never_receives_input() -> anyhow::Result<()> {
         let permit = permit()?;
         let mut native = Fake::new();
         assert_eq!(
-            Some(insert(
-                &mut native,
-                "text",
-                &permit,
-                delivery,
-                &report.subscribe()
-            )?),
+            Some(insert(&mut native, "text", &permit, delivery, &report.subscribe())?.0),
             delivery.check_focus(OWN_FOCUS),
             "{delivery:?} input ignored Speakeasy's own focus"
         );
@@ -279,7 +370,7 @@ fn escape_during_the_final_checks_prevents_input() -> anyhow::Result<()> {
             ..Fake::new()
         };
         assert_eq!(
-            insert(&mut native, "text", &permit, delivery, &unfocused())?,
+            insert(&mut native, "text", &permit, delivery, &unfocused())?.0,
             Inserted::Cancelled
         );
         assert!(!native.sent(), "{delivery:?} input outlived its revocation");
@@ -291,7 +382,8 @@ fn escape_during_the_final_checks_prevents_input() -> anyhow::Result<()> {
 async fn a_stopped_worker_exits_while_inserters_outlive_it() -> anyhow::Result<()> {
     let (events, _receiver) = async_channel::bounded(1);
     let input = InputSender::new(events);
-    let (worker, inserter) = Worker::start(input.clone(), unfocused(), |_| Ok(Inserted::Sent))?;
+    let (worker, inserter) =
+        Worker::start(input.clone(), unfocused(), |_| Ok(Inserted::Sent).into())?;
     worker.request_stop();
     tokio::time::timeout(PATIENCE, worker.stopped())
         .await
@@ -313,7 +405,7 @@ async fn a_panic_answers_a_fixed_message_and_the_next_request_is_served() -> any
         if request.text == "panics" {
             panic::resume_unwind(Box::new("private payload"));
         }
-        Ok(Inserted::Sent)
+        Ok(Inserted::Sent).into()
     })?;
     let failed = inserter
         .insert("panics".into(), permit()?, Delivery::Paste, Enter::Withheld)

@@ -72,7 +72,7 @@ around it; "open paren"/"close paren", "open bracket"/"close bracket", "open bra
 or "open quote"/"close quote" to enclose words; and "backtick" before and after a span to quote it
 as code. "A new line of products" keeps its words. Verbatim and the case styles keep every word, and
 turning off **Spoken symbols** under Writing keeps them in Prose too. Pasting keeps line breaks as
-text; with Keep clipboard, an app may treat a typed line break as Return.
+text; with Type instead of paste, an app may treat a typed line break as Return.
 
 **Return during the hold** finishes the dictation like releasing the shortcut, types it, and then
 presses Return, so a chat or an agent's prompt sends it. It applies to that dictation only, and only
@@ -524,8 +524,8 @@ retries interrupted deletions on its next pass.
   up to 512 MiB of retained source frames and 384 MiB of video in addition to their selected images
   and private voice.
 - Windows clipboard history and cloud clipboard skip what Speakeasy puts on the clipboard, pasted
-  dictation and Show summaries alike, as do Universal Clipboard and Mac clipboard managers that
-  honor transient data.
+  dictation, the copy it puts back, and Show summaries alike, as do Universal Clipboard and Mac
+  clipboard managers that honor transient data.
 - There are no accounts, telemetry, or dictation history. An agent you hand a Show to, by MCP
   request or a pasted **Send to agent** prompt, reads that Show's evidence, and its model provider
   may receive it.
@@ -843,10 +843,15 @@ releases the shortcut and the model until you resume.
 
 ### Text delivery
 
-By default the text is pasted through the clipboard and stays there. On Windows and Mac, **Keep
-clipboard** types the text as direct input instead, which some editors reject; Linux offers **Insert
-text by**, described above. Protected fields and elevated Windows apps may refuse either method, and
-no OS submission can confirm that an editor accepted the text.
+By default the text is pasted through the clipboard. On Windows and Mac, Speakeasy then puts back
+what the clipboard held half a second after the paste, unless something else changed the clipboard
+in the meantime. It leaves the dictated text there instead when the earlier copy was concealed by a
+password manager, was over 64 MiB, or, on Windows, was held in a format it cannot copy, such as a
+metafile. **Paste last dictation** pastes the text again either way. **Type instead of paste** types
+the text as direct input, which never touches the clipboard but some editors reject. On Linux the
+pasted text stays on the clipboard; **Insert text by**, described above, chooses the method.
+Protected fields and elevated Windows apps may refuse either method, and no OS submission can
+confirm that an editor accepted the text.
 
 ## Build and verify
 

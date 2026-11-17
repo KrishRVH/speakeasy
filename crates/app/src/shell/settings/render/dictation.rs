@@ -674,15 +674,15 @@ impl Settings {
         #[cfg(not(target_os = "linux"))]
         let delivery = {
             use crate::config::TextDelivery;
-            let keep = self.config.text_delivery == TextDelivery::Type;
+            let typed = self.config.text_delivery == TextDelivery::Type;
             kit.setting(
-                "Keep clipboard",
-                "Type text instead of pasting it, so your clipboard stays as it was.",
+                "Type instead of paste",
+                "Pasting puts your previous clipboard back a moment later. Typing never touches the clipboard, but some editors reject it.",
                 kit.switch(
-                    "keep-clipboard",
-                    "Keep clipboard",
-                    keep,
-                    Some(ui.press(Action::SelectDelivery(if keep {
+                    "type-instead-of-paste",
+                    "Type instead of paste",
+                    typed,
+                    Some(ui.press(Action::SelectDelivery(if typed {
                         TextDelivery::Paste
                     } else {
                         TextDelivery::Type

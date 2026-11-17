@@ -23,7 +23,7 @@ impl Worker {
     pub(crate) fn start(
         input: InputSender,
         own_focus: OwnFocus,
-        serve_one: impl Fn(&Insertion) -> anyhow::Result<Inserted> + Send + 'static,
+        serve_one: impl Fn(&Insertion) -> Settled + Send + 'static,
     ) -> std::io::Result<(Self, Inserter)> {
         let (inserter, requests) = Inserter::lane(own_focus);
         let thread = OwnedThread::spawn("insertion", {
@@ -54,23 +54,60 @@ impl Drop for Worker {
     }
 }
 
-fn serve(
-    requests: &Receiver<Insertion>,
-    serve_one: impl Fn(&Insertion) -> anyhow::Result<Inserted>,
-) {
-    while let Ok(request) = requests.recv_blocking() {
-        let outcome = panic::catch_unwind(AssertUnwindSafe(|| serve_one(&request)))
-            .unwrap_or_else(|_| Err(anyhow!(INSERTION_STOPPED)));
-        request.reply.send(outcome);
+pub(crate) struct Settled {
+    outcome: anyhow::Result<Inserted>,
+    restore: Option<Box<dyn FnOnce() -> anyhow::Result<()>>>,
+}
+
+impl From<anyhow::Result<Inserted>> for Settled {
+    fn from(outcome: anyhow::Result<Inserted>) -> Self {
+        Self {
+            outcome,
+            restore: None,
+        }
     }
 }
 
-pub(crate) fn deliver<N: NativeInsert>(
+fn serve(requests: &Receiver<Insertion>, serve_one: impl Fn(&Insertion) -> Settled) {
+    while let Ok(request) = requests.recv_blocking() {
+        let settled = panic::catch_unwind(AssertUnwindSafe(|| serve_one(&request)))
+            .unwrap_or_else(|_| Err(anyhow!(INSERTION_STOPPED)).into());
+        request.reply.send(settled.outcome);
+        if let Some(restore) = settled.restore {
+            thread::sleep(RESTORE_AFTER);
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "The dictation already reported its delivery; a clipboard that cannot be restored keeps the dictated text"
+            )]
+            let _ = panic::catch_unwind(AssertUnwindSafe(restore));
+        }
+    }
+}
+
+pub(crate) fn settle<N: NativeInsert + 'static>(mut native: N, request: &Insertion) -> Settled {
+    match deliver(&mut native, request) {
+        Ok((outcome, saved)) => Settled {
+            outcome: Ok(outcome),
+            restore: saved.map(|saved| {
+                Box::new(move || native.restore(saved.contents, &saved.mark))
+                    as Box<dyn FnOnce() -> anyhow::Result<()>>
+            }),
+        },
+        Err(error) => Err(error).into(),
+    }
+}
+
+pub(crate) struct Saved<N: NativeInsert> {
+    contents: N::Contents,
+    mark: N::Mark,
+}
+
+fn deliver<N: NativeInsert>(
     native: &mut N,
     request: &Insertion,
-) -> anyhow::Result<Inserted> {
+) -> anyhow::Result<(Inserted, Option<Saved<N>>)> {
     wait_for_released_modifiers(&request.permit, || Ok(!native.shortcut_released()))?;
-    let inserted = insert(
+    let (inserted, saved) = insert(
         native,
         &request.text,
         &request.permit,
@@ -79,12 +116,14 @@ pub(crate) fn deliver<N: NativeInsert>(
     )?;
     if request.enter == Enter::Pressed && inserted == Inserted::Sent {
         thread::sleep(SUBMIT_SETTLE);
-        return submit(native, &request.own_focus);
+        return Ok((submit(native, &request.own_focus)?, saved));
     }
-    Ok(inserted)
+    Ok((inserted, saved))
 }
 
 const SUBMIT_SETTLE: Duration = Duration::from_millis(100);
+
+const RESTORE_AFTER: Duration = Duration::from_millis(500);
 
 const RETURN_WITHHELD: Inserted = Inserted::Copied(
     "Your words are in, but Speakeasy couldn't press Return. Press Return to send them.",
@@ -104,9 +143,15 @@ pub(crate) trait NativeInsert {
 
     type Keys;
 
+    type Contents;
+
     fn acquire(&mut self) -> anyhow::Result<Self::Lease>;
 
+    fn save(&mut self, lease: &Self::Lease) -> Option<Self::Contents>;
+
     fn write(&mut self, lease: Self::Lease, text: &str) -> anyhow::Result<()>;
+
+    fn restore(&mut self, contents: Self::Contents, mark: &Self::Mark) -> anyhow::Result<()>;
 
     fn mark(&mut self) -> Self::Mark;
 
@@ -131,22 +176,23 @@ fn insert<N: NativeInsert>(
     permit: &InsertPermit,
     delivery: Delivery,
     own_focus: &OwnFocus,
-) -> anyhow::Result<Inserted> {
+) -> anyhow::Result<(Inserted, Option<Saved<N>>)> {
     if !permit.active() {
-        return Ok(Inserted::Cancelled);
+        return Ok((Inserted::Cancelled, None));
     }
     let (keys, clipboard) = match delivery {
         Delivery::Paste => {
             let lease = native.acquire()?;
             if !permit.active() {
-                return Ok(Inserted::Cancelled);
+                return Ok((Inserted::Cancelled, None));
             }
+            let contents = native.save(&lease);
             native.write(lease, text)?;
             let mark = native.mark();
             if !native.holds(text, &mark)? {
-                return Ok(CLIPBOARD_CHANGED);
+                return Ok((CLIPBOARD_CHANGED, None));
             }
-            (native.paste_keys()?, Some(mark))
+            (native.paste_keys()?, Some((mark, contents)))
         },
         Delivery::Direct => (native.text_keys(text)?, None),
     };
@@ -154,15 +200,27 @@ fn insert<N: NativeInsert>(
         !own_focus.held() && native.external_focus(),
         native.shortcut_released(),
     ) {
-        return Ok(outcome);
+        return Ok((outcome, None));
     }
-    if clipboard.is_some_and(|mark| native.mark() != mark) {
-        return Ok(CLIPBOARD_CHANGED_BEFORE_PASTE);
+    if clipboard
+        .as_ref()
+        .is_some_and(|(mark, _)| native.mark() != *mark)
+    {
+        return Ok((CLIPBOARD_CHANGED_BEFORE_PASTE, None));
     }
     if !permit.commit() {
-        return Ok(Inserted::Cancelled);
+        return Ok((Inserted::Cancelled, None));
     }
-    native.send(keys)
+    let inserted = native.send(keys)?;
+    let saved = clipboard
+        .filter(|_| inserted == Inserted::Sent)
+        .and_then(|(mark, contents)| {
+            Some(Saved {
+                contents: contents?,
+                mark,
+            })
+        });
+    Ok((inserted, saved))
 }
 
 fn submit<N: NativeInsert>(native: &mut N, own_focus: &OwnFocus) -> anyhow::Result<Inserted> {

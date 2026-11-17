@@ -83,7 +83,7 @@ pub(crate) fn start(
     own_focus: OwnFocus,
 ) -> anyhow::Result<(OwnedThread, Monitor, Inserter)> {
     let (insertion, inserter) = insertion::Worker::start(input.clone(), own_focus, |request| {
-        insertion::deliver(&mut Insert, request)
+        insertion::settle(Insert, request)
     })?;
     let stop = Arc::new(StopEvent::new()?);
     let thread = OwnedThread::spawn("input-monitor", {

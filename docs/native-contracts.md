@@ -33,6 +33,15 @@ their synchronous submission and carry the app's own-input marker so hooks ignor
 is split only at valid encoding boundaries. Clipboard data and decoded images never enter
 Debug/error output.
 
+A dictation sent with Return spends its permit on the paste; the Return 100 ms later is a second
+send that rechecks only that another app has focus and the shortcut is released, so a newer press
+withholds it. A paste snapshots the clipboard under the same lease that writes the dictation, and
+the insertion thread answers the request before it waits 500 ms and puts the snapshot back. The
+restore reopens the clipboard and writes only if the sequence number or change count still equals
+the one read after the dictation's write, so it never replaces a newer copy. The thread serves the
+next request only after the restore, which therefore snapshots the restored copy. The snapshot lives
+only on the insertion thread and is dropped after the restore.
+
 `MonitorControl` serializes publishing a live run-loop handle, readiness and stop. Stop-before-start
 remains effective; retirement removes the handle before a later stop can wake it. This lock cannot
 become owner-only state because a blocked native run loop does not receive ordinary owner messages.
