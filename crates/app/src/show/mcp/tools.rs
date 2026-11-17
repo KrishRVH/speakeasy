@@ -19,6 +19,7 @@ const WORD_LIMIT: usize = 512;
 const IMAGE_LIMIT: u64 = 8 << 20;
 const EVIDENCE_LIMIT: usize = 1 << 20;
 
+#[derive(Clone, Copy)]
 pub(super) enum Tool {
     List,
     Read,

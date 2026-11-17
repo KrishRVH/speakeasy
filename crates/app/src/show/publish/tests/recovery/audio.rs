@@ -130,7 +130,7 @@ async fn pending_retry_preserves_edits_and_failure_does_not_publish_another_copy
             Some(reopened.checkpoint),
             Origin::Recovered { pending: true },
             &retry,
-            || bail!("A failed retry prepared another bundle"),
+            || panic!("A failed retry prepared another bundle"),
             uncopied,
         )
         .is_err()

@@ -208,11 +208,6 @@ fn invalid_selectors_unknown_properties_damage_and_oversize_do_not_leak_content(
 #[test]
 fn linked_content_cannot_escape_an_allowed_bundle() -> anyhow::Result<()> {
     use std::os::unix::fs::symlink;
-    let root = tempfile::tempdir()?;
-    let directory = fixture(root.path(), "exact")?;
-    let outside = tempfile::NamedTempFile::new()?;
-    fs::write(outside.path(), b"PRIVATE_OUTSIDE")?;
-    let roots = Roots::open(&[root.path().to_owned()]).map_err(anyhow::Error::msg)?;
     for (name, tool, arguments) in [
         ("summary.md", Tool::Read, json!({"show": "exact"})),
         (
@@ -227,11 +222,24 @@ fn linked_content_cannot_escape_an_allowed_bundle() -> anyhow::Result<()> {
         ),
         ("show.json", Tool::Read, json!({"show": "exact"})),
     ] {
-        fs::remove_file(directory.join(name))?;
-        symlink(outside.path(), directory.join(name))?;
+        let temp = tempfile::tempdir()?;
+        let root = temp.path().join("root");
+        let directory = fixture(&root, "exact")?;
+        let roots = Roots::open(&[root]).map_err(anyhow::Error::msg)?;
+        assert_eq!(
+            call(&roots, tool, arguments.clone())["isError"],
+            false,
+            "{name}"
+        );
+        let outside = temp.path().join(name);
+        fs::rename(directory.join(name), &outside)?;
+        symlink(&outside, directory.join(name))?;
         let response = call(&roots, tool, arguments);
-        assert_eq!(response["isError"], true);
-        assert!(!serde_json::to_string(&response)?.contains("PRIVATE_OUTSIDE"));
+        assert_eq!(response["isError"], true, "{name}");
+        assert!(
+            !serde_json::to_string(&response)?.contains("PRIVATE_"),
+            "{name}"
+        );
     }
     Ok(())
 }
