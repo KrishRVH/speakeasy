@@ -1,8 +1,5 @@
 use super::{
-    super::{
-        Capture, Device, Event, Machine, Outcome, Payload, Worker,
-        session::{Purpose, Session},
-    },
+    super::{Capture, Device, Event, Machine, Outcome, Payload, Worker, session::Session},
     Abstract,
     canonical::STALE,
     oracle::{Effect, Query},
@@ -130,11 +127,7 @@ pub(super) fn transition(
         .iter()
         .any(|effect| matches!(effect, Effect::Answered(Query::Practise, _)))
     {
-        if !before
-            .session
-            .as_ref()
-            .is_some_and(|session| matches!(session.purpose, Purpose::Practice(())))
-        {
+        if !before.session.as_ref().is_some_and(Session::is_practice) {
             return Err("Practice text came from a session that was not practising".into());
         }
         if after.session.is_some() {

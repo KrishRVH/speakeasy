@@ -1044,7 +1044,7 @@ impl<P: Payload> Machine<P> {
             self.end_session(outcome, env);
             return;
         };
-        if let Purpose::Practice(practice) = &session.purpose {
+        if let Some(practice) = session.practice() {
             let delivered = env.practise(practice, &session.permit, text);
             self.end_session(
                 if delivered {
@@ -1213,7 +1213,13 @@ impl<P: Payload> Machine<P> {
         env: &mut impl Env<P>,
     ) -> ControlFlow<Halt> {
         match action {
-            Some(Action::Start) => return self.start_session(now, env),
+            Some(Action::Start) => {
+                let purpose = self
+                    .practice
+                    .clone()
+                    .map_or(Purpose::Dictation, Purpose::Practice);
+                return self.start_session(now, purpose, env);
+            },
             Some(Action::Finish) => {
                 self.finish(Recorder::Microphone, env);
                 self.finish(Recorder::Screen, env);
@@ -1231,15 +1237,16 @@ impl<P: Payload> Machine<P> {
         ControlFlow::Continue(())
     }
 
-    fn start_session(&mut self, now: Now<P>, env: &mut impl Env<P>) -> ControlFlow<Halt> {
+    fn start_session(
+        &mut self,
+        now: Now<P>,
+        purpose: Purpose<P>,
+        env: &mut impl Env<P>,
+    ) -> ControlFlow<Halt> {
         let Some((id, permit)) = self.admit(env)? else {
             return ControlFlow::Continue(());
         };
-        let mut session = Session::new(id, permit, now.instant, env.style());
-        if let Some(practice) = &self.practice {
-            session.purpose = Purpose::Practice(practice.clone());
-        }
-        self.begin(session);
+        self.begin(Session::new(id, permit, now.instant, purpose, env.style()));
         ControlFlow::Continue(())
     }
 
@@ -1280,10 +1287,7 @@ impl<P: Payload> Machine<P> {
             return ControlFlow::Continue(());
         }
         if matches!(self.gesture.state(), State::Held | State::HandsFree)
-            && self
-                .session
-                .as_ref()
-                .is_some_and(|session| matches!(session.purpose, Purpose::Dictation))
+            && self.session.as_ref().is_some_and(Session::is_dictation)
         {
             self.gesture.abandon();
             self.abandon(env);
@@ -1292,9 +1296,8 @@ impl<P: Payload> Machine<P> {
         if self.session.is_some() || !self.gesture.deliver() {
             return ControlFlow::Continue(());
         }
-        self.start_session(now, env)?;
+        self.start_session(now, Purpose::Replay, env)?;
         if let (Some(session), Some(text)) = (&mut self.session, &self.last_dictation) {
-            session.purpose = Purpose::Replay;
             session.insert(text.clone(), &self.config, env);
         }
         ControlFlow::Continue(())
@@ -1615,11 +1618,7 @@ impl<P: Payload> Machine<P> {
                     Err(Refusal::NothingToPaste)
                 } else {
                     self.paste_last(now, env)?;
-                    if self
-                        .session
-                        .as_ref()
-                        .is_some_and(|session| matches!(session.purpose, Purpose::Replay))
-                    {
+                    if self.session.as_ref().is_some_and(Session::is_replay) {
                         Ok(())
                     } else {
                         Err(Refusal::PasteStopped)
@@ -1658,7 +1657,7 @@ impl<P: Payload> Machine<P> {
     fn control_session(&self) -> Option<SessionId> {
         self.session
             .as_ref()
-            .filter(|session| matches!(session.purpose, Purpose::Dictation))
+            .filter(|session| session.is_dictation())
             .map(|session| session.id)
     }
 }

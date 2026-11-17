@@ -11,7 +11,7 @@ pub(super) struct Session<P: Payload> {
     pub(super) id: SessionId,
     pub(super) permit: P::Permit,
     pub(super) started: P::Instant,
-    pub(super) purpose: Purpose<P>,
+    purpose: Purpose<P>,
     pub(super) style: P::Style,
     stage: Stage<P>,
     recognition: Recognition<P>,
@@ -195,13 +195,14 @@ impl<P: Payload> Session<P> {
         id: SessionId,
         permit: P::Permit,
         started: P::Instant,
+        purpose: Purpose<P>,
         style: P::Style,
     ) -> Self {
         Self {
             id,
             permit,
             started,
-            purpose: Purpose::Dictation,
+            purpose,
             style,
             stage: Stage::Queued,
             recognition: Recognition::new(id),
@@ -216,10 +217,15 @@ impl<P: Payload> Session<P> {
         receipt: P::Receipt,
     ) -> Self {
         Self {
-            purpose: Purpose::Show(Show::new(Screen::Spent)),
             stage: Stage::Reopening,
             receipt: Some(receipt),
-            ..Self::new(id, permit, started, P::Style::default())
+            ..Self::new(
+                id,
+                permit,
+                started,
+                Purpose::Show(Show::new(Screen::Spent)),
+                P::Style::default(),
+            )
         }
     }
 
@@ -307,12 +313,27 @@ impl<P: Payload> Session<P> {
         }
     }
 
+    pub(super) const fn is_dictation(&self) -> bool {
+        matches!(self.purpose, Purpose::Dictation)
+    }
+
+    pub(super) const fn is_replay(&self) -> bool {
+        matches!(self.purpose, Purpose::Replay)
+    }
+
     pub(super) const fn is_show(&self) -> bool {
         matches!(self.purpose, Purpose::Show(_))
     }
 
     pub(super) const fn is_practice(&self) -> bool {
         matches!(self.purpose, Purpose::Practice(_))
+    }
+
+    pub(super) const fn practice(&self) -> Option<&P::Practice> {
+        match &self.purpose {
+            Purpose::Practice(practice) => Some(practice),
+            Purpose::Dictation | Purpose::Replay | Purpose::Show(_) => None,
+        }
     }
 
     pub(super) const fn is_queued(&self) -> bool {
@@ -556,14 +577,14 @@ impl<P: Payload> Session<P> {
     }
 
     pub(super) fn insert(&mut self, text: P::Heard, config: &P::Config, env: &mut impl Env<P>) {
-        let dictation = matches!(self.purpose, Purpose::Dictation).then(|| text.clone());
+        let dictation = self.is_dictation().then(|| text.clone());
         self.recognition = Recognition::new(self.id);
         env.insert(text, &self.permit, config);
         self.stage = Stage::Delivering { dictation };
     }
 
     pub(super) fn turn_into_show(&mut self, scope: P::Scope, env: &mut impl Env<P>) -> bool {
-        if !matches!(self.purpose, Purpose::Dictation)
+        if !self.is_dictation()
             || !(self.is_queued() || self.is_capturing())
             || !env.shield(&self.permit)
         {
