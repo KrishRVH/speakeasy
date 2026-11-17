@@ -589,29 +589,36 @@ impl Mac {
             },
             MacEvent::Key { code, down, .. } => {
                 self.taps.interrupt();
-                match code {
-                    Self::ESCAPE => Decision::pass(down.then_some(Action::Escape)),
-                    Self::SPACE | Self::SCREEN | Self::WINDOW | Self::AREA | Self::PASTE_LAST
-                        if down
-                            && matches!(
-                                self.shortcut,
-                                crate::MacShortcut::RightOption | crate::MacShortcut::RightCommand
-                            )
-                            && self.pressed.is_none_or(|pressed| {
-                                at.saturating_duration_since(pressed) < APPLICATION_SHORTCUT
-                            }) =>
-                    {
+                match Self::hold_key(code) {
+                    Some(_) if down && self.defers_to_applications(at) => {
                         self.chord.other_key(true)
                     },
-                    Self::SPACE => self.chord.hold_key(HoldKey::Space, down),
-                    Self::PASTE_LAST => self.chord.hold_key(HoldKey::PasteLast, down),
-                    Self::SCREEN => self.chord.hold_key(HoldKey::Show(Scope::Screen), down),
-                    Self::WINDOW => self.chord.hold_key(HoldKey::Show(Scope::Window), down),
-                    Self::AREA => self.chord.hold_key(HoldKey::Show(Scope::Area), down),
-                    _ => self.chord.other_key(down),
+                    Some(key) => self.chord.hold_key(key, down),
+                    None if code == Self::ESCAPE => Decision::pass(down.then_some(Action::Escape)),
+                    None => self.chord.other_key(down),
                 }
             },
         }
+    }
+
+    const fn hold_key(code: i64) -> Option<HoldKey> {
+        match code {
+            Self::SPACE => Some(HoldKey::Space),
+            Self::PASTE_LAST => Some(HoldKey::PasteLast),
+            Self::SCREEN => Some(HoldKey::Show(Scope::Screen)),
+            Self::WINDOW => Some(HoldKey::Show(Scope::Window)),
+            Self::AREA => Some(HoldKey::Show(Scope::Area)),
+            _ => None,
+        }
+    }
+
+    fn defers_to_applications(&self, at: Instant) -> bool {
+        matches!(
+            self.shortcut,
+            crate::MacShortcut::RightOption | crate::MacShortcut::RightCommand
+        ) && self
+            .pressed
+            .is_none_or(|pressed| at.saturating_duration_since(pressed) < APPLICATION_SHORTCUT)
     }
 }
 
