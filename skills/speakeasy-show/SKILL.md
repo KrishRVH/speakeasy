@@ -35,8 +35,11 @@ rather than substituting another recording.
 When you need to see something the user can show you, ask them to make a Show and run
 `speakeasy show wait --json`. It never records anything itself: it waits, 600 seconds by default
 (`--timeout SECONDS`, at most 3600), for the first Show saved after it starts and prints the same
-report as `show inspect`. Give the command a shell timeout at least that long. A timeout means no
-Show was made; ask again rather than reading an older one.
+report as `show inspect`. Many shell tools stop a command after a minute or two unless you ask for
+longer, which would end the wait while the user is still recording. Run it in the background and
+read its output when it exits, or set the tool's own limit above `--timeout`; when the tool's
+longest limit is 600 seconds, use `--timeout 540`. A timeout means no Show was made; ask again
+rather than reading an older one.
 
 For a managed Show, inspection reports an exact `id` matching its folder name. That ID can replace
 `BUNDLE_PATH` in commands without quoting a long filesystem path. Use the full ID, including a

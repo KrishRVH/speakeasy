@@ -90,12 +90,12 @@ impl Editor {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
     pub(super) fn practiced(&self) -> &Entity<TextField> {
         &self.practiced
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
     pub(super) fn addition_heard(&self, cx: &App) -> String {
         self.addition.heard.read(cx).text().to_owned()
     }
