@@ -14,7 +14,7 @@ use super::{LaunchMode, Services, settings::Settings};
 use crate::gpui_ext::native_window;
 use crate::{
     config::Config,
-    gpui_ext::{Presence, WindowUpdate, present},
+    gpui_ext::{Presence, WindowUpdate, defer_presence, present},
     show::review::{self, Collection},
 };
 
@@ -203,7 +203,8 @@ fn settings_if_open(cx: &App) -> Option<WindowHandle<Settings>> {
 
 pub(super) fn open(cx: &mut App) -> anyhow::Result<()> {
     if let Some(settings) = settings_if_open(cx) {
-        set_visible(settings, true, cx);
+        let raised = defer_presence(settings.into(), Presence::Raised, cx);
+        cx.global_mut::<Services>().visibility = Some(raised);
         return Ok(());
     }
     let services = cx.global::<Services>();
@@ -281,23 +282,6 @@ fn window_options(cx: &App) -> WindowOptions {
     }
 }
 
-fn set_visible(settings: WindowHandle<Settings>, visible: bool, cx: &mut App) {
-    if !visible {
-        settings.update_if_open(cx, |view, _, cx| view.end_practice(cx));
-    }
-    let presence = if visible {
-        Presence::Raised
-    } else {
-        Presence::Hidden
-    };
-    let task = cx.spawn(async move |cx| {
-        if present(settings.into(), presence, cx) && !visible {
-            cx.update(show_tray_hint);
-        }
-    });
-    cx.global_mut::<Services>().visibility = Some(task);
-}
-
 pub(super) fn hide_on_close(window: &mut Window, cx: &mut App) -> bool {
     if !cx.has_global::<Services>() {
         return true;
@@ -320,12 +304,19 @@ pub(super) fn hide_on_close(window: &mut Window, cx: &mut App) -> bool {
 }
 
 fn hide_to_tray(cx: &mut App) {
-    if let Some(settings) = cx
+    let Some(settings) = cx
         .try_global::<Services>()
         .and_then(|services| services.settings)
-    {
-        set_visible(settings, false, cx);
-    }
+    else {
+        return;
+    };
+    settings.update_if_open(cx, |view, _, cx| view.end_practice(cx));
+    let hidden = cx.spawn(async move |cx| {
+        if present(settings.into(), Presence::Hidden, cx) {
+            cx.update(show_tray_hint);
+        }
+    });
+    cx.global_mut::<Services>().visibility = Some(hidden);
 }
 
 fn show_tray_hint(cx: &mut App) {
