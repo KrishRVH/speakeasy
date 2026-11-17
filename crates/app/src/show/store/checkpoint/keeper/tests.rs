@@ -1,6 +1,6 @@
 use speakeasy_show::{Ending, Image, Moment, Take};
 
-use super::*;
+use super::{super::list, *};
 
 fn surface() -> Size {
     Size {
@@ -35,7 +35,7 @@ async fn closing_frames_flushes_them_without_waiting_for_audio_or_releasing_the_
     } = begin(root.path())?;
     record_frame(&mut frames)?;
     assert!(frames.close().await);
-    assert_eq!(super::super::list(root.path(), SystemTime::now()).shows, []);
+    assert_eq!(list(root.path(), SystemTime::now()).shows, []);
     let closing = keeper.close();
     tokio::pin!(closing);
     assert!(
@@ -92,9 +92,7 @@ async fn emergency_drop_stops_the_keeper_with_a_live_audio_producer() -> anyhow:
     )
     .await??;
     assert!(!audio.begin(8_000, Duration::ZERO, "en".into()));
-    let interrupted = super::super::list(root.path(), SystemTime::now())
-        .shows
-        .remove(0);
+    let interrupted = list(root.path(), SystemTime::now()).shows.remove(0);
     assert!(interrupted.lock()?.replay()?.ended());
     Ok(())
 }
@@ -141,7 +139,7 @@ async fn failed_frame_and_closed_audio_lanes_cannot_unlock_a_native_movie() -> a
         .await
         .is_err();
     let cancelled = target.cancelled();
-    let unlocked = super::super::list(root.path(), SystemTime::now()).shows;
+    let unlocked = list(root.path(), SystemTime::now()).shows;
     drop(target);
     let checkpoint = tokio::time::timeout(crate::testing::PATIENCE, closing)
         .await??
@@ -178,15 +176,10 @@ async fn emergency_drop_cancels_but_waits_for_the_native_movie_file_lease() -> a
             .await
             .is_err()
     );
-    assert_eq!(super::super::list(root.path(), SystemTime::now()).shows, []);
+    assert_eq!(list(root.path(), SystemTime::now()).shows, []);
     drop(target);
     tokio::time::timeout(crate::testing::PATIENCE, dropping).await??;
-    assert_eq!(
-        super::super::list(root.path(), SystemTime::now())
-            .shows
-            .len(),
-        1
-    );
+    assert_eq!(list(root.path(), SystemTime::now()).shows.len(), 1);
     Ok(())
 }
 

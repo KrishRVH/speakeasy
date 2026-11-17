@@ -1,5 +1,10 @@
 use super::*;
 
+fn cleanup_directory(show: &Path) -> PathBuf {
+    let name = show.file_name().unwrap().to_string_lossy();
+    show.with_file_name(format!("{}{name}", store::EXPIRED_PREFIX))
+}
+
 #[test]
 fn deleting_a_kept_damaged_show_removes_its_files_and_preserves_other_shows() -> anyhow::Result<()>
 {
@@ -12,16 +17,7 @@ fn deleting_a_kept_damaged_show_removes_its_files_and_preserves_other_shows() ->
     let deleted = delete(root.path(), &directory)?;
     assert!(deleted.cleanup.is_none());
     assert!(!directory.exists());
-    assert!(
-        !root
-            .path()
-            .join(format!(
-                "{}{}",
-                store::EXPIRED_PREFIX,
-                directory.file_name().unwrap().to_string_lossy()
-            ))
-            .exists()
-    );
+    assert!(!cleanup_directory(&directory).exists());
     assert!(other.join("summary.md").is_file());
     assert!(delete(root.path(), &directory).is_err());
     assert!(!directory.exists());
@@ -65,11 +61,7 @@ fn deletion_waits_for_the_retention_owner_and_refuses_unmanaged_paths() -> anyho
 fn deletion_never_replaces_an_existing_cleanup_directory() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let directory = show(root.path(), SystemTime::now())?;
-    let retired = root.path().join(format!(
-        "{}{}",
-        store::EXPIRED_PREFIX,
-        directory.file_name().unwrap().to_string_lossy()
-    ));
+    let retired = cleanup_directory(&directory);
     fs::create_dir(&retired)?;
     assert!(delete(root.path(), &directory).is_err());
     assert!(directory.is_dir() && retired.is_dir());
@@ -115,11 +107,7 @@ fn incomplete_deletion_is_hidden_and_cleanup_retries_it() -> anyhow::Result<()> 
     fs::write(sealed.join("frame.png"), b"synthetic frame")?;
     fs::set_permissions(&sealed, fs::Permissions::from_mode(0o555))?;
     let deleted = delete(root.path(), &directory)?;
-    let retired = root.path().join(format!(
-        "{}{}",
-        store::EXPIRED_PREFIX,
-        directory.file_name().unwrap().to_string_lossy()
-    ));
+    let retired = cleanup_directory(&directory);
     fs::set_permissions(retired.join("sealed"), fs::Permissions::from_mode(0o700))?;
     assert!(deleted.cleanup.is_some());
     assert!(!directory.exists());

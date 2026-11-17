@@ -5,7 +5,7 @@ use crate::show::store::{self, address, recall};
 
 mod deletion;
 
-fn show(parent: &Path, at: SystemTime) -> io::Result<std::path::PathBuf> {
+fn show(parent: &Path, at: SystemTime) -> io::Result<PathBuf> {
     let directory = parent.join(store::utc_stamp(at));
     fs::create_dir(&directory)?;
     fs::write(directory.join("summary.md"), "PRIVATE_EDIT")?;
