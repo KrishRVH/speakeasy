@@ -86,7 +86,7 @@ impl Settings {
     }
 
     pub(super) fn shows_hints(&self) -> bool {
-        self.config.uses_nemotron() || !self.config.recognition_terms.phrases().is_empty()
+        self.config.hears_hints() || !self.config.recognition_terms.phrases().is_empty()
     }
 
     pub(super) fn recognition_section(&self, ui: &Ui<'_>) -> Div {
@@ -122,7 +122,7 @@ impl Settings {
                     ui.press(remove),
                 )
             }));
-        let unused = (!self.config.uses_nemotron()).then(|| {
+        let unused = (!self.config.hears_hints()).then(|| {
             let model = match Speech::of(&self.config, self.own_engine) {
                 Some(Speech::Managed(Model::Parakeet)) => "Parakeet",
                 _ => "your own engine",
@@ -137,7 +137,7 @@ impl Settings {
                 .bg(palette.hover())
                 .child(div().pt(px(2.0)).child(icon(icons::INFO, 14.0, palette.muted)))
                 .child(kit.detail(format!(
-                    "Only Nemotron 3.5 uses hints, so {model} ignores these. Corrections still apply."
+                    "Only Nemotron 3.5 and Whisper use hints, so {model} ignores these. Corrections still apply."
                 )))
         });
         div()
@@ -151,7 +151,7 @@ impl Settings {
                     .gap(px(2.0))
                     .child(kit.heading("Recognition hints"))
                     .child(ui.text(
-                        "Names and terms Nemotron should listen for. Hints help it hear them; they don't force a spelling.",
+                        "Names and terms the speech model should listen for. Hints help it hear them; they don't force a spelling.",
                     )),
             )
             .children(unused)

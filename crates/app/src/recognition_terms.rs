@@ -67,6 +67,10 @@ impl Terms {
     pub(crate) fn contexts(&self) -> serde_json::Value {
         serde_json::json!([{"phrases": self.0, "boost": 2.0}])
     }
+
+    pub(crate) fn prompt(&self) -> String {
+        self.0.join(", ")
+    }
 }
 
 #[cfg(test)]

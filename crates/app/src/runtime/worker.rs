@@ -302,12 +302,13 @@ impl Cleanup {
     }
 }
 
-fn invented_credits<'a>(
+fn invented<'a>(
     engine: Engine,
     heard: impl Iterator<Item = &'a str> + Clone,
     audible: Duration,
+    terms: &Terms,
 ) -> bool {
-    engine == Engine::Whisper && credits::invented(heard, audible)
+    engine == Engine::Whisper && credits::invented(heard, audible, &terms.prompt())
 }
 
 async fn transcript_of<W: Speech>(
@@ -323,7 +324,7 @@ async fn transcript_of<W: Speech>(
         Wanted::Text => {
             let text = Zeroizing::new(worker.transcribe(wav, language, terms).await?);
             Transcript::Text(
-                if invented_credits(engine, iter::once(text.as_str()), clip.audible) {
+                if invented(engine, iter::once(text.as_str()), clip.audible, terms) {
                     Zeroizing::default()
                 } else {
                     text
@@ -334,12 +335,13 @@ async fn transcript_of<W: Speech>(
             let narration = worker.transcribe_words(wav, language, terms).await?;
             let invented = match &narration {
                 Narration::Text(text) => {
-                    invented_credits(engine, iter::once(text.as_str()), clip.audible)
+                    invented(engine, iter::once(text.as_str()), clip.audible, terms)
                 },
-                Narration::Words(words) => invented_credits(
+                Narration::Words(words) => invented(
                     engine,
                     words.iter().map(|word| word.text.as_str()),
                     clip.audible,
+                    terms,
                 ),
             };
             Transcript::Words(if invented {

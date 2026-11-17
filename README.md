@@ -708,10 +708,12 @@ the complete recording with the same model. Parakeet remains the default; choosi
 downloads what is missing and switches when the download finishes. Whisper and Show narration use
 whole-recording recognition.
 
-**Recognition hints** under Words helps Nemotron recognize names and jargon without forcing
-replacement text. Add a name or phrase; it applies right away. Up to 100 hints are stored locally;
-each allows six words and 64 characters. They remain saved when another model is selected, but only
-Nemotron uses them. Use **Corrections** when you want a deterministic replacement.
+**Recognition hints** under Words helps Nemotron and Whisper recognize names and jargon without
+forcing replacement text. Add a name or phrase; it applies right away. Up to 100 hints are stored
+locally; each allows six words and 64 characters. Nemotron boosts them as it decodes, and Whisper
+reads them as its prompt; a reply under a second of sound that only repeats the hints is dropped.
+Parakeet's engine has no way to bias it, so Parakeet ignores hints while they stay saved. Use
+**Corrections** when you want a deterministic replacement.
 
 **Your own engine**, under **Dictation → Speech model**, runs a whisper.cpp or NeMo-Speech.cpp build
 you installed. Choose **whisper.cpp** or **NeMo-Speech**, then the program and model file for that

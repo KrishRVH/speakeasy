@@ -639,6 +639,38 @@ async fn streaming_authenticates_and_sends_per_request_language_and_hints() -> a
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn whisper_requests_carry_hints_as_the_prompt_only_when_listed() -> anyhow::Result<()> {
+    let (_directory, mut speech, listener) = shell_engine("read -r _").await?;
+    let mut terms = Terms::default();
+    terms.add("Example Name")?;
+    terms.add("Kubernetes")?;
+    let mut prompts = Vec::new();
+    for terms in [terms, Terms::default()] {
+        let wav = audio::silent_wav(16_000, Duration::from_secs(1))?;
+        let (transcribed, body) = timeout(crate::testing::PATIENCE, async {
+            tokio::join!(speech.transcribe(wav, "en", &terms), async {
+                answer_silence(listener.accept().await?.0).await
+            })
+        })
+        .await?;
+        transcribed?;
+        prompts.push(multipart_field(&body?, "prompt"));
+    }
+    speech.stop().await;
+    assert_eq!(prompts, [Some("Example Name, Kubernetes".to_owned()), None]);
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn multipart_field(body: &[u8], name: &str) -> Option<String> {
+    let body = String::from_utf8_lossy(body);
+    let (_, after) = body.split_once(&format!("name=\"{name}\"\r\n\r\n"))?;
+    let (value, _) = after.split_once("\r\n--")?;
+    Some(value.to_owned())
+}
+
 #[cfg(unix)]
 async fn engine_from(mut command: Command, port: u16) -> anyhow::Result<LocalSpeech> {
     let mut child = command.process_group(0).spawn()?;
@@ -677,7 +709,7 @@ async fn impersonate_engine(listener: &tokio::net::TcpListener) -> anyhow::Resul
 }
 
 #[cfg(unix)]
-async fn answer_silence(stream: tokio::net::TcpStream) -> anyhow::Result<()> {
+async fn answer_silence(stream: tokio::net::TcpStream) -> anyhow::Result<Vec<u8>> {
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
     let mut stream = BufReader::new(stream);
     let mut length = 0;
@@ -692,7 +724,8 @@ async fn answer_silence(stream: tokio::net::TcpStream) -> anyhow::Result<()> {
             length = value.trim().parse()?;
         }
     }
-    stream.read_exact(&mut vec![0; length]).await?;
+    let mut body = vec![0; length];
+    stream.read_exact(&mut body).await?;
     stream
         .write_all(
             concat!(
@@ -702,7 +735,7 @@ async fn answer_silence(stream: tokio::net::TcpStream) -> anyhow::Result<()> {
             .as_bytes(),
         )
         .await?;
-    Ok(())
+    Ok(body)
 }
 
 #[cfg(target_os = "linux")]
@@ -782,7 +815,7 @@ async fn abandoned_and_failed_streams_probe_the_owned_engine_before_reuse() -> a
                 None | Some(Err(_) | Ok(Message::Close(_)))
             ));
 
-            answer_silence(listener.accept().await?.0).await
+            answer_silence(listener.accept().await?.0).await.map(drop)
         };
         let terms = Terms::default();
         let result = timeout(crate::testing::PATIENCE, async {

@@ -188,12 +188,15 @@ impl LocalSpeech {
         self.verify_listener().await?;
         let request = match self.protocol {
             Protocol::Whisper => {
-                let form = recording_form(wav, R::FORMAT)?
+                let mut form = recording_form(wav, R::FORMAT)?
                     .text(
                         "language",
                         crate::models::whisper_language(language).to_owned(),
                     )
                     .text("temperature", "0.0");
+                if !terms.phrases().is_empty() {
+                    form = form.text("prompt", terms.prompt());
+                }
                 self.client.post(self.url("inference")).multipart(form)
             },
             Protocol::Nemo | Protocol::Nemotron => {

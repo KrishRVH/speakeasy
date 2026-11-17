@@ -158,6 +158,10 @@ impl Config {
         self.model_choice() == Some(Model::Nemotron)
     }
 
+    pub(crate) fn hears_hints(&self) -> bool {
+        self.engine == Engine::Whisper || self.uses_nemotron()
+    }
+
     pub(crate) fn model_choice(&self) -> Option<Model> {
         managed_model(self.engine, &self.model, self.nemo_model)
     }

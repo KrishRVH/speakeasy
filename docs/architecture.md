@@ -131,7 +131,8 @@ module unless a test file is named.
 - **Model choices and hints**: [models.rs](../crates/app/src/models.rs) owns curated identities and
   engine language adaptation. [recognition_terms.rs](../crates/app/src/recognition_terms.rs)
   validates bounded recognition hints independently of transcript corrections. Hints travel per
-  request; editing them cancels the session but keeps the worker.
+  request, as Nemotron speech contexts or as Whisper's prompt. Editing hints cancels the session but
+  keeps the worker.
 - **Transcript cleanup**: [transcript.rs](../crates/app/src/transcript.rs), with the filler policy
   in `Config::fillers` ([config.rs](../crates/app/src/config.rs)). `for_dictation` composes filler
   removal, phrase corrections, and the session's output style for insertion and paired replay.
