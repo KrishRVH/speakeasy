@@ -200,7 +200,7 @@ option_if_let_else = "allow"
 too_many_lines = "allow"
 use_self = "allow"
 
-# Dev and test builds keep file:line for first-party and patched GPUI frames and drop other
+# Dev and test builds keep file:line for first-party and `gpui-pre` frames and drop other
 # dependency debuginfo. Full debuginfo for one build: --config 'profile.dev.debug="full"'
 # --config 'profile.dev.package."*".debug="full"' --config 'profile.dev.package.gpui-pre.debug="full"'
 [profile.dev]
