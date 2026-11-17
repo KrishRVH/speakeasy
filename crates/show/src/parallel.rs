@@ -1,20 +1,25 @@
-use std::num::NonZero;
+use std::{num::NonZero, thread};
 
 pub(crate) fn map<T: Sync, R: Send>(items: &[T], work: impl Fn(&T) -> R + Sync) -> Vec<R> {
-    let threads = std::thread::available_parallelism().map_or(1, NonZero::get);
+    let threads = thread::available_parallelism().map_or(1, NonZero::get);
     let per_thread = items.len().div_ceil(threads).max(1);
-    let work = &work;
-    std::thread::scope(|scope| {
+    let run = |chunk: &[T]| chunk.iter().map(&work).collect::<Vec<R>>();
+    thread::scope(|scope| {
         let workers: Vec<_> = items
             .chunks(per_thread)
-            .map(|chunk| scope.spawn(move || chunk.iter().map(work).collect::<Vec<R>>()))
+            .map(|chunk| {
+                thread::Builder::new()
+                    .spawn_scoped(scope, move || run(chunk))
+                    .map_err(|_refused| chunk)
+            })
             .collect();
         workers
             .into_iter()
-            .flat_map(|worker| {
-                worker
+            .flat_map(|worker| match worker {
+                Ok(worker) => worker
                     .join()
-                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
+                Err(chunk) => run(chunk),
             })
             .collect()
     })
