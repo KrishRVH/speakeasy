@@ -1,6 +1,6 @@
 use super::{
     super::{
-        Capture, Command, Completion, Delivered, Device, Event, Input, Inserted, Machine,
+        Capture, Command, Completion, Delivered, Device, Event, Input, Inserted, Lost, Machine,
         NarrationLoss, Part, Partition, Published, RecognitionMode, Recognized, Recorder, Reopened,
         Report, Screening, Sealed, SessionId, Settings, Stopped, Transcript, Unheard, Worker,
         session::Session,
@@ -143,24 +143,39 @@ fn controls(events: &mut Events, machine: &Machine<Abstract>) {
     events.push(preset(CONFIGS[0], current, true));
 }
 
+const fn sealed(partition: Option<Partition<Abstract>>) -> Sealed<Abstract> {
+    Sealed {
+        audio: (),
+        trimmed: (),
+        partition,
+    }
+}
+
+const fn lost(partition: Option<Partition<Abstract>>) -> Capture<Abstract> {
+    Capture::Lost(
+        sealed(partition),
+        Lost {
+            notice: (),
+            failure: (),
+        },
+    )
+}
+
 fn captures(events: &mut Events, session: &Session<Abstract>, mode: Option<RecognitionMode>) {
-    events.push(Event::Capture(STALE, Capture::Ready));
-    events.push(Event::Capture(STALE, Capture::Finished(Ok(None))));
+    events.extend(
+        [Capture::Ready, Capture::Finished(Ok(None)), lost(None)]
+            .map(|capture| Event::Capture(STALE, capture)),
+    );
     let Some(mode) = mode else {
         return;
     };
-    let sealed = |partition| {
-        Capture::Finished(Ok(Some(Sealed {
-            audio: (),
-            trimmed: (),
-            partition,
-        })))
-    };
+    let finished = |partition| Capture::Finished(Ok(Some(sealed(partition))));
     let mut captures = vec![
         Capture::Ready,
         Capture::Level(()),
         Capture::Finished(Ok(None)),
-        sealed(None),
+        finished(None),
+        lost(None),
     ];
     if session.is_show() {
         captures.push(Capture::CheckpointLost);
@@ -171,11 +186,14 @@ fn captures(events: &mut Events, session: &Session<Abstract>, mode: Option<Recog
             captures.extend([Capture::Piece(0, ()), Capture::Piece(1, ())]);
             for pieces in 0..=2 {
                 for empty in [false, true] {
-                    captures.push(sealed(Some(Partition {
-                        pieces,
-                        tail: (),
-                        empty,
-                    })));
+                    let partition = || {
+                        Some(Partition {
+                            pieces,
+                            tail: (),
+                            empty,
+                        })
+                    };
+                    captures.extend([finished(partition()), lost(partition())]);
                 }
             }
         },

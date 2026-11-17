@@ -10,7 +10,8 @@ use tokio::{sync::oneshot, task::JoinHandle, time::timeout};
 
 use super::{
     ports::{
-        Capturing, Footage, Listening, LiveAudio, Pinning, Preservation, Sealed, Speech, Unchosen,
+        Capturing, Footage, Listening, LiveAudio, Lost, Pinning, Preservation, Sealed, Speech,
+        Unchosen,
     },
     *,
 };
@@ -473,6 +474,17 @@ fn sealed() -> Sealed {
         trimmed: Duration::ZERO,
         partition: None,
     }
+}
+
+fn disconnected(id: SessionId) -> CaptureEvent {
+    CaptureEvent::Lost(
+        id,
+        sealed(),
+        Lost {
+            notice: "The microphone was disconnected.",
+            failure: anyhow!("The microphone was disconnected. Reconnect it."),
+        },
+    )
 }
 
 fn footage() -> Box<Footage> {

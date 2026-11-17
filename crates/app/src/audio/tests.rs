@@ -1,10 +1,10 @@
 use std::{sync::PoisonError, time::SystemTime};
 
-use anyhow::ensure;
+use anyhow::{bail, ensure};
 use speakeasy_core::machine::Cue;
 use tokio::time::timeout;
 
-use super::{pcm::SAMPLE_BYTES, *};
+use super::{pcm::SAMPLE_BYTES, stream::STALL, *};
 use crate::{
     show::{Keeper, Kept},
     sounds,
@@ -79,31 +79,66 @@ fn the_meter_rests_on_a_constant_offset_and_follows_speech_around_it() {
     ));
 }
 
-fn record_constant(level: f32, samples: usize) -> anyhow::Result<Option<Sealed>> {
-    let (mut producer, ring) = RingBuffer::new(samples.max(1));
-    producer.push_entire_slice(&vec![level; samples])?;
-    let (_errors, stream_errors) = async_channel::bounded(1);
-    let (events, _reports) = async_channel::bounded(64);
-    let (_cues, cues) = async_channel::unbounded();
-    let (_keep, keep) = async_channel::bounded(1);
-    let (_whole, whole) = async_channel::bounded(1);
-    let control = Control::default();
-    control.finish();
-    Recorder::new(
+fn recorder(samples: &[f32], error: Option<cpal::ErrorKind>) -> anyhow::Result<Recorder<()>> {
+    let (mut producer, ring) = RingBuffer::new(samples.len().max(1));
+    producer.push_entire_slice(samples)?;
+    let (errors, stream_errors) = async_channel::bounded(1);
+    if let Some(kind) = error {
+        errors.try_send(kind.into())?;
+    }
+    Ok(Recorder::new(
         (),
         ring,
         stream_errors,
         Instant::now(),
         16_000,
         RecognitionMode::Whole,
-    )
-    .record(
-        SessionId::FIRST,
-        &events,
-        &control,
-        &Requests { cues, keep, whole },
-    )
-    .outcome
+    ))
+}
+
+fn record_released(recorder: Recorder<()>) -> Outcome {
+    let (events, _reports) = async_channel::bounded(64);
+    let (_cues, cues) = async_channel::unbounded();
+    let (_keep, keep) = async_channel::bounded(1);
+    let (_whole, whole) = async_channel::bounded(1);
+    let control = Control::default();
+    control.finish();
+    recorder
+        .record(
+            SessionId::FIRST,
+            &events,
+            &control,
+            &Requests { cues, keep, whole },
+        )
+        .outcome
+}
+
+fn record_constant(level: f32, samples: usize) -> anyhow::Result<Option<Sealed>> {
+    match record_released(recorder(&vec![level; samples], None)?) {
+        Outcome::Finished(sealed) => sealed,
+        Outcome::Lost(..) => bail!("A healthy microphone was reported lost"),
+    }
+}
+
+fn speech() -> impl Iterator<Item = i16> {
+    fixture::square_wave(2_000).take(16_000)
+}
+
+fn spoken() -> Vec<f32> {
+    speech()
+        .map(|sample| f32::from(sample) / 32_768.0)
+        .collect()
+}
+
+fn stalled_since(arrived: bool) -> anyhow::Result<Pulse> {
+    let opened = Instant::now()
+        .checked_sub(STALL)
+        .context("The monotonic clock started less than a stall ago")?;
+    let mut pulse = Pulse::new(opened);
+    if arrived {
+        pulse.beat(opened);
+    }
+    Ok(pulse)
 }
 
 #[test]
@@ -120,6 +155,72 @@ fn only_exact_digital_silence_long_enough_to_seal_names_the_microphone() -> anyh
         "Quiet input below one PCM16 step still came from a live microphone"
     );
     assert!(record_constant(0.0, 1_600)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn a_microphone_lost_after_speech_seals_what_arrived() -> anyhow::Result<()> {
+    let recorded = recorder(&spoken(), Some(cpal::ErrorKind::DeviceNotAvailable))?;
+    let Outcome::Lost(sealed, lost) = record_released(recorded) else {
+        bail!("Speech captured before the microphone was lost was discarded");
+    };
+    assert_eq!(wav_duration(&sealed.wav)?, Duration::from_secs(1));
+    assert_eq!(lost.notice, "The microphone was disconnected.");
+    Ok(())
+}
+
+#[test]
+fn a_microphone_lost_before_speech_fails_with_its_named_error() -> anyhow::Result<()> {
+    for samples in [Vec::new(), vec![0.0; 8_000], vec![1e-6; 8_000]] {
+        let recorded = recorder(&samples, Some(cpal::ErrorKind::DeviceNotAvailable))?;
+        let Outcome::Finished(Err(failure)) = record_released(recorded) else {
+            bail!("A microphone lost before any speech did not fail");
+        };
+        assert!(!failure.is::<SilentMicrophone>());
+        assert!(
+            failure
+                .to_string()
+                .starts_with("The microphone was disconnected. Reconnect it"),
+            "{failure}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_microphone_that_never_sends_audio_is_named_instead_of_hearing_no_speech() -> anyhow::Result<()>
+{
+    let mut silent = recorder(&[], None)?;
+    silent.pulse = stalled_since(false)?;
+    let Outcome::Finished(Err(failure)) = record_released(silent) else {
+        bail!("A microphone that never sent audio read as no speech");
+    };
+    assert!(
+        failure
+            .to_string()
+            .starts_with("The microphone isn't sending audio."),
+        "{failure}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_microphone_that_stops_sending_after_speech_keeps_what_arrived() -> anyhow::Result<()> {
+    let mut stopped = recorder(&[], None)?;
+    speech().for_each(|sample| stopped.pcm.push(sample));
+    stopped.pulse = stalled_since(true)?;
+    let Outcome::Lost(sealed, lost) = record_released(stopped) else {
+        bail!("Speech before the microphone stopped sending audio was not kept");
+    };
+    assert_eq!(wav_duration(&sealed.wav)?, Duration::from_secs(1));
+    assert_eq!(lost.notice, "The microphone stopped sending audio.");
+
+    let mut late = recorder(&spoken(), None)?;
+    late.pulse = stalled_since(true)?;
+    assert!(
+        matches!(record_released(late), Outcome::Finished(Ok(Some(_)))),
+        "Samples waiting for a late drain read as a stalled microphone"
+    );
     Ok(())
 }
 
@@ -171,11 +272,11 @@ async fn sealed_audio_is_reported_before_device_teardown_and_retirement_waits() 
     let (release, waiting) = async_channel::bounded(1);
     let capture = Capture::spawn(SessionId::FIRST, events, move |_, _, _| {
         Ok(Captured {
-            outcome: Ok(Some(Sealed {
+            outcome: Outcome::Finished(Ok(Some(Sealed {
                 wav: vec![1, 2],
                 trimmed: Duration::ZERO,
                 partition: None,
-            })),
+            }))),
             device: Device {
                 entered,
                 release: waiting,
@@ -202,7 +303,7 @@ async fn capture_retirement_signals_cancel_and_waits_for_teardown() -> anyhow::R
         started.send_blocking(Arc::clone(control))?;
         waiting.recv_blocking()?;
         Ok(Captured {
-            outcome: Ok(None),
+            outcome: Outcome::Finished(Ok(None)),
             device: (),
         })
     })?;
@@ -261,7 +362,7 @@ async fn consumer_wakes(cancel: bool, wake_before_park: bool) -> anyhow::Result<
             thread::park_timeout(Duration::from_secs(5));
         }
         Ok(Captured {
-            outcome: Ok(None),
+            outcome: Outcome::Finished(Ok(None)),
             device: (),
         })
     })?;
@@ -305,7 +406,7 @@ async fn closing_audio_events_unblocks_owned_capture_retirement() -> anyhow::Res
     events.try_send(CaptureEvent::Ready(SessionId::FIRST))?;
     let capture = Capture::spawn(SessionId::FIRST, events, |_, _, _| {
         Ok(Captured {
-            outcome: Ok(None),
+            outcome: Outcome::Finished(Ok(None)),
             device: (),
         })
     })?;
@@ -351,7 +452,7 @@ async fn a_finished_capture_refuses_a_late_show_checkpoint() -> anyhow::Result<(
     let (release, waiting) = async_channel::bounded(1);
     let capture = Capture::spawn(SessionId::FIRST, events, move |_, _, _| {
         Ok(Captured {
-            outcome: Ok(None),
+            outcome: Outcome::Finished(Ok(None)),
             device: Device(waiting),
         })
     })?;

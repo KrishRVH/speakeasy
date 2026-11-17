@@ -343,7 +343,7 @@ fn ending(recording: &Recording) -> Option<String> {
 fn lost(loss: NarrationLoss) -> String {
     match loss {
         NarrationLoss::Incomplete => {
-            "Narration is incomplete: only audio that reached the checkpoint was recovered."
+            "Narration is incomplete: speech after the audio stopped is missing."
         },
         NarrationLoss::AudioStopped => "The microphone stopped, so this Show has no narration.",
         NarrationLoss::AudioSilent => {

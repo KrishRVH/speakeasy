@@ -409,8 +409,32 @@ const COPIED_WITHOUT_NARRATION: &str = "Show copied without narration.";
 
 const DISCONNECTED: &str = "The microphone was disconnected. Reconnect it.";
 
-fn disconnected(id: SessionId) -> CaptureEvent {
+fn disconnected_before_speech(id: SessionId) -> CaptureEvent {
     CaptureEvent::Finished(id, Err(anyhow!(DISCONNECTED)))
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_show_whose_microphone_is_lost_keeps_the_narration_that_arrived() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    let (id, events) = start_show_listening(&mut h).await?;
+    receive(&h.shows).await?;
+    events.send(disconnected(id)).await?;
+    h.transcribe_next_as("look at this").await?;
+    let (_, narration) = receive(&h.published).await?;
+    assert_eq!(narration, Narration::Text("look at this".into()));
+    h.phase(Phase::Copied).await?;
+    let snapshot = h.snapshot();
+    assert_eq!(
+        snapshot.message,
+        "Show copied with partial narration. The microphone was disconnected."
+    );
+    assert_eq!(snapshot.narration_lost, Some(NarrationLoss::Incomplete));
+    assert!(
+        h.take_sounds().contains(&Sound::Played(Cue::Stop)),
+        "The Show ended where its microphone stopped"
+    );
+    assert!(h.pasted.try_recv().is_err());
+    h.close().await
 }
 
 #[tokio::test(start_paused = true)]
@@ -422,7 +446,7 @@ async fn a_show_whose_audio_stops_ends_there_and_is_copied_with_the_remedy() -> 
     receive(&h.loads).await?;
     let (id, events) = start_show_listening(&mut h).await?;
     receive(&h.shows).await?;
-    events.send(disconnected(id)).await?;
+    events.send(disconnected_before_speech(id)).await?;
     let (_, narration) = receive(&h.published).await?;
     assert_eq!(narration, Narration::default());
     assert!(
@@ -511,7 +535,7 @@ async fn a_failed_load_leaves_the_failure_that_cost_a_show_its_narration_in_view
     receive(&h.loads).await?;
     let (id, microphone) = start_show_listening(&mut h).await?;
     receive(&h.shows).await?;
-    microphone.send(disconnected(id)).await?;
+    microphone.send(disconnected_before_speech(id)).await?;
     publishing.reached().await?;
     results.send(Err(anyhow!("Model failed to load"))).await?;
     h.observe(|snapshot| snapshot.model == ModelState::Unavailable)
@@ -571,7 +595,7 @@ async fn lose_screen_and_narration(h: &mut Harness, ending: Ending) -> anyhow::R
     stopped.recording.ending = ending;
     screen.send(ShowEvent::Finished(id, Ok(stopped))).await?;
     h.phase(Phase::Stopping).await?;
-    microphone.send(disconnected(id)).await?;
+    microphone.send(disconnected_before_speech(id)).await?;
     Ok(())
 }
 
@@ -636,7 +660,7 @@ async fn a_show_that_lost_its_narration_and_is_discarded_leaves_no_trace() -> an
     h.input(Input::Release);
 
     let (id, events) = start_show_listening(&mut h).await?;
-    events.send(disconnected(id)).await?;
+    events.send(disconnected_before_speech(id)).await?;
     h.phase(Phase::Processing).await?;
 
     change_settings(&h);

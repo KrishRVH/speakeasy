@@ -95,7 +95,7 @@ pub(super) fn inspect(
                 out,
                 "Narration missing: {}",
                 match lost {
-                    NarrationLoss::Incomplete => "only checkpointed audio recovered",
+                    NarrationLoss::Incomplete => "speech after the audio stopped",
                     NarrationLoss::AudioStopped => "audio stopped",
                     NarrationLoss::AudioSilent => "microphone sent only silence",
                     NarrationLoss::NotTranscribed => "transcription failed",

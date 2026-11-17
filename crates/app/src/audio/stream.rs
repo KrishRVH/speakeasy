@@ -1,16 +1,26 @@
-use std::{num::NonZeroUsize, sync::Arc, time::Instant};
+use std::{
+    iter,
+    num::NonZeroUsize,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context as _, anyhow, bail, ensure};
-use async_channel::{Receiver, Sender};
+use async_channel::Sender;
 use cpal::{SampleFormat, SizedSample, traits::DeviceTrait};
 use rtrb::Producer;
 use speakeasy_core::gesture::RECORDING_LIMIT;
 
 use super::control::{Control, Mode};
+use crate::runtime::ports::Lost;
 
 pub(crate) const MAX_SAMPLE_RATE: u32 = 192_000;
 const MAX_CHANNELS: usize = 32;
 const UNSUPPORTED_FORMAT: &str = "Microphone format is unsupported. Change it in your system's sound settings, or choose another microphone in Settings.";
+pub(super) const STALL: Duration = Duration::from_secs(2);
+const NOT_SENDING: &str = "The microphone isn't sending audio.";
+const STOPPED_SENDING: &str = "The microphone stopped sending audio.";
+const CHECK_INPUT: &str = "Check the input device, or quit the app holding it, then try again.";
 
 pub(super) struct CallbackState {
     pub(super) channels: NonZeroUsize,
@@ -81,45 +91,51 @@ where
         limit,
     } = state;
     let error_control = Arc::clone(&control);
-    let mut queued_total = 0_usize;
+    let mut timeline = 0_usize;
+    let mut owed = 0_usize;
     (
         move |data: &[T]| {
             let _publishing = control.publishing();
             if control.mode() != Mode::Recording || started.elapsed() >= RECORDING_LIMIT {
                 return;
             }
-            let frames = (data.len() / channels).min(limit.saturating_sub(queued_total));
-            let queued = frames.min(producer.slots());
-            let Ok(chunk) = producer.write_chunk_uninit(queued) else {
-                control.mark_overflowed();
-                return;
+            let frames = (data.len() / channels).min(limit.saturating_sub(timeline));
+            timeline = timeline.saturating_add(frames);
+            owed = owed.saturating_sub(queue(&mut producer, owed, iter::repeat(0.0)));
+            let queued = if owed == 0 {
+                let mono = data.chunks_exact(channels.get()).map(|frame| {
+                    frame
+                        .iter()
+                        .map(|sample| sample.to_sample::<f32>())
+                        .sum::<f32>()
+                        / channels.get() as f32
+                });
+                queue(&mut producer, frames, mono)
+            } else {
+                0
             };
-            chunk.fill_from_iter(data.chunks_exact(channels.get()).take(queued).map(|frame| {
-                frame
-                    .iter()
-                    .map(|sample| sample.to_sample::<f32>())
-                    .sum::<f32>()
-                    / channels.get() as f32
-            }));
-            if queued > 0 && queued_total == 0 {
-                control.mark_first_sample_queued();
-            }
-            queued_total = queued_total.saturating_add(queued);
-            if queued < frames {
-                control.mark_overflowed();
-            }
+            owed = owed.saturating_add(frames.saturating_sub(queued));
         },
         move |error| {
             let _publishing = error_control.publishing();
             if error_control.mode() == Mode::Recording {
-                handle_stream_error(error, &errors, &error_control);
+                handle_stream_error(error, &errors);
             }
         },
     )
 }
 
-fn handle_stream_error(error: cpal::Error, errors: &Sender<cpal::Error>, control: &Control) {
-    if is_recoverable(error.kind(), control.first_sample_queued()) {
+fn queue(producer: &mut Producer<f32>, frames: usize, samples: impl Iterator<Item = f32>) -> usize {
+    producer
+        .write_chunk_uninit(frames.min(producer.slots()))
+        .map_or(0, |chunk| chunk.fill_from_iter(samples))
+}
+
+fn handle_stream_error(error: cpal::Error, errors: &Sender<cpal::Error>) {
+    if matches!(
+        error.kind(),
+        cpal::ErrorKind::Xrun | cpal::ErrorKind::RealtimeDenied | cpal::ErrorKind::DeviceChanged
+    ) {
         return;
     }
     #[expect(
@@ -129,25 +145,49 @@ fn handle_stream_error(error: cpal::Error, errors: &Sender<cpal::Error>, control
     let _ = errors.try_send(error);
 }
 
-fn is_recoverable(kind: cpal::ErrorKind, first_sample_queued: bool) -> bool {
-    match kind {
-        cpal::ErrorKind::Xrun => !first_sample_queued,
-        cpal::ErrorKind::RealtimeDenied | cpal::ErrorKind::DeviceChanged => true,
-        _ => false,
+pub(super) struct Pulse {
+    since: Instant,
+    heard: bool,
+}
+
+impl Pulse {
+    pub(super) const fn new(now: Instant) -> Self {
+        Self {
+            since: now,
+            heard: false,
+        }
+    }
+
+    pub(super) const fn beat(&mut self, now: Instant) {
+        self.since = now;
+        self.heard = true;
+    }
+
+    pub(super) fn check(&self, now: Instant) -> anyhow::Result<Option<Lost>> {
+        if now.saturating_duration_since(self.since) < STALL {
+            return Ok(None);
+        }
+        ensure!(self.heard, "{NOT_SENDING} {CHECK_INPUT}");
+        Ok(Some(Lost {
+            notice: STOPPED_SENDING,
+            failure: anyhow!("{STOPPED_SENDING} {CHECK_INPUT}"),
+        }))
     }
 }
 
-pub(super) fn capture_failure(
-    control: &Control,
-    errors: &Receiver<cpal::Error>,
-) -> anyhow::Result<()> {
-    if control.overflowed() {
-        bail!("Recording fell behind and filled its buffer. Reduce system load, then try again.");
+impl From<cpal::Error> for Lost {
+    fn from(error: cpal::Error) -> Self {
+        let notice = match error.kind() {
+            cpal::ErrorKind::DeviceNotAvailable => "The microphone was disconnected.",
+            cpal::ErrorKind::DeviceBusy => "Another app is using the microphone.",
+            cpal::ErrorKind::PermissionDenied => "Speakeasy has no microphone access.",
+            _ => "The microphone failed.",
+        };
+        Self {
+            notice,
+            failure: microphone_error(error),
+        }
     }
-    if let Ok(error) = errors.try_recv() {
-        return Err(microphone_error(error));
-    }
-    Ok(())
 }
 
 pub(super) fn microphone_error(error: cpal::Error) -> anyhow::Error {
@@ -163,9 +203,6 @@ pub(super) fn microphone_error(error: cpal::Error) -> anyhow::Error {
                 "The microphone was disconnected. Reconnect it, or choose another microphone in Settings."
             )
         },
-        cpal::ErrorKind::Xrun => anyhow!(
-            "Audio was interrupted during recording. Check your audio routing or reduce system load, then try again."
-        ),
         _ => anyhow!(
             "The microphone failed ({error}). Try recording again, or choose another microphone in Settings."
         ),

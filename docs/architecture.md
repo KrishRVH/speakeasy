@@ -92,10 +92,19 @@ module unless a test file is named.
   Background noise above the floor can also qualify. The gate measures energy around each window's
   mean, so a microphone's DC offset never counts as sound. A recording long enough to seal whose
   every sample was exactly zero, judged before PCM16 rounding, fails with `SilentMicrophone`, which
-  names the mute switch, privacy settings, and the microphone choice. Callbacks count themselves as
-  publishing before reading the capture mode. Finish/cancel and that count share sequentially
-  consistent ordering; the drain advances the mode, then waits for publishing callbacks before
-  sealing audio. Mode only advances, so a late finish cannot undo cancellation.
+  names the mute switch, privacy settings, and the microphone choice. A driver glitch (`Xrun`),
+  denied real-time scheduling, or a rerouted device leaves a gap and recording continues; cpal's
+  callback timestamps cannot measure the lost span on every backend, so the gap stays unfilled. When
+  the drain falls behind and the ring fills, the callback counts the frames it could not queue and
+  queues that many zeros before its next samples, within the five-minute limit, so later speech
+  keeps its place. Any other stream error loses the microphone, and so does a ring that stays empty
+  for two seconds after samples arrived. Audio that passes the speech gate then seals and reaches
+  the owner as `CaptureEvent::Lost` with a short notice and an actionable failure; otherwise the
+  failure ends the recording. A stream that sends no samples for its first two seconds fails as not
+  sending audio rather than as no speech. Callbacks count themselves as publishing before reading
+  the capture mode. Finish/cancel and that count share sequentially consistent ordering; the drain
+  advances the mode, then waits for publishing callbacks before sealing audio. Mode only advances,
+  so a late finish cannot undo cancellation.
 - **Sound cues**: [sounds.rs](../crates/app/src/sounds.rs) plays the cues the owner asks for through
   `Ports::cue` on an owned output thread, which `Ports::hold_cues` keeps open through each session.
   A recording may overhear a cue, so [speech.rs](../crates/app/src/audio/speech.rs) hears only the
@@ -796,10 +805,12 @@ Capture starts on the first shortcut press, and the five-minute cap holds whatev
 [interaction design](interaction-design.md#interaction-contracts) owns the gestures. Each wake of
 `owner.rs` handles one message, advances ready work, and presents a snapshot. A `Session` holds its
 permit and one stage. A failure or a settings change ends it from any stage, and so does
-cancellation, except for a finished Show being saved. A Show whose microphone has listened outlives
-losing its narration: when audio capture stops, the microphone sent only silence, the model fails to
-load, or transcription fails its one retry, it goes on to its footage with no narration and the
-reason beside it, where dictation fails:
+cancellation, except for a finished Show being saved. A microphone lost after audible speech seals
+what arrived for recognition: a Show keeps it as partial narration, dictation keeps its words for
+Paste last instead of inserting them, and practice fails. A Show whose microphone has listened
+outlives losing its narration: when audio capture stops before speech, the microphone sent only
+silence, the model fails to load, or transcription fails its one retry, it goes on to its footage
+with no narration and the reason beside it, where dictation fails:
 
 ```mermaid
 stateDiagram-v2
@@ -814,14 +825,16 @@ stateDiagram-v2
     Recording --> Recording: recognize pause-aligned pieces; retain whole audio
     Recording --> Stopping: release / next press / limit
     Stopping --> Recognizing: audio sealed; retire microphone
+    Recording --> Recognizing: microphone lost after speech; seal what arrived
     Stopping --> [*]: no speech
     Recognizing --> Recognizing: await worker / pieces / final request / retry
     Recognizing --> Delivering: complete dictation text; insert
     Recognizing --> [*]: no speech
+    Recognizing --> [*]: microphone was lost; keep dictation for Paste last
     Stopping --> AwaitingFootage: silent Show; empty narration
     Recognizing --> AwaitingFootage: Show narration
-    Recording --> AwaitingFootage: Show audio stops; narration lost
-    Stopping --> AwaitingFootage: Show audio stops or was all zeros; narration lost
+    Recording --> AwaitingFootage: Show audio stops before speech; narration lost
+    Stopping --> AwaitingFootage: Show audio stops before speech or was all zeros; narration lost
     Recognizing --> AwaitingFootage: Show model or retry fails; narration lost
     AwaitingFootage --> Delivering: footage recorded; publish
     Delivering --> [*]: Done / Copied / Cancelled / Failed
@@ -906,10 +919,11 @@ and marks a ticket for an ended session stale. At every state and transition,
 - the microphone, screen, worker, and cleanups belong to sessions that exist;
 - the cue output is held open exactly while a session runs with sounds on;
 - deliveries never overlap, and a Show or practice never inserts text;
+- a dictation that lost its microphone never inserts text, and its words wait for Paste last;
 - an earlier Show never replaces a later remembered one.
 
 A failure prints the path of events that reached it. `mise run rust:test` explores five events deep,
-and `mise run rust:explore` explores to a fixed point: 1,430,956 states and 127,475,062 transitions
+and `mise run rust:explore` explores to a fixed point: 1,517,932 states and 137,663,842 transitions
 in under a minute on 32 threads, with about 1 GB of memory at its peak.
 
 The explored space has bounds. Timing scales to a one-tick tap, two-tick double tap, and three-tick

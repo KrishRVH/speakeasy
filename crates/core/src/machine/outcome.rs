@@ -7,6 +7,7 @@ pub enum Outcome<P: Payload> {
     Done,
     Practiced,
     Copied(P::Text),
+    Withheld(P::Text),
     ShowCopied(P::Saved),
     ShowGone,
     Recovered(P::Recovered),
@@ -22,7 +23,9 @@ impl<P: Payload> Outcome<P> {
             Self::Idle => Phase::Idle,
             Self::Done | Self::Practiced => Phase::Done,
             Self::Copied(_) | Self::ShowCopied(_) => Phase::Copied,
-            Self::NothingToPaste | Self::ShowGone | Self::Recovered(_) => Phase::Notice,
+            Self::NothingToPaste | Self::Withheld(_) | Self::ShowGone | Self::Recovered(_) => {
+                Phase::Notice
+            },
             Self::Empty => Phase::Empty,
             Self::Cancelled => Phase::Cancelled,
             Self::Unchosen(_) => Phase::Unchosen,

@@ -90,3 +90,20 @@ async fn an_explicit_show_disarms_idle_practice() -> anyhow::Result<()> {
     h.input(Input::Escape);
     h.close().await
 }
+
+#[tokio::test(start_paused = true)]
+async fn practice_that_loses_its_microphone_fails_without_transcribing() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    let mut receipt = arm_practice(&h).await?;
+    let (id, events) = h.start().await?;
+    events.send(disconnected(id)).await?;
+    h.phase(Phase::Error).await?;
+    assert_eq!(
+        h.snapshot().message,
+        "The microphone was disconnected. Reconnect it."
+    );
+    assert!(h.jobs.try_recv().is_err());
+    assert!(!matches!(receipt.try_recv(), Ok(PracticeEvent::Text(_))));
+    assert!(h.pasted.try_recv().is_err());
+    h.close().await
+}

@@ -60,9 +60,10 @@ containing only removed fillers sends nothing.
 
 **Paste last dictation** in the tray, or V during the shortcut hold on Windows and Mac, inserts
 exactly the last completed text again; V abandons the hold's own recording. It can recover text when
-insertion failed. Speakeasy keeps one result in memory, clears it when dictation pauses or restarts
-or the app quits, and never writes ordinary dictation to disk. Each request has fresh cancellation
-authority; it cannot retract text already delivered.
+insertion failed or when the microphone was lost partway through a dictation, whose words Speakeasy
+keeps instead of typing. Speakeasy keeps one result in memory, clears it when dictation pauses or
+restarts or the app quits, and never writes ordinary dictation to disk. Each request has fresh
+cancellation authority; it cannot retract text already delivered.
 
 Choose **Dictation style** in the Windows/Mac tray, or run `speakeasy style STYLE` with `prose`,
 `verbatim`, `camel`, `pascal`, `snake`, `kebab`, or `constant`. **Prose** uses your filler setting;
@@ -90,16 +91,21 @@ the pill shows:
 - **Working.** The lamp slides through the slot while your speech is transcribed on this machine.
 - **Typed.** A check, shown above, means the text was submitted to your app.
 - **No speech detected.** Nothing was sent. A microphone that sends only digital silence, for
-  example while muted or blocked in privacy settings, gets an error that says so instead.
+  example while muted or blocked in privacy settings, or no audio at all, gets an error that says so
+  instead.
 - **Text copied.** The text is on the clipboard but was not pasted, for example because the shortcut
   keys were still held or Speakeasy itself had focus. Paste it where you want it.
+- **Microphone lost.** The microphone disconnected, failed, or stopped sending audio after you
+  spoke. Speakeasy transcribes what it heard but doesn't type it; the pill says what happened and
+  how to paste the words with Paste last dictation. A brief audio dropout only leaves a gap.
 - **Needs attention.** An error says what to do next and stays in Settings after the pill fades.
 
 Soft kalimba notes mark the moments you may not be watching: a high note once Speakeasy is
-listening, a lower one when you finish or the five-minute limit does, a muted low note when you
-cancel, two rising notes when a Show starts, and a short chord when text or a Show is copied.
-Speakeasy listens beneath its own cues, so a recording that hears only a cue sends nothing, while a
-word said over one still counts. Turn them off with **Play sounds** in Settings.
+listening, a lower one when you finish, the five-minute limit does, or the microphone stops after
+you speak, a muted low note when you cancel, two rising notes when a Show starts, and a short chord
+when text or a Show is copied. Speakeasy listens beneath its own cues, so a recording that hears
+only a cue sends nothing, while a word said over one still counts. Turn them off with **Play
+sounds** in Settings.
 
 ### Show your coding agent
 
@@ -190,11 +196,12 @@ A Show records only what you name. With no window to record under the pointer, o
 before dragging out an area, it is cancelled, narration and all: nothing is pasted or saved, and the
 pill says why. If screen capture stops before you finish, or the window closes or goes off screen,
 the Show ends there with what it recorded: the pill says why, and the summary's second line says why
-and when. A microphone that stops after it starts listening ends the Show there too. Then, or when
-the microphone sent only silence or your speech can't be transcribed, the Show is saved without
-narration rather than lost: the pill says **Show copied without narration** and what went wrong. The
-summary tells your agent why; when recovery audio survived, **Transcribe narration** in Shows can
-save a narrated copy.
+and when. A microphone that stops after it starts listening ends the Show there too, and the Show
+keeps the narration it heard: the pill says **Show copied with partial narration** and why. When the
+microphone stopped before you spoke, sent only silence, or your speech can't be transcribed, the
+Show is saved without narration rather than lost: the pill says **Show copied without narration**
+and what went wrong. The summary tells your agent why; when recovery audio survived, **Transcribe
+narration** in Shows can save a narrated copy.
 
 On Windows and Mac, the menu's **Copy last Show** copies the latest Show's `summary.md` again as it
 reads now, edits included, and **Open last Show** opens its folder. Speakeasy remembers only that

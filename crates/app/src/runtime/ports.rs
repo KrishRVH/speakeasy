@@ -28,6 +28,12 @@ pub(crate) enum CaptureEvent {
     Level(SessionId, f32),
     Piece(SessionId, u32, Sealed),
     Finished(SessionId, anyhow::Result<Option<Sealed>>),
+    Lost(SessionId, Sealed, Lost),
+}
+
+pub(crate) struct Lost {
+    pub notice: &'static str,
+    pub failure: anyhow::Error,
 }
 
 pub(crate) struct LiveAudio {

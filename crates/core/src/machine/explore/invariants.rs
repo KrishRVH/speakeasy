@@ -1,6 +1,6 @@
 use super::{
     super::{
-        Device, Event, Machine, Payload, Worker,
+        Capture, Device, Event, Machine, Outcome, Payload, Worker,
         session::{Purpose, Session},
     },
     Abstract,
@@ -91,6 +91,10 @@ pub(super) fn transition(
             )
         })
         .collect();
+    let lost = before.session.as_ref().is_some_and(|session| {
+        session.lost.is_some()
+            || matches!(event, Event::Capture(id, Capture::Lost(..)) if *id == session.id)
+    });
     match deliveries[..] {
         [] => {},
         [delivery] => {
@@ -115,6 +119,9 @@ pub(super) fn transition(
             if matches!(delivery, Effect::Insert) && (session.is_show() || session.is_practice()) {
                 return Err("A Show or practice inserted text".into());
             }
+            if matches!(delivery, Effect::Insert) && lost {
+                return Err("A dictation that lost its microphone inserted text".into());
+            }
             if matches!(delivery, Effect::Reopen) && before.session.is_some() {
                 return Err("Recovery started while a session was active".into());
             }
@@ -135,6 +142,9 @@ pub(super) fn transition(
         if after.session.is_some() {
             return Err("A practice session survived handing over its text".into());
         }
+    }
+    if matches!(after.outcome, Outcome::Withheld(())) && after.last_dictation.is_none() {
+        return Err("A withheld dictation is not kept for Paste last".into());
     }
     if let (Some(earlier), Some(later)) = (before.remembered, after.remembered)
         && later < earlier

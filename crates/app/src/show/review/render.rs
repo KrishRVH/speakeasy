@@ -769,7 +769,7 @@ impl Review {
             Some(Narration::Silent) => div().child("No speech was recorded."),
             Some(Narration::Lost(loss)) => div().text_color(rgb(palette.warn)).child(match loss {
                 NarrationLoss::Incomplete => {
-                    "Only part of the audio was recovered; it contains no recognized words."
+                    "The audio stopped partway, and what arrived contains no recognized words."
                 },
                 NarrationLoss::AudioStopped => "The microphone stopped. Narration is missing.",
                 NarrationLoss::AudioSilent => {

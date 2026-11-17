@@ -1,5 +1,5 @@
 use std::{
-    sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
+    sync::atomic::{AtomicU8, AtomicUsize, Ordering},
     thread,
 };
 
@@ -18,16 +18,6 @@ pub(super) struct Control {
         reason = "The audio callback reads finish/cancel without waiting on the session owner"
     )]
     mode: AtomicU8,
-    #[expect(
-        clippy::disallowed_types,
-        reason = "The callback reports overflow to the owned PCM consumer without allocating or waiting"
-    )]
-    overflowed: AtomicBool,
-    #[expect(
-        clippy::disallowed_types,
-        reason = "Native data and error callbacks distinguish a startup discontinuity from lost recorded speech"
-    )]
-    first_sample_queued: AtomicBool,
     #[expect(
         clippy::disallowed_types,
         reason = "The consumer seals audio before stopping the device, so it must wait for in-flight callback publication without blocking the callback"
@@ -72,22 +62,6 @@ impl Control {
         while self.publishing.load(Ordering::SeqCst) != 0 {
             thread::yield_now();
         }
-    }
-
-    pub(super) fn mark_overflowed(&self) {
-        self.overflowed.store(true, Ordering::Release);
-    }
-
-    pub(super) fn overflowed(&self) -> bool {
-        self.overflowed.load(Ordering::Acquire)
-    }
-
-    pub(super) fn mark_first_sample_queued(&self) {
-        self.first_sample_queued.store(true, Ordering::Release);
-    }
-
-    pub(super) fn first_sample_queued(&self) -> bool {
-        self.first_sample_queued.load(Ordering::Acquire)
     }
 }
 

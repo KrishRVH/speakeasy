@@ -1,7 +1,7 @@
 use std::mem;
 
 use super::{
-    Env, NarrationLoss, Payload, Phase, SessionId,
+    Env, Lost, NarrationLoss, Payload, Phase, SessionId,
     recognition::{Detail, Partition, Recognition, Request, Ticket, Transcript},
 };
 use crate::gesture::State;
@@ -14,6 +14,7 @@ pub(super) struct Session<P: Payload> {
     pub(super) purpose: Purpose<P>,
     pub(super) style: P::Style,
     pub(super) pending_text: Option<P::Heard>,
+    pub(super) lost: Option<Lost<P>>,
     stage: Stage<P>,
     recognition: Recognition<P>,
     show: Option<Show<P>>,
@@ -179,6 +180,7 @@ impl<P: Payload> Session<P> {
             purpose: Purpose::Dictation,
             style,
             pending_text: None,
+            lost: None,
             stage: Stage::Queued,
             recognition: Recognition::new(id),
             show: None,
@@ -291,6 +293,10 @@ impl<P: Payload> Session<P> {
         matches!(self.stage, Stage::Recording { .. })
     }
 
+    pub(super) const fn is_listening(&self) -> bool {
+        matches!(self.stage, Stage::Recording { .. } | Stage::Stopping { .. })
+    }
+
     pub(super) const fn is_capturing(&self) -> bool {
         matches!(
             self.stage,
@@ -373,26 +379,39 @@ impl<P: Payload> Session<P> {
     }
 
     pub(super) fn captured(&mut self, sealed: Option<Sealed<P>>) -> bool {
-        self.stage = match (&self.stage, sealed) {
-            (Stage::Recording { audio } | Stage::Stopping { audio }, Some(sealed)) => {
-                let start = P::shift(*audio, sealed.trimmed);
-                let detail = if self.is_show() {
-                    Detail::Words
-                } else {
-                    Detail::Text
+        match sealed {
+            Some(sealed) if self.is_listening() => self.recognize(sealed),
+            _ if self.is_show() => {
+                self.stage = Stage::AwaitingFootage {
+                    narration: P::Narration::default(),
+                    lost: None,
                 };
-                self.recognition
-                    .seal(sealed.audio, sealed.partition, start, detail);
-                Stage::Recognizing { incomplete: false }
-            },
-            _ if self.is_show() => Stage::AwaitingFootage {
-                narration: P::Narration::default(),
-                lost: None,
             },
             _ => return false,
-        };
+        }
         self.conclude();
         true
+    }
+
+    pub(super) fn lost_microphone(&mut self, sealed: Sealed<P>, lost: Lost<P>) {
+        self.lost = Some(lost);
+        self.recognize(sealed);
+        self.conclude();
+    }
+
+    fn recognize(&mut self, sealed: Sealed<P>) {
+        let (Stage::Recording { audio } | Stage::Stopping { audio }) = self.stage else {
+            return;
+        };
+        let detail = if self.is_show() {
+            Detail::Words
+        } else {
+            Detail::Text
+        };
+        let start = P::shift(audio, sealed.trimmed);
+        self.recognition
+            .seal(sealed.audio, sealed.partition, start, detail);
+        self.stage = Stage::Recognizing { incomplete: false };
     }
 
     pub(super) fn piece(&mut self, number: u32, audio: P::Audio) {
@@ -451,14 +470,13 @@ impl<P: Payload> Session<P> {
             self.recognition = Recognition::new(self.id);
             self.stage = Stage::AwaitingFootage {
                 narration: P::delay(narration, start),
-                lost: incomplete.then_some(NarrationLoss::Incomplete),
+                lost: (incomplete || self.lost.is_some()).then_some(NarrationLoss::Incomplete),
             };
         }
     }
 
     pub(super) fn audio_failed(&mut self, silent: bool) -> bool {
-        let listened = self.is_show()
-            && matches!(self.stage, Stage::Recording { .. } | Stage::Stopping { .. });
+        let listened = self.is_show() && self.is_listening();
         if listened {
             self.go_on_without_narration(if silent {
                 NarrationLoss::AudioSilent

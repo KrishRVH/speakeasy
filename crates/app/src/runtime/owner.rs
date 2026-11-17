@@ -694,6 +694,16 @@ fn capture(event: CaptureEvent) -> Event<Native> {
                     },
                 )),
             ),
+            CaptureEvent::Lost(session, sealed, lost) => (
+                session,
+                Capture::Lost(
+                    native::sealed(sealed),
+                    machine::Lost {
+                        notice: lost.notice.into(),
+                        failure: lost.failure.to_string(),
+                    },
+                ),
+            ),
         };
     Event::Capture(session, capture)
 }

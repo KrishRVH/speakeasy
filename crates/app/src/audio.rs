@@ -18,7 +18,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{Context as _, anyhow, ensure};
+use anyhow::{Context as _, anyhow};
 use async_channel::{Receiver, Sender};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rtrb::{Consumer, RingBuffer};
@@ -41,10 +41,10 @@ use self::{
     cuts::Cuts,
     pcm::{Pcm16, samples_in},
     speech::{AcPower, Audibility},
-    stream::{CallbackState, build_stream, capture_failure, microphone_error, rate_and_channels},
+    stream::{CallbackState, Pulse, build_stream, microphone_error, rate_and_channels},
 };
 use crate::{
-    runtime::ports::{CaptureEvent, Capturing, Listening, Sealed},
+    runtime::ports::{CaptureEvent, Capturing, Listening, Lost, Sealed},
     show::AudioLog,
 };
 
@@ -92,7 +92,7 @@ impl Capture {
                     })
                 },
                 Err(Startup::Stopped) => Ok(Captured {
-                    outcome: Ok(None),
+                    outcome: Outcome::Finished(Ok(None)),
                     device: None,
                 }),
                 Err(Startup::Failed(error)) => Err(error),
@@ -128,14 +128,14 @@ impl Capture {
                 drop(requests);
                 let (outcome, device) = match ran {
                     Ok(Ok(Captured { outcome, device })) => (outcome, Some(device)),
-                    Ok(Err(error)) => (Err(error), None),
-                    Err(_) => (Err(anyhow!(CAPTURE_STOPPED)), None),
+                    Ok(Err(error)) => (Outcome::Finished(Err(error)), None),
+                    Err(_) => (Outcome::Finished(Err(anyhow!(CAPTURE_STOPPED))), None),
                 };
                 #[expect(
                     clippy::let_underscore_must_use,
                     reason = "A closed event lane belongs to a departed owner; retirement still observes this thread's exit"
                 )]
-                let _ = events.send_blocking(CaptureEvent::Finished(id, outcome));
+                let _ = events.send_blocking(outcome.report(id));
 
                 drop(device);
             }
@@ -241,8 +241,22 @@ impl<E: Into<anyhow::Error>> From<E> for Startup {
 }
 
 struct Captured<D> {
-    outcome: anyhow::Result<Option<Sealed>>,
+    outcome: Outcome,
     device: D,
+}
+
+enum Outcome {
+    Finished(anyhow::Result<Option<Sealed>>),
+    Lost(Sealed, Lost),
+}
+
+impl Outcome {
+    fn report(self, id: SessionId) -> CaptureEvent {
+        match self {
+            Self::Finished(sealed) => CaptureEvent::Finished(id, sealed),
+            Self::Lost(sealed, lost) => CaptureEvent::Lost(id, sealed, lost),
+        }
+    }
 }
 
 struct LiveStream {
@@ -262,6 +276,7 @@ struct Recorder<D = LiveStream> {
     cuts: Option<Cuts>,
     live: live::Feed,
     sounded: bool,
+    pulse: Pulse,
     #[cfg(test)]
     profile: Option<fixture::Profile>,
 }
@@ -347,6 +362,7 @@ impl<D> Recorder<D> {
             cuts,
             live,
             sounded: false,
+            pulse: Pulse::new(Instant::now()),
             #[cfg(test)]
             profile: None,
         }
@@ -371,29 +387,32 @@ impl<D> Recorder<D> {
             pcm,
             mut speech,
             device,
-            errors,
             rate,
             cuts,
             live,
             sounded,
             ..
         } = self;
-        let outcome = drained.and_then(|()| {
-            if abandoned(control, events) {
-                return Ok(None);
-            }
-
-            capture_failure(control, &errors)?;
-            ensure!(sounded || !pcm.long_enough(rate), SilentMicrophone);
-            speech.complete(pcm.audio());
-            live.finish(pcm.audio());
-            let partition = cuts.and_then(|cuts| cuts.finish(&speech, pcm.audio().len()));
-            let mut sealed = pcm.seal(speech, rate)?;
-            if let Some(sealed) = &mut sealed {
-                sealed.partition = partition;
-            }
-            Ok(sealed)
-        });
+        let outcome = match drained {
+            Ok(_) if abandoned(control, events) => Outcome::Finished(Ok(None)),
+            Ok(lost) => {
+                let silent = !sounded && pcm.long_enough(rate);
+                speech.complete(pcm.audio());
+                live.finish(pcm.audio());
+                let partition = cuts.and_then(|cuts| cuts.finish(&speech, pcm.audio().len()));
+                let mut sealed = pcm.seal(speech, rate);
+                if let Ok(Some(sealed)) = &mut sealed {
+                    sealed.partition = partition;
+                }
+                match (sealed, lost) {
+                    (Ok(Some(sealed)), Some(lost)) => Outcome::Lost(sealed, lost),
+                    (Ok(None), Some(lost)) => Outcome::Finished(Err(lost.failure)),
+                    (Ok(None), None) if silent => Outcome::Finished(Err(SilentMicrophone.into())),
+                    (sealed, _) => Outcome::Finished(sealed),
+                }
+            },
+            Err(error) => Outcome::Finished(Err(error)),
+        };
         Captured { outcome, device }
     }
 
@@ -404,7 +423,7 @@ impl<D> Recorder<D> {
         control: &Control,
         requests: &Requests,
         keeping: &mut checkpoint::Keeping<'_>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Option<Lost>> {
         let mut meter = LevelMeter::new();
         let mut ready = false;
         loop {
@@ -413,21 +432,30 @@ impl<D> Recorder<D> {
                 profile.polled();
             }
             if abandoned(control, events) {
-                return Ok(());
+                return Ok(None);
             }
             if requests.whole.try_recv().is_ok() {
                 self.cuts = None;
                 self.live = live::Feed::Abandoned;
             }
-            capture_failure(control, &self.errors)?;
-            let stopping = control.mode() == Mode::Finishing
+            let lost = match self.errors.try_recv() {
+                Ok(error) => Some(Lost::from(error)),
+                Err(_) if self.ring.is_empty() => self.pulse.check(Instant::now())?,
+                Err(_) => None,
+            };
+            let stopping = lost.is_some()
+                || control.mode() == Mode::Finishing
                 || self.started.elapsed() >= RECORDING_LIMIT
                 || self.pcm.room() == 0;
             if stopping {
                 control.finish();
                 control.quiesce();
             }
+            let heard = self.pcm.samples();
             self.sounded |= consume_pcm(&mut self.ring, &mut self.pcm, &mut meter);
+            if self.pcm.samples() > heard {
+                self.pulse.beat(Instant::now());
+            }
 
             if !ready && self.pcm.samples() > 0 {
                 ready = true;
@@ -451,7 +479,7 @@ impl<D> Recorder<D> {
             self.live
                 .offer(id, events, self.pcm.audio(), &self.speech, self.rate);
             if stopping {
-                return Ok(());
+                return Ok(lost);
             }
             if !events.is_full()
                 && let Some(cuts) = &mut self.cuts

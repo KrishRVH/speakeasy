@@ -154,3 +154,56 @@ async fn empty_replay_during_a_hold_preserves_the_recording() -> anyhow::Result<
     h.phase(Phase::Done).await?;
     h.close().await
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_dictation_that_loses_its_microphone_waits_for_paste_last() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    let (id, events) = h.start().await?;
+    events.send(disconnected(id)).await?;
+    h.transcribe_next_as("Words before the cable came out.")
+        .await?;
+    h.phase(Phase::Notice).await?;
+    let notice = h.snapshot();
+    assert!(notice.last_dictation);
+    assert!(
+        notice
+            .message
+            .starts_with("The microphone was disconnected.")
+            && notice.message.ends_with("to paste your words."),
+        "{}",
+        notice.message
+    );
+    assert!(!format!("{notice:?}").contains("cable"));
+    assert!(
+        h.take_sounds().contains(&Sound::Played(Cue::Stop)),
+        "The recording ended where its microphone stopped"
+    );
+    assert!(
+        h.pasted.try_recv().is_err(),
+        "Words from an interrupted dictation reached the focused app"
+    );
+    h.input(Input::PasteLast);
+    assert_eq!(
+        receive(&h.pasted).await?,
+        "Words before the cable came out."
+    );
+    h.phase(Phase::Done).await?;
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_lost_microphone_with_no_words_fails_with_its_remedy() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    let (id, events) = h.start().await?;
+    events.send(disconnected(id)).await?;
+    h.transcribe_next_as("").await?;
+    h.phase(Phase::Error).await?;
+    let failed = h.snapshot();
+    assert_eq!(
+        failed.message,
+        "The microphone was disconnected. Reconnect it."
+    );
+    assert!(!failed.last_dictation);
+    assert!(h.pasted.try_recv().is_err());
+    h.close().await
+}

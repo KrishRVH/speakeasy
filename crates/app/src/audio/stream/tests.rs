@@ -1,3 +1,4 @@
+use async_channel::Receiver;
 use rtrb::{Consumer, RingBuffer};
 
 use super::*;
@@ -26,6 +27,12 @@ fn callback_fixture(
     (state, ring, received, control)
 }
 
+fn drain(ring: &mut Consumer<f32>) -> Vec<f32> {
+    let mut samples = vec![0.0; ring.slots()];
+    ring.pop_entire_slice(&mut samples).unwrap();
+    samples
+}
+
 #[test]
 fn callbacks_after_finish_cannot_publish_samples_or_teardown_errors() {
     let (state, mut ring, errors, control) = callback_fixture(1, 10, 10);
@@ -35,54 +42,63 @@ fn callbacks_after_finish_cannot_publish_samples_or_teardown_errors() {
     control.quiesce();
     data(&[0.5; 3]);
     error(cpal::ErrorKind::DeviceNotAvailable.into());
-    assert_eq!(ring.slots(), 3);
-    let mut samples = [0.0; 3];
-    ring.pop_entire_slice(&mut samples).unwrap();
-    assert_eq!(samples, [0.25; 3]);
+    assert_eq!(drain(&mut ring), [0.25; 3]);
     assert!(errors.try_recv().is_err());
 }
 
 #[test]
-fn startup_xrun_is_allowed_but_an_interruption_after_samples_is_fatal() -> anyhow::Result<()> {
-    let (state, mut ring, errors, control) = callback_fixture(2, 4, 4);
+fn glitches_and_rerouting_never_stop_a_recording_before_or_after_its_first_sample() {
+    let (state, mut ring, errors, _control) = callback_fixture(2, 4, 4);
     let (mut data, mut error) = capture_callbacks::<f32>(state);
-    error(cpal::ErrorKind::Xrun.into());
-    assert!(capture_failure(&control, &errors).is_ok());
+    let glitches = [
+        cpal::ErrorKind::Xrun,
+        cpal::ErrorKind::RealtimeDenied,
+        cpal::ErrorKind::DeviceChanged,
+    ];
+    for kind in glitches {
+        error(kind.into());
+    }
     data(&[0.25, 0.75]);
-    assert_eq!(ring.pop()?, 0.5);
-    error(cpal::ErrorKind::Xrun.into());
-    let failure = capture_failure(&control, &errors)
-        .err()
-        .context("An interruption after samples must not silently discard speech")?;
+    for kind in glitches {
+        error(kind.into());
+    }
+    data(&[0.5, 0.5]);
     assert!(
-        failure
-            .to_string()
-            .starts_with("Audio was interrupted during recording.")
+        errors.try_recv().is_err(),
+        "A glitch reached the recording as a lost microphone"
     );
-    Ok(())
+    assert_eq!(drain(&mut ring), [0.5, 0.5]);
 }
 
 #[test]
-fn callback_overflow_is_fatal_but_recording_limit_and_cancellation_do_not_overflow()
--> anyhow::Result<()> {
-    for limit in [2, 3] {
-        let (state, mut ring, errors, control) = callback_fixture(1, 2, limit);
-        let (mut data, _) = capture_callbacks::<f32>(state);
-        data(&[0.25, 0.5, 0.75]);
-        assert_eq!(capture_failure(&control, &errors).is_err(), limit == 3);
-        assert_eq!(ring.pop()?, 0.25);
-        assert_eq!(ring.pop()?, 0.5);
-    }
-    let (state, mut ring, errors, control) = callback_fixture(1, 2, 10);
+fn ring_overflow_becomes_silence_of_its_exact_length_within_the_limit() {
+    let (state, mut ring, _errors, _control) = callback_fixture(1, 2, 10);
     let (mut data, _) = capture_callbacks::<f32>(state);
-    data(&[0.25]);
-    control.cancel();
+    data(&[0.25, 0.5, 0.75]);
+    assert_eq!(drain(&mut ring), [0.25, 0.5]);
+    data(&[1.0]);
+    assert_eq!(
+        drain(&mut ring),
+        [0.0, 1.0],
+        "The overflowed frame must hold its place as silence"
+    );
 
-    data(&[0.5, 0.75]);
-    assert!(capture_failure(&control, &errors).is_ok());
-    assert_eq!(ring.pop()?, 0.25);
-    assert!(ring.pop().is_err());
-    Ok(())
+    let (state, mut ring, _errors, _control) = callback_fixture(1, 2, 4);
+    let (mut data, _) = capture_callbacks::<f32>(state);
+    data(&[0.25, 0.5, 0.75, 0.875, 0.9]);
+    assert_eq!(drain(&mut ring), [0.25, 0.5]);
+    data(&[1.0]);
+    assert_eq!(drain(&mut ring), [0.0, 0.0]);
+    data(&[1.0]);
+    assert!(ring.is_empty(), "Silence filled past the recording limit");
+
+    let (state, mut ring, _errors, control) = callback_fixture(1, 2, 10);
+    let (mut data, _) = capture_callbacks::<f32>(state);
+    data(&[0.25, 0.5, 0.75]);
+    assert_eq!(drain(&mut ring), [0.25, 0.5]);
+    control.cancel();
+    data(&[1.0]);
+    assert!(ring.is_empty(), "A cancelled recording queued silence");
 }
 
 #[test]
@@ -113,104 +129,97 @@ fn formats_beyond_the_capture_bounds_are_refused_with_a_remedy() -> anyhow::Resu
 }
 
 #[test]
-fn recoverable_stream_notifications_do_not_abort_recording() {
+fn a_lost_stream_keeps_its_first_cause_without_blocking() -> anyhow::Result<()> {
     let (errors, received) = async_channel::bounded(1);
-    for kind in [
-        cpal::ErrorKind::RealtimeDenied,
-        cpal::ErrorKind::DeviceChanged,
-    ] {
-        for first_sample_queued in [false, true] {
-            let control = Control::default();
-            if first_sample_queued {
-                control.mark_first_sample_queued();
-            }
-            handle_stream_error(kind.into(), &errors, &control);
-            assert!(received.try_recv().is_err(), "{kind} aborted capture");
-        }
-    }
-}
-
-#[test]
-fn fatal_stream_errors_keep_the_first_cause_without_blocking() -> anyhow::Result<()> {
-    let (errors, received) = async_channel::bounded(1);
-    let control = Control::default();
     handle_stream_error(
         cpal::Error::with_message(cpal::ErrorKind::DeviceBusy, "fixture device is busy"),
         &errors,
-        &control,
     );
-    handle_stream_error(
-        cpal::ErrorKind::DeviceNotAvailable.into(),
-        &errors,
-        &control,
-    );
-    let error = capture_failure(&control, &received)
-        .err()
-        .context("Fatal driver error must abort recording")?
-        .to_string();
+    handle_stream_error(cpal::ErrorKind::DeviceNotAvailable.into(), &errors);
+    let lost = Lost::from(received.try_recv()?);
+    assert_eq!(lost.notice, "Another app is using the microphone.");
+    let failure = lost.failure.to_string();
     assert!(
-        error.starts_with("Another app is using the microphone."),
-        "{error}"
+        failure.starts_with("Another app is using the microphone."),
+        "{failure}"
     );
-    assert!(!error.contains("disconnected"));
-    assert!(!error.contains("buffer"));
+    assert!(received.try_recv().is_err());
     Ok(())
 }
 
 #[test]
-fn device_loss_and_backend_failures_abort_recording() -> anyhow::Result<()> {
-    for kind in [
-        cpal::ErrorKind::DeviceNotAvailable,
-        cpal::ErrorKind::StreamInvalidated,
-        cpal::ErrorKind::PermissionDenied,
-        cpal::ErrorKind::BackendError,
+fn a_lost_stream_names_its_cause_briefly_and_its_remedy_in_full() -> anyhow::Result<()> {
+    for (kind, notice) in [
+        (
+            cpal::ErrorKind::DeviceNotAvailable,
+            "The microphone was disconnected.",
+        ),
+        (
+            cpal::ErrorKind::PermissionDenied,
+            "Speakeasy has no microphone access.",
+        ),
+        (cpal::ErrorKind::StreamInvalidated, "The microphone failed."),
+        (cpal::ErrorKind::BackendError, "The microphone failed."),
     ] {
         let (errors, received) = async_channel::bounded(1);
         handle_stream_error(
             cpal::Error::with_message(kind, "fixture driver failure"),
             &errors,
-            &Control::default(),
         );
-        let error = capture_failure(&Control::default(), &received)
-            .err()
-            .context("Fatal driver error must abort recording")?
-            .to_string();
-        assert!(!error.contains(&format!("{kind:?}")), "{error}");
-
+        let lost = Lost::from(received.try_recv()?);
+        assert_eq!(lost.notice, notice);
+        let failure = lost.failure.to_string();
+        assert!(!failure.contains(&format!("{kind:?}")), "{failure}");
         let explained = matches!(
             kind,
             cpal::ErrorKind::DeviceNotAvailable | cpal::ErrorKind::PermissionDenied
         );
         assert_eq!(
-            error.contains("fixture driver failure"),
+            failure.contains("fixture driver failure"),
             !explained,
-            "{error}"
+            "{failure}"
         );
         assert!(
-            error.ends_with(", then try again.") || error.ends_with("in Settings."),
-            "{error}"
+            failure.ends_with(", then try again.") || failure.ends_with("in Settings."),
+            "{failure}"
         );
     }
     Ok(())
 }
 
 #[test]
-fn recording_buffer_overflow_has_its_own_actionable_error() -> anyhow::Result<()> {
-    let (_errors, received) = async_channel::bounded(1);
-    let control = Control::default();
-    control.mark_overflowed();
-    let error = capture_failure(&control, &received)
+fn a_stream_silent_from_its_start_fails_and_one_that_stops_is_lost() -> anyhow::Result<()> {
+    let opened = Instant::now();
+    let after = |millis| opened + Duration::from_millis(millis);
+    let mut pulse = Pulse::new(opened);
+    assert!(pulse.check(after(1_999))?.is_none());
+    let failure = pulse
+        .check(after(2_000))
         .err()
-        .context("Application ring overflow must abort recording")?
+        .context("A microphone that never sent audio was not named")?
         .to_string();
-    assert!(error.contains("Recording fell behind and filled its buffer"));
-    assert!(error.contains("Reduce system load"));
+    assert!(
+        failure.starts_with("The microphone isn't sending audio. Check the input device"),
+        "{failure}"
+    );
+
+    pulse.beat(after(2_500));
+    assert!(pulse.check(after(4_499))?.is_none());
+    let lost = pulse
+        .check(after(4_500))?
+        .context("A microphone that stopped sending audio was not lost")?;
+    assert_eq!(lost.notice, "The microphone stopped sending audio.");
+    assert!(
+        lost.failure
+            .to_string()
+            .ends_with("Check the input device, or quit the app holding it, then try again.")
+    );
     Ok(())
 }
 
 #[test]
 #[ignore = "opt-in synthetic release profiling; never opens a microphone"]
-fn profile_audio_pipeline() -> anyhow::Result<()> {
+fn profile_audio_pipeline() {
     use std::hint::black_box;
 
     use crate::audio::{LevelMeter, consume_pcm, pcm::Pcm16};
@@ -218,7 +227,8 @@ fn profile_audio_pipeline() -> anyhow::Result<()> {
     for channels in [1, 2, 8] {
         let mut timings = Vec::new();
         for _ in 0..21 {
-            let (state, mut ring, errors, control) = callback_fixture(channels, 48_000, 480 * 3000);
+            let (state, mut ring, _errors, _control) =
+                callback_fixture(channels, 48_000, 480 * 3000);
             let (mut data, _) = capture_callbacks::<f32>(state);
             let input = vec![0.125; 480 * channels];
             let mut pcm = Pcm16::with_reservation(480, 480);
@@ -232,7 +242,6 @@ fn profile_audio_pipeline() -> anyhow::Result<()> {
                 pcm.clear();
             }
             timings.push(started.elapsed().as_secs_f64() * 1e6 / 3000.0);
-            capture_failure(&control, &errors)?;
         }
         timings.sort_by(f64::total_cmp);
         eprintln!(
@@ -240,5 +249,4 @@ fn profile_audio_pipeline() -> anyhow::Result<()> {
             timings[10], timings[19]
         );
     }
-    Ok(())
 }

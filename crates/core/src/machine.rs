@@ -409,12 +409,19 @@ pub enum Capture<P: Payload> {
     Level(P::Level),
     Piece(u32, P::Audio),
     Finished(Result<Option<Sealed<P>>, Unheard<P>>),
+    Lost(Sealed<P>, Lost<P>),
 }
 
 #[cfg_attr(test, derive(Clone, Debug))]
 pub struct Unheard<P: Payload> {
     pub silent: bool,
     pub text: P::Text,
+}
+
+#[cfg_attr(test, derive(Clone, Debug))]
+pub struct Lost<P: Payload> {
+    pub notice: P::Text,
+    pub failure: P::Text,
 }
 
 #[cfg_attr(test, derive(Clone, Debug))]
@@ -934,6 +941,14 @@ impl<P: Payload> Machine<P> {
                     self.fail(Failure::Said(unheard.text), env);
                 }
             },
+            Capture::Lost(sealed, lost) if session.is_listening() && !session.is_practice() => {
+                if session.is_show() {
+                    self.notice = Some(Notice::NarrationLost(lost.notice.clone()));
+                }
+                session.lost_microphone(sealed, lost);
+                self.conclude_capture(env);
+            },
+            Capture::Lost(_, lost) => self.fail(Failure::Said(lost.failure), env),
         }
     }
 
@@ -1022,7 +1037,10 @@ impl<P: Payload> Machine<P> {
             return;
         };
         let Some(text) = env.compose(heard, session.style, &self.config) else {
-            self.end_session(Outcome::Empty, env);
+            let outcome = session.lost.take().map_or(Outcome::Empty, |lost| {
+                Outcome::Failed(Failure::Said(lost.failure))
+            });
+            self.end_session(outcome, env);
             return;
         };
         if let Purpose::Practice(practice) = &session.purpose {
@@ -1035,6 +1053,9 @@ impl<P: Payload> Machine<P> {
                 },
                 env,
             );
+        } else if let Some(lost) = session.lost.take() {
+            self.last_dictation = Some(text);
+            self.end_session(Outcome::Withheld(lost.notice), env);
         } else {
             session.pending_text = Some(text.clone());
             session.insert(text, &self.config, env);
@@ -1664,8 +1685,8 @@ fn saved_anyway<P: Payload>(
 
 #[cfg(not(test))]
 redacted!(
-    Now, Status, Keeping, Event, Input, Report, Command, Capture, Unheard, Screening, Stopped,
-    Completion, Delivered, Inserted, Published, Machine,
+    Now, Status, Keeping, Event, Input, Report, Command, Capture, Unheard, Lost, Screening,
+    Stopped, Completion, Delivered, Inserted, Published, Machine,
 );
 
 #[cfg(test)]

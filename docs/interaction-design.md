@@ -62,8 +62,9 @@ click-through.
 | Show copied      | Closed lid with a lamp check and “Show copied” for 1.6 seconds, each time a Show is copied, by Copy last Show too. |
 | Stopped early    | A quiet notice of up to two lines saying the Show was copied but stopped early, and why, for six seconds.          |
 | Nothing chosen   | A quiet notice of up to two lines saying why a W or A Show was cancelled, for six seconds.                         |
-| Narration lost   | The same notice saying the Show was copied without narration, why, and how it ended, above “Details in Settings”.  |
+| Narration lost   | The same notice saying what narration the copied Show lacks, why, and how it ended, above “Details in Settings”.   |
 | Text copied      | A quiet notice of up to two lines saying how to paste the copied text, for six seconds.                            |
+| Microphone lost  | A quiet notice naming what stopped the microphone and how to paste the words it kept, for six seconds.             |
 | Show gone        | A quiet notice saying the last Show has expired or was deleted, for six seconds.                                   |
 | No speech        | “No speech detected” on the closed lid for 1.2 seconds.                                                            |
 | Cancelled        | Quiet dismissal without a completion mark.                                                                         |
@@ -104,11 +105,12 @@ capture, a timer wakes the pill for each second of its clock and countdown.
 
 Short notes from a CC0 kalimba recording confirm the moments a user may not be watching: a high note
 once the microphone listens, a lower note when a recording finishes, by gesture, at the five-minute
-limit, as a Show's screen, window, or audio capture stops, or as an interruption finishes a Show, a
-muted low note when the user cancels or a Show has nothing to record, two rising notes when a Show
-starts, and a rising chord when text or a Show waits on the clipboard. Text arriving in the editor,
-errors, hands-free locking, and dictation that an interruption discards stay silent; the pill
-already says them. **Play sounds** in Settings turns every cue off.
+limit, as its microphone is lost after speech, as a Show's screen, window, or audio capture stops,
+or as an interruption finishes a Show, a muted low note when the user cancels or a Show has nothing
+to record, two rising notes when a Show starts, and a rising chord when text or a Show waits on the
+clipboard. Text arriving in the editor, errors, hands-free locking, and dictation that an
+interruption discards stay silent; the pill already says them. **Play sounds** in Settings turns
+every cue off.
 
 Each cue echoes the pill. The high note sounds as the pill opens to listening rather than at the
 press, so it never promises a microphone still opening, and a desktop shortcut that takes the keys
@@ -186,11 +188,13 @@ before Settings; they act once a Show is saved and between recordings, paused in
 begins or either finds that Show gone. Errors remain accessible in Settings after the pill's notice
 expires: its commands and status line stay in view below the scrolling controls.
 
-Paste last dictation is available between sessions when one result remains in memory. V during an
-ordinary Windows/macOS hold abandons that pending recording and pastes the previous result; repeated
-keydown events do not repeat insertion. Windows/macOS also offer Dictation style and saved Preset
-submenus. Style selects the next recording and appears in the pill when non-Prose. Preset choices
-require idle dictation and last for the session without changing saved settings.
+Paste last dictation is available between sessions when one result remains in memory. A dictation
+whose microphone is lost after speech keeps its words there instead of inserting them, and its
+notice names the failure and how to paste them: V during a hold on Windows/macOS, the tray on Linux.
+V during an ordinary Windows/macOS hold abandons that pending recording and pastes the previous
+result; repeated keydown events do not repeat insertion. Windows/macOS also offer Dictation style
+and saved Preset submenus. Style selects the next recording and appears in the pill when non-Prose.
+Preset choices require idle dictation and last for the session without changing saved settings.
 
 ## Reviewing Shows
 

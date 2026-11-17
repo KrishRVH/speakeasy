@@ -18,10 +18,17 @@ const REPLAY_HINT: &str = if cfg!(target_os = "macos") {
     " Your words are still available. Choose Paste last dictation in the tray, or run speakeasy paste-last."
 };
 
+const WITHHELD_HINT: &str = if cfg!(any(target_os = "macos", target_os = "windows")) {
+    " Hold the dictation shortcut and press V to paste your words."
+} else {
+    " Choose Paste last dictation in the tray to paste your words."
+};
+
 pub(super) fn message(outcome: &Outcome<Native>, notice: Option<&Notice<Native>>) -> String {
     let mut message = match outcome {
         Outcome::NothingToPaste => "No dictation to paste yet.".into(),
         Outcome::Copied(message) => message.clone(),
+        Outcome::Withheld(notice) => format!("{notice}{WITHHELD_HINT}"),
         Outcome::Practiced => "Practice complete. Your words stay in Settings.".into(),
         Outcome::Failed(failed) => failure(failed),
         Outcome::ShowCopied(copied) => copied_message(*copied, notice),
@@ -88,9 +95,9 @@ pub(super) fn failure(failure: &Failure<Native>) -> String {
             } else {
                 "The Show, which stopped early,"
             };
-            let (narration, failure) = match preservation.narration_lost {
-                Some(_) => (" without narration", failure.as_deref()),
-                None => ("", None),
+            let (narration, failure) = match narrated(preservation.narration_lost) {
+                Some(narration) => (format!(" {narration}"), failure.as_deref()),
+                None => (String::new(), None),
             };
             format!(
                 "{show} was saved{narration} but not copied ({error}). Choose Copy last Show in \
@@ -107,23 +114,18 @@ fn copied_message(copied: Copied, notice: Option<&Notice<Native>>) -> String {
         ending,
         preservation,
     } = copied;
-    let copied = match (ending, preservation.narration_lost.is_some()) {
-        (Ending::Finished, false) => SHOW_COPIED,
-        (Ending::ScreenStopped, false) => "Show copied, but the screen stopped recording early.",
-        (Ending::WindowClosed, false) => "Show copied, but the recorded window closed.",
-        (Ending::WindowOffScreen, false) => "Show copied, but the recorded window went off screen.",
-        (Ending::Finished, true) => "Show copied without narration.",
-        (Ending::ScreenStopped, true) => {
-            "Show copied without narration, and the screen stopped recording early."
-        },
-        (Ending::WindowClosed, true) => {
-            "Show copied without narration, and the recorded window closed."
-        },
-        (Ending::WindowOffScreen, true) => {
-            "Show copied without narration, and the recorded window went off screen."
-        },
+    let ended = match ending {
+        Ending::Finished => None,
+        Ending::ScreenStopped => Some("the screen stopped recording early"),
+        Ending::WindowClosed => Some("the recorded window closed"),
+        Ending::WindowOffScreen => Some("the recorded window went off screen"),
     };
-    let mut message = copied.to_owned();
+    let mut message = match (narrated(preservation.narration_lost), ended) {
+        (None, None) => SHOW_COPIED.to_owned(),
+        (None, Some(ended)) => format!("Show copied, but {ended}."),
+        (Some(narration), None) => format!("Show copied {narration}."),
+        (Some(narration), Some(ended)) => format!("Show copied {narration}, and {ended}."),
+    };
     if preservation.narration_lost.is_some()
         && let Some(failure) = notice.and_then(Notice::failure)
     {
@@ -131,6 +133,18 @@ fn copied_message(copied: Copied, notice: Option<&Notice<Native>>) -> String {
         message.push_str(failure);
     }
     message
+}
+
+const fn narrated(lost: Option<NarrationLoss>) -> Option<&'static str> {
+    match lost {
+        None => None,
+        Some(NarrationLoss::Incomplete) => Some("with partial narration"),
+        Some(
+            NarrationLoss::AudioStopped
+            | NarrationLoss::AudioSilent
+            | NarrationLoss::NotTranscribed,
+        ) => Some("without narration"),
+    }
 }
 
 fn preserved(message: &mut String, preservation: Preservation) {
@@ -212,5 +226,55 @@ mod tests {
                 assert_eq!(message(&outcome, None), format!("{prefix}{suffix}"));
             }
         }
+    }
+
+    #[test]
+    fn a_show_cut_short_by_its_microphone_says_its_narration_is_partial() {
+        let lost = Notice::NarrationLost("The microphone was disconnected.".to_owned());
+        for (narration_lost, ending, copied) in [
+            (
+                Some(NarrationLoss::Incomplete),
+                Ending::Finished,
+                "Show copied with partial narration.",
+            ),
+            (
+                Some(NarrationLoss::Incomplete),
+                Ending::WindowClosed,
+                "Show copied with partial narration, and the recorded window closed.",
+            ),
+            (
+                Some(NarrationLoss::AudioStopped),
+                Ending::Finished,
+                "Show copied without narration.",
+            ),
+        ] {
+            let saved = Copied {
+                ending,
+                preservation: Preservation {
+                    narration_lost,
+                    ..Preservation::default()
+                },
+            };
+            assert_eq!(
+                message(&Outcome::ShowCopied(saved), Some(&lost)),
+                format!("{copied} The microphone was disconnected.")
+            );
+        }
+        let unsaved = Failure::NotCopied {
+            saved: Copied {
+                ending: Ending::Finished,
+                preservation: Preservation {
+                    narration_lost: Some(NarrationLoss::Incomplete),
+                    ..Preservation::default()
+                },
+            },
+            error: "Another app holds the clipboard".to_owned(),
+            failure: Some("The microphone was disconnected.".to_owned()),
+        };
+        assert_eq!(
+            message(&Outcome::Failed(unsaved), None),
+            "The Show was saved with partial narration but not copied (Another app holds the \
+             clipboard). Choose Copy last Show in Speakeasy's menu. The microphone was disconnected."
+        );
     }
 }

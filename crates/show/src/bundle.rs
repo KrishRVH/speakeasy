@@ -211,7 +211,7 @@ impl fmt::Display for Summary<'_> {
         match recording.narration_lost {
             Some(NarrationLoss::Incomplete) => writeln!(
                 f,
-                "Narration is incomplete: only the audio that reached the checkpoint was recovered."
+                "Narration is incomplete: what the user said after the audio stopped is missing."
             )?,
             Some(NarrationLoss::AudioStopped) if stopped.is_some() => writeln!(
                 f,
