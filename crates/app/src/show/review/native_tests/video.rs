@@ -265,14 +265,16 @@ async fn exercise_video(cx: &mut AsyncApp) -> anyhow::Result<()> {
     })?;
     key(window, "end", cx)?;
     wait_for(window, ready, cx).await?;
+    window.read_with(cx, |view, _| {
+        assert_eq!(view.library.selected().map(|key| key.frame), Some(119));
+    })?;
+    annotations::exercise(window, &directory, cx).await?;
     let pixels = window.read_with(cx, |view, _| -> anyhow::Result<_> {
         let ImageState::Ready(decoded) = &view.image else {
-            anyhow::bail!("Missing end frame");
+            anyhow::bail!("Missing the frame shown at close");
         };
-        assert_eq!(view.library.selected().map(|key| key.frame), Some(119));
         Ok(Arc::downgrade(&decoded.image))
     })??;
-    annotations::exercise(window, &directory, cx).await?;
     window.update(cx, |view, window, cx| {
         view.act(Action::Frame(1), cx);
         window.remove_window();
@@ -282,7 +284,10 @@ async fn exercise_video(cx: &mut AsyncApp) -> anyhow::Result<()> {
     cx.background_executor()
         .timer(Duration::from_millis(50))
         .await;
-    assert!(pixels.upgrade().is_none());
+    assert!(
+        pixels.upgrade().is_none(),
+        "Closing review kept the frame it showed"
+    );
     assert!(
         !directory.exists(),
         "Closing review retained its synthetic library after reader cleanup"
