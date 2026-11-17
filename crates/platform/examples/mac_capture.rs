@@ -11,6 +11,7 @@ fn main() -> anyhow::Result<()> {
 #[cfg(target_os = "macos")]
 mod native {
     use std::{
+        ffi::OsStr,
         io::{self, BufRead as _, BufReader, Write as _},
         process::{Child, Command, Stdio},
         sync::mpsc,
@@ -27,46 +28,31 @@ mod native {
     use objc2_foundation::{NSDate, NSPoint, NSRect, NSRunLoop, NSSize};
     use speakeasy_platform::{Display, Part, ScreenCapture, ScreenEvent, Target};
 
+    const RED: [u8; 3] = [230, 30, 20];
+    const GREEN: [u8; 3] = [20, 220, 30];
+
     pub(super) fn run() -> anyhow::Result<()> {
-        let mode = std::env::args()
-            .nth(1)
-            .context("Use --owned-screen to opt into synthetic window capture")?;
-        ensure!(
-            mode == "--owned-screen" || mode == "--source",
-            "Use --owned-screen to opt into synthetic window capture"
-        );
+        let argument = std::env::args_os().nth(1);
+        let role = match argument.as_deref().and_then(OsStr::to_str) {
+            Some("--owned-screen") => capture,
+            Some("--source") => source,
+            _ => anyhow::bail!("Use --owned-screen to opt into synthetic window capture"),
+        };
         let main = MainThreadMarker::new()
             .context("Native window acceptance must start on the main thread")?;
         let app = NSApplication::sharedApplication(main);
         app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
         app.finishLaunching();
-        if mode == "--source" {
-            return source(main);
-        }
-        let mut source = Source(
-            Command::new(std::env::current_exe()?)
-                .arg("--source")
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .spawn()?,
-        );
-        let mut ready = String::new();
-        BufReader::new(
-            source
-                .0
-                .stdout
-                .take()
-                .context("Synthetic source has no readiness lane")?,
-        )
-        .read_line(&mut ready)?;
-        ensure!(
-            ready.trim() == "ready",
-            "Synthetic window did not become ready"
-        );
+        role(main)
+    }
+
+    fn capture(main: MainThreadMarker) -> anyhow::Result<()> {
+        let source = Source::spawn()?;
         let mut displays = [0; 2];
         let mut count = 0;
-
-        let status = unsafe { CGGetActiveDisplayList(2, displays.as_mut_ptr(), &raw mut count) };
+        let capacity = u32::try_from(displays.len())?;
+        let status =
+            unsafe { CGGetActiveDisplayList(capacity, displays.as_mut_ptr(), &raw mut count) };
         ensure!(
             status == CGError::Success && count == 1 && displays[0] == CGMainDisplayID(),
             "This owned-window check requires exactly one active display"
@@ -126,7 +112,7 @@ mod native {
             .stop()
             .context("Cannot stop the synthetic capture source")?;
         writeln!(
-            std::io::stdout().lock(),
+            io::stdout().lock(),
             "Owned Mac capture passed: changing pixels, exclusion, timestamps, stop and restart"
         )?;
         Ok(())
@@ -142,21 +128,18 @@ mod native {
 
     fn source(main: MainThreadMarker) -> anyhow::Result<()> {
         let window = window(main, [100.0, 100.0, 400.0, 300.0], 100)?;
-        window.setBackgroundColor(Some(&color([230, 30, 20])));
+        window.setBackgroundColor(Some(&color(RED)));
         window.orderFrontRegardless();
         window.display();
-        writeln!(std::io::stdout().lock(), "ready")?;
-        std::io::stdout().lock().flush()?;
+        let mut stdout = io::stdout().lock();
+        writeln!(stdout, "ready")?;
+        stdout.flush()?;
         let started = Instant::now();
         let mut previous = 0;
         loop {
             let phase = (started.elapsed().as_millis() / 200) % 2;
             if phase != previous {
-                window.setBackgroundColor(Some(&color(if phase == 0 {
-                    [230, 30, 20]
-                } else {
-                    [20, 220, 30]
-                })));
+                window.setBackgroundColor(Some(&color(if phase == 0 { RED } else { GREEN })));
                 window.display();
                 previous = phase;
             }
@@ -254,31 +237,55 @@ mod native {
             );
             previous = Some(frame.at);
             let pixels = frame.image.pixels().as_chunks::<4>().0;
-            let patterns = [[20, 30, 230], [30, 220, 20]];
-            let matched = patterns.iter().position(|pattern| {
-                pixels.iter().all(|pixel| {
-                    pixel[..3]
-                        .iter()
-                        .zip(pattern)
-                        .all(|(actual, expected)| actual.abs_diff(*expected) <= 3)
-                })
-            });
-            let index = matched.context("The owned capture contains pixels outside its synthetic source or includes the excluded window")?;
-            *seen
-                .get_mut(index)
-                .context("Synthetic pattern index is invalid")? = true;
+            let shown = [RED, GREEN]
+                .into_iter()
+                .zip(&mut seen)
+                .find_map(|(color, seen)| filled(pixels, color).then_some(seen))
+                .context("The owned capture contains pixels outside its synthetic source or includes the excluded window")?;
+            *shown = true;
             count = count.saturating_add(1);
         }
         ensure!(
-            count >= 4 && seen.into_iter().all(|present| present),
+            count >= 4 && seen == [true; 2],
             "The owned capture missed changing content"
         );
         Ok(())
     }
 
+    fn filled(pixels: &[[u8; 4]], color: [u8; 3]) -> bool {
+        pixels.iter().all(|&[blue, green, red, _alpha]| {
+            [red, green, blue]
+                .into_iter()
+                .zip(color)
+                .all(|(actual, expected)| actual.abs_diff(expected) <= 3)
+        })
+    }
+
     struct Source(Child);
 
     impl Source {
+        fn spawn() -> anyhow::Result<Self> {
+            let mut source = Self(
+                Command::new(std::env::current_exe()?)
+                    .arg("--source")
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::null())
+                    .spawn()?,
+            );
+            let readiness = source
+                .0
+                .stdout
+                .take()
+                .context("Synthetic source has no readiness lane")?;
+            let mut ready = String::new();
+            BufReader::new(readiness).read_line(&mut ready)?;
+            ensure!(
+                ready.trim() == "ready",
+                "Synthetic window did not become ready"
+            );
+            Ok(source)
+        }
+
         fn stop(mut self) -> io::Result<()> {
             self.0.kill()?;
             self.0.wait().map(|_status| ())
