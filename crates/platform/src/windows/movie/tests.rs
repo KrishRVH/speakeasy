@@ -33,14 +33,9 @@ const FILE_LIMIT: u64 = 384 << 20;
 
 #[test]
 #[ignore = "Opt in: native Media Foundation encoder, synthetic pixels only; set SPEAKEASY_MOVIE_PROBE_DIRECTORY to an empty artifact directory"]
-fn encode_synthetic_movie_fragments() -> anyhow::Result<()> {
-    let directory = probe_directory()?;
-    anyhow::ensure!(directory.is_dir(), "Movie probe directory must exist");
-    let mut moving = Encoder::open(
-        &directory.join("moving.mp4"),
-        canvas::Canvas::new([1280, 720])?,
-        FILE_LIMIT,
-    )?;
+fn encode_synthetic_movie_fragments_time_continuous_motion_at_thirty_hertz() -> anyhow::Result<()> {
+    let path = probe_directory()?.join("moving.mp4");
+    let mut moving = Encoder::open(&path, canvas::Canvas::new([1280, 720])?, FILE_LIMIT)?;
     let mut picture = frame(1280, 720, 240);
     let start = Instant::now();
     for number in 0..120_u32 {
@@ -68,17 +63,19 @@ fn encode_synthetic_movie_fragments() -> anyhow::Result<()> {
             .is_continue()
     );
     moving.finish()?;
-    let times = sample_times(&directory.join("moving.mp4"))?;
+    let times = sample_times(&path)?;
     assert_eq!(times.len(), 120);
     assert_eq!(times[0].0, 0);
     let &(last, duration) = times.last().unwrap();
     assert!((last + duration - 40_000_000).abs() <= 1_000);
+    Ok(())
+}
 
-    let mut held = Encoder::open(
-        &directory.join("held.mp4"),
-        canvas::Canvas::new([1280, 720])?,
-        FILE_LIMIT,
-    )?;
+#[test]
+#[ignore = "Opt in: native Media Foundation encoder, synthetic pixels only; set SPEAKEASY_MOVIE_PROBE_DIRECTORY to an empty artifact directory"]
+fn encode_synthetic_movie_fragments_hold_a_quiet_screen_to_the_end() -> anyhow::Result<()> {
+    let path = probe_directory()?.join("held.mp4");
+    let mut held = Encoder::open(&path, canvas::Canvas::new([1280, 720])?, FILE_LIMIT)?;
     let start = Instant::now();
     for number in 0..180 {
         let at = wait_for_sample(start, number);
@@ -92,16 +89,23 @@ fn encode_synthetic_movie_fragments() -> anyhow::Result<()> {
         );
     }
     held.finish()?;
-    let times = sample_times(&directory.join("held.mp4"))?;
+    let times = sample_times(&path)?;
     let &(last, duration) = times.last().unwrap();
     assert!(
         (last + duration - 60_000_000).abs() <= 1_000,
         "A quiet screen truncated the movie before recording ended"
     );
+    Ok(())
+}
 
+#[test]
+#[ignore = "Opt in: native Media Foundation encoder, synthetic pixels only; set SPEAKEASY_MOVIE_PROBE_DIRECTORY to an empty artifact directory"]
+fn encode_synthetic_movie_fragments_never_exceed_the_byte_cap() -> anyhow::Result<()> {
+    let directory = probe_directory()?;
     let path = directory.join("capped.mp4");
     let limit = 1 << 20;
     let mut capped = Encoder::open(&path, canvas::Canvas::new([1280, 720])?, limit)?;
+    let mut picture = frame(1280, 720, 240);
     let mut failed = false;
     let start = Instant::now();
     for number in 0..900_u32 {
@@ -128,8 +132,13 @@ fn encode_synthetic_movie_fragments() -> anyhow::Result<()> {
     assert!(std::fs::metadata(&path)?.len() <= limit);
 
     std::fs::rename(&path, directory.join("capped-closed.mp4"))?;
+    Ok(())
+}
 
-    let too_small = directory.join("no-header.mp4");
+#[test]
+#[ignore = "Opt in: native Media Foundation encoder, synthetic pixels only; set SPEAKEASY_MOVIE_PROBE_DIRECTORY to an empty artifact directory"]
+fn encode_synthetic_movie_fragments_fail_without_room_for_a_header() -> anyhow::Result<()> {
+    let too_small = probe_directory()?.join("no-header.mp4");
     if let Ok(mut encoder) = Encoder::open(&too_small, canvas::Canvas::new([320, 240])?, 1) {
         let submitted = encoder.write(&frame(320, 240, 50), Duration::ZERO, &mut || false);
         let finished = encoder.finish();
@@ -141,9 +150,11 @@ fn encode_synthetic_movie_fragments() -> anyhow::Result<()> {
 }
 
 fn probe_directory() -> anyhow::Result<PathBuf> {
-    std::env::var_os("SPEAKEASY_MOVIE_PROBE_DIRECTORY")
+    let directory = std::env::var_os("SPEAKEASY_MOVIE_PROBE_DIRECTORY")
         .map(PathBuf::from)
-        .context("Choose a synthetic movie probe directory")
+        .context("Choose a synthetic movie probe directory")?;
+    anyhow::ensure!(directory.is_dir(), "Movie probe directory must exist");
+    Ok(directory)
 }
 
 fn decode(path: &Path, size: [u32; 2], at: Duration) -> anyhow::Result<MovieFrame> {
