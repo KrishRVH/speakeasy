@@ -105,10 +105,15 @@ impl Journal {
         }
     }
 
+    #[must_use = "an unused admission skips its frame"]
     pub fn admit(&mut self) -> Option<Admission<'_>> {
-        let admitted = self.arrived.is_multiple_of(self.stride);
+        let admitted = self.admits();
         self.arrived = self.arrived.saturating_add(1);
         admitted.then_some(Admission(self))
+    }
+
+    const fn admits(&self) -> bool {
+        self.arrived.is_multiple_of(self.stride)
     }
 
     #[must_use]
@@ -143,11 +148,7 @@ impl Journal {
             .samples
             .partition_point(|sample| sample.at <= at)
             .saturating_sub(1);
-        let position = self
-            .segments
-            .partition_point(|segment| segment.first <= index)
-            .saturating_sub(1);
-        self.segments.get(position)?.frame(index)
+        run_at(&self.segments, |segment| segment.first, index)?.frame(index)
     }
 
     fn thin(&mut self) {
@@ -249,10 +250,7 @@ impl Journal {
 
     fn restore(&mut self, at: Moment, entry: Option<&Entry>) -> Result<(), SourceError> {
         if let Some(entry) = entry {
-            require(
-                self.arrived.is_multiple_of(self.stride),
-                "checkpoint frame disagrees with sampling",
-            )?;
+            require(self.admits(), "checkpoint frame disagrees with sampling")?;
             require(
                 entry.reset
                     || self.segments.last().is_some_and(|segment| {
@@ -261,10 +259,10 @@ impl Journal {
                 "checkpoint delta has no preceding frame",
             )?;
         }
-        if self.admit().is_some()
+        if let Some(Admission(journal)) = self.admit()
             && let Some(entry) = entry
         {
-            self.push(at, entry);
+            journal.push(at, entry);
         }
         Ok(())
     }
@@ -352,10 +350,8 @@ impl Segment {
         let stride = self.width.saturating_mul(PIXEL);
         let mut rgba = vec![0; stride.saturating_mul(self.height)];
         for (tile, versions) in tiles(self.width, self.height).zip(&self.tiles) {
-            let shown = versions
-                .partition_point(|version| version.first <= index)
-                .saturating_sub(1);
-            restore_tile(&versions.get(shown)?.data, tile, stride, &mut rgba)?;
+            let shown = run_at(versions, |version| version.first, index)?;
+            decode_tile(&shown.data, tile, stride, &mut rgba)?;
         }
         Image::from_premultiplied(
             u32::try_from(self.width).ok()?,
@@ -384,12 +380,12 @@ fn encode_tile(frame: &Image, tile: Tile) -> Arc<[u8]> {
     fdeflate::compress_to_vec(&filtered).into()
 }
 
-fn restore_tile(data: &[u8], tile: Tile, stride: usize, rgba: &mut [u8]) -> Option<()> {
+fn decode_tile(data: &[u8], tile: Tile, stride: usize, rgba: &mut [u8]) -> Option<()> {
     let columns = tile.columns();
     let row_bytes = columns.len();
-    let filtered =
-        fdeflate::decompress_to_vec_bounded(data, row_bytes.saturating_mul(tile.height)).ok()?;
-    if filtered.len() != row_bytes.checked_mul(tile.height)? {
+    let expected = row_bytes.checked_mul(tile.height)?;
+    let filtered = fdeflate::decompress_to_vec_bounded(data, expected).ok()?;
+    if filtered.len() != expected {
         return None;
     }
     let rows = rgba.chunks_exact_mut(stride.max(1)).skip(tile.top);
@@ -421,6 +417,11 @@ fn with_ends<T>(
         let run = runs.next()?;
         Some((run, runs.peek().map_or(end, &start)))
     })
+}
+
+fn run_at<T>(runs: &[T], start: impl Fn(&T) -> usize, index: usize) -> Option<&T> {
+    let following = runs.partition_point(|run| start(run) <= index);
+    runs.get(following.checked_sub(1)?)
 }
 
 fn tiles(width: usize, height: usize) -> impl Iterator<Item = Tile> {

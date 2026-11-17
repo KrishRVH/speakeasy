@@ -1,9 +1,9 @@
 use std::{fmt, ops::Range};
 
 use super::{
-    DURATION_LIMIT, EDGE, Journal, MAX_FRAME_EDGE, PIXEL, Tile,
+    DURATION_LIMIT, EDGE, Journal, MAX_FRAME_EDGE, PIXEL, Tile, decode_tile,
     record::{Cursor, RECORD_OVERHEAD, emit_record, payload, require},
-    restore_tile, tiles, with_ends,
+    run_at, tiles, with_ends,
 };
 use crate::{Image, Moment, Span, convert};
 
@@ -239,28 +239,21 @@ impl Source {
             .moments
             .partition_point(|moment| *moment <= at)
             .saturating_sub(1);
-        let segment = self
-            .segments
-            .iter()
-            .rev()
-            .find(|segment| segment.first <= frame)
+        let segment = run_at(&self.segments, |segment| segment.first, frame)
             .ok_or(SourceError("source frame geometry is missing"))?;
         let width = convert::count(segment.width);
         let height = convert::count(segment.height);
         let stride = width.saturating_mul(PIXEL);
         let mut rgba = vec![0; stride.saturating_mul(height)];
         for (tile, versions) in tiles(width, height).zip(&segment.tiles) {
-            let location = versions
-                .iter()
-                .rev()
-                .find(|version| version.first <= frame)
+            let location = run_at(versions, |version| version.first, frame)
                 .ok_or(SourceError("source tile is missing"))?;
             let encoded = read(location.record.clone())?;
             require(
                 encoded.len() as u64 == location.record.end.saturating_sub(location.record.start),
                 "source tile is truncated",
             )?;
-            restore_tile(payload(&encoded, TILE_RECORD)?, tile, stride, &mut rgba)
+            decode_tile(payload(&encoded, TILE_RECORD)?, tile, stride, &mut rgba)
                 .ok_or(SourceError("source tile is damaged"))?;
         }
         let image = Image::from_premultiplied(segment.width, segment.height, rgba)
