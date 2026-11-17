@@ -353,7 +353,7 @@ fn record(
     exclusions.refresh()?;
     let mut clean_from = clean_after_now();
     let mut movie = movie::Movie::new(movie);
-    let cadence = if movie.active() {
+    let cadence = if movie.wants_frames() {
         interval.min(movie::INTERVAL)
     } else {
         interval
@@ -371,11 +371,11 @@ fn record(
             let mut movie_failed = false;
 
             let still = pacer.due(now) && !events.is_full();
-            let moving = movie.active() && now >= motion;
+            let moving = movie.wants_frames() && now >= motion;
             if (still || moving)
                 && let Some(frame) = capture.read_pending()?
             {
-                movie_failed = !movie.frame(&frame, stopping);
+                movie_failed = movie.frame(&frame, stopping).is_err();
                 if moving {
                     motion = next_motion(motion, now);
                 }
@@ -383,7 +383,7 @@ fn record(
                     pacer.sent(now);
                 }
             }
-            movie_failed |= !movie.poll(Instant::now(), stopping);
+            movie_failed |= movie.poll(Instant::now(), stopping).is_err();
             if movie_failed {
                 #[expect(
                     clippy::let_underscore_must_use,

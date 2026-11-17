@@ -14,8 +14,8 @@ async fn a_cancelled_pending_movie_releases_its_lease_without_a_frame() {
     let (_stop, stopping) = async_channel::bounded(1);
     let mut movie = Movie::new(Some(target));
     control.request_stop();
-    assert!(movie.poll(Instant::now(), &stopping));
-    assert!(!movie.active());
+    assert!(movie.poll(Instant::now(), &stopping).is_ok());
+    assert!(!movie.wants_frames());
     assert!(control.next().await.is_none());
 }
 
@@ -35,11 +35,11 @@ async fn a_cancelled_active_movie_releases_its_file_without_a_new_frame() -> any
     let (poll, polling) = async_channel::bounded(1);
     let native = crate::OwnedThread::spawn("synthetic movie cancellation", move || {
         let mut movie = Movie::new(Some(target));
-        assert!(movie.frame(&frame(320, 240, 140), &stopping));
+        assert!(movie.frame(&frame(320, 240, 140), &stopping).is_ok());
         submitted.send_blocking(()).unwrap();
         if polling.recv_blocking().is_ok() {
-            assert!(movie.poll(Instant::now(), &stopping));
-            assert!(!movie.active());
+            assert!(movie.poll(Instant::now(), &stopping).is_ok());
+            assert!(!movie.wants_frames());
         }
     })?;
     let Some(crate::MovieEvent::Started { accepted, .. }) = control.next().await else {

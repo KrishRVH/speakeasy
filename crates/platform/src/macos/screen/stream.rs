@@ -58,7 +58,7 @@ pub(super) fn capture(
     if geometry.bounds != target.display.native.bounds {
         return Err(Failure::DisplayLost);
     }
-    let cadence = if movie.active() {
+    let cadence = if movie.wants_frames() {
         INTERVAL
     } else {
         interval.max(INTERVAL)
@@ -129,7 +129,7 @@ fn record(
                 continue;
             }
             last_frame = Some(frame.at);
-            movie_failed |= !movie.frame(&frame, stopping);
+            movie_failed |= movie.frame(&frame, stopping).is_err();
             if last_still
                 .is_none_or(|previous| frame.at.saturating_duration_since(previous) >= interval)
             {
@@ -144,7 +144,7 @@ fn record(
         if last_frame.is_none() && started.elapsed() >= PATIENCE {
             return Err(Failure::Stalled);
         }
-        movie_failed |= !movie.poll(Instant::now(), stopping);
+        movie_failed |= movie.poll(Instant::now(), stopping).is_err();
         if movie_failed {
             #[expect(
                 clippy::let_underscore_must_use,

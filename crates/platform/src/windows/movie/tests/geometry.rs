@@ -128,11 +128,11 @@ async fn rejected_and_cancelled_geometry_never_submit_the_unacknowledged_layout(
         let native = crate::OwnedThread::spawn("synthetic geometry acceptance", move || {
             let first = frame(320, 240, 150);
             let mut movie = Movie::new(Some(target));
-            assert!(movie.frame(&first, &stopping));
+            assert!(movie.frame(&first, &stopping).is_ok());
             let mut resized = frame(160, 240, 200);
             resized.at = first.at.checked_add(Duration::from_millis(100)).unwrap();
-            assert_eq!(movie.frame(&resized, &stopping), !rejected);
-            assert!(!movie.active());
+            assert_eq!(movie.frame(&resized, &stopping).is_err(), rejected);
+            assert!(!movie.wants_frames());
         })?;
         let Some(crate::MovieEvent::Started { accepted, .. }) = control.next().await else {
             anyhow::bail!("Missing synthetic origin");

@@ -47,6 +47,8 @@ enum Ending {
     Failed,
 }
 
+pub(crate) struct Failed;
+
 struct Publication<'a> {
     target: &'a MovieTarget,
     stopping: &'a Receiver<Infallible>,
@@ -67,23 +69,20 @@ impl Movie {
         target.map_or(Self::Stopped, Self::Pending)
     }
 
-    pub(crate) const fn active(&self) -> bool {
+    pub(crate) const fn wants_frames(&self) -> bool {
         !matches!(self, Self::Stopped)
     }
 
-    pub(crate) fn poll(&mut self, now: Instant, stopping: &Receiver<Infallible>) -> bool {
-        let target = match self {
-            Self::Pending(target) => target,
-            Self::Active(recording) => &recording.target,
-            Self::Stopped => return true,
-        };
-        if target.cancelled() || stopping.is_closed() {
-            let ending = now.min(target.deadline());
-            self.stop(ending);
-            return true;
+    pub(crate) fn poll(
+        &mut self,
+        now: Instant,
+        stopping: &Receiver<Infallible>,
+    ) -> Result<(), Failed> {
+        if self.halt(now, stopping) {
+            return Ok(());
         }
         let Self::Active(recording) = self else {
-            return true;
+            return Ok(());
         };
         let advanced = recording.advance(now, stopping);
         self.settle(advanced, now)
@@ -93,37 +92,57 @@ impl Movie {
         self.end(Ending::Stopped(at));
     }
 
-    pub(crate) fn frame(&mut self, frame: &Frame, stopping: &Receiver<Infallible>) -> bool {
+    pub(crate) fn frame(
+        &mut self,
+        frame: &Frame,
+        stopping: &Receiver<Infallible>,
+    ) -> Result<(), Failed> {
         *self = match mem::replace(self, Self::Stopped) {
             Self::Pending(target) => match Recording::begin(target, frame, stopping) {
                 Ok(Some(recording)) => Self::Active(Box::new(recording)),
-                Ok(None) => return true,
-                Err(_private_native_error) => return false,
+                Ok(None) => return Ok(()),
+                Err(_private_native_error) => return Err(Failed),
             },
             movie => movie,
         };
-        let Self::Active(recording) = self else {
-            return true;
-        };
-        if recording.target.cancelled() || stopping.is_closed() {
-            let ending = Instant::now().min(recording.target.deadline());
-            self.stop(ending);
-            return true;
+        if self.halt(Instant::now(), stopping) {
+            return Ok(());
         }
+        let Self::Active(recording) = self else {
+            return Ok(());
+        };
         let written = recording.frame(frame, stopping);
         self.settle(written, Instant::now())
     }
 
-    fn settle(&mut self, outcome: anyhow::Result<ControlFlow<()>>, now: Instant) -> bool {
+    fn halt(&mut self, now: Instant, stopping: &Receiver<Infallible>) -> bool {
+        let target = match self {
+            Self::Pending(target) => target,
+            Self::Active(recording) => &recording.target,
+            Self::Stopped => return true,
+        };
+        let halted = target.cancelled() || stopping.is_closed();
+        if halted {
+            let ending = now.min(target.deadline());
+            self.stop(ending);
+        }
+        halted
+    }
+
+    fn settle(
+        &mut self,
+        outcome: anyhow::Result<ControlFlow<()>>,
+        now: Instant,
+    ) -> Result<(), Failed> {
         match outcome {
-            Ok(ControlFlow::Continue(())) => true,
+            Ok(ControlFlow::Continue(())) => Ok(()),
             Ok(ControlFlow::Break(())) => {
                 self.stop(now);
-                true
+                Ok(())
             },
             Err(_private_native_error) => {
                 self.end(Ending::Failed);
-                false
+                Err(Failed)
             },
         }
     }

@@ -200,9 +200,13 @@ async fn a_stalled_writer_reports_the_held_prefix_even_without_a_new_capture() -
         let image = frame(320, 240, 80);
         let at = image.at;
         let mut movie = Movie::new(Some(target));
-        assert!(movie.frame(&image, &stopping));
-        assert!(!movie.poll(at.checked_add(Duration::from_secs(3)).unwrap(), &stopping));
-        assert!(!movie.active());
+        assert!(movie.frame(&image, &stopping).is_ok());
+        assert!(
+            movie
+                .poll(at.checked_add(Duration::from_secs(3)).unwrap(), &stopping)
+                .is_err()
+        );
+        assert!(!movie.wants_frames());
     })?;
     let Some(crate::MovieEvent::Started { at, accepted, .. }) = control.next().await else {
         anyhow::bail!("Synthetic movie did not request its origin");
