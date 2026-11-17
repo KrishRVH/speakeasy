@@ -225,6 +225,37 @@ fn a_microphone_that_stops_sending_after_speech_keeps_what_arrived() -> anyhow::
 }
 
 #[test]
+fn samples_that_arrive_late_restart_the_stall_clock() -> anyhow::Result<()> {
+    let mut late = recorder(&spoken(), None)?;
+    late.pulse = stalled_since(false)?;
+    let (events, reports) = async_channel::bounded(64);
+    let (_cues, cues) = async_channel::unbounded();
+    let (_keep, keep) = async_channel::bounded(1);
+    let (_whole, whole) = async_channel::bounded(1);
+    let requests = Requests { cues, keep, whole };
+    let control = &Control::default();
+    let (ready, recorded) = thread::scope(|scope| {
+        let recording = scope.spawn(move || {
+            late.record(SessionId::FIRST, &events, control, &requests)
+                .outcome
+        });
+        let ready = std::iter::from_fn(|| reports.recv_blocking().ok())
+            .any(|event| matches!(event, CaptureEvent::Ready(_)));
+        control.finish();
+        (ready, recording.join())
+    });
+    ensure!(ready, "The recording never reported its first samples");
+    let Ok(outcome) = recorded else {
+        bail!("The recording thread panicked");
+    };
+    assert!(
+        matches!(outcome, Outcome::Finished(Ok(Some(_)))),
+        "The poll after a late first sample read as a microphone that never sent audio"
+    );
+    Ok(())
+}
+
+#[test]
 fn stopped_startup_returns_without_audio() {
     let records_nothing = |events: &Sender<CaptureEvent>, control: &Arc<Control>| {
         matches!(
