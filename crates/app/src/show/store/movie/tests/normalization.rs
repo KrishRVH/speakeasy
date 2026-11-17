@@ -18,8 +18,8 @@ fn publication_and_export_correct_headers_without_changing_the_recorded_source()
     assert_eq!(fs::read(source.path().join(FILE))?, original);
     assert_eq!(fs::read(destination.path().join(FILE))?, expected);
     let mut saved = Reading::open(destination.path(), Moment::from_millis(500))?;
-    assert_eq!(saved.movie.prefix.frames, 2);
-    assert_eq!(saved.movie.prefix.duration, Duration::from_secs(2));
+    assert_eq!(saved.movie.prefix.frames(), 2);
+    assert_eq!(saved.movie.prefix.duration(), Duration::from_secs(2));
     let mut exported = Vec::new();
     saved.copy_to(&mut exported, MoviePrefix::FILE_LIMIT)?;
     assert_eq!(exported, expected);

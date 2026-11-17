@@ -40,12 +40,12 @@ pub fn read_movie_frame(
     cancelled: impl Fn() -> bool,
 ) -> anyhow::Result<Option<MovieFrame>> {
     anyhow::ensure!(
-        file.metadata()?.len() == prefix.bytes
-            && (1..=MoviePrefix::FILE_LIMIT).contains(&prefix.bytes),
+        file.metadata()?.len() == prefix.bytes()
+            && (1..=MoviePrefix::FILE_LIMIT).contains(&prefix.bytes()),
         "Movie changed; refresh the Show before reading it"
     );
     anyhow::ensure!(
-        is_canvas(prefix.size) && at <= prefix.duration && at <= RECORDING_LIMIT,
+        is_canvas(prefix.size()) && at <= prefix.duration() && at <= RECORDING_LIMIT,
         "Movie frame request is out of range"
     );
     if cancelled() {
@@ -53,7 +53,7 @@ pub fn read_movie_frame(
     }
     #[cfg(target_os = "windows")]
     {
-        crate::windows::movie::read::frame(file, prefix.bytes, prefix.size, at, &cancelled)
+        crate::windows::movie::read::frame(file, prefix.bytes(), prefix.size(), at, &cancelled)
     }
     #[cfg(target_os = "macos")]
     {

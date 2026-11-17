@@ -383,7 +383,7 @@ fn sampled(
         .iter()
         .skip(1)
         .map(|next| next.at)
-        .chain([prefix.duration]);
+        .chain([prefix.duration()]);
     samples
         .iter()
         .zip(ends)

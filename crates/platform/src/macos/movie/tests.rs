@@ -29,8 +29,8 @@ fn read(
 ) -> anyhow::Result<Option<MovieFrame>> {
     let (file, prefix) = validated(path)?;
     let metadata = file.metadata()?;
-    assert_eq!(prefix.bytes, metadata.len());
-    assert!(!prefix.truncated);
+    assert_eq!(prefix.bytes(), metadata.len());
+    assert!(!prefix.truncated());
     let sample = prefix.samples()[index];
     let descriptor = file.as_raw_fd();
     let frame = crate::read_movie_frame(file, &prefix, sample.at, cancelled)?;
@@ -64,8 +64,8 @@ fn native_movie_preserves_exact_samples_pixels_and_input_ownership() -> anyhow::
     let directory = Path::new(&directory);
     let path = directory.join("moving.mp4");
     let (_, prefix) = validated(&path)?;
-    assert_eq!(prefix.frames, 120);
-    assert_eq!(prefix.timescale, 30_000);
+    assert_eq!(prefix.frames(), 120);
+    assert_eq!(prefix.timescale(), 30_000);
     assert_eq!(prefix.samples()[1].ticks, 1001);
     for index in [119, 0, 1, 45, 2] {
         let frame = read(&path, index, || false)?.context("Synthetic frame was cancelled")?;
@@ -103,9 +103,9 @@ fn native_movie_preserves_exact_samples_pixels_and_input_ownership() -> anyhow::
     let recovered = private.path().join("recovered.mp4");
     std::fs::write(&recovered, &truncated)?;
     let (_, prefix) = validated(&recovered)?;
-    assert!(prefix.truncated);
-    assert!(prefix.frames < 120);
-    std::fs::write(&recovered, &truncated[..usize::try_from(prefix.bytes)?])?;
+    assert!(prefix.truncated());
+    assert!(prefix.frames() < 120);
+    std::fs::write(&recovered, &truncated[..usize::try_from(prefix.bytes())?])?;
     let index = prefix.samples().len().checked_sub(1).unwrap();
     let frame = read(&recovered, index, || false)?.context("Recovered frame cancelled")?;
     assert_eq!(frame.at, prefix.samples()[index].at);
@@ -113,7 +113,7 @@ fn native_movie_preserves_exact_samples_pixels_and_input_ownership() -> anyhow::
 
     let long = directory.join("long.mp4");
     let (_, prefix) = validated(&long)?;
-    assert!(prefix.duration >= Duration::from_secs(299));
+    assert!(prefix.duration() >= Duration::from_secs(299));
     let index = prefix
         .samples()
         .partition_point(|sample| sample.at <= Duration::from_secs(290))
@@ -138,15 +138,15 @@ fn native_windows_movie_preserves_colors_on_macos() -> anyhow::Result<()> {
 
 fn retained_colors(path: &Path, size: [u32; 2], indices: &[usize]) -> anyhow::Result<()> {
     let (mut input, prefix) = validated(path)?;
-    assert!(!prefix.truncated);
-    assert_eq!(prefix.size, size);
+    assert!(!prefix.truncated());
+    assert_eq!(prefix.size(), size);
     input.rewind()?;
     let private = tempfile::tempdir()?;
     let path = private.path().join("retained.mp4");
     let mut retained = File::create_new(&path)?;
     assert_eq!(
-        std::io::copy(&mut input.take(prefix.bytes), &mut retained)?,
-        prefix.bytes
+        std::io::copy(&mut input.take(prefix.bytes()), &mut retained)?,
+        prefix.bytes()
     );
     drop(retained);
     let mut bytes = std::fs::read(&path)?;

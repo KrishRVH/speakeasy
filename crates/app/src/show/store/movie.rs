@@ -209,7 +209,7 @@ impl Reading {
         out: &mut impl std::io::Write,
         limit: u64,
     ) -> anyhow::Result<u64> {
-        let bytes = self.movie.prefix.bytes;
+        let bytes = self.movie.prefix.bytes();
         anyhow::ensure!(bytes <= limit, "Movie exceeds the export size limit");
         self.file.rewind()?;
         let mut position = 0_u64;
@@ -315,13 +315,13 @@ pub(super) fn open(directory: &Path) -> anyhow::Result<Option<Reading>> {
         anyhow::Ok(bytes)
     })?;
     anyhow::ensure!(
-        prefix.size == metadata.size,
+        prefix.size() == metadata.size,
         "Movie canvas differs from its timing metadata"
     );
     let limit = u64::try_from(RECORDING_LIMIT.as_millis())?;
     let end_ms = metadata
         .origin_ms
-        .saturating_add(u64::try_from(prefix.duration.as_millis())?);
+        .saturating_add(u64::try_from(prefix.duration().as_millis())?);
 
     anyhow::ensure!(
         end_ms <= limit.saturating_add(FRAME_SLACK_MS),
@@ -355,10 +355,10 @@ pub(super) fn open(directory: &Path) -> anyhow::Result<Option<Reading>> {
             "Movie has no finalized completion receipt"
         );
         anyhow::ensure!(
-            coverage.bytes == prefix.bytes
-                && length == prefix.bytes
-                && !prefix.truncated
-                && coverage.frames == prefix.frames
+            coverage.bytes == prefix.bytes()
+                && length == prefix.bytes()
+                && !prefix.truncated()
+                && coverage.frames == prefix.frames()
                 && coverage.end_ms == end_ms.min(limit)
                 && coverage.annotations_through_ms <= limit,
             "Saved movie coverage differs from its fragments"
@@ -369,14 +369,14 @@ pub(super) fn open(directory: &Path) -> anyhow::Result<Option<Reading>> {
             directory,
             metadata.identity,
             metadata.size,
-            prefix.frames,
+            prefix.frames(),
         )?);
     }
     metadata
         .geometry
         .as_ref()
         .context("Video crop geometry is missing")?
-        .validate(metadata.size, prefix.frames)?;
+        .validate(metadata.size, prefix.frames())?;
     Ok(Some(Reading {
         file,
         movie: Inspected { metadata, prefix },
@@ -399,9 +399,9 @@ pub(in crate::show::store) fn retain(
     let end_ms = movie
         .metadata
         .origin_ms
-        .saturating_add(u64::try_from(movie.prefix.duration.as_millis())?)
+        .saturating_add(u64::try_from(movie.prefix.duration().as_millis())?)
         .min(u64::try_from(RECORDING_LIMIT.as_millis())?);
-    let partial = movie.prefix.truncated
+    let partial = movie.prefix.truncated()
         || movie
             .metadata
             .finished
@@ -409,8 +409,8 @@ pub(in crate::show::store) fn retain(
             .is_none_or(|finish| !finish.finalized);
     movie.metadata.coverage = Some(Coverage {
         end_ms,
-        frames: movie.prefix.frames,
-        bytes: movie.prefix.bytes,
+        frames: movie.prefix.frames(),
+        bytes: movie.prefix.bytes(),
         annotations_through_ms: annotations.as_millis(),
         partial,
     });

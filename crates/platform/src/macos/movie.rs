@@ -38,7 +38,7 @@ pub(crate) fn frame(
         if cancelled() {
             return Ok(None);
         }
-        Request::start(asset, prefix.size, sample)?.wait(cancelled)
+        Request::start(asset, prefix.size(), sample)?.wait(cancelled)
     })
 }
 
@@ -56,15 +56,15 @@ impl Sample {
             .saturating_sub(1);
         let sample = samples.get(index).context("Movie has no retained sample")?;
         ensure!(
-            (1..=1_000_000_000).contains(&prefix.timescale)
+            (1..=1_000_000_000).contains(&prefix.timescale())
                 && sample.ticks
-                    <= u64::from(prefix.timescale)
+                    <= u64::from(prefix.timescale())
                         .saturating_mul(MoviePrefix::DURATION_LIMIT.as_secs()),
             "Movie sample timestamp is out of range"
         );
         Ok(Self {
             ticks: sample.ticks,
-            timescale: prefix.timescale,
+            timescale: prefix.timescale(),
         })
     }
 

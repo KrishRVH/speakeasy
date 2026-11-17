@@ -42,11 +42,11 @@ fn native_mac_movie_encoding() -> anyhow::Result<()> {
         assert_released(descriptor, &opened);
         let prefix = inspect(&path)?;
         let length = std::fs::metadata(&path)?.len();
-        assert!(!prefix.truncated);
-        assert_eq!(prefix.frames, u32::try_from(count)?);
-        assert_eq!(prefix.bytes, length);
+        assert!(!prefix.truncated());
+        assert_eq!(prefix.frames(), u32::try_from(count)?);
+        assert_eq!(prefix.bytes(), length);
         assert_eq!(
-            prefix.duration,
+            prefix.duration(),
             Duration::from_nanos(u64::try_from(count)? * 1_000_000_000 / 30)
         );
         for index in [count - 1, 0] {
@@ -67,7 +67,7 @@ fn native_mac_movie_encoding() -> anyhow::Result<()> {
     }
     let waiting = Instant::now();
     loop {
-        if inspect(&path).is_ok_and(|prefix| prefix.frames > 0) {
+        if inspect(&path).is_ok_and(|prefix| prefix.frames() > 0) {
             encoder.output.check()?;
             break;
         }
@@ -83,7 +83,7 @@ fn native_mac_movie_encoding() -> anyhow::Result<()> {
     drop(encoder);
     assert_released(descriptor, &opened);
     let prefix = inspect(&path)?;
-    assert!(prefix.frames > 0 && prefix.frames <= submitted);
+    assert!(prefix.frames() > 0 && prefix.frames() <= submitted);
 
     let path = directory.join("capped.mp4");
     let limit = std::fs::metadata(directory.join("moving.mp4"))?.len() / 2;
@@ -109,7 +109,7 @@ fn native_mac_movie_encoding() -> anyhow::Result<()> {
     assert_released(descriptor, &opened);
     assert!(std::fs::metadata(&path)?.len() <= limit);
     let prefix = inspect(&path)?;
-    assert!(prefix.frames > 0 && prefix.frames < 120);
+    assert!(prefix.frames() > 0 && prefix.frames() < 120);
     timing::verify(&directory)?;
     Ok(())
 }

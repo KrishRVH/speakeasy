@@ -24,7 +24,7 @@ fn sample_navigation_preserves_fractional_times_instead_of_assuming_a_frame_rate
     let media = bytes.windows(4).position(|tag| tag == b"mdhd").unwrap();
     bytes[media + 16..media + 20].copy_from_slice(&30_000_u32.to_be_bytes());
     let prefix = inspect(&bytes).unwrap();
-    assert_eq!(prefix.timescale, 30_000);
+    assert_eq!(prefix.timescale(), 30_000);
     assert_eq!(prefix.samples()[1].ticks, 1_000);
     assert_eq!(
         prefix
@@ -34,7 +34,7 @@ fn sample_navigation_preserves_fractional_times_instead_of_assuming_a_frame_rate
             .collect::<Vec<_>>(),
         [Duration::ZERO, Duration::from_nanos(33_333_333)]
     );
-    assert_eq!(prefix.duration, Duration::from_nanos(66_666_666));
+    assert_eq!(prefix.duration(), Duration::from_nanos(66_666_666));
     let run = bytes.windows(4).position(|tag| tag == b"trun").unwrap();
     bytes[run + 16..run + 20].copy_from_slice(&1_500_u32.to_be_bytes());
     assert_eq!(
@@ -52,8 +52,8 @@ fn sample_navigation_preserves_fractional_times_instead_of_assuming_a_frame_rate
 fn recovery_never_claims_samples_from_an_incomplete_fragment() {
     let fixture = fixture::movie();
     let complete = inspect(&fixture.bytes).unwrap();
-    assert_eq!(complete.frames, 2);
-    assert_eq!(complete.duration, Duration::from_secs(2));
+    assert_eq!(complete.frames(), 2);
+    assert_eq!(complete.duration(), Duration::from_secs(2));
     assert_eq!(
         complete
             .samples()
@@ -62,15 +62,15 @@ fn recovery_never_claims_samples_from_an_incomplete_fragment() {
             .collect::<Vec<_>>(),
         [Duration::ZERO, Duration::from_secs(1)]
     );
-    assert!(!complete.truncated);
+    assert!(!complete.truncated());
     for cut in fixture.initialized..fixture.bytes.len() {
         let result = inspect(&fixture.bytes[..cut]);
         if cut < fixture.ends[0] {
             assert!(result.is_err());
         } else {
             let prefix = result.unwrap();
-            assert_eq!(prefix.bytes, u64::try_from(fixture.ends[0]).unwrap());
-            assert_eq!(prefix.frames, 1);
+            assert_eq!(prefix.bytes(), u64::try_from(fixture.ends[0]).unwrap());
+            assert_eq!(prefix.frames(), 1);
             assert_eq!(
                 prefix
                     .samples()
@@ -79,8 +79,8 @@ fn recovery_never_claims_samples_from_an_incomplete_fragment() {
                     .collect::<Vec<_>>(),
                 [Duration::ZERO]
             );
-            assert_eq!(prefix.duration, Duration::from_secs(1));
-            assert_eq!(prefix.truncated, cut != fixture.ends[0]);
+            assert_eq!(prefix.duration(), Duration::from_secs(1));
+            assert_eq!(prefix.truncated(), cut != fixture.ends[0]);
         }
     }
 }
@@ -105,9 +105,9 @@ fn damaged_second_sample_preserves_only_the_first_fragment() {
     let trun = bytes.windows(4).rposition(|tag| tag == b"trun").unwrap();
     bytes[trun + 20..trun + 24].copy_from_slice(&7_u32.to_be_bytes());
     let prefix = inspect(&bytes).unwrap();
-    assert_eq!(prefix.frames, 1);
-    assert!(prefix.truncated);
-    assert_eq!(prefix.bytes, u64::try_from(fixture.ends[0]).unwrap());
+    assert_eq!(prefix.frames(), 1);
+    assert!(prefix.truncated());
+    assert_eq!(prefix.bytes(), u64::try_from(fixture.ends[0]).unwrap());
 }
 
 #[test]

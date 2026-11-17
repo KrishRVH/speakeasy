@@ -64,8 +64,8 @@ pub(super) fn verify(directory: &Path) -> anyhow::Result<()> {
     );
     encoder.finish()?;
     let prefix = inspect(&path)?;
-    assert_eq!(prefix.frames, 14);
-    assert!(!prefix.truncated);
+    assert_eq!(prefix.frames(), 14);
+    assert!(!prefix.truncated());
     for (index, sample) in prefix.samples().iter().enumerate() {
         let expected =
             Duration::from_nanos(u64::try_from(index)?.checked_mul(1_000_000_000).unwrap() / 30);

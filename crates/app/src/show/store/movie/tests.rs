@@ -36,7 +36,7 @@ fn publication_keeps_only_complete_video_and_separate_annotation_coverage() -> a
     checkpoint(source.path(), true)?;
     let original = fs::read(source.path().join(FILE))?;
     let inspected = open(source.path())?.unwrap();
-    assert!(inspected.movie.prefix.truncated);
+    assert!(inspected.movie.prefix.truncated());
     retain(destination.path(), inspected, Moment::from_millis(500))?;
     let kept = saved(destination.path(), Moment::from_millis(500))?.unwrap();
     for path in ["/tmp/a``b/recording.mp4", "/tmp/Show video.mp4"] {

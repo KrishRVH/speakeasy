@@ -33,14 +33,14 @@ fn native_fragments_recover_only_complete_sample_ranges() -> Result<(), Box<dyn 
                 input.read_exact(&mut bytes)?;
                 Ok(bytes)
             })?;
-        assert_eq!(prefix.frames, frames);
-        assert_eq!(prefix.duration, Duration::from_secs(seconds));
-        assert_eq!(prefix.truncated, truncated);
+        assert_eq!(prefix.frames(), frames);
+        assert_eq!(prefix.duration(), Duration::from_secs(seconds));
+        assert_eq!(prefix.truncated(), truncated);
         input.rewind()?;
         let mut destination = File::create_new(output.join(name))?;
         assert_eq!(
-            std::io::copy(&mut input.take(prefix.bytes), &mut destination)?,
-            prefix.bytes
+            std::io::copy(&mut input.take(prefix.bytes()), &mut destination)?,
+            prefix.bytes()
         );
         destination.sync_all()?;
         println!("{name}: {prefix:?}");

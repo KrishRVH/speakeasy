@@ -20,8 +20,8 @@ fn normalization_preserves_samples_and_all_bytes_except_the_declared_header_flag
     }
     let normalized = inspect(&expected).unwrap();
     assert_eq!(normalized.samples(), prefix.samples());
-    assert_eq!(normalized.duration, prefix.duration);
-    assert_eq!(normalized.bytes, prefix.bytes);
+    assert_eq!(normalized.duration(), prefix.duration());
+    assert_eq!(normalized.bytes(), prefix.bytes());
     assert_eq!(normalized.normalization().headers, [0_u64; 0]);
     let mut changed = original;
     changed[flag] = 33;
@@ -61,8 +61,8 @@ fn rejected_fragments_never_contribute_header_corrections() {
     let (mut bytes, _) = padded(fixture::movie().bytes, 1, &[0; 4], None);
     bytes.truncate(bytes.len() - 1);
     let prefix = inspect(&bytes).unwrap();
-    assert_eq!(prefix.frames, 1);
-    assert!(prefix.truncated);
+    assert_eq!(prefix.frames(), 1);
+    assert!(prefix.truncated());
     let mut corrected = bytes.clone();
     prefix.normalization().apply(0, &mut corrected).unwrap();
     assert_eq!(corrected, bytes);

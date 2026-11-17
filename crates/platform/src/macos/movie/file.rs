@@ -93,7 +93,7 @@ impl Reader {
     fn new(file: File, prefix: &MoviePrefix) -> Retained<Self> {
         let this = Self::alloc().set_ivars(Input {
             file: Mutex::new(Some(file)),
-            bytes: prefix.bytes,
+            bytes: prefix.bytes(),
         });
 
         unsafe { msg_send![super(this), init] }

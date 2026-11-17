@@ -148,7 +148,7 @@ impl Reading {
         cancelled: impl Fn() -> bool,
     ) -> anyhow::Result<Option<Sample>> {
         anyhow::ensure!(
-            at <= self.movie.prefix.duration,
+            at <= self.movie.prefix.duration(),
             "Requested time is outside the retained video coverage"
         );
         let through = Moment::from_millis(
@@ -165,7 +165,7 @@ impl Reading {
             return Ok(None);
         };
         anyhow::ensure!(
-            frame.at < self.movie.prefix.duration,
+            frame.at < self.movie.prefix.duration(),
             "Decoded video sample exceeds its retained coverage"
         );
         let viewport = geometry::viewport(&self.movie, frame.at);

@@ -9,7 +9,7 @@ use initialization::Track;
 pub use normalization::MovieNormalization;
 
 const HEADER_LIMIT: u64 = 1 << 20;
-const SAMPLE_LIMIT: u32 = 10_801;
+const SAMPLE_LIMIT: usize = 10_801;
 
 const NON_SYNC_SAMPLE: u32 = 0x0001_0000;
 
@@ -55,14 +55,13 @@ impl std::error::Error for MovieError {}
 
 #[derive(Clone, Debug)]
 pub struct MoviePrefix {
-    pub bytes: u64,
-    pub size: [u32; 2],
-    pub duration: Duration,
-    pub frames: u32,
-    pub timescale: u32,
+    bytes: u64,
+    size: [u32; 2],
+    duration: Duration,
+    timescale: u32,
     samples: Vec<MovieSample>,
     normalization: MovieNormalization,
-    pub truncated: bool,
+    truncated: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -76,6 +75,31 @@ impl MoviePrefix {
     pub const FILE_LIMIT: u64 = 1 << 30;
 
     #[must_use]
+    pub const fn bytes(&self) -> u64 {
+        self.bytes
+    }
+
+    #[must_use]
+    pub const fn size(&self) -> [u32; 2] {
+        self.size
+    }
+
+    #[must_use]
+    pub const fn duration(&self) -> Duration {
+        self.duration
+    }
+
+    #[must_use]
+    pub fn frames(&self) -> u32 {
+        u32::try_from(self.samples.len()).unwrap_or(u32::MAX)
+    }
+
+    #[must_use]
+    pub const fn timescale(&self) -> u32 {
+        self.timescale
+    }
+
+    #[must_use]
     pub fn samples(&self) -> &[MovieSample] {
         &self.samples
     }
@@ -83,6 +107,11 @@ impl MoviePrefix {
     #[must_use]
     pub const fn normalization(&self) -> &MovieNormalization {
         &self.normalization
+    }
+
+    #[must_use]
+    pub const fn truncated(&self) -> bool {
+        self.truncated
     }
 
     pub fn read<E: From<MovieError>>(
@@ -99,7 +128,6 @@ impl MoviePrefix {
             bytes: position,
             size: track.size,
             duration: Duration::ZERO,
-            frames: 0,
             timescale: track.timescale,
             samples: Vec::new(),
             normalization: MovieNormalization::default(),
@@ -108,7 +136,7 @@ impl MoviePrefix {
         let mut decoded = 0_u64;
         let mut sequence = 1_u32;
         while position < length {
-            let Some(atom) = input.atom(position, result.frames > 0)? else {
+            let Some(atom) = input.atom(position, !result.samples.is_empty())? else {
                 result.truncated = true;
                 break;
             };
@@ -117,18 +145,18 @@ impl MoviePrefix {
                 break;
             }
             if atom.kind != *b"moof" || atom.end.saturating_sub(position) > HEADER_LIMIT {
-                if result.frames == 0 {
+                if result.samples.is_empty() {
                     return Err(MovieError::Invalid("Movie first fragment is unsupported").into());
                 }
                 result.truncated = true;
                 break;
             }
-            let Some(data) = input.atom(atom.end, result.frames > 0)? else {
+            let Some(data) = input.atom(atom.end, !result.samples.is_empty())? else {
                 result.truncated = true;
                 break;
             };
             if data.kind != *b"mdat" {
-                if result.frames == 0 {
+                if result.samples.is_empty() {
                     return Err(
                         MovieError::Invalid("Movie first fragment has no media data").into(),
                     );
@@ -140,20 +168,18 @@ impl MoviePrefix {
             let fragment = match fragment(&bytes, &atom, &data, &track, sequence, decoded) {
                 Ok(fragment) => fragment,
                 Err(error) => {
-                    if result.frames == 0 {
+                    if result.samples.is_empty() {
                         return Err(error.into());
                     }
                     result.truncated = true;
                     break;
                 },
             };
-            let frames = result
-                .frames
-                .checked_add(fragment.samples)
-                .ok_or(MovieError::Invalid("Movie sample count overflows"))?;
-            require(frames <= SAMPLE_LIMIT, "Movie has too many samples")?;
+            require(
+                result.samples.len().saturating_add(fragment.times.len()) <= SAMPLE_LIMIT,
+                "Movie has too many samples",
+            )?;
             decoded = fragment.decoded;
-            result.frames = frames;
             result.normalization.headers.extend(fragment.normalization);
             for at in fragment.times {
                 result.samples.push(MovieSample {
@@ -167,7 +193,7 @@ impl MoviePrefix {
                 .checked_add(1)
                 .ok_or(MovieError::Invalid("Movie fragment sequence overflows"))?;
         }
-        if result.frames == 0 {
+        if result.samples.is_empty() {
             return Err(MovieError::NoFragment.into());
         }
         result.duration = duration(decoded, track.timescale)?;
@@ -292,7 +318,6 @@ impl<E: From<MovieError>, F: FnMut(Range<u64>) -> Result<Vec<u8>, E>> Input<F> {
 }
 
 struct Fragment {
-    samples: u32,
     decoded: u64,
     times: Vec<u64>,
     normalization: Option<u64>,
@@ -354,7 +379,6 @@ fn fragment(
         "Movie fragment header has trailing data",
     )?;
     let mut result = Fragment {
-        samples: 0,
         decoded,
         times: Vec::new(),
         normalization: (flags == tfhd::BASE_OFFSET && header.rest() == [0; 4]).then_some(
@@ -390,7 +414,7 @@ fn fragment(
         )?;
         let samples = run.word()?;
         require(
-            samples > 0 && result.samples.saturating_add(samples) <= SAMPLE_LIMIT,
+            samples > 0 && result.times.len().saturating_add(samples as usize) <= SAMPLE_LIMIT,
             "Movie sample table is too large",
         )?;
         if flags & trun::OFFSET != 0 {
@@ -399,7 +423,7 @@ fn fragment(
                 base.checked_add_signed(offset) == Some(next),
                 "Movie sample bytes are not contiguous",
             )?;
-        } else if result.samples == 0 {
+        } else if result.times.is_empty() {
             require(base == next, "Movie implicit sample base misses its data")?;
         }
         let first_flags = run.word_if(flags & trun::FIRST_FLAGS != 0)?;
@@ -423,7 +447,7 @@ fn fragment(
                 "Movie presentation reordering is unsupported",
             )?;
             require(duration > 0 && size > 0, "Movie sample is empty")?;
-            if sequence == 1 && result.samples == 0 && index == 0 {
+            if sequence == 1 && result.times.is_empty() {
                 require(
                     sample_flags & NON_SYNC_SAMPLE == 0,
                     "Movie starts without a random-access sample",
@@ -446,10 +470,9 @@ fn fragment(
                 .ok_or(MovieError::Invalid("Movie sample exceeds its data box"))?;
         }
         require(run.is_empty(), "Movie sample table has trailing data")?;
-        result.samples = result.samples.saturating_add(samples);
     }
     require(
-        result.samples > 0 && next == data.end,
+        !result.times.is_empty() && next == data.end,
         "Movie fragment data does not match its sample table",
     )?;
     Ok(result)
