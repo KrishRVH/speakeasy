@@ -51,7 +51,7 @@ impl Converter {
         }
     }
 
-    pub(super) fn frame(&self, input: &IMFSample) -> anyhow::Result<IMFSample> {
+    pub(super) fn frame(&mut self, input: &IMFSample) -> anyhow::Result<IMFSample> {
         unsafe { self.0.ProcessInput(0, input, 0)? };
         let sample = self
             .output()?
@@ -71,7 +71,7 @@ impl Converter {
         Ok(sample)
     }
 
-    pub(super) fn finish(&self) -> anyhow::Result<()> {
+    pub(super) fn finish(&mut self) -> anyhow::Result<()> {
         unsafe {
             self.0.ProcessMessage(MFT_MESSAGE_NOTIFY_END_OF_STREAM, 0)?;
             self.0.ProcessMessage(MFT_MESSAGE_COMMAND_DRAIN, 0)?;
@@ -83,7 +83,7 @@ impl Converter {
         Ok(())
     }
 
-    fn output(&self) -> anyhow::Result<Option<IMFSample>> {
+    fn output(&mut self) -> anyhow::Result<Option<IMFSample>> {
         let info = unsafe { self.0.GetOutputStreamInfo(0)? };
         let native_allocation = (MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0
             | MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES.0)

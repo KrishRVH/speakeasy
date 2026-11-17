@@ -22,7 +22,7 @@ use windows::{
 use super::{convert::Converter, file, foundation::Foundation};
 use crate::movie::encode::{self, Clock};
 
-const TICKS: u64 = 10_000_000;
+const TICKS_PER_SECOND: u64 = 10_000_000;
 const QUEUED_BYTES: u32 = 64 << 20;
 
 pub(crate) struct Codec {
@@ -59,15 +59,15 @@ impl encode::Codec for Codec {
             output.SetUINT32(&MF_MT_MPEG2_PROFILE, 100)?;
             output.SetUINT32(
                 &MF_MT_VIDEO_NOMINAL_RANGE,
-                u32::try_from(MFNominalRange_16_235.0)?,
+                MFNominalRange_16_235.0.cast_unsigned(),
             )?;
             output.SetUINT32(
                 &MF_MT_YUV_MATRIX,
-                u32::try_from(MFVideoTransferMatrix_BT709.0)?,
+                MFVideoTransferMatrix_BT709.0.cast_unsigned(),
             )?;
             let sink = Sink(MFCreateFMPEG4MediaSink(&stream.native, &output, None)?);
             let fragments: IMFAttributes = sink.0.cast()?;
-            fragments.SetUINT64(&MF_MPEG4SINK_MIN_FRAGMENT_DURATION, TICKS)?;
+            fragments.SetUINT64(&MF_MPEG4SINK_MIN_FRAGMENT_DURATION, TICKS_PER_SECOND)?;
             fragments.SetUINT32(&MF_MPEG4SINK_MAX_CODED_SEQUENCES_PER_FRAGMENT, 1)?;
             let mut attributes = None;
             MFCreateAttributes(&raw mut attributes, 3)?;
@@ -82,16 +82,16 @@ impl encode::Codec for Codec {
             input.SetUINT32(&MF_MT_ALL_SAMPLES_INDEPENDENT, 1)?;
             input.SetUINT32(
                 &MF_MT_VIDEO_NOMINAL_RANGE,
-                u32::try_from(MFNominalRange_0_255.0)?,
+                MFNominalRange_0_255.0.cast_unsigned(),
             )?;
             let format = media(&MFVideoFormat_NV12, size)?;
             format.SetUINT32(
                 &MF_MT_YUV_MATRIX,
-                u32::try_from(MFVideoTransferMatrix_BT709.0)?,
+                MFVideoTransferMatrix_BT709.0.cast_unsigned(),
             )?;
             format.SetUINT32(
                 &MF_MT_VIDEO_NOMINAL_RANGE,
-                u32::try_from(MFNominalRange_16_235.0)?,
+                MFNominalRange_16_235.0.cast_unsigned(),
             )?;
             let (converter, format) = Converter::new(&input, &format)?;
             writer.SetInputMediaType(0, &format, None)?;
@@ -114,15 +114,24 @@ impl encode::Codec for Codec {
         index: u32,
         _cancelled: &mut dyn FnMut() -> bool,
     ) -> anyhow::Result<bool> {
+        let mut statistics = MF_SINK_WRITER_STATISTICS {
+            cb: u32::try_from(size_of::<MF_SINK_WRITER_STATISTICS>())?,
+            ..MF_SINK_WRITER_STATISTICS::default()
+        };
+
+        unsafe { self.writer.GetStatistics(0, &raw mut statistics)? };
+        let bytes = u32::try_from(pixels.len())?;
+        ensure!(
+            statistics.dwByteCountQueued.saturating_add(bytes) <= QUEUED_BYTES,
+            "Video encoding cannot keep up; retained frames remain available"
+        );
         let at = Self::CLOCK.time(index);
         let through = Self::CLOCK.time(index.saturating_add(1));
-        submit(
-            &self.writer,
-            &self.converter,
-            pixels,
-            at,
-            through.saturating_sub(at),
-        )?;
+        let sample = self
+            .converter
+            .frame(&sample(pixels, at, through.saturating_sub(at))?)?;
+
+        unsafe { self.writer.WriteSample(0, &sample)? };
         Ok(true)
     }
 
@@ -134,37 +143,13 @@ impl encode::Codec for Codec {
         Ok(())
     }
 
-    fn finish(self) -> anyhow::Result<()> {
+    fn finish(mut self) -> anyhow::Result<()> {
         self.converter.finish()?;
 
         unsafe { self.writer.Finalize()? };
         self.stream.sync.sync_data()?;
         Ok(())
     }
-}
-
-fn submit(
-    writer: &IMFSinkWriter,
-    converter: &Converter,
-    pixels: &[u8],
-    at: Duration,
-    duration: Duration,
-) -> anyhow::Result<()> {
-    let mut statistics = MF_SINK_WRITER_STATISTICS {
-        cb: u32::try_from(size_of::<MF_SINK_WRITER_STATISTICS>())?,
-        ..MF_SINK_WRITER_STATISTICS::default()
-    };
-
-    unsafe { writer.GetStatistics(0, &raw mut statistics)? };
-    let bytes = u32::try_from(pixels.len())?;
-    ensure!(
-        statistics.dwByteCountQueued.saturating_add(bytes) <= QUEUED_BYTES,
-        "Video encoding cannot keep up; retained frames remain available"
-    );
-    let sample = converter.frame(&sample(pixels, at, duration)?)?;
-
-    unsafe { writer.WriteSample(0, &sample)? };
-    Ok(())
 }
 
 fn media(kind: &GUID, [width, height]: [u32; 2]) -> anyhow::Result<IMFMediaType> {
@@ -174,11 +159,11 @@ fn media(kind: &GUID, [width, height]: [u32; 2]) -> anyhow::Result<IMFMediaType>
         media.SetGUID(&MF_MT_SUBTYPE, kind)?;
         media.SetUINT32(
             &MF_MT_VIDEO_PRIMARIES,
-            u32::try_from(MFVideoPrimaries_BT709.0)?,
+            MFVideoPrimaries_BT709.0.cast_unsigned(),
         )?;
         media.SetUINT32(
             &MF_MT_TRANSFER_FUNCTION,
-            u32::try_from(MFVideoTransFunc_sRGB.0)?,
+            MFVideoTransFunc_sRGB.0.cast_unsigned(),
         )?;
         media.SetUINT64(
             &MF_MT_FRAME_SIZE,

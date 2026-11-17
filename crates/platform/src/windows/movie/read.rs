@@ -27,6 +27,21 @@ mod pixels;
 
 const STREAM: u32 = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0.cast_unsigned();
 
+const COLOR_FORMAT: [(GUID, u32); 3] = [
+    (
+        MF_MT_VIDEO_PRIMARIES,
+        MFVideoPrimaries_BT709.0.cast_unsigned(),
+    ),
+    (
+        MF_MT_TRANSFER_FUNCTION,
+        MFVideoTransFunc_sRGB.0.cast_unsigned(),
+    ),
+    (
+        MF_MT_VIDEO_NOMINAL_RANGE,
+        MFNominalRange_0_255.0.cast_unsigned(),
+    ),
+];
+
 pub(crate) fn frame(
     file: File,
     bytes: u64,
@@ -89,18 +104,9 @@ fn reader(stream: &file::ReadStream) -> anyhow::Result<IMFSourceReader> {
         let format = MFCreateMediaType()?;
         format.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
         format.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_RGB32)?;
-        format.SetUINT32(
-            &MF_MT_VIDEO_PRIMARIES,
-            u32::try_from(MFVideoPrimaries_BT709.0)?,
-        )?;
-        format.SetUINT32(
-            &MF_MT_TRANSFER_FUNCTION,
-            u32::try_from(MFVideoTransFunc_sRGB.0)?,
-        )?;
-        format.SetUINT32(
-            &MF_MT_VIDEO_NOMINAL_RANGE,
-            u32::try_from(MFNominalRange_0_255.0)?,
-        )?;
+        for (attribute, value) in &COLOR_FORMAT {
+            format.SetUINT32(attribute, *value)?;
+        }
         reader.SetCurrentMediaType(STREAM, None, &format)?;
         preserve_timestamps(&reader)?;
         Ok(reader)
@@ -143,14 +149,12 @@ fn format_stride(format: &IMFMediaType, expected: [u32; 2]) -> anyhow::Result<i3
             size == expected && format.GetGUID(&MF_MT_SUBTYPE)? == MFVideoFormat_RGB32,
             "Decoded video canvas differs from its validated container"
         );
-        ensure!(
-            format.GetUINT32(&MF_MT_VIDEO_PRIMARIES)? == u32::try_from(MFVideoPrimaries_BT709.0)?
-                && format.GetUINT32(&MF_MT_TRANSFER_FUNCTION)?
-                    == u32::try_from(MFVideoTransFunc_sRGB.0)?
-                && format.GetUINT32(&MF_MT_VIDEO_NOMINAL_RANGE)?
-                    == u32::try_from(MFNominalRange_0_255.0)?,
-            "Decoded video color format changed"
-        );
+        for (attribute, value) in &COLOR_FORMAT {
+            ensure!(
+                format.GetUINT32(attribute)? == *value,
+                "Decoded video color format changed"
+            );
+        }
         match format.GetUINT32(&MF_MT_DEFAULT_STRIDE) {
             Ok(stride) => Ok(stride.cast_signed()),
             Err(error) if error.code() == MF_E_ATTRIBUTENOTFOUND => Ok(
