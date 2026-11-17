@@ -3,7 +3,7 @@ use std::time::Duration;
 use gpui::{Bounds, Context, MouseButton, Pixels, canvas, div, prelude::*, px, relative, rgb};
 use speakeasy_show::{Moment, Span};
 
-use super::{Action, ImageState, Mode, Review, navigation::Stamp};
+use super::{Action, ImageState, Modality, Mode, Review, navigation::Stamp};
 use crate::{
     controls::CORNER,
     gpui_ext::EntityUpdate as _,
@@ -44,7 +44,7 @@ impl Review {
                     .cursor_pointer()
                     .focusable()
                     .tab_stop(true)
-                    .when(self.keyboard, |track| {
+                    .when(self.modality == Modality::Keyboard, |track| {
                         let lamp = palette.lamp;
                         track.focus(move |style| style.border_color(rgb(lamp)))
                     })

@@ -61,19 +61,21 @@ fn refresh_preserves_the_explicit_path_but_never_substitutes_for_a_deleted_show(
 fn the_more_menu_opens_once_per_press_and_keyboard_skips_unavailable_actions() {
     use menu::Menu;
     let enabled = [false, true, false, true];
-    let open = Menu::Closed.pressed(false, &enabled);
+    let open = Menu::Closed.pressed(Modality::Pointer, &enabled);
     assert_eq!(open, Menu::Open(None));
     assert_eq!(
-        open.dismissed().pressed(false, &enabled),
+        open.dismissed().pressed(Modality::Pointer, &enabled),
         Menu::Closed,
         "Pressing the trigger of an open menu reopened it"
     );
     assert_eq!(
-        open.dismissed().pointer().pressed(false, &enabled),
+        open.dismissed()
+            .pointer()
+            .pressed(Modality::Pointer, &enabled),
         Menu::Open(None),
         "A later press on the trigger did not open a menu dismissed elsewhere"
     );
-    let keyed = Menu::Dismissed.pressed(true, &enabled);
+    let keyed = Menu::Dismissed.pressed(Modality::Keyboard, &enabled);
     assert_eq!(keyed, Menu::Open(Some(1)));
     let (down, up) = (Direction::Forward, Direction::Back);
     assert_eq!(keyed.step(&enabled, down), Menu::Open(Some(3)));

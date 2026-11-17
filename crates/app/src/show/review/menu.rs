@@ -3,7 +3,7 @@ use gpui::{
     px,
 };
 
-use super::{Action, CopyKind, Direction, ExportKind, ImageState, Review, render::id};
+use super::{Action, CopyKind, Direction, ExportKind, ImageState, Modality, Review, render::id};
 use crate::{
     controls::{CORNER, DISABLED, HEIGHT, Kit, popover},
     gpui_ext::AriaDisabled as _,
@@ -19,13 +19,13 @@ pub(super) enum Menu {
 }
 
 impl Menu {
-    pub(super) fn pressed(self, keyboard: bool, enabled: &[bool]) -> Self {
-        match (self, keyboard) {
-            (Self::Open(_), _) | (Self::Dismissed, false) => Self::Closed,
-            (Self::Closed | Self::Dismissed, true) => {
+    pub(super) fn pressed(self, modality: Modality, enabled: &[bool]) -> Self {
+        match (self, modality) {
+            (Self::Open(_), _) | (Self::Dismissed, Modality::Pointer) => Self::Closed,
+            (Self::Closed | Self::Dismissed, Modality::Keyboard) => {
                 Self::Open(None).step(enabled, Direction::Forward)
             },
-            (Self::Closed, false) => Self::Open(None),
+            (Self::Closed, Modality::Pointer) => Self::Open(None),
         }
     }
 
@@ -154,8 +154,12 @@ impl Review {
     }
 
     fn toggle_menu(&mut self, event: &ClickEvent, _: &mut Window, cx: &mut Context<'_, Self>) {
-        let enabled = self.enabled_items(cx);
-        self.menu = self.menu.pressed(event.is_keyboard(), &enabled);
+        let modality = if event.is_keyboard() {
+            Modality::Keyboard
+        } else {
+            Modality::Pointer
+        };
+        self.menu = self.menu.pressed(modality, &self.enabled_items(cx));
         cx.notify();
     }
 
@@ -164,7 +168,7 @@ impl Review {
         kit.menu("shows-more-menu", "More actions")
             .role(gpui::Role::Menu)
             .capture_any_mouse_down(cx.listener(|view, _: &MouseDownEvent, _, cx| {
-                view.modality(false, cx);
+                view.set_modality(Modality::Pointer, cx);
             }))
             .on_mouse_down_out(cx.listener(|view, _: &MouseDownEvent, _, cx| {
                 view.menu = view.menu.dismissed();

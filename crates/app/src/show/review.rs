@@ -163,7 +163,7 @@ pub(crate) struct Review {
     checking: Option<Task<()>>,
     write: Option<Write>,
     confirm: Option<Confirm>,
-    keyboard: bool,
+    modality: Modality,
     menu: menu::Menu,
     visibility: Option<Task<()>>,
     _updates: Task<()>,
@@ -243,7 +243,7 @@ impl Review {
             checking: None,
             write: None,
             confirm: None,
-            keyboard: false,
+            modality: Modality::Pointer,
             menu: menu::Menu::Closed,
             visibility: None,
             _updates: follow(
@@ -979,6 +979,12 @@ impl CopyKind {
 enum Direction {
     Back,
     Forward,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Modality {
+    Pointer,
+    Keyboard,
 }
 
 #[derive(Clone, Copy)]

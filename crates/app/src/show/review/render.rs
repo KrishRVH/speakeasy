@@ -7,8 +7,8 @@ use gpui::{
 use speakeasy_show::NarrationLoss;
 
 use super::{
-    Action, Confirm, CopyKind, Direction, Export, ExportKind, ImageState, Kind, Mode, Pane, Review,
-    Source, Write, discard_warning,
+    Action, Confirm, CopyKind, Direction, Export, ExportKind, ImageState, Kind, Modality, Mode,
+    Pane, Review, Source, Write, discard_warning,
     library::{Detail, Key, Row},
     narration::{self, Narration},
     navigation::{Origin, Stamp},
@@ -48,7 +48,7 @@ const HEADING_TEXT: Pixels = px(16.0);
 impl Render for Review {
     fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let palette = self.theme.palette();
-        let kit = Kit::new(palette).keyboard(self.keyboard);
+        let kit = Kit::new(palette).keyboard(self.modality == Modality::Keyboard);
         let now = SystemTime::now();
         let content = match self.library.selected() {
             Some(key) => self.detail_pane(key, kit, palette, now, cx),
@@ -63,11 +63,11 @@ impl Render for Review {
             .flex()
             .flex_col()
             .capture_key_down(cx.listener(|view, _: &KeyDownEvent, _, cx| {
-                view.modality(true, cx);
+                view.set_modality(Modality::Keyboard, cx);
             }))
             .capture_any_mouse_down(cx.listener(|view, _: &MouseDownEvent, _, cx| {
                 view.menu = view.menu.pointer();
-                view.modality(false, cx);
+                view.set_modality(Modality::Pointer, cx);
             }))
             .capture_key_up(cx.listener(Self::menu_key_up))
             .on_key_down(cx.listener(Self::key_down))
@@ -97,9 +97,9 @@ impl Render for Review {
 }
 
 impl Review {
-    pub(super) fn modality(&mut self, keyboard: bool, cx: &mut Context<'_, Self>) {
-        if self.keyboard != keyboard {
-            self.keyboard = keyboard;
+    pub(super) fn set_modality(&mut self, modality: Modality, cx: &mut Context<'_, Self>) {
+        if self.modality != modality {
+            self.modality = modality;
             cx.notify();
         }
     }
