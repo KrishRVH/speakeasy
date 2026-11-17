@@ -3,10 +3,9 @@ use std::{io, path::Path, time::SystemTime};
 use serde::Serialize;
 use speakeasy_show::{Ending, Moment, NarrationLoss};
 
-use super::recall::Entry;
 use crate::show::{
     evidence::{self, Inspection, Problem},
-    store::retention::Retention,
+    store::{recall::Entry, retention::Retention},
 };
 
 pub(super) fn json(value: &impl Serialize, out: &mut impl io::Write) -> io::Result<()> {

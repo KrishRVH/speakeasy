@@ -1,3 +1,5 @@
+use std::ffi::OsString;
+
 use super::*;
 
 #[test]

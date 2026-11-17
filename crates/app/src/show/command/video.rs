@@ -8,8 +8,11 @@ use std::{
 use anyhow::Context as _;
 use speakeasy_show::Span;
 
-use super::{AROUND, output, query::Query};
-use crate::show::store::{recall, video};
+use super::{AROUND, output};
+use crate::show::{
+    evidence::query::Query,
+    store::{recall, video},
+};
 
 #[derive(PartialEq, Eq)]
 pub(crate) struct Request {

@@ -14,11 +14,11 @@ use speakeasy_show::{
     locate::{self, Evidence},
 };
 
-use super::{
-    AROUND,
-    query::{self, Query},
+use super::AROUND;
+use crate::show::{
+    evidence::query::{self, Query},
+    store::{recall, source},
 };
-use crate::show::store::{recall, source};
 
 #[derive(PartialEq, Eq)]
 pub(crate) struct Request {
