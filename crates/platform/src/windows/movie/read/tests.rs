@@ -1,4 +1,8 @@
-use std::{fs::OpenOptions, os::windows::fs::OpenOptionsExt as _, path::PathBuf};
+use std::{
+    fs::OpenOptions,
+    os::windows::fs::OpenOptionsExt as _,
+    path::{Path, PathBuf},
+};
 
 use super::*;
 
@@ -26,20 +30,10 @@ fn video_media_types_may_omit_the_default_stride() -> anyhow::Result<()> {
 
 #[test]
 #[ignore = "Opt in: native decoder; set SPEAKEASY_MOVIE_READ_DIRECTORY to the validated synthetic movie prefixes"]
-fn recovered_movie_seeks_preserve_pixels_time_and_file_ownership() -> anyhow::Result<()> {
-    let directory = PathBuf::from(
-        std::env::var_os("SPEAKEASY_MOVIE_READ_DIRECTORY")
-            .context("Choose the synthetic movie prefix directory")?,
-    );
-    for name in ["moving.mp4", "held.mp4", "capped-closed.mp4"] {
-        let path = directory.join(name);
-        let decode = |ms, cancelled: &dyn Fn() -> bool| {
-            let mut file = File::open(&path)?;
-            let prefix = crate::movie::tests::prefix(&mut file)?;
-            crate::read_movie_frame(file, &prefix, Duration::from_millis(ms), cancelled)
-        };
+fn recovered_movie_seeks_return_the_latest_opaque_frame_with_its_own_time() -> anyhow::Result<()> {
+    for path in prefixes()? {
         for ms in [3500, 0, 1505, 3999] {
-            let frame = decode(ms, &|| false)?.context("Synthetic read was cancelled")?;
+            let frame = seek(&path, ms, &|| false)?.context("Synthetic read was cancelled")?;
             assert!(frame.at <= Duration::from_millis(ms));
             assert!(Duration::from_millis(ms).saturating_sub(frame.at) < Duration::from_millis(34));
             if ms == 1505 {
@@ -59,10 +53,18 @@ fn recovered_movie_seeks_preserve_pixels_time_and_file_ownership() -> anyhow::Re
                     .iter()
                     .all(|pixel| pixel[3] == 255)
             );
-            if name == "moving.mp4" && ms == 0 {
+            if path.ends_with("moving.mp4") && ms == 0 {
                 check_orientation(frame.image.pixels());
             }
         }
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "Opt in: native decoder; set SPEAKEASY_MOVIE_READ_DIRECTORY to the validated synthetic movie prefixes"]
+fn recovered_movie_seeks_stop_mid_decode_and_release_their_file() -> anyhow::Result<()> {
+    for path in prefixes()? {
         #[expect(
             clippy::disallowed_types,
             reason = "The injected Fn cancellation query needs a local call counter to interrupt decoding after samples have been read"
@@ -72,12 +74,26 @@ fn recovered_movie_seeks_preserve_pixels_time_and_file_ownership() -> anyhow::Re
             checks.set(checks.get() + 1);
             checks.get() >= 5
         };
-        assert!(decode(3500, &cancel)?.is_none());
+        assert!(seek(&path, 3500, &cancel)?.is_none());
         assert!(checks.get() >= 5);
         let exclusive = OpenOptions::new().read(true).share_mode(0).open(&path)?;
         drop(exclusive);
     }
     Ok(())
+}
+
+fn prefixes() -> anyhow::Result<[PathBuf; 3]> {
+    let directory = PathBuf::from(
+        std::env::var_os("SPEAKEASY_MOVIE_READ_DIRECTORY")
+            .context("Choose the synthetic movie prefix directory")?,
+    );
+    Ok(["moving.mp4", "held.mp4", "capped-closed.mp4"].map(|name| directory.join(name)))
+}
+
+fn seek(path: &Path, ms: u64, cancelled: &dyn Fn() -> bool) -> anyhow::Result<Option<MovieFrame>> {
+    let mut file = File::open(path)?;
+    let prefix = crate::movie::tests::prefix(&mut file)?;
+    crate::read_movie_frame(file, &prefix, Duration::from_millis(ms), cancelled)
 }
 
 fn check_orientation(pixels: &[u8]) {
