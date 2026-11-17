@@ -66,7 +66,7 @@ fn narration_lands_where_it_was_spoken_on_the_show_timeline() {
     let request = session.request(&mut log).unwrap();
     assert_eq!(
         session.heard(
-            request.ticket,
+            request.ticket(),
             Transcript::Words(vec![Duration::from_millis(300)])
         ),
         None

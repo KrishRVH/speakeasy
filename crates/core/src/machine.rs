@@ -20,7 +20,7 @@ use std::ops::ControlFlow;
 use self::session::{Purpose, Session};
 pub use self::{
     outcome::{Failure, Notice, Outcome, Refusal},
-    recognition::{Detail, Part, Partition, Request, Source, Ticket, Transcript},
+    recognition::{Detail, Part, Partition, Request, Ticket, Transcript},
     session::{Kept, Origin, Publication, Recognized, Release, Reopened, Sealed},
 };
 use crate::gesture::{Action, Gesture, Moment, State, Timing};
@@ -532,7 +532,7 @@ impl Worker {
             return;
         }
         if let Some(request) = session.request(env) {
-            *self = Self::Transcribing(request.ticket);
+            *self = Self::Transcribing(request.ticket());
             env.transcribe(request, config);
         }
     }

@@ -1,7 +1,7 @@
 use std::{future::pending, iter, mem, time::Duration};
 
 use anyhow::{anyhow, ensure};
-use speakeasy_core::machine::{Completion, Detail, Request, Source, Ticket, Transcript};
+use speakeasy_core::machine::{Completion, Detail, Request, Ticket, Transcript};
 use speakeasy_show::Narration;
 use tokio::{
     sync::watch,
@@ -128,36 +128,47 @@ impl<W: Speech> Worker<W> {
                 return;
             },
         };
-        let language = match &request.source {
-            Source::Audio(clip) => clip.language.as_deref(),
-            Source::Live(_) => None,
+        let ticket = request.ticket();
+        let language = match &request {
+            Request::Stream { .. } => None,
+            Request::Piece { audio, .. } | Request::Final { audio, .. } => {
+                audio.language.as_deref()
+            },
         }
         .unwrap_or(&config.language)
         .to_owned();
         let engine = config.engine;
-        let wanted = match request.detail {
-            Detail::Text => Wanted::Text,
-            Detail::Words => Wanted::Words(Cleanup {
+        let wanted = match request {
+            Request::Final {
+                detail: Detail::Words,
+                ..
+            } => Wanted::Words(Cleanup {
                 fillers: config.fillers(&language),
                 corrections: config.vocabulary.clone(),
             }),
+            Request::Stream { .. }
+            | Request::Piece { .. }
+            | Request::Final {
+                detail: Detail::Text,
+                ..
+            } => Wanted::Text,
         };
         let terms = config.recognition_terms.clone();
         self.state = State::Transcribing {
-            ticket: request.ticket,
+            ticket,
             job: Job::spawn(|mut cancelled| async move {
                 let heard = async {
-                    match request.source {
-                        Source::Audio(clip) => {
-                            transcript_of(&mut worker, clip, &language, engine, wanted, &terms)
-                                .await
-                                .map(Transcription::Heard)
-                        },
-                        Source::Live(audio) => {
+                    match request {
+                        Request::Stream { audio, .. } => {
                             let text = worker.transcribe_stream(audio, &language, &terms).await?;
                             Ok(text
                                 .map(|text| Transcript::Text(Zeroizing::new(text)))
                                 .map_or(Transcription::Abandoned, Transcription::Heard))
+                        },
+                        Request::Piece { audio: clip, .. } | Request::Final { audio: clip, .. } => {
+                            transcript_of(&mut worker, clip, &language, engine, wanted, &terms)
+                                .await
+                                .map(Transcription::Heard)
                         },
                     }
                 };

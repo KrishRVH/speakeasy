@@ -28,16 +28,35 @@ pub enum Transcript<P: Payload> {
 }
 
 #[cfg_attr(test, derive(Clone, Debug))]
-pub struct Request<P: Payload> {
-    pub ticket: Ticket,
-    pub source: Source<P>,
-    pub detail: Detail,
+pub enum Request<P: Payload> {
+    Stream {
+        session: SessionId,
+        audio: P::Live,
+    },
+    Piece {
+        session: SessionId,
+        number: u32,
+        audio: P::Audio,
+    },
+    Final {
+        session: SessionId,
+        audio: P::Audio,
+        detail: Detail,
+    },
 }
 
-#[cfg_attr(test, derive(Clone, Debug))]
-pub enum Source<P: Payload> {
-    Audio(P::Audio),
-    Live(P::Live),
+impl<P: Payload> Request<P> {
+    #[must_use]
+    pub const fn ticket(&self) -> Ticket {
+        let (session, part) = match *self {
+            Self::Stream { session, .. } => (session, Part::Stream),
+            Self::Piece {
+                session, number, ..
+            } => (session, Part::Piece(number)),
+            Self::Final { session, .. } => (session, Part::Final),
+        };
+        Ticket { session, part }
+    }
 }
 
 #[cfg_attr(test, derive(Clone, Debug))]
@@ -175,15 +194,10 @@ impl<P: Payload> Recognition<P> {
         cut: impl FnOnce(&P::Audio, &P::Range) -> Option<P::Audio>,
     ) -> Option<Request<P>> {
         let session = self.id;
-        let early = |part, source| Request {
-            ticket: Ticket { session, part },
-            source,
-            detail: Detail::Text,
-        };
         if let Early::Streaming(stream) = &mut self.early {
             return stream
                 .send()
-                .map(|audio| early(Part::Stream, Source::Live(audio)));
+                .map(|audio| Request::Stream { session, audio });
         }
         if let Early::Segmented(pieces) = &mut self.early
             && let Some((index, piece)) = pieces
@@ -192,9 +206,11 @@ impl<P: Payload> Recognition<P> {
                 .find(|(_, piece)| !matches!(piece, Job::Heard(_)))
         {
             let number = u32::try_from(index).ok()?;
-            return piece
-                .send()
-                .map(|audio| early(Part::Piece(number), Source::Audio(audio)));
+            return piece.send().map(|audio| Request::Piece {
+                session,
+                number,
+                audio,
+            });
         }
         let final_part = self
             .final_part
@@ -214,12 +230,9 @@ impl<P: Payload> Recognition<P> {
             Audio::Whole => final_part.audio.clone(),
         };
         final_part.progress = Progress::Sent;
-        Some(Request {
-            ticket: Ticket {
-                session,
-                part: Part::Final,
-            },
-            source: Source::Audio(audio),
+        Some(Request::Final {
+            session,
+            audio,
             detail: final_part.detail,
         })
     }
@@ -355,7 +368,7 @@ impl<P: Payload> Recognition<P> {
 }
 
 #[cfg(not(test))]
-redacted!(Transcript, Request, Source, Partition);
+redacted!(Transcript, Request, Partition);
 
 #[cfg(test)]
 mod tests;
