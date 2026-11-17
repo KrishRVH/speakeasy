@@ -272,30 +272,39 @@ struct Cue {
 }
 
 impl Cue {
-    const ALL: [(&'static str, f32, bool); 10] = [
-        ("now", 58.0, true),
-        ("here", 56.0, true),
-        ("look", 58.0, true),
-        ("watch", 58.0, true),
-        ("see", 44.0, false),
-        ("there", 44.0, false),
-        ("this", 44.0, false),
-        ("these", 44.0, false),
-        ("that", 42.0, false),
-        ("those", 42.0, false),
+    const ALL: [Self; 10] = [
+        Self::deliberate("now", 58.0),
+        Self::deliberate("here", 56.0),
+        Self::deliberate("look", 58.0),
+        Self::deliberate("watch", 58.0),
+        Self::incidental("see", 44.0),
+        Self::incidental("there", 44.0),
+        Self::incidental("this", 44.0),
+        Self::incidental("these", 44.0),
+        Self::incidental("that", 42.0),
+        Self::incidental("those", 42.0),
     ];
+
+    const fn deliberate(word: &'static str, score: f32) -> Self {
+        Self {
+            word,
+            score,
+            deliberate: true,
+        }
+    }
+
+    const fn incidental(word: &'static str, score: f32) -> Self {
+        Self {
+            word,
+            score,
+            deliberate: false,
+        }
+    }
 
     fn of(text: &str) -> Option<Self> {
         let word = text
             .trim_matches(|character: char| !character.is_alphanumeric())
             .to_lowercase();
-        Self::ALL
-            .into_iter()
-            .find(|(cue, ..)| *cue == word)
-            .map(|(word, score, deliberate)| Self {
-                word,
-                score,
-                deliberate,
-            })
+        Self::ALL.into_iter().find(|cue| cue.word == word)
     }
 }
