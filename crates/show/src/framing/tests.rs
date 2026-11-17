@@ -1,7 +1,7 @@
 use proptest::prelude::*;
 
 use super::*;
-use crate::{Reason, recording::spaces};
+use crate::{Keyframe, Reason, recording::spaces};
 
 mod corpus;
 mod windows;
@@ -11,16 +11,19 @@ const SCREEN: Size = Size {
     height: 900.0,
 };
 
-fn keyframe(index: usize, at: u64) -> Keyframe {
-    Keyframe {
-        index,
-        at: Moment::from_millis(at),
-        reason: Reason::Middle,
-        event: String::new(),
-        said: None,
-        marks: 0..0,
-        action: None,
-        crop: None,
+fn shot(index: usize, at: u64) -> Shot {
+    Shot {
+        keyframe: Keyframe {
+            index,
+            at: Moment::from_millis(at),
+            reason: Reason::Middle,
+            event: String::new(),
+            said: None,
+            marks: 0..0,
+            action: None,
+            crop: None,
+        },
+        plan: None,
     }
 }
 
@@ -39,14 +42,12 @@ fn clicked(surface: Size, clicks: &[(u64, Point)]) -> Recording {
     }
 }
 
-fn crops(
-    recording: &Recording,
-    keyframes: &[Keyframe],
-    changes: &[Vec<Rect>],
-) -> Vec<Option<Rect>> {
-    plan(recording, keyframes, &[], changes, &[])
+fn crops(recording: &Recording, shots: &[Shot], changes: &[Vec<Rect>]) -> Vec<Option<Rect>> {
+    let mut shots = shots.to_vec();
+    plan(recording, &mut shots, &[], changes, &[]);
+    shots
         .into_iter()
-        .map(|plan| plan.map(|plan| plan.crop))
+        .map(|shot| shot.plan.map(|plan| plan.crop))
         .collect()
 }
 
@@ -69,13 +70,13 @@ fn within(outer: Rect, inner: Rect) -> bool {
 fn a_keyframe_without_activity_keeps_the_view_nearest_before_it() {
     let (first, second) = (Point::new(0.2, 0.25), Point::new(0.85, 0.8));
     let recording = clicked(SCREEN, &[(20_000, first), (60_000, second)]);
-    let keyframes = [
-        keyframe(1, 0),
-        keyframe(2, 20_000),
-        keyframe(3, 40_000),
-        keyframe(4, 60_000),
+    let shots = [
+        shot(1, 0),
+        shot(2, 20_000),
+        shot(3, 40_000),
+        shot(4, 60_000),
     ];
-    let crops = crops(&recording, &keyframes, &[]);
+    let crops = crops(&recording, &shots, &[]);
     let [Some(opening), Some(near), Some(talk), Some(far)] = crops[..] else {
         panic!("Every keyframe is cropped: {crops:?}");
     };
@@ -89,12 +90,12 @@ fn a_keyframe_without_activity_keeps_the_view_nearest_before_it() {
 fn a_change_away_from_the_input_does_not_widen_the_view() {
     let click = Point::new(0.2, 0.25);
     let recording = clicked(SCREEN, &[(10_000, click)]);
-    let keyframes = [keyframe(1, 10_000), keyframe(2, 40_000)];
+    let shots = [shot(1, 10_000), shot(2, 40_000)];
     let opened = Rect::from([0.15, 0.2, 0.32, 0.4]);
     let ticking = Rect::from([0.9, 0.0, 0.98, 0.03]);
     let panel = Rect::from([0.6, 0.6, 0.9, 0.9]);
     let changes = [vec![opened, ticking], vec![panel]];
-    let crops = crops(&recording, &keyframes, &changes);
+    let crops = crops(&recording, &shots, &changes);
     let [Some(working), Some(elsewhere)] = crops[..] else {
         panic!("Both keyframes are cropped: {crops:?}");
     };
@@ -108,13 +109,13 @@ fn a_change_away_from_the_input_does_not_widen_the_view() {
 
 #[test]
 fn a_keyframe_with_nothing_to_frame_keeps_the_whole_screen() {
-    let keyframes = [keyframe(1, 0), keyframe(2, 30_000)];
-    assert_eq!(crops(&clicked(SCREEN, &[]), &keyframes, &[]), [None, None]);
+    let shots = [shot(1, 0), shot(2, 30_000)];
+    assert_eq!(crops(&clicked(SCREEN, &[]), &shots, &[]), [None, None]);
     let everywhere = clicked(
         SCREEN,
         &[(0, Point::new(0.0, 0.0)), (0, Point::new(1.0, 1.0))],
     );
-    assert_eq!(crops(&everywhere, &keyframes[..1], &[]), [None]);
+    assert_eq!(crops(&everywhere, &shots[..1], &[]), [None]);
 }
 
 proptest! {
@@ -130,13 +131,13 @@ proptest! {
             .zip((0_u64..).step_by(5_000))
             .map(|((x, y), at)| (at, Point::new(x, y)))
             .collect();
-        let keyframes: Vec<Keyframe> = clicks
+        let shots: Vec<Shot> = clicks
             .iter()
             .zip(1..)
-            .map(|(&(at, _), index)| keyframe(index, at))
+            .map(|(&(at, _), index)| shot(index, at))
             .collect();
-        let crops = crops(&clicked(surface, &clicks), &keyframes, &[]);
-        prop_assert_eq!(crops.len(), keyframes.len());
+        let crops = crops(&clicked(surface, &clicks), &shots, &[]);
+        prop_assert_eq!(crops.len(), shots.len());
         for (crop, &(_, point)) in crops.into_iter().zip(&clicks) {
             let Some(crop) = crop else { continue };
             prop_assert!(spaces::valid(crop), "{:?}", crop);

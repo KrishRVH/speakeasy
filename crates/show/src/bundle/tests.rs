@@ -495,19 +495,21 @@ fn debugging_a_file_never_prints_its_contents() {
 fn a_failed_frame_stops_loading_before_the_next_sheet() {
     let selection = Selection {
         marks: Vec::new(),
-        keyframes: (1..=13)
-            .map(|index| Keyframe {
-                index,
-                at: Moment::from_millis(index as u64),
-                reason: Reason::Middle,
-                event: String::new(),
-                said: None,
-                marks: 0..0,
-                action: None,
-                crop: None,
+        shots: (1..=13)
+            .map(|index| Shot {
+                keyframe: Keyframe {
+                    index,
+                    at: Moment::from_millis(index as u64),
+                    reason: Reason::Middle,
+                    event: String::new(),
+                    said: None,
+                    marks: 0..0,
+                    action: None,
+                    crop: None,
+                },
+                plan: None,
             })
             .collect(),
-        plans: Vec::new(),
     };
     let result = compose(
         Recording::default(),
@@ -556,7 +558,7 @@ fn contact_sheets_cover_every_frame_once_in_readable_pages() {
             })
             .collect();
         let selection = select(&recording, &samples).unwrap();
-        assert_eq!(selection.keyframes.len(), count);
+        assert_eq!(selection.shots.len(), count);
         let colors: Vec<[u8; 3]> = (0..count)
             .map(|index| [40 + u8::try_from(index).unwrap() * 10, 90, 150])
             .collect();

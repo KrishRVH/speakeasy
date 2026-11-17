@@ -96,8 +96,13 @@ impl fmt::Debug for Keyframe {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Selection {
     pub(crate) marks: Vec<Mark>,
-    pub(crate) keyframes: Vec<Keyframe>,
-    pub(crate) plans: Vec<Option<Plan>>,
+    pub(crate) shots: Vec<Shot>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Shot {
+    pub(crate) keyframe: Keyframe,
+    pub(crate) plan: Option<Plan>,
 }
 
 #[must_use]
@@ -160,26 +165,25 @@ fn select_within(recording: &Recording, samples: &[Sample], most: usize) -> Opti
         .iter()
         .map(|candidate| candidate.anchor(&frames))
         .collect();
-    let keyframes: Vec<Keyframe> = chosen
+    let shots: Vec<Shot> = chosen
         .into_iter()
         .zip(align::align(&anchors, recording.narration.words()))
         .enumerate()
-        .map(|(position, (candidate, said))| Keyframe {
-            index: position.saturating_add(1),
-            at: frames.at(candidate.frame),
-            reason: candidate.basis.reason(),
-            event: describe::event(&candidate.basis, &marks),
-            said,
-            marks: candidate.basis.marks(),
-            action: candidate.basis.action(),
-            crop: None,
+        .map(|(position, (candidate, said))| Shot {
+            keyframe: Keyframe {
+                index: position.saturating_add(1),
+                at: frames.at(candidate.frame),
+                reason: candidate.basis.reason(),
+                event: describe::event(&candidate.basis, &marks),
+                said,
+                marks: candidate.basis.marks(),
+                action: candidate.basis.action(),
+                crop: None,
+            },
+            plan: None,
         })
         .collect();
-    (!keyframes.is_empty()).then_some(Selection {
-        marks,
-        keyframes,
-        plans: Vec::new(),
-    })
+    (!shots.is_empty()).then_some(Selection { marks, shots })
 }
 
 struct Candidate {

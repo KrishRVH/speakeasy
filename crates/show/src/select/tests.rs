@@ -63,33 +63,33 @@ fn recording(strokes: Vec<Stroke>, actions: Vec<Action>, narration: Narration) -
 
 fn times(selection: &Selection) -> Vec<u64> {
     selection
-        .keyframes
+        .shots
         .iter()
-        .map(|keyframe| keyframe.at.as_millis())
+        .map(|shot| shot.keyframe.at.as_millis())
         .collect()
 }
 
 fn said(selection: &Selection) -> Vec<Option<&str>> {
     selection
-        .keyframes
+        .shots
         .iter()
-        .map(|keyframe| keyframe.said.as_deref())
+        .map(|shot| shot.keyframe.said.as_deref())
         .collect()
 }
 
 fn marked(selection: &Selection) -> Vec<Range<usize>> {
     selection
-        .keyframes
+        .shots
         .iter()
-        .map(|keyframe| keyframe.marks.clone())
+        .map(|shot| shot.keyframe.marks.clone())
         .collect()
 }
 
 fn reported(selection: &Selection) -> Vec<Option<Action>> {
     selection
-        .keyframes
+        .shots
         .iter()
-        .map(|keyframe| keyframe.action)
+        .map(|shot| shot.keyframe.action)
         .collect()
 }
 
@@ -106,9 +106,9 @@ fn later_actions_survive_a_full_first_sheet() {
     for action in actions {
         assert!(
             shown
-                .keyframes
+                .shots
                 .iter()
-                .any(|frame| frame.action == Some(action)),
+                .any(|shot| shot.keyframe.action == Some(action)),
             "Missing action at {}",
             action.span().end()
         );
@@ -153,7 +153,7 @@ fn a_crowded_show_keeps_its_most_keyframes_spread_out() {
         _ => 128,
     });
     let shown = select(&crowded, &still).unwrap();
-    assert_eq!(shown.keyframes.len(), MOST_KEYFRAMES);
+    assert_eq!(shown.shots.len(), MOST_KEYFRAMES);
     for frames in [&still, &switching] {
         for most in [12, 24, MOST_KEYFRAMES] {
             let at = times(&select_within(&crowded, frames, most).unwrap());
@@ -207,10 +207,10 @@ fn marks_on_one_screen_share_a_keyframe() {
     )
     .unwrap();
     assert_eq!(times(&shown), [1_000, 4_000]);
-    assert_eq!(shown.keyframes[0].reason, Reason::Click);
-    assert_eq!(shown.keyframes[1].reason, Reason::Mark);
-    assert_eq!(shown.keyframes[1].marks, 0..2);
-    assert_eq!(shown.keyframes[1].file(), "frames/frame-02.png");
+    assert_eq!(shown.shots[0].keyframe.reason, Reason::Click);
+    assert_eq!(shown.shots[1].keyframe.reason, Reason::Mark);
+    assert_eq!(shown.shots[1].keyframe.marks, 0..2);
+    assert_eq!(shown.shots[1].keyframe.file(), "frames/frame-02.png");
 }
 
 #[test]
@@ -226,9 +226,9 @@ fn marks_group_only_while_they_share_a_screen() {
         &frames,
     )
     .unwrap();
-    assert_eq!(shown.keyframes.len(), 7);
+    assert_eq!(shown.shots.len(), 7);
     assert_eq!(marked(&shown), [0..1, 1..2, 2..3, 3..4, 4..6, 6..7, 7..8]);
-    assert_eq!(shown.keyframes[4].at.as_millis(), 11_000);
+    assert_eq!(shown.shots[4].keyframe.at.as_millis(), 11_000);
 
     let still = samples(1_000, 50_000, |_| 128);
     let strokes = [2_000, 9_000, 20_000, 33_000, 40_000].map(dab).to_vec();
@@ -251,7 +251,7 @@ fn a_scene_change_shows_the_settled_view() {
     ];
     let shown = select(&Recording::default(), &frames).unwrap();
     assert_eq!(times(&shown), [1_500]);
-    assert_eq!(shown.keyframes[0].reason, Reason::SceneChange);
+    assert_eq!(shown.shots[0].keyframe.reason, Reason::SceneChange);
 }
 
 #[test]
@@ -279,7 +279,7 @@ fn a_click_shows_the_screen_once_its_change_settles() {
         .collect();
     let shown = select(&clicked, &dialog).unwrap();
     assert_eq!(times(&shown), [1_200]);
-    assert_eq!(shown.keyframes[0].reason, Reason::Click);
+    assert_eq!(shown.shots[0].keyframe.reason, Reason::Click);
     assert_eq!(reported(&shown), [Some(click(1_000))]);
 }
 
@@ -375,7 +375,7 @@ fn double_clicks_merge_and_keyframes_keep_apart() {
     )
     .unwrap();
     assert_eq!(times(&shown), [1_250, 2_500]);
-    assert_eq!(shown.keyframes[0].event, "clicked (x 0.50, y 0.50)");
+    assert_eq!(shown.shots[0].keyframe.event, "clicked (x 0.50, y 0.50)");
 
     let sparse = samples(2_000, 4_000, |_| 128);
     let actions = vec![click(1_000), click(1_800)];
@@ -421,15 +421,15 @@ fn spoken_cues_never_repeat_an_unchanged_screen() {
         (3_400, "stuck."),
     ]);
     let shown = select(&recording(Vec::new(), Vec::new(), narration), &still).unwrap();
-    assert_eq!(shown.keyframes.len(), 1);
-    assert_eq!(shown.keyframes[0].reason, Reason::Cue);
+    assert_eq!(shown.shots.len(), 1);
+    assert_eq!(shown.shots[0].keyframe.reason, Reason::Cue);
     assert_eq!(said(&shown), [Some("Look at this. Now it's stuck.")]);
 
     let changed = samples(250, 5_000, |at| if at < 1_000 { 40 } else { 90 });
     let narration = words(&[(3_500, "Look"), (3_700, "here.")]);
     let shown = select(&recording(Vec::new(), Vec::new(), narration), &changed).unwrap();
-    assert_eq!(shown.keyframes.len(), 1);
-    assert_eq!(shown.keyframes[0].reason, Reason::SceneChange);
+    assert_eq!(shown.shots.len(), 1);
+    assert_eq!(shown.shots[0].keyframe.reason, Reason::SceneChange);
 }
 
 #[test]
@@ -445,9 +445,9 @@ fn a_spoken_cue_finds_the_change_it_points_at() {
     ]);
     let shown = select(&recording(Vec::new(), vec![click(500)], narration), &frames).unwrap();
     assert_eq!(times(&shown), [750, 3_250]);
-    assert_eq!(shown.keyframes[1].reason, Reason::Cue);
+    assert_eq!(shown.shots[1].keyframe.reason, Reason::Cue);
     assert_eq!(
-        shown.keyframes[1].event,
+        shown.shots[1].keyframe.event,
         "said “watch” as the screen changed"
     );
     assert_eq!(
@@ -467,8 +467,8 @@ fn a_spoken_cue_never_waits_for_a_screen_that_keeps_changing() {
     let looked = recording(Vec::new(), Vec::new(), words(&[(2_000, "Look")]));
     let shown = select(&looked, &animating).unwrap();
     assert_eq!(times(&shown), [2_250, 12_000]);
-    assert_eq!(shown.keyframes[0].event, "said “look”");
-    assert_eq!(shown.keyframes[1].reason, Reason::SceneChange);
+    assert_eq!(shown.shots[0].keyframe.event, "said “look”");
+    assert_eq!(shown.shots[1].keyframe.reason, Reason::SceneChange);
 }
 
 #[test]
@@ -486,9 +486,9 @@ fn narration_before_the_first_change_keeps_the_screen_it_describes() {
     let clicked = |narration| recording(Vec::new(), vec![click(3_000)], narration);
     let shown = select(&clicked(introduced.clone()), &opened).unwrap();
     assert_eq!(times(&shown), [2_750, 3_250]);
-    assert_eq!(shown.keyframes[0].reason, Reason::Opening);
+    assert_eq!(shown.shots[0].keyframe.reason, Reason::Opening);
     assert_eq!(
-        shown.keyframes[0].event,
+        shown.shots[0].keyframe.event,
         "the screen before the first change"
     );
     assert_eq!(
@@ -566,21 +566,22 @@ fn only_a_different_screen_cuts_into_a_drawing() {
         &still,
     )
     .unwrap();
-    assert_eq!(shown.keyframes.len(), 1);
-    assert_eq!(shown.keyframes[0].reason, Reason::Mark);
+    assert_eq!(shown.shots.len(), 1);
+    assert_eq!(shown.shots[0].keyframe.reason, Reason::Mark);
 
     let strokes = || vec![dab(2_000), dab(3_100), dab(4_200)];
     let clicked = recording(strokes(), vec![click(2_500)], Narration::default());
     let shown = select(&clicked, &still).unwrap();
     assert_eq!(times(&shown), [4_250]);
-    assert_eq!(shown.keyframes[0].marks, 0..1);
-    assert_eq!(shown.keyframes[0].action, Some(click(2_500)));
+    assert_eq!(shown.shots[0].keyframe.marks, 0..1);
+    assert_eq!(shown.shots[0].keyframe.action, Some(click(2_500)));
     assert!(
-        shown.keyframes[0]
+        shown.shots[0]
+            .keyframe
             .event
             .ends_with("; clicked (x 0.50, y 0.50)"),
         "{}",
-        shown.keyframes[0].event
+        shown.shots[0].keyframe.event
     );
 
     let twice = recording(
@@ -590,27 +591,27 @@ fn only_a_different_screen_cuts_into_a_drawing() {
     );
     let shown = select(&twice, &still).unwrap();
     assert_eq!(times(&shown), [4_250]);
-    assert_eq!(shown.keyframes[0].action, Some(click(3_500)));
+    assert_eq!(shown.shots[0].keyframe.action, Some(click(3_500)));
 
     let before = recording(strokes(), vec![click(1_800)], Narration::default());
     let shown = select(&before, &still).unwrap();
     assert_eq!(times(&shown), [4_250]);
-    assert_eq!(shown.keyframes[0].action, Some(click(1_800)));
+    assert_eq!(shown.shots[0].keyframe.action, Some(click(1_800)));
 
     let after = recording(strokes(), vec![click(4_300)], Narration::default());
     let shown = select(&after, &still).unwrap();
     assert_eq!(times(&shown), [4_250]);
-    assert_eq!(shown.keyframes[0].action, Some(click(4_300)));
+    assert_eq!(shown.shots[0].keyframe.action, Some(click(4_300)));
 
     let opened = samples(250, 10_000, |at| if at >= 4_500 { 255 } else { 128 });
     let shown = select(&after, &opened).unwrap();
     assert_eq!(times(&shown), [4_250, 4_500]);
-    assert_eq!(shown.keyframes[0].action, None);
-    assert_eq!(shown.keyframes[1].action, Some(click(4_300)));
+    assert_eq!(shown.shots[0].keyframe.action, None);
+    assert_eq!(shown.shots[1].keyframe.action, Some(click(4_300)));
 
     let shown = select_within(&after, &opened, 1).unwrap();
     assert_eq!(times(&shown), [4_250]);
-    assert_eq!(shown.keyframes[0].action, Some(click(4_300)));
+    assert_eq!(shown.shots[0].keyframe.action, Some(click(4_300)));
 
     let flash = samples(250, 10_000, |at| {
         if (2_600..3_400).contains(&at) {
@@ -621,11 +622,11 @@ fn only_a_different_screen_cuts_into_a_drawing() {
     });
     let shown = select(&clicked, &flash).unwrap();
     assert_eq!(times(&shown), [2_750, 4_250]);
-    assert_eq!(shown.keyframes[1].action, None);
+    assert_eq!(shown.shots[1].keyframe.action, None);
 
     let shown = select_within(&clicked, &flash, 1).unwrap();
     assert_eq!(times(&shown), [4_250]);
-    assert_eq!(shown.keyframes[0].action, Some(click(2_500)));
+    assert_eq!(shown.shots[0].keyframe.action, Some(click(2_500)));
 }
 
 #[test]
@@ -673,10 +674,10 @@ fn long_talk_over_a_changing_screen_gets_more_than_one_frame() {
     assert_eq!(at.len(), 6, "{at:?}");
     assert!(at[0] <= 30_000 && at[1] <= 60_000, "{at:?}");
     let most = shown
-        .keyframes
+        .shots
         .iter()
-        .map(|keyframe| {
-            keyframe
+        .map(|shot| {
+            shot.keyframe
                 .said
                 .as_deref()
                 .unwrap_or("")
@@ -688,12 +689,12 @@ fn long_talk_over_a_changing_screen_gets_more_than_one_frame() {
 
     let still = samples(500, 120_000, |_| 90);
     let shown = select(&recording(Vec::new(), Vec::new(), words(&talk)), &still).unwrap();
-    assert_eq!(shown.keyframes.len(), 1);
+    assert_eq!(shown.shots.len(), 1);
 }
 
 #[test]
 fn each_event_says_why_its_frame_was_chosen() {
-    let event = |shown: Option<Selection>| shown.unwrap().keyframes[0].event.clone();
+    let event = |shown: Option<Selection>| shown.unwrap().shots[0].keyframe.event.clone();
     let still = samples(250, 10_000, |_| 128);
     let drawn = recording(
         vec![dab(2_000), dab(4_000)],
@@ -728,7 +729,7 @@ fn a_quiet_show_falls_back_to_its_middle() {
     let frames = [sample(0, 0), sample(1_000, 0), sample(2_000, 0)];
     let shown = select(&Recording::default(), &frames).unwrap();
     assert_eq!(times(&shown), [1_000]);
-    assert_eq!(shown.keyframes[0].reason, Reason::Middle);
+    assert_eq!(shown.shots[0].keyframe.reason, Reason::Middle);
     assert_eq!(select(&Recording::default(), &[]), None);
 }
 
@@ -765,7 +766,7 @@ proptest! {
         let Some(shown) = shown else {
             return Ok(());
         };
-        let keyframes = &shown.keyframes;
+        let keyframes: Vec<&Keyframe> = shown.shots.iter().map(|shot| &shot.keyframe).collect();
         prop_assert!(keyframes.len() <= most);
         let view = Frames::new(&frames).unwrap();
         let with_marks = keyframes.iter().filter(|keyframe| !keyframe.marks.is_empty()).count();

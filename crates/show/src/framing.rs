@@ -5,9 +5,10 @@ use std::iter;
 use content::Content;
 
 use crate::{
-    Image, Keyframe, Layer, Layout, Mark, Moment, Point, Recording, Rect, Selection, Size, Window,
+    Image, Layer, Layout, Mark, Moment, Point, Recording, Rect, Selection, Size, Window,
     draw::Shown,
     recording::Action,
+    select::Shot,
     signature::{Changed, Sample},
 };
 
@@ -62,15 +63,15 @@ impl Selection {
     #[must_use]
     pub fn framed(mut self, recording: &Recording, samples: &[Sample], layouts: &[Layout]) -> Self {
         let changes: Vec<Vec<Rect>> = self
-            .keyframes
+            .shots
             .iter()
-            .scan(Moment::START, |since, keyframe| {
+            .scan(Moment::START, |since, Shot { keyframe, .. }| {
                 let changed = changed_between(samples, *since, keyframe.at);
                 *since = keyframe.at;
                 Some(changed.regions())
             })
             .collect();
-        self.plans = plan(recording, &self.keyframes, &self.marks, &changes, layouts);
+        plan(recording, &mut self.shots, &self.marks, &changes, layouts);
         self
     }
 }
@@ -87,17 +88,17 @@ fn changed_between(samples: &[Sample], since: Moment, until: Moment) -> Changed 
 
 fn plan(
     recording: &Recording,
-    keyframes: &[Keyframe],
+    shots: &mut [Shot],
     marks: &[Mark],
     changes: &[Vec<Rect>],
     layouts: &[Layout],
-) -> Vec<Option<Plan>> {
+) {
     let screen = Screen::of(recording.surface);
-    let found: Vec<Option<Plan>> = keyframes
+    let found: Vec<Option<Plan>> = shots
         .iter()
         .enumerate()
-        .map(|(position, keyframe)| {
-            let (start, end) = slice(keyframes, position, recording.duration);
+        .map(|(position, Shot { keyframe, .. })| {
+            let (start, end) = slice(shots, position, recording.duration);
             let touched: Vec<Action> = recording
                 .actions
                 .iter()
@@ -157,10 +158,9 @@ fn plan(
         })
         .collect();
     share_steady_views(&mut plans, screen);
-    plans
-        .into_iter()
-        .map(|plan| (plan.crop != Rect::UNIT).then_some(plan))
-        .collect()
+    for (shot, plan) in shots.iter_mut().zip(plans) {
+        shot.plan = (plan.crop != Rect::UNIT).then_some(plan);
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -292,19 +292,17 @@ pub(crate) fn fit(plan: Plan, drawn: Option<Rect>, frame: &Image, surface: Size)
     (crop.area() < WORTH_CROPPING).then_some(crop)
 }
 
-fn slice(keyframes: &[Keyframe], position: usize, duration: Moment) -> (Moment, Moment) {
-    let at = keyframes
+fn slice(shots: &[Shot], position: usize, duration: Moment) -> (Moment, Moment) {
+    let at = shots
         .get(position)
-        .map_or(Moment::START, |keyframe| keyframe.at);
-    let halfway = |other: Option<&Keyframe>, otherwise: Moment| {
+        .map_or(Moment::START, |shot| shot.keyframe.at);
+    let halfway = |other: Option<&Shot>, otherwise: Moment| {
         other.map_or(otherwise, |other| {
-            Moment::from_millis(at.as_millis().midpoint(other.at.as_millis()))
+            Moment::from_millis(at.as_millis().midpoint(other.keyframe.at.as_millis()))
         })
     };
-    let previous = position
-        .checked_sub(1)
-        .and_then(|before| keyframes.get(before));
-    let next = keyframes.get(position.saturating_add(1));
+    let previous = position.checked_sub(1).and_then(|before| shots.get(before));
+    let next = shots.get(position.saturating_add(1));
     (
         halfway(previous, Moment::START),
         halfway(next, duration.max(at)),

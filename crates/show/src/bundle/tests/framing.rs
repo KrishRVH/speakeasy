@@ -1,4 +1,5 @@
 use super::*;
+use crate::framing::Plan;
 
 const SCREEN: Size = Size {
     width: 800.0,
@@ -44,8 +45,20 @@ fn a_cropped_frame_is_cut_to_the_crop_it_records_and_keeps_everything_drawn() {
     });
     let selection = Selection {
         marks: Vec::new(),
-        keyframes: vec![keyframe(1, None), clicked, keyframe(3, None)],
-        plans: vec![planned, planned],
+        shots: vec![
+            Shot {
+                keyframe: keyframe(1, None),
+                plan: planned,
+            },
+            Shot {
+                keyframe: clicked,
+                plan: planned,
+            },
+            Shot {
+                keyframe: keyframe(3, None),
+                plan: None,
+            },
+        ],
     };
     let recording = Recording {
         duration: Moment::from_millis(4_000),

@@ -1,5 +1,5 @@
 use std::{
-    fmt, iter,
+    fmt,
     path::{Path, PathBuf},
 };
 
@@ -13,9 +13,10 @@ use crate::{
     Selection, Typeface, Wsl,
     describe::{Count, Marker},
     draw::{self, Corner},
-    framing::{self, Plan},
+    framing,
     locate::PixelRect,
     parallel,
+    select::Shot,
     sheet::{self, Tile},
 };
 
@@ -121,21 +122,13 @@ pub fn compose<E: From<Error> + Send>(
     frame: impl Fn(Moment) -> Result<Image, E> + Sync,
     typeface: &Typeface,
 ) -> Result<Bundle, E> {
-    let Selection {
-        marks,
-        mut keyframes,
-        plans,
-    } = selection;
-    let planned: Vec<(&Keyframe, Option<Plan>)> = keyframes
-        .iter()
-        .zip(plans.into_iter().chain(iter::repeat(None)))
-        .collect();
+    let Selection { marks, shots } = selection;
     let mut sheets = Vec::new();
-    let mut frames = Vec::with_capacity(keyframes.len());
-    let mut crops = Vec::with_capacity(keyframes.len());
-    for (number, page) in sheet::pages(&planned).enumerate() {
+    let mut frames = Vec::with_capacity(shots.len());
+    let mut crops = Vec::with_capacity(shots.len());
+    for (number, page) in sheet::pages(&shots).enumerate() {
         let (annotated, cropped): (Vec<(Image, Corner)>, Vec<Option<Rect>>) =
-            parallel::map(page, |&(keyframe, plan)| {
+            parallel::map(page, |Shot { keyframe, plan }| {
                 let mut image = frame(keyframe.at)?;
                 let drawn = draw::annotate(&mut image, keyframe, &recording, &marks, typeface);
                 let crop = plan
@@ -161,7 +154,7 @@ pub fn compose<E: From<Error> + Send>(
                 &page
                     .iter()
                     .zip(&annotated)
-                    .map(|(&(keyframe, _), (image, corner))| Tile {
+                    .map(|(Shot { keyframe, .. }, (image, corner))| Tile {
                         image,
                         badge: keyframe.into(),
                         corner: *corner,
@@ -174,7 +167,7 @@ pub fn compose<E: From<Error> + Send>(
         let badged: Vec<(&Keyframe, Image)> = page
             .iter()
             .zip(annotated)
-            .map(|(&(keyframe, _), (mut image, corner))| {
+            .map(|(Shot { keyframe, .. }, (mut image, corner))| {
                 draw::badge_frame(&mut image, keyframe, corner, typeface);
                 (keyframe, image)
             })
@@ -189,9 +182,11 @@ pub fn compose<E: From<Error> + Send>(
             frames.push(file?);
         }
     }
-    for (keyframe, crop) in keyframes.iter_mut().zip(crops) {
-        keyframe.crop = crop;
-    }
+    let keyframes = shots
+        .into_iter()
+        .zip(crops)
+        .map(|(Shot { keyframe, .. }, crop)| Keyframe { crop, ..keyframe })
+        .collect();
     Ok(Bundle {
         manifest: Manifest {
             version: Manifest::VERSION,

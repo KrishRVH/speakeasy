@@ -137,7 +137,7 @@ impl Case {
                 .filter(|(_, keyframe)| fit(keyframe) > 0.5)
                 .map(|(position, _)| position)
         };
-        let keyframes: Vec<Keyframe> = self
+        let mut shots: Vec<Shot> = self
             .keyframes
             .iter()
             .enumerate()
@@ -151,25 +151,29 @@ impl Case {
                     _ => 0..0,
                 };
                 assert_eq!(range.len(), held.len(), "{} marks interleave", self.name);
-                Keyframe {
-                    index,
-                    at: Moment::from_millis(expected.at),
-                    reason: if held.is_empty() {
-                        Reason::Middle
-                    } else {
-                        Reason::Mark
+                Shot {
+                    keyframe: Keyframe {
+                        index,
+                        at: Moment::from_millis(expected.at),
+                        reason: if held.is_empty() {
+                            Reason::Middle
+                        } else {
+                            Reason::Mark
+                        },
+                        event: String::new(),
+                        said: None,
+                        marks: range,
+                        action: None,
+                        crop: None,
                     },
-                    event: String::new(),
-                    said: None,
-                    marks: range,
-                    action: None,
-                    crop: None,
+                    plan: None,
                 }
             })
             .collect();
-        plan(&recording, &keyframes, &marks, &self.changes, layouts)
+        plan(&recording, &mut shots, &marks, &self.changes, layouts);
+        shots
             .into_iter()
-            .map(|plan| plan.map_or(Rect::UNIT, |plan| plan.crop))
+            .map(|shot| shot.plan.map_or(Rect::UNIT, |plan| plan.crop))
             .collect()
     }
 

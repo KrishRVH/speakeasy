@@ -18,12 +18,11 @@ fn arranged(at: u64, windows: Vec<Window>) -> Layout {
 }
 
 fn planned(clicks: &[(u64, Point)], at: u64, changes: &[Rect], layouts: &[Layout]) -> Option<Plan> {
-    let keyframes = [keyframe(1, at)];
+    let mut shots = [shot(1, at)];
     let changes = [changes.to_vec()];
-    plan(&clicked(SCREEN, clicks), &keyframes, &[], &changes, layouts)
-        .into_iter()
-        .next()
-        .flatten()
+    plan(&clicked(SCREEN, clicks), &mut shots, &[], &changes, layouts);
+    let [shot] = shots;
+    shot.plan
 }
 
 #[test]
@@ -163,9 +162,10 @@ fn a_long_stroke_counts_as_one_gesture_against_clicks() {
         strokes: vec![Stroke::new(circled).unwrap()],
         ..clicked(SCREEN, &clicks)
     };
-    let keyframes = [keyframe(1, 3_000)];
+    let mut shots = [shot(1, 3_000)];
     let layouts = [arranged(0, vec![form, page])];
-    let plan = plan(&recording, &keyframes, &[], &[Vec::new()], &layouts)[0].unwrap();
+    plan(&recording, &mut shots, &[], &[Vec::new()], &layouts);
+    let plan = shots[0].plan.unwrap();
     assert!(
         plan.crop.encloses(form.bounds) && plan.crop.encloses(page.bounds),
         "{plan:?}"
