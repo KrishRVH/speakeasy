@@ -1,6 +1,9 @@
-use proptest::prelude::*;
+use proptest::{prelude::*, sample::Index};
 
-use super::*;
+use super::{
+    record::{framed, payload},
+    *,
+};
 
 fn frame(width: u32, height: u32, paint: impl Fn(usize, usize) -> [u8; 4]) -> Image {
     let pixels: Vec<u8> = (0..convert::count(height))
@@ -8,6 +11,33 @@ fn frame(width: u32, height: u32, paint: impl Fn(usize, usize) -> [u8; 4]) -> Im
         .flat_map(|(x, y)| paint(x, y))
         .collect();
     Image::from_rgba(width, height, pixels).unwrap()
+}
+
+fn gradient(shift: usize) -> impl Fn(usize, usize) -> [u8; 4] {
+    move |x, y| {
+        let value = u8::try_from(x.wrapping_add(y).wrapping_add(shift) % 256).unwrap();
+        [value, value / 2, value.wrapping_neg(), 255]
+    }
+}
+
+pub(super) fn incompressible() -> Image {
+    frame(64, 64, |x, _| {
+        if x.is_multiple_of(2) {
+            [0, 0, 0, 255]
+        } else {
+            [128, 128, 128, 255]
+        }
+    })
+}
+
+pub(super) fn damaged(record: &[u8], at: Index, byte: u8, keep: Option<Index>) -> Vec<u8> {
+    let kind = record[size_of::<u32>()];
+    let mut data = payload(record, kind).unwrap().to_vec();
+    *at.get_mut(&mut data) = byte;
+    if let Some(keep) = keep {
+        data.truncate(keep.index(data.len()));
+    }
+    framed(kind, &data).unwrap()
 }
 
 fn admitted(journal: &mut Journal) -> Admission<'_> {
@@ -64,12 +94,6 @@ fn a_still_screen_costs_almost_nothing_and_changes_cost_their_tiles() {
 
 #[test]
 fn any_recorded_moment_is_rebuilt_exactly() {
-    let gradient = |shift: usize| {
-        move |x: usize, y: usize| {
-            let value = u8::try_from((x + y + shift) % 256).unwrap();
-            [value, value / 2, value.wrapping_neg(), 255]
-        }
-    };
     let mut journal = Journal::new();
     let frames: Vec<Image> = [0, 7, 7, 30]
         .into_iter()
@@ -91,41 +115,35 @@ fn any_recorded_moment_is_rebuilt_exactly() {
 
     let resized = frame(64, 64, gradient(3));
     admitted(&mut journal).record(Moment::from_millis(1_000), resized.clone());
-    assert_eq!(
-        journal.frame_at(Moment::from_millis(1_000)).as_ref(),
-        Some(&resized)
-    );
+    assert_eq!(journal.frame_at(Moment::from_millis(1_000)), Some(resized));
     assert_eq!(
         journal.frame_at(Moment::from_millis(150)).as_ref(),
         frames.get(1)
     );
+    assert_eq!(Journal::new().frame_at(Moment::START), None);
+}
 
-    let whole = {
-        let mut alone = Journal::new();
-        admitted(&mut alone).record(Moment::START, resized.clone());
-        alone.bytes()
-    };
+#[test]
+fn a_sealed_journal_records_its_next_frame_whole_and_rebuilds_both_sides() {
+    let before = frame(64, 64, gradient(3));
+    let mut journal = Journal::new();
+    admitted(&mut journal).record(Moment::START, before.clone());
+    let whole = journal.bytes();
     let mut journal = journal.sealed();
-    let held = journal.bytes();
-    admitted(&mut journal).record(Moment::from_millis(1_100), resized.clone());
+    admitted(&mut journal).record(Moment::from_millis(100), before.clone());
     assert_eq!(
-        journal.bytes() - held,
+        journal.bytes() - whole,
         whole,
         "A sealed journal keeps no frame to compare the next against"
     );
     let after = frame(64, 64, gradient(9));
-    admitted(&mut journal).record(Moment::from_millis(1_200), after.clone());
+    admitted(&mut journal).record(Moment::from_millis(200), after.clone());
     assert_eq!(
-        journal.frame_at(Moment::from_millis(1_100)).as_ref(),
-        Some(&resized)
+        journal.frame_at(Moment::from_millis(100)).as_ref(),
+        Some(&before)
     );
-    assert_eq!(journal.frame_at(Moment::from_millis(1_200)), Some(after));
-    assert_eq!(journal.frame_at(Moment::from_millis(1_000)), Some(resized));
-    assert_eq!(
-        journal.frame_at(Moment::from_millis(350)).as_ref(),
-        frames.get(3)
-    );
-    assert_eq!(Journal::new().frame_at(Moment::START), None);
+    assert_eq!(journal.frame_at(Moment::from_millis(200)), Some(after));
+    assert_eq!(journal.frame_at(Moment::START), Some(before));
 }
 
 #[test]

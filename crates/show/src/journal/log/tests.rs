@@ -1,7 +1,7 @@
 use proptest::{prelude::*, sample::Index};
 
 use super::*;
-use crate::journal::record::damaged;
+use crate::journal::tests::{damaged, incompressible};
 
 mod gaps;
 
@@ -15,6 +15,15 @@ fn surface() -> Size {
 fn apply(take: &mut Take, event: &TakeEvent, bytes: &mut Vec<u8>) {
     take.apply(event).unwrap();
     bytes.extend(encode(event).unwrap());
+}
+
+fn gray(shade: u8) -> Image {
+    Image::filled(2, 2, [shade; 3]).unwrap()
+}
+
+fn arrival(take: &mut Take, at: u64, image: Image) -> TakeEvent {
+    take.arrive(Moment::from_millis(at), || Some(image))
+        .unwrap()
 }
 
 fn replay(bytes: &[u8]) -> Result<Take, SourceError> {
@@ -44,10 +53,8 @@ fn replay(bytes: &[u8]) -> Result<Take, SourceError> {
 fn every_kind_of_event() -> Vec<TakeEvent> {
     let mut take = Take::new(1_000, surface(), Framing::Automatic);
     let mut arrive = |at, shade| {
-        take.arrive(Moment::from_millis(at), || {
-            Some(Image::filled(70, 66, [shade; 3]).unwrap())
-        })
-        .unwrap()
+        let image = Image::filled(70, 66, [shade; 3]).unwrap();
+        arrival(&mut take, at, image)
     };
     let (whole, changed) = (arrive(100, 40), arrive(200, 80));
     vec![
@@ -168,11 +175,7 @@ proptest! {
 fn every_torn_tail_recovers_only_whole_events_and_keeps_an_honest_ending() {
     let mut live = Take::new(1_000, surface(), Framing::Automatic);
     let mut bytes = header(1_000, surface(), Framing::Automatic).unwrap();
-    let image = live
-        .arrive(Moment::from_millis(100), || {
-            Some(Image::filled(2, 2, [42; 3]).unwrap())
-        })
-        .unwrap();
+    let image = arrival(&mut live, 100, gray(42));
     bytes.extend(encode(&image).unwrap());
     let first_frame_end = bytes.len();
     apply(
@@ -219,61 +222,60 @@ fn a_checkpoint_keeps_who_frames_the_recording() {
 }
 
 #[test]
-fn malformed_events_cannot_change_the_good_prefix_or_print_pixels() {
-    let mut take = Take::new(0, surface(), Framing::Automatic);
-    let mut bytes = header(0, surface(), Framing::Automatic).unwrap();
-    let mut arrivals = Vec::new();
-    for n in 0..3_u64 {
-        let event = take
-            .arrive(Moment::from_millis(n * 100), || {
-                Some(Image::filled(2, 2, [u8::try_from(n).unwrap(); 3]).unwrap())
-            })
-            .unwrap();
-        bytes.extend(encode(&event).unwrap());
-        arrivals.push(event);
-    }
-    assert_eq!(
-        replay(&bytes).unwrap().journal().samples().len(),
-        take.journal().samples().len()
-    );
+fn a_changed_tile_frame_needs_the_frame_it_changes() {
+    let mut live = Take::new(0, surface(), Framing::Automatic);
+    arrival(&mut live, 0, gray(0));
+    let changed = arrival(&mut live, 100, gray(1));
     let mut orphan = Take::new(0, surface(), Framing::Automatic);
-    assert!(
-        orphan.apply(&arrivals[1]).is_err(),
-        "A changed-tile frame needs the frame it changes"
-    );
+    assert!(orphan.apply(&changed).is_err());
     assert!(orphan.journal().is_empty());
-    let before = take.journal().samples().len();
-    let mut fresh = Take::new(100, surface(), Framing::Automatic);
-    let event = fresh
-        .arrive(Moment::from_millis(400), || {
-            Some(Image::filled(2, 2, [1; 3]).unwrap())
-        })
-        .unwrap();
-    assert!(
-        take.apply(&event).is_err(),
-        "The stride should reject this admitted image"
+}
+
+#[test]
+fn an_image_the_sampling_stride_skips_is_refused() {
+    let mut take = Take::new(0, surface(), Framing::Automatic);
+    for (at, shade) in [(0, 0), (100, 1), (200, 2)] {
+        arrival(&mut take, at, gray(shade));
+    }
+    let held = take.journal().samples().len();
+    let admitted = arrival(
+        &mut Take::new(100, surface(), Framing::Automatic),
+        400,
+        gray(1),
     );
-    assert_eq!(take.journal().samples().len(), before);
     assert!(
-        take.apply(&TakeEvent::Surface(Size {
-            width: f32::NAN,
-            height: 1.0
-        }))
-        .is_err()
+        take.apply(&admitted).is_err(),
+        "Thinning halved admission, so the fourth arrival is skipped"
     );
-    assert!(record_size(&u32::MAX.to_le_bytes()).is_err());
+    assert_eq!(take.journal().samples().len(), held);
+}
+
+#[test]
+fn a_surface_without_a_positive_finite_size_is_refused() {
+    let mut take = Take::new(0, surface(), Framing::Automatic);
+    for width in [f32::NAN, 0.0, -1.0, f32::INFINITY] {
+        let surface = TakeEvent::Surface(Size { width, height: 1.0 });
+        assert!(take.apply(&surface).is_err(), "{width}");
+    }
+}
+
+#[test]
+fn a_record_with_a_failed_checksum_or_an_impossible_length_is_refused() {
+    let event = arrival(&mut Take::new(0, surface(), Framing::Automatic), 0, gray(1));
     let mut corrupt = encode(&event).unwrap();
-    corrupt[20] ^= 0xFF;
+    let last_payload_byte = corrupt.len() - size_of::<u32>() - 1;
+    corrupt[last_payload_byte] ^= 1;
     assert!(decode(&corrupt).is_err());
-    let arrival = |shade| {
-        let event = Take::new(100, surface(), Framing::Automatic)
-            .arrive(Moment::START, || {
-                Some(Image::filled(2, 2, [shade; 3]).unwrap())
-            })
-            .unwrap();
-        format!("{event:?}")
+    assert!(record_size(&u32::MAX.to_le_bytes()).is_err());
+}
+
+#[test]
+fn debugging_an_arrival_never_prints_its_pixels() {
+    let shown = |shade| {
+        let mut take = Take::new(100, surface(), Framing::Automatic);
+        format!("{:?}", arrival(&mut take, 0, gray(shade)))
     };
-    assert_eq!(arrival(0), arrival(255));
+    assert_eq!(shown(0), shown(255));
 }
 
 #[test]
@@ -298,23 +300,9 @@ fn arrivals_after_end_or_the_time_limit_never_prepare_pixels() {
 
 #[test]
 fn high_entropy_tiles_round_trip_even_when_compression_expands_them() {
-    let image = Image::from_bgra(
-        64,
-        64,
-        (0..4_096)
-            .flat_map(|n| {
-                if n % 2 == 0 {
-                    [0, 0, 0, 255]
-                } else {
-                    [128, 128, 128, 255]
-                }
-            })
-            .collect(),
-    )
-    .unwrap();
+    let image = incompressible();
     let mut live = Take::new(1 << 20, surface(), Framing::Automatic);
-    let event = live.arrive(Moment::START, || Some(image.clone())).unwrap();
-    let encoded = encode(&event).unwrap();
+    let encoded = encode(&arrival(&mut live, 0, image.clone())).unwrap();
     let mut replayed = Take::new(1 << 20, surface(), Framing::Automatic);
     replayed.apply(&decode(&encoded).unwrap()).unwrap();
     assert_eq!(replayed.journal().frame_at(Moment::START), Some(image));
@@ -323,11 +311,7 @@ fn high_entropy_tiles_round_trip_even_when_compression_expands_them() {
 #[test]
 fn encoding_rejects_a_tile_that_a_reader_cannot_accept() {
     let mut take = Take::new(1_000, surface(), Framing::Automatic);
-    let mut event = take
-        .arrive(Moment::START, || {
-            Some(Image::from_bgra(2, 2, vec![0; 16]).unwrap())
-        })
-        .unwrap();
+    let mut event = arrival(&mut take, 0, gray(0));
     let TakeEvent::Arrival {
         entry: Some(entry), ..
     } = &mut event

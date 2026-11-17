@@ -1,7 +1,10 @@
 use proptest::{prelude::*, sample::Index};
 
 use super::*;
-use crate::journal::record::{damaged, framed};
+use crate::journal::{
+    record::framed,
+    tests::{damaged, incompressible},
+};
 
 fn encode(journal: &Journal, duration: Moment) -> Vec<u8> {
     let mut bytes = Vec::new();
@@ -233,20 +236,7 @@ fn replacing_a_source_with_same_sized_evidence_cannot_reuse_an_old_timestamp() {
 
 #[test]
 fn tiles_that_deflate_expands_remain_readable() {
-    let image = Image::from_bgra(
-        64,
-        64,
-        (0..4_096)
-            .flat_map(|n| {
-                if n % 2 == 0 {
-                    [0, 0, 0, 255]
-                } else {
-                    [128, 128, 128, 255]
-                }
-            })
-            .collect(),
-    )
-    .unwrap();
+    let image = incompressible();
     let mut journal = Journal::new();
     journal
         .admit()
