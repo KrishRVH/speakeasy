@@ -92,7 +92,7 @@ pub(super) fn transition(
         })
         .collect();
     let lost = before.session.as_ref().is_some_and(|session| {
-        session.lost.is_some()
+        session.lost_its_microphone()
             || matches!(event, Event::Capture(id, Capture::Lost(..)) if *id == session.id)
     });
     match deliveries[..] {

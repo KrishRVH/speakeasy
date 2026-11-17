@@ -1036,8 +1036,9 @@ impl<P: Payload> Machine<P> {
         else {
             return;
         };
+        let lost = session.take_lost();
         let Some(text) = env.compose(heard, session.style, &self.config) else {
-            let outcome = session.lost.take().map_or(Outcome::Empty, |lost| {
+            let outcome = lost.map_or(Outcome::Empty, |lost| {
                 Outcome::Failed(Failure::Said(lost.failure))
             });
             self.end_session(outcome, env);
@@ -1053,7 +1054,7 @@ impl<P: Payload> Machine<P> {
                 },
                 env,
             );
-        } else if let Some(lost) = session.lost.take() {
+        } else if let Some(lost) = lost {
             self.last_dictation = Some(text);
             self.end_session(Outcome::Withheld(lost.notice), env);
         } else {

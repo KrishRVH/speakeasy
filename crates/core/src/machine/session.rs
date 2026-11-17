@@ -14,7 +14,6 @@ pub(super) struct Session<P: Payload> {
     pub(super) purpose: Purpose<P>,
     pub(super) style: P::Style,
     pub(super) pending_text: Option<P::Heard>,
-    pub(super) lost: Option<Lost<P>>,
     stage: Stage<P>,
     recognition: Recognition<P>,
     show: Option<Show<P>>,
@@ -156,14 +155,38 @@ enum Stage<P: Payload> {
     Stopping {
         audio: P::Span,
     },
-    Recognizing {
-        incomplete: bool,
-    },
+    Recognizing(Ended<P>),
     AwaitingFootage {
         narration: P::Narration,
         lost: Option<NarrationLoss>,
     },
     Delivering,
+}
+
+#[cfg_attr(test, derive(Clone, Debug))]
+enum Ended<P: Payload> {
+    Finished,
+    Early,
+    Lost(Lost<P>),
+}
+
+impl<P: Payload> Ended<P> {
+    const fn narration_loss(&self) -> Option<NarrationLoss> {
+        match self {
+            Self::Finished => None,
+            Self::Early | Self::Lost(_) => Some(NarrationLoss::Incomplete),
+        }
+    }
+
+    fn take_lost(&mut self) -> Option<Lost<P>> {
+        match mem::replace(self, Self::Early) {
+            Self::Lost(lost) => Some(lost),
+            other => {
+                *self = other;
+                None
+            },
+        }
+    }
 }
 
 impl<P: Payload> Session<P> {
@@ -180,7 +203,6 @@ impl<P: Payload> Session<P> {
             purpose: Purpose::Dictation,
             style,
             pending_text: None,
-            lost: None,
             stage: Stage::Queued,
             recognition: Recognition::new(id),
             show: None,
@@ -224,7 +246,11 @@ impl<P: Payload> Session<P> {
                 incomplete,
             } => {
                 self.recognition.seal(audio, None, start, Detail::Words);
-                Stage::Recognizing { incomplete }
+                Stage::Recognizing(if incomplete {
+                    Ended::Early
+                } else {
+                    Ended::Finished
+                })
             },
             Recognized::Narration { narration, loss } => Stage::AwaitingFootage {
                 narration,
@@ -271,7 +297,7 @@ impl<P: Payload> Session<P> {
             Stage::Recording { .. } => Phase::Recording,
             Stage::Stopping { .. } => Phase::Stopping,
             Stage::Reopening
-            | Stage::Recognizing { .. }
+            | Stage::Recognizing(_)
             | Stage::AwaitingFootage { .. }
             | Stage::Delivering => Phase::Processing,
         }
@@ -338,7 +364,19 @@ impl<P: Payload> Session<P> {
     }
 
     pub(super) const fn is_recognizing(&self) -> bool {
-        matches!(self.stage, Stage::Recognizing { .. })
+        matches!(self.stage, Stage::Recognizing(_))
+    }
+
+    #[cfg(test)]
+    pub(super) const fn lost_its_microphone(&self) -> bool {
+        matches!(self.stage, Stage::Recognizing(Ended::Lost(_)))
+    }
+
+    pub(super) fn take_lost(&mut self) -> Option<Lost<P>> {
+        let Stage::Recognizing(ended) = &mut self.stage else {
+            return None;
+        };
+        ended.take_lost()
     }
 
     pub(super) const fn queued_screen(&self) -> Option<P::Scope> {
@@ -380,7 +418,7 @@ impl<P: Payload> Session<P> {
 
     pub(super) fn captured(&mut self, sealed: Option<Sealed<P>>) -> bool {
         match sealed {
-            Some(sealed) if self.is_listening() => self.recognize(sealed),
+            Some(sealed) if self.is_listening() => self.recognize(sealed, Ended::Finished),
             _ if self.is_show() => {
                 self.stage = Stage::AwaitingFootage {
                     narration: P::Narration::default(),
@@ -394,12 +432,11 @@ impl<P: Payload> Session<P> {
     }
 
     pub(super) fn lost_microphone(&mut self, sealed: Sealed<P>, lost: Lost<P>) {
-        self.lost = Some(lost);
-        self.recognize(sealed);
+        self.recognize(sealed, Ended::Lost(lost));
         self.conclude();
     }
 
-    fn recognize(&mut self, sealed: Sealed<P>) {
+    fn recognize(&mut self, sealed: Sealed<P>, ended: Ended<P>) {
         let (Stage::Recording { audio } | Stage::Stopping { audio }) = self.stage else {
             return;
         };
@@ -411,7 +448,7 @@ impl<P: Payload> Session<P> {
         let start = P::shift(audio, sealed.trimmed);
         self.recognition
             .seal(sealed.audio, sealed.partition, start, detail);
-        self.stage = Stage::Recognizing { incomplete: false };
+        self.stage = Stage::Recognizing(ended);
     }
 
     pub(super) fn piece(&mut self, number: u32, audio: P::Audio) {
@@ -464,13 +501,14 @@ impl<P: Payload> Session<P> {
     }
 
     fn narrate(&mut self, narration: P::Narration) {
-        if let Stage::Recognizing { incomplete } = self.stage
+        if let Stage::Recognizing(ended) = &self.stage
             && let Some(start) = self.recognition.start()
         {
+            let lost = ended.narration_loss();
             self.recognition = Recognition::new(self.id);
             self.stage = Stage::AwaitingFootage {
                 narration: P::delay(narration, start),
-                lost: (incomplete || self.lost.is_some()).then_some(NarrationLoss::Incomplete),
+                lost,
             };
         }
     }
