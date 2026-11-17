@@ -115,12 +115,12 @@ impl Paster {
 
     fn serve(mut self, requests: &Receiver<Insertion>) {
         while let Ok(request) = requests.recv_blocking() {
-            let outcome = self.paste(&request);
+            let outcome = self.insert(&request);
             request.reply.send(outcome);
         }
     }
 
-    fn paste(&mut self, request: &Insertion) -> anyhow::Result<Inserted> {
+    fn insert(&mut self, request: &Insertion) -> anyhow::Result<Inserted> {
         if !request.permit.active() {
             return Ok(Inserted::Cancelled);
         }
