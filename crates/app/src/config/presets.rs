@@ -60,16 +60,29 @@ impl Preset {
     }
 
     pub(crate) fn load(&self, config: &mut Config) {
-        config.engine = self.engine;
-        config.engine_executable.clone_from(&self.engine_executable);
-        config.model.clone_from(&self.model);
-        config.nemo_model = self.nemo_model;
-        config.language.clone_from(&self.language);
-        config.recognition_terms.clone_from(&self.recognition_terms);
-        config.remove_fillers = self.remove_fillers;
-        config.vocabulary.clone_from(&self.vocabulary);
-        config.threads = self.threads;
-        config.use_gpu = self.use_gpu;
+        let Self {
+            name: _,
+            engine,
+            engine_executable,
+            model,
+            nemo_model,
+            language,
+            recognition_terms,
+            remove_fillers,
+            vocabulary,
+            threads,
+            use_gpu,
+        } = self;
+        config.engine = *engine;
+        config.engine_executable.clone_from(engine_executable);
+        config.model.clone_from(model);
+        config.nemo_model = *nemo_model;
+        config.language.clone_from(language);
+        config.recognition_terms.clone_from(recognition_terms);
+        config.remove_fillers = *remove_fillers;
+        config.vocabulary.clone_from(vocabulary);
+        config.threads = *threads;
+        config.use_gpu = *use_gpu;
     }
 
     pub(crate) fn matches(&self, config: &Config) -> bool {
