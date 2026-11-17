@@ -182,7 +182,7 @@ pub(super) fn regular_file(directory: &Path, name: &str, limit: u64) -> io::Resu
                 return Err(io::Error::other("not a regular file"));
             }
             if metadata.len() > limit {
-                return Err(io::Error::other("file is too large"));
+                return Err(too_large());
             }
             if metadata.len() == 0 && name != Bundle::SUMMARY {
                 return Err(io::Error::other("file is empty"));
@@ -204,9 +204,13 @@ pub(crate) fn read_file(directory: &Path, name: &str, limit: u64) -> io::Result<
         .take(limit.saturating_add(1))
         .read_to_end(&mut bytes)?;
     if !u64::try_from(bytes.len()).is_ok_and(|length| length <= limit) {
-        return Err(io::Error::other("file is too large"));
+        return Err(too_large());
     }
     Ok(bytes)
+}
+
+fn too_large() -> io::Error {
+    io::Error::new(io::ErrorKind::FileTooLarge, "file is too large")
 }
 
 pub(crate) fn summary(directory: &Path) -> io::Result<String> {
@@ -226,19 +230,13 @@ impl SavedShow {
 
     pub(crate) fn summary(&self) -> anyhow::Result<Option<String>> {
         let path = self.0.join(Bundle::SUMMARY);
-        let Some(file) = found(fs::File::open(&path)).map_err(cannot_read(&path))? else {
-            return Ok(None);
-        };
-        let mut summary = String::new();
-        file.take(SUMMARY_LIMIT.saturating_add(1))
-            .read_to_string(&mut summary)
-            .map_err(cannot_read(&path))?;
-        anyhow::ensure!(
-            u64::try_from(summary.len()).is_ok_and(|length| length <= SUMMARY_LIMIT),
-            "{} is too large to copy; a Show's summary is a few kilobytes.",
-            path.display()
-        );
-        Ok(Some(summary))
+        match found(summary(&self.0)) {
+            Err(error) if error.kind() == io::ErrorKind::FileTooLarge => Err(anyhow::anyhow!(
+                "{} is too large to copy; a Show's summary is a few kilobytes.",
+                path.display()
+            )),
+            read => read.map_err(cannot_read(&path)),
+        }
     }
 }
 

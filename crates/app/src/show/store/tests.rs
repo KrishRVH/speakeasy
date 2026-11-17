@@ -302,6 +302,25 @@ fn a_saved_show_reads_back_as_its_folder_holds_it_until_it_is_gone() -> anyhow::
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+fn a_saved_show_never_copies_through_a_linked_summary() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let folder = fresh_directory(&root.path().join("shows"), at(1_792_420_563))?;
+    let (show, _) = stage(managed(&folder), bundle()?, None)?.persist()?;
+    let elsewhere = root.path().join("elsewhere.md");
+    fs::write(&elsewhere, "Text that belongs to another file")?;
+    fs::remove_file(folder.join(Bundle::SUMMARY))?;
+    std::os::unix::fs::symlink(&elsewhere, folder.join(Bundle::SUMMARY))?;
+    let message = show
+        .summary()
+        .err()
+        .context("A linked summary was followed")?
+        .to_string();
+    assert!(message.contains("not a regular file"), "{message}");
+    Ok(())
+}
+
 #[test]
 fn a_show_that_cannot_be_saved_names_the_shows_folder_and_a_remedy() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
