@@ -216,13 +216,12 @@ fn consume<T>(
     let Some(live) = input.as_mut() else {
         return;
     };
-    let finished = match record {
-        Ok(record) => write(live, record).err().map(|_| false),
-        Err(_) => Some(true),
+    let complete = match record.map(|record| write(live, record)) {
+        Ok(Ok(())) => return,
+        Ok(Err(_failed)) => false,
+        Err(_closed) => true,
     };
-    if let Some(complete) = finished
-        && let Some(input) = input.take()
-    {
+    if let Some(input) = input.take() {
         input.finish(complete);
     }
 }
