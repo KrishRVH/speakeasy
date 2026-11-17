@@ -697,7 +697,7 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let directory = root.path().join("show");
     let staged = store::stage(
-        speakeasy_show::Location::managed(&directory, None).context(store::UNNAMED)?,
+        store::managed(&directory, None)?,
         bundle,
         Some(store::Retained {
             journal: &journal,

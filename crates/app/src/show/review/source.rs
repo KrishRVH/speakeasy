@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::Context as _;
-use speakeasy_show::{Bundle, Demo, Location, Manifest, Typeface};
+use speakeasy_show::{Bundle, Demo, Manifest, Typeface};
 
 use crate::show::store;
 
@@ -44,12 +44,7 @@ fn fixture() -> anyhow::Result<Root> {
             .checked_sub(Duration::from_secs(days_ago.saturating_mul(86_400)))
             .unwrap_or(SystemTime::UNIX_EPOCH);
         let destination = store::fresh_directory(&directory, at)?;
-        store::stage(
-            Location::managed(&destination, None).context(store::UNNAMED)?,
-            bundle.clone(),
-            None,
-        )?
-        .persist()?;
+        store::stage(store::managed(&destination, None)?, bundle.clone(), None)?.persist()?;
         Ok(destination)
     };
     fs::write(save(0)?.join(".pinned"), b"")?;

@@ -9,7 +9,7 @@ use std::{
 
 use anyhow::Context as _;
 use gpui::App;
-use speakeasy_show::{Bundle, Journal, Location, Moment};
+use speakeasy_show::{Bundle, Journal, Location, Moment, Wsl};
 
 const KEPT_FOR: Duration = Duration::from_hours(7 * 24);
 
@@ -22,8 +22,6 @@ const PIN: &str = ".pinned";
 const STAGING_PREFIX: &str = ".partial-";
 
 const EXPIRED_PREFIX: &str = ".expired-";
-
-pub(super) const UNNAMED: &str = "A Show's folder needs a name made of Unicode text";
 
 pub(super) fn directory() -> anyhow::Result<PathBuf> {
     Ok(crate::paths::data_root()?.join("shows"))
@@ -66,6 +64,13 @@ pub(super) fn fresh_directory(parent: &Path, now: SystemTime) -> anyhow::Result<
         })
         .find(|candidate| fs::symlink_metadata(candidate).is_err())
         .context("Too many Shows were written this second")
+}
+
+pub(super) fn managed<'a>(
+    directory: &'a Path,
+    wsl: Option<&'a Wsl>,
+) -> anyhow::Result<Location<'a>> {
+    Location::managed(directory, wsl).context("A Show's folder needs a name made of Unicode text")
 }
 
 pub(super) struct Staged {
@@ -262,6 +267,13 @@ enum Cleanup {
     Blocked,
 }
 
+enum Expiry {
+    NotAFolder,
+    Live,
+    Leftover,
+    Due(String),
+}
+
 fn retire_expired(
     parent: &Path,
     entry: &fs::DirEntry,
@@ -270,22 +282,20 @@ fn retire_expired(
 ) -> io::Result<Cleanup> {
     let _lock = retention::lock(parent)?;
     let path = entry.path();
-    if !expired(entry, cutoff, now)? {
-        if entry.file_type()?.is_dir() {
+    match expiry(entry, cutoff, now)? {
+        Expiry::NotAFolder => Ok(Cleanup::Keep),
+        Expiry::Live => {
             voice::expire(&path, now)?;
-        }
-        return Ok(Cleanup::Keep);
-    }
-    let name = entry.file_name();
-    let Some(name) = name.to_str().filter(|name| stamp(name).is_some()) else {
-        return Ok(Cleanup::Remove(path));
-    };
-    match retire(parent, &path, name) {
-        Ok(destination) => Ok(Cleanup::Remove(destination)),
-        Err(error) if error.kind() == ErrorKind::NotFound => Err(error),
-        Err(_blocked) => {
-            voice::expire(&path, now)?;
-            Ok(Cleanup::Blocked)
+            Ok(Cleanup::Keep)
+        },
+        Expiry::Leftover => Ok(Cleanup::Remove(path)),
+        Expiry::Due(name) => match retire(parent, &path, &name) {
+            Ok(destination) => Ok(Cleanup::Remove(destination)),
+            Err(error) if error.kind() == ErrorKind::NotFound => Err(error),
+            Err(_blocked) => {
+                voice::expire(&path, now)?;
+                Ok(Cleanup::Blocked)
+            },
         },
     }
 }
@@ -299,29 +309,27 @@ fn retire(parent: &Path, directory: &Path, name: &str) -> io::Result<PathBuf> {
     Ok(destination)
 }
 
-fn expired(entry: &fs::DirEntry, cutoff: &str, now: SystemTime) -> io::Result<bool> {
+fn expiry(entry: &fs::DirEntry, cutoff: &str, now: SystemTime) -> io::Result<Expiry> {
     if !entry.file_type()?.is_dir() {
-        return Ok(false);
+        return Ok(Expiry::NotAFolder);
     }
-    let name = entry.file_name();
-    let Some(name) = name.to_str() else {
-        return Ok(false);
+    let Ok(name) = entry.file_name().into_string() else {
+        return Ok(Expiry::Live);
     };
-    if name
+    let retired = name
         .strip_prefix(EXPIRED_PREFIX)
-        .is_some_and(|name| stamp(name).is_some())
-    {
-        return Ok(true);
-    }
-    if name.starts_with(STAGING_PREFIX) {
-        let modified = entry.metadata()?.modified()?;
-
-        Ok(now
-            .duration_since(modified)
-            .is_ok_and(|age| age >= ABANDONED_AFTER))
+        .is_some_and(|name| stamp(name).is_some());
+    let abandoned = name.starts_with(STAGING_PREFIX)
+        && now
+            .duration_since(entry.metadata()?.modified()?)
+            .is_ok_and(|age| age >= ABANDONED_AFTER);
+    Ok(if retired || abandoned {
+        Expiry::Leftover
+    } else if stamp(&name).is_some_and(|stamp| stamp < cutoff) && !pinned(&entry.path())? {
+        Expiry::Due(name)
     } else {
-        Ok(stamp(name).is_some_and(|stamp| stamp < cutoff) && !pinned(&entry.path())?)
-    }
+        Expiry::Live
+    })
 }
 
 pub(super) fn pinned(path: &Path) -> io::Result<bool> {

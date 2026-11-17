@@ -382,7 +382,7 @@ fn demo(chosen: Option<PathBuf>, out: &mut impl io::Write) -> anyhow::Result<()>
         Location::unmanaged(directory, wsl.as_ref())
     } else {
         fresh = store::fresh_directory(&store::private_directory()?, SystemTime::now())?;
-        Location::managed(&fresh, wsl.as_ref()).context(store::UNNAMED)?
+        store::managed(&fresh, wsl.as_ref())?
     };
     let (_, summary) = store::stage(location, bundle, None)?.persist()?;
     write!(out, "{summary}")?;

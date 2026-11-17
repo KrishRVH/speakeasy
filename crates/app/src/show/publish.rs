@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::{Context as _, anyhow};
 use speakeasy_platform::InsertPermit;
-use speakeasy_show::{Framing, Location, NarrationLoss, Typeface, compose, select};
+use speakeasy_show::{Framing, NarrationLoss, Typeface, compose, select};
 
 use super::{
     Checkpoint, Checkpointing, Interrupted, SavedShow, recorder::NOTHING_RECORDED, store,
@@ -316,7 +316,7 @@ fn persist(
         return Ok(None);
     }
     let mut staged = store::stage(
-        Location::managed(&directory, wsl.as_ref()).context(store::UNNAMED)?,
+        store::managed(&directory, wsl.as_ref())?,
         bundle,
         Some(store::Retained {
             journal: &journal,
