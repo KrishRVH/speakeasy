@@ -67,9 +67,9 @@ frame --video decodes the retained movie on Windows and macOS, using original se
 It reports actual decoded time and separate annotation coverage, including recovered video tails.
 --annotated adds timed saved ink, pins, and completed actions; reports list omitted annotations.
 It requires geometry and annotation coverage at the decoded sample. --crop needs matching geometry.
-inspect exits with status 1 for a damaged or unsupported Show.
+inspect and wait exit with status 1 for a damaged or unsupported Show.
 SHOW is an exact folder-name ID in Speakeasy's Shows folder, or an explicit path.
-Use ./ID to address a relative path. No command chooses the latest earlier Show.
+Use ./ID to address a relative path. Commands never guess an earlier Show; wait reports a new one.
 keep prevents expiry; --off restores the original seven-day expiry date.
 An overdue Show then expires at the next cleanup. Only managed Shows can be kept.
 export writes a new ZIP with saved images, narration, retained samples, and a relative reading guide.
@@ -274,6 +274,10 @@ impl Command {
                 let parent = store::directory()?;
                 let entry = wait::next_saved(&parent, patience)?;
                 output::inspect(&entry, Some(&parent), json, out)?;
+                anyhow::ensure!(
+                    entry.health() == recall::Health::Ok,
+                    "The Show is damaged or unsupported; inspection lists the problems."
+                );
             },
             Self::Keep {
                 directory,
