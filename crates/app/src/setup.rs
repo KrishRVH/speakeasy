@@ -28,6 +28,7 @@ use crate::{
     config::{Config, Engine},
     http::{Trust, client_builder},
     models::Model,
+    progress::Progress,
 };
 
 const PARAKEET: Download<'static> = Download {
@@ -41,6 +42,8 @@ const NEMOTRON: Download<'static> = Download {
     size: 742_090_464,
     sha256: "3fc991d3badad7277c11030a7519832cddaf2057aafed6d4b25147e953a070b1",
 };
+
+const CHECKING: Progress = Progress::Step("Checking this machine");
 
 pub(crate) fn downloaded() -> Vec<Model> {
     let Ok(root) = crate::paths::data_root() else {
@@ -59,29 +62,6 @@ pub(crate) fn downloaded() -> Vec<Model> {
 
 fn model_directory(root: &Path, download: &Download<'_>) -> PathBuf {
     root.join("models").join(download.sha256)
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct Progress {
-    pub step: &'static str,
-    pub done: u64,
-    pub total: u64,
-}
-
-impl Progress {
-    const fn new(step: &'static str) -> Self {
-        Self {
-            step,
-            done: 0,
-            total: 0,
-        }
-    }
-}
-
-impl Default for Progress {
-    fn default() -> Self {
-        Self::new("Checking this machine")
-    }
 }
 
 pub(crate) struct Installed {
@@ -155,7 +135,7 @@ impl Setup {
         + Send
         + 'static,
     ) -> anyhow::Result<Self> {
-        let (progress, updates) = watch::channel(Progress::default());
+        let (progress, updates) = watch::channel(CHECKING);
         let (finish, result) = async_channel::bounded(1);
         let thread = StoppableThread::spawn("setup", move |cancelled| {
             if let Some(result) = work(progress, cancelled) {
@@ -248,14 +228,14 @@ impl Installation {
         loop {
             match lock.try_lock() {
                 Ok(()) => {
-                    progress.send_replace(Progress::default());
+                    progress.send_replace(CHECKING);
                     return Ok(Self {
                         child: None,
                         _lock: lock,
                     });
                 },
                 Err(fs::TryLockError::WouldBlock) => {
-                    progress.send_replace(Progress::new("Waiting for another setup to finish"));
+                    progress.send_replace(Progress::Step("Waiting for another setup to finish"));
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 },
                 Err(fs::TryLockError::Error(error)) => return Err(file_error(root)(error)),

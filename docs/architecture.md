@@ -329,7 +329,9 @@ module unless a test file is named.
   and preservation of edits.
 - **Setup**: [setup.rs](../crates/app/src/setup.rs) and [setup/](../crates/app/src/setup) choose,
   download, verify, and unpack engines and report which managed models are already downloaded; a
-  full install is opt-in.
+  full install is opt-in. Setup and update preparation report each step through
+  [progress.rs](../crates/app/src/progress.rs), with a byte count only when the step's total is
+  known.
 - **Reset**: [reset.rs](../crates/app/src/reset.rs) holds `setup.lock` and `updates.lock` in the
   data root through deletion, refuses while another copy holds either, and deletes engines, models,
   downloads, and updates folders, and deletes the settings file last, following a settings symlink

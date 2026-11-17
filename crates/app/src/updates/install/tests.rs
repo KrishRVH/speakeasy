@@ -157,12 +157,7 @@ fn cache_entries(root: &Path) -> Vec<std::ffi::OsString> {
 }
 
 fn progress() -> watch::Sender<Progress> {
-    watch::channel(Progress {
-        stage: "Test",
-        done: 0,
-        total: 0,
-    })
-    .0
+    watch::channel(Progress::Step("Test")).0
 }
 
 #[tokio::test]
@@ -178,8 +173,10 @@ async fn verified_download_retains_the_file_until_its_owner_is_released() {
     served.await.unwrap();
     assert_eq!(installer.version, version("1.2.3"));
     assert_eq!(installer.file.metadata().unwrap().len(), 9);
-    assert_eq!(observed.borrow().stage, "Verifying update");
-    assert_eq!(observed.borrow().done, observed.borrow().total);
+    assert!(matches!(
+        *observed.borrow(),
+        Progress::Bytes { step: "Verifying update", done, total } if done == total.get()
+    ));
     let path = installer.directory.path().join(manifest::NAME);
     #[cfg(target_os = "windows")]
     {

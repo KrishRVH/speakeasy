@@ -12,11 +12,11 @@ use reqwest::Client;
 use tokio::{sync::watch, time::timeout};
 
 use super::{
-    Installation, Progress,
+    Installation,
     archive::{EXECUTABLE, unpack},
     download::Download,
 };
-use crate::child::hidden_command;
+use crate::{child::hidden_command, progress::Progress};
 
 #[cfg(target_os = "windows")]
 const CUDA: Download<'static> = Download {
@@ -167,7 +167,7 @@ async fn doctor(
     progress: &watch::Sender<Progress>,
     installation: &mut Installation,
 ) -> Option<serde_json::Value> {
-    progress.send_replace(Progress::new("Checking the speech engine on this machine"));
+    progress.send_replace(Progress::Step("Checking the speech engine on this machine"));
     let mut command = hidden_command(directory.join(EXECUTABLE));
     command.args(["doctor", "--json"]).stdout(Stdio::piped());
     let output = timeout(Duration::from_secs(60), installation.output(&mut command)).await;

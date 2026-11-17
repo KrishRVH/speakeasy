@@ -9,7 +9,8 @@ use reqwest::{Client, StatusCode, header::RANGE};
 use sha2::{Digest as _, Sha256};
 use tokio::{io::AsyncReadExt, sync::watch};
 
-use super::{Progress, file_error};
+use super::file_error;
+use crate::progress::Progress;
 
 pub(super) struct Download<'a> {
     pub(super) url: &'a str,
@@ -97,11 +98,7 @@ pub(super) async fn fetch(
             File::create(&partial).map_err(file_error(directory))?,
         )
     };
-    progress.send_replace(Progress {
-        step,
-        done,
-        total: download.size,
-    });
+    progress.send_replace(Progress::bytes(step, done, download.size));
     while let Some(chunk) = response
         .chunk()
         .await
@@ -113,7 +110,7 @@ pub(super) async fn fetch(
         }
         hash.update(&chunk);
         file.write_all(&chunk).map_err(file_error(directory))?;
-        progress.send_modify(|progress| progress.done = done);
+        progress.send_replace(Progress::bytes(step, done, download.size));
     }
     file.sync_all().map_err(file_error(directory))?;
     drop(file);
@@ -138,11 +135,9 @@ async fn hash_file(
     size: u64,
     progress: &watch::Sender<Progress>,
 ) -> io::Result<Sha256> {
-    progress.send_replace(Progress {
-        step: "Verifying downloaded data",
-        done: 0,
-        total: size,
-    });
+    let step = "Verifying downloaded data";
+    let mut done = 0_u64;
+    progress.send_replace(Progress::bytes(step, done, size));
     let mut file = tokio::fs::File::open(path).await?;
 
     let mut chunk = Vec::with_capacity(1024 * 1024);
@@ -154,9 +149,8 @@ async fn hash_file(
             break;
         }
         hasher.update(&chunk);
-        progress.send_modify(|progress| {
-            progress.done = progress.done.saturating_add(count as u64);
-        });
+        done = done.saturating_add(count as u64);
+        progress.send_replace(Progress::bytes(step, done, size));
 
         tokio::task::yield_now().await;
     }

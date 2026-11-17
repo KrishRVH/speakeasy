@@ -9,7 +9,7 @@ use tokio::{
 use super::*;
 use crate::{
     http::{Trust, client_builder},
-    setup::Installation,
+    setup::{CHECKING, Installation},
 };
 
 const BODY: &[u8] = b"Say the word. The door opens, and what is said stays inside.";
@@ -99,7 +99,7 @@ async fn fetch_promotes_a_verified_complete_partial_without_a_request() -> anyho
     let directory = tempfile::tempdir()?;
     let partial = directory.path().join("model.gguf.part");
     fs::write(&partial, BODY)?;
-    let (progress, _) = watch::channel(Progress::default());
+    let (progress, _) = watch::channel(CHECKING);
     let path = fetch_into(&download, directory.path(), &progress).await?;
     assert_eq!(fs::read(path)?, BODY);
     assert!(!partial.exists());
@@ -125,7 +125,7 @@ async fn fetch_replaces_a_corrupt_complete_partial() -> anyhow::Result<()> {
         directory.path().join("model.gguf.part"),
         vec![0; BODY.len()],
     )?;
-    let (progress, _) = watch::channel(Progress::default());
+    let (progress, _) = watch::channel(CHECKING);
     let path = fetch_into(&download, directory.path(), &progress).await?;
     assert_eq!(fs::read(path)?, BODY);
     assert_eq!(requests.recv().await?, None);
@@ -144,14 +144,16 @@ async fn cancellation_during_verification_keeps_the_partial_for_retry() -> anyho
         size: bytes.len() as u64,
         sha256: &sha,
     };
-    let (progress, mut updates) = watch::channel(Progress::default());
+    let (progress, mut updates) = watch::channel(CHECKING);
     let (cancel, cancelled) = async_channel::bounded::<Infallible>(1);
     let cancel_when_verifying = async {
         updates
             .wait_for(|progress| {
-                progress.step == "Verifying downloaded data"
-                    && progress.done > 0
-                    && progress.done < progress.total
+                matches!(
+                    *progress,
+                    Progress::Bytes { step: "Verifying downloaded data", done, total }
+                        if done > 0 && done < total.get()
+                )
             })
             .await?;
         drop(cancel);
@@ -183,12 +185,15 @@ async fn fetch_resumes_a_partial_download_and_verifies_the_whole_file() -> anyho
     };
     let directory = tempfile::tempdir()?;
     fs::write(directory.path().join("model.gguf.part"), &BODY[..20])?;
-    let (progress, _) = watch::channel(Progress::default());
+    let (progress, _) = watch::channel(CHECKING);
     let path = fetch_into(&download, directory.path(), &progress).await?;
     assert_eq!(requests.recv().await?, Some(20));
     assert_eq!(fs::read(&path)?, BODY);
     assert!(!directory.path().join("model.gguf.part").exists());
-    assert_eq!(progress.borrow().done, BODY.len() as u64);
+    assert!(matches!(
+        *progress.borrow(),
+        Progress::Bytes { done, .. } if done == BODY.len() as u64
+    ));
     Ok(())
 }
 
@@ -203,7 +208,7 @@ async fn fetch_discards_a_download_that_fails_its_checksum() -> anyhow::Result<(
         sha256: &sha,
     };
     let directory = tempfile::tempdir()?;
-    let (progress, _) = watch::channel(Progress::default());
+    let (progress, _) = watch::channel(CHECKING);
     let error = fetch_into(&download, directory.path(), &progress)
         .await
         .err()
@@ -223,7 +228,7 @@ async fn cached_downloads_require_the_pinned_bytes_and_preserve_a_mismatch() -> 
         size: expected.len() as u64,
         sha256: &digest,
     };
-    let (progress, _) = watch::channel(Progress::default());
+    let (progress, _) = watch::channel(CHECKING);
     for bytes in [expected.as_slice(), b"stale checkpoint", b"truncated"] {
         let directory = tempfile::tempdir()?;
         let path = directory.path().join("model.gguf");

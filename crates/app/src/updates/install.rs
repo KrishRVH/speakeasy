@@ -14,7 +14,10 @@ use tokio::sync::watch;
 #[cfg(target_os = "windows")]
 use super::fetch;
 use super::{Job, Version};
-use crate::http::{Trust, client_builder};
+use crate::{
+    http::{Trust, client_builder},
+    progress::Progress,
+};
 
 mod cache;
 #[cfg(target_os = "windows")]
@@ -29,13 +32,6 @@ mod tests;
 const DOWNLOAD_FAILED: &str =
     "Cannot download the update. Check your connection and free disk space, then try again.";
 const INVALID_FILE: &str = "The downloaded installer does not match the authenticated release. Nothing was installed. Try again.";
-
-#[derive(Clone, Copy)]
-pub(crate) struct Progress {
-    pub(crate) stage: &'static str,
-    pub(crate) done: u64,
-    pub(crate) total: u64,
-}
 
 #[cfg(target_os = "windows")]
 pub(crate) type Download = Job<Installer>;
@@ -64,11 +60,7 @@ impl Download {
             "This release is not newer than the installed version."
         );
         let root = crate::paths::data_root()?;
-        let (progress, observed) = watch::channel(Progress {
-            stage: "Authenticating update",
-            done: 0,
-            total: 0,
-        });
+        let (progress, observed) = watch::channel(Progress::Step("Authenticating update"));
         let operation = Self::spawn("update-download", move || async move {
             let target = handoff::Target::current(configuration)?;
             let client = client(client_builder(Trust::System)?.https_only(true))?;
@@ -163,17 +155,13 @@ async fn download(
         INVALID_FILE
     );
     let mut done = 0_u64;
-    progress.send_replace(Progress {
-        stage: "Downloading update",
-        done,
-        total: artifact.size,
-    });
+    progress.send_replace(Progress::bytes("Downloading update", done, artifact.size));
     while let Some(chunk) = response.chunk().await.context(DOWNLOAD_FAILED)? {
         let length = u64::try_from(chunk.len()).context(INVALID_FILE)?;
         ensure!(length <= artifact.size.saturating_sub(done), INVALID_FILE);
         file.write_all(&chunk).context(DOWNLOAD_FAILED)?;
         done = done.saturating_add(length);
-        progress.send_modify(|progress| progress.done = done);
+        progress.send_replace(Progress::bytes("Downloading update", done, artifact.size));
         tokio::task::yield_now().await;
     }
     ensure!(done == artifact.size, INVALID_FILE);
@@ -185,13 +173,9 @@ async fn download(
         metadata.is_file() && metadata.len() == artifact.size,
         INVALID_FILE
     );
-    progress.send_replace(Progress {
-        stage: "Verifying update",
-        done: 0,
-        total: artifact.size,
-    });
     let mut hash = Sha256::new();
     let mut hashed = 0_u64;
+    progress.send_replace(Progress::bytes("Verifying update", hashed, artifact.size));
     let mut buffer = vec![0; 1024 * 1024];
     loop {
         let read = file.read(&mut buffer).context(DOWNLOAD_FAILED)?;
@@ -204,7 +188,7 @@ async fn download(
             .filter(|&total| total <= artifact.size)
             .context(INVALID_FILE)?;
         hash.update(buffer.get(..read).context(INVALID_FILE)?);
-        progress.send_modify(|progress| progress.done = hashed);
+        progress.send_replace(Progress::bytes("Verifying update", hashed, artifact.size));
         tokio::task::yield_now().await;
     }
     ensure!(

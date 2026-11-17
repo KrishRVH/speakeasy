@@ -17,7 +17,7 @@ use super::{
 use crate::{
     controls::{Kit, Tone, Weight, facet, hollow, icon, popover},
     icons,
-    setup::Progress,
+    progress::Progress,
     shell::Services,
     status::{Indicator, ServiceState},
     theme::Palette,
@@ -472,15 +472,20 @@ const fn microphone_remedy() -> &'static str {
 }
 
 pub(super) fn fraction(progress: Progress) -> f32 {
-    progress.done as f32 / progress.total.max(1) as f32
+    match progress {
+        Progress::Step(_) => 0.0,
+        Progress::Bytes { done, total, .. } => done as f32 / total.get() as f32,
+    }
 }
 
 pub(super) fn progress_text(progress: Progress) -> String {
-    let Progress { step, done, total } = progress;
-    if total > 0 {
-        format!("{step} · {} of {} MB", done / 1_000_000, total / 1_000_000)
-    } else {
-        format!("{step}…")
+    match progress {
+        Progress::Step(step) => format!("{step}…"),
+        Progress::Bytes { step, done, total } => format!(
+            "{step} · {} of {} MB",
+            done / 1_000_000,
+            total.get() / 1_000_000
+        ),
     }
 }
 

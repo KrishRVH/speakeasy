@@ -8,11 +8,11 @@ use reqwest::Client;
 use tokio::sync::watch;
 
 use super::{
-    Installation, Progress,
+    Installation,
     download::{Download, fetch},
     file_error, system32,
 };
-use crate::child::hidden_command;
+use crate::{child::hidden_command, progress::Progress};
 
 #[cfg(target_os = "windows")]
 pub(super) const EXECUTABLE: &str = r"bin\nemo-speech.exe";
@@ -44,7 +44,7 @@ pub(super) async fn unpack(
         progress,
     )
     .await?;
-    progress.send_replace(Progress::new("Unpacking the speech engine"));
+    progress.send_replace(Progress::Step("Unpacking the speech engine"));
     let staging = engines.join(format!("{stem}.part"));
     remove_engine_directory(&staging)?;
     fs::create_dir_all(&staging).map_err(file_error(&engines))?;
@@ -118,7 +118,7 @@ mod tests {
     use super::*;
     use crate::{
         http::{Trust, client_builder},
-        setup::download::hex_digest,
+        setup::{CHECKING, download::hex_digest},
     };
 
     #[test]
@@ -170,7 +170,7 @@ mod tests {
         fs::create_dir_all(root.join("engines"))?;
         fs::write(root.join("downloads/fixture.tar.gz"), b"unused archive")?;
         fs::write(root.join("engines/fixture.part"), b"not a directory")?;
-        let (progress, _) = watch::channel(Progress::default());
+        let (progress, _) = watch::channel(CHECKING);
         let mut installation = Installation::acquire(root, &progress).await?;
         let archive = Download {
             url: "http://127.0.0.1:0/fixture.tar.gz",
@@ -231,7 +231,7 @@ mod tests {
             root.join("downloads/fixture.tar"),
             ustar(&entry, b"engine fixture"),
         )?;
-        let (progress, _) = watch::channel(Progress::default());
+        let (progress, _) = watch::channel(CHECKING);
         let mut installation = Installation::acquire(root, &progress).await?;
         let bytes = fs::read(root.join("downloads/fixture.tar"))?;
         let archive = Download {

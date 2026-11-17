@@ -197,7 +197,7 @@ async fn cancellation_stops_the_child_before_another_setup_owns_the_directory() 
     let root = directory.path().to_path_buf();
     let partial = b"partial model";
     fs::write(root.join("model.gguf.part"), partial)?;
-    let (progress, _) = watch::channel(Progress::default());
+    let (progress, _) = watch::channel(CHECKING);
     let (cancel, cancelled) = async_channel::bounded::<Infallible>(1);
     let first_root = root.clone();
     let first = tokio::spawn(async move {
@@ -218,7 +218,7 @@ async fn cancellation_stops_the_child_before_another_setup_owns_the_directory() 
         "The setup child did not take its lock"
     );
 
-    let (progress, mut updates) = watch::channel(Progress::default());
+    let (progress, mut updates) = watch::channel(CHECKING);
     let (_second_cancel, second_cancelled) = async_channel::bounded::<Infallible>(1);
     let second_root = root.clone();
     let second = tokio::spawn(async move {
@@ -233,7 +233,10 @@ async fn cancellation_stops_the_child_before_another_setup_owns_the_directory() 
         .await
     });
     timeout(Duration::from_secs(5), updates.changed()).await??;
-    assert_eq!(updates.borrow().step, "Waiting for another setup to finish");
+    assert!(matches!(
+        *updates.borrow(),
+        Progress::Step("Waiting for another setup to finish")
+    ));
     assert!(!second.is_finished());
     drop(cancel);
     assert!(timeout(Duration::from_secs(5), first).await??.is_none());
@@ -246,9 +249,9 @@ async fn cancellation_stops_the_child_before_another_setup_owns_the_directory() 
 #[tokio::test]
 async fn cancellation_while_waiting_for_setup_leaves_the_owner_locked() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
-    let (progress, _) = watch::channel(Progress::default());
+    let (progress, _) = watch::channel(CHECKING);
     let _owner = Installation::acquire(directory.path(), &progress).await?;
-    let (progress, mut updates) = watch::channel(Progress::default());
+    let (progress, mut updates) = watch::channel(CHECKING);
     let (cancel, cancelled) = async_channel::bounded::<Infallible>(1);
     let root = directory.path().to_path_buf();
     let waiting = tokio::spawn(async move {
@@ -275,7 +278,7 @@ async fn setup_names_the_directory_it_cannot_prepare_and_what_to_do() -> anyhow:
     let beneath_a_file = directory.path().join("file").join("speakeasy");
     let lock_is_a_directory = directory.path().join("speakeasy");
     fs::create_dir_all(lock_is_a_directory.join("setup.lock"))?;
-    let (progress, _) = watch::channel(Progress::default());
+    let (progress, _) = watch::channel(CHECKING);
     for root in [beneath_a_file, lock_is_a_directory] {
         let failure = Installation::acquire(&root, &progress)
             .await
@@ -296,7 +299,7 @@ async fn setup_names_the_directory_it_cannot_prepare_and_what_to_do() -> anyhow:
 async fn install_chooses_an_engine_that_recognizes_fixture_speech() -> anyhow::Result<()> {
     let wav = fs::read(std::env::var("SPEAKEASY_FIXTURE_WAV")?)?;
     let root = tempfile::tempdir()?;
-    let (progress, _) = watch::channel(Progress::default());
+    let (progress, _) = watch::channel(CHECKING);
     let (_cancel, cancelled) = async_channel::bounded::<Infallible>(1);
     let installed = Installation::run(root.path(), &progress, &cancelled, async |installation| {
         install(root.path(), &progress, installation, Model::Parakeet).await

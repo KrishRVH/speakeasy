@@ -124,6 +124,8 @@ impl Settings {
 
     #[cfg(target_os = "windows")]
     pub(super) fn download_update(&mut self, cx: &Context<'_, Self>) {
+        use crate::progress::Progress;
+
         let Update::Available(version) = self.update else {
             return;
         };
@@ -153,14 +155,12 @@ impl Settings {
                     break outcome.await;
                 }
                 let progress = *progress.borrow_and_update();
-                let message = progress
-                    .done
-                    .saturating_mul(100)
-                    .checked_div(progress.total)
-                    .map_or_else(
-                        || progress.stage.to_owned(),
-                        |percent| format!("{}: {percent}%", progress.stage),
-                    );
+                let message = match progress {
+                    Progress::Step(step) => step.to_owned(),
+                    Progress::Bytes { step, done, total } => {
+                        format!("{step}: {}%", done.saturating_mul(100) / total)
+                    },
+                };
                 this.update_if_alive(cx, |view, cx| view.note_download(message, cx));
                 cx.background_executor()
                     .timer(super::PROGRESS_THROTTLE)

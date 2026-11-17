@@ -16,6 +16,7 @@ mod lowpass;
 mod models;
 mod paths;
 mod pill;
+mod progress;
 mod recognition_terms;
 mod reset;
 mod runtime;
