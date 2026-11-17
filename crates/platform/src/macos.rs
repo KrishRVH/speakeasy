@@ -32,7 +32,7 @@ use core_graphics::{
     },
     event_source::{CGEventSource, CGEventSourceStateID},
 };
-use objc2::{MainThreadMarker, rc::Retained, runtime::ProtocolObject};
+use objc2::{MainThreadMarker, MainThreadOnly as _, rc::Retained, runtime::ProtocolObject};
 use objc2_app_kit::{
     NSAlert, NSEvent, NSFloatingWindowLevel, NSPasteboard, NSScreen, NSView, NSWindow,
     NSWindowCollectionBehavior, NSWindowStyleMask, NSWorkspace,
@@ -41,7 +41,7 @@ use objc2_app_kit::{
 use objc2_core_graphics as cg;
 use objc2_foundation::{
     NSDistributedNotificationCenter, NSNotification, NSNotificationCenter, NSObjectProtocol,
-    NSPoint, NSString,
+    NSPoint, NSString, ns_string,
 };
 use raw_window_handle::{RawWindowHandle, WindowHandle};
 
@@ -61,7 +61,7 @@ const TEXT_EVENT_UNITS: usize = 16;
 
 pub(super) struct Monitor {
     control: Arc<MonitorControl<CFRunLoop>>,
-    _observers: Vec<Observer>,
+    _observers: [Observer; 3],
     insertion: insertion::Worker,
 }
 
@@ -181,7 +181,7 @@ impl Drop for Observer {
     }
 }
 
-fn lifecycle_observers(input: &InputSender, policy: &Arc<SharedPolicy>) -> Vec<Observer> {
+fn lifecycle_observers(input: &InputSender, policy: &Arc<SharedPolicy>) -> [Observer; 3] {
     let workspace = NSWorkspace::sharedWorkspace().notificationCenter();
 
     let (will_sleep, resigned) = unsafe {
@@ -191,11 +191,11 @@ fn lifecycle_observers(input: &InputSender, policy: &Arc<SharedPolicy>) -> Vec<O
         )
     };
     let distributed = NSDistributedNotificationCenter::defaultCenter().into_super();
-    let screen_locked = NSString::from_str("com.apple.screenIsLocked");
-    vec![
+    let screen_locked = ns_string!("com.apple.screenIsLocked");
+    [
         Observer::interrupt_on(workspace.clone(), will_sleep, input, policy),
         Observer::interrupt_on(workspace, resigned, input, policy),
-        Observer::interrupt_on(distributed, &screen_locked, input, policy),
+        Observer::interrupt_on(distributed, screen_locked, input, policy),
     ]
 }
 
@@ -429,7 +429,7 @@ impl NativeWindow {
     pub fn set_pill_visible(&self, visible: bool) {
         let window = &self.native.ns_window;
         if visible {
-            if let Some(origin) = pill_origin_under_pointer() {
+            if let Some(origin) = pill_origin_under_pointer(window.mtm()) {
                 window.setFrameOrigin(origin);
             }
             window.orderFrontRegardless();
@@ -439,8 +439,7 @@ impl NativeWindow {
     }
 }
 
-fn pill_origin_under_pointer() -> Option<NSPoint> {
-    let main = MainThreadMarker::new()?;
+fn pill_origin_under_pointer(main: MainThreadMarker) -> Option<NSPoint> {
     let pointer = NSEvent::mouseLocation();
     let screen = NSScreen::screens(main)
         .iter()
@@ -609,7 +608,7 @@ fn discards_stderr() -> bool {
 pub(super) fn show_startup_error(message: &str) {
     if let Some(main) = MainThreadMarker::new() {
         let alert = NSAlert::new(main);
-        alert.setMessageText(&NSString::from_str("Speakeasy could not start"));
+        alert.setMessageText(ns_string!("Speakeasy could not start"));
         alert.setInformativeText(&NSString::from_str(message));
         alert.runModal();
     }

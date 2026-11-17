@@ -6,7 +6,7 @@ use objc2_app_kit::{
     NSPasteboard, NSPasteboardContentsOptions, NSPasteboardItem, NSPasteboardTypePNG,
     NSPasteboardTypeString, NSPasteboardWriting,
 };
-use objc2_foundation::{NSArray, NSData, NSString};
+use objc2_foundation::{NSArray, NSData, NSString, ns_string};
 
 #[expect(
     clippy::disallowed_types,
@@ -52,10 +52,7 @@ fn item(
 ) -> anyhow::Result<Retained<NSPasteboardItem>> {
     let item = NSPasteboardItem::new();
     ensure!(
-        item.setString_forType(
-            &NSString::new(),
-            &NSString::from_str("org.nspasteboard.TransientType")
-        ),
+        item.setString_forType(ns_string!(""), ns_string!("org.nspasteboard.TransientType")),
         "Cannot mark the clipboard copy private"
     );
     if let Some(image) = image {
