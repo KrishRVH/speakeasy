@@ -93,7 +93,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("installer", type=Path)
     parser.add_argument("version")
-    parser.add_argument("--public-key", type=Path, default=Path("packaging/update-key.pub"))
+    parser.add_argument("--public-key", type=Path)
     parser.add_argument("--private-key", type=Path, required=True)
     arguments = parser.parse_args(namespace=Arguments())
     try:
