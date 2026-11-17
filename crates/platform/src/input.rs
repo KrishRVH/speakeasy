@@ -166,7 +166,7 @@ impl InsertPermit {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 #[expect(
     clippy::disallowed_types,
     reason = "Native Escape must revoke this recording while its owner is blocked in a clipboard OS call"
@@ -174,6 +174,12 @@ impl InsertPermit {
 struct Gate(Arc<AtomicU64>);
 
 const _: () = assert!(Gate::STATE == (Gate::AUTHORIZED | Gate::REVOKED | Gate::SHIELDED));
+
+impl Default for Gate {
+    fn default() -> Self {
+        Self(Arc::new(Self::REVOKED.into()))
+    }
+}
 
 impl Gate {
     const AUTHORIZED: u64 = 1;
@@ -352,6 +358,25 @@ mod tests {
         input.deliver(Input::Escape);
         assert!(!permit.shield());
         assert!(!permit.active());
+        Ok(())
+    }
+
+    #[test]
+    fn cancels_while_idle_leave_an_idle_copy_authorized() -> anyhow::Result<()> {
+        let (sender, _events) = async_channel::bounded(8);
+        let input = InputSender::new(sender);
+        for recorded in [false, true] {
+            if recorded {
+                assert!(input.begin().context("Recording")?.commit());
+            }
+            let idle = input.idle().context("Idle")?;
+            input.deliver(Input::Escape);
+            input.cancel();
+            assert!(
+                idle.is_current(),
+                "A cancel with no recording revoked an idle copy (after a recording: {recorded})"
+            );
+        }
         Ok(())
     }
 
