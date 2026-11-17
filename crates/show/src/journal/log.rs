@@ -1,5 +1,5 @@
 use super::{
-    DURATION_LIMIT, Entry, Journal, SourceError,
+    DURATION_LIMIT, EDGE, Entry, Journal, SourceError,
     record::{Cursor, RECORD_OVERHEAD, framed, payload, require},
     tiles,
 };
@@ -9,7 +9,6 @@ use crate::{
 };
 
 const MAGIC: &[u8; 8] = b"SPKLOG03";
-const EDGE: usize = super::MAX_FRAME_EDGE as usize;
 const RECORD_LIMIT: usize = 40 << 20;
 const EVENT_OVERHEAD: usize = 64;
 
@@ -413,7 +412,7 @@ impl Entry {
         for value in [self.width, self.height, self.tiles.len()] {
             put(data, value)?;
         }
-        data.extend_from_slice(self.signature.bytes());
+        data.extend_from_slice(self.signature.as_bytes());
         let geometry: Vec<_> = tiles(self.width, self.height).collect();
         for (index, bytes) in &self.tiles {
             let tile = geometry

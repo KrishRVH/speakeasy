@@ -1,7 +1,7 @@
 use std::{fmt, ops::Range};
 
 use super::{
-    DURATION_LIMIT, Journal, PIXEL, Tile,
+    DURATION_LIMIT, EDGE, Journal, MAX_FRAME_EDGE, PIXEL, Tile,
     record::{Cursor, RECORD_OVERHEAD, emit_record, payload, require},
     restore_tile, tiles,
 };
@@ -15,7 +15,6 @@ const FOOTER_BYTES: u64 = 16;
 const SMALLEST_FILE: u64 = (MAGIC.len() + RECORD_OVERHEAD) as u64 + FOOTER_BYTES;
 const INDEX_LIMIT: usize = 64 << 20;
 const FRAME_LIMIT: usize = 4_096;
-const EDGE_LIMIT: u32 = super::MAX_FRAME_EDGE;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SourceError(pub(crate) &'static str);
@@ -90,9 +89,8 @@ impl Source {
         let encoded = read(start..end)?;
         require(encoded.len() as u64 == size, "source index is truncated")?;
         let mut index = Cursor(payload(&encoded, INDEX_RECORD)?);
-        let index_checksum = encoded
-            .get(encoded.len().saturating_sub(4)..)
-            .and_then(|bytes| bytes.try_into().ok())
+        let index_checksum = *encoded
+            .last_chunk()
             .ok_or(SourceError("source checksum is missing"))?;
         let duration = Moment::from_millis(index.wide()?);
         require(
@@ -121,25 +119,21 @@ impl Source {
         }
         let count = index.count(moments.len(), 16)?;
         require(count > 0, "source has no frame geometry")?;
-        let mut segments = Vec::with_capacity(count);
+        let mut segments: Vec<Segment> = Vec::with_capacity(count);
         let mut expected = MAGIC.len() as u64;
-        for position in 0..count {
+        for _ in 0..count {
             let first = index.usize()?;
             require(
                 first < moments.len()
-                    && if position == 0 {
-                        first == 0
-                    } else {
-                        segments
-                            .last()
-                            .is_some_and(|segment: &Segment| segment.first < first)
-                    },
+                    && segments
+                        .last()
+                        .map_or(first == 0, |previous| previous.first < first),
                 "source geometry order is invalid",
             )?;
             let width = index.word()?;
             let height = index.word()?;
             require(
-                (1..=EDGE_LIMIT).contains(&width) && (1..=EDGE_LIMIT).contains(&height),
+                (1..=MAX_FRAME_EDGE).contains(&width) && (1..=MAX_FRAME_EDGE).contains(&height),
                 "source frame dimensions exceed the format limit",
             )?;
             let geometry: Vec<_> = tiles(convert::count(width), convert::count(height)).collect();
@@ -160,19 +154,21 @@ impl Source {
             index.0.is_empty() && expected == start,
             "source index does not cover its data",
         )?;
-        for (position, segment) in segments.iter().enumerate() {
-            let end = segments
-                .get(position.saturating_add(1))
-                .map_or(moments.len(), |next| next.first);
-            require(
+        let ends = segments
+            .iter()
+            .skip(1)
+            .map(|next| next.first)
+            .chain([moments.len()]);
+        require(
+            segments.iter().zip(ends).all(|(segment, end)| {
                 segment
                     .tiles
                     .iter()
                     .flatten()
-                    .all(|version| version.first < end),
-                "source tile outlives its geometry",
-            )?;
-        }
+                    .all(|version| version.first < end)
+            }),
+            "source tile outlives its geometry",
+        )?;
         Ok(Self {
             duration,
             moments,
@@ -312,7 +308,7 @@ impl Journal {
         let mut offset: usize = MAGIC.len();
         for segment in &self.segments {
             require(
-                segment.width <= EDGE_LIMIT as usize && segment.height <= EDGE_LIMIT as usize,
+                segment.width <= EDGE && segment.height <= EDGE,
                 "source frame dimensions exceed the format limit",
             )?;
             for value in [
@@ -373,20 +369,16 @@ impl Cursor<'_> {
         expected: &mut u64,
         data_end: u64,
     ) -> Result<Vec<Location>, SourceError> {
-        let count = self.count(frames.end.saturating_sub(frames.start), 12)?;
+        let count = self.count(frames.len(), 12)?;
         require(count > 0, "source tile has no initial image")?;
-        let mut versions = Vec::with_capacity(count);
-        for position in 0..count {
+        let mut versions: Vec<Location> = Vec::with_capacity(count);
+        for _ in 0..count {
             let first = self.usize()?;
-            let ordered = if position == 0 {
-                first == frames.start
-            } else {
-                versions
-                    .last()
-                    .is_some_and(|version: &Location| version.first < first)
-            };
             require(
-                first < frames.end && ordered,
+                first < frames.end
+                    && versions
+                        .last()
+                        .map_or(first == frames.start, |previous| previous.first < first),
                 "source tile versions are out of order",
             )?;
             let offset = u64::from(self.word()?);

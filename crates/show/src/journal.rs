@@ -15,6 +15,7 @@ pub use source::{Source, SourceError, SourceFrame};
 const TILE: usize = 64;
 
 pub const MAX_FRAME_EDGE: u32 = 2_560;
+const EDGE: usize = MAX_FRAME_EDGE as usize;
 const PIXEL: usize = 4;
 const DURATION_LIMIT: Moment = Moment::from_millis(360_000);
 const ENTRY_OVERHEAD: usize = Signature::BYTES + 64;

@@ -48,7 +48,7 @@ impl fmt::Debug for Signature {
 impl Signature {
     pub(crate) const BYTES: usize = CELLS;
 
-    pub(crate) fn bytes(&self) -> &[u8] {
+    pub(crate) fn as_bytes(&self) -> &[u8] {
         self.cells.as_slice()
     }
 
