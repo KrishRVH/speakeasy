@@ -8,7 +8,7 @@ use anyhow::anyhow;
 use async_channel::Receiver;
 
 use super::{
-    Delivery, Enter, INSERTION_STOPPED, Inserted, Inserter, Insertion, OwnFocus,
+    Delivery, Enter, INSERTION_STOPPED, Inserted, Inserter, Insertion, MODIFIER_WAIT, OwnFocus,
     wait_for_released_modifiers,
 };
 use crate::{InputSender, InsertPermit, OwnedThread};
@@ -106,7 +106,15 @@ fn deliver<N: NativeInsert>(
     native: &mut N,
     request: &Insertion,
 ) -> anyhow::Result<(Inserted, Option<Saved<N>>)> {
-    wait_for_released_modifiers(&request.permit, || Ok(!native.shortcut_released()))?;
+    let patience = match request.enter {
+        Enter::Withheld => MODIFIER_WAIT,
+        Enter::Pressed => SUBMIT_RELEASE_WAIT,
+    };
+    wait_for_released_modifiers(
+        &request.permit,
+        patience,
+        || Ok(!native.shortcut_released()),
+    )?;
     let (inserted, saved) = insert(
         native,
         &request.text,
@@ -115,13 +123,16 @@ fn deliver<N: NativeInsert>(
         &request.own_focus,
     )?;
     if request.enter == Enter::Pressed && inserted == Inserted::Sent {
+        let target = native.target();
         thread::sleep(SUBMIT_SETTLE);
-        return Ok((submit(native, &request.own_focus)?, saved));
+        return Ok((submit(native, &request.own_focus, target), None));
     }
     Ok((inserted, saved))
 }
 
 const SUBMIT_SETTLE: Duration = Duration::from_millis(100);
+
+const SUBMIT_RELEASE_WAIT: Duration = Duration::from_secs(5);
 
 const RESTORE_AFTER: Duration = Duration::from_millis(500);
 
@@ -145,6 +156,8 @@ pub(crate) trait NativeInsert {
 
     type Contents;
 
+    type Target: PartialEq;
+
     fn acquire(&mut self) -> anyhow::Result<Self::Lease>;
 
     fn save(&mut self, lease: &Self::Lease) -> Option<Self::Contents>;
@@ -164,6 +177,8 @@ pub(crate) trait NativeInsert {
     fn return_keys(&mut self) -> anyhow::Result<Self::Keys>;
 
     fn external_focus(&mut self) -> bool;
+
+    fn target(&mut self) -> Option<Self::Target>;
 
     fn shortcut_released(&mut self) -> bool;
 
@@ -223,15 +238,25 @@ fn insert<N: NativeInsert>(
     Ok((inserted, saved))
 }
 
-fn submit<N: NativeInsert>(native: &mut N, own_focus: &OwnFocus) -> anyhow::Result<Inserted> {
-    if own_focus.held() || !native.external_focus() || !native.shortcut_released() {
-        return Ok(RETURN_WITHHELD);
+fn submit<N: NativeInsert>(
+    native: &mut N,
+    own_focus: &OwnFocus,
+    target: Option<N::Target>,
+) -> Inserted {
+    if target.is_none()
+        || own_focus.held()
+        || !native.external_focus()
+        || native.target() != target
+        || !native.shortcut_released()
+    {
+        return RETURN_WITHHELD;
     }
-    let keys = native.return_keys()?;
-    Ok(match native.send(keys)? {
-        Inserted::Sent => Inserted::Sent,
-        Inserted::Copied(_) | Inserted::Cancelled | Inserted::Unavailable(_) => RETURN_WITHHELD,
-    })
+    match native.return_keys().and_then(|keys| native.send(keys)) {
+        Ok(Inserted::Sent) => Inserted::Sent,
+        Ok(Inserted::Copied(_) | Inserted::Cancelled | Inserted::Unavailable(_)) | Err(_) => {
+            RETURN_WITHHELD
+        },
+    }
 }
 
 #[cfg(test)]

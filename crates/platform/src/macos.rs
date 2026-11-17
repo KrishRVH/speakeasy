@@ -496,6 +496,7 @@ impl insertion::NativeInsert for Insert {
     type Keys = Vec<CGEvent>;
     type Lease = clipboard::Lease;
     type Mark = isize;
+    type Target = i32;
 
     fn acquire(&mut self) -> anyhow::Result<clipboard::Lease> {
         Ok(clipboard::acquire())
@@ -562,6 +563,12 @@ impl insertion::NativeInsert for Insert {
         NSWorkspace::sharedWorkspace()
             .frontmostApplication()
             .is_some_and(|app| !is_own_process(app.processIdentifier().into()))
+    }
+
+    fn target(&mut self) -> Option<i32> {
+        NSWorkspace::sharedWorkspace()
+            .frontmostApplication()
+            .map(|app| app.processIdentifier())
     }
 
     fn shortcut_released(&mut self) -> bool {

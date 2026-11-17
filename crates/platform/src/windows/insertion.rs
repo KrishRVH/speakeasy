@@ -1,5 +1,5 @@
 use std::{
-    num::NonZeroU32,
+    num::{NonZeroU32, NonZeroUsize},
     thread,
     time::{Duration, Instant},
 };
@@ -61,11 +61,11 @@ fn saved_formats() -> Option<Vec<(u32, Vec<u8>)>> {
         if SYNTHESIZED.contains(&format) || private.contains(&Some(format)) {
             continue;
         }
+        size = size
+            .checked_add(clipboard_win::raw::size(format).map_or(0, NonZeroUsize::get))
+            .filter(|size| *size <= SAVED_BYTES)?;
         let mut data = Vec::new();
         clipboard_win::raw::get_vec(format, &mut data).ok()?;
-        size = size
-            .checked_add(data.len())
-            .filter(|size| *size <= SAVED_BYTES)?;
         saved.push((format, data));
     }
     (!saved.is_empty()).then_some(saved)
@@ -139,6 +139,7 @@ impl NativeInsert for Insert {
     type Keys = Keys;
     type Lease = clipboard_win::Clipboard;
     type Mark = Option<NonZeroU32>;
+    type Target = usize;
 
     fn acquire(&mut self) -> anyhow::Result<clipboard_win::Clipboard> {
         open_clipboard()
@@ -197,6 +198,11 @@ impl NativeInsert for Insert {
     fn external_focus(&mut self) -> bool {
         let focused = unsafe { GetForegroundWindow() };
         window_process(focused).is_some_and(|process| process != std::process::id())
+    }
+
+    fn target(&mut self) -> Option<usize> {
+        let focused = unsafe { GetForegroundWindow() };
+        (!focused.is_null()).then(|| focused.addr())
     }
 
     fn shortcut_released(&mut self) -> bool {

@@ -776,9 +776,11 @@ No single module owns these rules; a change to any party keeps them.
 - **Revoke before cleanup.** Escape, the Linux cancel chord, a settings change the session reads,
   Pause, and Quit revoke the recording's insertion permit before any cleanup is awaited, even while
   a clipboard call is blocked. `commit()` runs immediately before the irreversible effect, and an
-  obsolete permit never authorizes newer work. A Show pastes nothing, so its permit is shielded:
-  Escape, the tray, and an interruption reach the owner, which may keep the Show, while a settings
-  change, Pause, and Quit still revoke it at once.
+  obsolete permit never authorizes newer work. A dictation sent with Return spends its permit on the
+  text; the Return 100 ms later instead requires the same foreground target and a released shortcut,
+  as [native contracts](native-contracts.md) records. A Show pastes nothing, so its permit is
+  shielded: Escape, the tray, and an interruption reach the owner, which may keep the Show, while a
+  settings change, Pause, and Quit still revoke it at once.
 - **Stale results cannot reach a newer session.** A capture event applies only after one lookup
   matches its `SessionId` and a capturing stage, and footage only to its own session. Abandoning a
   session first detaches its transcription or delivery from it; at most, a late result makes the

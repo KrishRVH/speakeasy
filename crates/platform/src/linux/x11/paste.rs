@@ -22,7 +22,8 @@ use super::{
 use crate::{
     Delivery, InputSender, Inserted, LinuxPaste, OwnedThread,
     insertion::{
-        Insertion, PASTE_AFTER_RELEASE, Reply, abandon_queued, wait_for_released_modifiers,
+        Insertion, MODIFIER_WAIT, PASTE_AFTER_RELEASE, Reply, abandon_queued,
+        wait_for_released_modifiers,
     },
     linux::{
         CLIPBOARD_CHANGED, COPIED_FOR_MANUAL_PASTE, HostSession, NO_PASTE_BINDING, PasteChord,
@@ -142,7 +143,9 @@ impl Paster {
         let keys = PasteKeys::of(self.paste);
         let previous_owner = self.clipboard.owner()?;
         let shortcut_held = keys.is_some()
-            && wait_for_released_modifiers(&request.permit, || self.modifiers_held())?;
+            && wait_for_released_modifiers(&request.permit, MODIFIER_WAIT, || {
+                self.modifiers_held()
+            })?;
         let owner_changed = self.clipboard.owner()? != previous_owner;
 
         if !request.permit.active() {

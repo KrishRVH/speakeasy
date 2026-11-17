@@ -270,11 +270,14 @@ original seven-day schedule even when the saved bundle is kept.
   shortcut waits for release. With Ctrl+Win, an unassigned mask key keeps the released Win key from
   opening Start.
 - Return (or keypad Enter on macOS) during a Windows/macOS hold finishes that dictation as a release
-  would and marks it to send: after its text is pasted or typed, Speakeasy waits 100 ms for the app
-  to take it and presses Return once, rechecking that another app has focus and the shortcut is
-  released. If either check fails or the press is blocked, the text stays and the pill says Return
-  wasn't pressed, without offering a second paste. Return outside a hold, during hands-free, in
-  practice, or with a Show does nothing in Speakeasy and reaches the focused app.
+  would and marks it to send. Delivery waits up to 5 s for the shortcut's release, then pastes or
+  types the text, waits 100 ms for the app to take it, and presses Return once, rechecking that the
+  same foreground window (macOS: the same app), not Speakeasy, has focus and the shortcut is
+  released. If a check fails, or the Return press is blocked or fails, the text stays and the pill
+  says Return wasn't pressed, without offering a second paste. A sent paste keeps the dictation on
+  the clipboard rather than restoring the earlier copy. Like the other hold keys, Return is withheld
+  whenever the shortcut is down, so on the finishing press of hands-free or a Show it does nothing;
+  in practice it finishes the hold without sending. Return with the shortcut up reaches the app.
 - During a Windows/macOS hold, S, W, or A turns the recording into a Show, hands-free and keeping
   the narration since the press; pressing the shortcut again finishes it on release. The pill table
   shows what the pill presents. S records the display under the pointer and W the window under it,

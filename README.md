@@ -79,9 +79,11 @@ text; with Type instead of paste, an app may treat a typed line break as Return.
 
 **Return during the hold** finishes the dictation like releasing the shortcut, types it, and then
 presses Return, so a chat or an agent's prompt sends it. It applies to that dictation only, and only
-while the shortcut is held; hands-free and Shows ignore it, and Return outside a hold reaches your
-app as usual. If focus moves to another app, or the shortcut is still held, before Return would go,
-Speakeasy leaves the text unsent and says so.
+while the shortcut is held. Return while the shortcut is down for any other reason is held back and
+does nothing, and Return with the shortcut up reaches your app as usual. Release the shortcut within
+five seconds. If focus moves to another window on Windows, or another app on Mac, before Return
+would go, Speakeasy leaves the text unsent and says so. A sent dictation stays on the clipboard
+instead of the earlier copy coming back, so a slow app can never paste and send the earlier copy.
 
 **Paste last dictation** in the tray, or V during the shortcut hold on Windows and Mac, inserts
 exactly the last completed text again; V abandons the hold's own recording. It can recover text when
@@ -729,9 +731,10 @@ whole-recording recognition.
 **Recognition hints** under Words helps Nemotron and Whisper recognize names and jargon without
 forcing replacement text. Add a name or phrase; it applies right away. Up to 100 hints are stored
 locally; each allows six words and 64 characters. Nemotron boosts them as it decodes, and Whisper
-reads them as its prompt; a reply under a second of sound that only repeats the hints is dropped.
-Parakeet's engine has no way to bias it, so Parakeet ignores hints while they stay saved. Use
-**Corrections** when you want a deterministic replacement.
+reads the newest hints that fit in 600 characters as its prompt; with two or more hints, a reply
+under a second of sound that only repeats them is dropped. Parakeet's engine has no way to bias it,
+so Parakeet ignores hints while they stay saved. Use **Corrections** when you want a deterministic
+replacement.
 
 **Your own engine**, under **Dictation → Speech model**, runs a whisper.cpp or NeMo-Speech.cpp build
 you installed. Choose **whisper.cpp** or **NeMo-Speech**, then the program and model file for that

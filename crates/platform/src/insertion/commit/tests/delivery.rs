@@ -68,6 +68,49 @@ fn return_waits_for_focus_and_released_keys_after_the_text_lands() -> anyhow::Re
     Ok(())
 }
 
+#[test]
+fn return_goes_only_to_the_app_that_took_the_text() -> anyhow::Result<()> {
+    let request = Insertion {
+        enter: Enter::Pressed,
+        ..request(Delivery::Paste)?
+    };
+    let mut native = Fake::new();
+    native.targets = [1, 2].into();
+    assert_eq!(deliver(&mut native, &request)?.0, RETURN_WITHHELD);
+    assert!(native.sent());
+    assert!(!native.steps.contains(&Step::Send(Keys::Return)));
+    Ok(())
+}
+
+#[test]
+fn a_failed_return_never_offers_the_landed_text_again() -> anyhow::Result<()> {
+    let request = Insertion {
+        enter: Enter::Pressed,
+        ..request(Delivery::Paste)?
+    };
+    let mut native = Fake::new();
+    native.return_fails = true;
+    assert_eq!(deliver(&mut native, &request)?.0, RETURN_WITHHELD);
+    Ok(())
+}
+
+#[test]
+fn a_sent_dictation_leaves_its_text_on_the_clipboard() -> anyhow::Result<()> {
+    let pressed = Insertion {
+        enter: Enter::Pressed,
+        ..request(Delivery::Paste)?
+    };
+    let (inserted, saved) = deliver(&mut Fake::new(), &pressed)?;
+    assert_eq!(inserted, Inserted::Sent);
+    assert!(
+        saved.is_none(),
+        "A slow app could paste the restored copy and send it"
+    );
+    let (_, saved) = deliver(&mut Fake::new(), &request(Delivery::Paste)?)?;
+    assert!(saved.is_some());
+    Ok(())
+}
+
 fn request(delivery: Delivery) -> anyhow::Result<Insertion> {
     let (reply, _answer) = Reply::channel();
     Ok(Insertion {

@@ -25,10 +25,10 @@ const BRIEF: Duration = Duration::from_secs(1);
 pub(crate) fn invented<'a>(
     heard: impl Iterator<Item = &'a str> + Clone,
     audible: Duration,
-    prompt: &str,
+    prompt: Option<&str>,
 ) -> bool {
     let echoes = |text| folded(text).eq(heard.clone().flat_map(folded));
-    audible < BRIEF && (CREDITS.iter().copied().any(echoes) || !prompt.is_empty() && echoes(prompt))
+    audible < BRIEF && (CREDITS.iter().copied().any(echoes) || prompt.is_some_and(echoes))
 }
 
 fn folded(text: &str) -> impl Iterator<Item = char> + Clone + '_ {
@@ -55,7 +55,7 @@ mod tests {
     const BRIEFLY: Duration = Duration::from_millis(900);
 
     fn says(text: &str, audible: Duration) -> bool {
-        invented(iter::once(text), audible, "")
+        invented(iter::once(text), audible, None)
     }
 
     #[test]
@@ -75,18 +75,25 @@ mod tests {
         ] {
             assert!(says(heard, BRIEFLY), "{heard}");
         }
-        assert!(invented(["Thank", " you."].into_iter(), Duration::ZERO, ""));
+        assert!(invented(
+            ["Thank", " you."].into_iter(),
+            Duration::ZERO,
+            None
+        ));
     }
 
     #[test]
     fn a_brief_recording_that_repeats_every_hint_is_invented() {
         let prompt = "Example Name, Kubernetes";
         for heard in ["Example Name, Kubernetes.", "example name kubernetes"] {
-            assert!(invented(iter::once(heard), BRIEFLY, prompt), "{heard}");
+            assert!(
+                invented(iter::once(heard), BRIEFLY, Some(prompt)),
+                "{heard}"
+            );
         }
-        assert!(!invented(iter::once("Kubernetes."), BRIEFLY, prompt));
-        assert!(!invented(iter::once(prompt), BRIEF, prompt));
-        assert!(!invented(iter::once(""), Duration::ZERO, ""));
+        assert!(!invented(iter::once("Kubernetes."), BRIEFLY, Some(prompt)));
+        assert!(!invented(iter::once(prompt), BRIEF, Some(prompt)));
+        assert!(!invented(iter::once(""), Duration::ZERO, None));
     }
 
     #[test]

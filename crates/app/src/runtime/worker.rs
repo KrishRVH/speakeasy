@@ -308,7 +308,7 @@ fn invented<'a>(
     audible: Duration,
     terms: &Terms,
 ) -> bool {
-    engine == Engine::Whisper && credits::invented(heard, audible, &terms.prompt())
+    engine == Engine::Whisper && credits::invented(heard, audible, terms.list_echo().as_deref())
 }
 
 async fn transcript_of<W: Speech>(

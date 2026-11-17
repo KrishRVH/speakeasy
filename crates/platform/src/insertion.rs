@@ -203,12 +203,13 @@ pub enum Inserted {
 
 pub(crate) fn wait_for_released_modifiers(
     permit: &InsertPermit,
+    patience: Duration,
     mut held: impl FnMut() -> anyhow::Result<bool>,
 ) -> anyhow::Result<bool> {
     let started = Instant::now();
     loop {
         let down = held()?;
-        if !down || started.elapsed() >= MODIFIER_WAIT || !permit.active() {
+        if !down || started.elapsed() >= patience || !permit.active() {
             return Ok(down);
         }
         thread::sleep(MODIFIER_POLL);

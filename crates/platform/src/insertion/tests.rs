@@ -1,6 +1,8 @@
 use anyhow::Context as _;
 
-use super::{Delivery, FocusReport, Inserted, utf16_chunks, wait_for_released_modifiers};
+use super::{
+    Delivery, FocusReport, Inserted, MODIFIER_WAIT, utf16_chunks, wait_for_released_modifiers,
+};
 use crate::InputSender;
 
 pub(super) const DELIVERIES: [Delivery; 2] = [Delivery::Paste, Delivery::Direct];
@@ -67,13 +69,13 @@ fn modifier_wait_ends_at_release_or_revocation() -> anyhow::Result<()> {
     let (events, _receiver) = async_channel::bounded(1);
     let permit = InputSender::new(events).begin().context("Recording")?;
     let mut held = [true, true, false].into_iter();
-    let still_held = wait_for_released_modifiers(&permit, || {
+    let still_held = wait_for_released_modifiers(&permit, MODIFIER_WAIT, || {
         held.next().context("Queried modifiers after their release")
     })?;
     assert!(!still_held);
     permit.revoke();
     let mut queries = 0;
-    let still_held = wait_for_released_modifiers(&permit, || {
+    let still_held = wait_for_released_modifiers(&permit, MODIFIER_WAIT, || {
         queries += 1;
         Ok(true)
     })?;

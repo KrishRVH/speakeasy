@@ -2,6 +2,13 @@ use std::slice;
 
 const PAUSES: [char; 2] = [',', ';'];
 
+const QUOTES: [char; 4] = ['"', '\'', '“', '‘'];
+
+const NAMING: &[&str] = &[
+    "a", "an", "the", "this", "that", "each", "every", "any", "no", "one", "another", "its", "my",
+    "your", "our", "their", "his", "her", "leading", "trailing", "double", "single", "extra",
+];
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Symbols {
     Write,
@@ -61,15 +68,34 @@ fn command<'a>(previous: Option<&str>, tokens: &'a [&'a str]) -> Option<(Mark, &
             .iter()
             .zip(words.iter())
             .all(|(token, word)| bare(token).eq_ignore_ascii_case(word));
+        let ends = spoken.len() == tokens.len();
         let alone = || {
             let before = previous.is_none_or(|token| !trailing(token).is_empty());
-            let after = spoken.len() == tokens.len()
+            let after = ends
                 || spoken
                     .last()
                     .is_some_and(|token| !trailing(token).is_empty());
             before && after
         };
-        (said && (!matches!(mark, Mark::Break(_)) || alone())).then_some((*mark, spoken))
+        let named = || {
+            spoken
+                .first()
+                .is_some_and(|token| token.starts_with(QUOTES))
+                || previous.is_some_and(|token| {
+                    trailing(token).is_empty()
+                        && NAMING
+                            .iter()
+                            .any(|word| bare(token).eq_ignore_ascii_case(word))
+                })
+        };
+        let between = || previous.is_some() && !ends;
+        let fits = match mark {
+            Mark::Break(_) => alone(),
+            Mark::Join(_) => between() && !named(),
+            Mark::Open(_) => !ends && !named(),
+            Mark::Close(_) | Mark::Pair(_) => !named(),
+        };
+        (said && fits).then_some((*mark, spoken))
     })
 }
 
@@ -203,6 +229,13 @@ mod tests {
             "Start a new paragraph, then stop.",
             "The slash command works.",
             "New lines.",
+            "Prefix it with an underscore.",
+            "The variable has an underscore in it.",
+            "Windows paths use a backslash.",
+            "Type the word \"underscore\" here.",
+            "Add a backtick before the name.",
+            "Escape it with a forward slash, then retry.",
+            "End with an underscore",
         ] {
             assert_eq!(written(heard), heard);
         }

@@ -47,6 +47,8 @@ struct Fake {
     external_focus: bool,
     releases: VecDeque<bool>,
     restored: Option<async_channel::Sender<u8>>,
+    targets: VecDeque<u8>,
+    return_fails: bool,
 }
 
 impl Fake {
@@ -60,6 +62,8 @@ impl Fake {
             external_focus: EXTERNAL_FOCUS,
             releases: VecDeque::new(),
             restored: None,
+            targets: VecDeque::new(),
+            return_fails: false,
         }
     }
 
@@ -85,6 +89,7 @@ impl NativeInsert for Fake {
     type Keys = Keys;
     type Lease = ();
     type Mark = u8;
+    type Target = u8;
 
     fn acquire(&mut self) -> anyhow::Result<()> {
         self.reach(Step::Acquire);
@@ -134,7 +139,12 @@ impl NativeInsert for Fake {
     }
 
     fn return_keys(&mut self) -> anyhow::Result<Keys> {
+        anyhow::ensure!(!self.return_fails, "Fixture Return failure");
         Ok(Keys::Return)
+    }
+
+    fn target(&mut self) -> Option<u8> {
+        Some(self.targets.pop_front().unwrap_or(1))
     }
 
     fn external_focus(&mut self) -> bool {
