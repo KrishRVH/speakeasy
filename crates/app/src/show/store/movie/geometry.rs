@@ -157,14 +157,7 @@ impl Writing {
             part,
         };
         validate(change, self.last, self.size)?;
-        let [left, top, width, height] = content;
-        let mut bytes: Vec<_> = [sample, left, top, width, height]
-            .into_iter()
-            .flat_map(u32::to_le_bytes)
-            .collect();
-        bytes.extend(part.into_iter().flat_map(f32::to_le_bytes));
-        bytes.extend_from_slice(&crc32fast::hash(&bytes).to_le_bytes());
-        self.file.write_all(&bytes)?;
+        self.file.write_all(&encode(change))?;
         self.file.sync_data()?;
         self.last = Some(change);
         Ok(())
@@ -201,15 +194,10 @@ pub(super) fn recover(
         };
         changes.push(change);
     }
-    let through = if changes.is_empty() {
-        0
-    } else if complete {
-        frames
-    } else {
-        changes
-            .last()
-            .map_or(0, |change| change.sample.saturating_add(1))
-            .min(frames)
+    let through = match changes.last() {
+        None => 0,
+        Some(_) if complete => frames,
+        Some(last) => last.sample.saturating_add(1).min(frames),
     };
     changes.retain(|change| change.sample < through);
     let geometry = Geometry { through, changes };
@@ -221,6 +209,17 @@ fn header(id: [u8; 16], size: [u32; 2]) -> Vec<u8> {
     let mut bytes = Vec::from(*MAGIC);
     bytes.extend_from_slice(&id);
     bytes.extend(size.into_iter().flat_map(u32::to_le_bytes));
+    bytes.extend_from_slice(&crc32fast::hash(&bytes).to_le_bytes());
+    bytes
+}
+
+fn encode(change: Change) -> Vec<u8> {
+    let [left, top, width, height] = change.content;
+    let mut bytes: Vec<_> = [change.sample, left, top, width, height]
+        .into_iter()
+        .flat_map(u32::to_le_bytes)
+        .chain(change.part.into_iter().flat_map(f32::to_le_bytes))
+        .collect();
     bytes.extend_from_slice(&crc32fast::hash(&bytes).to_le_bytes());
     bytes
 }

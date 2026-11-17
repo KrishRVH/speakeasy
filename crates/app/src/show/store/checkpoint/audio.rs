@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context as _, ensure};
+use anyhow::{Context as _, bail, ensure};
 use zeroize::Zeroizing;
 
 use super::read_complete;
@@ -21,6 +21,10 @@ pub(super) const CHUNK_BYTES: usize = 1 << 20;
 const PAYLOAD_LIMIT: usize = CHUNK_BYTES + 1;
 const DAMAGED: &str =
     "The kept Show audio is damaged or unsupported. Its frames can still be recovered.";
+const BEGIN: u8 = 1;
+const SAMPLES: u8 = 2;
+const CUE: u8 = 3;
+const END: u8 = 4;
 
 pub(crate) struct KeptAudio {
     pub rate: u32,
@@ -67,7 +71,7 @@ impl Record {
                         && language.len() <= LANGUAGE_BYTES,
                     DAMAGED
                 );
-                bytes.push(1);
+                bytes.push(BEGIN);
                 bytes.extend_from_slice(&rate.to_le_bytes());
                 bytes.extend_from_slice(&u64::try_from(start.as_millis())?.to_le_bytes());
                 bytes.extend_from_slice(language.as_bytes());
@@ -77,7 +81,7 @@ impl Record {
                     !pcm.is_empty() && pcm.len() <= CHUNK_BYTES && pcm.len().is_multiple_of(2),
                     DAMAGED
                 );
-                bytes.push(2);
+                bytes.push(SAMPLES);
                 bytes.extend_from_slice(pcm);
             },
             Self::Cue { before, at } => {
@@ -88,18 +92,15 @@ impl Record {
                         && *at <= pcm_limit(MAX_RATE),
                     DAMAGED
                 );
-                bytes.push(3);
+                bytes.push(CUE);
                 bytes.extend_from_slice(&u64::try_from(*before)?.to_le_bytes());
                 bytes.extend_from_slice(&u64::try_from(*at)?.to_le_bytes());
             },
-            Self::End => bytes.push(4),
+            Self::End => bytes.push(END),
         }
-        let length = u32::try_from(bytes.len().saturating_sub(4))?;
-        bytes
-            .get_mut(..4)
-            .context(DAMAGED)?
-            .copy_from_slice(&length.to_le_bytes());
-        let checksum = crc32fast::hash(bytes.get(4..).context(DAMAGED)?);
+        let (length, payload) = bytes.split_first_chunk_mut::<4>().context(DAMAGED)?;
+        *length = u32::try_from(payload.len())?.to_le_bytes();
+        let checksum = crc32fast::hash(payload);
         bytes.extend_from_slice(&checksum.to_le_bytes());
         Ok(bytes)
     }
@@ -116,15 +117,17 @@ fn decode(mut file: impl io::Read, bytes: usize) -> anyhow::Result<KeptAudio> {
     file.read_exact(&mut magic).context(DAMAGED)?;
     ensure!(&magic == MAGIC, DAMAGED);
     let first = next(&mut file)?.context(DAMAGED)?;
-    let (kind, mut header) = first.split_first().context(DAMAGED)?;
-    ensure!(*kind == 1, DAMAGED);
-    let rate = u32::from_le_bytes(take(&mut header)?);
-    let start = u64::from_le_bytes(take(&mut header)?);
+    let Some((&BEGIN, header)) = first.split_first() else {
+        bail!(DAMAGED);
+    };
+    let (rate, header) = header.split_first_chunk::<4>().context(DAMAGED)?;
+    let (start, language) = header.split_first_chunk::<8>().context(DAMAGED)?;
+    let (rate, start) = (u32::from_le_bytes(*rate), u64::from_le_bytes(*start));
     ensure!(
-        (1..=MAX_RATE).contains(&rate) && start <= MAX_START_MS && header.len() <= LANGUAGE_BYTES,
+        (1..=MAX_RATE).contains(&rate) && start <= MAX_START_MS && language.len() <= LANGUAGE_BYTES,
         DAMAGED
     );
-    let language = std::str::from_utf8(header)
+    let language = std::str::from_utf8(language)
         .map_err(|_private_content| anyhow::anyhow!(DAMAGED))?
         .into();
     let limit = pcm_limit(rate);
@@ -144,16 +147,19 @@ fn decode(mut file: impl io::Read, bytes: usize) -> anyhow::Result<KeptAudio> {
             break;
         };
         match kind {
-            2 if !data.is_empty()
-                && data.len().is_multiple_of(2)
-                && audio.pcm.len().saturating_add(data.len()) <= limit =>
+            SAMPLES
+                if !data.is_empty()
+                    && data.len().is_multiple_of(2)
+                    && audio.pcm.len().saturating_add(data.len()) <= limit =>
             {
                 audio.pcm.extend_from_slice(data);
             },
-            3 if data.len() == 16 && audio.cues.len() < MAX_CUES => {
-                let mut data = data;
-                let before = usize::try_from(u64::from_le_bytes(take(&mut data)?))?;
-                let at = usize::try_from(u64::from_le_bytes(take(&mut data)?))?;
+            CUE if audio.cues.len() < MAX_CUES => {
+                let ([before, at], []) = data.as_chunks::<8>() else {
+                    break;
+                };
+                let before = usize::try_from(u64::from_le_bytes(*before))?;
+                let at = usize::try_from(u64::from_le_bytes(*at))?;
                 if !before.is_multiple_of(2)
                     || !at.is_multiple_of(2)
                     || before > at
@@ -166,7 +172,7 @@ fn decode(mut file: impl io::Read, bytes: usize) -> anyhow::Result<KeptAudio> {
                 }
                 audio.cues.push((before, at));
             },
-            4 if data.is_empty() => {
+            END if data.is_empty() => {
                 audio.complete = true;
                 break;
             },
@@ -198,12 +204,6 @@ fn next(file: &mut impl io::Read) -> anyhow::Result<Option<Zeroizing<Vec<u8>>>> 
         return Ok(None);
     }
     Ok(Some(bytes))
-}
-
-fn take<const N: usize>(bytes: &mut &[u8]) -> anyhow::Result<[u8; N]> {
-    let (head, rest) = bytes.split_first_chunk::<N>().context(DAMAGED)?;
-    *bytes = rest;
-    Ok(*head)
 }
 
 fn pcm_limit(rate: u32) -> usize {
