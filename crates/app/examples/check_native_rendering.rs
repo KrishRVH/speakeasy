@@ -69,7 +69,9 @@ impl Render for Scene {
 
 fn main() -> anyhow::Result<()> {
     ensure!(
-        std::env::args().nth(1).as_deref() == Some("--native-gui"),
+        std::env::args_os()
+            .nth(1)
+            .is_some_and(|arg| arg == "--native-gui"),
         "Pass --native-gui to opt into opening owned test windows"
     );
     let (completed, outcome) = std::sync::mpsc::channel();

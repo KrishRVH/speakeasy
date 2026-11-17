@@ -50,7 +50,7 @@ impl Installer {
             .tempdir_in(&cache)?;
         let path = directory.path().join(manifest::NAME);
         std::fs::write(&path, b"Synthetic authority receipt; never executed.")?;
-        let file = super::open_verified(&path)?;
+        let file = super::open_for_verification(&path)?;
         Ok((
             Self::new(
                 Payload {

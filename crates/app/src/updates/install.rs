@@ -179,7 +179,7 @@ async fn download(
     ensure!(done == artifact.size, INVALID_FILE);
     file.sync_all().context(DOWNLOAD_FAILED)?;
     drop(file);
-    let mut file = open_verified(&path)?;
+    let mut file = open_for_verification(&path)?;
     let metadata = file.metadata().context(DOWNLOAD_FAILED)?;
     ensure!(
         metadata.is_file() && metadata.len() == artifact.size,
@@ -219,7 +219,7 @@ async fn download(
     })
 }
 
-fn open_verified(path: &Path) -> anyhow::Result<File> {
+fn open_for_verification(path: &Path) -> anyhow::Result<File> {
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(target_os = "windows")]
