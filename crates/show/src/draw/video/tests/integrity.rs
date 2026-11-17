@@ -32,6 +32,30 @@ fn a_mark_cannot_declare_completion_before_its_referenced_strokes() {
 }
 
 #[test]
+fn a_mark_cannot_declare_inside_out_bounds() {
+    let mut tracker = tracker();
+    tracker.observe(ms(100), Point::new(0.2, 0.4), true, false);
+    tracker.observe(ms(200), Point::new(0.8, 0.6), true, false);
+    tracker.observe(ms(210), Point::new(0.8, 0.6), false, false);
+    let mut marks = tracker.marks();
+    let recording = tracker.finish(ms(1000));
+    assert!(Annotations::new(&recording, &marks).is_ok());
+    let Rect {
+        left,
+        top,
+        right,
+        bottom,
+    } = marks[0].bounds;
+    marks[0].bounds = Rect {
+        left: right,
+        top: bottom,
+        right: left,
+        bottom: top,
+    };
+    assert!(Annotations::new(&recording, &marks).is_err());
+}
+
+#[test]
 fn cancellation_between_primitives_leaves_the_original_frame_untouched() {
     let recording = recording(vec![
         stroke(&[(0.1, 0.3, 100), (0.8, 0.3, 200)]),

@@ -253,6 +253,8 @@ fn consistent(recording: &Recording, marks: &[Mark]) -> bool {
             mark.span.end() <= *duration
                 && drawn
                 && placed
+                && left <= right
+                && top <= bottom
                 && Rect::UNIT.contains(Point::new(left, top))
                 && Rect::UNIT.contains(Point::new(right, bottom))
         })
