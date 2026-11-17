@@ -43,6 +43,22 @@ const COPIED_FOR_MANUAL_PASTE: Inserted = Inserted::Copied("Text copied. Paste i
 
 const CLIPBOARD_CHANGED: Inserted = Inserted::Unavailable("The clipboard changed before pasting.");
 
+#[derive(Clone, Copy)]
+enum PasteKeys {
+    CtrlV,
+    CtrlShiftV,
+}
+
+impl PasteKeys {
+    const fn of(paste: LinuxPaste) -> Option<Self> {
+        match paste {
+            LinuxPaste::Standard => Some(Self::CtrlV),
+            LinuxPaste::Terminal => Some(Self::CtrlShiftV),
+            LinuxPaste::Manual => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PasteChord<K> {
     control: K,
@@ -51,12 +67,12 @@ struct PasteChord<K> {
 }
 
 impl<K> PasteChord<K> {
-    fn resolve(paste: LinuxPaste, mut key: impl FnMut(Keysym) -> Option<K>) -> Option<Self> {
+    fn resolve(keys: PasteKeys, mut key: impl FnMut(Keysym) -> Option<K>) -> Option<Self> {
         Some(Self {
             control: key(Keysym::Control_L)?,
-            shift: match paste {
-                LinuxPaste::Terminal => Some(key(Keysym::Shift_L)?),
-                LinuxPaste::Standard | LinuxPaste::Manual => None,
+            shift: match keys {
+                PasteKeys::CtrlV => None,
+                PasteKeys::CtrlShiftV => Some(key(Keysym::Shift_L)?),
             },
             v: key(Keysym::v)?,
         })
@@ -346,7 +362,7 @@ mod tests {
         let without_shift = |symbol| (symbol != Keysym::Shift_L).then_some(symbol);
         let without_v = |symbol| (symbol != Keysym::v).then_some(symbol);
         assert_eq!(
-            PasteChord::resolve(LinuxPaste::Standard, without_shift),
+            PasteChord::resolve(PasteKeys::CtrlV, without_shift),
             Some(PasteChord {
                 control: Keysym::Control_L,
                 shift: None,
@@ -354,13 +370,13 @@ mod tests {
             }),
             "A layout without Shift refused Ctrl+V"
         );
-        assert!(PasteChord::resolve(LinuxPaste::Terminal, without_shift).is_none());
-        let terminal = PasteChord::resolve(LinuxPaste::Terminal, Some);
+        assert!(PasteChord::resolve(PasteKeys::CtrlShiftV, without_shift).is_none());
+        let terminal = PasteChord::resolve(PasteKeys::CtrlShiftV, Some);
         assert_eq!(
             terminal.map(|chord| chord.presses().collect::<Vec<_>>()),
             Some(vec![Keysym::Control_L, Keysym::Shift_L, Keysym::v])
         );
-        assert!(PasteChord::resolve(LinuxPaste::Standard, without_v).is_none());
+        assert!(PasteChord::resolve(PasteKeys::CtrlV, without_v).is_none());
     }
 
     #[test]

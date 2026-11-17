@@ -21,7 +21,8 @@ use zbus::{
 
 use self::insertion::Insertions;
 use super::{
-    APPLICATION_ID, ShortcutLabels, ei, owner_changes, stop_requested, token::TokenStore, x11,
+    APPLICATION_ID, PasteKeys, ShortcutLabels, ei, owner_changes, stop_requested,
+    token::TokenStore, x11,
 };
 use crate::{
     DesktopOptions, Input, InputSender, InsertPermit, LinuxPaste,
@@ -408,17 +409,18 @@ pub(super) async fn run(
 }
 
 async fn bind(portal: &mut Portal, options: &DesktopOptions) -> anyhow::Result<Bound> {
-    let libei = (options.paste != LinuxPaste::Manual)
-        .then(ei::Api::load)
-        .transpose()?;
+    let automatic = match PasteKeys::of(options.paste) {
+        Some(keys) => Some((ei::Api::load()?, keys)),
+        None => None,
+    };
     let (shortcut_session, labels) = if options.external_shortcut {
         (None, ShortcutLabels::new(options))
     } else {
         let (session, labels) = bind_shortcuts(portal, options).await?;
         (Some(session), labels)
     };
-    let remote = match libei {
-        Some(libei) => Some(start_remote_desktop(portal, libei, options.paste).await?),
+    let remote = match automatic {
+        Some((libei, keys)) => Some(start_remote_desktop(portal, libei, keys).await?),
         None => None,
     };
     Ok(Bound {
@@ -483,7 +485,7 @@ async fn bind_shortcuts(
 async fn start_remote_desktop(
     portal: &mut Portal,
     libei: ei::Api,
-    paste: LinuxPaste,
+    keys: PasteKeys,
 ) -> anyhow::Result<Remote> {
     let tokens = TokenStore::open();
     let session = portal.create_session(REMOTE).await?;
@@ -540,7 +542,7 @@ async fn start_remote_desktop(
         .call("ConnectToEIS", &(&session, Options::new()))
         .await?;
     Ok(Remote {
-        sender: ei::Sender::connect(libei, descriptor.into(), paste)?,
+        sender: ei::Sender::connect(libei, descriptor.into(), keys)?,
         clipboard_session: clipboard_shared.then_some(session),
     })
 }

@@ -26,6 +26,7 @@ use crate::{
     },
     linux::{
         CLIPBOARD_CHANGED, COPIED_FOR_MANUAL_PASTE, HostSession, NO_PASTE_BINDING, PasteChord,
+        PasteKeys,
     },
 };
 
@@ -129,7 +130,7 @@ impl Paster {
             ));
         }
         match self.copy_after_release(request)? {
-            ControlFlow::Continue(owner) => self.paste_copied(request, owner),
+            ControlFlow::Continue((owner, keys)) => self.paste_copied(request, owner, keys),
             ControlFlow::Break(outcome) => Ok(outcome),
         }
     }
@@ -137,9 +138,10 @@ impl Paster {
     fn copy_after_release(
         &mut self,
         request: &Insertion,
-    ) -> anyhow::Result<ControlFlow<Inserted, Window>> {
+    ) -> anyhow::Result<ControlFlow<Inserted, (Window, PasteKeys)>> {
+        let keys = PasteKeys::of(self.paste);
         let previous_owner = self.clipboard.owner()?;
-        let shortcut_held = self.paste != LinuxPaste::Manual
+        let shortcut_held = keys.is_some()
             && wait_for_released_modifiers(&request.permit, || self.modifiers_held())?;
         let owner_changed = self.clipboard.owner()? != previous_owner;
 
@@ -158,13 +160,13 @@ impl Paster {
                 Inserted::Cancelled
             }));
         };
-        if self.paste == LinuxPaste::Manual {
+        let Some(keys) = keys else {
             return Ok(ControlFlow::Break(COPIED_FOR_MANUAL_PASTE));
-        }
+        };
         if shortcut_held {
             return Ok(ControlFlow::Break(PASTE_AFTER_RELEASE));
         }
-        Ok(ControlFlow::Continue(owner))
+        Ok(ControlFlow::Continue((owner, keys)))
     }
 
     fn modifiers_held(&self) -> anyhow::Result<bool> {
@@ -172,9 +174,14 @@ impl Paster {
         Ok(self.keyboard.held_modifiers(&keys) & !self.keyboard.lock_modifiers() != 0)
     }
 
-    fn paste_copied(&self, request: &Insertion, owner: Window) -> anyhow::Result<Inserted> {
+    fn paste_copied(
+        &self,
+        request: &Insertion,
+        owner: Window,
+        keys: PasteKeys,
+    ) -> anyhow::Result<Inserted> {
         let Some(chord) =
-            PasteChord::resolve(self.paste, |symbol| self.keyboard.unshifted_keycode(symbol))
+            PasteChord::resolve(keys, |symbol| self.keyboard.unshifted_keycode(symbol))
         else {
             return Ok(NO_PASTE_BINDING);
         };

@@ -13,8 +13,7 @@ use libloading::os::unix::{Library, RTLD_LAZY, RTLD_LOCAL};
 use tokio::io::unix::AsyncFd;
 use xkbcommon::xkb::{self, Keysym};
 
-use super::PasteChord;
-use crate::LinuxPaste;
+use super::{PasteChord, PasteKeys};
 
 const EVENT_DISCONNECT: i32 = 2;
 const EVENT_SEAT_ADDED: i32 = 3;
@@ -106,13 +105,13 @@ pub(super) struct Sender {
     text: Option<Device>,
     context: EiContext,
     api: Api,
-    paste: LinuxPaste,
+    keys: PasteKeys,
     sequence: u32,
     readiness: AsyncFd<OwnedFd>,
 }
 
 impl Sender {
-    pub(super) fn connect(api: Api, fd: OwnedFd, paste: LinuxPaste) -> anyhow::Result<Self> {
+    pub(super) fn connect(api: Api, fd: OwnedFd, keys: PasteKeys) -> anyhow::Result<Self> {
         let context = EiContext::new_sender(&api)?;
 
         let status = unsafe { (api.ei_setup_backend_fd)(context.as_ptr(), fd.into_raw_fd()) };
@@ -124,7 +123,7 @@ impl Sender {
             text: None,
             context,
             api,
-            paste,
+            keys,
             sequence: 0,
             readiness,
         })
@@ -244,7 +243,7 @@ impl Sender {
                 self.keyboard = Some(Keyboard {
                     device: Device::acquire(&self.api, device),
                     paste: device_keymap(&self.api, device.as_ptr())
-                        .and_then(|keymap| PasteLayouts::new(&keymap, self.paste))
+                        .and_then(|keymap| PasteLayouts::new(&keymap, self.keys))
                         .ok()
                         .map(|layouts| KeymapPaste {
                             layouts,
@@ -511,7 +510,7 @@ struct PasteLayouts {
 }
 
 impl PasteLayouts {
-    fn new(keymap: &xkb::Keymap, paste: LinuxPaste) -> anyhow::Result<Self> {
+    fn new(keymap: &xkb::Keymap, keys: PasteKeys) -> anyhow::Result<Self> {
         let blockers = ["Shift", "Control", "Mod1", "Mod2", "Mod3", "Mod4", "Mod5"]
             .into_iter()
             .filter_map(|name| 1_u32.checked_shl(keymap.mod_get_index(name)))
@@ -522,7 +521,7 @@ impl PasteLayouts {
             blockers,
             chords: (0..keymap.num_layouts())
                 .map(|group| {
-                    PasteChord::resolve(paste, |symbol| {
+                    PasteChord::resolve(keys, |symbol| {
                         layout_key(keymap, group, symbol)?
                             .raw()
                             .checked_sub(XKB_KEYCODE_OFFSET)
@@ -632,7 +631,7 @@ mod tests {
                 xkb::KEYMAP_COMPILE_NO_FLAGS,
             )
             .context("Fixture keymap")?;
-            let layouts = PasteLayouts::new(&keymap, LinuxPaste::Terminal)?;
+            let layouts = PasteLayouts::new(&keymap, PasteKeys::CtrlShiftV)?;
             assert_eq!(
                 layouts.chord(group),
                 Some(PasteChord {
@@ -678,7 +677,7 @@ mod tests {
         )
         .context("Fixture keymap")?;
         assert_eq!(
-            PasteLayouts::new(&keymap, LinuxPaste::Standard)?.chord(0),
+            PasteLayouts::new(&keymap, PasteKeys::CtrlV)?.chord(0),
             Some(PasteChord {
                 control: 29,
                 shift: None,
@@ -686,7 +685,7 @@ mod tests {
             }),
             "A layout without Shift refused Ctrl+V"
         );
-        let terminal = PasteLayouts::new(&keymap, LinuxPaste::Terminal)?;
+        let terminal = PasteLayouts::new(&keymap, PasteKeys::CtrlShiftV)?;
         assert!(terminal.chord(0).is_none());
         assert_eq!(
             terminal.blockers & mask(&keymap, "Mod3"),
