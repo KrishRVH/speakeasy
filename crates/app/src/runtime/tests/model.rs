@@ -1,26 +1,22 @@
 use std::collections::{HashMap, VecDeque};
 
+use anyhow::Context as _;
 use proptest::prelude::*;
+use speakeasy_core::{gesture::RECORDING_LIMIT, machine::Recorder};
 
 use super::*;
 use crate::recognition_terms::Terms;
 
-const PAST_THE_LIMIT: Duration = Duration::from_secs(301);
+const PAST_THE_LIMIT: Duration = RECORDING_LIMIT.saturating_add(Duration::from_secs(1));
 
 const DRAIN_ROUNDS: usize = 16;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum Source {
-    Microphone,
-    Screen,
-}
 
 enum Log {
     MicrophoneOpened(SessionId, Sender<CaptureEvent>),
     ScreenOpened(SessionId, Sender<ShowEvent>),
-    Finished(Source, SessionId),
-    Retiring(Source, SessionId),
-    Retired(Source, SessionId),
+    Finished(Recorder, SessionId),
+    Retiring(Recorder, SessionId),
+    Retired(Recorder, SessionId),
     Pinned(SessionId),
     Inserted { text: String, latest: u64 },
     Loaded,
@@ -44,13 +40,13 @@ struct Releases {
 }
 
 impl ModelPorts {
-    fn device(&self, source: Source, id: SessionId) -> ModelDevice {
-        let release = match source {
-            Source::Microphone => self.releases.microphone,
-            Source::Screen => self.releases.screen,
+    fn device(&self, recorder: Recorder, id: SessionId) -> ModelDevice {
+        let release = match recorder {
+            Recorder::Microphone => self.releases.microphone,
+            Recorder::Screen => self.releases.screen,
         };
         ModelDevice {
-            source,
+            recorder,
             id,
             log: self.log.clone(),
             release,
@@ -77,7 +73,7 @@ impl Ports for ModelPorts {
         self.log
             .try_send(Log::MicrophoneOpened(id, events.clone()))?;
         events.try_send(CaptureEvent::Ready(id))?;
-        Ok(self.device(Source::Microphone, id))
+        Ok(self.device(Recorder::Microphone, id))
     }
 
     fn keep(&self, _: SystemTime) -> anyhow::Result<Option<show::Kept>> {
@@ -93,7 +89,7 @@ impl Ports for ModelPorts {
         events: Sender<ShowEvent>,
     ) -> anyhow::Result<ModelDevice> {
         self.log.try_send(Log::ScreenOpened(id, events))?;
-        Ok(self.device(Source::Screen, id))
+        Ok(self.device(Recorder::Screen, id))
     }
 
     fn reopen(
@@ -172,7 +168,7 @@ impl Ports for ModelPorts {
 }
 
 struct ModelDevice {
-    source: Source,
+    recorder: Recorder,
     id: SessionId,
     log: Sender<Log>,
     release: Duration,
@@ -188,14 +184,14 @@ impl ModelDevice {
 
 impl Capturing for ModelDevice {
     fn finish(&self) {
-        self.log(Log::Finished(self.source, self.id));
+        self.log(Log::Finished(self.recorder, self.id));
     }
 
     fn retire(self) -> impl Future<Output = ()> + Send + 'static {
-        self.log(Log::Retiring(self.source, self.id));
+        self.log(Log::Retiring(self.recorder, self.id));
         async move {
             tokio::time::sleep(self.release).await;
-            self.log(Log::Retired(self.source, self.id));
+            self.log(Log::Retired(self.recorder, self.id));
         }
     }
 }
@@ -447,7 +443,7 @@ struct Open {
 }
 
 struct Finish {
-    device: (Source, SessionId),
+    device: (Recorder, SessionId),
     answered: bool,
 }
 
@@ -460,7 +456,7 @@ struct Model {
     microphone: Option<(SessionId, Sender<CaptureEvent>)>,
     pieces: u32,
     screen: Option<(SessionId, Sender<ShowEvent>)>,
-    open: HashMap<Source, Open>,
+    open: HashMap<Recorder, Open>,
     finished: Vec<Finish>,
     worker: bool,
 }
@@ -526,14 +522,14 @@ impl Model {
                         Heard::Failure => Err(anyhow!("Model microphone failed")),
                     };
                     events.try_send(CaptureEvent::Finished(*id, outcome))?;
-                    self.answered(Source::Microphone, *id);
+                    self.answered(Recorder::Microphone, *id);
                 }
             },
             Step::Footage(seen) => {
                 if let Some((id, events)) = &self.screen {
                     let event = match seen {
                         Seen::Complete => self
-                            .finishing(Source::Screen, *id)
+                            .finishing(Recorder::Screen, *id)
                             .then(|| ShowEvent::Finished(*id, Ok(footage()))),
                         Seen::Failure => Some(ShowEvent::Finished(
                             *id,
@@ -543,7 +539,7 @@ impl Model {
                     };
                     if let Some(event) = event {
                         events.try_send(event)?;
-                        self.answered(Source::Screen, *id);
+                        self.answered(Recorder::Screen, *id);
                     }
                 }
             },
@@ -578,8 +574,8 @@ impl Model {
                 answer_unless_abandoned(reply, Ok(transcript));
                 acted = true;
             }
-            for (source, id) in self.unanswered() {
-                self.complete(source, id)?;
+            for (recorder, id) in self.unanswered() {
+                self.complete(recorder, id)?;
 
                 settle().await;
                 acted = true;
@@ -598,20 +594,20 @@ impl Model {
         bail!("The owner kept working through {DRAIN_ROUNDS} drain rounds")
     }
 
-    fn complete(&mut self, source: Source, id: SessionId) -> anyhow::Result<()> {
-        match (source, &self.microphone, &self.screen) {
-            (Source::Microphone, Some((_, events)), _) => {
+    fn complete(&mut self, recorder: Recorder, id: SessionId) -> anyhow::Result<()> {
+        match (recorder, &self.microphone, &self.screen) {
+            (Recorder::Microphone, Some((_, events)), _) => {
                 events.try_send(CaptureEvent::Finished(
                     id,
                     Ok(Some(spoken_by(id, self.pieces))),
                 ))?;
             },
-            (Source::Screen, _, Some((_, events))) => {
+            (Recorder::Screen, _, Some((_, events))) => {
                 events.try_send(ShowEvent::Finished(id, Ok(footage())))?;
             },
-            _ => bail!("{source:?} finished for {id:?} without opening"),
+            _ => bail!("{recorder:?} finished for {id:?} without opening"),
         }
-        self.answered(source, id);
+        self.answered(recorder, id);
         Ok(())
     }
 
@@ -628,44 +624,49 @@ impl Model {
             arrived = true;
             match entry {
                 Log::MicrophoneOpened(id, events) => {
-                    self.opened(Source::Microphone, id)?;
+                    self.opened(Recorder::Microphone, id)?;
                     self.microphone = Some((id, events));
                     self.pieces = 0;
                 },
                 Log::ScreenOpened(id, events) => {
-                    self.opened(Source::Screen, id)?;
+                    self.opened(Recorder::Screen, id)?;
                     self.screen = Some((id, events));
                 },
-                Log::Finished(source, id) => {
-                    if !self.finishing(source, id) {
+                Log::Finished(recorder, id) => {
+                    if !self.finishing(recorder, id) {
                         self.finished.push(Finish {
-                            device: (source, id),
+                            device: (recorder, id),
                             answered: false,
                         });
                     }
                 },
-                Log::Retiring(source, id) => match self.open.get_mut(&source) {
+                Log::Retiring(recorder, id) => match self.open.get_mut(&recorder) {
                     Some(open) if open.id == id => open.retiring = true,
-                    _ => bail!("{source:?} {id:?} retired without being open"),
+                    _ => bail!("{recorder:?} {id:?} retired without being open"),
                 },
-                Log::Retired(source, id) => {
-                    let released = self.open.remove(&source);
+                Log::Retired(recorder, id) => {
+                    let released = self.open.remove(&recorder);
                     ensure!(
                         released.is_some_and(|open| open.id == id && open.retiring),
-                        "{source:?} {id:?} released without being retired"
+                        "{recorder:?} {id:?} released without being retired"
                     );
                 },
                 Log::Pinned(id) => ensure!(
                     self.open
-                        .get(&Source::Screen)
+                        .get(&Recorder::Screen)
                         .is_some_and(|open| open.id == id && !open.retiring),
                     "Screen {id:?} took a pin while not recording a Show"
                 ),
                 Log::Inserted { text, latest } => {
+                    ensure!(!text.is_empty(), "Session {latest} inserted empty text");
                     let session = latest.to_string();
+                    let others: Vec<&str> = text
+                        .split_whitespace()
+                        .filter(|part| *part != session)
+                        .collect();
                     ensure!(
-                        !text.is_empty() && text.split_whitespace().all(|part| part == session),
-                        "Session {text}'s text was inserted after session {latest} began"
+                        others.is_empty(),
+                        "Text from sessions {others:?} was inserted after session {latest} began"
                     );
                 },
                 Log::Loaded => {
@@ -689,14 +690,14 @@ impl Model {
         Ok(arrived)
     }
 
-    fn opened(&mut self, source: Source, id: SessionId) -> anyhow::Result<()> {
+    fn opened(&mut self, recorder: Recorder, id: SessionId) -> anyhow::Result<()> {
         let open = Open {
             id,
             retiring: false,
         };
-        if let Some(previous) = self.open.insert(source, open) {
+        if let Some(previous) = self.open.insert(recorder, open) {
             bail!(
-                "{source:?} opened for {id:?} before {:?} released it",
+                "{recorder:?} opened for {id:?} before {:?} released it",
                 previous.id
             );
         }
@@ -710,23 +711,23 @@ impl Model {
         );
         let phase = self.updates.borrow().phase;
         if !phase.is_active()
-            && let Some((source, open)) = self.open.iter().find(|(_, open)| !open.retiring)
+            && let Some((recorder, open)) = self.open.iter().find(|(_, open)| !open.retiring)
         {
             bail!(
-                "{source:?} stayed open for {:?} after the session ended in {phase:?}",
+                "{recorder:?} stayed open for {:?} after the session ended in {phase:?}",
                 open.id
             );
         }
         Ok(())
     }
 
-    fn finishing(&self, source: Source, id: SessionId) -> bool {
+    fn finishing(&self, recorder: Recorder, id: SessionId) -> bool {
         self.finished
             .iter()
-            .any(|ending| ending.device == (source, id))
+            .any(|ending| ending.device == (recorder, id))
     }
 
-    fn unanswered(&self) -> Vec<(Source, SessionId)> {
+    fn unanswered(&self) -> Vec<(Recorder, SessionId)> {
         self.finished
             .iter()
             .filter(|ending| !ending.answered)
@@ -734,8 +735,8 @@ impl Model {
             .collect()
     }
 
-    fn answered(&mut self, source: Source, id: SessionId) {
-        let device = (source, id);
+    fn answered(&mut self, recorder: Recorder, id: SessionId) {
+        let device = (recorder, id);
         match self
             .finished
             .iter_mut()
@@ -795,13 +796,23 @@ fn concrete_failures_release_devices_and_come_to_rest() -> anyhow::Result<()> {
     let microphone_failure = || Step::Audio(Heard::Failure);
     let screen_failure = || Step::Footage(Seen::Failure);
     let cases = [
-        (vec![keys(&[Key::Toggle]), microphone_failure()], at_once),
         (
+            "Hands-free dictation loses its microphone",
+            vec![keys(&[Key::Toggle]), microphone_failure()],
+            at_once,
+        ),
+        (
+            "A Show's area goes unchosen while speech arrives",
             vec![show(), speech(), Step::Footage(Seen::Unchosen)],
             at_once,
         ),
-        (vec![show(), microphone_failure()], at_once),
         (
+            "A Show loses its microphone",
+            vec![show(), microphone_failure()],
+            at_once,
+        ),
+        (
+            "A Show starts just after the finished one's footage failed",
             vec![
                 show(),
                 show(),
@@ -815,6 +826,7 @@ fn concrete_failures_release_devices_and_come_to_rest() -> anyhow::Result<()> {
             at_once,
         ),
         (
+            "A new Show waits for the cancelled one's screen to release",
             vec![
                 show(),
                 keys(&[Key::Cancel]),
@@ -827,6 +839,7 @@ fn concrete_failures_release_devices_and_come_to_rest() -> anyhow::Result<()> {
             },
         ),
         (
+            "Repeated Shows run through microphone and screen failures and a cancel",
             vec![
                 show(),
                 show(),
@@ -849,8 +862,10 @@ fn concrete_failures_release_devices_and_come_to_rest() -> anyhow::Result<()> {
             at_once,
         ),
     ];
-    for (steps, releases) in cases {
-        paused()?.block_on(run(&steps, releases, &[]))?;
+    for (case, steps, releases) in cases {
+        paused()?
+            .block_on(run(&steps, releases, &[]))
+            .context(case)?;
     }
     Ok(())
 }
