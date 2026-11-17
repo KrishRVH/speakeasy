@@ -490,7 +490,7 @@ impl Capture {
 
         best_effort(session.SetIsCursorCaptureEnabled(false));
 
-        best_effort(session.SetMinUpdateInterval(time_span(interval)));
+        best_effort(session.SetMinUpdateInterval(interval.into()));
         let content_size = pixels(size);
         let part = target.part();
         let crop = pixel_box(part, content_size);
@@ -613,12 +613,6 @@ const fn crop_size([left, top, right, bottom]: [u32; 4]) -> [u32; 2] {
 
 fn pixels(size: SizeInt32) -> [u32; 2] {
     [size.Width, size.Height].map(|edge| u32::try_from(edge).unwrap_or_default())
-}
-
-fn time_span(duration: Duration) -> TimeSpan {
-    TimeSpan {
-        Duration: i64::try_from(duration.as_nanos() / 100).unwrap_or(i64::MAX),
-    }
 }
 
 fn composed_at(composed: TimeSpan) -> Instant {
