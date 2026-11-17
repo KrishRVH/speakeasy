@@ -147,14 +147,16 @@ plus content checks bound clipboard replacement races.
 Owners: `crates/platform/src/screen.rs`, `screen/geometry.rs`, `windows/screen.rs`,
 `windows/screen/exclusion.rs`, `windows/screen/layout.rs`, `windows/screen/readback.rs`,
 `macos/screen.rs`, `macos/screen/stream.rs`, `macos/screen/stream/output.rs`; owned-window checks in
-`windows/screen/acceptance.rs` and `windows/screen/acceptance/geometry.rs`.
+`windows/screen/acceptance.rs`, `windows/screen/acceptance/geometry.rs`, and
+`windows/screen/acceptance/movie.rs`.
 
-Windows capture runs on one owner thread with a free-threaded frame pool. The process-lifetime MTA
-usage reference is intentional because cached WinRT activation factories outlive individual
-captures. Session/pool closure precedes resource release, and the display-closed callback only
-closes its lane. Texture/context resources belong to the same D3D device; crop bounds lie inside the
-source; CPU mappings are read only until Unmap. Checked row/pitch/height calculations precede raw
-slices. App-owned windows are excluded before admissible frames and new exclusions discard pending
+Windows capture runs on one owner thread with a free-threaded frame pool. Each capture takes an MTA
+usage reference it never releases, so the apartment lasts for the process, because cached WinRT
+activation factories outlive individual captures. Session/pool closure precedes resource release,
+and the display-closed callback only closes its lane. Texture/context resources belong to the same
+D3D device; crop bounds lie inside the source; CPU mappings are read only until Unmap. Checked
+row/pitch/height calculations precede raw slices. App-owned windows, including any whose display
+affinity cannot be read, are excluded before admissible frames, and new exclusions discard pending
 images under the existing composition margin.
 
 Pending Windows frames retain their observed target rectangle and are rejected when observations

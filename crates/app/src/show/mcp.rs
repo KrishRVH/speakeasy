@@ -18,7 +18,8 @@ const HELP: &str = "speakeasy show mcp --root PATH [--root PATH ...]
 speakeasy show mcp --setup
 
 Serve three read-only Show tools over stdio. At least one existing root is required.
-Roots are fixed at launch; tool arguments cannot add folders. Symlinks are refused.
+Roots are fixed at launch; tool arguments cannot add folders.
+A root and the Shows in it cannot be symlinks.
 Each root can be a saved Show or a folder containing saved Shows.
 --setup prints Claude Code, Codex and generic client stanzas; it changes no settings.
 Requested text and images go to the calling agent and possibly its model provider.
