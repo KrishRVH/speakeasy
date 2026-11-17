@@ -212,6 +212,7 @@ impl Checkpoint {
 
     pub(in crate::show) fn retain_voice(&self, staged: &Staged) -> anyhow::Result<()> {
         super::voice::retain(&self.directory, staged, self.recorded()?)
+            .context("Cannot retain Show voice; its checkpoint remains available")
     }
 
     pub(crate) fn narrate(&self, narration: &Narration, incomplete: bool) -> anyhow::Result<()> {

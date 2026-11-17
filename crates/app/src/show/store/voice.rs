@@ -62,10 +62,7 @@ pub(super) fn retain(
         return Ok(());
     }
     let voice = recall::regular_file(checkpoint, audio::FILE, audio::FILE_LIMIT);
-    if found(voice)
-        .context("Cannot retain Show voice; its checkpoint remains available")?
-        .is_none()
-    {
+    if found(voice)?.is_none() {
         return Ok(());
     }
     let mut input =
