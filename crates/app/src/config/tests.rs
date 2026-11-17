@@ -120,26 +120,19 @@ fn delivery_changes_save_one_current_key() -> anyhow::Result<()> {
 }
 
 #[test]
-fn filler_cleanup_follows_engine_language_and_switch() -> anyhow::Result<()> {
-    for (engine, language, applies) in [
-        (Engine::Whisper, "en", true),
-        (Engine::Whisper, "EN", true),
-        (Engine::Whisper, "en-US", true),
-        (Engine::Whisper, "en-CA", true),
-        (Engine::Whisper, "de", false),
-        (Engine::Whisper, "auto", false),
-        (Engine::Nemo, "en", true),
-        (Engine::Nemo, "EN", true),
-        (Engine::Nemo, "en-GB", true),
-        (Engine::Nemo, "en-AU", true),
-        (Engine::Nemo, "EN-au", true),
-        (Engine::Nemo, "de-en", false),
-        (Engine::Nemo, "de", false),
-        (Engine::Nemo, "auto", false),
+fn filler_cleanup_follows_language_and_switch() -> anyhow::Result<()> {
+    for (language, applies) in [
+        ("en", true),
+        ("EN", true),
+        ("en-US", true),
+        ("en-GB", true),
+        ("EN-au", true),
+        ("de-en", false),
+        ("de", false),
+        ("auto", false),
     ] {
         for remove_fillers in [true, false] {
             let config = Config {
-                engine,
                 language: language.into(),
                 remove_fillers,
                 ..Config::default()
@@ -152,8 +145,7 @@ fn filler_cleanup_follows_engine_language_and_switch() -> anyhow::Result<()> {
             assert_eq!(
                 config.fillers(&config.language),
                 expected,
-                "{} with {language}, switch {remove_fillers}",
-                engine.label()
+                "{language}, switch {remove_fillers}"
             );
         }
     }
