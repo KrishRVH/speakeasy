@@ -147,12 +147,7 @@ impl TextDelivery {
 
 impl Config {
     pub(crate) fn fillers(&self, language: &str) -> Fillers {
-        if self.remove_fillers
-            && language
-                .split('-')
-                .next()
-                .is_some_and(|code| code.eq_ignore_ascii_case("en"))
-        {
+        if self.remove_fillers && models::is_english(language) {
             Fillers::Remove
         } else {
             Fillers::Preserve

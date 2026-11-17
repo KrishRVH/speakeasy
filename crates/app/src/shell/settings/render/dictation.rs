@@ -6,7 +6,7 @@ use super::{Ui, fraction, progress_text, setup_progress};
 use crate::{
     config::Engine,
     controls::{Tone, Weight},
-    models::Model,
+    models::{self, Model},
     shell::{
         Services,
         settings::{
@@ -639,10 +639,7 @@ impl Settings {
     fn writing_section(&self, ui: &Ui<'_>) -> Div {
         let kit = ui.kit();
         let detects = speech::detects_language(&self.config);
-        let english = menu::language(&self.config)
-            .split('-')
-            .next()
-            .is_some_and(|code| code.eq_ignore_ascii_case("en"));
+        let english = models::is_english(menu::language(&self.config));
         let (enabled, detail) = if detects {
             (
                 true,

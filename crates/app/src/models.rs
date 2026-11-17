@@ -97,6 +97,13 @@ pub(crate) fn whisper_language(locale: &str) -> &str {
     }
 }
 
+pub(crate) fn is_english(locale: &str) -> bool {
+    locale
+        .split_once('-')
+        .map_or(locale, |(language, _)| language)
+        .eq_ignore_ascii_case("en")
+}
+
 pub(crate) const WHISPER_LANGUAGES: &[(&str, &str)] = &[
     ("auto", "Detect automatically"),
     ("af", "Afrikaans"),
