@@ -79,35 +79,42 @@ fn actions_include_the_release_space_but_finalization_uses_the_stored_endpoint()
     assert_eq!(tracker.finish(ms(40)).spaces.actions, [None]);
 }
 
+fn grouped_mark_part(interrupt: impl FnOnce(&mut Tracker)) -> Option<Rect> {
+    let mut tracker = tracker();
+    tracker.observe(ms(0), Point::new(0.1, 0.2), true, false);
+    tracker.observe(ms(10), Point::new(0.5, 0.2), true, false);
+    tracker.observe(ms(20), Point::new(0.5, 0.2), false, false);
+    interrupt(&mut tracker);
+    tracker.observe(ms(30), Point::new(0.1, 0.4), true, false);
+    tracker.observe(ms(40), Point::new(0.5, 0.4), true, false);
+    tracker.observe(ms(50), Point::new(0.5, 0.4), false, false);
+    let marks = tracker.marks();
+    assert_eq!(marks.len(), 1);
+    tracker.finish(ms(60)).mark_part(&marks[0])
+}
+
 #[test]
 fn grouped_marks_cannot_cross_resizes_gaps_or_unknown_samples() {
-    for mode in 0..4 {
-        let mut tracker = tracker();
-        tracker.observe(ms(0), Point::new(0.1, 0.2), true, false);
-        tracker.observe(ms(10), Point::new(0.5, 0.2), true, false);
-        tracker.observe(ms(20), Point::new(0.5, 0.2), false, false);
-        match mode {
-            0 => {
-                assert!(tracker.locate(RESIZED));
-            },
-            1 => {
-                assert!(tracker.locate(RESIZED));
-                assert!(tracker.locate(Rect::UNIT));
-            },
-            2 => {
-                tracker.gap(ms(25));
-                assert!(tracker.locate(Rect::UNIT));
-            },
-            _ => tracker.gap(ms(25)),
-        }
-        tracker.observe(ms(30), Point::new(0.1, 0.4), true, false);
-        tracker.observe(ms(40), Point::new(0.5, 0.4), true, false);
-        tracker.observe(ms(50), Point::new(0.5, 0.4), false, false);
-        let marks = tracker.marks();
-        assert_eq!(marks.len(), 1);
-        let recording = tracker.finish(ms(60));
-        assert_eq!(recording.mark_part(&marks[0]), None, "mode {mode}");
-    }
+    assert_eq!(grouped_mark_part(|_| {}), Some(Rect::UNIT));
+    let resized = grouped_mark_part(|tracker| assert!(tracker.locate(RESIZED)));
+    let resized_back = grouped_mark_part(|tracker| {
+        assert!(tracker.locate(RESIZED));
+        assert!(tracker.locate(Rect::UNIT));
+    });
+    let relocated_after_gap = grouped_mark_part(|tracker| {
+        tracker.gap(ms(25));
+        assert!(tracker.locate(Rect::UNIT));
+    });
+    let unknown_after_gap = grouped_mark_part(|tracker| tracker.gap(ms(25)));
+    assert_eq!(
+        [
+            resized,
+            resized_back,
+            relocated_after_gap,
+            unknown_after_gap
+        ],
+        [None; 4]
+    );
 }
 
 #[test]
