@@ -98,14 +98,18 @@ pub(crate) struct Marker<'a>(pub(crate) &'a Keyframe, pub(crate) &'a [Mark]);
 
 impl fmt::Display for Marker<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self(keyframe, marks) = self;
+        let Self(keyframe, marks) = *self;
         match (keyframe.reason, keyframe.action) {
             (Reason::Click, Some(action)) => write!(f, " [{}]", Verb(action)),
             (Reason::Mark, during) if !marks.is_empty() => {
                 let mut separator = " [";
-                for mark in *marks {
-                    let (numeral, verb) = (Numeral(mark.number), mark.shape.verb());
-                    write!(f, "{separator}{numeral} {verb}")?;
+                for mark in marks {
+                    write!(
+                        f,
+                        "{separator}{} {}",
+                        Numeral(mark.number),
+                        mark.shape.verb()
+                    )?;
                     separator = ", ";
                 }
                 if let Some(action) = during {
