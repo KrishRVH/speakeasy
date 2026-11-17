@@ -268,10 +268,7 @@ impl<Host> Runtime<Host> {
         inputs: Receiver<Input>,
         run: impl FnOnce(Wiring<P>) -> io::Result<Host>,
     ) -> anyhow::Result<Self> {
-        let (epoch, last_show) = {
-            let presented = snapshots.borrow();
-            (presented.epoch, presented.last_show.clone())
-        };
+        let epoch = snapshots.borrow().epoch;
         let Configuration {
             effective,
             saved,
@@ -300,7 +297,6 @@ impl<Host> Runtime<Host> {
             stopping,
             ports,
             epoch,
-            last_show,
         })?;
         Ok(Self {
             host,
@@ -525,7 +521,6 @@ struct Wiring<P> {
     stopping: Receiver<Infallible>,
     ports: P,
     epoch: SnapshotEpoch,
-    last_show: Option<SavedShow>,
 }
 
 enum Directive {

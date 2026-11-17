@@ -119,13 +119,15 @@ impl<P: Ports> Owner<P> {
             stopping,
             ports,
             epoch,
-            last_show,
         } = wiring;
         let (capture_events, captures) = async_channel::bounded(64);
         let (show_events, shows) = async_channel::bounded(4);
         let desktop_ready = !ports.prepares_desktop();
         let origin = now();
-        let preset = snapshots.borrow().preset.clone();
+        let (last_show, preset) = {
+            let presented = snapshots.borrow();
+            (presented.last_show.clone(), presented.preset.clone())
+        };
         let mut world = World {
             ports,
             origin,
