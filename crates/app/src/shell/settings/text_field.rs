@@ -5,7 +5,7 @@ mod viewport;
 use std::{ops::Range, sync::mpsc};
 
 use accessible::{Painted, Request};
-use edit::{Composition, Edit};
+use edit::{Composition, Direction, Edit};
 use gpui::{
     AccessibleAction, App, Bounds, ClipboardItem, Context, ElementInputHandler, EntityInputHandler,
     EventEmitter, FocusHandle, Focusable, KeyDownEvent, MouseButton, MouseDownEvent,
@@ -148,13 +148,18 @@ impl TextField {
                     );
                 }
             },
-            "left" => self.edit.step(false, key.modifiers.shift),
-            "right" => self.edit.step(true, key.modifiers.shift),
+            "left" => self.edit.step(Direction::Backward, key.modifiers.shift),
+            "right" => self.edit.step(Direction::Forward, key.modifiers.shift),
             "home" => self.edit.select(0, key.modifiers.shift),
             "end" => self.edit.select(self.edit.text.len(), key.modifiers.shift),
             "backspace" | "delete" => {
                 if self.edit.selection().is_empty() {
-                    self.edit.step(key.key == "delete", true);
+                    let direction = if key.key == "delete" {
+                        Direction::Forward
+                    } else {
+                        Direction::Backward
+                    };
+                    self.edit.step(direction, true);
                 }
                 self.replace_text_in_range(None, "", window, cx);
             },

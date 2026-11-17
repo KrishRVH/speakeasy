@@ -11,6 +11,12 @@ pub(super) enum Composition {
     Mark(Option<Range<usize>>),
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum Direction {
+    Backward,
+    Forward,
+}
+
 #[derive(Default)]
 pub(super) struct Edit {
     pub(super) text: String,
@@ -86,30 +92,23 @@ impl Edit {
             .unwrap_or(self.text.len())
     }
 
-    pub(super) fn step(&mut self, forward: bool, extend: bool) {
-        if !extend && !self.selection().is_empty() {
-            let selection = self.selection();
-            self.select(
-                if forward {
-                    selection.end
-                } else {
-                    selection.start
-                },
-                false,
-            );
-            return;
-        }
-        let boundary = if forward {
-            self.text
-                .grapheme_indices(true)
-                .find_map(|(at, _)| (at > self.cursor).then_some(at))
-                .unwrap_or(self.text.len())
-        } else {
-            self.text
+    pub(super) fn step(&mut self, direction: Direction, extend: bool) {
+        let selection = self.selection();
+        let collapse = !extend && !selection.is_empty();
+        let boundary = match direction {
+            Direction::Backward if collapse => selection.start,
+            Direction::Forward if collapse => selection.end,
+            Direction::Backward => self
+                .text
                 .grapheme_indices(true)
                 .rev()
                 .find_map(|(at, _)| (at < self.cursor).then_some(at))
-                .unwrap_or(0)
+                .unwrap_or(0),
+            Direction::Forward => self
+                .text
+                .grapheme_indices(true)
+                .find_map(|(at, _)| (at > self.cursor).then_some(at))
+                .unwrap_or(self.text.len()),
         };
         self.select(boundary, extend);
     }
@@ -195,7 +194,7 @@ mod tests {
                 edit.set_text(format!("a{grapheme}b"));
                 edit.select(1 + offset, false);
                 assert_eq!(edit.cursor, 1);
-                edit.step(false, true);
+                edit.step(Direction::Backward, true);
                 assert!(edit.replace(None, "", Composition::Commit));
                 assert_eq!(edit.text, format!("{grapheme}b"));
             }
@@ -209,7 +208,7 @@ mod tests {
         edit.select(0, false);
         assert!(edit.replace(None, "e", Composition::Commit));
         assert_eq!(edit.cursor, "e\u{301}".len());
-        edit.step(false, true);
+        edit.step(Direction::Backward, true);
         assert!(edit.replace(None, "", Composition::Commit));
         assert_eq!(edit.text, "b");
     }
@@ -251,7 +250,7 @@ mod tests {
                 assert_eq!(edit.reversed(), selected.start > selected.end);
             }
             if edit.selection().is_empty() {
-                edit.step(false, true);
+                edit.step(Direction::Backward, true);
             }
             assert!(edit.replace(None, "", Composition::Commit));
             assert_eq!(edit.text, "");
@@ -262,10 +261,10 @@ mod tests {
     fn deletion_and_selection_do_not_split_combining_or_emoji_graphemes() {
         let mut edit = Edit::default();
         edit.set_text("a👩🏽‍💻e\u{301}".into());
-        edit.step(false, true);
+        edit.step(Direction::Backward, true);
         assert_eq!(edit.text.get(edit.selection()), Some("e\u{301}"));
         assert!(edit.replace(None, "", Composition::Commit));
-        edit.step(false, true);
+        edit.step(Direction::Backward, true);
         assert_eq!(edit.text.get(edit.selection()), Some("👩🏽‍💻"));
         assert!(edit.replace(None, "", Composition::Commit));
         assert_eq!(edit.text, "a");

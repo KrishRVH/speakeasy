@@ -197,15 +197,17 @@ impl Settings {
         };
         let controls = div().flex().flex_none().items_center().gap(px(8.0));
         let controls = match &self.update {
-            Update::Idle | Update::Checking { .. } => controls.child(ui.button_if(
-                if self.update.is_busy() {
-                    "Checking…"
-                } else {
-                    "Check for updates"
-                },
+            Update::Idle => controls.child(ui.button_if(
+                "Check for updates",
                 Action::CheckUpdates,
                 Weight::Secondary,
-                !self.update.is_busy() && !is_demo(ui.cx),
+                !is_demo(ui.cx),
+            )),
+            Update::Checking { .. } => controls.child(ui.button_if(
+                "Checking…",
+                Action::CheckUpdates,
+                Weight::Secondary,
+                false,
             )),
             Update::Available(_) => {
                 #[cfg(target_os = "windows")]
