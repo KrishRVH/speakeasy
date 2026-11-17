@@ -63,27 +63,24 @@ fn open_file(owner: HWND, title: &[u16], filter: &[u16]) -> anyhow::Result<Optio
         ..Default::default()
     };
 
-    let error = unsafe {
+    let failure = unsafe {
         let apartment = CoInitializeEx(
             null(),
             (COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE).cast_unsigned(),
         );
-        let error = if GetOpenFileNameW(&raw mut dialog) == FALSE {
-            CommDlgExtendedError()
-        } else {
-            0
-        };
+        let failure = (GetOpenFileNameW(&raw mut dialog) == FALSE).then(|| CommDlgExtendedError());
         if apartment >= 0 {
             CoUninitialize();
         }
-        error
+        failure
     };
-    if error != 0 {
-        bail!("The file dialog failed with code {error:#x}");
+    match failure {
+        None => Ok(file
+            .split(|&unit| unit == 0)
+            .next()
+            .filter(|path| !path.is_empty())
+            .map(|path| OsString::from_wide(path).into())),
+        Some(0) => Ok(None),
+        Some(code) => bail!("The file dialog failed with code {code:#x}"),
     }
-    Ok(file
-        .split(|&unit| unit == 0)
-        .next()
-        .filter(|path| !path.is_empty())
-        .map(|path| OsString::from_wide(path).into()))
 }

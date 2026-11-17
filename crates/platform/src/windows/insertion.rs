@@ -33,9 +33,10 @@ fn write_clipboard(
     text: &str,
     image: Option<&clipboard::Image>,
 ) -> anyhow::Result<()> {
-    let png = image
-        .map(|_| {
+    let image = image
+        .map(|image| {
             clipboard_win::raw::register_format("PNG")
+                .map(|png| (image, png))
                 .context("Cannot register the clipboard image format")
         })
         .transpose()?;
@@ -46,7 +47,7 @@ fn write_clipboard(
                 .context("Cannot register a clipboard format")?;
             clipboard_win::raw::set_without_clear(format.get(), &0_u32.to_ne_bytes())?;
         }
-        if let Some((image, png)) = image.zip(png) {
+        if let Some((image, png)) = image {
             clipboard_win::raw::set_without_clear(png.get(), &image.png)?;
             clipboard_win::raw::set_without_clear(clipboard_win::formats::CF_DIBV5, &image.dib)?;
         }
@@ -66,7 +67,7 @@ fn write_clipboard(
 pub(super) struct Insert;
 
 pub(super) enum Keys {
-    Paste([INPUT; 4]),
+    Paste,
     Text(Vec<INPUT>),
 }
 
@@ -101,12 +102,7 @@ impl NativeInsert for Insert {
     }
 
     fn paste_keys(&mut self) -> anyhow::Result<Keys> {
-        Ok(Keys::Paste([
-            press(VK_CONTROL),
-            press(VK_V),
-            release(VK_V),
-            release(VK_CONTROL),
-        ]))
+        Ok(Keys::Paste)
     }
 
     fn text_keys(&mut self, text: &str) -> anyhow::Result<Keys> {
@@ -129,7 +125,13 @@ impl NativeInsert for Insert {
 
     fn send(&mut self, keys: Keys) -> anyhow::Result<Inserted> {
         match keys {
-            Keys::Paste(shortcut) => {
+            Keys::Paste => {
+                let shortcut = [
+                    press(VK_CONTROL),
+                    press(VK_V),
+                    release(VK_V),
+                    release(VK_CONTROL),
+                ];
                 let sent = send_input(&shortcut)?;
                 if sent == shortcut.len() {
                     return Ok(Inserted::Sent);

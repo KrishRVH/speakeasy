@@ -383,7 +383,7 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
     let swallow = code >= 0
         && panic::catch_unwind(|| {
             let event = unsafe { &*(lparam as *const KBDLLHOOKSTRUCT) };
-            let down = wparam == WM_KEYDOWN as usize || wparam == WM_SYSKEYDOWN as usize;
+            let down = matches!(u32::try_from(wparam), Ok(WM_KEYDOWN | WM_SYSKEYDOWN));
             event.dwExtraInfo != OWN_INPUT
                 && HOOK.with_borrow_mut(|slot| {
                     slot.as_mut()
@@ -441,7 +441,7 @@ fn interrupts_recording(message: u32, wparam: WPARAM) -> bool {
                 | WTS_SESSION_LOCK)
         ),
         WM_QUERYENDSESSION => true,
-        WM_POWERBROADCAST => wparam == PBT_APMSUSPEND as usize,
+        WM_POWERBROADCAST => u32::try_from(wparam) == Ok(PBT_APMSUSPEND),
         _ => false,
     }
 }
