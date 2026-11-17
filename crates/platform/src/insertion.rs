@@ -116,9 +116,7 @@ pub(crate) struct Insertion {
 #[cfg(target_os = "linux")]
 pub(crate) fn abandon_queued(requests: &Receiver<Insertion>) {
     requests.close();
-    while let Ok(request) = requests.try_recv() {
-        drop(request);
-    }
+    while requests.try_recv().is_ok() {}
 }
 
 pub(crate) struct Reply<T>(Sender<T>);

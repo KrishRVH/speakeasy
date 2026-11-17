@@ -1,5 +1,5 @@
 use super::*;
-use crate::insertion::{Insertion, Reply};
+use crate::insertion::{Insertion, Reply, commit::deliver, tests::HELD};
 
 #[test]
 fn delivery_waits_on_its_native_shortcut_and_rechecks_it_before_sending() -> anyhow::Result<()> {
@@ -8,18 +8,15 @@ fn delivery_waits_on_its_native_shortcut_and_rechecks_it_before_sending() -> any
             let mut native = Fake::new();
             native.releases = releases.into();
             let request = request(delivery)?;
-            assert_eq!(
-                super::super::deliver(&mut native, &request)?,
-                Inserted::Sent
-            );
+            assert_eq!(deliver(&mut native, &request)?, Inserted::Sent);
             assert!(native.sent());
         }
         let mut native = Fake::new();
         native.releases = [true, false].into();
         let request = request(delivery)?;
         assert_eq!(
-            super::super::deliver(&mut native, &request)?,
-            delivery.preflight(true, false).unwrap()
+            deliver(&mut native, &request)?,
+            delivery.preflight(EXTERNAL_FOCUS, HELD).unwrap()
         );
         assert!(!native.sent());
     }

@@ -118,10 +118,9 @@ pub(crate) fn insert<N: NativeInsert>(
     if !permit.active() {
         return Ok(Inserted::Cancelled);
     }
-    let keys = match delivery {
+    let (keys, clipboard) = match delivery {
         Delivery::Paste => {
             let lease = native.acquire()?;
-
             if !permit.active() {
                 return Ok(Inserted::Cancelled);
             }
@@ -130,29 +129,19 @@ pub(crate) fn insert<N: NativeInsert>(
             if !native.holds(text, &mark)? {
                 return Ok(CLIPBOARD_CHANGED);
             }
-            let keys = native.paste_keys()?;
-            if let Some(outcome) = delivery.preflight(
-                !own_focus.held() && native.external_focus(),
-                native.shortcut_released(),
-            ) {
-                return Ok(outcome);
-            }
-            if native.mark() != mark {
-                return Ok(CLIPBOARD_CHANGED_BEFORE_PASTE);
-            }
-            keys
+            (native.paste_keys()?, Some(mark))
         },
-        Delivery::Direct => {
-            let keys = native.text_keys(text)?;
-            if let Some(outcome) = delivery.preflight(
-                !own_focus.held() && native.external_focus(),
-                native.shortcut_released(),
-            ) {
-                return Ok(outcome);
-            }
-            keys
-        },
+        Delivery::Direct => (native.text_keys(text)?, None),
     };
+    if let Some(outcome) = delivery.preflight(
+        !own_focus.held() && native.external_focus(),
+        native.shortcut_released(),
+    ) {
+        return Ok(outcome);
+    }
+    if clipboard.is_some_and(|mark| native.mark() != mark) {
+        return Ok(CLIPBOARD_CHANGED_BEFORE_PASTE);
+    }
     if !permit.commit() {
         return Ok(Inserted::Cancelled);
     }

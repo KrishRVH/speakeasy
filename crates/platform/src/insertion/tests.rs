@@ -6,7 +6,7 @@ use crate::InputSender;
 pub(super) const DELIVERIES: [Delivery; 2] = [Delivery::Paste, Delivery::Direct];
 pub(super) const OWN_FOCUS: bool = false;
 pub(super) const EXTERNAL_FOCUS: bool = true;
-const HELD: bool = false;
+pub(super) const HELD: bool = false;
 pub(super) const RELEASED: bool = true;
 
 #[test]
