@@ -6,7 +6,7 @@ use super::{
     library::{Row, list},
     *,
 };
-use crate::show::store::recall::Health;
+use crate::show::store::recall::{self, Health};
 
 mod narration;
 mod offers;

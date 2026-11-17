@@ -32,7 +32,7 @@ use super::{
     Interrupted, copy,
     edits::Edit,
     preview,
-    store::{self, movie, recall, retention},
+    store::{self, movie, retention},
 };
 use crate::{
     gpui_ext::{EntityUpdate, Presence, defer_presence, follow},
@@ -495,7 +495,7 @@ impl Review {
         let directory = key.directory.clone();
         let work = cx.background_executor().spawn(async move {
             std::fs::metadata(&directory)?;
-            Ok((recall::summary(&directory), store::pinned(&directory).ok()))
+            Ok((library::summary(&directory), store::pinned(&directory).ok()))
         });
         self.checking = Some(cx.spawn(async move |view, cx| {
             let result = work.await;
@@ -663,9 +663,9 @@ impl Review {
         )
     }
 
-    fn update_summary(&mut self, summary: io::Result<String>) {
+    fn update_summary(&mut self, summary: Result<String, String>) {
         if let Some(detail) = &mut self.detail {
-            detail.summary = summary.map_err(|error| format!("Cannot read summary.md: {error}"));
+            detail.summary = summary;
         }
     }
 

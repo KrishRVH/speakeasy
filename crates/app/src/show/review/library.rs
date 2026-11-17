@@ -192,8 +192,7 @@ impl Detail {
 
     pub(super) fn open(directory: &Path, mode: Mode) -> io::Result<Self> {
         let entry = Entry::open(directory)?;
-        let summary =
-            recall::summary(directory).map_err(|error| format!("Cannot read summary.md: {error}"));
+        let summary = summary(directory);
         let mut warnings = Vec::new();
         let mut frames = Vec::new();
         let mut marks = Vec::new();
@@ -301,6 +300,10 @@ impl Detail {
             movie: inspected.map(|inspected| inspected.metadata),
         })
     }
+}
+
+pub(super) fn summary(directory: &Path) -> Result<String, String> {
+    recall::summary(directory).map_err(|error| format!("Cannot read summary.md: {error}"))
 }
 
 fn ending(recording: &Recording) -> Option<String> {
