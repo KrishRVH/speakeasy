@@ -154,14 +154,15 @@ async fn download(
             .is_none_or(|size| size == artifact.size),
         INVALID_FILE
     );
+    let step = "Downloading update";
     let mut done = 0_u64;
-    progress.send_replace(Progress::bytes("Downloading update", done, artifact.size));
+    progress.send_replace(Progress::bytes(step, done, artifact.size));
     while let Some(chunk) = response.chunk().await.context(DOWNLOAD_FAILED)? {
         let length = u64::try_from(chunk.len()).context(INVALID_FILE)?;
         ensure!(length <= artifact.size.saturating_sub(done), INVALID_FILE);
         file.write_all(&chunk).context(DOWNLOAD_FAILED)?;
         done = done.saturating_add(length);
-        progress.send_replace(Progress::bytes("Downloading update", done, artifact.size));
+        progress.send_replace(Progress::bytes(step, done, artifact.size));
         tokio::task::yield_now().await;
     }
     ensure!(done == artifact.size, INVALID_FILE);
@@ -173,9 +174,10 @@ async fn download(
         metadata.is_file() && metadata.len() == artifact.size,
         INVALID_FILE
     );
+    let step = "Verifying update";
     let mut hash = Sha256::new();
     let mut hashed = 0_u64;
-    progress.send_replace(Progress::bytes("Verifying update", hashed, artifact.size));
+    progress.send_replace(Progress::bytes(step, hashed, artifact.size));
     let mut buffer = vec![0; 1024 * 1024];
     loop {
         let read = file.read(&mut buffer).context(DOWNLOAD_FAILED)?;
@@ -188,7 +190,7 @@ async fn download(
             .filter(|&total| total <= artifact.size)
             .context(INVALID_FILE)?;
         hash.update(buffer.get(..read).context(INVALID_FILE)?);
-        progress.send_replace(Progress::bytes("Verifying update", hashed, artifact.size));
+        progress.send_replace(Progress::bytes(step, hashed, artifact.size));
         tokio::task::yield_now().await;
     }
     ensure!(

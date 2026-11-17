@@ -42,16 +42,6 @@ pub(crate) enum Retention {
 }
 
 impl Retention {
-    fn read(directory: &Path) -> io::Result<Self> {
-        Ok(Self::of(
-            directory
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or_default(),
-            pinned(directory)?,
-        ))
-    }
-
     pub(crate) fn of(name: &str, kept: bool) -> Self {
         if kept {
             Self::Kept
@@ -122,7 +112,7 @@ pub(super) fn lock(parent: &Path) -> io::Result<File> {
 
 pub(crate) fn set_kept(parent: &Path, directory: &Path, kept: bool) -> io::Result<Retention> {
     let _lock = lock(parent)?;
-    super::address::managed_id(parent, directory)?.ok_or_else(|| {
+    let id = super::address::managed_id(parent, directory)?.ok_or_else(|| {
         io::Error::other(format!(
             "Only Shows directly in {} expire; this folder is not managed",
             parent.display()
@@ -139,7 +129,7 @@ pub(crate) fn set_kept(parent: &Path, directory: &Path, kept: bool) -> io::Resul
         remove_if_present(&pin)?;
     }
     super::sync_directory(directory)?;
-    Retention::read(directory)
+    Ok(Retention::of(id.as_str(), pinned(directory)?))
 }
 
 #[cfg(test)]
