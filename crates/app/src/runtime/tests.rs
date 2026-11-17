@@ -638,13 +638,23 @@ impl Runtime<OwnedTask> {
         meter: watch::Sender<Meter>,
         ports: P,
     ) -> anyhow::Result<Self> {
+        let configuration = Configuration {
+            effective: config.clone(),
+            saved: config,
+            styles,
+        };
+        Self::on_task_with(configuration, snapshots, meter, ports)
+    }
+
+    fn on_task_with<P: Ports>(
+        configuration: Configuration,
+        snapshots: watch::Sender<Snapshot>,
+        meter: watch::Sender<Meter>,
+        ports: P,
+    ) -> anyhow::Result<Self> {
         let (input, inputs) = input_lane();
         Self::host(
-            Configuration {
-                effective: config.clone(),
-                saved: config,
-                styles,
-            },
+            configuration,
             snapshots,
             meter,
             ports,
@@ -692,6 +702,22 @@ impl Harness {
         customize: impl FnOnce(&mut FakePorts),
     ) -> anyhow::Result<Self> {
         Self::host(Config::default(), Some(show), customize, Runtime::on_task)
+    }
+
+    fn resuming(effective: Config, saved: Config) -> anyhow::Result<Self> {
+        Self::host(
+            effective,
+            None,
+            |_| {},
+            |effective, styles, snapshots, meter, ports| {
+                let configuration = Configuration {
+                    effective,
+                    saved,
+                    styles,
+                };
+                Runtime::on_task_with(configuration, snapshots, meter, ports)
+            },
+        )
     }
 
     fn exited(&self) -> impl Future<Output = ()> + use<> {

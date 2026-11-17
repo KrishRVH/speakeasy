@@ -1,4 +1,4 @@
-mod commands;
+pub(super) mod commands;
 mod outcome;
 
 use std::{

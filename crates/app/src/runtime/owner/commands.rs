@@ -64,7 +64,7 @@ impl<P: Ports> World<P> {
     }
 }
 
-pub(super) const fn refusal(refusal: Refusal) -> &'static str {
+pub(in crate::runtime) const fn refusal(refusal: Refusal) -> &'static str {
     match refusal {
         Refusal::Busy => "Finish the current session or practice before starting dictation.",
         Refusal::NotReady => "Wait for desktop access and the local speech model to be ready.",

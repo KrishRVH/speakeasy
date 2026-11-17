@@ -1,54 +1,58 @@
+use speakeasy_core::machine::Refusal;
+
 use super::*;
+use crate::runtime::owner::commands::refusal;
+
+async fn choose(
+    h: &Harness,
+    name: &str,
+    config: &Config,
+    baseline: &Config,
+    session: u64,
+) -> anyhow::Result<Reply> {
+    let (call, receipt) = Call::new(Command::Preset { name: name.into() });
+    h.runtime.preset(
+        name.into(),
+        ValidConfig::assume(config.clone()),
+        baseline.clone(),
+        session,
+        call,
+    );
+    receive(&receipt).await
+}
+
+async fn finish_in(h: &mut Harness, language: &str) -> anyhow::Result<()> {
+    h.input(Input::Toggle);
+    let (heard, reply) = receive(&h.jobs).await?;
+    assert_eq!(heard, language);
+    answer(reply, "Fixture.")?;
+    receive(&h.pasted).await?;
+    h.phase(Phase::Done).await
+}
 
 #[tokio::test(start_paused = true)]
-async fn preset_adoption_is_idle_and_does_not_reload_for_text_choices() -> anyhow::Result<()> {
+async fn a_preset_applies_only_while_idle_and_reloads_only_for_engine_choices() -> anyhow::Result<()>
+{
     let mut h = Harness::new()?;
     ready(&mut h).await?;
     let baseline = h.runtime.configuration.borrow().clone();
-    let mut config = baseline.clone();
-    config.language = "fr".into();
-    let (call, receipt) = Call::new(Command::Preset {
-        name: "French".into(),
-    });
-    h.runtime.preset(
-        "French".into(),
-        ValidConfig::assume(config.clone()),
-        baseline.clone(),
-        0,
-        call,
-    );
-    assert_eq!(receive(&receipt).await?.result, Disposition::Ok);
+    let french = Config {
+        language: "fr".into(),
+        ..baseline.clone()
+    };
+    let adopted = choose(&h, "French", &french, &baseline, h.snapshot().session).await?;
+    assert_eq!(adopted.result, Disposition::Ok);
     assert!(h.loads.try_recv().is_err());
     h.start().await?;
-    let (call, receipt) = Call::new(Command::Preset {
-        name: "Busy".into(),
-    });
-    h.runtime.preset(
-        "Busy".into(),
-        ValidConfig::assume(baseline.clone()),
-        baseline.clone(),
-        1,
-        call,
-    );
-    assert_eq!(receive(&receipt).await?.result, Disposition::Refused);
-    h.input(Input::Toggle);
-    let (language, reply) = receive(&h.jobs).await?;
-    assert_eq!(language, "fr");
-    answer(reply, "Fixture.")?;
-    receive(&h.pasted).await?;
-    h.phase(Phase::Done).await?;
-    config.threads += 1;
-    let (call, receipt) = Call::new(Command::Preset {
-        name: "Faster".into(),
-    });
-    h.runtime.preset(
-        "Faster".into(),
-        ValidConfig::assume(config),
-        baseline,
-        1,
-        call,
-    );
-    assert_eq!(receive(&receipt).await?.result, Disposition::Ok);
+    let busy = choose(&h, "Busy", &baseline, &baseline, h.snapshot().session).await?;
+    assert_eq!(busy.reason.as_deref(), Some(refusal(Refusal::PresetBusy)));
+    finish_in(&mut h, "fr").await?;
+    let faster = Config {
+        threads: french.threads + 1,
+        ..french
+    };
+    let adopted = choose(&h, "Faster", &faster, &baseline, h.snapshot().session).await?;
+    assert_eq!(adopted.result, Disposition::Ok);
     ready(&mut h).await?;
     assert!(h.loads.try_recv().is_err());
     assert_eq!(h.snapshot().preset.as_deref(), Some("Faster"));
@@ -60,20 +64,19 @@ async fn preset_validation_cannot_cross_a_recording_or_settings_change() -> anyh
     let mut h = Harness::new()?;
     ready(&mut h).await?;
     let baseline = h.runtime.configuration.borrow().clone();
+    let validated = h.snapshot().session;
     h.start().await?;
     h.input(Input::Cancel);
     h.phase(Phase::Cancelled).await?;
-    let candidate = ValidConfig::assume(baseline.clone());
-    let (call, receipt) = Call::new(Command::Preset { name: "Old".into() });
-    h.runtime
-        .preset("Old".into(), candidate.clone(), baseline.clone(), 0, call);
-    assert_eq!(receive(&receipt).await?.result, Disposition::Refused);
-    let mut changed = baseline.clone();
-    changed.language = "de".into();
-    h.runtime.configure(ValidConfig::assume(changed));
-    let (call, receipt) = Call::new(Command::Preset { name: "Old".into() });
-    h.runtime.preset("Old".into(), candidate, baseline, 1, call);
-    assert_eq!(receive(&receipt).await?.result, Disposition::Refused);
+    let stale = Some(refusal(Refusal::PresetStale));
+    let across_recording = choose(&h, "Old", &baseline, &baseline, validated).await?;
+    assert_eq!(across_recording.reason.as_deref(), stale);
+    h.runtime.configure(ValidConfig::assume(Config {
+        language: "de".into(),
+        ..baseline.clone()
+    }));
+    let across_settings = choose(&h, "Old", &baseline, &baseline, h.snapshot().session).await?;
+    assert_eq!(across_settings.reason.as_deref(), stale);
     assert!(
         control(&h, Command::Status)
             .await?
@@ -88,50 +91,17 @@ async fn preset_validation_cannot_cross_a_recording_or_settings_change() -> anyh
 #[tokio::test(start_paused = true)]
 async fn resumed_preset_keeps_saved_settings_separate_from_effective_choices() -> anyhow::Result<()>
 {
-    let baseline = Config::default();
-    let mut effective = baseline.clone();
-    effective.language = "fr".into();
-    let saved = baseline.clone();
-    let mut h = Harness::host(
-        effective,
-        None,
-        |_| {},
-        |config, styles, snapshots, meter, ports| {
-            let (input, inputs) = input_lane();
-            Runtime::host(
-                Configuration {
-                    effective: config,
-                    saved,
-                    styles,
-                },
-                snapshots,
-                meter,
-                ports,
-                input,
-                inputs,
-                |wiring| Ok(OwnedTask::spawn(owner::run(wiring))),
-            )
-        },
-    )?;
+    let saved = Config::default();
+    let effective = Config {
+        language: "fr".into(),
+        ..saved.clone()
+    };
+    let mut h = Harness::resuming(effective, saved.clone())?;
     ready(&mut h).await?;
     h.start().await?;
-    h.runtime.configure(ValidConfig::assume(baseline.clone()));
-    h.input(Input::Toggle);
-    let (language, reply) = receive(&h.jobs).await?;
-    assert_eq!(language, "fr");
-    answer(reply, "Fixture.")?;
-    receive(&h.pasted).await?;
-    h.phase(Phase::Done).await?;
-    let (call, receipt) = Call::new(Command::Preset {
-        name: "Default".into(),
-    });
-    h.runtime.preset(
-        "Default".into(),
-        ValidConfig::assume(baseline.clone()),
-        baseline,
-        1,
-        call,
-    );
-    assert_eq!(receive(&receipt).await?.result, Disposition::Ok);
+    h.runtime.configure(ValidConfig::assume(saved.clone()));
+    finish_in(&mut h, "fr").await?;
+    let adopted = choose(&h, "Default", &saved, &saved, h.snapshot().session).await?;
+    assert_eq!(adopted.result, Disposition::Ok);
     h.close().await
 }
