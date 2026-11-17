@@ -101,6 +101,7 @@ fn recording(elapsed: Duration) -> Scene {
         draw_hint: None,
         secure_input: None,
         hands_free: true,
+        for_script: false,
         show: false,
         style: Style::Prose,
         ending: Ending::Finished,
@@ -425,4 +426,19 @@ fn limit_countdown_is_clamped_and_only_appears_in_the_last_thirty_seconds() {
     assert_eq!(clock(269), (false, "4:29".into()));
     assert_eq!(clock(270), (true, "0:30 left".into()));
     assert_eq!(clock(305), (true, "0:00 left".into()));
+}
+
+#[test]
+fn a_dictation_for_a_script_says_so_while_it_records() {
+    let script = |phase| Scene {
+        phase,
+        for_script: true,
+        style: Style::Verbatim,
+        ..recording(Duration::from_secs(3))
+    };
+    let captured = script(Phase::Recording);
+    assert_eq!(captured.label(), Some(FOR_SCRIPT));
+    assert!(captured.shows_clock());
+    assert!(captured.capsule_size().width > recording(Duration::from_secs(3)).capsule_size().width);
+    assert_eq!(script(Phase::Processing).label(), None);
 }

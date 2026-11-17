@@ -3,7 +3,7 @@ use speakeasy_core::machine::{self, Event, Refusal, SessionId};
 use super::World;
 use crate::{
     config::Change,
-    control::{Command, Status},
+    control::{Command, Reply, Status},
     runtime::{Directive, native::Native, ports::Ports},
     status::ServiceState,
 };
@@ -11,6 +11,15 @@ use crate::{
 impl<P: Ports> World<P> {
     pub(super) fn direct(&self, directive: Directive) -> Option<Event<Native>> {
         match directive {
+            Directive::Control(call)
+                if matches!(
+                    call.command,
+                    Command::Capture { .. } | Command::Print { .. }
+                ) && !self.changes.borrow().print_to_scripts =>
+            {
+                call.respond(Reply::refused(SCRIPTS_CANNOT_READ));
+                None
+            },
             Directive::Control(call) if call.is_live() => {
                 let command = match &call.command {
                     Command::Status => machine::Command::Status,
@@ -65,6 +74,9 @@ impl<P: Ports> World<P> {
         (self.token(session) == token).then_some(session)
     }
 }
+
+const SCRIPTS_CANNOT_READ: &str =
+    "Turn on Scripts can read their dictations in Settings, Dictation, Writing, to use --print.";
 
 pub(in crate::runtime) const fn refusal(refusal: Refusal) -> &'static str {
     match refusal {

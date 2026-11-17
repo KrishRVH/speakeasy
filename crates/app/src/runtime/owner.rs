@@ -271,6 +271,7 @@ impl<P: Ports> Owner<P> {
             reported: world.reported,
             phase: machine.phase(),
             hands_free: machine.hands_free(),
+            for_script: machine.for_script(),
             show: machine.shows(),
             ending,
             narration_lost,

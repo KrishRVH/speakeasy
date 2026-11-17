@@ -675,6 +675,15 @@ impl Settings {
                 Action::Toggle(Setting::SpokenSymbols),
             ),
         );
+        let scripts = kit.setting(
+            "Scripts can read their dictations",
+            "Lets speakeasy dictation start --print return its words to the script that started it instead of pasting them. The pill says To script while it records.",
+            ui.switch(
+                "Scripts can read their dictations",
+                Setting::PrintToScripts.is_on(&self.config),
+                Action::Toggle(Setting::PrintToScripts),
+            ),
+        );
         #[cfg(not(target_os = "linux"))]
         let delivery = {
             use crate::config::TextDelivery;
@@ -711,6 +720,7 @@ impl Settings {
                 fillers.into_any_element(),
                 symbols.into_any_element(),
                 delivery.into_any_element(),
+                scripts.into_any_element(),
             ],
         )
     }

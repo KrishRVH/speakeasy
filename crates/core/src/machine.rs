@@ -690,6 +690,11 @@ impl<P: Payload> Machine<P> {
     }
 
     #[must_use]
+    pub fn for_script(&self) -> bool {
+        self.session.as_ref().is_some_and(Session::for_script)
+    }
+
+    #[must_use]
     pub const fn shows(&self) -> bool {
         self.latest.show || matches!(self.outcome, Outcome::ShowCopied(_))
     }

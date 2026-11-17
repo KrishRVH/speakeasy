@@ -614,6 +614,13 @@ impl<P: Payload> Session<P> {
         }
     }
 
+    pub(super) const fn for_script(&self) -> bool {
+        matches!(
+            self.purpose,
+            Purpose::Dictation(Handoff::Capture | Handoff::Print(_))
+        )
+    }
+
     pub(super) fn capture(&mut self) {
         if let Purpose::Dictation(handoff) = &mut self.purpose {
             *handoff = Handoff::Capture;

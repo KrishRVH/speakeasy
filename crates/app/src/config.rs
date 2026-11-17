@@ -64,6 +64,7 @@ pub(crate) struct Config {
     pub recognition_terms: Terms,
     pub remove_fillers: bool,
     pub spoken_symbols: bool,
+    pub print_to_scripts: bool,
     pub vocabulary: Vec<Correction>,
     pub presets: Vec<presets::Preset>,
     pub threads: u16,
@@ -90,6 +91,7 @@ impl Default for Config {
             recognition_terms: Terms::default(),
             remove_fillers: true,
             spoken_symbols: true,
+            print_to_scripts: false,
             vocabulary: Vec::new(),
             presets: Vec::new(),
             threads: 4,
@@ -277,6 +279,7 @@ impl Config {
             recognition_terms,
             remove_fillers,
             spoken_symbols,
+            print_to_scripts,
             vocabulary,
             presets,
             threads,
@@ -313,7 +316,8 @@ impl Config {
                     || self.spoken_symbols != *spoken_symbols
                     || self.vocabulary != *vocabulary
                     || self.text_delivery != *text_delivery
-                    || self.play_sounds != *play_sounds,
+                    || self.play_sounds != *play_sounds
+                    || self.print_to_scripts != *print_to_scripts,
                 Change::Session,
             ),
             (

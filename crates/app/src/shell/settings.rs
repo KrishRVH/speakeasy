@@ -892,6 +892,7 @@ enum Setting {
     ReduceMotion,
     RemoveFillers,
     SpokenSymbols,
+    PrintToScripts,
     PlaySounds,
     StartAtLogin,
 }
@@ -903,6 +904,7 @@ impl Setting {
             Self::ReduceMotion => &mut config.reduced_motion,
             Self::RemoveFillers => &mut config.remove_fillers,
             Self::SpokenSymbols => &mut config.spoken_symbols,
+            Self::PrintToScripts => &mut config.print_to_scripts,
             Self::PlaySounds => &mut config.play_sounds,
             Self::StartAtLogin => &mut config.start_at_login,
         }
@@ -916,6 +918,7 @@ impl Setting {
                 config.fillers(&config.language) == crate::transcript::Fillers::Remove
             },
             Self::SpokenSymbols => config.spoken_symbols,
+            Self::PrintToScripts => config.print_to_scripts,
             Self::PlaySounds => config.play_sounds,
             Self::StartAtLogin => config.start_at_login,
         }

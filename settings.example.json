@@ -8,6 +8,7 @@
   "language": "auto",
   "remove_fillers": true,
   "spoken_symbols": true,
+  "print_to_scripts": false,
   "vocabulary": [],
   "presets": [],
   "recognition_terms": [],

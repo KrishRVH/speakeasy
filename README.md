@@ -484,16 +484,17 @@ commands targeting Shows or private practice are refused. Read status after an u
 instead of blindly retrying. `style` changes the next-recording default; `dictation start --style`
 overrides only that recording.
 
-`dictation start --print` records the same hands-free dictation, but its words never reach the
-focused app. `dictation stop TOKEN --print` finishes it, waits up to two minutes for recognition,
-and returns the text as the reply's `text` field, cleaned up like any dictation in its style. A
-printed dictation pastes nothing; Paste last dictation can still paste it. Stopping it without
-`--print`, or finishing it with the shortcut, pastes nothing and says so. Printing a dictation
-started without `--print` is refused, as is printing one twice, and one that ends empty, cancelled,
-or failed refuses its caller. Keyboard dictations, Shows, practice, and earlier dictations can never
-be read back. Text over the 64 KiB reply limit is refused; paste it instead. These explicit commands
-work on all three platforms; Linux's desktop-binding `--toggle` and `--cancel` still require Desktop
-bindings.
+`dictation start --print` works only after you turn on **Scripts can read their dictations** in
+Settings, Dictation, Writing; until then it is refused. It records the same hands-free dictation,
+but its words never reach the focused app, and the pill says To script while it records.
+`dictation stop TOKEN --print` finishes it, waits up to two minutes for recognition, and returns the
+text as the reply's `text` field, cleaned up like any dictation in its style. A printed dictation
+pastes nothing; Paste last dictation can still paste it. Stopping it without `--print`, or finishing
+it with the shortcut, pastes nothing and says so. Printing a dictation started without `--print` is
+refused, as is printing one twice, and one that ends empty, cancelled, or failed refuses its caller.
+Keyboard dictations, Shows, practice, and earlier dictations can never be read back. Text over the
+64 KiB reply limit is refused; paste it instead. These explicit commands work on all three
+platforms; Linux's desktop-binding `--toggle` and `--cancel` still require Desktop bindings.
 
 `show skill` prints the [agent reading guide](skills/speakeasy-show/SKILL.md) embedded in the
 installed binary. `show skill --install DIR` writes it to `DIR/speakeasy-show/SKILL.md` for an agent

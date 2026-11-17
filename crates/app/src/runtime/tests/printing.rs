@@ -3,10 +3,21 @@ use anyhow::Context as _;
 use super::*;
 use crate::control::{Call, Command, Disposition, Reply};
 
-async fn captured(h: &Harness) -> anyhow::Result<String> {
+fn scripted() -> anyhow::Result<Harness> {
+    Harness::with_ports(
+        Config {
+            print_to_scripts: true,
+            ..Config::default()
+        },
+        |_| {},
+    )
+}
+
+async fn captured(h: &mut Harness) -> anyhow::Result<String> {
     let started = h.call(Command::Capture { style: None }).await?;
     assert_eq!(started.result, Disposition::Ok);
     receive(&h.captures).await?;
+    h.observe(|snapshot| snapshot.for_script).await?;
     started
         .session
         .context("Capture did not identify its session")
@@ -28,9 +39,9 @@ impl Harness {
 
 #[tokio::test(start_paused = true)]
 async fn a_captured_dictation_answers_its_caller_and_pastes_nothing() -> anyhow::Result<()> {
-    let mut h = Harness::new()?;
+    let mut h = scripted()?;
     h.ready().await?;
-    let token = captured(&h).await?;
+    let token = captured(&mut h).await?;
     let printed = h.print(token);
     h.transcribe_next_as("Fixture words.").await?;
     let reply = receive(&printed).await?;
@@ -44,7 +55,7 @@ async fn a_captured_dictation_answers_its_caller_and_pastes_nothing() -> anyhow:
 
 #[tokio::test(start_paused = true)]
 async fn only_a_captured_dictation_can_be_printed() -> anyhow::Result<()> {
-    let mut h = Harness::new()?;
+    let mut h = scripted()?;
     h.ready().await?;
     let started = h.call(Command::Start { style: None }).await?;
     receive(&h.captures).await?;
@@ -65,9 +76,9 @@ async fn only_a_captured_dictation_can_be_printed() -> anyhow::Result<()> {
 
 #[tokio::test(start_paused = true)]
 async fn a_capture_that_ends_without_words_refuses_its_caller() -> anyhow::Result<()> {
-    let mut h = Harness::new()?;
+    let mut h = scripted()?;
     h.ready().await?;
-    let token = captured(&h).await?;
+    let token = captured(&mut h).await?;
     let printed = h.print(token);
     h.transcribe_next_as("").await?;
     let reply = receive(&printed).await?;
@@ -78,9 +89,9 @@ async fn a_capture_that_ends_without_words_refuses_its_caller() -> anyhow::Resul
 
 #[tokio::test(start_paused = true)]
 async fn a_capture_stopped_without_print_keeps_its_words_off_the_screen() -> anyhow::Result<()> {
-    let mut h = Harness::new()?;
+    let mut h = scripted()?;
     h.ready().await?;
-    let token = captured(&h).await?;
+    let token = captured(&mut h).await?;
     assert_eq!(
         h.call(Command::Stop { session: token }).await?.result,
         Disposition::Ok
@@ -94,9 +105,9 @@ async fn a_capture_stopped_without_print_keeps_its_words_off_the_screen() -> any
 
 #[tokio::test(start_paused = true)]
 async fn a_cancelled_capture_refuses_its_waiting_caller() -> anyhow::Result<()> {
-    let mut h = Harness::new()?;
+    let mut h = scripted()?;
     h.ready().await?;
-    let token = captured(&h).await?;
+    let token = captured(&mut h).await?;
     let printed = h.print(token.clone());
     let (_, job) = receive(&h.jobs).await?;
     assert_eq!(
@@ -113,9 +124,9 @@ async fn a_cancelled_capture_refuses_its_waiting_caller() -> anyhow::Result<()> 
 
 #[tokio::test(start_paused = true)]
 async fn a_second_print_is_refused_while_the_first_still_gets_the_words() -> anyhow::Result<()> {
-    let mut h = Harness::new()?;
+    let mut h = scripted()?;
     h.ready().await?;
-    let token = captured(&h).await?;
+    let token = captured(&mut h).await?;
     let first = h.print(token.clone());
     let (_, job) = receive(&h.jobs).await?;
     let second = receive(&h.print(token)).await?;
@@ -126,5 +137,23 @@ async fn a_second_print_is_refused_while_the_first_still_gets_the_words() -> any
         receive(&first).await?.text.as_deref(),
         Some("Fixture words.")
     );
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn scripts_read_nothing_until_the_user_lets_them() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    h.ready().await?;
+    let refused = h.call(Command::Capture { style: None }).await?;
+    assert_eq!(refused.result, Disposition::Refused);
+    assert!(h.captures.try_recv().is_err());
+    let started = h.call(Command::Start { style: None }).await?;
+    receive(&h.captures).await?;
+    let token = started
+        .session
+        .context("Start did not identify its session")?;
+    let printed = receive(&h.print(token)).await?;
+    assert_eq!(printed.result, Disposition::Refused);
+    assert!(!h.snapshot().for_script);
     h.close().await
 }

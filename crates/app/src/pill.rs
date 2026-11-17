@@ -177,6 +177,7 @@ impl Pill {
         let state_changed = new_feedback
             || snapshot.message != previous.message
             || snapshot.hands_free != previous.hands_free
+            || snapshot.for_script != previous.for_script
             || snapshot.show != previous.show
             || snapshot.ending != previous.ending
             || snapshot.narration_lost != previous.narration_lost;
@@ -238,6 +239,7 @@ impl Pill {
             draw_hint: remaining(self.draw_hint_until),
             secure_input: remaining(self.secure_input_until),
             hands_free: self.snapshot.hands_free,
+            for_script: self.snapshot.for_script,
             show: self.snapshot.show,
             style: self.snapshot.style,
             ending: self.snapshot.ending,
@@ -406,6 +408,8 @@ impl Capsule {
     }
 }
 
+const FOR_SCRIPT: &str = "To script";
+
 struct Scene {
     phase: Phase,
     since_phase: Duration,
@@ -413,6 +417,7 @@ struct Scene {
     draw_hint: Option<Duration>,
     secure_input: Option<Duration>,
     hands_free: bool,
+    for_script: bool,
     show: bool,
     style: Style,
     ending: Ending,
@@ -467,8 +472,16 @@ impl Scene {
         self.is_capturing() && !self.show && self.style != Style::Prose
     }
 
+    fn label(&self) -> Option<&'static str> {
+        if self.is_capturing() && self.for_script {
+            Some(FOR_SCRIPT)
+        } else {
+            self.shows_style().then(|| self.style.label())
+        }
+    }
+
     fn shows_clock(&self) -> bool {
-        self.is_capturing() && (self.hands_free || self.clock.near_limit || self.shows_style())
+        self.is_capturing() && (self.hands_free || self.clock.near_limit || self.label().is_some())
     }
 
     fn shows_draw_hint(&self) -> bool {
@@ -502,7 +515,7 @@ impl Scene {
             Phase::Copied | Phase::Notice | Phase::Unchosen | Phase::Error => MESSAGE_SIZE,
             Phase::Idle | Phase::Cancelled => RESTING_SIZE,
         };
-        if self.shows_style() {
+        if self.label().is_some() {
             bounds.width += 90.0;
         }
         bounds
