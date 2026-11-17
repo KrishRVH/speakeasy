@@ -44,6 +44,15 @@ pub(crate) struct Badge {
     pub time: String,
 }
 
+impl From<&Keyframe> for Badge {
+    fn from(keyframe: &Keyframe) -> Self {
+        Self {
+            number: keyframe.index,
+            time: keyframe.at.to_string(),
+        }
+    }
+}
+
 pub(crate) struct Shown<'a> {
     ink: Vec<Vec<Point>>,
     focus: Option<Point>,
@@ -363,10 +372,7 @@ pub(crate) fn badge_frame(
     badge(
         &mut image.as_mut(),
         whole,
-        &Badge {
-            number: keyframe.index,
-            time: keyframe.at.to_string(),
-        },
+        &Badge::from(keyframe),
         scale,
         corner,
         typeface,

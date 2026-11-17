@@ -12,7 +12,7 @@ use crate::{
     Ending, Error, Image, Keyframe, Mark, Moment, Narration, NarrationLoss, Recording, Rect,
     Selection, Typeface, Wsl,
     describe::{Count, Marker},
-    draw::{self, Badge, Corner},
+    draw::{self, Corner},
     framing::{self, Plan},
     locate::PixelRect,
     parallel,
@@ -163,10 +163,7 @@ pub fn compose<E: From<Error> + Send>(
                     .zip(&annotated)
                     .map(|(&(keyframe, _), (image, corner))| Tile {
                         image,
-                        badge: Badge {
-                            number: keyframe.index,
-                            time: keyframe.at.to_string(),
-                        },
+                        badge: keyframe.into(),
                         corner: *corner,
                     })
                     .collect::<Vec<_>>(),
