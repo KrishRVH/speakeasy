@@ -36,8 +36,8 @@ use objc2_core_media::CMSampleBuffer;
 use objc2_core_video::{
     CVPixelBuffer, CVPixelBufferGetBaseAddress, CVPixelBufferGetBytesPerRow,
     CVPixelBufferGetHeight, CVPixelBufferGetPixelFormatType, CVPixelBufferGetWidth,
-    CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags, CVPixelBufferUnlockBaseAddress,
-    kCVPixelFormatType_32BGRA, kCVReturnSuccess,
+    CVPixelBufferIsPlanar, CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags,
+    CVPixelBufferUnlockBaseAddress, kCVPixelFormatType_32BGRA, kCVReturnSuccess,
 };
 use objc2_foundation::{NSArray, NSError, NSPoint, NSRect, NSSize};
 use objc2_screen_capture_kit::{
@@ -526,6 +526,9 @@ impl<'a> Locked<'a> {
     }
 
     fn rows(&self) -> Option<&[u8]> {
+        if CVPixelBufferIsPlanar(self.0) {
+            return None;
+        }
         let base = NonNull::new(CVPixelBufferGetBaseAddress(self.0).cast::<u8>())?;
         let length =
             CVPixelBufferGetBytesPerRow(self.0).checked_mul(CVPixelBufferGetHeight(self.0))?;

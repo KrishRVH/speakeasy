@@ -11,13 +11,13 @@ use objc2_core_media::{
 };
 use objc2_core_video::{
     CVAttachmentMode, CVPixelBuffer, CVPixelBufferGetBaseAddress, CVPixelBufferGetBytesPerRow,
-    CVPixelBufferGetDataSize, CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags,
-    CVPixelBufferPool, CVPixelBufferUnlockBaseAddress, kCVImageBufferColorPrimaries_ITU_R_709_2,
-    kCVImageBufferColorPrimariesKey, kCVImageBufferTransferFunction_sRGB,
-    kCVImageBufferTransferFunctionKey, kCVImageBufferYCbCrMatrix_ITU_R_709_2,
-    kCVImageBufferYCbCrMatrixKey, kCVPixelBufferHeightKey, kCVPixelBufferPixelFormatTypeKey,
-    kCVPixelBufferPoolAllocationThresholdKey, kCVPixelBufferWidthKey, kCVPixelFormatType_32BGRA,
-    kCVReturnSuccess,
+    CVPixelBufferGetDataSize, CVPixelBufferIsPlanar, CVPixelBufferLockBaseAddress,
+    CVPixelBufferLockFlags, CVPixelBufferPool, CVPixelBufferUnlockBaseAddress,
+    kCVImageBufferColorPrimaries_ITU_R_709_2, kCVImageBufferColorPrimariesKey,
+    kCVImageBufferTransferFunction_sRGB, kCVImageBufferTransferFunctionKey,
+    kCVImageBufferYCbCrMatrix_ITU_R_709_2, kCVImageBufferYCbCrMatrixKey, kCVPixelBufferHeightKey,
+    kCVPixelBufferPixelFormatTypeKey, kCVPixelBufferPoolAllocationThresholdKey,
+    kCVPixelBufferWidthKey, kCVPixelFormatType_32BGRA, kCVReturnSuccess,
 };
 
 const BUDGET: usize = 64 << 20;
@@ -123,10 +123,9 @@ impl Buffers {
         ensure!(stride >= row, "Native video stride is too short");
         let length = stride
             .checked_mul(height)
-            .filter(|length| *length <= self.bytes)
             .context("Native video rows exceed their buffer")?;
         {
-            let mut locked = Locked::new(&buffer)?;
+            let mut locked = unsafe { Locked::new(&buffer) }?;
             let pixels = locked.bytes(length)?;
             pixels.fill(0);
             for (to, from) in pixels.chunks_exact_mut(stride).zip(bgra.chunks_exact(row)) {
@@ -191,7 +190,7 @@ impl Buffers {
 struct Locked<'a>(&'a CVPixelBuffer);
 
 impl<'a> Locked<'a> {
-    fn new(buffer: &'a CVPixelBuffer) -> anyhow::Result<Self> {
+    unsafe fn new(buffer: &'a CVPixelBuffer) -> anyhow::Result<Self> {
         let status = unsafe { CVPixelBufferLockBaseAddress(buffer, CVPixelBufferLockFlags(0)) };
         ensure!(
             status == kCVReturnSuccess,
@@ -205,6 +204,10 @@ impl<'a> Locked<'a> {
         reason = "An exclusive borrow prevents two mutable slices of the native pixel storage from coexisting"
     )]
     fn bytes(&mut self, length: usize) -> anyhow::Result<&mut [u8]> {
+        ensure!(
+            !CVPixelBufferIsPlanar(self.0) && length <= CVPixelBufferGetDataSize(self.0),
+            "Native video rows exceed their buffer"
+        );
         let base = NonNull::new(CVPixelBufferGetBaseAddress(self.0).cast::<u8>())
             .context("Native video pixels are missing")?;
 
