@@ -15,6 +15,7 @@ use crate::show::{
 const TEXT_LIMIT: usize = 64 << 10;
 const WORD_LIMIT: usize = 512;
 const IMAGE_LIMIT: u64 = 8 << 20;
+const EVIDENCE_LIMIT: usize = 1 << 20;
 
 pub(super) enum Tool {
     List,
@@ -319,7 +320,7 @@ fn decode<T: serde::de::DeserializeOwned>(arguments: Value) -> Result<T, String>
 }
 
 fn text(value: &impl Serialize) -> Result<Value, String> {
-    let encoded = protocol::encode_with_limit(value, 1 << 20)
+    let encoded = protocol::encode(value, EVIDENCE_LIMIT)
         .map_err(|_private| "Show evidence exceeds the output limit")?;
     let text = String::from_utf8(encoded).map_err(|_private| "Cannot encode Show evidence")?;
     Ok(json!({"type": "text", "text": text}))

@@ -25,7 +25,7 @@ const AROUND: Duration = Duration::from_secs(1);
 
 const HELP: &str = "speakeasy show list [--json]
 speakeasy show inspect SHOW [--json]
-speakeasy show frames SHOW [FOCUS] [--around MS] [--json]
+speakeasy show frames SHOW [FOCUS [--around MS]] [--json]
 speakeasy show frames SHOW FOCUS --out NEW.png [--most N] [--around MS] [--crop] [--json]
 speakeasy show frame SHOW FOCUS --out NEW.png [--crop] [--video [--annotated]] [--json]
 speakeasy show keep SHOW [--off] [--json]

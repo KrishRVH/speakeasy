@@ -41,14 +41,17 @@ pub(super) fn serve(
             )),
         };
         if let Some(response) = response {
-            let encoded = match encode(&response) {
+            let encoded = match encode(&response, RESPONSE_LIMIT) {
                 Ok(encoded) => encoded,
-                Err(_private) => encode(&error(
-                    response.get("id").cloned().unwrap_or(Value::Null),
-                    -32603,
-                    "MCP response exceeds the output limit",
-                    None,
-                ))?,
+                Err(_private) => encode(
+                    &error(
+                        response.get("id").cloned().unwrap_or(Value::Null),
+                        -32603,
+                        "MCP response exceeds the output limit",
+                        None,
+                    ),
+                    RESPONSE_LIMIT,
+                )?,
             };
             if let Err(error) = out
                 .write_all(&encoded)
@@ -288,11 +291,7 @@ fn error(id: Value, code: i32, message: &'static str, data: Option<Value>) -> Va
     json!({"jsonrpc": "2.0", "id": id, "error": error})
 }
 
-fn encode(value: &impl Serialize) -> io::Result<Vec<u8>> {
-    encode_with_limit(value, RESPONSE_LIMIT)
-}
-
-pub(super) fn encode_with_limit(value: &impl Serialize, limit: usize) -> io::Result<Vec<u8>> {
+pub(super) fn encode(value: &impl Serialize, limit: usize) -> io::Result<Vec<u8>> {
     struct Bounded {
         bytes: Vec<u8>,
         limit: usize,

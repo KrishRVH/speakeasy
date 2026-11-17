@@ -153,6 +153,6 @@ fn output_is_bounded_and_a_closed_client_ends_the_server() -> anyhow::Result<()>
     let roots = Roots::open(vec![root.path().to_owned()]).map_err(anyhow::Error::msg)?;
     let input = serde_json::to_vec(&modern(json!(1), "server/discover"))?;
     serve(&roots, &mut Cursor::new(input), &mut Closed)?;
-    assert!(encode(&"x".repeat(RESPONSE_LIMIT)).is_err());
+    assert!(encode(&"x".repeat(RESPONSE_LIMIT), RESPONSE_LIMIT).is_err());
     Ok(())
 }

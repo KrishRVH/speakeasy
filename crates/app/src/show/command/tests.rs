@@ -261,6 +261,10 @@ fn the_embedded_skill_is_emitted_verbatim_and_its_commands_are_accepted() -> any
     let mut output = Vec::new();
     Command::Skill { install: None }.write(&mut output)?;
     let skill = String::from_utf8(output)?;
+    assert!(
+        skill == SKILL,
+        "The emitted skill differs from the embedded guide"
+    );
     let mut commands = 0;
     for span in skill.split('`').skip(1).step_by(2) {
         if let Some(args) = span.strip_prefix("speakeasy show ") {
