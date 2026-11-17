@@ -5,10 +5,7 @@ use super::*;
 fn irregular_captures_never_appear_before_their_capture_time() -> anyhow::Result<()> {
     use std::io::Write as _;
 
-    let directory = PathBuf::from(
-        std::env::var_os("SPEAKEASY_MOVIE_PROBE_DIRECTORY")
-            .ok_or_else(|| anyhow::anyhow!("Choose a synthetic probe directory"))?,
-    );
+    let directory = probe_directory()?;
     let path = directory.join("resizing.mp4");
     let mut encoder = Encoder::open(&path, canvas::Canvas::new([320, 240])?, FILE_LIMIT)?;
     let inputs = [0_u64, 33, 67, 101, 437, 753, 1121, 1999, 2501, 2700];
@@ -37,12 +34,9 @@ fn irregular_captures_never_appear_before_their_capture_time() -> anyhow::Result
     let bytes = path.metadata()?.len();
     let mut log = std::fs::File::create_new(directory.join("resizing.csv"))?;
     writeln!(log, "pts100ns,duration100ns,source,sourceMs")?;
-    for (ticks, duration) in encoder::sample_times(&path)? {
+    for (ticks, duration) in sample_times(&path)? {
         let at = Duration::from_nanos(u64::try_from(ticks)?.saturating_mul(100));
-        let file = std::fs::File::open(&path)?;
-        let bytes = file.metadata()?.len();
-        let decoded = read::frame(file, bytes, [320, 240], at, &|| false)?
-            .ok_or_else(|| anyhow::anyhow!("Synthetic read was cancelled"))?;
+        let decoded = decode(&path, [320, 240], at)?;
         let shade = decoded.bgra[(120 * 320 + 160) * 4];
         let source = inputs
             .iter()
@@ -111,16 +105,11 @@ fn pending_images_and_quiet_output_keep_capture_and_presentation_distinct() -> a
             assert_eq!(encoder.coverage().unwrap().frames, 2);
         }
         encoder.finish()?;
-        let file = std::fs::File::open(&path)?;
-        let bytes = file.metadata()?.len();
-        let decoded = read::frame(
-            file,
-            bytes,
+        let decoded = decode(
+            &path,
             [320, 240],
             Duration::from_millis(if stop { 32 } else { 34 }),
-            &|| false,
-        )?
-        .unwrap();
+        )?;
         assert_eq!(decoded.at.as_nanos(), if stop { 0 } else { 33_333_300 });
         let expected: u8 = if stop { 40 } else { 120 };
 
@@ -151,7 +140,7 @@ fn pending_images_and_quiet_output_keep_capture_and_presentation_distinct() -> a
     let deadline = Instant::now().checked_add(Duration::from_secs(5)).unwrap();
     loop {
         std::fs::copy(&path, &interrupted)?;
-        if encoder::sample_times(&interrupted).is_ok_and(|samples| samples.len() >= 30) {
+        if sample_times(&interrupted).is_ok_and(|samples| samples.len() >= 30) {
             break;
         }
         assert!(
@@ -160,12 +149,7 @@ fn pending_images_and_quiet_output_keep_capture_and_presentation_distinct() -> a
         );
         std::thread::sleep(Duration::from_millis(25));
     }
-    let file = std::fs::File::open(&interrupted)?;
-    let bytes = file.metadata()?.len();
-    let decoded = read::frame(file, bytes, [320, 240], Duration::from_millis(500), &|| {
-        false
-    })?
-    .unwrap();
+    let decoded = decode(&interrupted, [320, 240], Duration::from_millis(500))?;
     assert!(decoded.bgra[0].abs_diff(80) <= 8);
     encoder.finish()?;
     Ok(())
@@ -195,7 +179,7 @@ fn cancelled_catchup_keeps_its_committed_output_without_backfilling_on_close() -
     assert_eq!(coverage.last, Duration::ZERO);
     assert_eq!(coverage.at, Duration::from_millis(100));
     encoder.finish()?;
-    assert_eq!(encoder::sample_times(&path)?.len(), 4);
+    assert_eq!(sample_times(&path)?.len(), 4);
     Ok(())
 }
 
@@ -247,6 +231,6 @@ async fn a_stalled_writer_reports_the_held_prefix_even_without_a_new_capture() -
     assert_eq!(frames, 61);
     assert!(!finalized);
     assert!(control.next().await.is_none());
-    assert_eq!(encoder::sample_times(&path)?.len(), 61);
+    assert_eq!(sample_times(&path)?.len(), 61);
     Ok(())
 }

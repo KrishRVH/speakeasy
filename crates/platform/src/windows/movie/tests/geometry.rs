@@ -24,10 +24,7 @@ impl crate::movie::encode::Observer for Receipts {
 #[test]
 #[ignore = "Opt in: native encoder/decoder with synthetic resizing pixels; no capture or input"]
 fn receipts_describe_presented_layouts_and_exclude_superseded_inputs() -> anyhow::Result<()> {
-    let directory = PathBuf::from(
-        std::env::var_os("SPEAKEASY_MOVIE_PROBE_DIRECTORY")
-            .ok_or_else(|| anyhow::anyhow!("Choose a synthetic probe directory"))?,
-    );
+    let directory = probe_directory()?;
     let path = directory.join("geometry.mp4");
     let mut encoder = Encoder::open(&path, canvas::Canvas::new([320, 240])?, FILE_LIMIT)?;
     let mut receipts = Receipts::default();
@@ -93,11 +90,9 @@ fn receipts_describe_presented_layouts_and_exclude_superseded_inputs() -> anyhow
             part.left, part.top, part.right, part.bottom
         )?;
     }
-    for (index, (ticks, _)) in encoder::sample_times(&path)?.into_iter().enumerate() {
+    for (index, (ticks, _)) in sample_times(&path)?.into_iter().enumerate() {
         let at = Duration::from_nanos(u64::try_from(ticks)? * 100);
-        let file = std::fs::File::open(&path)?;
-        let bytes = file.metadata()?.len();
-        let frame = read::frame(file, bytes, [320, 240], at, &|| false)?.unwrap();
+        let frame = decode(&path, [320, 240], at)?;
         let [left, top, width, height] = receipts
             .0
             .iter()
@@ -175,7 +170,7 @@ async fn rejected_and_cancelled_geometry_never_submit_the_unacknowledged_layout(
         assert_eq!(frames, 3);
         assert_eq!(finalized, !rejected);
         assert!(control.next().await.is_none());
-        assert_eq!(encoder::sample_times(&path)?.len(), 3);
+        assert_eq!(sample_times(&path)?.len(), 3);
         std::fs::rename(path, directory.path().join("closed.mp4"))?;
     }
     Ok(())

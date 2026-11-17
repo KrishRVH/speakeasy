@@ -1,11 +1,21 @@
 use std::{
-    path::PathBuf,
+    fs::File,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
-use super::{encoder, read};
+use anyhow::Context as _;
+use windows::{
+    Win32::Media::MediaFoundation::{
+        MF_SOURCE_READER_FIRST_VIDEO_STREAM, MF_SOURCE_READERF_ENDOFSTREAM,
+        MFCreateSourceReaderFromURL,
+    },
+    core::HSTRING,
+};
+
+use super::{encoder, foundation::Foundation, read};
 use crate::{
-    Part,
+    MovieFrame, Part,
     movie::{
         canvas,
         encode::{Encoder as Timeline, End},
@@ -24,10 +34,7 @@ const FILE_LIMIT: u64 = 384 << 20;
 #[test]
 #[ignore = "Opt in: native Media Foundation encoder, synthetic pixels only; set SPEAKEASY_MOVIE_PROBE_DIRECTORY to an empty artifact directory"]
 fn encode_synthetic_movie_fragments() -> anyhow::Result<()> {
-    let directory = PathBuf::from(
-        std::env::var_os("SPEAKEASY_MOVIE_PROBE_DIRECTORY")
-            .ok_or_else(|| anyhow::anyhow!("Choose an explicit movie probe directory"))?,
-    );
+    let directory = probe_directory()?;
     anyhow::ensure!(directory.is_dir(), "Movie probe directory must exist");
     let mut moving = Encoder::open(
         &directory.join("moving.mp4"),
@@ -60,7 +67,7 @@ fn encode_synthetic_movie_fragments() -> anyhow::Result<()> {
             .is_continue()
     );
     moving.finish()?;
-    let times = encoder::sample_times(&directory.join("moving.mp4"))?;
+    let times = sample_times(&directory.join("moving.mp4"))?;
     assert_eq!(times.len(), 120);
     assert_eq!(times[0].0, 0);
     let &(last, duration) = times.last().unwrap();
@@ -84,7 +91,7 @@ fn encode_synthetic_movie_fragments() -> anyhow::Result<()> {
         );
     }
     held.finish()?;
-    let times = encoder::sample_times(&directory.join("held.mp4"))?;
+    let times = sample_times(&directory.join("held.mp4"))?;
     let &(last, duration) = times.last().unwrap();
     assert!(
         (last + duration - 60_000_000).abs() <= 1_000,
@@ -129,6 +136,46 @@ fn encode_synthetic_movie_fragments() -> anyhow::Result<()> {
     assert!(std::fs::metadata(&too_small)?.len() <= 1);
     std::fs::remove_file(too_small)?;
     Ok(())
+}
+
+fn probe_directory() -> anyhow::Result<PathBuf> {
+    std::env::var_os("SPEAKEASY_MOVIE_PROBE_DIRECTORY")
+        .map(PathBuf::from)
+        .context("Choose a synthetic movie probe directory")
+}
+
+fn decode(path: &Path, size: [u32; 2], at: Duration) -> anyhow::Result<MovieFrame> {
+    let file = File::open(path)?;
+    let bytes = file.metadata()?.len();
+    read::frame(file, bytes, size, at, &|| false)?.context("Synthetic read was cancelled")
+}
+
+fn sample_times(path: &Path) -> anyhow::Result<Vec<(i64, i64)>> {
+    let _foundation = Foundation::start()?;
+
+    unsafe {
+        let reader = MFCreateSourceReaderFromURL(&HSTRING::from(path.as_os_str()), None)?;
+        let mut times = Vec::new();
+        for _ in 0..=9_002 {
+            let mut flags = 0;
+            let mut sample = None;
+            reader.ReadSample(
+                MF_SOURCE_READER_FIRST_VIDEO_STREAM.0.cast_unsigned(),
+                0,
+                None,
+                Some(&raw mut flags),
+                None,
+                Some(&raw mut sample),
+            )?;
+            if let Some(sample) = sample {
+                times.push((sample.GetSampleTime()?, sample.GetSampleDuration()?));
+            }
+            if flags & MF_SOURCE_READERF_ENDOFSTREAM.0.cast_unsigned() != 0 {
+                return Ok(times);
+            }
+        }
+    }
+    anyhow::bail!("Synthetic movie exceeds its read bound")
 }
 
 fn wait_for_sample(start: Instant, number: u32) -> Duration {
