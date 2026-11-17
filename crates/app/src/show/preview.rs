@@ -1,10 +1,12 @@
 mod frame;
 
-use std::{path::PathBuf, pin::Pin, sync::Arc, time::Duration};
+use std::{ops::Range, path::PathBuf, pin::Pin, sync::Arc, time::Duration};
 
 use gpui::RenderImage;
 use speakeasy_platform::StoppableThread;
-use speakeasy_show::Moment;
+use speakeasy_show::{Annotations, Moment};
+
+use super::store::movie::AnnotationState;
 
 #[derive(Clone, Debug)]
 pub(crate) enum Content {
@@ -13,9 +15,9 @@ pub(crate) enum Content {
         index: Arc<speakeasy_show::Source>,
     },
     Video {
-        span: std::ops::Range<Duration>,
+        span: Range<Duration>,
         annotations: Moment,
-        scene: Option<Arc<speakeasy_show::Annotations>>,
+        scene: Option<Arc<Annotations>>,
     },
 }
 
@@ -30,7 +32,7 @@ pub(crate) struct Request {
 pub(crate) struct Decoded {
     pub image: Arc<RenderImage>,
     pub at: Duration,
-    pub annotations: super::store::movie::AnnotationState,
+    pub annotations: AnnotationState,
 }
 
 pub(crate) type Receipt = Pin<Box<dyn Future<Output = Result<Decoded, String>> + Send>>;

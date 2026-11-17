@@ -3,9 +3,9 @@ use std::{path::Path, sync::Arc, time::Duration};
 use anyhow::Context as _;
 use gpui::RenderImage;
 use image::RgbaImage;
-use speakeasy_show::{Annotations, Moment, Source};
+use speakeasy_show::{Annotations, Moment, Source, SourceFrame};
 
-use super::{Content, Decoded, Request};
+use super::{AnnotationState, Content, Decoded, Request};
 use crate::show::store::{movie, recall, source};
 
 const LONGEST_EDGE: u32 = 4_096;
@@ -23,8 +23,8 @@ pub(super) fn read(request: Request, cancelled: &dyn Fn() -> bool) -> Result<Dec
     if cancelled() {
         return Err(CANCELLED.into());
     }
-    let pixels = match content {
-        Content::Png(name) => png(&directory, &name, cancelled)?,
+    let (pixels, at) = match content {
+        Content::Png(name) => (png(&directory, &name, cancelled)?, at),
         Content::Source { index } => retained(&directory, &index, at)?,
         Content::Video {
             span,
@@ -48,7 +48,7 @@ pub(super) fn read(request: Request, cancelled: &dyn Fn() -> bool) -> Result<Dec
     Ok(Decoded {
         image: render(pixels),
         at: at.since(Moment::START),
-        annotations: movie::AnnotationState::Off,
+        annotations: AnnotationState::Off,
     })
 }
 
@@ -68,12 +68,16 @@ fn png(directory: &Path, name: &str, cancelled: &dyn Fn() -> bool) -> Result<Rgb
     Ok(pixels)
 }
 
-fn retained(directory: &Path, index: &Source, at: Moment) -> Result<RgbaImage, String> {
-    let image = source::frame(directory, index, at)
-        .map_err(|error| format!("Cannot read source frame: {error:#}"))?
-        .image;
-    RgbaImage::from_raw(image.width(), image.height(), image.into_bgra())
-        .ok_or_else(|| "Cannot read source frame: invalid frame dimensions".to_owned())
+fn retained(
+    directory: &Path,
+    index: &Source,
+    requested: Moment,
+) -> Result<(RgbaImage, Moment), String> {
+    let SourceFrame { at, image } = source::frame(directory, index, requested)
+        .map_err(|error| format!("Cannot read source frame: {error:#}"))?;
+    let pixels = RgbaImage::from_raw(image.width(), image.height(), image.into_bgra())
+        .ok_or_else(|| "Cannot read source frame: invalid frame dimensions".to_owned())?;
+    Ok((pixels, at))
 }
 
 fn video(
@@ -89,8 +93,8 @@ fn video(
         .context(CANCELLED)?;
     let (at, [width, height]) = (frame.at, frame.size);
     let (pixels, annotations) = match (annotated, scene) {
-        (false, _) => (frame.bgra, movie::AnnotationState::Off),
-        (true, None) => (frame.bgra, movie::AnnotationState::Unavailable),
+        (false, _) => (frame.bgra, AnnotationState::Off),
+        (true, None) => (frame.bgra, AnnotationState::Unavailable),
         (true, Some(scene)) => {
             let rendered = frame
                 .render(Some(scene), None, cancelled)?
@@ -140,7 +144,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn source_and_png_previews_preserve_bgra_pixels_and_selected_time() -> anyhow::Result<()> {
+    fn source_and_png_previews_preserve_bgra_pixels_and_their_sample_time() -> anyhow::Result<()> {
         use speakeasy_show::{Image, Journal};
 
         let directory = tempfile::tempdir()?;
@@ -159,9 +163,8 @@ mod tests {
         })?;
         std::fs::write(directory.path().join(source::FILE), source_bytes)?;
         let index = Arc::new(source::inspect(directory.path())?);
-        let at = Moment::from_millis(200);
-        for content in [Content::Source { index }, Content::Png("frame.png".into())] {
-            let decoded = read(
+        let preview = |content, at| {
+            read(
                 Request {
                     directory: directory.path().to_owned(),
                     content,
@@ -171,11 +174,25 @@ mod tests {
                 },
                 &|| false,
             )
-            .map_err(anyhow::Error::msg)?;
+            .map_err(anyhow::Error::msg)
+        };
+        for content in [
+            Content::Source {
+                index: Arc::clone(&index),
+            },
+            Content::Png("frame.png".into()),
+        ] {
+            let decoded = preview(content, Moment::from_millis(200))?;
             assert_eq!(decoded.image.as_bytes(0), Some(bgra.as_slice()));
             assert_eq!(decoded.at, Duration::from_millis(200));
-            assert_eq!(decoded.annotations, movie::AnnotationState::Off);
+            assert_eq!(decoded.annotations, AnnotationState::Off);
         }
+        let held = preview(Content::Source { index }, Moment::from_millis(450))?;
+        assert_eq!(
+            held.at,
+            Duration::from_millis(200),
+            "A source preview reported the requested time instead of its sample's"
+        );
         Ok(())
     }
 
