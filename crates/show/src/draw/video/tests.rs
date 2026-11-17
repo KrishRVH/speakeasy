@@ -188,11 +188,15 @@ fn delayed_pins_wait_for_observation_and_unknown_geometry_is_omitted() {
     recording.spaces.pins[0] = None;
     let unlocated = Annotations::new(&recording, &marks).unwrap();
     assert_eq!(
-        painted(&unlocated, Duration::from_millis(2000)).1,
+        painted(&unlocated, Duration::from_millis(1000)).1,
         AnnotationReport {
             drawn: 0,
             omitted: 1
         }
+    );
+    assert_eq!(
+        painted(&unlocated, Duration::from_millis(2000)).1,
+        AnnotationReport::default()
     );
 }
 

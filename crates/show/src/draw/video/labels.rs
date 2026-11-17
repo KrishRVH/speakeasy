@@ -45,16 +45,18 @@ impl Label {
             return Placement::Hidden;
         }
         let part = match self.anchor {
-            Anchor::Pin(None) => None,
-            Anchor::Pin(Some(PinSpace {
-                space: Space { part, .. },
-                observed,
-            })) => {
+            Anchor::Pin(pin) => {
+                let observed = pin.map_or_else(|| self.mark.span.end(), |pin| pin.observed);
                 let start = observed.max(self.mark.span.end()).since(Moment::START);
                 if at < start || at.saturating_sub(start) > RECENT_INK {
                     return Placement::Hidden;
                 }
-                Some(part)
+                pin.map(
+                    |PinSpace {
+                         space: Space { part, .. },
+                         ..
+                     }| part,
+                )
             },
             Anchor::Ink(part) => {
                 if shown
