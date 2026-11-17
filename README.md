@@ -91,8 +91,8 @@ the pill shows:
 - **Working.** The lamp slides through the slot while your speech is transcribed on this machine.
 - **Typed.** A check, shown above, means the text was submitted to your app.
 - **No speech detected.** Nothing was sent. A microphone that sends only digital silence, for
-  example while muted or blocked in privacy settings, or no audio at all, gets an error that says so
-  instead.
+  example while muted or blocked in privacy settings, or no audio at all for two seconds, gets an
+  error that says so instead.
 - **Text copied.** The text is on the clipboard but was not pasted, for example because the shortcut
   keys were still held or Speakeasy itself had focus. Paste it where you want it.
 - **Microphone lost.** The microphone disconnected, failed, or stopped sending audio after you
