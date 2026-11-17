@@ -483,15 +483,15 @@ impl Render for TextField {
                                     bounds.size.width,
                                     line.width,
                                 );
+                                let layout = Layout {
+                                    line,
+                                    bounds,
+                                    scroll: viewport.offset,
+                                };
                                 let runs = if window.is_a11y_active()
-                                    && let Some(painted) = Painted::new(
-                                        field.entity_id(),
-                                        &input.edit,
-                                        &line,
-                                        bounds,
-                                        viewport.offset,
-                                        window,
-                                    ) {
+                                    && let Some(painted) =
+                                        Painted::new(field.entity_id(), &input.edit, &layout, window)
+                                {
                                     let runs = painted.run_ids();
                                     #[expect(
                                         clippy::let_underscore_must_use,
@@ -502,9 +502,9 @@ impl Render for TextField {
                                 } else {
                                     Vec::new()
                                 };
-                                (field.clone(), line, viewport, runs)
+                                (field.clone(), layout, viewport, runs)
                             },
-                            move |bounds, (field, line, viewport, runs), window, cx| {
+                            move |bounds, (field, layout, viewport, runs), window, cx| {
                                 for run in runs {
                                     window.on_a11y_action(
                                         run,
@@ -516,11 +516,6 @@ impl Render for TextField {
                                     );
                                 }
                                 field.update(cx, |input, cx| {
-                                    let layout = Layout {
-                                        line,
-                                        bounds,
-                                        scroll: viewport.offset,
-                                    };
                                     input.viewport = viewport;
                                     window.handle_input(
                                         &input.focus,

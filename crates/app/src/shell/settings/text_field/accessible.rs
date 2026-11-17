@@ -1,13 +1,13 @@
 use std::hash::{DefaultHasher, Hash as _, Hasher as _};
 
 use gpui::{
-    A11ySubtreeBuilder, AccessibleAction, Bounds, EntityId, Pixels, ShapedLine, Window,
+    A11ySubtreeBuilder, AccessibleAction, Bounds, EntityId, Pixels, Window,
     accesskit::{ActionData, Node, NodeId, Rect, Role, TextDirection, TextPosition, TextSelection},
-    point, px, size,
+    point, size,
 };
 use unicode_segmentation::UnicodeSegmentation as _;
 
-use super::{Selection, edit::Edit};
+use super::{Layout, Selection, edit::Edit};
 
 #[cfg(test)]
 mod tests;
@@ -63,11 +63,11 @@ impl Run<'_> {
         self.starts.first().copied().unwrap_or(self.end)
     }
 
-    fn boundaries(&self) -> impl Iterator<Item = usize> + '_ {
+    fn boundaries(&self) -> impl Iterator<Item = usize> {
         self.starts.iter().copied().chain([self.end])
     }
 
-    fn graphemes(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+    fn graphemes(&self) -> impl Iterator<Item = (usize, usize)> {
         self.starts.iter().copied().zip(self.boundaries().skip(1))
     }
 
@@ -146,7 +146,6 @@ impl Document {
 struct Frame {
     bounds: Bounds<Pixels>,
     visible: Bounds<Pixels>,
-    scroll: Pixels,
     scale: f32,
 }
 
@@ -174,33 +173,31 @@ impl Painted {
     pub(super) fn new(
         field: EntityId,
         edit: &Edit,
-        line: &ShapedLine,
-        bounds: Bounds<Pixels>,
-        scroll: Pixels,
+        layout: &Layout,
         window: &Window,
     ) -> Option<Self> {
         let document = Document::new(field, edit)?;
         let edges = document
             .boundaries()
-            .map(|offset| line.x_for_index(offset))
+            .map(|offset| layout.x_for_index(offset))
             .collect();
         Self::measured(
             document,
             edit,
             edges,
             Frame {
-                bounds,
-                visible: bounds.intersect(&window.content_mask().bounds),
-                scroll,
+                bounds: layout.bounds,
+                visible: layout.bounds.intersect(&window.content_mask().bounds),
                 scale: window.scale_factor(),
             },
         )
     }
 
     fn measured(document: Document, edit: &Edit, edges: Vec<Pixels>, frame: Frame) -> Option<Self> {
-        let Frame { scroll, scale, .. } = frame;
-        let measurable =
-            scale.is_finite() && scale > 0.0 && f32::from(scroll).is_finite() && px(0.0) <= scroll;
+        let scale = frame.scale;
+        let measurable = scale.is_finite()
+            && scale > 0.0
+            && edges.iter().all(|edge| f32::from(*edge).is_finite());
         let ends = edit.ends();
         let selection = TextSelection {
             anchor: document.position(ends.anchor)?,
@@ -292,9 +289,9 @@ impl Painted {
                 .collect::<Vec<_>>(),
         );
         node.set_text_direction(TextDirection::LeftToRight);
-        let Frame { bounds, scroll, .. } = self.frame;
+        let bounds = self.frame.bounds;
         node.set_bounds(self.frame.physical(Bounds::new(
-            point(bounds.left() - scroll + start, bounds.top()),
+            point(start, bounds.top()),
             size(end - start, bounds.size.height),
         )));
         node

@@ -1,6 +1,7 @@
 use gpui::{
     EntityId,
     accesskit::{Point, ScrollHint},
+    px,
 };
 
 use super::*;
@@ -18,23 +19,24 @@ fn document(edit: &Edit) -> Document {
     Document::new(EntityId::from(FIELD), edit).unwrap()
 }
 
-fn frame(scroll: f32) -> Frame {
+fn frame() -> Frame {
     let bounds = Bounds::new(point(px(10.0), px(20.0)), size(px(100.0), px(20.0)));
     Frame {
         bounds,
         visible: bounds,
-        scroll: px(scroll),
         scale: 2.0,
     }
 }
 
 fn painted(edit: &Edit, scroll: f32) -> Option<Painted> {
     let document = document(edit);
+    let frame = frame();
+    let origin = frame.bounds.left() - px(scroll);
     let edges = (0..)
-        .map(|step: u16| px(f32::from(step) * 10.0))
+        .map(|step: u16| origin + px(f32::from(step) * 10.0))
         .take(document.boundaries().count())
         .collect();
-    Painted::measured(document, edit, edges, frame(scroll))
+    Painted::measured(document, edit, edges, frame)
 }
 
 fn request(edit: &Edit, data: &ActionData) -> Option<Selection> {
@@ -171,7 +173,7 @@ fn scrolling_moves_geometry_without_retiring_runs() {
     );
     assert_eq!(still.bounds().unwrap().x0, 20.0);
     assert_eq!(scrolled.bounds().unwrap().x0, -10.0);
-    for invalid in [-1.0, f32::NAN, f32::INFINITY] {
+    for invalid in [f32::NAN, f32::INFINITY] {
         assert!(
             painted(&text, invalid).is_none(),
             "A scroll of {invalid} was published"
@@ -181,7 +183,7 @@ fn scrolling_moves_geometry_without_retiring_runs() {
 
 #[test]
 fn a_field_scrolled_out_of_its_clip_publishes_an_empty_rectangle_at_the_clip_edge() {
-    let mut separated = frame(0.0);
+    let mut separated = frame();
     separated.visible = separated.bounds.intersect(&Bounds::new(
         point(px(150.0), px(0.0)),
         size(px(50.0), px(100.0)),
