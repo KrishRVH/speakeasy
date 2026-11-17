@@ -177,34 +177,35 @@ impl Pulse {
 
 impl From<cpal::Error> for Lost {
     fn from(error: cpal::Error) -> Self {
-        let notice = match error.kind() {
-            cpal::ErrorKind::DeviceNotAvailable => "The microphone was disconnected.",
-            cpal::ErrorKind::DeviceBusy => "Another app is using the microphone.",
-            cpal::ErrorKind::PermissionDenied => "Speakeasy has no microphone access.",
-            _ => "The microphone failed.",
-        };
-        Self {
-            notice,
-            failure: microphone_error(error),
-        }
+        let (notice, failure) = diagnose(error);
+        Self { notice, failure }
     }
 }
 
 pub(super) fn microphone_error(error: cpal::Error) -> anyhow::Error {
+    diagnose(error).1
+}
+
+fn diagnose(error: cpal::Error) -> (&'static str, anyhow::Error) {
+    let explained = |cause, remedy| (cause, anyhow!("{cause} {remedy}"));
     match error.kind() {
-        cpal::ErrorKind::DeviceBusy => anyhow!(
-            "Another app is using the microphone. Close that app, or choose another microphone in Settings."
+        cpal::ErrorKind::DeviceNotAvailable => explained(
+            "The microphone was disconnected.",
+            "Reconnect it, or choose another microphone in Settings.",
         ),
-        cpal::ErrorKind::PermissionDenied => anyhow!(
-            "Speakeasy has no microphone access. Allow it in your system's privacy settings, then try again."
+        cpal::ErrorKind::DeviceBusy => explained(
+            "Another app is using the microphone.",
+            "Close that app, or choose another microphone in Settings.",
         ),
-        cpal::ErrorKind::DeviceNotAvailable => {
+        cpal::ErrorKind::PermissionDenied => explained(
+            "Speakeasy has no microphone access.",
+            "Allow it in your system's privacy settings, then try again.",
+        ),
+        _ => (
+            "The microphone failed.",
             anyhow!(
-                "The microphone was disconnected. Reconnect it, or choose another microphone in Settings."
-            )
-        },
-        _ => anyhow!(
-            "The microphone failed ({error}). Try recording again, or choose another microphone in Settings."
+                "The microphone failed ({error}). Try recording again, or choose another microphone in Settings."
+            ),
         ),
     }
 }
