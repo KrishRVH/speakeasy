@@ -327,17 +327,17 @@ impl<Host> Runtime<Host> {
         &self,
         interrupted: Interrupted,
     ) -> Result<RecoveryReceipt, &'static str> {
-        let (receipt, result) = async_channel::bounded(1);
+        let (completed, receipt) = async_channel::bounded(1);
         self.recoveries
             .try_send(Recovery {
                 interrupted,
-                receipt,
+                completed,
             })
             .map_err(|error| match error {
                 TrySendError::Full(_) => "A Show recovery is already waiting.",
                 TrySendError::Closed(_) => "Resume Speakeasy to recover this Show.",
             })?;
-        Ok(result)
+        Ok(receipt)
     }
 
     pub(crate) fn practice(&self) -> Result<mpsc::Receiver<PracticeEvent>, &'static str> {
@@ -507,7 +507,7 @@ pub(crate) enum PracticeEvent {
 
 struct Recovery {
     interrupted: Interrupted,
-    receipt: Sender<Result<SavedShow, String>>,
+    completed: Sender<Result<SavedShow, String>>,
 }
 
 struct Wiring<P> {

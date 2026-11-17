@@ -230,10 +230,10 @@ impl<P: Ports> Owner<P> {
             Wake::Retired(recorder) => Event::Retired(recorder),
             Wake::Recover(Recovery {
                 interrupted,
-                receipt,
+                completed,
             }) => Event::Recover {
                 interrupted,
-                receipt,
+                receipt: completed,
             },
             Wake::Practice(practice) => Event::Practice(practice),
             Wake::EndPractice => Event::PracticeClosed,
