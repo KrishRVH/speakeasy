@@ -95,6 +95,7 @@ impl Payload for Native {
 pub(super) struct Clip {
     pub wav: Zeroizing<Vec<u8>>,
     pub language: Option<Box<str>>,
+    pub audible: Duration,
 }
 
 impl Clip {
@@ -102,6 +103,7 @@ impl Clip {
         Self {
             wav: Zeroizing::new(mem::take(&mut sealed.wav)),
             language,
+            audible: sealed.audible,
         }
     }
 }

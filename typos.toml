@@ -20,6 +20,8 @@ fo = "fo"
 # ISO BMFF track and track-run box types.
 trak = "trak"
 trun = "trun"
+# French "sous-titres" in the subtitle credits Whisper invents.
+titres = "titres"
 
 [files]
 # Dotfiles hold the CI workflows and the task and tool config.

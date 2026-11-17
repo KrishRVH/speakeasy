@@ -96,6 +96,10 @@ impl Audibility {
         self.scanned = end;
     }
 
+    pub(super) const fn audible(&self) -> usize {
+        self.audible
+    }
+
     pub(super) fn paused(&self, length: usize) -> Option<Range<usize>> {
         let speech = self.speech.as_ref()?;
         if length.saturating_sub(speech.end) < self.quiet_edge {

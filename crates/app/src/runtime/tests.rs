@@ -468,10 +468,13 @@ impl Pinning for FakeScreen {
     }
 }
 
+const SPOKEN: Duration = Duration::from_secs(2);
+
 fn sealed() -> Sealed {
     Sealed {
         wav: vec![1, 2],
         trimmed: Duration::ZERO,
+        audible: SPOKEN,
         partition: None,
     }
 }

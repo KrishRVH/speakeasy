@@ -486,7 +486,7 @@ impl<D> Recorder<D> {
                 && let Some(range) = cuts.offer(&self.speech, self.pcm.audio().len())
             {
                 let end = range.end;
-                let Ok(piece) = self.pcm.excerpt(range, self.rate) else {
+                let Ok(piece) = self.pcm.excerpt(range, &self.speech, self.rate) else {
                     self.cuts = None;
                     continue;
                 };

@@ -166,6 +166,7 @@ impl Capturing for FixtureDevice {
             Ok(Some(Sealed {
                 wav: self.wav.clone(),
                 trimmed: Duration::ZERO,
+                audible: audio::wav_duration(&self.wav).expect("Fixture audio has a WAV header"),
                 partition: None,
             })),
         );

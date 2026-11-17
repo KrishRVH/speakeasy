@@ -1,7 +1,8 @@
-use std::{future::pending, mem, time::Duration};
+use std::{future::pending, iter, mem, time::Duration};
 
 use anyhow::{anyhow, ensure};
 use speakeasy_core::machine::{Detail, Request, Source, Ticket, Transcript};
+use speakeasy_show::Narration;
 use tokio::{
     sync::watch,
     task::{JoinError, JoinHandle},
@@ -10,14 +11,14 @@ use tokio::{
 use zeroize::Zeroizing;
 
 use super::{
-    native::Native,
+    native::{Clip, Native},
     ports::{Ports, STARTUP_CANCELLED, Speech},
 };
 use crate::{
-    config::Config,
+    config::{Config, Engine},
     recognition_terms::Terms,
     transcript::{
-        self, Fillers,
+        self, Fillers, credits,
         vocabulary::{Correction, Vocabulary},
     },
 };
@@ -111,21 +112,23 @@ impl<W: Speech> Worker<W> {
         }
         .unwrap_or(&config.language)
         .to_owned();
-        let fillers = config.fillers(&language);
-        let corrections = config.vocabulary.clone();
+        let cleanup = Cleanup {
+            engine: config.engine,
+            fillers: config.fillers(&language),
+            corrections: config.vocabulary.clone(),
+        };
         let terms = config.recognition_terms.clone();
         *self = Self::Transcribing {
             ticket: request.ticket,
             job: Job::spawn(|mut cancelled| async move {
                 let heard = async {
                     match request.source {
-                        Source::Audio(mut clip) => transcript_of(
+                        Source::Audio(clip) => transcript_of(
                             &mut worker,
-                            mem::take(&mut *clip.wav),
+                            clip,
                             &language,
                             request.detail,
-                            fillers,
-                            &corrections,
+                            &cleanup,
                             &terms,
                         )
                         .await
@@ -251,24 +254,59 @@ fn joined<T>(
     result.unwrap_or_else(|_private_panic| Err(anyhow!(message)))
 }
 
+struct Cleanup {
+    engine: Engine,
+    fillers: Fillers,
+    corrections: Vec<Correction>,
+}
+
+impl Cleanup {
+    fn invented<'a>(
+        &self,
+        heard: impl Iterator<Item = &'a str> + Clone,
+        audible: Duration,
+    ) -> bool {
+        self.engine == Engine::Whisper && credits::invented(heard, audible)
+    }
+
+    fn narration(&self, narration: Narration) -> Narration {
+        Vocabulary::new(&self.corrections).narration(transcript::for_show(narration, self.fillers))
+    }
+}
+
 async fn transcript_of<W: Speech>(
     worker: &mut W,
-    wav: Vec<u8>,
+    mut clip: Clip,
     language: &str,
     detail: Detail,
-    fillers: Fillers,
-    corrections: &[Correction],
+    cleanup: &Cleanup,
     terms: &Terms,
 ) -> anyhow::Result<Transcript<Native>> {
+    let wav = mem::take(&mut *clip.wav);
     Ok(match detail {
-        Detail::Text => Transcript::Text(Zeroizing::new(
-            worker.transcribe(wav, language, terms).await?,
-        )),
+        Detail::Text => {
+            let text = Zeroizing::new(worker.transcribe(wav, language, terms).await?);
+            Transcript::Text(
+                if cleanup.invented(iter::once(text.as_str()), clip.audible) {
+                    Zeroizing::default()
+                } else {
+                    text
+                },
+            )
+        },
         Detail::Words => {
             let narration = worker.transcribe_words(wav, language, terms).await?;
-            Transcript::Words(
-                Vocabulary::new(corrections).narration(transcript::for_show(narration, fillers)),
-            )
+            let invented = match &narration {
+                Narration::Text(text) => cleanup.invented(iter::once(text.as_str()), clip.audible),
+                Narration::Words(words) => {
+                    cleanup.invented(words.iter().map(|word| word.text.as_str()), clip.audible)
+                },
+            };
+            Transcript::Words(if invented {
+                Narration::default()
+            } else {
+                cleanup.narration(narration)
+            })
         },
     })
 }

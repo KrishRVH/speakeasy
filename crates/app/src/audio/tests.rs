@@ -306,6 +306,7 @@ async fn sealed_audio_is_reported_before_device_teardown_and_retirement_waits() 
             outcome: Outcome::Finished(Ok(Some(Sealed {
                 wav: vec![1, 2],
                 trimmed: Duration::ZERO,
+                audible: Duration::ZERO,
                 partition: None,
             }))),
             device: Device {

@@ -1,3 +1,4 @@
+pub(crate) mod credits;
 pub(crate) mod style;
 pub(crate) mod vocabulary;
 

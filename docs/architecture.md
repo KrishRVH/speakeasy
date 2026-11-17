@@ -89,22 +89,23 @@ module unless a test file is named.
   [stream/tests.rs](../crates/app/src/audio/stream/tests.rs) use synthetic samples; microphones.rs
   checks that a scan the driver blocks serves the next request. The energy gate retains audio after
   100 ms of audible windows, with a floor near −70 dBFS for quiet microphones. PCM stays unchanged.
-  Background noise above the floor can also qualify. The gate measures energy around each window's
-  mean, so a microphone's DC offset never counts as sound. A recording long enough to seal whose
-  every sample was exactly zero, judged before PCM16 rounding, fails with `SilentMicrophone`, which
-  names the mute switch, privacy settings, and the microphone choice. A driver glitch (`Xrun`),
-  denied real-time scheduling, or a rerouted device leaves a gap and recording continues; cpal's
-  callback timestamps cannot measure the lost span on every backend, so the gap stays unfilled. When
-  the drain falls behind and the ring fills, the callback counts the frames it could not queue and
-  queues that many zeros before its next samples, within the five-minute limit, so later speech
-  keeps its place. Any other stream error loses the microphone, and so does a ring that stays empty
-  for two seconds after samples arrived. Audio that passes the speech gate then seals and reaches
-  the owner as `CaptureEvent::Lost` with a short notice and an actionable failure; otherwise the
-  failure ends the recording. A stream that sends no samples for its first two seconds fails as not
-  sending audio rather than as no speech. Callbacks count themselves as publishing before reading
-  the capture mode. Finish/cancel and that count share sequentially consistent ordering; the drain
-  advances the mode, then waits for publishing callbacks before sealing audio. Mode only advances,
-  so a late finish cannot undo cancellation.
+  Background noise above the floor can also qualify. Sealed audio carries its audible time: how long
+  the recording's windows had passed the gate when it was sealed. The gate measures energy around
+  each window's mean, so a microphone's DC offset never counts as sound. A recording long enough to
+  seal whose every sample was exactly zero, judged before PCM16 rounding, fails with
+  `SilentMicrophone`, which names the mute switch, privacy settings, and the microphone choice. A
+  driver glitch (`Xrun`), denied real-time scheduling, or a rerouted device leaves a gap and
+  recording continues; cpal's callback timestamps cannot measure the lost span on every backend, so
+  the gap stays unfilled. When the drain falls behind and the ring fills, the callback counts the
+  frames it could not queue and queues that many zeros before its next samples, within the
+  five-minute limit, so later speech keeps its place. Any other stream error loses the microphone,
+  and so does a ring that stays empty for two seconds after samples arrived. Audio that passes the
+  speech gate then seals and reaches the owner as `CaptureEvent::Lost` with a short notice and an
+  actionable failure; otherwise the failure ends the recording. A stream that sends no samples for
+  its first two seconds fails as not sending audio rather than as no speech. Callbacks count
+  themselves as publishing before reading the capture mode. Finish/cancel and that count share
+  sequentially consistent ordering; the drain advances the mode, then waits for publishing callbacks
+  before sealing audio. Mode only advances, so a late finish cannot undo cancellation.
 - **Sound cues**: [sounds.rs](../crates/app/src/sounds.rs) plays the cues the owner asks for through
   `Ports::cue` on an owned output thread, which `Ports::hold_cues` keeps open through each session.
   A recording may overhear a cue, so [speech.rs](../crates/app/src/audio/speech.rs) hears only the
@@ -136,7 +137,18 @@ module unless a test file is named.
   removal, phrase corrections, and the session's output style for insertion and paired replay.
   [vocabulary.rs](../crates/app/src/transcript/vocabulary.rs) validates and compiles per-request
   phrase corrections after filler removal, preserving timed-word spans. Its tests cover word
-  boundaries, non-chaining replacements, duplicate validation, and timing.
+  boundaries, non-chaining replacements, duplicate validation, and timing. Whisper invents subtitle
+  credits such as “Thank you.” from near-silence, and
+  [credits.rs](../crates/app/src/transcript/credits.rs) lists the ones it is known to invent. The
+  worker drops a Whisper transcript or Show narration that is exactly one of them when its recording
+  held under one second of audible time. The comparison reads letters and digits only, ignoring
+  case, punctuation, and the dot that distinguishes Turkish i. Dictation then ends as “No speech
+  detected”, and a Show keeps empty narration, as silence does. A credit with other words around it,
+  from a second or more of sound, or from another engine stays. A credit really said alone in under
+  a second is dropped too, and where room noise passes the gate every window counts, so in a noisy
+  room only a recording shorter than about a second qualifies.
+  [runtime/tests/recognition.rs](../crates/app/src/runtime/tests/recognition.rs) checks dictation
+  and Show narration.
 - **Insertion**: [platform/src/insertion.rs](../crates/platform/src/insertion.rs) with the Windows
   and macOS commit protocol in [insertion/commit.rs](../crates/platform/src/insertion/commit.rs),
   [input.rs](../crates/platform/src/input.rs),

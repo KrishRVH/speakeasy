@@ -479,6 +479,7 @@ impl<P: Ports> Env<Native> for World<P> {
         Some(Clip {
             wav: Zeroizing::new(wav),
             language: audio.language.clone(),
+            audible: audio.audible,
         })
     }
 

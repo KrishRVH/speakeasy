@@ -46,6 +46,7 @@ pub(crate) struct LiveAudio {
 pub(crate) struct Sealed {
     pub wav: Vec<u8>,
     pub trimmed: Duration,
+    pub audible: Duration,
     pub partition: Option<Partition>,
 }
 

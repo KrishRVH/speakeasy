@@ -87,17 +87,24 @@ impl Pcm16 {
             return Ok(None);
         };
         let trimmed = duration_of(range.start, rate);
+        let audible = duration_of(speech.audible(), rate);
         self.retain_audio(range);
         self.release_excess_capacity();
         let wav = self.into_wav(rate)?;
         Ok(Some(Sealed {
             wav,
             trimmed,
+            audible,
             partition: None,
         }))
     }
 
-    pub(super) fn excerpt(&self, range: Range<usize>, rate: u32) -> anyhow::Result<Sealed> {
+    pub(super) fn excerpt(
+        &self,
+        range: Range<usize>,
+        speech: &Audibility,
+        rate: u32,
+    ) -> anyhow::Result<Sealed> {
         let audio = self
             .audio()
             .get(range.clone())
@@ -105,6 +112,7 @@ impl Pcm16 {
         Ok(Sealed {
             wav: encode(audio, rate)?,
             trimmed: duration_of(range.start, rate),
+            audible: duration_of(speech.audible(), rate),
             partition: None,
         })
     }
@@ -358,6 +366,7 @@ mod tests {
         assert_eq!(wav_sample_rate(&sealed.wav).unwrap(), rate);
 
         assert_eq!(sealed.trimmed, Duration::from_millis(1_500));
+        assert_eq!(sealed.audible, Duration::from_secs(2));
 
         assert!(click.seal(Audibility::new(rate), rate).unwrap().is_none());
     }

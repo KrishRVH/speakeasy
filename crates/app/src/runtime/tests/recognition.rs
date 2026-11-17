@@ -49,6 +49,7 @@ fn partitioned(pieces: u32) -> anyhow::Result<Sealed> {
     Ok(Sealed {
         wav: silent_wav(16_000, Duration::from_secs(1))?,
         trimmed: Duration::ZERO,
+        audible: SPOKEN,
         partition: Some(Partition {
             pieces,
             tail: 32_000..32_000,
@@ -118,6 +119,7 @@ async fn a_nonempty_tail_keeps_every_piece_and_cleans_across_the_final_boundary(
             Ok(Some(Sealed {
                 wav: audio.clone(),
                 trimmed: Duration::ZERO,
+                audible: SPOKEN,
                 partition: Some(Partition {
                     pieces: 2,
                     tail: 32_000..64_000,
@@ -259,4 +261,74 @@ async fn promotion_during_a_piece_uses_whole_show_narration() -> anyhow::Result<
     assert_eq!(narration, Narration::Text("whole Show narration".into()));
     assert!(h.pasted.try_recv().is_err());
     h.close().await
+}
+
+const BRIEF: Duration = Duration::from_millis(900);
+
+fn heard_for(audible: Duration) -> Sealed {
+    Sealed {
+        wav: vec![1, 2],
+        trimmed: Duration::ZERO,
+        audible,
+        partition: None,
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn whisper_drops_a_lone_credit_only_from_a_recording_under_a_second_of_sound()
+-> anyhow::Result<()> {
+    for (engine, audible, inserted) in [
+        (Engine::Whisper, BRIEF, false),
+        (Engine::Whisper, Duration::from_secs(1), true),
+        (Engine::Nemo, BRIEF, true),
+    ] {
+        let mut h = Harness::with_ports(Config { engine, ..config() }, |ports| {
+            ports.delayed_finish = true;
+        })?;
+        let (id, events) = h.start().await?;
+        events
+            .send(CaptureEvent::Finished(id, Ok(Some(heard_for(audible)))))
+            .await?;
+        h.transcribe_next_as("Thank you.").await?;
+        if inserted {
+            assert_eq!(receive(&h.pasted).await?, "Thank you.");
+            h.phase(Phase::Done).await?;
+        } else {
+            h.phase(Phase::Empty).await?;
+            assert!(
+                h.pasted.try_recv().is_err(),
+                "An invented credit was pasted"
+            );
+        }
+        h.close().await?;
+    }
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn whisper_drops_a_lone_credit_from_a_brief_shows_narration() -> anyhow::Result<()> {
+    for (audible, narration) in [
+        (BRIEF, Narration::default()),
+        (Duration::from_secs(1), Narration::Text("Thank you.".into())),
+    ] {
+        let config = Config {
+            engine: Engine::Whisper,
+            ..config()
+        };
+        let mut h = Harness::with_ports(config, |ports| ports.delayed_finish = true)?;
+        h.input(Input::Press);
+        h.phase(Phase::Recording).await?;
+        let (id, events) = receive(&h.captures).await?;
+        h.input(Input::Show(Scope::Screen));
+        receive(&h.shows).await?;
+        finish_show(&h);
+        events
+            .send(CaptureEvent::Finished(id, Ok(Some(heard_for(audible)))))
+            .await?;
+        h.transcribe_next_as("Thank you.").await?;
+        let (_, published) = receive(&h.published).await?;
+        assert_eq!(published, narration);
+        h.close().await?;
+    }
+    Ok(())
 }
