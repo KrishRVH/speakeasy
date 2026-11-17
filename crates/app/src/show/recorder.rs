@@ -22,7 +22,7 @@ use crate::runtime::{
     ports::{Capturing, Footage, Pinning, ShowEvent, Unchosen},
 };
 
-const JOURNAL_BUDGET: usize = speakeasy_show::Log::MAX_BUDGET;
+const JOURNAL_BUDGET: usize = speakeasy_show::log::MAX_BUDGET;
 
 const FIRST_FRAME_WAIT: Duration = Duration::from_secs(3);
 

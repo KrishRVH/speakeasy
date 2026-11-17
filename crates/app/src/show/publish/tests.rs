@@ -623,12 +623,12 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
         let (checkpoint, mut writer) = crate::show::Keeper::fixture(
             root.path(),
             SystemTime::now(),
-            speakeasy_show::Log::MAX_BUDGET,
+            speakeasy_show::log::MAX_BUDGET,
             surface,
             Framing::Automatic,
         )?;
         let mut take =
-            speakeasy_show::Take::new(speakeasy_show::Log::MAX_BUDGET, surface, Framing::Automatic);
+            speakeasy_show::Take::new(speakeasy_show::log::MAX_BUDGET, surface, Framing::Automatic);
         let mut timings = Vec::new();
         for (index, image) in images.into_iter().enumerate() {
             let at = Moment::from_millis(u64::try_from(index)? * 200);

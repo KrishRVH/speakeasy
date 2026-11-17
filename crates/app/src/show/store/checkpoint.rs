@@ -11,7 +11,7 @@ use std::{
 use anyhow::Context as _;
 pub(crate) use audio::{KeptAudio, MAX_CUES};
 pub(crate) use keeper::{AudioLog, FrameLog, Keeper, Kept};
-use speakeasy_show::{Bundle, Log, Moment, Narration, Take};
+use speakeasy_show::{Bundle, Moment, Narration, Take, log};
 
 use super::{
     Staged, address::ShowId, age, entry_exists, found, movie, recall, remove_if_present,
@@ -309,18 +309,19 @@ impl Checkpoint {
     pub(crate) fn replay(&self) -> anyhow::Result<Take> {
         let opened = recall::regular_file(&self.directory, LOG, FILE_LIMIT)
             .and_then(|()| File::open(self.directory.join(LOG)));
-        let mut log = io::BufReader::new(found(opened)?.context(NO_FRAMES)?);
-        let mut header = [0; Log::HEADER_BYTES];
-        log.read_exact(&mut header)
+        let mut reader = io::BufReader::new(found(opened)?.context(NO_FRAMES)?);
+        let mut header = [0; log::HEADER_BYTES];
+        reader
+            .read_exact(&mut header)
             .context("The Show checkpoint header is incomplete")?;
-        let mut take = Log::start(&header)?;
-        let mut consumed = u64::try_from(Log::HEADER_BYTES)?;
+        let mut take = log::start(&header)?;
+        let mut consumed = u64::try_from(log::HEADER_BYTES)?;
         for _ in 0..EVENT_LIMIT {
             let mut length = [0; 4];
-            if !read_complete(&mut log, &mut length)? {
+            if !read_complete(&mut reader, &mut length)? {
                 break;
             }
-            let Ok(size) = Log::record_size(&length) else {
+            let Ok(size) = log::record_size(&length) else {
                 break;
             };
             consumed = consumed.saturating_add(u64::try_from(size)?);
@@ -332,10 +333,10 @@ impl Checkpoint {
                 break;
             };
             *prefix = length;
-            if !read_complete(&mut log, rest)? {
+            if !read_complete(&mut reader, rest)? {
                 break;
             }
-            let Ok(event) = Log::decode(&record) else {
+            let Ok(event) = log::decode(&record) else {
                 break;
             };
             if take.apply(&event).is_err() || take.ended() {

@@ -12,7 +12,7 @@ fn pointer_gaps_survive_replay_without_joining_actions_ink_or_pins() {
     };
     for drawing in [false, true] {
         let mut live = Take::new(0, surface(), Framing::Automatic);
-        let mut bytes = Log::header(0, surface(), Framing::Automatic).unwrap();
+        let mut bytes = header(0, surface(), Framing::Automatic).unwrap();
         for event in [
             pointer(10, 0.1, drawing, true),
             pointer(20, 0.2, drawing, true),

@@ -5,10 +5,10 @@ use crate::{
     signature::{Sample, Signature},
 };
 
-mod log;
+pub mod log;
 mod record;
 mod source;
-pub use log::{Log, Take, TakeEvent};
+pub use log::{Take, TakeEvent};
 use record::require;
 pub use source::{Source, SourceError, SourceFrame};
 

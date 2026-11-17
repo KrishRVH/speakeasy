@@ -15,7 +15,7 @@ use movie::Writing;
 pub(crate) use producers::{AudioLog, FrameLog};
 use producers::{Credit, Producer};
 use speakeasy_platform::{MovieTarget, StoppableThread};
-use speakeasy_show::{Framing, Log, Size, TakeEvent};
+use speakeasy_show::{Framing, Size, TakeEvent, log};
 
 use super::{Checkpoint, audio};
 
@@ -273,7 +273,7 @@ fn frame(
             input.begin(
                 directory,
                 super::LOG,
-                &Log::header(budget, surface, framing)?,
+                &log::header(budget, surface, framing)?,
             )?;
         },
         FrameRecord::Movie { started, returned } => {
@@ -291,7 +291,7 @@ fn frame(
             let _ = returned.try_send(target);
         },
         FrameRecord::Event(event) => {
-            input.append(&Log::encode(&event)?, super::FILE_LIMIT, super::EVENT_LIMIT)?;
+            input.append(&log::encode(&event)?, super::FILE_LIMIT, super::EVENT_LIMIT)?;
         },
     }
     input.settle(bytes)

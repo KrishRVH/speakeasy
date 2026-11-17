@@ -8,6 +8,10 @@ use crate::{
     Tracker, Window, layout::MOST_WINDOWS,
 };
 
+pub const HEADER_BYTES: usize =
+    MAGIC.len() + RECORD_OVERHEAD + size_of::<u64>() + 2 * size_of::<f32>() + size_of::<u8>();
+pub const MAX_BUDGET: usize = 384 << 20;
+
 const MAGIC: &[u8; 8] = b"SPKLOG03";
 const RECORD_LIMIT: usize = 40 << 20;
 const EVENT_OVERHEAD: usize = 64;
@@ -199,207 +203,198 @@ impl Take {
     }
 }
 
-#[derive(Debug)]
-pub struct Log;
+pub fn header(budget: usize, surface: Size, framing: Framing) -> Result<Vec<u8>, SourceError> {
+    require(
+        budget <= MAX_BUDGET,
+        "checkpoint memory budget is too large",
+    )?;
+    valid_surface(surface)?;
+    let mut data = Vec::new();
+    data.extend_from_slice(&(budget as u64).to_le_bytes());
+    data.extend_from_slice(&surface.width.to_le_bytes());
+    data.extend_from_slice(&surface.height.to_le_bytes());
+    data.push(match framing {
+        Framing::Automatic => AUTOMATIC,
+        Framing::Chosen => CHOSEN,
+    });
+    Ok([MAGIC.as_slice(), &framed(HEADER, &data)?].concat())
+}
 
-impl Log {
-    pub const HEADER_BYTES: usize =
-        MAGIC.len() + RECORD_OVERHEAD + size_of::<u64>() + 2 * size_of::<f32>() + size_of::<u8>();
-    pub const MAX_BUDGET: usize = 384 << 20;
+pub fn start(header: &[u8]) -> Result<Take, SourceError> {
+    let (magic, record) = header.split_at_checked(MAGIC.len()).unwrap_or_default();
+    require(
+        header.len() == HEADER_BYTES && magic == MAGIC,
+        "unsupported or truncated checkpoint header",
+    )?;
+    let mut data = Cursor(payload(record, HEADER)?);
+    let budget = usize::try_from(data.wide()?)
+        .map_err(|_out_of_range| SourceError("checkpoint memory budget is too large"))?;
+    require(
+        budget <= MAX_BUDGET,
+        "checkpoint memory budget is too large",
+    )?;
+    let surface = Size {
+        width: f32::from_le_bytes(data.take()?),
+        height: f32::from_le_bytes(data.take()?),
+    };
+    valid_surface(surface)?;
+    let framing = match data.take()? {
+        [AUTOMATIC] => Framing::Automatic,
+        [CHOSEN] => Framing::Chosen,
+        _ => return Err(SourceError("checkpoint framing is unknown")),
+    };
+    Ok(Take::new(budget, surface, framing))
+}
 
-    pub fn header(budget: usize, surface: Size, framing: Framing) -> Result<Vec<u8>, SourceError> {
-        require(
-            budget <= Self::MAX_BUDGET,
-            "checkpoint memory budget is too large",
-        )?;
-        valid_surface(surface)?;
-        let mut data = Vec::new();
-        data.extend_from_slice(&(budget as u64).to_le_bytes());
-        data.extend_from_slice(&surface.width.to_le_bytes());
-        data.extend_from_slice(&surface.height.to_le_bytes());
-        data.push(match framing {
-            Framing::Automatic => AUTOMATIC,
-            Framing::Chosen => CHOSEN,
-        });
-        Ok([MAGIC.as_slice(), &framed(HEADER, &data)?].concat())
-    }
+pub fn record_size(prefix: &[u8]) -> Result<usize, SourceError> {
+    let length = Cursor(prefix)
+        .usize()?
+        .checked_add(RECORD_OVERHEAD)
+        .ok_or(SourceError("checkpoint record is too large"))?;
+    require(length <= RECORD_LIMIT, "checkpoint record is too large")?;
+    Ok(length)
+}
 
-    pub fn start(header: &[u8]) -> Result<Take, SourceError> {
-        let (magic, record) = header.split_at_checked(MAGIC.len()).unwrap_or_default();
-        require(
-            header.len() == Self::HEADER_BYTES && magic == MAGIC,
-            "unsupported or truncated checkpoint header",
-        )?;
-        let mut data = Cursor(payload(record, HEADER)?);
-        let budget = usize::try_from(data.wide()?)
-            .map_err(|_out_of_range| SourceError("checkpoint memory budget is too large"))?;
-        require(
-            budget <= Self::MAX_BUDGET,
-            "checkpoint memory budget is too large",
-        )?;
-        let surface = Size {
-            width: f32::from_le_bytes(data.take()?),
-            height: f32::from_le_bytes(data.take()?),
-        };
-        valid_surface(surface)?;
-        let framing = match data.take()? {
-            [AUTOMATIC] => Framing::Automatic,
-            [CHOSEN] => Framing::Chosen,
-            _ => return Err(SourceError("checkpoint framing is unknown")),
-        };
-        Ok(Take::new(budget, surface, framing))
-    }
-
-    pub fn record_size(header: &[u8]) -> Result<usize, SourceError> {
-        let length = Cursor(header)
-            .usize()?
-            .checked_add(RECORD_OVERHEAD)
-            .ok_or(SourceError("checkpoint record is too large"))?;
-        require(length <= RECORD_LIMIT, "checkpoint record is too large")?;
-        Ok(length)
-    }
-
-    pub fn encode(event: &TakeEvent) -> Result<Vec<u8>, SourceError> {
-        let mut data = Vec::new();
-        let kind = match event {
-            TakeEvent::Surface(size) => {
-                data.extend_from_slice(&size.width.to_le_bytes());
-                data.extend_from_slice(&size.height.to_le_bytes());
-                SURFACE
-            },
-            TakeEvent::Pointer {
-                at,
-                point,
-                part,
-                drawing,
-                pressed,
-            } => {
-                data.extend_from_slice(&at.as_millis().to_le_bytes());
-                data.extend_from_slice(&point.x.to_le_bytes());
-                data.extend_from_slice(&point.y.to_le_bytes());
-                data.push(u8::from(*drawing));
-                data.push(u8::from(*pressed));
+pub fn encode(event: &TakeEvent) -> Result<Vec<u8>, SourceError> {
+    let mut data = Vec::new();
+    let kind = match event {
+        TakeEvent::Surface(size) => {
+            data.extend_from_slice(&size.width.to_le_bytes());
+            data.extend_from_slice(&size.height.to_le_bytes());
+            SURFACE
+        },
+        TakeEvent::Pointer {
+            at,
+            point,
+            part,
+            drawing,
+            pressed,
+        } => {
+            data.extend_from_slice(&at.as_millis().to_le_bytes());
+            data.extend_from_slice(&point.x.to_le_bytes());
+            data.extend_from_slice(&point.y.to_le_bytes());
+            data.push(u8::from(*drawing));
+            data.push(u8::from(*pressed));
+            data.extend(
+                [part.left, part.top, part.right, part.bottom]
+                    .into_iter()
+                    .flat_map(f32::to_le_bytes),
+            );
+            POINTER
+        },
+        TakeEvent::Pin(span) => {
+            data.extend_from_slice(&span.start().as_millis().to_le_bytes());
+            data.extend_from_slice(&span.end().as_millis().to_le_bytes());
+            PIN
+        },
+        TakeEvent::Arrival { at, entry } => {
+            data.extend_from_slice(&at.as_millis().to_le_bytes());
+            data.push(u8::from(entry.is_some()));
+            if let Some(entry) = entry {
+                entry.encode(&mut data)?;
+            }
+            ARRIVAL
+        },
+        TakeEvent::End { at, ending } => {
+            data.extend_from_slice(&at.as_millis().to_le_bytes());
+            data.push(match ending {
+                Ending::Finished => 0,
+                Ending::ScreenStopped => 1,
+                Ending::WindowClosed => 2,
+                Ending::WindowOffScreen => 3,
+            });
+            END
+        },
+        TakeEvent::PointerGap(at) => {
+            data.extend_from_slice(&at.as_millis().to_le_bytes());
+            POINTER_GAP
+        },
+        TakeEvent::Windows(layout) => {
+            require(layout.valid(), "checkpoint window layout is invalid")?;
+            data.extend_from_slice(&layout.at.as_millis().to_le_bytes());
+            put(&mut data, layout.windows.len())?;
+            for window in &layout.windows {
+                data.extend_from_slice(&window.id.to_le_bytes());
+                data.extend_from_slice(&window.app.to_le_bytes());
+                data.push(match window.layer {
+                    Layer::Normal => 0,
+                    Layer::Menu => 1,
+                    Layer::Bar => 2,
+                    Layer::Floating => 3,
+                });
                 data.extend(
-                    [part.left, part.top, part.right, part.bottom]
+                    <[f32; 4]>::from(window.bounds)
                         .into_iter()
                         .flat_map(f32::to_le_bytes),
                 );
-                POINTER
-            },
-            TakeEvent::Pin(span) => {
-                data.extend_from_slice(&span.start().as_millis().to_le_bytes());
-                data.extend_from_slice(&span.end().as_millis().to_le_bytes());
-                PIN
-            },
-            TakeEvent::Arrival { at, entry } => {
-                data.extend_from_slice(&at.as_millis().to_le_bytes());
-                data.push(u8::from(entry.is_some()));
-                if let Some(entry) = entry {
-                    entry.encode(&mut data)?;
-                }
-                ARRIVAL
-            },
-            TakeEvent::End { at, ending } => {
-                data.extend_from_slice(&at.as_millis().to_le_bytes());
-                data.push(match ending {
-                    Ending::Finished => 0,
-                    Ending::ScreenStopped => 1,
-                    Ending::WindowClosed => 2,
-                    Ending::WindowOffScreen => 3,
-                });
-                END
-            },
-            TakeEvent::PointerGap(at) => {
-                data.extend_from_slice(&at.as_millis().to_le_bytes());
-                POINTER_GAP
-            },
-            TakeEvent::Windows(layout) => {
-                require(layout.valid(), "checkpoint window layout is invalid")?;
-                data.extend_from_slice(&layout.at.as_millis().to_le_bytes());
-                put(&mut data, layout.windows.len())?;
-                for window in &layout.windows {
-                    data.extend_from_slice(&window.id.to_le_bytes());
-                    data.extend_from_slice(&window.app.to_le_bytes());
-                    data.push(match window.layer {
-                        Layer::Normal => 0,
-                        Layer::Menu => 1,
-                        Layer::Bar => 2,
-                        Layer::Floating => 3,
-                    });
-                    data.extend(
-                        <[f32; 4]>::from(window.bounds)
-                            .into_iter()
-                            .flat_map(f32::to_le_bytes),
-                    );
-                }
-                WINDOWS
-            },
-        };
-        require(
-            data.len().saturating_add(RECORD_OVERHEAD) <= RECORD_LIMIT,
-            "checkpoint record is too large",
-        )?;
-        framed(kind, &data)
-    }
+            }
+            WINDOWS
+        },
+    };
+    require(
+        data.len().saturating_add(RECORD_OVERHEAD) <= RECORD_LIMIT,
+        "checkpoint record is too large",
+    )?;
+    framed(kind, &data)
+}
 
-    pub fn decode(record: &[u8]) -> Result<TakeEvent, SourceError> {
-        require(
-            record.len() <= RECORD_LIMIT,
-            "checkpoint record is too large",
-        )?;
-        let kind = *record
-            .get(size_of::<u32>())
-            .ok_or(SourceError("checkpoint record is truncated"))?;
-        let mut data = Cursor(payload(record, kind)?);
-        let event = match kind {
-            SURFACE => TakeEvent::Surface(Size {
-                width: f32::from_le_bytes(data.take()?),
-                height: f32::from_le_bytes(data.take()?),
-            }),
-            POINTER => TakeEvent::Pointer {
-                at: Moment::from_millis(data.wide()?),
-                point: Point::new(
-                    f32::from_le_bytes(data.take()?),
-                    f32::from_le_bytes(data.take()?),
-                ),
-                drawing: boolean(&mut data)?,
-                pressed: boolean(&mut data)?,
-                part: Rect::from([
-                    f32::from_le_bytes(data.take()?),
-                    f32::from_le_bytes(data.take()?),
-                    f32::from_le_bytes(data.take()?),
-                    f32::from_le_bytes(data.take()?),
-                ]),
+pub fn decode(record: &[u8]) -> Result<TakeEvent, SourceError> {
+    require(
+        record.len() <= RECORD_LIMIT,
+        "checkpoint record is too large",
+    )?;
+    let kind = *record
+        .get(size_of::<u32>())
+        .ok_or(SourceError("checkpoint record is truncated"))?;
+    let mut data = Cursor(payload(record, kind)?);
+    let event = match kind {
+        SURFACE => TakeEvent::Surface(Size {
+            width: f32::from_le_bytes(data.take()?),
+            height: f32::from_le_bytes(data.take()?),
+        }),
+        POINTER => TakeEvent::Pointer {
+            at: Moment::from_millis(data.wide()?),
+            point: Point::new(
+                f32::from_le_bytes(data.take()?),
+                f32::from_le_bytes(data.take()?),
+            ),
+            drawing: boolean(&mut data)?,
+            pressed: boolean(&mut data)?,
+            part: Rect::from([
+                f32::from_le_bytes(data.take()?),
+                f32::from_le_bytes(data.take()?),
+                f32::from_le_bytes(data.take()?),
+                f32::from_le_bytes(data.take()?),
+            ]),
+        },
+        PIN => TakeEvent::Pin(Span::new(
+            Moment::from_millis(data.wide()?),
+            Moment::from_millis(data.wide()?),
+        )),
+        ARRIVAL => TakeEvent::Arrival {
+            at: Moment::from_millis(data.wide()?),
+            entry: if boolean(&mut data)? {
+                Some(Entry::decode(&mut data)?)
+            } else {
+                None
             },
-            PIN => TakeEvent::Pin(Span::new(
-                Moment::from_millis(data.wide()?),
-                Moment::from_millis(data.wide()?),
-            )),
-            ARRIVAL => TakeEvent::Arrival {
-                at: Moment::from_millis(data.wide()?),
-                entry: if boolean(&mut data)? {
-                    Some(Entry::decode(&mut data)?)
-                } else {
-                    None
-                },
+        },
+        END => TakeEvent::End {
+            at: Moment::from_millis(data.wide()?),
+            ending: match data.take::<1>()? {
+                [0] => Ending::Finished,
+                [1] => Ending::ScreenStopped,
+                [2] => Ending::WindowClosed,
+                [3] => Ending::WindowOffScreen,
+                _ => return Err(SourceError("checkpoint ending is invalid")),
             },
-            END => TakeEvent::End {
-                at: Moment::from_millis(data.wide()?),
-                ending: match data.take::<1>()? {
-                    [0] => Ending::Finished,
-                    [1] => Ending::ScreenStopped,
-                    [2] => Ending::WindowClosed,
-                    [3] => Ending::WindowOffScreen,
-                    _ => return Err(SourceError("checkpoint ending is invalid")),
-                },
-            },
-            POINTER_GAP => TakeEvent::PointerGap(Moment::from_millis(data.wide()?)),
-            WINDOWS => TakeEvent::Windows(layout(&mut data)?),
-            _ => return Err(SourceError("unsupported checkpoint event")),
-        };
-        require(data.0.is_empty(), "checkpoint record has trailing data")?;
-        Ok(event)
-    }
+        },
+        POINTER_GAP => TakeEvent::PointerGap(Moment::from_millis(data.wide()?)),
+        WINDOWS => TakeEvent::Windows(layout(&mut data)?),
+        _ => return Err(SourceError("unsupported checkpoint event")),
+    };
+    require(data.0.is_empty(), "checkpoint record has trailing data")?;
+    Ok(event)
 }
 
 impl Entry {

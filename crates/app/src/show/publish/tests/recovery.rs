@@ -53,7 +53,7 @@ async fn clicked_checkpoint(
         width: width as f32,
         height: height as f32,
     };
-    let budget = speakeasy_show::Log::MAX_BUDGET;
+    let budget = speakeasy_show::log::MAX_BUDGET;
     let (checkpoint, mut writer) =
         crate::show::Keeper::fixture(parent, SystemTime::now(), budget, surface, framing)?;
     let mut take = Take::new(budget, surface, framing);

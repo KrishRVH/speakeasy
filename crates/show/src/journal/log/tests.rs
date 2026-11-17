@@ -14,23 +14,23 @@ fn surface() -> Size {
 
 fn apply(take: &mut Take, event: &TakeEvent, bytes: &mut Vec<u8>) {
     take.apply(event).unwrap();
-    bytes.extend(Log::encode(event).unwrap());
+    bytes.extend(encode(event).unwrap());
 }
 
 fn replay(bytes: &[u8]) -> Result<Take, SourceError> {
     let header = bytes
-        .get(..Log::HEADER_BYTES)
+        .get(..HEADER_BYTES)
         .ok_or(SourceError("missing header"))?;
-    let mut take = Log::start(header)?;
-    let mut rest = bytes.get(Log::HEADER_BYTES..).unwrap_or_default();
+    let mut take = start(header)?;
+    let mut rest = bytes.get(HEADER_BYTES..).unwrap_or_default();
     while let Some(prefix) = rest.get(..4) {
-        let Ok(length) = Log::record_size(prefix) else {
+        let Ok(length) = record_size(prefix) else {
             break;
         };
         let Some((record, tail)) = rest.split_at_checked(length) else {
             break;
         };
-        let Ok(event) = Log::decode(record) else {
+        let Ok(event) = decode(record) else {
             break;
         };
         if take.apply(&event).is_err() {
@@ -89,7 +89,7 @@ proptest! {
         budget in 0..2_000_usize,
     ) {
         let mut live = Take::new(budget, surface(), Framing::Automatic);
-        let mut bytes = Log::header(budget, surface(), Framing::Automatic).unwrap();
+        let mut bytes = header(budget, surface(), Framing::Automatic).unwrap();
         for (index, color) in colors.into_iter().enumerate() {
             let at = Moment::from_millis(u64::try_from(index).unwrap().saturating_mul(100));
             let shade = f32::from(color);
@@ -102,7 +102,7 @@ proptest! {
             let event = live
                 .arrive(at, || Some(Image::filled(width, 66, [color; 3]).unwrap()))
                 .unwrap();
-            bytes.extend(Log::encode(&event).unwrap());
+            bytes.extend(encode(&event).unwrap());
             let pointer = TakeEvent::Pointer {
                 part: Rect::from([0.0, 0.0, 0.5 + shade / 510.0, 1.0]),
                 at,
@@ -140,8 +140,8 @@ proptest! {
     ) {
         let events = every_kind_of_event();
         let position = chosen.index(events.len());
-        let record = Log::encode(&events[position]).unwrap();
-        if let Ok(event) = Log::decode(&damaged(&record, at, byte, keep)) {
+        let record = encode(&events[position]).unwrap();
+        if let Ok(event) = decode(&damaged(&record, at, byte, keep)) {
             let mut take = Take::new(1_000, surface(), Framing::Automatic);
             for earlier in &events[..position] {
                 take.apply(earlier).unwrap();
@@ -160,20 +160,20 @@ proptest! {
             clippy::let_underscore_must_use,
             reason = "The property only requires decoding to return; either outcome passes"
         )]
-        let _ = Log::decode(&bytes);
+        let _ = decode(&bytes);
     }
 }
 
 #[test]
 fn every_torn_tail_recovers_only_whole_events_and_keeps_an_honest_ending() {
     let mut live = Take::new(1_000, surface(), Framing::Automatic);
-    let mut bytes = Log::header(1_000, surface(), Framing::Automatic).unwrap();
+    let mut bytes = header(1_000, surface(), Framing::Automatic).unwrap();
     let image = live
         .arrive(Moment::from_millis(100), || {
             Some(Image::filled(2, 2, [42; 3]).unwrap())
         })
         .unwrap();
-    bytes.extend(Log::encode(&image).unwrap());
+    bytes.extend(encode(&image).unwrap());
     let first_frame_end = bytes.len();
     apply(
         &mut live,
@@ -196,7 +196,7 @@ fn every_torn_tail_recovers_only_whole_events_and_keeps_an_honest_ending() {
     );
     for end in 0..bytes.len() {
         let result = replay(&bytes[..end]);
-        if end < Log::HEADER_BYTES {
+        if end < HEADER_BYTES {
             assert!(result.is_err());
             continue;
         }
@@ -213,15 +213,15 @@ fn every_torn_tail_recovers_only_whole_events_and_keeps_an_honest_ending() {
 #[test]
 fn a_checkpoint_keeps_who_frames_the_recording() {
     for framing in [Framing::Automatic, Framing::Chosen] {
-        let header = Log::header(0, surface(), framing).unwrap();
-        assert_eq!(Log::start(&header).unwrap().framing(), framing);
+        let bytes = header(0, surface(), framing).unwrap();
+        assert_eq!(start(&bytes).unwrap().framing(), framing);
     }
 }
 
 #[test]
 fn malformed_events_cannot_change_the_good_prefix_or_print_pixels() {
     let mut take = Take::new(0, surface(), Framing::Automatic);
-    let mut bytes = Log::header(0, surface(), Framing::Automatic).unwrap();
+    let mut bytes = header(0, surface(), Framing::Automatic).unwrap();
     let mut arrivals = Vec::new();
     for n in 0..3_u64 {
         let event = take
@@ -229,7 +229,7 @@ fn malformed_events_cannot_change_the_good_prefix_or_print_pixels() {
                 Some(Image::filled(2, 2, [u8::try_from(n).unwrap(); 3]).unwrap())
             })
             .unwrap();
-        bytes.extend(Log::encode(&event).unwrap());
+        bytes.extend(encode(&event).unwrap());
         arrivals.push(event);
     }
     assert_eq!(
@@ -261,10 +261,10 @@ fn malformed_events_cannot_change_the_good_prefix_or_print_pixels() {
         }))
         .is_err()
     );
-    assert!(Log::record_size(&u32::MAX.to_le_bytes()).is_err());
-    let mut corrupt = Log::encode(&event).unwrap();
+    assert!(record_size(&u32::MAX.to_le_bytes()).is_err());
+    let mut corrupt = encode(&event).unwrap();
     corrupt[20] ^= 0xFF;
-    assert!(Log::decode(&corrupt).is_err());
+    assert!(decode(&corrupt).is_err());
     let arrival = |shade| {
         let event = Take::new(100, surface(), Framing::Automatic)
             .arrive(Moment::START, || {
@@ -314,9 +314,9 @@ fn high_entropy_tiles_round_trip_even_when_compression_expands_them() {
     .unwrap();
     let mut live = Take::new(1 << 20, surface(), Framing::Automatic);
     let event = live.arrive(Moment::START, || Some(image.clone())).unwrap();
-    let encoded = Log::encode(&event).unwrap();
+    let encoded = encode(&event).unwrap();
     let mut replayed = Take::new(1 << 20, surface(), Framing::Automatic);
-    replayed.apply(&Log::decode(&encoded).unwrap()).unwrap();
+    replayed.apply(&decode(&encoded).unwrap()).unwrap();
     assert_eq!(replayed.journal().frame_at(Moment::START), Some(image));
 }
 
@@ -335,7 +335,7 @@ fn encoding_rejects_a_tile_that_a_reader_cannot_accept() {
         panic!("The first image is admitted");
     };
     entry.tiles[0].1 = vec![0; 4_096].into();
-    assert!(Log::encode(&event).is_err());
+    assert!(encode(&event).is_err());
 }
 
 #[test]
@@ -362,7 +362,7 @@ fn a_checkpoint_restores_window_layouts_and_refuses_impossible_ones() {
         ],
     };
     let mut live = Take::new(0, surface(), Framing::Automatic);
-    let mut bytes = Log::header(0, surface(), Framing::Automatic).unwrap();
+    let mut bytes = header(0, surface(), Framing::Automatic).unwrap();
     apply(&mut live, &TakeEvent::Windows(first.clone()), &mut bytes);
     apply(&mut live, &TakeEvent::Windows(second.clone()), &mut bytes);
     let restored = [first.clone(), second.clone()];
@@ -378,12 +378,12 @@ fn a_checkpoint_restores_window_layouts_and_refuses_impossible_ones() {
         windows: vec![window(4, Layer::Normal, [0.5, 0.5, 1.2, 0.9])],
     };
     assert!(live.apply(&TakeEvent::Windows(outside.clone())).is_err());
-    assert!(Log::encode(&TakeEvent::Windows(outside)).is_err());
+    assert!(encode(&TakeEvent::Windows(outside)).is_err());
     let crowded = Layout {
         windows: vec![window(5, Layer::Normal, [0.1, 0.1, 0.2, 0.2]); MOST_WINDOWS + 1],
         ..second
     };
-    assert!(Log::encode(&TakeEvent::Windows(crowded)).is_err());
+    assert!(encode(&TakeEvent::Windows(crowded)).is_err());
     let mut unknown = 500_u64.to_le_bytes().to_vec();
     unknown.extend([1_u32, 6, 0].into_iter().flat_map(u32::to_le_bytes));
     unknown.push(4);
@@ -392,6 +392,6 @@ fn a_checkpoint_restores_window_layouts_and_refuses_impossible_ones() {
             .into_iter()
             .flat_map(f32::to_le_bytes),
     );
-    assert!(Log::decode(&framed(WINDOWS, &unknown).unwrap()).is_err());
+    assert!(decode(&framed(WINDOWS, &unknown).unwrap()).is_err());
     assert_eq!(live.finish().1.layouts(), restored);
 }
