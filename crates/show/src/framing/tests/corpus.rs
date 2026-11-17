@@ -29,8 +29,18 @@ struct Arranged {
 struct Placed {
     id: u32,
     app: u32,
-    layer: String,
+    #[serde(with = "LayerDef")]
+    layer: Layer,
     bounds: Rect,
+}
+
+#[derive(Deserialize)]
+#[serde(remote = "Layer")]
+enum LayerDef {
+    Normal,
+    Floating,
+    Menu,
+    Bar,
 }
 
 #[derive(Deserialize)]
@@ -105,13 +115,7 @@ impl Case {
                     .map(|placed| Window {
                         id: placed.id,
                         app: placed.app,
-                        layer: match placed.layer.as_str() {
-                            "Normal" => Layer::Normal,
-                            "Floating" => Layer::Floating,
-                            "Menu" => Layer::Menu,
-                            "Bar" => Layer::Bar,
-                            other => panic!("{other} is not a window layer"),
-                        },
+                        layer: placed.layer,
                         bounds: placed.bounds,
                     })
                     .collect(),
