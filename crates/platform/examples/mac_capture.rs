@@ -43,19 +43,19 @@ mod native {
         if mode == "--source" {
             return source(main);
         }
-        let mut source = Source(Some(
+        let mut source = Source(
             Command::new(std::env::current_exe()?)
                 .arg("--source")
                 .stdout(Stdio::piped())
                 .stderr(Stdio::null())
                 .spawn()?,
-        ));
+        );
         let mut ready = String::new();
         BufReader::new(
             source
                 .0
-                .as_mut()
-                .and_then(|child| child.stdout.take())
+                .stdout
+                .take()
                 .context("Synthetic source has no readiness lane")?,
         )
         .read_line(&mut ready)?;
@@ -278,34 +278,27 @@ mod native {
         Ok(())
     }
 
-    struct Source(Option<Child>);
+    struct Source(Child);
 
     impl Source {
         fn stop(mut self) -> io::Result<()> {
-            if let Some(child) = &mut self.0 {
-                child.kill()?;
-                child.wait().map(|_status| ())?;
-                self.0 = None;
-            }
-            Ok(())
+            self.0.kill()?;
+            self.0.wait().map(|_status| ())
         }
     }
 
     impl Drop for Source {
         fn drop(&mut self) {
-            let Some(child) = &mut self.0 else {
-                return;
-            };
             #[expect(
                 clippy::let_underscore_must_use,
-                reason = "The owned fixture may already have exited; wait still reaps its process"
+                reason = "The owned fixture may already have exited or been stopped; a reaped child is never signaled again"
             )]
-            let _ = child.kill();
+            let _ = self.0.kill();
             #[expect(
                 clippy::let_underscore_must_use,
                 reason = "The fixture's lifetime is bounded by the parent even after acceptance fails"
             )]
-            let _ = child.wait();
+            let _ = self.0.wait();
         }
     }
 }
