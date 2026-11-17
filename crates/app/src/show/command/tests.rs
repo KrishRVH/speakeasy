@@ -46,6 +46,13 @@ fn commands_require_explicit_paths_and_accept_only_their_options() -> anyhow::Re
     assert_eq!(parse(&["--help"])?, Command::Help);
     assert_eq!(parse(&["list", "--json"])?, Command::List { json: true });
     assert_eq!(
+        parse(&["wait", "--timeout", "90", "--json"])?,
+        Command::Wait {
+            patience: Duration::from_secs(90),
+            json: true
+        }
+    );
+    assert_eq!(
         parse(&["inspect", "a show", "--json"])?,
         Command::Inspect {
             directory: "a show".into(),
@@ -77,6 +84,10 @@ fn commands_require_explicit_paths_and_accept_only_their_options() -> anyhow::Re
     );
     for args in [
         &["inspect"][..],
+        &["wait", "--timeout", "0"],
+        &["wait", "--timeout", "3601"],
+        &["wait", "--timeout", "1.5"],
+        &["wait", "here"],
         &["inspect", ""],
         &["inspect", "here", "extra"],
         &["list", "--json", "--json"],

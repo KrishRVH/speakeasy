@@ -1,6 +1,7 @@
 mod output;
 mod source;
 mod video;
+mod wait;
 
 use std::{
     ffi::{OsStr, OsString},
@@ -32,6 +33,7 @@ const AROUND: Duration = Duration::from_secs(1);
 
 const HELP: &str = "speakeasy show list [--json]
 speakeasy show inspect SHOW [--json]
+speakeasy show wait [--timeout SECONDS] [--json]
 speakeasy show frames SHOW [FOCUS [--around MS]] [--json]
 speakeasy show frames SHOW FOCUS --out NEW.png [--most N] [--around MS] [--crop] [--json]
 speakeasy show frame SHOW FOCUS --out NEW.png [--crop] [--video [--annotated]] [--json]
@@ -47,6 +49,8 @@ speakeasy show demo [--out NEW_DIR]
 list discovers interrupted and saved Shows, including damaged bundles.
 inspect checks an explicit bundle and maps its sheets, keyframes and marks.
 Both print metadata and current absolute paths, never narration or screen content.
+wait inspects the first Show saved after it starts, once you make one with the Show gesture.
+It never starts a recording, waits 600 seconds by default (at most 3600), and fails on timeout.
 Images are checked as files, not decoded. Missing files are reported, not repaired.
 frames lists retained source times and sampling coverage, without reading pixels.
 FOCUS is exactly one of --at M:SS.mmm, --mark N, or --phrase TEXT [--match K].
@@ -65,7 +69,7 @@ It reports actual decoded time and separate annotation coverage, including recov
 It requires geometry and annotation coverage at the decoded sample. --crop needs matching geometry.
 inspect exits with status 1 for a damaged or unsupported Show.
 SHOW is an exact folder-name ID in Speakeasy's Shows folder, or an explicit path.
-Use ./ID to address a relative path. No command chooses the latest Show.
+Use ./ID to address a relative path. No command chooses the latest earlier Show.
 keep prevents expiry; --off restores the original seven-day expiry date.
 An overdue Show then expires at the next cleanup. Only managed Shows can be kept.
 export writes a new ZIP with saved images, narration, retained samples, and a relative reading guide.
@@ -92,6 +96,10 @@ pub(crate) enum Command {
     },
     Inspect {
         directory: PathBuf,
+        json: bool,
+    },
+    Wait {
+        patience: Duration,
         json: bool,
     },
     Source(source::Request),
@@ -134,10 +142,16 @@ impl Command {
             _ => {},
         }
         let (mut show, mut destination, mut json, mut off) = (None, None, false, false);
+        let mut patience = None;
         while let Some(arg) = args.next() {
             match (verb, arg.to_str()) {
                 (_, Some("--help" | "-h")) => return Ok(Self::Help),
-                ("list" | "inspect" | "keep" | "export" | "discard", Some("--json")) if !json => {
+                ("wait", Some("--timeout")) if patience.is_none() => {
+                    patience = Some(seconds(&mut args)?);
+                },
+                ("list" | "inspect" | "wait" | "keep" | "export" | "discard", Some("--json"))
+                    if !json =>
+                {
                     json = true;
                 },
                 ("keep", Some("--off")) if !off => off = true,
@@ -167,6 +181,10 @@ impl Command {
             "list" => Ok(Self::List { json }),
             "inspect" => Ok(Self::Inspect {
                 directory: show.context("show inspect needs an exact Show ID or path")?,
+                json,
+            }),
+            "wait" => Ok(Self::Wait {
+                patience: patience.unwrap_or(wait::PATIENCE),
                 json,
             }),
             "keep" => Ok(Self::Keep {
@@ -252,6 +270,11 @@ impl Command {
                     "The Show is damaged or unsupported; inspection lists the problems."
                 );
             },
+            Self::Wait { patience, json } => {
+                let parent = store::directory()?;
+                let entry = wait::next_saved(&parent, patience)?;
+                output::inspect(&entry, Some(&parent), json, out)?;
+            },
             Self::Keep {
                 directory,
                 kept,
@@ -281,6 +304,14 @@ impl Command {
         }
         Ok(())
     }
+}
+
+fn seconds(args: &mut impl Iterator<Item = OsString>) -> anyhow::Result<Duration> {
+    args.next()
+        .and_then(|arg| arg.to_str()?.parse::<u64>().ok())
+        .map(Duration::from_secs)
+        .filter(|patience| !patience.is_zero() && *patience <= wait::LONGEST)
+        .context("--timeout needs whole seconds from 1 to 3600")
 }
 
 pub(super) fn operand(arg: &OsStr) -> bool {

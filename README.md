@@ -360,6 +360,7 @@ path instead of its ID.
 speakeasy show list --json
 speakeasy show inspect "PATH_TO_SHOW" --json
 speakeasy show inspect 20261020T143205Z --json
+speakeasy show wait --timeout 900 --json
 speakeasy show frames 20261020T143205Z --json
 speakeasy show frame 20261020T143205Z --at 0:12.500 --out /path/to/new-frame.png --json
 speakeasy show frame 20261020T143205Z --video --at 0:12.500 --out /path/to/new-video-frame.png --json
@@ -373,6 +374,10 @@ speakeasy show video 20261020T143205Z --phrase "save button" --around 2000 --out
 speakeasy show skill --install /path/to/agent/skills
 speakeasy show skill
 ```
+
+`wait` lets an agent ask you to show it something: it waits for the first Show you save after it
+starts and prints that Show's inspection. It never starts recording; you still make the Show with
+the gesture. It gives up after 600 seconds unless `--timeout` asks for up to 3600.
 
 `list` finds interrupted Shows first, then saved Shows newest first, including damaged or
 unsupported ones. It lists the timestamp-named folders in Speakeasy's Shows folder; use `inspect`
