@@ -47,15 +47,14 @@ impl Query {
             !matches.is_empty(),
             "No matching phrase in the recorded narration; use another phrase, mark, or time"
         );
-        let selected = match occurrence {
-            Some(index) => Some(
-                *index
-                    .checked_sub(1)
+        let selected = match (occurrence, matches.as_slice()) {
+            (Some(nth), _) => Some(
+                *nth.checked_sub(1)
                     .and_then(|index| matches.get(index))
                     .context("That match number is unavailable; list the phrase matches first")?,
             ),
-            None if matches.len() == 1 => matches.first().copied(),
-            None => None,
+            (None, &[only]) => Some(only),
+            (None, _) => None,
         };
         Ok(Found {
             kind,
@@ -78,27 +77,28 @@ pub(in crate::show) fn time(value: &str) -> anyhow::Result<Moment> {
         );
         Ok(part.parse()?)
     };
-    let (whole, fraction) = value.split_once('.').unwrap_or((value, ""));
-    anyhow::ensure!(
-        fraction.len() <= 3 && (!value.contains('.') || !fraction.is_empty()),
-        "Time accepts one to three decimal places"
-    );
-    let seconds = if let Some((minutes, seconds)) = whole.split_once(':') {
-        let seconds = number(seconds)?;
-        anyhow::ensure!(seconds < 60, "Seconds after ':' must be less than 60");
-        number(minutes)?
-            .checked_mul(60)
-            .and_then(|minutes| minutes.checked_add(seconds))
-    } else {
-        Some(number(whole)?)
+    let (whole, fraction) = match value.split_once('.') {
+        Some((whole, fraction)) => {
+            anyhow::ensure!(
+                (1..=3).contains(&fraction.len()),
+                "Time accepts one to three decimal places"
+            );
+            (whole, fraction)
+        },
+        None => (value, ""),
+    };
+    let seconds = match whole.split_once(':') {
+        Some((minutes, seconds)) => {
+            let seconds = number(seconds)?;
+            anyhow::ensure!(seconds < 60, "Seconds after ':' must be less than 60");
+            number(minutes)?
+                .checked_mul(60)
+                .and_then(|minutes| minutes.checked_add(seconds))
+        },
+        None => Some(number(whole)?),
     }
     .context("Time is too large")?;
-    let millis = if fraction.is_empty() {
-        0
-    } else {
-        number(fraction)?
-            .saturating_mul(10_u64.pow(3_u32.saturating_sub(u32::try_from(fraction.len())?)))
-    };
+    let millis = number(&format!("{fraction:0<3}"))?;
     Ok(Moment::from_millis(
         seconds
             .checked_mul(1_000)
