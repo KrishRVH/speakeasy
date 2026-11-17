@@ -7,7 +7,7 @@ use std::{
     sync::{Mutex, MutexGuard, PoisonError},
 };
 
-use anyhow::{Context as _, ensure};
+use anyhow::{Context as _, bail, ensure};
 use objc2::{AllocAnyThread as _, DefinedClass as _, define_class, msg_send, rc::Retained};
 use objc2_av_foundation::{AVAssetSegmentType, AVAssetWriter, AVAssetWriterDelegate};
 use objc2_foundation::{NSData, NSObject, NSObjectProtocol};
@@ -16,8 +16,14 @@ struct Sink {
     file: Option<File>,
     bytes: u64,
     limit: u64,
-    initialized: bool,
-    failed: bool,
+    progress: Progress,
+}
+
+#[derive(PartialEq, Eq)]
+enum Progress {
+    Uninitialized,
+    Initialized,
+    Failed,
 }
 
 pub(super) struct State {
@@ -43,7 +49,7 @@ define_class!(
                 catch_unwind(AssertUnwindSafe(|| sink.write(data, kind))),
                 Ok(Ok(()))
             ) {
-                sink.failed = true;
+                sink.progress = Progress::Failed;
             }
         }
     }
@@ -65,8 +71,7 @@ impl Output {
                 file: Some(file),
                 bytes: 0,
                 limit,
-                initialized: false,
-                failed: false,
+                progress: Progress::Uninitialized,
             }),
         });
 
@@ -76,7 +81,7 @@ impl Output {
     pub(super) fn check(&self) -> anyhow::Result<()> {
         let sink = self.sink();
         ensure!(
-            !sink.failed && sink.file.is_some(),
+            sink.progress != Progress::Failed && sink.file.is_some(),
             "Movie segment output failed"
         );
         drop(sink);
@@ -88,7 +93,7 @@ impl Output {
         let file = sink.file.take().context("Movie output already closed")?;
         file.sync_all()?;
         ensure!(
-            !sink.failed && sink.initialized,
+            sink.progress == Progress::Initialized,
             "Movie segment output failed"
         );
         drop(sink);
@@ -119,11 +124,10 @@ impl Output {
 
 impl Sink {
     fn write(&mut self, data: &NSData, kind: AVAssetSegmentType) -> anyhow::Result<()> {
-        ensure!(!self.failed, "Movie output has failed");
-        let expected = if self.initialized {
-            AVAssetSegmentType::Separable
-        } else {
-            AVAssetSegmentType::Initialization
+        let expected = match self.progress {
+            Progress::Uninitialized => AVAssetSegmentType::Initialization,
+            Progress::Initialized => AVAssetSegmentType::Separable,
+            Progress::Failed => bail!("Movie output has failed"),
         };
         ensure!(kind == expected, "Movie segments arrived out of order");
         let end = self
@@ -136,7 +140,7 @@ impl Sink {
         file.write_all(unsafe { data.as_bytes_unchecked() })?;
         file.sync_data()?;
         self.bytes = end;
-        self.initialized = true;
+        self.progress = Progress::Initialized;
         Ok(())
     }
 }
