@@ -37,9 +37,14 @@ pub(crate) struct Recording {
     encoder: Option<Encoder>,
     first: Instant,
     received_at: Option<Instant>,
-    ending: Option<Instant>,
-    failed: bool,
+    ending: Ending,
     target: MovieTarget,
+}
+
+enum Ending {
+    Open,
+    Stopped(Instant),
+    Failed,
 }
 
 struct Publication<'a> {
@@ -85,10 +90,7 @@ impl Movie {
     }
 
     pub(crate) fn stop(&mut self, at: Instant) {
-        if let Self::Active(recording) = self {
-            recording.ending = Some(at);
-        }
-        *self = Self::Stopped;
+        self.end(Ending::Stopped(at));
     }
 
     pub(crate) fn frame(&mut self, frame: &Frame, stopping: &Receiver<Infallible>) -> bool {
@@ -120,13 +122,17 @@ impl Movie {
                 true
             },
             Err(_private_native_error) => {
-                if let Self::Active(recording) = self {
-                    recording.failed = true;
-                }
-                *self = Self::Stopped;
+                self.end(Ending::Failed);
                 false
             },
         }
+    }
+
+    fn end(&mut self, ending: Ending) {
+        if let Self::Active(recording) = self {
+            recording.ending = ending;
+        }
+        *self = Self::Stopped;
     }
 }
 
@@ -145,8 +151,7 @@ impl Recording {
             encoder: Some(encoder),
             first: frame.at,
             received_at: None,
-            ending: None,
-            failed: false,
+            ending: Ending::Open,
             target,
         }))
     }
@@ -203,9 +208,11 @@ impl Drop for Recording {
         let presented = coverage
             .and_then(|coverage| self.first.checked_add(coverage.at))
             .unwrap_or(self.first);
-        let through = self
-            .ending
-            .or(self.received_at)
+        let ended = match self.ending {
+            Ending::Stopped(at) => Some(at),
+            Ending::Open | Ending::Failed => self.received_at,
+        };
+        let through = ended
             .unwrap_or(self.first)
             .max(presented)
             .min(self.target.deadline());
@@ -213,7 +220,7 @@ impl Drop for Recording {
             .encoder
             .take()
             .is_some_and(|encoder| encoder.finish().is_ok())
-            && !self.failed;
+            && !matches!(self.ending, Ending::Failed);
         self.target.finish(
             last,
             through,
