@@ -103,21 +103,31 @@ fn a_purge_keeps_both_leases_through_deletion_even_without_a_cache() -> anyhow::
     Ok(())
 }
 
-#[cfg(unix)]
 #[test]
 fn a_failed_purge_keeps_the_settings() -> anyhow::Result<()> {
-    use std::os::unix::fs::PermissionsExt as _;
     let root = tempfile::tempdir()?;
     let (settings, data) = fixture(root.path())?;
-    let models = data.join("models");
-    fs::set_permissions(&models, fs::Permissions::from_mode(0o555))?;
-    let purged = purge(&settings, &data);
-    fs::set_permissions(&models, fs::Permissions::from_mode(0o755))?;
+    let purged = purge_with(&settings, &data, |path| {
+        if path.ends_with("models") {
+            return Err(io::ErrorKind::PermissionDenied.into());
+        }
+        remove(path)
+    });
     assert!(purged.is_err());
     assert!(
         settings.is_file(),
         "A purge that kept a download still deleted the settings"
     );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_download_that_cannot_be_examined_fails_its_removal() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let not_a_folder = root.path().join("data");
+    fs::write(&not_a_folder, "PUBLIC_FIXTURE")?;
+    assert!(remove(&not_a_folder.join("models")).is_err());
     Ok(())
 }
 
