@@ -21,6 +21,17 @@ mkdir -p artifacts
 rm -f artifacts/speakeasy-macos.zip artifacts/speakeasy-macos.dmg
 staging=$(mktemp -d artifacts/.macos-package.XXXXXX)
 trap 'rm -rf -- "$staging"' EXIT
+# Submits one archive and stops unless Apple accepts it, naming the submission to check.
+notarize() {
+  xcrun notarytool submit "$1" --keychain-profile "$notary_profile" --wait --output-format json > "$staging/notarization.json"
+  python3 -c '
+import json, sys
+result = json.load(sys.stdin)
+if result.get("status") != "Accepted":
+    submission = result.get("id", "unavailable")
+    sys.exit(f"Apple did not accept notarization of the {sys.argv[1]}. Check submission {submission} with notarytool before distributing.")
+' "$2" < "$staging/notarization.json"
+}
 MACOSX_DEPLOYMENT_TARGET=14.0 cargo build --release --locked -p speakeasy
 bundle="artifacts/Speakeasy.app"
 rm -rf "$bundle"
@@ -52,18 +63,7 @@ if [[ -n "$signing_identity" ]]; then
     --entitlements packaging/macos/Entitlements.plist "$bundle"
   codesign --verify --strict "$bundle"
   ditto -c -k --keepParent "$bundle" "$staging/upload.zip"
-  xcrun notarytool submit "$staging/upload.zip" --keychain-profile "$notary_profile" \
-    --wait --output-format json > "$staging/result.json"
-  if ! python3 -c '
-import json, sys
-result = json.load(sys.stdin)
-if result.get("status") != "Accepted":
-    print("Notarization submission:", result.get("id", "unavailable"), file=sys.stderr)
-    sys.exit(1)
-' < "$staging/result.json"; then
-    echo "Apple did not accept notarization. Check this submission with notarytool before distributing." >&2
-    exit 1
-  fi
+  notarize "$staging/upload.zip" app
   xcrun stapler staple "$bundle"
   xcrun stapler validate "$bundle"
   spctl --assess --type execute "$bundle"
@@ -79,9 +79,7 @@ ln -s /Applications "$dmg_directory/Applications"
 hdiutil create -quiet -ov -format UDZO -volname Speakeasy -srcfolder "$dmg_directory" "$staging/speakeasy-macos.dmg"
 if [[ -n "$signing_identity" ]]; then
   codesign --sign "$signing_identity" --timestamp "$staging/speakeasy-macos.dmg"
-  xcrun notarytool submit "$staging/speakeasy-macos.dmg" --keychain-profile "$notary_profile" \
-    --wait --output-format json > "$dmg_directory/result.json"
-  python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("status") == "Accepted" else "Disk image notarization was rejected.")' < "$dmg_directory/result.json"
+  notarize "$staging/speakeasy-macos.dmg" "disk image"
   xcrun stapler staple "$staging/speakeasy-macos.dmg"
   xcrun stapler validate "$staging/speakeasy-macos.dmg"
   spctl --assess --type open --context context:primary-signature "$staging/speakeasy-macos.dmg"

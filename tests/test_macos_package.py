@@ -134,10 +134,10 @@ def test_failed_distribution_never_emits_a_release_archive(
     assert not (artifacts / "speakeasy-macos.dmg").exists()
     assert not list(artifacts.glob(".macos-package.*"))
     if "STUB_NOTARY_STATUS" in failure:
-        if failure.get("STUB_NOTARY_SUFFIX") == ".dmg":
-            assert "Disk image notarization was rejected." in result.stderr
-        else:
-            assert "synthetic-submission" in result.stderr
+        rejected = "disk image" if failure.get("STUB_NOTARY_SUFFIX") == ".dmg" else "app"
+        assert f"notarization of the {rejected}. Check submission synthetic-submission" in (
+            result.stderr
+        )
 
 
 def test_partial_distribution_configuration_fails_before_building(tmp_path: Path) -> None:
