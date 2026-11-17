@@ -79,6 +79,7 @@ async fn recognize(socket: &mut Socket, mut audio: LiveAudio) -> anyhow::Result<
     let mut final_seen = false;
     let mut text = Zeroizing::new(String::new());
     let chunk_size = usize::try_from(audio.rate / 10)?.saturating_mul(2);
+    ensure!(chunk_size > 0, FAILED);
     let deadline = tokio::time::sleep(FINAL_TIMEOUT);
     tokio::pin!(deadline);
     loop {
