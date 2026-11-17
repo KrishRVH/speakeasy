@@ -176,28 +176,26 @@ fn read(directory: &Path) -> Result<ReadShow, ReadError> {
 
 pub(super) fn regular_file(directory: &Path, name: &str, limit: u64) -> io::Result<()> {
     let mut path = directory.to_owned();
-    let mut parts = name.split('/').peekable();
-    while let Some(part) = parts.next() {
-        path.push(part);
-        let metadata = fs::symlink_metadata(&path)?;
-        if parts.peek().is_some() {
-            if !metadata.is_dir() {
-                return Err(io::Error::other("parent must be a directory, not a link"));
-            }
-        } else {
-            if !metadata.is_file() {
-                return Err(io::Error::other("not a regular file"));
-            }
-            if metadata.len() > limit {
-                return Err(too_large());
-            }
-            if metadata.len() == 0 && name != Bundle::SUMMARY {
-                return Err(io::Error::other("file is empty"));
-            }
-            return Ok(());
+    let mut parts = name.split('/');
+    let file = parts.next_back().unwrap_or_default();
+    for folder in parts {
+        path.push(folder);
+        if !fs::symlink_metadata(&path)?.is_dir() {
+            return Err(io::Error::other("parent must be a directory, not a link"));
         }
     }
-    Err(io::Error::other("missing file name"))
+    path.push(file);
+    let metadata = fs::symlink_metadata(&path)?;
+    if !metadata.is_file() {
+        return Err(io::Error::other("not a regular file"));
+    }
+    if metadata.len() > limit {
+        return Err(too_large());
+    }
+    if metadata.len() == 0 && name != Bundle::SUMMARY {
+        return Err(io::Error::other("file is empty"));
+    }
+    Ok(())
 }
 
 pub(super) fn bundle_path(directory: &Path, name: &str) -> PathBuf {
