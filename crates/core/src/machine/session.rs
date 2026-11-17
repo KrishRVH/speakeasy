@@ -13,10 +13,8 @@ pub(super) struct Session<P: Payload> {
     pub(super) started: P::Instant,
     pub(super) purpose: Purpose<P>,
     pub(super) style: P::Style,
-    pub(super) pending_text: Option<P::Heard>,
     stage: Stage<P>,
     recognition: Recognition<P>,
-    show: Option<Show<P>>,
     receipt: Option<P::Receipt>,
 }
 
@@ -25,6 +23,7 @@ pub(super) enum Purpose<P: Payload> {
     Dictation,
     Replay,
     Practice(P::Practice),
+    Show(Show<P>),
 }
 
 #[cfg_attr(test, derive(Clone, Debug))]
@@ -84,7 +83,7 @@ pub enum Release<P: Payload> {
 }
 
 #[cfg_attr(test, derive(Clone, Debug))]
-struct Show<P: Payload> {
+pub(super) struct Show<P: Payload> {
     screen: Screen<P>,
     audio: Option<P::AudioLog>,
     frames: Option<P::FrameLog>,
@@ -150,17 +149,17 @@ enum Stage<P: Payload> {
     Opening,
     Reopening,
     Recording {
-        audio: P::Span,
+        start: P::Span,
     },
     Stopping {
-        audio: P::Span,
+        start: P::Span,
     },
     Recognizing(Ended<P>),
     AwaitingFootage {
         narration: P::Narration,
-        lost: Option<NarrationLoss>,
+        loss: Option<NarrationLoss>,
     },
-    Delivering,
+    Delivering(Option<P::Heard>),
 }
 
 #[cfg_attr(test, derive(Clone, Debug))]
@@ -202,10 +201,8 @@ impl<P: Payload> Session<P> {
             started,
             purpose: Purpose::Dictation,
             style,
-            pending_text: None,
             stage: Stage::Queued,
             recognition: Recognition::new(id),
-            show: None,
             receipt: None,
         }
     }
@@ -214,14 +211,14 @@ impl<P: Payload> Session<P> {
         id: SessionId,
         permit: P::Permit,
         started: P::Instant,
-        style: P::Style,
         receipt: P::Receipt,
     ) -> Self {
-        let mut session = Self::new(id, permit, started, style);
-        session.show = Some(Show::new(Screen::Spent));
-        session.receipt = Some(receipt);
-        session.stage = Stage::Reopening;
-        session
+        Self {
+            purpose: Purpose::Show(Show::new(Screen::Spent)),
+            stage: Stage::Reopening,
+            receipt: Some(receipt),
+            ..Self::new(id, permit, started, P::Style::default())
+        }
     }
 
     pub(super) fn take_receipt(&mut self) -> Option<P::Receipt> {
@@ -235,10 +232,6 @@ impl<P: Payload> Session<P> {
             pending,
             recognized,
         } = reopened;
-        let mut show = Show::new(Screen::Recorded(footage));
-        show.checkpoint = Some(checkpoint);
-        show.disposition = Disposition::Finished;
-        show.origin = Origin::Recovered { pending };
         self.stage = match recognized {
             Recognized::Speech {
                 audio,
@@ -252,16 +245,25 @@ impl<P: Payload> Session<P> {
                     Ended::Finished
                 })
             },
-            Recognized::Narration { narration, loss } => Stage::AwaitingFootage {
-                narration,
-                lost: loss,
-            },
+            Recognized::Narration { narration, loss } => Stage::AwaitingFootage { narration, loss },
         };
-        self.show = Some(show);
+        self.purpose = Purpose::Show(Show {
+            checkpoint: Some(checkpoint),
+            disposition: Disposition::Finished,
+            origin: Origin::Recovered { pending },
+            ..Show::new(Screen::Recorded(footage))
+        });
+    }
+
+    const fn show_mut(&mut self) -> Option<&mut Show<P>> {
+        match &mut self.purpose {
+            Purpose::Show(show) => Some(show),
+            Purpose::Dictation | Purpose::Replay | Purpose::Practice(_) => None,
+        }
     }
 
     pub(super) fn keep(&mut self, kept: Kept<P>) {
-        if let Some(show) = &mut self.show {
+        if let Some(show) = self.show_mut() {
             show.checkpoint = Some(kept.checkpoint);
             show.audio = Some(kept.audio);
             show.frames = Some(kept.frames);
@@ -269,24 +271,24 @@ impl<P: Payload> Session<P> {
     }
 
     pub(super) fn take_frame_log(&mut self) -> Option<P::FrameLog> {
-        self.show.as_mut()?.frames.take()
+        self.show_mut()?.frames.take()
     }
 
     pub(super) fn take_audio_log(&mut self) -> Option<(P::AudioLog, P::Span)> {
-        let (Stage::Recording { audio } | Stage::Stopping { audio }) = self.stage else {
+        let (Stage::Recording { start } | Stage::Stopping { start }) = self.stage else {
             return None;
         };
-        self.show.as_mut()?.audio.take().map(|log| (log, audio))
+        self.show_mut()?.audio.take().map(|log| (log, start))
     }
 
     pub(super) fn forfeit(&mut self) {
-        if let Some(show) = &mut self.show {
+        if let Some(show) = self.show_mut() {
             show.disposition = Disposition::Forfeited;
         }
     }
 
     fn conclude(&mut self) {
-        if let Some(show) = &mut self.show {
+        if let Some(show) = self.show_mut() {
             show.conclude();
         }
     }
@@ -299,12 +301,12 @@ impl<P: Payload> Session<P> {
             Stage::Reopening
             | Stage::Recognizing(_)
             | Stage::AwaitingFootage { .. }
-            | Stage::Delivering => Phase::Processing,
+            | Stage::Delivering(_) => Phase::Processing,
         }
     }
 
     pub(super) const fn is_show(&self) -> bool {
-        self.show.is_some()
+        matches!(self.purpose, Purpose::Show(_))
     }
 
     pub(super) const fn is_practice(&self) -> bool {
@@ -332,7 +334,7 @@ impl<P: Payload> Session<P> {
 
     #[cfg(test)]
     pub(super) const fn is_delivering(&self) -> bool {
-        matches!(self.stage, Stage::Delivering)
+        matches!(self.stage, Stage::Delivering(_))
     }
 
     #[cfg(test)]
@@ -341,14 +343,14 @@ impl<P: Payload> Session<P> {
     }
 
     pub(super) const fn awaits_delivery(&self) -> bool {
-        matches!(self.stage, Stage::Delivering | Stage::Reopening)
+        matches!(self.stage, Stage::Delivering(_) | Stage::Reopening)
     }
 
     #[cfg(test)]
     pub(super) const fn records_screen(&self) -> bool {
         matches!(
-            self.show,
-            Some(Show {
+            self.purpose,
+            Purpose::Show(Show {
                 screen: Screen::Recording,
                 ..
             })
@@ -379,9 +381,16 @@ impl<P: Payload> Session<P> {
         ended.take_lost()
     }
 
+    pub(super) fn take_inserted_text(&mut self) -> Option<P::Heard> {
+        let Stage::Delivering(text) = &mut self.stage else {
+            return None;
+        };
+        text.take()
+    }
+
     pub(super) const fn queued_screen(&self) -> Option<P::Scope> {
-        match &self.show {
-            Some(Show {
+        match &self.purpose {
+            Purpose::Show(Show {
                 screen: Screen::Queued(scope),
                 ..
             }) => Some(*scope),
@@ -400,19 +409,19 @@ impl<P: Payload> Session<P> {
             self.conclude();
         }
         if matches!(self.stage, Stage::Opening) {
-            let audio = P::offset(self.started, at);
+            let start = P::offset(self.started, at);
             self.stage = if gesture == State::Processing {
-                Stage::Stopping { audio }
+                Stage::Stopping { start }
             } else {
-                Stage::Recording { audio }
+                Stage::Recording { start }
             };
         }
     }
 
     pub(super) fn finish(&mut self) {
         self.conclude();
-        if let Stage::Recording { audio } = self.stage {
-            self.stage = Stage::Stopping { audio };
+        if let Stage::Recording { start } = self.stage {
+            self.stage = Stage::Stopping { start };
         }
     }
 
@@ -422,7 +431,7 @@ impl<P: Payload> Session<P> {
             _ if self.is_show() => {
                 self.stage = Stage::AwaitingFootage {
                     narration: P::Narration::default(),
-                    lost: None,
+                    loss: None,
                 };
             },
             _ => return false,
@@ -437,7 +446,7 @@ impl<P: Payload> Session<P> {
     }
 
     fn recognize(&mut self, sealed: Sealed<P>, ended: Ended<P>) {
-        let (Stage::Recording { audio } | Stage::Stopping { audio }) = self.stage else {
+        let (Stage::Recording { start } | Stage::Stopping { start }) = self.stage else {
             return;
         };
         let detail = if self.is_show() {
@@ -445,7 +454,7 @@ impl<P: Payload> Session<P> {
         } else {
             Detail::Text
         };
-        let start = P::shift(audio, sealed.trimmed);
+        let start = P::shift(start, sealed.trimmed);
         self.recognition
             .seal(sealed.audio, sealed.partition, start, detail);
         self.stage = Stage::Recognizing(ended);
@@ -504,11 +513,11 @@ impl<P: Payload> Session<P> {
         if let Stage::Recognizing(ended) = &self.stage
             && let Some(start) = self.recognition.start()
         {
-            let lost = ended.narration_loss();
+            let loss = ended.narration_loss();
             self.recognition = Recognition::new(self.id);
             self.stage = Stage::AwaitingFootage {
                 narration: P::delay(narration, start),
-                lost,
+                loss,
             };
         }
     }
@@ -534,30 +543,31 @@ impl<P: Payload> Session<P> {
         given_up
     }
 
-    fn go_on_without_narration(&mut self, lost: NarrationLoss) {
+    fn go_on_without_narration(&mut self, loss: NarrationLoss) {
         self.recognition = Recognition::new(self.id);
         self.stage = Stage::AwaitingFootage {
             narration: P::Narration::default(),
-            lost: Some(lost),
+            loss: Some(loss),
         };
         self.conclude();
     }
 
     pub(super) fn insert(&mut self, text: P::Heard, config: &P::Config, env: &mut impl Env<P>) {
+        let kept = matches!(self.purpose, Purpose::Dictation).then(|| text.clone());
         self.recognition = Recognition::new(self.id);
         env.insert(text, &self.permit, config);
-        self.stage = Stage::Delivering;
+        self.stage = Stage::Delivering(kept);
     }
 
     pub(super) fn turn_into_show(&mut self, scope: P::Scope, env: &mut impl Env<P>) -> bool {
-        if self.is_practice() || self.is_show() || !(self.is_queued() || self.is_capturing()) {
-            return false;
-        }
-        if !env.shield(&self.permit) {
+        if !matches!(self.purpose, Purpose::Dictation)
+            || !(self.is_queued() || self.is_capturing())
+            || !env.shield(&self.permit)
+        {
             return false;
         }
         self.recognition.whole();
-        self.show = Some(Show::new(Screen::Queued(scope)));
+        self.purpose = Purpose::Show(Show::new(Screen::Queued(scope)));
         true
     }
 
@@ -565,21 +575,21 @@ impl<P: Payload> Session<P> {
         if let Some(Show {
             screen: screen @ Screen::Queued(_),
             ..
-        }) = &mut self.show
+        }) = self.show_mut()
         {
             *screen = Screen::Recording;
         }
     }
 
     pub(super) fn screen_recorded(&mut self, footage: P::Footage) {
-        if let Some(show) = &mut self.show {
+        if let Some(show) = self.show_mut() {
             show.screen = Screen::Recorded(footage);
         }
     }
 
     pub(super) fn publish(&mut self, env: &mut impl Env<P>) {
-        let (Stage::AwaitingFootage { narration, lost }, Some(show)) =
-            (&mut self.stage, &mut self.show)
+        let (Stage::AwaitingFootage { narration, loss }, Purpose::Show(show)) =
+            (&mut self.stage, &mut self.purpose)
         else {
             return;
         };
@@ -587,7 +597,7 @@ impl<P: Payload> Session<P> {
             return;
         };
         let narration = mem::take(narration);
-        let loss = *lost;
+        let loss = *loss;
         show.close_producers();
         let origin = mem::replace(&mut show.origin, Origin::Live);
         let checkpoint = show.checkpoint.take();
@@ -602,7 +612,7 @@ impl<P: Payload> Session<P> {
             &self.permit,
             self.receipt.take(),
         );
-        self.stage = Stage::Delivering;
+        self.stage = Stage::Delivering(None);
     }
 
     pub(super) fn into_cleanup(self, env: &mut impl Env<P>) -> bool {
@@ -610,15 +620,15 @@ impl<P: Payload> Session<P> {
             env.retire_delivery(self.id);
             return true;
         }
-        let Some(mut show) = self.show else {
+        let Purpose::Show(mut show) = self.purpose else {
             return false;
         };
         let release = match show.disposition {
             Disposition::Finished => Release::Keep(match self.stage {
                 Stage::AwaitingFootage {
                     narration,
-                    lost: lost @ (None | Some(NarrationLoss::Incomplete)),
-                } => Some((narration, lost.is_some())),
+                    loss: loss @ (None | Some(NarrationLoss::Incomplete)),
+                } => Some((narration, loss.is_some())),
                 _ => None,
             }),
             Disposition::Unfinished | Disposition::Forfeited => Release::Discard,

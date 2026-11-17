@@ -182,11 +182,8 @@ impl SessionId {
     }
 
     #[must_use]
-    pub const fn next(self) -> Option<Self> {
-        match self.0.checked_add(1) {
-            Some(raw) => Some(Self(raw)),
-            None => None,
-        }
+    pub fn next(self) -> Option<Self> {
+        self.0.checked_add(1).map(Self)
     }
 }
 
@@ -496,7 +493,10 @@ impl Worker {
     }
 
     fn is_streaming(self, session: SessionId) -> bool {
-        matches!(self, Self::Transcribing(Ticket { session: streaming, part: Part::Stream }) if streaming == session)
+        self == Self::Transcribing(Ticket {
+            session,
+            part: Part::Stream,
+        })
     }
 
     fn revive<P: Payload>(&mut self, config: &P::Config, env: &mut impl Env<P>) -> bool {
@@ -738,8 +738,8 @@ impl<P: Payload> Machine<P> {
                 session,
                 changed,
             } => {
-                let refused = self.adopt_preset(name, config, session, changed, env);
-                env.respond(call, refused.map_or_else(|| Ok(self.status()), Err));
+                let adopted = self.adopt_preset(name, config, session, changed, env);
+                env.respond(call, adopted.map(|()| self.status()));
                 None
             },
             Event::Capture(session, capture) => {
@@ -1000,7 +1000,7 @@ impl<P: Payload> Machine<P> {
                 }
             },
             Completion::Transcribed(ticket, Err(text)) => {
-                let replaced = self.worker.revive(&self.config, env);
+                self.worker.revive(&self.config, env);
                 let Some(session) = self
                     .session
                     .as_mut()
@@ -1008,7 +1008,7 @@ impl<P: Payload> Machine<P> {
                 else {
                     return;
                 };
-                if replaced && session.is_transcribing() {
+                if session.is_transcribing() {
                     self.notice = Some(Notice::LoadingModel);
                 }
                 if !session.failed(ticket) {
@@ -1058,7 +1058,6 @@ impl<P: Payload> Machine<P> {
             self.last_dictation = Some(text);
             self.end_session(Outcome::Withheld(lost.notice), env);
         } else {
-            session.pending_text = Some(text.clone());
             session.insert(text, &self.config, env);
         }
     }
@@ -1130,29 +1129,27 @@ impl<P: Payload> Machine<P> {
     }
 
     fn handle_delivered(&mut self, delivered: Delivered<P>, env: &mut impl Env<P>) {
-        if !self.session.as_ref().is_some_and(Session::awaits_delivery) {
+        let Some(session) = self
+            .session
+            .as_mut()
+            .filter(|session| session.awaits_delivery())
+        else {
             return;
-        }
-        let show = self.session.as_ref().is_some_and(Session::is_show);
+        };
+        let show = session.is_show();
         let remembered = matches!(
-            &delivered,
+            delivered,
             Delivered::Inserted(
                 Inserted::Sent | Inserted::Copied(_) | Inserted::Unavailable(_) | Inserted::Failed
             ) | Delivered::Panicked
         );
-        if remembered
-            && let Some(text) = self
-                .session
-                .as_mut()
-                .and_then(|session| session.pending_text.take())
-        {
+        if remembered && let Some(text) = session.take_inserted_text() {
             self.last_dictation = Some(text);
         }
-        let mut outcome = match delivered {
+        let replay = !show && self.last_dictation.is_some();
+        let outcome = match delivered {
             Delivered::Reopened(Ok(reopened)) => {
-                if let Some(session) = &mut self.session {
-                    session.reopened(reopened);
-                }
+                session.reopened(reopened);
                 return;
             },
             Delivered::Inserted(Inserted::Sent) => Outcome::Done,
@@ -1178,7 +1175,7 @@ impl<P: Payload> Machine<P> {
             Delivered::Inserted(Inserted::Unavailable(text)) => {
                 Outcome::Failed(Failure::Undelivered {
                     said: Some(text),
-                    replay: false,
+                    replay,
                 })
             },
             Delivered::Published(Published::Recovered { shown, recovered }) => {
@@ -1190,19 +1187,9 @@ impl<P: Payload> Machine<P> {
             | Delivered::Reopened(Err(text)) => Outcome::Failed(Failure::Said(text)),
             Delivered::Panicked if show => Outcome::Failed(Failure::PublishStopped),
             Delivered::Inserted(Inserted::Failed) | Delivered::Panicked => {
-                Outcome::Failed(Failure::Undelivered {
-                    said: None,
-                    replay: false,
-                })
+                Outcome::Failed(Failure::Undelivered { said: None, replay })
             },
         };
-        if !show
-            && remembered
-            && self.last_dictation.is_some()
-            && let Outcome::Failed(Failure::Undelivered { replay, .. }) = &mut outcome
-        {
-            *replay = true;
-        }
         if let Outcome::Failed(failure) = &outcome
             && let Some(receipt) = self.session.as_mut().and_then(Session::take_receipt)
         {
@@ -1245,60 +1232,70 @@ impl<P: Payload> Machine<P> {
     }
 
     fn start_session(&mut self, now: Now<P>, env: &mut impl Env<P>) -> ControlFlow<Flow> {
-        let Some(permit) = env.admit() else {
-            self.gesture.abandon();
+        let Some((id, permit)) = self.admit(env)? else {
             return ControlFlow::Continue(());
         };
-        let Some(id) = self.latest.id.next() else {
-            return ControlFlow::Break(Flow::Stopped);
-        };
-        let style = env.style();
-        self.latest = Latest {
-            id,
-            started: now.instant,
-            show: false,
-            style,
-        };
-        self.outcome = Outcome::Idle;
-        self.notice = None;
-        let mut session = Session::new(id, permit, now.instant, style);
+        let mut session = Session::new(id, permit, now.instant, env.style());
         if let Some(practice) = &self.practice {
             session.purpose = Purpose::Practice(practice.clone());
         }
-        self.session = Some(session);
+        self.begin(session);
         ControlFlow::Continue(())
+    }
+
+    fn admit(
+        &mut self,
+        env: &mut impl Env<P>,
+    ) -> ControlFlow<Flow, Option<(SessionId, P::Permit)>> {
+        let Some(permit) = env.admit() else {
+            self.gesture.abandon();
+            return ControlFlow::Continue(None);
+        };
+        match self.latest.id.next() {
+            Some(id) => ControlFlow::Continue(Some((id, permit))),
+            None => ControlFlow::Break(Flow::Stopped),
+        }
+    }
+
+    fn begin(&mut self, session: Session<P>) {
+        self.latest = Latest {
+            id: session.id,
+            started: session.started,
+            show: session.is_show(),
+            style: session.style,
+        };
+        self.outcome = Outcome::Idle;
+        self.notice = None;
+        self.session = Some(session);
     }
 
     fn paste_last(&mut self, now: Now<P>, env: &mut impl Env<P>) -> ControlFlow<Flow> {
         if self.practice.is_some() {
             return ControlFlow::Continue(());
         }
-        let Some(text) = self.last_dictation.clone() else {
+        if self.last_dictation.is_none() {
             if self.session.is_none() {
                 self.outcome = Outcome::NothingToPaste;
             }
             return ControlFlow::Continue(());
-        };
+        }
         if matches!(self.gesture.state(), State::Held | State::HandsFree)
             && self
                 .session
                 .as_ref()
-                .is_some_and(|session| !session.is_show() && !session.is_practice())
+                .is_some_and(|session| matches!(session.purpose, Purpose::Dictation))
         {
             self.gesture.abandon();
             self.abandon(env);
             self.worker.revive(&self.config, env);
         }
-        if self.session.is_some() {
-            return ControlFlow::Continue(());
-        }
-        if !self.gesture.deliver() {
+        if self.session.is_some() || !self.gesture.deliver() {
             return ControlFlow::Continue(());
         }
         self.start_session(now, env)?;
-        if let Some(session) = &mut self.session {
+        if let (Some(session), Some(text)) = (&mut self.session, &self.last_dictation) {
             session.purpose = Purpose::Replay;
-            session.insert(text, &self.config, env);
+            session.insert(text.clone(), &self.config, env);
         }
         ControlFlow::Continue(())
     }
@@ -1330,28 +1327,15 @@ impl<P: Payload> Machine<P> {
         if !self.gesture.save() {
             return ControlFlow::Continue(());
         }
-        let Some(permit) = env.admit() else {
-            self.gesture.abandon();
+        let Some((id, permit)) = self.admit(env)? else {
             return ControlFlow::Continue(());
-        };
-        let Some(id) = self.latest.id.next() else {
-            return ControlFlow::Break(Flow::Stopped);
         };
         if !env.shield(&permit) {
             self.gesture.abandon();
             return ControlFlow::Continue(());
         }
-        let style = P::Style::default();
-        self.latest = Latest {
-            id,
-            started: now.instant,
-            show: true,
-            style,
-        };
-        self.outcome = Outcome::Idle;
-        self.notice = None;
         env.reopen(interrupted);
-        self.session = Some(Session::recovering(id, permit, now.instant, style, receipt));
+        self.begin(Session::recovering(id, permit, now.instant, receipt));
         ControlFlow::Continue(())
     }
 
@@ -1584,13 +1568,13 @@ impl<P: Payload> Machine<P> {
         command: Command<P>,
         env: &mut impl Env<P>,
     ) -> ControlFlow<Flow> {
-        let refused = match command {
-            Command::Status => None,
+        let reply = match command {
+            Command::Status => Ok(()),
             Command::Start(style) => {
-                if self.session.is_some() || self.practice.is_some() {
-                    Some(Refusal::Busy)
+                if self.is_busy() {
+                    Err(Refusal::Busy)
                 } else if !self.desktop_ready || self.worker.model() != ModelState::Ready {
-                    Some(Refusal::NotReady)
+                    Err(Refusal::NotReady)
                 } else {
                     let action = self.gesture.toggle(now.moment);
                     self.handle_action(now, action, env)?;
@@ -1600,45 +1584,51 @@ impl<P: Payload> Machine<P> {
                         session.style = style;
                         self.latest.style = style;
                     }
-                    self.control_session()
-                        .is_none()
-                        .then_some(Refusal::StartStopped)
+                    if self.control_session().is_some() {
+                        Ok(())
+                    } else {
+                        Err(Refusal::StartStopped)
+                    }
                 }
             },
             Command::Stop(token) | Command::Cancel(token)
                 if token.is_none() || self.control_session() != token =>
             {
-                Some(Refusal::NotActive)
+                Err(Refusal::NotActive)
             },
             Command::Stop(_) => {
                 let action = self.gesture.finish();
                 self.handle_action(now, action, env)?;
-                None
+                Ok(())
             },
             Command::Cancel(_) => {
                 let action = self.gesture.cancel();
                 self.handle_action(now, action, env)?;
-                None
+                Ok(())
             },
             Command::PasteLast => {
-                if self.session.is_some() || self.practice.is_some() {
-                    Some(Refusal::PasteBusy)
+                if self.is_busy() {
+                    Err(Refusal::PasteBusy)
                 } else if !self.desktop_ready {
-                    Some(Refusal::PasteNotReady)
+                    Err(Refusal::PasteNotReady)
                 } else if self.last_dictation.is_none() {
-                    Some(Refusal::NothingToPaste)
+                    Err(Refusal::NothingToPaste)
                 } else {
                     self.paste_last(now, env)?;
-                    let replaying = self
+                    if self
                         .session
                         .as_ref()
-                        .is_some_and(|session| matches!(session.purpose, Purpose::Replay));
-                    (!replaying).then_some(Refusal::PasteStopped)
+                        .is_some_and(|session| matches!(session.purpose, Purpose::Replay))
+                    {
+                        Ok(())
+                    } else {
+                        Err(Refusal::PasteStopped)
+                    }
                 }
             },
-            Command::Unsupported => Some(Refusal::Unsupported),
+            Command::Unsupported => Err(Refusal::Unsupported),
         };
-        env.respond(call, refused.map_or_else(|| Ok(self.status()), Err));
+        env.respond(call, reply.map(|()| self.status()));
         ControlFlow::Continue(())
     }
 
@@ -1649,22 +1639,26 @@ impl<P: Payload> Machine<P> {
         session: SessionId,
         changed: bool,
         env: &mut impl Env<P>,
-    ) -> Option<Refusal> {
-        if self.session.is_some() || self.practice.is_some() {
-            return Some(Refusal::PresetBusy);
+    ) -> Result<(), Refusal> {
+        if self.is_busy() {
+            return Err(Refusal::PresetBusy);
         }
         if self.latest.id != session || changed {
-            return Some(Refusal::PresetStale);
+            return Err(Refusal::PresetStale);
         }
         self.apply_settings(config, env);
         self.preset = Some(name);
-        None
+        Ok(())
+    }
+
+    const fn is_busy(&self) -> bool {
+        self.session.is_some() || self.practice.is_some()
     }
 
     fn control_session(&self) -> Option<SessionId> {
         self.session
             .as_ref()
-            .filter(|session| !session.is_show() && matches!(session.purpose, Purpose::Dictation))
+            .filter(|session| matches!(session.purpose, Purpose::Dictation))
             .map(|session| session.id)
     }
 }

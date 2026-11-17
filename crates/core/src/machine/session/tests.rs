@@ -23,9 +23,9 @@ fn sealed() -> Sealed<Sample> {
     }
 }
 
-const fn lost(session: &Session<Sample>) -> Option<NarrationLoss> {
+const fn loss(session: &Session<Sample>) -> Option<NarrationLoss> {
     match &session.stage {
-        Stage::AwaitingFootage { lost, .. } => *lost,
+        Stage::AwaitingFootage { loss, .. } => *loss,
         _ => None,
     }
 }
@@ -93,13 +93,13 @@ fn a_show_goes_on_without_narration_only_from_the_stages_its_loss_can_reach() {
         show.audio_failed(false),
         "Audio can still stop while the capture seals it"
     );
-    assert_eq!(lost(&show), Some(NarrationLoss::AudioStopped));
+    assert_eq!(loss(&show), Some(NarrationLoss::AudioStopped));
 
     let mut show = opened(&mut log, true);
     show.audio_ready(State::Held, Duration::ZERO);
     show.finish();
     assert!(show.audio_failed(true));
-    assert_eq!(lost(&show), Some(NarrationLoss::AudioSilent));
+    assert_eq!(loss(&show), Some(NarrationLoss::AudioSilent));
 
     let mut show = opened(&mut log, true);
     show.audio_ready(State::Held, Duration::ZERO);
@@ -114,5 +114,5 @@ fn a_show_goes_on_without_narration_only_from_the_stages_its_loss_can_reach() {
     }));
     assert!(show.request(&mut log).is_some());
     assert!(show.not_transcribed());
-    assert_eq!(lost(&show), Some(NarrationLoss::NotTranscribed));
+    assert_eq!(loss(&show), Some(NarrationLoss::NotTranscribed));
 }
