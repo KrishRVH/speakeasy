@@ -1125,7 +1125,6 @@ impl<P: Payload> Machine<P> {
             },
             Screening::Unchosen(unchosen) => {
                 session.forfeit();
-                self.gesture.abandon();
                 self.discard(env);
                 self.cue(Cue::Cancel, env);
                 self.outcome = Outcome::Unchosen(unchosen);
@@ -1291,7 +1290,6 @@ impl<P: Payload> Machine<P> {
         if matches!(self.gesture.state(), State::Held | State::HandsFree)
             && self.session.as_ref().is_some_and(Session::is_dictation)
         {
-            self.gesture.abandon();
             self.abandon(env);
             self.worker.revive(&self.config, env);
         }
@@ -1316,7 +1314,6 @@ impl<P: Payload> Machine<P> {
     fn end_practice(&mut self, env: &mut impl Env<P>) {
         self.practice = None;
         if self.session.as_ref().is_some_and(Session::is_practice) {
-            self.gesture.abandon();
             self.discard(env);
             self.cue(Cue::Cancel, env);
         }
@@ -1387,6 +1384,7 @@ impl<P: Payload> Machine<P> {
     }
 
     fn abandon(&mut self, env: &mut impl Env<P>) {
+        self.gesture.abandon();
         self.clear_warning();
         let Some(session) = self.session.take() else {
             return;
@@ -1411,7 +1409,6 @@ impl<P: Payload> Machine<P> {
     }
 
     fn fail(&mut self, failure: Failure<P>, env: &mut impl Env<P>) {
-        self.gesture.abandon();
         self.abandon(env);
         self.outcome = Outcome::Failed(failure);
     }
