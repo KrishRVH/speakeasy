@@ -116,7 +116,7 @@ pub(crate) struct Window(CGWindowID);
 struct Described {
     number: CGWindowID,
     owner: i64,
-    layer: i64,
+    layer: Option<WindowLayer>,
     alpha: f64,
     on_screen: bool,
     bounds: Bounds,
@@ -124,28 +124,31 @@ struct Described {
 
 pub(crate) fn window_under_pointer(display: Display) -> anyhow::Result<Option<(Window, Part)>> {
     let pointer = pointer_location().context(NO_POINTER)?;
-    let listed = on_screen_windows().context("Cannot list windows. Try again.")?;
-    Ok(listed
-        .into_iter()
-        .find(|window| window.layer == 0 && window.alpha > 0.0 && window.bounds.contains(pointer))
+    Ok(on_screen_windows()
+        .context("Cannot list windows. Try again.")?
+        .find(|window| {
+            window.layer == Some(WindowLayer::Normal)
+                && window.alpha > 0.0
+                && window.bounds.contains(pointer)
+        })
         .filter(|window| !super::is_own_process(window.owner))
         .and_then(|front| {
-            let part = display.bounds.part_covered_by(front.bounds)?;
-            Some((Window(front.number), part))
+            display
+                .bounds
+                .part_covered_by(front.bounds)
+                .map(|part| (Window(front.number), part))
         }))
 }
 
 pub(crate) fn stack(display: Display) -> Option<Vec<Listed>> {
-    let listed = on_screen_windows()?;
     Some(
-        listed
-            .into_iter()
+        on_screen_windows()?
             .filter(|window| window.alpha > 0.0 && !super::is_own_process(window.owner))
             .filter_map(|window| {
                 Some(Listed {
                     window: u64::from(window.number),
                     process: u64::try_from(window.owner).ok()?,
-                    layer: layer(window.layer)?,
+                    layer: window.layer?,
                     part: display.bounds.part_covered_by(window.bounds)?,
                 })
             })
@@ -177,18 +180,17 @@ fn place(target: Target) -> Result<Place, WindowGone> {
     let Region::Window(window, _) = target.region else {
         return Ok(Place::Covers(target.part()));
     };
-    let Some(listed) = windows(CGWindowListOption::OptionIncludingWindow, window.0) else {
+    let Some(mut listed) = windows(CGWindowListOption::OptionIncludingWindow, window.0) else {
         return Ok(Place::Unknown);
     };
     let described = listed
-        .into_iter()
         .find(|described| described.number == window.0)
         .ok_or(WindowGone::Closed)?;
     if !described.on_screen {
         return Err(WindowGone::OffScreen);
     }
     target
-        .display()
+        .display
         .native
         .bounds
         .part_covered_by(described.bounds)
@@ -196,23 +198,26 @@ fn place(target: Target) -> Result<Place, WindowGone> {
         .ok_or(WindowGone::OffScreen)
 }
 
-fn on_screen_windows() -> Option<Vec<Described>> {
+fn on_screen_windows() -> Option<impl Iterator<Item = Described>> {
     windows(
         CGWindowListOption::OptionOnScreenOnly | CGWindowListOption::ExcludeDesktopElements,
         kCGNullWindowID,
     )
 }
 
-fn windows(options: CGWindowListOption, window: CGWindowID) -> Option<Vec<Described>> {
+fn windows(
+    options: CGWindowListOption,
+    window: CGWindowID,
+) -> Option<impl Iterator<Item = Described>> {
     let list = CGWindowListCopyWindowInfo(options, window)?;
 
     let list =
         unsafe { CFRetained::cast_unchecked::<CFArray<CFDictionary<CFString, CFType>>>(list) };
-    Some(list.iter().filter_map(|window| describe(&window)).collect())
+    Some(list.into_iter().filter_map(|window| describe(&window)))
 }
 
 fn describe(window: &CFDictionary<CFString, CFType>) -> Option<Described> {
-    let [number, owner, layer, alpha, on_screen, bounds] = unsafe {
+    let [number, owner, level, alpha, on_screen, bounds] = unsafe {
         [
             kCGWindowNumber,
             kCGWindowOwnerPID,
@@ -233,7 +238,7 @@ fn describe(window: &CFDictionary<CFString, CFType>) -> Option<Described> {
     Some(Described {
         number: u32::try_from(numeric(number)?.as_i64()?).ok()?,
         owner: numeric(owner)?.as_i64()?,
-        layer: numeric(layer)?.as_i64()?,
+        layer: layer(numeric(level)?.as_i64()?),
         alpha: numeric(alpha)
             .and_then(|alpha| alpha.as_f64())
             .unwrap_or(1.0),
@@ -269,7 +274,7 @@ pub(crate) fn capture(
     stopping: &Receiver<Infallible>,
     movie: Option<crate::MovieTarget>,
 ) {
-    if matches!(target.region, Region::Window(_, _)) {
+    if matches!(target.region, Region::Window(..)) {
         drop(movie);
         capture_stills_owned(target, interval, longest_edge, events, stopping);
     } else if let Err(failure) =
@@ -318,9 +323,7 @@ async fn capture_stills(
     longest_edge: u32,
     events: &Sender<ScreenEvent>,
 ) -> Result<Infallible, Failure> {
-    let source = answer(Source::fetch(target.display().native.id, longest_edge))
-        .await
-        .unwrap_or(Err(Failure::Stalled))?;
+    let source = Source::fetch(target.display.native.id, longest_edge).await?;
     let mut last_answer = Instant::now();
     loop {
         let still = match place(target)? {
@@ -362,15 +365,16 @@ struct Source {
 unsafe impl Send for Source {}
 
 impl Source {
-    fn fetch(id: CGDirectDisplayID, longest_edge: u32) -> Receiver<Result<Self, Failure>> {
-        ask(
+    async fn fetch(id: CGDirectDisplayID, longest_edge: u32) -> Result<Self, Failure> {
+        let replies = ask(
             |handler| {
                 unsafe { SCShareableContent::getShareableContentWithCompletionHandler(handler) };
             },
             move |content: Option<&SCShareableContent>, _: Option<&NSError>| {
                 Self::new(content.ok_or(Failure::Permission)?, id, longest_edge)
             },
-        )
+        );
+        answer(replies).await.unwrap_or(Err(Failure::Stalled))
     }
 
     fn new(

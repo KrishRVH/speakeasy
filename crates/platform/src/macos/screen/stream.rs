@@ -20,7 +20,7 @@ use objc2_screen_capture_kit::{
 };
 use tokio::runtime;
 
-use super::{Failure, PATIENCE, Source, answer, display_bounds, refused};
+use super::{Failure, PATIENCE, Source, display_bounds, refused};
 use crate::{
     Frame, Part, ScreenEvent, Target,
     movie::recording::{INTERVAL, Movie},
@@ -45,9 +45,7 @@ pub(super) fn capture(
         tokio::select! {
             _ = stopping.recv() => Ok(None),
             () = events.closed() => Ok(None),
-            source = answer(Source::fetch(target.display.native.id, longest_edge)) => {
-                source.unwrap_or(Err(Failure::Stalled)).map(Some)
-            },
+            source = Source::fetch(target.display.native.id, longest_edge) => source.map(Some),
         }
     })?;
     let Some(source) = source else {

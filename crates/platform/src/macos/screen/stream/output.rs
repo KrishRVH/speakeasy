@@ -94,7 +94,8 @@ impl Output {
     }
 
     fn read(&self, sample: &CMSampleBuffer, kind: SCStreamOutputType) -> Result<(), Failure> {
-        if kind != SCStreamOutputType::Screen || self.ivars().frames.is_closed() {
+        let state = self.ivars();
+        if kind != SCStreamOutputType::Screen || state.frames.is_closed() {
             return Ok(());
         }
 
@@ -116,14 +117,14 @@ impl Output {
             SCFrameStatus::Complete => {},
             _ => return Err(Failure::Stalled),
         }
-        if self.ivars().frames.is_full() {
+        if state.frames.is_full() {
             return Ok(());
         }
 
         let ticks = number(&info, unsafe { SCStreamFrameInfoDisplayTime })
             .and_then(|value| u64::try_from(value).ok())
             .ok_or(Failure::Stalled)?;
-        let Some(at) = self.ivars().clock.at(ticks, Instant::now()) else {
+        let Some(at) = state.clock.at(ticks, Instant::now()) else {
             return Ok(());
         };
 
@@ -131,16 +132,16 @@ impl Output {
         if [
             CVPixelBufferGetWidth(&buffer),
             CVPixelBufferGetHeight(&buffer),
-        ] != self.ivars().size
+        ] != state.size
         {
             return Err(Failure::DisplayLost);
         }
-        let frame = frame(sample, self.ivars().part, at).ok_or(Failure::Stalled)?;
+        let frame = frame(sample, state.part, at).ok_or(Failure::Stalled)?;
         #[expect(
             clippy::let_underscore_must_use,
             reason = "A full bounded lane drops a frame; a stopped owner no longer accepts pixels"
         )]
-        let _ = self.ivars().frames.try_send(frame);
+        let _ = state.frames.try_send(frame);
         Ok(())
     }
 
