@@ -108,9 +108,7 @@ async fn cancelled_text_never_replaces_recall_and_settings_preserve_it() -> anyh
     preparing.release().await?;
     assert_eq!(receive(&h.pasted).await?, "Kept fixture.");
     h.phase(Phase::Done).await?;
-    let mut config = h.runtime.configuration.borrow().clone();
-    config.language = "fr".into();
-    h.runtime.configure(ValidConfig::assume(config));
+    change_settings(&h);
     h.phase(Phase::Idle).await?;
     assert!(h.snapshot().last_dictation);
     h.input(Input::PasteLast);
@@ -148,8 +146,7 @@ async fn empty_replay_during_a_hold_preserves_the_recording() -> anyhow::Result<
     tokio::time::advance(Duration::from_millis(300)).await;
     h.input(Input::PasteLast);
     h.input(Input::Release);
-    let (_, reply) = receive(&h.jobs).await?;
-    answer(reply, "Current fixture.")?;
+    h.transcribe_next_as("Current fixture.").await?;
     assert_eq!(receive(&h.pasted).await?, "Current fixture.");
     h.phase(Phase::Done).await?;
     h.close().await
