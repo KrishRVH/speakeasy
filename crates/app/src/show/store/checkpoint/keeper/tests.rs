@@ -106,7 +106,7 @@ async fn an_audio_failure_does_not_stop_frames_or_release_the_owner() -> anyhow:
         mut audio,
     } = begin(root.path())?;
     assert!(audio.begin(0, Duration::ZERO, "en".into()));
-    assert!(audio.finish(&[1, 0], &[]));
+    drop(audio);
     record_frame(&mut frames)?;
     assert!(frames.close().await);
     let checkpoint = keeper
