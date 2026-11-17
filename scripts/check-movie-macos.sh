@@ -53,4 +53,4 @@ for name in ["moving", "other", "long"]:
     if metadata["streams"] != [{"color_space": "smpte170m", "color_transfer": "iec61966-2-1", "color_primaries": "bt709"}]:
         raise SystemExit("Synthetic video lost its color description")
 PY
-cargo test --locked -p speakeasy-platform native_movie_preserves_exact_samples_pixels_and_input_ownership -- --ignored --nocapture --test-threads=1
+cargo test --locked -p speakeasy-platform macos::movie::tests::native_movie_ -- --ignored --nocapture --test-threads=1

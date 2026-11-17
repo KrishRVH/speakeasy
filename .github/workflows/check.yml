@@ -143,7 +143,7 @@ jobs:
       - name: Decode the Windows movie on macOS
         timeout-minutes: 5
         run: |
-          export SPEAKEASY_WINDOWS_MOVIE="$PWD/artifacts/movie/windows.mp4"
+          export SPEAKEASY_WINDOWS_MOVIE_DIRECTORY="$PWD/artifacts/movie"
           cargo test --locked -p speakeasy-platform native_windows_movie_preserves_colors_on_macos -- --ignored --nocapture --test-threads=1
       - name: Check native Mac movie encoding
         timeout-minutes: 5

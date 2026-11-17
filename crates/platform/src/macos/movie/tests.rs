@@ -7,7 +7,7 @@ use std::{
         fd::{AsRawFd as _, RawFd},
         unix::fs::MetadataExt as _,
     },
-    path::Path,
+    path::{Path, PathBuf},
     time::Instant,
 };
 
@@ -16,8 +16,14 @@ use speakeasy_show::MoviePrefix;
 use super::*;
 use crate::movie::tests::check_colors;
 
+fn fixtures() -> anyhow::Result<PathBuf> {
+    std::env::var_os("SPEAKEASY_MOVIE_FIXTURES")
+        .map(PathBuf::from)
+        .context("Set SPEAKEASY_MOVIE_FIXTURES")
+}
+
 fn validated(path: &Path) -> anyhow::Result<(File, MoviePrefix)> {
-    let mut file = File::open(path)?;
+    let mut file = File::open(path).with_context(|| format!("Cannot open {}", path.display()))?;
     let prefix = crate::movie::tests::prefix(&mut file)?;
     Ok((file, prefix))
 }
@@ -44,7 +50,7 @@ pub(super) fn assert_released(descriptor: RawFd, opened: &Metadata) {
     if status == 0 {
         let current = unsafe { current.assume_init() };
         assert!(
-            u64::try_from(current.st_dev).ok() != Some(opened.dev())
+            i64::from(current.st_dev).cast_unsigned() != opened.dev()
                 || current.st_ino != opened.ino(),
             "A native movie owner retained its file"
         );
@@ -58,11 +64,8 @@ pub(super) fn assert_released(descriptor: RawFd, opened: &Metadata) {
 
 #[test]
 #[ignore = "Opt in: native file-fed codec; run scripts/check-movie-macos.sh with FFmpeg installed"]
-fn native_movie_preserves_exact_samples_pixels_and_input_ownership() -> anyhow::Result<()> {
-    let directory =
-        std::env::var_os("SPEAKEASY_MOVIE_FIXTURES").context("Set SPEAKEASY_MOVIE_FIXTURES")?;
-    let directory = Path::new(&directory);
-    let path = directory.join("moving.mp4");
+fn native_movie_reads_exact_samples_and_pixels() -> anyhow::Result<()> {
+    let path = fixtures()?.join("moving.mp4");
     let (_, prefix) = validated(&path)?;
     assert_eq!(prefix.frames(), 120);
     assert_eq!(prefix.timescale(), 30_000);
@@ -72,6 +75,13 @@ fn native_movie_preserves_exact_samples_pixels_and_input_ownership() -> anyhow::
         assert_eq!(frame.at, prefix.samples()[index].at);
         check_colors(&frame, index);
     }
+    Ok(())
+}
+
+#[test]
+#[ignore = "Opt in: native file-fed codec; run scripts/check-movie-macos.sh with FFmpeg installed"]
+fn native_movie_cancels_before_and_after_generation_starts() -> anyhow::Result<()> {
+    let path = fixtures()?.join("moving.mp4");
     assert!(read(&path, 1, || true)?.is_none());
     #[expect(
         clippy::disallowed_types,
@@ -86,20 +96,31 @@ fn native_movie_preserves_exact_samples_pixels_and_input_ownership() -> anyhow::
         .is_none()
     );
     assert!(checks.get() >= 3);
+    Ok(())
+}
 
+#[test]
+#[ignore = "Opt in: native file-fed codec; run scripts/check-movie-macos.sh with FFmpeg installed"]
+fn native_movie_reads_its_open_file_after_the_path_is_replaced() -> anyhow::Result<()> {
+    let fixtures = fixtures()?;
     let private = tempfile::tempdir()?;
     let original = private.path().join("movie.mp4");
-    std::fs::copy(&path, &original)?;
+    std::fs::copy(fixtures.join("moving.mp4"), &original)?;
     let (file, prefix) = validated(&original)?;
     std::fs::rename(&original, private.path().join("retained.mp4"))?;
-    std::fs::copy(directory.join("other.mp4"), &original)?;
-    let sample = prefix.samples()[1];
-    let frame = crate::read_movie_frame(file, &prefix, sample.at, || false)?
+    std::fs::copy(fixtures.join("other.mp4"), &original)?;
+    let frame = crate::read_movie_frame(file, &prefix, prefix.samples()[1].at, || false)?
         .context("Synthetic replaced-path read cancelled")?;
     check_colors(&frame, 1);
+    Ok(())
+}
 
-    let mut truncated = std::fs::read(&path)?;
+#[test]
+#[ignore = "Opt in: native file-fed codec; run scripts/check-movie-macos.sh with FFmpeg installed"]
+fn native_movie_reads_the_recoverable_prefix_of_a_truncated_file() -> anyhow::Result<()> {
+    let mut truncated = std::fs::read(fixtures()?.join("moving.mp4"))?;
     truncated.truncate(truncated.len().checked_sub(8).unwrap());
+    let private = tempfile::tempdir()?;
     let recovered = private.path().join("recovered.mp4");
     std::fs::write(&recovered, &truncated)?;
     let (_, prefix) = validated(&recovered)?;
@@ -110,8 +131,13 @@ fn native_movie_preserves_exact_samples_pixels_and_input_ownership() -> anyhow::
     let frame = read(&recovered, index, || false)?.context("Recovered frame cancelled")?;
     assert_eq!(frame.at, prefix.samples()[index].at);
     check_colors(&frame, index);
+    Ok(())
+}
 
-    let long = directory.join("long.mp4");
+#[test]
+#[ignore = "Opt in: native file-fed codec; run scripts/check-movie-macos.sh with FFmpeg installed"]
+fn native_movie_seeks_near_the_end_of_a_five_minute_recording() -> anyhow::Result<()> {
+    let long = fixtures()?.join("long.mp4");
     let (_, prefix) = validated(&long)?;
     assert!(prefix.duration() >= Duration::from_secs(299));
     let index = prefix
@@ -127,33 +153,35 @@ fn native_movie_preserves_exact_samples_pixels_and_input_ownership() -> anyhow::
 }
 
 #[test]
-#[ignore = "Opt in: read the synthetic Windows encoder artifact on macOS"]
+#[ignore = "Opt in: read the synthetic Windows encoder artifacts on macOS"]
 fn native_windows_movie_preserves_colors_on_macos() -> anyhow::Result<()> {
-    let path = std::env::var_os("SPEAKEASY_WINDOWS_MOVIE")
-        .context("Set SPEAKEASY_WINDOWS_MOVIE to the synthetic encoder artifact")?;
-    let path = Path::new(&path);
-    retained_colors(path, [320, 240], &[119, 0, 1, 45, 2])?;
-    retained_colors(&path.with_file_name("windows-hd.mp4"), [1280, 720], &[1, 0])
+    let directory = std::env::var_os("SPEAKEASY_WINDOWS_MOVIE_DIRECTORY")
+        .map(PathBuf::from)
+        .context("Set SPEAKEASY_WINDOWS_MOVIE_DIRECTORY to the synthetic encoder artifacts")?;
+    for (name, size, indices) in [
+        ("windows.mp4", [320, 240], &[119, 0, 1, 45, 2][..]),
+        ("windows-hd.mp4", [1280, 720], &[1, 0]),
+    ] {
+        check_retained_colors(&directory.join(name), size, indices)?;
+    }
+    Ok(())
 }
 
-fn retained_colors(path: &Path, size: [u32; 2], indices: &[usize]) -> anyhow::Result<()> {
+fn check_retained_colors(path: &Path, size: [u32; 2], indices: &[usize]) -> anyhow::Result<()> {
     let (mut input, prefix) = validated(path)?;
     assert!(!prefix.truncated());
     assert_eq!(prefix.size(), size);
     input.rewind()?;
-    let private = tempfile::tempdir()?;
-    let path = private.path().join("retained.mp4");
-    let mut retained = File::create_new(&path)?;
-    assert_eq!(
-        std::io::copy(&mut input.take(prefix.bytes()), &mut retained)?,
-        prefix.bytes()
-    );
-    drop(retained);
-    let mut bytes = std::fs::read(&path)?;
+    let mut bytes = Vec::new();
+    input.take(prefix.bytes()).read_to_end(&mut bytes)?;
+    assert_eq!(u64::try_from(bytes.len())?, prefix.bytes());
     prefix.normalization().apply(0, &mut bytes)?;
-    std::fs::write(&path, bytes)?;
+    let private = tempfile::tempdir()?;
+    let retained = private.path().join("retained.mp4");
+    std::fs::write(&retained, bytes)?;
     for &index in indices {
-        let frame = read(&path, index, || false)?.context("Synthetic Windows frame cancelled")?;
+        let frame =
+            read(&retained, index, || false)?.context("Synthetic Windows frame cancelled")?;
         check_colors(&frame, index);
     }
     Ok(())
