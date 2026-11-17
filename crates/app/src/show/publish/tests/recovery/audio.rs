@@ -42,7 +42,7 @@ async fn failed_save_keeps_durable_narration_and_original_voice() -> anyhow::Res
     let root = tempfile::tempdir()?;
     let checkpoint = with_audio(root.path()).await?;
     let captured = narrated(
-        footage(&checkpoint)?,
+        Footage::from(checkpoint.replay()?),
         Narration::Text("synthetic narration".into()),
         None,
     );
@@ -83,7 +83,7 @@ async fn pending_retry_preserves_edits_and_failure_does_not_publish_another_copy
     let selected = with_audio(root.path()).await?.interrupted()?;
     let checkpoint = selected.lock()?;
     let captured = narrated(
-        footage(&checkpoint)?,
+        Footage::from(checkpoint.replay()?),
         Narration::default(),
         Some(NarrationLoss::NotTranscribed),
     );
@@ -188,7 +188,7 @@ async fn kept_bundle_cannot_extend_audio_expiry_and_discard_audio_leaves_it_unto
         let checkpoint = with_audio(root.path()).await?;
         let recorded = checkpoint.recorded()?;
         let captured = narrated(
-            footage(&checkpoint)?,
+            Footage::from(checkpoint.replay()?),
             Narration::default(),
             Some(NarrationLoss::NotTranscribed),
         );

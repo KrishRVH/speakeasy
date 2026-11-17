@@ -213,9 +213,8 @@ pub(crate) async fn reopen(interrupted: Interrupted) -> anyhow::Result<Reopened>
 fn reopen_with(interrupted: Interrupted) -> anyhow::Result<Reopened> {
     let checkpoint = interrupted.lock()?;
     let pending = checkpoint.pending()?;
-    let take = checkpoint.replay()?;
-    let framing = take.framing();
-    let (mut recording, journal) = take.finish();
+    let mut footage = Footage::from(checkpoint.replay()?);
+    let recording = &mut footage.recording;
     let mut speech = None;
 
     match checkpoint.narration() {
@@ -242,11 +241,7 @@ fn reopen_with(interrupted: Interrupted) -> anyhow::Result<Reopened> {
         },
     }
     Ok(Reopened {
-        footage: Footage {
-            recording,
-            journal,
-            framing,
-        },
+        footage,
         checkpoint,
         speech,
         pending,

@@ -728,7 +728,8 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
 }
 
 #[test]
-fn retrieval_is_advertised_only_when_both_source_and_command_are_available() -> anyhow::Result<()> {
+fn a_show_saves_without_its_source_and_advertises_retrieval_only_with_source_and_command()
+-> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let command = root.path().join("Apps ü & `tools`").join("speakeasy-cli");
     for (available, source_ok) in [(true, true), (false, true), (true, false)] {
@@ -778,6 +779,10 @@ fn retrieval_is_advertised_only_when_both_source_and_command_are_available() -> 
             assert!(copied.contains(&format!("``{}``", command.display())));
         }
         assert_eq!(store::source::present(show.directory())?, source_ok);
+        assert!(store::recall::Entry::open(show.directory())?.show.is_ok());
+        for entry in fs::read_dir(show.directory())? {
+            assert!(!entry?.file_name().to_string_lossy().starts_with(".tmp"));
+        }
     }
     Ok(())
 }

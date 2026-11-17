@@ -4,6 +4,17 @@ use speakeasy_show::{Ending, Take, TakeEvent};
 
 use super::*;
 
+fn recoverable(parent: &Path) -> Vec<Interrupted> {
+    store::checkpoint::list(parent, SystemTime::now()).shows
+}
+
+fn interrupted(parent: &Path) -> anyhow::Result<Interrupted> {
+    let Ok([show]) = <[_; 1]>::try_from(recoverable(parent)) else {
+        bail!("Expected one interrupted Show");
+    };
+    Ok(show)
+}
+
 async fn checkpoint(parent: &Path) -> anyhow::Result<Checkpoint> {
     let surface = Size {
         width: 80.0,
@@ -14,18 +25,15 @@ async fn checkpoint(parent: &Path) -> anyhow::Result<Checkpoint> {
         SystemTime::now(),
         1 << 20,
         surface,
-        speakeasy_show::Framing::Automatic,
+        Framing::Automatic,
     )?;
-    let mut take = Take::new(1 << 20, surface, speakeasy_show::Framing::Automatic);
+    let mut take = Take::new(1 << 20, surface, Framing::Automatic);
     assert!(
         writer.send(take.arrive(Moment::from_millis(100), || Some(desktop(
             80, 60, 0, 0, false
         )))?)
     );
-    assert!(writer.send(TakeEvent::End {
-        at: Moment::from_millis(500),
-        ending: Ending::Finished
-    }));
+    assert!(writer.send(take.end(Moment::from_millis(500), Ending::Finished)));
     assert!(writer.close().await);
     checkpoint
         .close()
@@ -33,21 +41,7 @@ async fn checkpoint(parent: &Path) -> anyhow::Result<Checkpoint> {
         .context("Fixture checkpoint is missing")
 }
 
-fn footage(checkpoint: &Checkpoint) -> anyhow::Result<Footage> {
-    let take = checkpoint.replay()?;
-    let framing = take.framing();
-    let (recording, journal) = take.finish();
-    Ok(Footage {
-        recording,
-        journal,
-        framing,
-    })
-}
-
-async fn clicked_checkpoint(
-    parent: &Path,
-    framing: speakeasy_show::Framing,
-) -> anyhow::Result<Checkpoint> {
+async fn clicked_checkpoint(parent: &Path, framing: Framing) -> anyhow::Result<Checkpoint> {
     let (width, height) = (1_600, 1_000);
     let surface = Size {
         width: width as f32,
@@ -81,15 +75,10 @@ async fn clicked_checkpoint(
 
 #[tokio::test]
 async fn recovery_frames_a_show_as_its_recording_chose() -> anyhow::Result<()> {
-    for framing in [
-        speakeasy_show::Framing::Automatic,
-        speakeasy_show::Framing::Chosen,
-    ] {
+    for framing in [Framing::Automatic, Framing::Chosen] {
         let parent = tempfile::tempdir()?;
         drop(clicked_checkpoint(parent.path(), framing).await?);
-        let interrupted = store::checkpoint::list(parent.path(), SystemTime::now())
-            .shows
-            .remove(0);
+        let interrupted = interrupted(parent.path())?;
         let (_input, permit) = permit();
         let Published::Recovered { show, .. } =
             recover_with(interrupted, &permit, || Ok(parent.path().to_owned()))?
@@ -101,11 +90,7 @@ async fn recovery_frames_a_show_as_its_recording_chose() -> anyhow::Result<()> {
             .keyframes()
             .iter()
             .any(|keyframe| keyframe.crop.is_some());
-        assert_eq!(
-            cropped,
-            framing == speakeasy_show::Framing::Automatic,
-            "{framing:?}"
-        );
+        assert_eq!(cropped, framing == Framing::Automatic, "{framing:?}");
     }
     Ok(())
 }
@@ -117,9 +102,7 @@ async fn recovery_preserves_original_expiry_and_publishes_once_without_narration
     let checkpoint = checkpoint(parent.path()).await?;
     let recorded = checkpoint.recorded()?;
     drop(checkpoint);
-    let interrupted = store::checkpoint::list(parent.path(), SystemTime::now())
-        .shows
-        .remove(0);
+    let interrupted = interrupted(parent.path())?;
     let stale = interrupted.clone();
     let (_input, permit) = permit();
     let Published::Recovered { show, .. } =
@@ -139,20 +122,16 @@ async fn recovery_preserves_original_expiry_and_publishes_once_without_narration
     );
     assert_eq!(store::source::inspect(show.directory())?.moments().len(), 1);
     assert!(stale.lock().is_err());
-    assert_eq!(
-        store::checkpoint::list(parent.path(), SystemTime::now()).shows,
-        []
-    );
+    assert_eq!(recoverable(parent.path()), []);
     Ok(())
 }
 
 #[tokio::test]
-async fn revoking_finished_publication_or_recovery_keeps_its_checkpoint() -> anyhow::Result<()> {
+async fn cancelled_or_failed_recovery_and_cancelled_publication_keep_the_checkpoint()
+-> anyhow::Result<()> {
     let parent = tempfile::tempdir()?;
     drop(checkpoint(parent.path()).await?);
-    let interrupted = store::checkpoint::list(parent.path(), SystemTime::now())
-        .shows
-        .remove(0);
+    let interrupted = interrupted(parent.path())?;
     let (input, revoked) = permit();
     input.cancel();
     assert!(matches!(
@@ -170,7 +149,7 @@ async fn revoking_finished_publication_or_recovery_keeps_its_checkpoint() -> any
     );
     assert!(interrupted.lock()?.replay()?.ended());
     let checkpoint = interrupted.lock()?;
-    let captured = footage(&checkpoint)?;
+    let captured = Footage::from(checkpoint.replay()?);
     assert!(matches!(
         publish_with(
             Handoff::default(),
@@ -198,7 +177,7 @@ async fn failed_publication_keeps_recoverable_frames_and_success_cleans_up() -> 
     assert!(
         publish_with(
             Handoff::default(),
-            footage(&checkpoint)?,
+            Footage::from(checkpoint.replay()?),
             Origin::Live {
                 checkpoint: Some(checkpoint)
             },
@@ -208,11 +187,9 @@ async fn failed_publication_keeps_recoverable_frames_and_success_cleans_up() -> 
         )
         .is_err()
     );
-    let interrupted = store::checkpoint::list(parent.path(), SystemTime::now())
-        .shows
-        .remove(0);
+    let interrupted = interrupted(parent.path())?;
     let checkpoint = interrupted.lock()?;
-    let captured = footage(&checkpoint)?;
+    let captured = Footage::from(checkpoint.replay()?);
     let (_input, active) = permit();
     assert!(matches!(
         publish_with(
@@ -228,48 +205,7 @@ async fn failed_publication_keeps_recoverable_frames_and_success_cleans_up() -> 
         Published::Saved { .. }
     ));
     assert!(!interrupted.directory().exists());
-    assert_eq!(
-        store::checkpoint::list(parent.path(), SystemTime::now()).shows,
-        []
-    );
-    Ok(())
-}
-
-#[test]
-fn optional_source_failure_still_saves_selected_keyframes_and_reports_the_loss()
--> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let (mut footage, narration) = rehearse(80, 60);
-
-    footage.recording.duration = Moment::from_millis(360_001);
-    let (_input, permit) = permit();
-    let result = publish_with(
-        Handoff::default(),
-        narrated(footage, narration, None),
-        Origin::Live { checkpoint: None },
-        &permit,
-        || Ok(root.path().to_owned()),
-        |_| Ok(()),
-    )?;
-    let Published::Saved {
-        show,
-        preservation: Preservation { source_lost, .. },
-        copied: Ok(()),
-        ..
-    } = result
-    else {
-        bail!("Keyframes were not saved");
-    };
-    assert!(source_lost);
-    assert!(store::recall::Entry::open(show.directory())?.show.is_ok());
-    assert!(!store::source::present(show.directory())?);
-    assert!(fs::read_dir(show.directory())?.all(|entry| {
-        !entry
-            .unwrap()
-            .file_name()
-            .to_string_lossy()
-            .starts_with(".tmp")
-    }));
+    assert_eq!(recoverable(parent.path()), []);
     Ok(())
 }
 

@@ -610,13 +610,7 @@ impl<'a> Take<'a> {
         if self.state.journal().is_empty() {
             return Err(anyhow!(NOTHING_RECORDED));
         }
-        let framing = self.state.framing();
-        let (recording, journal) = self.state.finish();
-        Ok(Footage {
-            recording,
-            journal,
-            framing,
-        })
+        Ok(Footage::from(self.state))
     }
 }
 

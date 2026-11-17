@@ -6,7 +6,7 @@ use std::{
 use async_channel::Sender;
 use speakeasy_core::machine::{Cue, RecognitionMode, SessionId};
 use speakeasy_platform::{Delivery, InsertPermit, Inserted, Scope, Taps};
-use speakeasy_show::{Ending, Framing, Journal, Narration, NarrationLoss, Recording};
+use speakeasy_show::{Ending, Framing, Journal, Narration, NarrationLoss, Recording, Take};
 use tokio::sync::{mpsc, oneshot, watch};
 use zeroize::Zeroizing;
 
@@ -72,6 +72,18 @@ pub(crate) struct Footage {
     pub recording: Recording,
     pub journal: Journal,
     pub framing: Framing,
+}
+
+impl From<Take> for Footage {
+    fn from(take: Take) -> Self {
+        let framing = take.framing();
+        let (recording, journal) = take.finish();
+        Self {
+            recording,
+            journal,
+            framing,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Default)]

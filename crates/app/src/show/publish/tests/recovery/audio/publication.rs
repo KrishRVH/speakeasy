@@ -6,7 +6,7 @@ async fn durable_voiced_publication_retires_checkpoint_after_a_crash_before_disc
     let root = tempfile::tempdir()?;
     let checkpoint = with_audio(root.path()).await?;
     let captured = narrated(
-        footage(&checkpoint)?,
+        Footage::from(checkpoint.replay()?),
         Narration::Text("synthetic narration".into()),
         None,
     );
@@ -42,7 +42,7 @@ async fn failed_or_cancelled_narrated_copy_keeps_new_narration_recoverable() -> 
         let root = tempfile::tempdir()?;
         let checkpoint = with_audio(root.path()).await?;
         let captured = narrated(
-            footage(&checkpoint)?,
+            Footage::from(checkpoint.replay()?),
             Narration::default(),
             Some(NarrationLoss::NotTranscribed),
         );
@@ -114,7 +114,7 @@ async fn durable_bundle_retires_checkpoint_even_when_narration_checkpoint_write_
     fs::create_dir(interrupted.directory().join("narration.json"))?;
     let checkpoint = interrupted.lock()?;
     let captured = narrated(
-        footage(&checkpoint)?,
+        Footage::from(checkpoint.replay()?),
         Narration::Text("already transcribed".into()),
         None,
     );
@@ -156,7 +156,11 @@ async fn only_audio_that_may_hold_speech_is_kept_for_retry_or_as_voice() -> anyh
     ] {
         let root = tempfile::tempdir()?;
         let checkpoint = with_audio(root.path()).await?;
-        let captured = narrated(footage(&checkpoint)?, Narration::default(), lost);
+        let captured = narrated(
+            Footage::from(checkpoint.replay()?),
+            Narration::default(),
+            lost,
+        );
         let (_input, active) = permit();
         let Published::Saved {
             show, preservation, ..
