@@ -21,7 +21,7 @@ use speakeasy_core::{
         Status, Stopped, Unheard,
     },
 };
-use speakeasy_platform::{Input, InputSender, InsertPermit, Scope, Taps};
+use speakeasy_platform::{Enter, Input, InputSender, InsertPermit, Scope, Taps};
 use speakeasy_show::Ending;
 use tokio::{
     sync::{mpsc, oneshot, watch},
@@ -328,6 +328,7 @@ impl<P: Ports> World<P> {
             Input::Interrupt => machine::Input::Interrupt,
             Input::Toggle => machine::Input::Toggle,
             Input::PasteLast => machine::Input::PasteLast,
+            Input::Submit => machine::Input::Submit,
             Input::StartShow(scope) => machine::Input::StartShow(scope),
             Input::Unavailable(message) => machine::Input::Unavailable(message),
             Input::DesktopReady { shortcut, cancel } => {
@@ -486,10 +487,23 @@ impl<P: Ports> Env<Native> for World<P> {
         (!text.is_empty()).then(|| Zeroizing::new(text))
     }
 
-    fn insert(&mut self, mut text: Zeroizing<String>, permit: &InsertPermit, config: &Config) {
-        let insertion = self
-            .ports
-            .insert(mem::take(&mut *text), permit.clone(), config.delivery());
+    fn insert(
+        &mut self,
+        mut text: Zeroizing<String>,
+        permit: &InsertPermit,
+        config: &Config,
+        enter: machine::Enter,
+    ) {
+        let enter = match enter {
+            machine::Enter::Withheld => Enter::Withheld,
+            machine::Enter::Pressed => Enter::Pressed,
+        };
+        let insertion = self.ports.insert(
+            mem::take(&mut *text),
+            permit.clone(),
+            config.delivery(),
+            enter,
+        );
         self.delivery = Some(tokio::spawn(
             async move { Delivered::Inserted(insertion.await) },
         ));

@@ -1,8 +1,8 @@
 use std::{ops::Range, sync::mpsc, time::Duration};
 
 use super::{
-    Cue, Env, Failure, Keeping, Payload, Publication, RecognitionMode, Recorder, Refusal, Release,
-    Request, SessionId, Settings, Status,
+    Cue, Enter, Env, Failure, Keeping, Payload, Publication, RecognitionMode, Recorder, Refusal,
+    Release, Request, SessionId, Settings, Status,
 };
 
 #[derive(Clone, Debug)]
@@ -165,7 +165,7 @@ impl Env<Sample> for Log {
         (!heard.is_empty()).then_some(heard)
     }
 
-    fn insert(&mut self, _: String, _: &u64, _: &Settings) {}
+    fn insert(&mut self, _: String, _: &u64, _: &Settings, _: Enter) {}
 
     fn ready(&mut self, (): &()) -> bool {
         true

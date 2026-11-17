@@ -171,6 +171,14 @@ impl Gesture {
         }
     }
 
+    pub(crate) fn submit(&mut self) -> Option<Action> {
+        if matches!(self.phase, Phase::Held { .. }) {
+            self.finish()
+        } else {
+            None
+        }
+    }
+
     pub(crate) fn lock(&mut self) {
         if let Phase::Held { started } = self.phase {
             self.phase = Phase::HandsFree { started };

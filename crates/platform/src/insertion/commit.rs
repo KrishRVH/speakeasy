@@ -1,10 +1,14 @@
-use std::panic::{self, AssertUnwindSafe};
+use std::{
+    panic::{self, AssertUnwindSafe},
+    thread,
+    time::Duration,
+};
 
 use anyhow::anyhow;
 use async_channel::Receiver;
 
 use super::{
-    Delivery, INSERTION_STOPPED, Inserted, Inserter, Insertion, OwnFocus,
+    Delivery, Enter, INSERTION_STOPPED, Inserted, Inserter, Insertion, OwnFocus,
     wait_for_released_modifiers,
 };
 use crate::{InputSender, InsertPermit, OwnedThread};
@@ -66,14 +70,25 @@ pub(crate) fn deliver<N: NativeInsert>(
     request: &Insertion,
 ) -> anyhow::Result<Inserted> {
     wait_for_released_modifiers(&request.permit, || Ok(!native.shortcut_released()))?;
-    insert(
+    let inserted = insert(
         native,
         &request.text,
         &request.permit,
         request.delivery,
         &request.own_focus,
-    )
+    )?;
+    if request.enter == Enter::Pressed && inserted == Inserted::Sent {
+        thread::sleep(SUBMIT_SETTLE);
+        return submit(native, &request.own_focus);
+    }
+    Ok(inserted)
 }
+
+const SUBMIT_SETTLE: Duration = Duration::from_millis(100);
+
+const RETURN_WITHHELD: Inserted = Inserted::Copied(
+    "Your words are in, but Speakeasy couldn't press Return. Press Return to send them.",
+);
 
 const CLIPBOARD_CHANGED: Inserted = Inserted::Unavailable(
     "The clipboard changed, so the paste was not sent and its new contents were kept.",
@@ -100,6 +115,8 @@ pub(crate) trait NativeInsert {
     fn paste_keys(&mut self) -> anyhow::Result<Self::Keys>;
 
     fn text_keys(&mut self, text: &str) -> anyhow::Result<Self::Keys>;
+
+    fn return_keys(&mut self) -> anyhow::Result<Self::Keys>;
 
     fn external_focus(&mut self) -> bool;
 
@@ -146,6 +163,17 @@ fn insert<N: NativeInsert>(
         return Ok(Inserted::Cancelled);
     }
     native.send(keys)
+}
+
+fn submit<N: NativeInsert>(native: &mut N, own_focus: &OwnFocus) -> anyhow::Result<Inserted> {
+    if own_focus.held() || !native.external_focus() || !native.shortcut_released() {
+        return Ok(RETURN_WITHHELD);
+    }
+    let keys = native.return_keys()?;
+    Ok(match native.send(keys)? {
+        Inserted::Sent => Inserted::Sent,
+        Inserted::Copied(_) | Inserted::Cancelled | Inserted::Unavailable(_) => RETURN_WITHHELD,
+    })
 }
 
 #[cfg(test)]

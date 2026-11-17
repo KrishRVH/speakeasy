@@ -102,6 +102,7 @@ fn inputs(events: &mut Events, machine: &Machine<Abstract>) {
             Input::Interrupt,
             Input::Toggle,
             Input::PasteLast,
+            Input::Submit,
             Input::StartShow(()),
             Input::Unavailable(()),
         ]

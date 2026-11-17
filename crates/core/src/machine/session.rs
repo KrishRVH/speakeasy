@@ -18,9 +18,15 @@ pub(super) struct Session<P: Payload> {
     receipt: Option<P::Receipt>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Enter {
+    Withheld,
+    Pressed,
+}
+
 #[cfg_attr(test, derive(Clone, Debug))]
 pub(super) enum Purpose<P: Payload> {
-    Dictation,
+    Dictation(Enter),
     Replay,
     Practice(P::Practice),
     Show(Show<P>),
@@ -279,7 +285,7 @@ impl<P: Payload> Session<P> {
     const fn show_mut(&mut self) -> Option<&mut Show<P>> {
         match &mut self.purpose {
             Purpose::Show(show) => Some(show),
-            Purpose::Dictation | Purpose::Replay | Purpose::Practice(_) => None,
+            Purpose::Dictation(_) | Purpose::Replay | Purpose::Practice(_) => None,
         }
     }
 
@@ -333,7 +339,7 @@ impl<P: Payload> Session<P> {
     }
 
     pub(super) const fn is_dictation(&self) -> bool {
-        matches!(self.purpose, Purpose::Dictation)
+        matches!(self.purpose, Purpose::Dictation(_))
     }
 
     pub(super) const fn is_replay(&self) -> bool {
@@ -351,7 +357,7 @@ impl<P: Payload> Session<P> {
     pub(super) const fn practice(&self) -> Option<&P::Practice> {
         match &self.purpose {
             Purpose::Practice(practice) => Some(practice),
-            Purpose::Dictation | Purpose::Replay | Purpose::Show(_) => None,
+            Purpose::Dictation(_) | Purpose::Replay | Purpose::Show(_) => None,
         }
     }
 
@@ -595,10 +601,20 @@ impl<P: Payload> Session<P> {
         self.conclude();
     }
 
+    pub(super) fn submit(&mut self) {
+        if let Purpose::Dictation(enter) = &mut self.purpose {
+            *enter = Enter::Pressed;
+        }
+    }
+
     pub(super) fn insert(&mut self, text: P::Heard, config: &P::Config, env: &mut impl Env<P>) {
         let dictation = self.is_dictation().then(|| text.clone());
+        let enter = match self.purpose {
+            Purpose::Dictation(enter) => enter,
+            Purpose::Replay | Purpose::Practice(_) | Purpose::Show(_) => Enter::Withheld,
+        };
         self.recognition = Recognition::new(self.id);
-        env.insert(text, &self.permit, config);
+        env.insert(text, &self.permit, config, enter);
         self.stage = Stage::Delivering { dictation };
     }
 

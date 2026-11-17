@@ -38,6 +38,9 @@ const MAC_W: i64 = 13;
 const MAC_A: i64 = 0;
 const MAC_Q: i64 = 12;
 const MAC_V: i64 = 9;
+const MAC_RETURN: i64 = 36;
+const MAC_KEYPAD_ENTER: i64 = 76;
+const RETURN: u32 = 0x0D;
 const MAC_F13: i64 = 105;
 const NONE_HELD: Physical = Physical {
     chord_keys: [false; 4],
@@ -144,6 +147,30 @@ fn paste_last_is_a_single_held_press_and_its_release_stays_swallowed() {
     chord.release();
     assert!(chord.hold_key(HoldKey::PasteLast, false).swallows());
     assert!(!chord.hold_key(HoldKey::PasteLast, true).swallows());
+}
+
+#[test]
+fn return_during_a_hold_submits_once_and_outside_a_hold_reaches_the_app() {
+    let (mut policy, both) = windows_holding();
+    let submit = policy.observe(RETURN, true, both, now());
+    assert!(submit.swallows());
+    assert_eq!(delivered(&submit), [Action::Submit]);
+    assert_eq!(delivered(&policy.observe(RETURN, true, both, now())), []);
+    assert!(policy.observe(RETURN, false, both, now()).swallows());
+    let free = policy.observe(RETURN, true, NONE_HELD, now());
+    assert!(!free.swallows());
+    assert_eq!(delivered(&free), [Action::Release]);
+
+    for code in [MAC_RETURN, MAC_KEYPAD_ENTER] {
+        let mut mac = mac_holding();
+        let submit = mac.observe(key(code, true, FN_HELD), keyboard_fn_up, now());
+        assert!(submit.swallows());
+        assert_eq!(delivered(&submit), [Action::Submit]);
+        assert!(
+            mac.observe(key(code, false, FN_HELD), keyboard_fn_up, now())
+                .swallows()
+        );
+    }
 }
 
 #[test]

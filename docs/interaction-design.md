@@ -55,7 +55,7 @@ click-through.
 | Recording        | Open slot, live rim, and measured grille.                                                                          |
 | Hands-free       | Grille, lock symbol, and elapsed timer beside the slot.                                                            |
 | Show recording   | Hands-free layout with a red screen mark for the lock; “Hold Shift to draw” replaces the timer for three seconds.  |
-| Secure input     | A live jewel and a note that Escape, Space, V, S, W, and A won’t reach Speakeasy, for five seconds.                |
+| Secure input     | A live jewel and a note that Escape, Space, Return, V, S, W, and A won’t reach Speakeasy, for five seconds.        |
 | Final 30 seconds | Remaining time in the attention color; the recording limit stays in the session owner.                             |
 | Stopping         | The lid stays open until capture stops; the grille settles.                                                        |
 | Processing       | The lid partly closes; a lamp highlight sweeps the opening after 250 ms.                                           |
@@ -260,11 +260,18 @@ original seven-day schedule even when the saved bundle is kept.
   Settings. Desktop command bindings start/finish hands-free.
 - On Windows/macOS, the shortcut's modifiers are observed, never swallowed. A selected F13 is
   reserved: its presses, repeats, and releases are withheld, and repeats cannot start a recording.
-  Apart from F13, only the Space that locks hands-free, V that pastes the last dictation, and S, W,
-  or A that starts a Show are withheld from the focused app. Shift stays passive so a Show can draw
-  and pin with it, and another app's double Shift still works; any other key during a hold belongs
-  to a different shortcut, so it interrupts the recording, and the shortcut waits for release. On
-  Windows, an unassigned mask key keeps the released Win key from opening Start.
+  Apart from F13, only the Space that locks hands-free, Return that sends, V that pastes the last
+  dictation, and S, W, or A that starts a Show are withheld from the focused app. Shift stays
+  passive so a Show can draw and pin with it, and another app's double Shift still works; any other
+  key during a hold belongs to a different shortcut, so it interrupts the recording, and the
+  shortcut waits for release. On Windows, an unassigned mask key keeps the released Win key from
+  opening Start.
+- Return (or keypad Enter on macOS) during a Windows/macOS hold finishes that dictation as a release
+  would and marks it to send: after its text is pasted or typed, Speakeasy waits 100 ms for the app
+  to take it and presses Return once, rechecking that another app has focus and the shortcut is
+  released. If either check fails or the press is blocked, the text stays and the pill says Return
+  wasn't pressed, without offering a second paste. Return outside a hold, during hands-free, in
+  practice, or with a Show does nothing in Speakeasy and reaches the focused app.
 - During a Windows/macOS hold, S, W, or A turns the recording into a Show, hands-free and keeping
   the narration since the press; pressing the shortcut again finishes it on release. The pill table
   shows what the pill presents. S records the display under the pointer and W the window under it,
@@ -296,14 +303,14 @@ original seven-day schedule even when the saved bundle is kept.
 - On macOS, while another app holds secure keyboard entry, such as a focused password field or a
   terminal's Secure Keyboard Entry, the event tap sees modifier changes but no key presses. Fn,
   Right Option, and Right Command still start and finish dictation; a selected F13 does nothing, and
-  Escape, Space, V, S, W, and A never reach Speakeasy. Escape reaches the focused app as always, and
-  Space, V, S, W, and A, which a hold normally withholds, reach it too with the held key: they type
-  or act as that key's shortcuts, so with Right Command, W closes the window and V pastes. As each
-  recording opens, from a shortcut, the tray, or a command, the pill asks once whether secure
-  keyboard entry is on and, if so, replaces the slot with a notice that says which keys won't arrive
-  and that a password field or terminal usually holds it, without naming the holder. A Show's
-  drawing hint waits for the notice to end, and the countdown to the limit outranks it. Nothing
-  checks while idle or later in a recording.
+  Escape, Space, Return, V, S, W, and A never reach Speakeasy. Escape reaches the focused app as
+  always, and Space, Return, V, S, W, and A, which a hold normally withholds, reach it too with the
+  held key: they type or act as that key's shortcuts, so with Right Command, W closes the window and
+  V pastes. As each recording opens, from a shortcut, the tray, or a command, the pill asks once
+  whether secure keyboard entry is on and, if so, replaces the slot with a notice that says which
+  keys won't arrive and that a password field or terminal usually holds it, without naming the
+  holder. A Show's drawing hint waits for the notice to end, and the countdown to the limit outranks
+  it. Nothing checks while idle or later in a recording.
 - Readiness follows the first captured buffer. Startup feedback does not imply that speech before
   that buffer can be recovered.
 - Insertion does not steal focus. OS submission is the observable result; success in every editor

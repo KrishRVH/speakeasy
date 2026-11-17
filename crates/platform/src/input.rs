@@ -22,6 +22,7 @@ pub enum Input {
     Interrupt,
     Toggle,
     PasteLast,
+    Submit,
     StartShow(Scope),
     Unavailable(String),
     DesktopReady { shortcut: String, cancel: String },

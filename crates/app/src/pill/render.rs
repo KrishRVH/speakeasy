@@ -27,7 +27,7 @@ const TRAY_HINT: &str = if cfg!(target_os = "macos") {
 };
 const DRAW_HINT: &str = "Hold Shift to draw";
 const SECURE_INPUT: &str =
-    "Secure keyboard entry is on, so Escape, Space, V, S, W, and A won’t reach Speakeasy.";
+    "Secure keyboard entry is on, so Escape, Space, Return, V, S, W, and A won’t reach Speakeasy.";
 const SECURE_INPUT_SOURCES: &str = "Often a password field or terminal";
 
 impl Pill {

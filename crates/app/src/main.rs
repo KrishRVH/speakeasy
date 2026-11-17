@@ -365,7 +365,8 @@ fn print_help() -> io::Result<()> {
             "speakeasy [--config PATH] [--demo | --demo-tray]\n\
              Shortcut: {SHORTCUT}\n\
              Hold to dictate; add Space or double-tap for hands-free, or S, W, or A to Show \
-             the screen, a window, or an area. Add V to paste the last dictation. \
+             the screen, a window, or an area. Add Return to send what you said, or V to paste the \
+             last dictation. \
              {CANCEL_SHORTCUT} cancels, a Show only while the shortcut is held."
         )?;
     }

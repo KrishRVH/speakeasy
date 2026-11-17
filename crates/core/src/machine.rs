@@ -21,7 +21,7 @@ use self::session::{Purpose, Session};
 pub use self::{
     outcome::{Failure, Notice, Outcome, Refusal},
     recognition::{Detail, Part, Partition, Request, Ticket, Transcript},
-    session::{Kept, Origin, Publication, Recognized, Release, Reopened, Sealed},
+    session::{Enter, Kept, Origin, Publication, Recognized, Release, Reopened, Sealed},
 };
 use crate::gesture::{Action, Gesture, Moment, State, Timing};
 
@@ -134,7 +134,7 @@ pub trait Env<P: Payload> {
     fn compose(&mut self, heard: P::Heard, style: P::Style, config: &P::Config)
     -> Option<P::Heard>;
 
-    fn insert(&mut self, text: P::Heard, permit: &P::Permit, config: &P::Config);
+    fn insert(&mut self, text: P::Heard, permit: &P::Permit, config: &P::Config, enter: Enter);
 
     fn ready(&mut self, practice: &P::Practice) -> bool;
 
@@ -377,6 +377,7 @@ pub enum Input<P: Payload> {
     Interrupt,
     Toggle,
     PasteLast,
+    Submit,
     StartShow(P::Scope),
     Unavailable(P::Text),
     DesktopReady,
@@ -814,6 +815,15 @@ impl<P: Payload> Machine<P> {
                 self.gesture.lock();
                 None
             },
+            Input::Submit => {
+                let action = self.gesture.submit();
+                if action.is_some()
+                    && let Some(session) = &mut self.session
+                {
+                    session.submit();
+                }
+                action
+            },
             Input::Show(scope) => {
                 self.start_show(scope, env);
                 None
@@ -1218,7 +1228,7 @@ impl<P: Payload> Machine<P> {
                 let purpose = self
                     .practice
                     .clone()
-                    .map_or(Purpose::Dictation, Purpose::Practice);
+                    .map_or(Purpose::Dictation(Enter::Withheld), Purpose::Practice);
                 return self.start_session(now, purpose, env);
             },
             Some(Action::Finish) => {

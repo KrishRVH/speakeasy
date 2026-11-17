@@ -1,6 +1,6 @@
 use super::super::{
-    Cue, Env, Failure, Keeping, Kept, Payload, Publication, RecognitionMode, Recorder, Refusal,
-    Release, Request, SessionId, Settings, Status,
+    Cue, Enter, Env, Failure, Keeping, Kept, Payload, Publication, RecognitionMode, Recorder,
+    Refusal, Release, Request, SessionId, Settings, Status,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -280,7 +280,7 @@ impl Env<Abstract> for Oracle {
         self.choose(Query::Compose, [("text", Some(())), ("empty", None)])
     }
 
-    fn insert(&mut self, (): (), (): &(), _: &Settings) {
+    fn insert(&mut self, (): (), (): &(), _: &Settings, _: Enter) {
         self.effects.push(Effect::Insert);
     }
 

@@ -1,7 +1,7 @@
 use std::{path::PathBuf, time::Duration};
 
 use anyhow::Context as _;
-use speakeasy_platform::{Delivery, InsertPermit, Inserted, Taps};
+use speakeasy_platform::{Delivery, Enter, InsertPermit, Inserted, Taps};
 use speakeasy_show::Narration;
 use tokio::time::timeout;
 
@@ -127,6 +127,7 @@ impl Ports for Fixture {
         text: String,
         permit: InsertPermit,
         _: Delivery,
+        _: Enter,
     ) -> impl Future<Output = anyhow::Result<Inserted>> + Send + 'static {
         let inserted = self.inserted.clone();
         async move {

@@ -537,6 +537,7 @@ mod tests {
             text: text.into(),
             permit: permit.clone(),
             delivery,
+            enter: crate::Enter::Withheld,
             own_focus,
             reply,
         }

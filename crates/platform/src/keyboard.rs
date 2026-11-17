@@ -35,7 +35,7 @@ impl Chord {
         let bit = key.bit();
         let acts = down
             && self.hold == Hold::Held
-            && (!matches!(key, HoldKey::PasteLast) || self.swallowing & bit == 0);
+            && (!matches!(key, HoldKey::PasteLast | HoldKey::Submit) || self.swallowing & bit == 0);
         if acts {
             self.swallowing |= bit;
         }
@@ -90,6 +90,7 @@ enum Hold {
 enum HoldKey {
     Space,
     PasteLast,
+    Submit,
     Show(Scope),
 }
 
@@ -98,6 +99,7 @@ impl HoldKey {
         match self {
             Self::Space => Action::Lock,
             Self::PasteLast => Action::PasteLast,
+            Self::Submit => Action::Submit,
             Self::Show(scope) => Action::Show(scope),
         }
     }
@@ -109,6 +111,7 @@ impl HoldKey {
             Self::Show(Scope::Window) => 4,
             Self::Show(Scope::Area) => 8,
             Self::PasteLast => 16,
+            Self::Submit => 32,
         }
     }
 }
@@ -173,6 +176,7 @@ enum Action {
     Release,
     Lock,
     PasteLast,
+    Submit,
     Show(Scope),
     Pin(Taps),
     Escape,
@@ -186,6 +190,7 @@ impl Action {
             Self::Release => input.deliver(Input::Release),
             Self::Lock => input.deliver(Input::Lock),
             Self::PasteLast => input.deliver(Input::PasteLast),
+            Self::Submit => input.deliver(Input::Submit),
             Self::Show(scope) => input.deliver(Input::Show(scope)),
             Self::Pin(taps) => input.deliver(Input::Pin(taps)),
             Self::Escape => input.deliver(Input::Escape),
@@ -308,6 +313,7 @@ impl Windows {
     const LEFT_SHIFT: u16 = 0xA0;
     const LEFT_WINDOWS: u16 = 0x5B;
     const PASTE_LAST: u16 = 0x56;
+    const RETURN: u16 = 0x0D;
     const RIGHT_CONTROL: u16 = 0xA3;
     const RIGHT_SHIFT: u16 = 0xA1;
     const RIGHT_WINDOWS: u16 = 0x5C;
@@ -369,6 +375,7 @@ impl Windows {
             Self::ESCAPE => Decision::pass(down.then_some(Action::Escape)),
             Self::SPACE => self.chord.hold_key(HoldKey::Space, down),
             Self::PASTE_LAST => self.chord.hold_key(HoldKey::PasteLast, down),
+            Self::RETURN => self.chord.hold_key(HoldKey::Submit, down),
             Self::SCREEN => self.chord.hold_key(HoldKey::Show(Scope::Screen), down),
             Self::WINDOW => self.chord.hold_key(HoldKey::Show(Scope::Window), down),
             Self::AREA => self.chord.hold_key(HoldKey::Show(Scope::Area), down),
@@ -489,11 +496,13 @@ impl Mac {
     const ESCAPE: i64 = 53;
     const F13: i64 = 105;
     const FUNCTION: i64 = 63;
+    const KEYPAD_ENTER: i64 = 76;
     const LEFT_COMMAND: i64 = 55;
     const LEFT_CONTROL: i64 = 59;
     const LEFT_OPTION: i64 = 58;
     const LEFT_SHIFT: i64 = 56;
     const PASTE_LAST: i64 = 9;
+    const RETURN: i64 = 36;
     const RIGHT_COMMAND: i64 = 54;
     const RIGHT_CONTROL: i64 = 62;
     const RIGHT_OPTION: i64 = 61;
@@ -605,6 +614,7 @@ impl Mac {
         match code {
             Self::SPACE => Some(HoldKey::Space),
             Self::PASTE_LAST => Some(HoldKey::PasteLast),
+            Self::RETURN | Self::KEYPAD_ENTER => Some(HoldKey::Submit),
             Self::SCREEN => Some(HoldKey::Show(Scope::Screen)),
             Self::WINDOW => Some(HoldKey::Show(Scope::Window)),
             Self::AREA => Some(HoldKey::Show(Scope::Area)),

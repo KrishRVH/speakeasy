@@ -83,6 +83,7 @@ impl Inserter {
         text: String,
         permit: InsertPermit,
         delivery: Delivery,
+        enter: Enter,
     ) -> anyhow::Result<Inserted> {
         if !permit.active() {
             return Ok(Inserted::Cancelled);
@@ -92,6 +93,7 @@ impl Inserter {
             text,
             permit,
             delivery,
+            enter,
             own_focus: self.own_focus.clone(),
             reply,
         };
@@ -109,6 +111,14 @@ pub(crate) struct Insertion {
     pub(crate) text: String,
     pub(crate) permit: InsertPermit,
     pub(crate) delivery: Delivery,
+    #[cfg_attr(
+        all(target_os = "linux", not(test)),
+        expect(
+            dead_code,
+            reason = "Linux delivers no hold keys, so no Linux dictation asks for Return"
+        )
+    )]
+    pub(crate) enter: Enter,
     pub(crate) own_focus: OwnFocus,
     pub(crate) reply: Reply<anyhow::Result<Inserted>>,
 }
@@ -134,6 +144,12 @@ impl<T> Reply<T> {
         )]
         let _ = self.0.try_send(answer);
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Enter {
+    Withheld,
+    Pressed,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

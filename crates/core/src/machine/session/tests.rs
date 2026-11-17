@@ -7,8 +7,13 @@ use crate::machine::{
 };
 
 fn opened(log: &mut Log, show: bool) -> Session<Sample> {
-    let mut session =
-        Session::<Sample>::new(SessionId::FIRST, 1, Duration::ZERO, Purpose::Dictation, ());
+    let mut session = Session::<Sample>::new(
+        SessionId::FIRST,
+        1,
+        Duration::ZERO,
+        Purpose::Dictation(Enter::Withheld),
+        (),
+    );
     if show {
         assert!(session.turn_into_show((), log));
     }

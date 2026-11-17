@@ -150,6 +150,7 @@ impl Ports for ModelPorts {
         text: String,
         permit: InsertPermit,
         _: Delivery,
+        _: Enter,
     ) -> impl Future<Output = anyhow::Result<Inserted>> + Send + 'static {
         let (log, presented) = (self.log.clone(), self.presented.clone());
         async move {

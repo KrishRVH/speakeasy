@@ -6,7 +6,7 @@ use super::{CLIPBOARD_CHANGED, CLIPBOARD_CHANGED_BEFORE_PASTE, NativeInsert, Wor
 use crate::{
     InputSender, InsertPermit, PATIENCE,
     insertion::{
-        Delivery, FocusReport, INSERTION_STOPPED, Inserted, OwnFocus,
+        Delivery, Enter, FocusReport, INSERTION_STOPPED, Inserted, OwnFocus,
         tests::{DELIVERIES, EXTERNAL_FOCUS, OWN_FOCUS, RELEASED},
     },
 };
@@ -23,7 +23,13 @@ enum Step {
     TextKeys,
     ExternalFocus,
     ShortcutReleased,
-    Send(Delivery),
+    Send(Keys),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Keys {
+    Insert(Delivery),
+    Return,
 }
 
 struct Fake {
@@ -67,7 +73,7 @@ impl Fake {
 }
 
 impl NativeInsert for Fake {
-    type Keys = Delivery;
+    type Keys = Keys;
     type Lease = ();
     type Mark = u8;
 
@@ -91,14 +97,18 @@ impl NativeInsert for Fake {
         Ok(self.holds && *mark == self.clipboard)
     }
 
-    fn paste_keys(&mut self) -> anyhow::Result<Delivery> {
+    fn paste_keys(&mut self) -> anyhow::Result<Keys> {
         self.reach(Step::PasteKeys);
-        Ok(Delivery::Paste)
+        Ok(Keys::Insert(Delivery::Paste))
     }
 
-    fn text_keys(&mut self, _: &str) -> anyhow::Result<Delivery> {
+    fn text_keys(&mut self, _: &str) -> anyhow::Result<Keys> {
         self.reach(Step::TextKeys);
-        Ok(Delivery::Direct)
+        Ok(Keys::Insert(Delivery::Direct))
+    }
+
+    fn return_keys(&mut self) -> anyhow::Result<Keys> {
+        Ok(Keys::Return)
     }
 
     fn external_focus(&mut self) -> bool {
@@ -111,7 +121,7 @@ impl NativeInsert for Fake {
         self.releases.pop_front().unwrap_or(RELEASED)
     }
 
-    fn send(&mut self, keys: Delivery) -> anyhow::Result<Inserted> {
+    fn send(&mut self, keys: Keys) -> anyhow::Result<Inserted> {
         self.reach(Step::Send(keys));
         Ok(Inserted::Sent)
     }
@@ -145,7 +155,7 @@ fn paste_checks_the_clipboard_again_after_focus_and_sends_once() -> anyhow::Resu
             Step::ExternalFocus,
             Step::ShortcutReleased,
             Step::Mark,
-            Step::Send(Delivery::Paste),
+            Step::Send(Keys::Insert(Delivery::Paste)),
         ]
     );
     assert!(!permit.commit(), "The paste left its authority unspent");
@@ -166,7 +176,7 @@ fn direct_input_never_touches_the_clipboard() -> anyhow::Result<()> {
             Step::TextKeys,
             Step::ExternalFocus,
             Step::ShortcutReleased,
-            Step::Send(Delivery::Direct),
+            Step::Send(Keys::Insert(Delivery::Direct)),
         ]
     );
     assert!(!permit.commit(), "Direct input left its authority unspent");
@@ -288,7 +298,7 @@ async fn a_stopped_worker_exits_while_inserters_outlive_it() -> anyhow::Result<(
         .context("The insertion thread waited for every Inserter to drop")?;
     let permit = input.begin().context("Recording")?;
     let refused = inserter
-        .insert("text".into(), permit, Delivery::Paste)
+        .insert("text".into(), permit, Delivery::Paste, Enter::Withheld)
         .await
         .err()
         .context("A stopped worker accepted a request")?;
@@ -306,14 +316,14 @@ async fn a_panic_answers_a_fixed_message_and_the_next_request_is_served() -> any
         Ok(Inserted::Sent)
     })?;
     let failed = inserter
-        .insert("panics".into(), permit()?, Delivery::Paste)
+        .insert("panics".into(), permit()?, Delivery::Paste, Enter::Withheld)
         .await
         .err()
         .context("A panicking insertion reported an outcome")?;
     assert_eq!(format!("{failed:#}"), INSERTION_STOPPED);
     let next = tokio::time::timeout(
         PATIENCE,
-        inserter.insert("text".into(), permit()?, Delivery::Paste),
+        inserter.insert("text".into(), permit()?, Delivery::Paste, Enter::Withheld),
     )
     .await
     .context("The request after a panic was never answered")??;

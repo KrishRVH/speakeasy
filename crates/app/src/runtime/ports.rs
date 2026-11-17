@@ -5,7 +5,7 @@ use std::{
 
 use async_channel::Sender;
 use speakeasy_core::machine::{Cue, RecognitionMode, SessionId};
-use speakeasy_platform::{Delivery, InsertPermit, Inserted, Scope, Taps};
+use speakeasy_platform::{Delivery, Enter, InsertPermit, Inserted, Scope, Taps};
 use speakeasy_show::{Ending, Framing, Journal, Narration, NarrationLoss, Recording, Take};
 use tokio::sync::{mpsc, oneshot, watch};
 use zeroize::Zeroizing;
@@ -202,6 +202,7 @@ pub(crate) trait Ports: Send + 'static {
         text: String,
         permit: InsertPermit,
         delivery: Delivery,
+        enter: Enter,
     ) -> impl Future<Output = anyhow::Result<Inserted>> + Send + 'static;
 
     fn cue(&self, cue: Cue);

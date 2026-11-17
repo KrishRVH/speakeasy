@@ -41,6 +41,23 @@ async fn held_shortcut_release_finishes_through_the_owner() -> anyhow::Result<()
 }
 
 #[tokio::test(start_paused = true)]
+async fn return_during_a_hold_sends_only_that_dictation() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    h.input(Input::Press);
+    h.phase(Phase::Recording).await?;
+    h.input(Input::Submit);
+    h.transcribe_next_as("Ship it.").await?;
+    assert_eq!(receive(&h.entered).await?, "Ship it.");
+    h.phase(Phase::Done).await?;
+    h.start().await?;
+    h.input(Input::Submit);
+    h.finish_as("Hands free.").await?;
+    assert_eq!(receive(&h.pasted).await?, "Hands free.");
+    assert!(h.entered.try_recv().is_err());
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
 async fn locking_a_hold_keeps_the_same_capture_until_the_next_press() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
     h.input(Input::Press);

@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, ensure};
-use speakeasy_platform::{Delivery, InsertPermit, Inserted, Scope, Taps};
+use speakeasy_platform::{Delivery, Enter, InsertPermit, Inserted, Scope, Taps};
 use speakeasy_show::{
     Image, Journal, Moment, Narration, NarrationLoss, Recording, Size, Span, Word,
 };
@@ -99,6 +99,7 @@ struct FakePorts {
     pins: Sender<(SessionId, Taps)>,
     jobs: Sender<TranscriptionJob>,
     pasted: Sender<String>,
+    entered: Sender<String>,
     published: Sender<(Footage, Narration)>,
     loads: Sender<()>,
     sounds: Sender<Sound>,
@@ -110,6 +111,7 @@ struct Reports {
     pins: Receiver<(SessionId, Taps)>,
     jobs: Receiver<TranscriptionJob>,
     pasted: Receiver<String>,
+    entered: Receiver<String>,
     published: Receiver<(Footage, Narration)>,
     loads: Receiver<()>,
     sounds: Receiver<Sound>,
@@ -122,6 +124,7 @@ impl FakePorts {
         let (pins, pinned) = async_channel::bounded(8);
         let (jobs, requested) = async_channel::bounded(8);
         let (pasted, submitted) = async_channel::bounded(8);
+        let (entered, sent) = async_channel::bounded(8);
         let (published, written) = async_channel::bounded(8);
         let (loads, loaded) = async_channel::bounded(8);
         let (sounds, played) = async_channel::unbounded();
@@ -152,6 +155,7 @@ impl FakePorts {
             pins,
             jobs,
             pasted,
+            entered,
             published,
             loads,
             sounds,
@@ -162,6 +166,7 @@ impl FakePorts {
             pins: pinned,
             jobs: requested,
             pasted: submitted,
+            entered: sent,
             published: written,
             loads: loaded,
             sounds: played,
@@ -356,8 +361,12 @@ impl Ports for FakePorts {
         text: String,
         permit: InsertPermit,
         _: Delivery,
+        enter: Enter,
     ) -> impl Future<Output = anyhow::Result<Inserted>> + Send + 'static {
-        let pasted = self.pasted.clone();
+        let pasted = match enter {
+            Enter::Withheld => self.pasted.clone(),
+            Enter::Pressed => self.entered.clone(),
+        };
         let insertion = self.insertion.clone();
         let results = self.insert_results.clone();
         async move {
@@ -683,6 +692,7 @@ struct Harness<Host = OwnedTask> {
     pins: Receiver<(SessionId, Taps)>,
     jobs: Receiver<TranscriptionJob>,
     pasted: Receiver<String>,
+    entered: Receiver<String>,
     published: Receiver<(Footage, Narration)>,
     loads: Receiver<()>,
     sounds: Receiver<Sound>,
@@ -776,6 +786,7 @@ impl<Host: Sync> Harness<Host> {
             pins: reports.pins,
             jobs: reports.jobs,
             pasted: reports.pasted,
+            entered: reports.entered,
             published: reports.published,
             loads: reports.loads,
             sounds: reports.sounds,

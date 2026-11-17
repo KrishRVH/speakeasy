@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::Context as _;
 use windows_sys::Win32::UI::{
-    Input::KeyboardAndMouse::{INPUT, VK_CONTROL, VK_V},
+    Input::KeyboardAndMouse::{INPUT, VK_CONTROL, VK_RETURN, VK_V},
     WindowsAndMessaging::GetForegroundWindow,
 };
 
@@ -68,6 +68,7 @@ pub(super) struct Insert;
 
 pub(super) enum Keys {
     Paste,
+    Return,
     Text(Vec<INPUT>),
 }
 
@@ -114,6 +115,10 @@ impl NativeInsert for Insert {
         ))
     }
 
+    fn return_keys(&mut self) -> anyhow::Result<Keys> {
+        Ok(Keys::Return)
+    }
+
     fn external_focus(&mut self) -> bool {
         let focused = unsafe { GetForegroundWindow() };
         window_process(focused).is_some_and(|process| process != std::process::id())
@@ -146,6 +151,21 @@ impl NativeInsert for Insert {
                 Ok(Inserted::Copied(
                     "Text copied. This app blocked paste; press Ctrl+V.",
                 ))
+            },
+            Keys::Return => {
+                let keys = [press(VK_RETURN), release(VK_RETURN)];
+                let sent = send_input(&keys)?;
+                if sent == keys.len() {
+                    return Ok(Inserted::Sent);
+                }
+                if sent > 0 {
+                    #[expect(
+                        clippy::let_underscore_must_use,
+                        reason = "Release a stuck synthetic Return after partial input even if the target also blocks cleanup"
+                    )]
+                    let _ = send_input(&[release(VK_RETURN)]);
+                }
+                Ok(Inserted::Unavailable("This app blocked Return."))
             },
             Keys::Text(input) => {
                 let sent = send_input(&input)?;

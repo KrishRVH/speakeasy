@@ -539,6 +539,16 @@ impl insertion::NativeInsert for Insert {
         Ok(events)
     }
 
+    fn return_keys(&mut self) -> anyhow::Result<Vec<CGEvent>> {
+        let source = private_event_source()?;
+        [true, false]
+            .into_iter()
+            .map(|down| {
+                own_key_event(&source, KeyCode::RETURN, down).context("Cannot create Return event")
+            })
+            .collect()
+    }
+
     fn external_focus(&mut self) -> bool {
         NSWorkspace::sharedWorkspace()
             .frontmostApplication()

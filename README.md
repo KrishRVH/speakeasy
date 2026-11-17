@@ -32,13 +32,14 @@ slot on screen while you speak, and recognizes every word on your machine.
 | Dictate while held; release to type              | <kbd>Ctrl</kbd> + <kbd>Win</kbd>                            | <kbd>Fn</kbd>                                               |
 | Hands-free; press the shortcut again to finish   | <kbd>Ctrl</kbd> + <kbd>Win</kbd> + <kbd>Space</kbd>         | <kbd>Fn</kbd> + <kbd>Space</kbd>                            |
 | Cancel dictation; the key still reaches your app | <kbd>Escape</kbd>                                           | <kbd>Escape</kbd>                                           |
+| Finish, type, and press Return to send           | <kbd>Enter</kbd> during the hold                            | <kbd>Return</kbd> during the hold                           |
 | Paste the last dictation                         | <kbd>V</kbd> during the hold                                | <kbd>V</kbd> during the hold                                |
 | Show the screen, a window, or an area; see below | <kbd>S</kbd>, <kbd>W</kbd>, or <kbd>A</kbd> during the hold | <kbd>S</kbd>, <kbd>W</kbd>, or <kbd>A</kbd> during the hold |
 
 The shortcuts match Wispr Flow's defaults, and double-tapping the shortcut also starts hands-free.
 On Mac, Settings and the setup guide offer Fn, F13, Right Option, or Right Command. With either
-right modifier, hold it for a quarter-second before adding Space, S, W, A, or V; quick combinations
-keep their usual action. Left Option and Left Command remain ordinary modifiers.
+right modifier, hold it for a quarter-second before adding Space, Return, S, W, A, or V; quick
+combinations keep their usual action. Left Option and Left Command remain ordinary modifiers.
 
 For Fn, set **System Settings › Keyboard › Press 🌐 key to** to **Do Nothing** so Fn only dictates.
 
@@ -54,8 +55,8 @@ keyboard does not send.
 
 **Secure keyboard entry on Mac:** while a password field has focus, or a terminal's **Secure
 Keyboard Entry** is on, macOS hides key presses from other apps. Fn, Right Option, and Right Command
-still dictate, but F13 cannot start dictation, and Escape, Space, V, S, W, and A don't reach
-Speakeasy. Space, V, S, W, and A go to your app with the key you hold instead, so with Right
+still dictate, but F13 cannot start dictation, and Escape, Space, Return, V, S, W, and A don't reach
+Speakeasy. Space, Return, V, S, W, and A go to your app with the key you hold instead, so with Right
 Command, W closes the window and V pastes. The pill says so as a recording starts. Leave the
 password field, or turn Secure Keyboard Entry off in the terminal's app menu.
 
@@ -72,6 +73,12 @@ or "open quote"/"close quote" to enclose words; and "backtick" before and after 
 as code. "A new line of products" keeps its words. Verbatim and the case styles keep every word, and
 turning off **Spoken symbols** under Writing keeps them in Prose too. Pasting keeps line breaks as
 text; with Keep clipboard, an app may treat a typed line break as Return.
+
+**Return during the hold** finishes the dictation like releasing the shortcut, types it, and then
+presses Return, so a chat or an agent's prompt sends it. It applies to that dictation only, and only
+while the shortcut is held; hands-free and Shows ignore it, and Return outside a hold reaches your
+app as usual. If focus moves to another app, or the shortcut is still held, before Return would go,
+Speakeasy leaves the text unsent and says so.
 
 **Paste last dictation** in the tray, or V during the shortcut hold on Windows and Mac, inserts
 exactly the last completed text again; V abandons the hold's own recording. It can recover text when

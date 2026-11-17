@@ -138,6 +138,7 @@ fn focus_moving_to_speakeasy_during_the_last_clipboard_check_refuses_the_paste()
         text: "fixture".into(),
         permit: permit.clone(),
         delivery: Delivery::Paste,
+        enter: crate::Enter::Withheld,
         own_focus: report.subscribe(),
         reply,
     };
@@ -180,7 +181,12 @@ async fn readiness_waits_for_insertion_setup_and_follows_its_failure_report() ->
         "Desktop readiness preceded insertion setup"
     );
     let permit = input.begin().context("Recording")?;
-    let mut queued = Box::pin(inserter.insert("fixture".into(), permit, Delivery::Paste));
+    let mut queued = Box::pin(inserter.insert(
+        "fixture".into(),
+        permit,
+        Delivery::Paste,
+        crate::Enter::Withheld,
+    ));
     assert!(queued.as_mut().now_or_never().is_none());
     release.send(())?;
     assert!(
@@ -227,10 +233,20 @@ async fn a_panicking_insertion_thread_answers_the_request_in_hand_and_every_queu
     )?;
     worker.ready().await?;
     let permit = input.begin().context("Recording")?;
-    let mut in_hand = Box::pin(inserter.insert("fixture".into(), permit.clone(), Delivery::Paste));
+    let mut in_hand = Box::pin(inserter.insert(
+        "fixture".into(),
+        permit.clone(),
+        Delivery::Paste,
+        crate::Enter::Withheld,
+    ));
     assert!(in_hand.as_mut().now_or_never().is_none());
     tokio::time::timeout(PATIENCE, holding.recv()).await??;
-    let mut queued = Box::pin(inserter.insert("fixture".into(), permit, Delivery::Paste));
+    let mut queued = Box::pin(inserter.insert(
+        "fixture".into(),
+        permit,
+        Delivery::Paste,
+        crate::Enter::Withheld,
+    ));
     assert!(queued.as_mut().now_or_never().is_none());
     release.send(())?;
     for answer in [in_hand, queued] {

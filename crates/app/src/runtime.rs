@@ -14,7 +14,7 @@ use std::{
 use async_channel::{Receiver, Sender, TrySendError};
 use speakeasy_core::machine::{Cue, ModelState, Phase, RecognitionMode, SessionId};
 use speakeasy_platform::{
-    Delivery, Input, InputMonitor, InputSender, InsertPermit, Inserted, Inserter, OwnFocus,
+    Delivery, Enter, Input, InputMonitor, InputSender, InsertPermit, Inserted, Inserter, OwnFocus,
     OwnedThread, Scope,
 };
 use speakeasy_show::{Ending, NarrationLoss};
@@ -476,9 +476,10 @@ impl Ports for Desktop {
         text: String,
         permit: InsertPermit,
         delivery: Delivery,
+        enter: Enter,
     ) -> impl Future<Output = anyhow::Result<Inserted>> + Send + 'static {
         let inserter = self.inserter.clone();
-        async move { inserter.insert(text, permit, delivery).await }
+        async move { inserter.insert(text, permit, delivery, enter).await }
     }
 
     fn cue(&self, cue: Cue) {

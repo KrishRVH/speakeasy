@@ -48,7 +48,7 @@ pub use self::{
     },
     image::BgraImage,
     input::{IdleInput, Input, InputSender, InsertPermit, Taps},
-    insertion::{Delivery, FocusReport, Inserted, Inserter, OwnFocus},
+    insertion::{Delivery, Enter, FocusReport, Inserted, Inserter, OwnFocus},
     movie::{MovieControl, MovieEvent, MovieFrame, MovieTarget, read_movie_frame},
     owned_thread::{OwnedThread, StoppableThread},
     permissions::{Permission, Permissions},

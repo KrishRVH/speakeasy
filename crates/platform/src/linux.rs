@@ -320,11 +320,21 @@ mod tests {
             serve,
         )?;
         let permit = input.begin().context("Recording")?;
-        let in_hand = inserter.insert("fixture".into(), permit.clone(), Delivery::Paste);
+        let in_hand = inserter.insert(
+            "fixture".into(),
+            permit.clone(),
+            Delivery::Paste,
+            crate::Enter::Withheld,
+        );
         let mut in_hand = Box::pin(in_hand);
         assert!(in_hand.as_mut().now_or_never().is_none());
         tokio::time::timeout(PATIENCE, holding.recv()).await??;
-        let mut queued = Box::pin(inserter.insert("fixture".into(), permit, Delivery::Paste));
+        let mut queued = Box::pin(inserter.insert(
+            "fixture".into(),
+            permit,
+            Delivery::Paste,
+            crate::Enter::Withheld,
+        ));
         assert!(queued.as_mut().now_or_never().is_none());
         release.send(())?;
         for answer in [in_hand, queued] {
