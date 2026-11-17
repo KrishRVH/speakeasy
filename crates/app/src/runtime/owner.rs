@@ -258,7 +258,7 @@ impl<P: Ports> Owner<P> {
         };
         let snapshot = Snapshot {
             epoch: world.epoch,
-            session: machine.session().into(),
+            session: machine.latest_session().into(),
             reported: world.reported,
             phase: machine.phase(),
             hands_free: machine.hands_free(),

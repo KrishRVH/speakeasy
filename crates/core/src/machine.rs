@@ -626,6 +626,7 @@ impl<P: Payload> Machine<P> {
         self.abandon(env);
     }
 
+    #[must_use]
     pub fn drained(&mut self, session: SessionId, delivered: Delivered<P>) -> Option<P::Shown> {
         let shown = saved_anyway(self.remembered, session, delivered)?;
         self.remembered = Some(session);
@@ -653,7 +654,7 @@ impl<P: Payload> Machine<P> {
     }
 
     #[must_use]
-    pub const fn session(&self) -> SessionId {
+    pub const fn latest_session(&self) -> SessionId {
         self.latest.id
     }
 
@@ -937,7 +938,7 @@ impl<P: Payload> Machine<P> {
                 }
             },
             Capture::Finished(Err(unheard)) => {
-                if session.audio_failed(unheard.silent) {
+                if session.go_on_without_audio(unheard.silent) {
                     self.notice = Some(Notice::NarrationLost(unheard.text));
                     self.conclude_capture(env);
                 } else {
@@ -969,7 +970,7 @@ impl<P: Payload> Machine<P> {
             Completion::Abandoned(ticket) => {
                 self.worker = Worker::Ready;
                 if let Some(session) = &mut self.session {
-                    session.failed(ticket);
+                    session.absorb_failure(ticket);
                 }
             },
             Completion::Loaded(Ok(())) => {
@@ -986,7 +987,9 @@ impl<P: Payload> Machine<P> {
                     if !matches!(self.notice, Some(Notice::NarrationLost(_))) {
                         self.notice = Some(Notice::WarmupFailed(text));
                     }
-                } else if self.session.as_mut().is_some_and(Session::not_transcribed) {
+                } else if let Some(session) = &mut self.session
+                    && session.go_on_without_transcript()
+                {
                     self.notice = Some(Notice::WarmupFailed(text));
                 } else {
                     self.fail(Failure::Said(text), env);
@@ -1014,8 +1017,8 @@ impl<P: Payload> Machine<P> {
                 if session.is_transcribing() {
                     self.notice = Some(Notice::LoadingModel);
                 }
-                if !session.failed(ticket) {
-                    if session.not_transcribed() {
+                if !session.absorb_failure(ticket) {
+                    if session.go_on_without_transcript() {
                         self.notice = Some(Notice::NarrationLost(text));
                     } else {
                         self.fail(Failure::Said(text), env);
@@ -1140,13 +1143,13 @@ impl<P: Payload> Machine<P> {
             return;
         };
         let show = session.is_show();
-        let remembered = matches!(
+        let keeps_dictation = matches!(
             delivered,
             Delivered::Inserted(
                 Inserted::Sent | Inserted::Copied(_) | Inserted::Unavailable(_) | Inserted::Failed
             ) | Delivered::Panicked
         );
-        if remembered && let Some(text) = session.take_dictation() {
+        if keeps_dictation && let Some(text) = session.take_dictation() {
             self.last_dictation = Some(text);
         }
         let replay = !show && self.last_dictation.is_some();

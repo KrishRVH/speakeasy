@@ -548,8 +548,8 @@ impl<P: Payload> Session<P> {
         }
     }
 
-    pub(super) fn failed(&mut self, ticket: Ticket) -> bool {
-        !self.accepts(ticket) || self.recognition.failed(ticket)
+    pub(super) fn absorb_failure(&mut self, ticket: Ticket) -> bool {
+        !self.accepts(ticket) || self.recognition.absorb_failure(ticket)
     }
 
     fn narrate(&mut self, narration: P::Narration) {
@@ -565,7 +565,7 @@ impl<P: Payload> Session<P> {
         }
     }
 
-    pub(super) fn audio_failed(&mut self, silent: bool) -> bool {
+    pub(super) fn go_on_without_audio(&mut self, silent: bool) -> bool {
         let listened = self.is_show() && self.is_listening();
         if listened {
             self.go_on_without_narration(if silent {
@@ -577,7 +577,7 @@ impl<P: Payload> Session<P> {
         listened
     }
 
-    pub(super) fn not_transcribed(&mut self) -> bool {
+    pub(super) fn go_on_without_transcript(&mut self) -> bool {
         let given_up =
             self.is_show() && self.is_recognizing() && self.recognition.may_lose_narration();
         if given_up {

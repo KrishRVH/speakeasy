@@ -48,7 +48,7 @@ fn stale_tickets_cannot_complete_or_fail_an_active_piece() {
             .heard(stale, Transcript::Text("stale".into()))
             .is_none()
     );
-    assert!(recognition.failed(stale));
+    assert!(recognition.absorb_failure(stale));
     assert!(recognition.accepts(current));
     assert!(
         recognition
@@ -76,10 +76,10 @@ fn a_failed_tail_retries_the_whole_recording_once() {
     );
     let tail = request(&mut recognition).unwrap();
     assert_eq!(audio(&tail), &recording()[32..]);
-    assert!(recognition.failed(tail.ticket()));
+    assert!(recognition.absorb_failure(tail.ticket()));
     let retry = request(&mut recognition).unwrap();
     assert_eq!(audio(&retry), recording());
-    assert!(!recognition.failed(retry.ticket()));
+    assert!(!recognition.absorb_failure(retry.ticket()));
     assert!(request(&mut recognition).is_none());
 }
 
@@ -186,7 +186,7 @@ fn streaming_failure_and_show_promotion_keep_the_full_recording() {
         if promotion {
             recognition.whole();
         } else {
-            assert!(recognition.failed(streaming.ticket()));
+            assert!(recognition.absorb_failure(streaming.ticket()));
         }
         assert!(!recognition.accepts(streaming.ticket()));
         assert!(

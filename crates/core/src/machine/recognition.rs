@@ -326,7 +326,7 @@ impl<P: Payload> Recognition<P> {
         text
     }
 
-    pub(super) fn failed(&mut self, ticket: Ticket) -> bool {
+    pub(super) fn absorb_failure(&mut self, ticket: Ticket) -> bool {
         if !self.accepts(ticket) {
             return true;
         }

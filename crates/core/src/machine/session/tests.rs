@@ -87,21 +87,24 @@ fn a_show_goes_on_without_narration_only_from_the_stages_its_loss_can_reach() {
     let mut log = Log::default();
     let mut dictation = opened(&mut log, false);
     dictation.audio_ready(State::Held, Duration::ZERO);
-    assert!(!dictation.audio_failed(false), "Dictation has nothing left");
+    assert!(
+        !dictation.go_on_without_audio(false),
+        "Dictation has nothing left"
+    );
 
     let mut show = opened(&mut log, true);
     assert!(
-        !show.audio_failed(false),
+        !show.go_on_without_audio(false),
         "A microphone that never listened fails with its remedy"
     );
     show.audio_ready(State::Held, Duration::ZERO);
     assert!(
-        !show.not_transcribed(),
+        !show.go_on_without_transcript(),
         "A Show still recording has no speech to transcribe"
     );
     show.finish();
     assert!(
-        show.audio_failed(false),
+        show.go_on_without_audio(false),
         "Audio can still stop while the capture seals it"
     );
     assert_eq!(loss(&show), Some(NarrationLoss::AudioStopped));
@@ -109,21 +112,27 @@ fn a_show_goes_on_without_narration_only_from_the_stages_its_loss_can_reach() {
     let mut show = opened(&mut log, true);
     show.audio_ready(State::Held, Duration::ZERO);
     show.finish();
-    assert!(show.audio_failed(true));
+    assert!(show.go_on_without_audio(true));
     assert_eq!(loss(&show), Some(NarrationLoss::AudioSilent));
 
     let mut show = opened(&mut log, true);
     show.audio_ready(State::Held, Duration::ZERO);
     show.finish();
     assert!(show.captured(Some(sealed())));
-    assert!(!show.audio_failed(false), "Sealed audio can no longer stop");
+    assert!(
+        !show.go_on_without_audio(false),
+        "Sealed audio can no longer stop"
+    );
     assert!(show.request(&mut log).is_some());
-    assert!(!show.not_transcribed(), "Speech keeps its one retry");
-    assert!(show.failed(Ticket {
+    assert!(
+        !show.go_on_without_transcript(),
+        "Speech keeps its one retry"
+    );
+    assert!(show.absorb_failure(Ticket {
         session: show.id,
         part: Part::Final
     }));
     assert!(show.request(&mut log).is_some());
-    assert!(show.not_transcribed());
+    assert!(show.go_on_without_transcript());
     assert_eq!(loss(&show), Some(NarrationLoss::NotTranscribed));
 }
