@@ -159,7 +159,9 @@ enum Stage<P: Payload> {
         narration: P::Narration,
         loss: Option<NarrationLoss>,
     },
-    Delivering(Option<P::Heard>),
+    Delivering {
+        dictation: Option<P::Heard>,
+    },
 }
 
 #[cfg_attr(test, derive(Clone, Debug))]
@@ -301,7 +303,7 @@ impl<P: Payload> Session<P> {
             Stage::Reopening
             | Stage::Recognizing(_)
             | Stage::AwaitingFootage { .. }
-            | Stage::Delivering(_) => Phase::Processing,
+            | Stage::Delivering { .. } => Phase::Processing,
         }
     }
 
@@ -334,7 +336,7 @@ impl<P: Payload> Session<P> {
 
     #[cfg(test)]
     pub(super) const fn is_delivering(&self) -> bool {
-        matches!(self.stage, Stage::Delivering(_))
+        matches!(self.stage, Stage::Delivering { .. })
     }
 
     #[cfg(test)]
@@ -343,7 +345,7 @@ impl<P: Payload> Session<P> {
     }
 
     pub(super) const fn awaits_delivery(&self) -> bool {
-        matches!(self.stage, Stage::Delivering(_) | Stage::Reopening)
+        matches!(self.stage, Stage::Delivering { .. } | Stage::Reopening)
     }
 
     #[cfg(test)]
@@ -381,11 +383,11 @@ impl<P: Payload> Session<P> {
         ended.take_lost()
     }
 
-    pub(super) fn take_inserted_text(&mut self) -> Option<P::Heard> {
-        let Stage::Delivering(text) = &mut self.stage else {
+    pub(super) fn take_dictation(&mut self) -> Option<P::Heard> {
+        let Stage::Delivering { dictation } = &mut self.stage else {
             return None;
         };
-        text.take()
+        dictation.take()
     }
 
     pub(super) const fn queued_screen(&self) -> Option<P::Scope> {
@@ -554,10 +556,10 @@ impl<P: Payload> Session<P> {
     }
 
     pub(super) fn insert(&mut self, text: P::Heard, config: &P::Config, env: &mut impl Env<P>) {
-        let kept = matches!(self.purpose, Purpose::Dictation).then(|| text.clone());
+        let dictation = matches!(self.purpose, Purpose::Dictation).then(|| text.clone());
         self.recognition = Recognition::new(self.id);
         env.insert(text, &self.permit, config);
-        self.stage = Stage::Delivering(kept);
+        self.stage = Stage::Delivering { dictation };
     }
 
     pub(super) fn turn_into_show(&mut self, scope: P::Scope, env: &mut impl Env<P>) -> bool {
@@ -613,7 +615,7 @@ impl<P: Payload> Session<P> {
             &self.permit,
             self.receipt.take(),
         );
-        self.stage = Stage::Delivering(None);
+        self.stage = Stage::Delivering { dictation: None };
     }
 
     pub(super) fn into_cleanup(self, env: &mut impl Env<P>) -> bool {

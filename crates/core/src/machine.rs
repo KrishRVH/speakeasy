@@ -1143,7 +1143,7 @@ impl<P: Payload> Machine<P> {
                 Inserted::Sent | Inserted::Copied(_) | Inserted::Unavailable(_) | Inserted::Failed
             ) | Delivered::Panicked
         );
-        if remembered && let Some(text) = session.take_inserted_text() {
+        if remembered && let Some(text) = session.take_dictation() {
             self.last_dictation = Some(text);
         }
         let replay = !show && self.last_dictation.is_some();
