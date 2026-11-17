@@ -44,7 +44,7 @@ struct Presenter {
     toggle: MenuItem,
     cancel: MenuItem,
     paste_last: MenuItem,
-    styles: Vec<(Style, CheckMenuItem)>,
+    styles: [(Style, CheckMenuItem); Style::ALL.len()],
     presets: Submenu,
     preset_items: Vec<(String, CheckMenuItem)>,
     show_screen: MenuItem,
@@ -137,15 +137,12 @@ pub(crate) fn install(cx: &mut App) -> anyhow::Result<()> {
     let paste_last = MenuItem::new("Paste last dictation", false, None);
     let style_menu = Submenu::new("Dictation style", true);
     let presets = Submenu::new("Preset", false);
-    let styles: Vec<_> = Style::ALL
-        .into_iter()
-        .map(|style| {
-            (
-                style,
-                CheckMenuItem::new(style.label(), true, style == Style::Prose, None),
-            )
-        })
-        .collect();
+    let styles = Style::ALL.map(|style| {
+        (
+            style,
+            CheckMenuItem::new(style.label(), true, style == Style::Prose, None),
+        )
+    });
     for (_, item) in &styles {
         style_menu.append(item)?;
     }
@@ -234,20 +231,14 @@ pub(crate) fn install(cx: &mut App) -> anyhow::Result<()> {
     let mut changes = TrayChanges::new(cx);
     let updates = cx.spawn(async move |cx| {
         loop {
-            let refresh = tokio::select! {
-                state = changes.next(cx) => {
-                    let Some(state) = state else { break };
-                    presenter.present(state);
-                    false
-                },
-                requested = refreshes.recv() => {
-                    if requested.is_err() { break; }
-                    true
-                },
+            let state = tokio::select! {
+                state = changes.next(cx) => state,
+                requested = refreshes.recv() => requested.ok().map(|()| changes.refresh(cx)),
             };
-            if refresh {
-                presenter.present(changes.refresh(cx));
-            }
+            let Some(state) = state else {
+                break;
+            };
+            presenter.present(state);
         }
     });
     cx.set_global(Tray {

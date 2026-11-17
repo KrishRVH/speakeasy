@@ -160,8 +160,7 @@ impl TrayChanges {
     }
 
     fn read(&mut self, cx: &AsyncApp) -> TrayState {
-        let snapshot = self.snapshots.borrow_and_update().clone();
-        cx.update(|cx| TrayState::new(cx.global::<Services>(), &snapshot))
+        cx.update(|cx| TrayState::new(cx.global::<Services>(), &self.snapshots.borrow_and_update()))
     }
 
     #[cfg(any(target_os = "windows", target_os = "macos"))]
