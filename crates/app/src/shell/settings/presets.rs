@@ -49,17 +49,18 @@ impl Editor {
     #[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
     pub(super) fn enter(&mut self, name: &str, cx: &mut Context<'_, Settings>) {
         self.naming = true;
-        self.name.update(cx, |field, cx| field.set(name.into(), cx));
+        self.name
+            .update(cx, |field, cx| field.set_text(name.into(), cx));
     }
 
     pub(super) fn clear(&mut self, cx: &mut Context<'_, Settings>) {
         self.naming = false;
         self.name
-            .update(cx, |field, cx| field.set(String::new(), cx));
+            .update(cx, |field, cx| field.set_text(String::new(), cx));
     }
 
-    pub(super) fn theme(&self, theme: Theme, cx: &mut Context<'_, Settings>) {
-        self.name.update(cx, |field, _| field.theme(theme));
+    pub(super) fn set_theme(&self, theme: Theme, cx: &mut Context<'_, Settings>) {
+        self.name.update(cx, |field, _| field.set_theme(theme));
     }
 }
 

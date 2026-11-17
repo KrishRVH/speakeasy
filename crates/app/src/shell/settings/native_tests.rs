@@ -101,7 +101,7 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                     "Settings drop lost the queued save"
                 );
                 window.update(cx, |field, window, cx| {
-                    field.set("🦀 café ".into(), cx);
+                    field.set_text("🦀 café ".into(), cx);
                     field.replace_and_mark_text_in_range(None, "日本", Some(1..2), window, cx);
                     let selection = field
                         .selected_text_range(false, window, cx)

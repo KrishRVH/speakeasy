@@ -62,16 +62,16 @@ impl Editor {
         }
     }
 
-    pub(super) fn theme(&self, theme: Theme, cx: &mut Context<'_, Settings>) {
+    pub(super) fn set_theme(&self, theme: Theme, cx: &mut Context<'_, Settings>) {
         for field in self.fields() {
-            field.update(cx, |field, _| field.theme(theme));
+            field.update(cx, |field, _| field.set_theme(theme));
         }
     }
 
     pub(super) fn clear(&mut self, cx: &mut Context<'_, Settings>) {
         self.editing = None;
         for field in self.fields() {
-            field.update(cx, |field, cx| field.set(String::new(), cx));
+            field.update(cx, |field, cx| field.set_text(String::new(), cx));
         }
     }
 
@@ -115,7 +115,7 @@ impl Settings {
             Edit::Add => {
                 if self.store_correction(None, cx) {
                     for field in [&self.vocabulary.heard, &self.vocabulary.written] {
-                        field.update(cx, |field, cx| field.set(String::new(), cx));
+                        field.update(cx, |field, cx| field.set_text(String::new(), cx));
                     }
                     self.vocabulary
                         .heard
@@ -129,10 +129,10 @@ impl Settings {
                     let (heard, written) = (rule.heard.clone(), rule.written.clone());
                     self.vocabulary
                         .revised_heard
-                        .update(cx, |field, cx| field.set(heard, cx));
+                        .update(cx, |field, cx| field.set_text(heard, cx));
                     self.vocabulary
                         .revised_written
-                        .update(cx, |field, cx| field.set(written, cx));
+                        .update(cx, |field, cx| field.set_text(written, cx));
                     self.vocabulary.editing = Some(index);
                     self.vocabulary
                         .revised_heard

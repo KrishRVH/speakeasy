@@ -47,7 +47,7 @@ impl Update {
         }
     }
 
-    pub(super) const fn busy(&self) -> bool {
+    pub(super) const fn is_busy(&self) -> bool {
         match self {
             Self::Checking { .. } => true,
             #[cfg(target_os = "windows")]
@@ -88,7 +88,7 @@ impl Update {
 
 impl Settings {
     pub(super) fn check_updates(&mut self, cx: &Context<'_, Self>) {
-        if is_demo(cx) || self.update.busy() || cx.global::<Services>().is_quitting() {
+        if is_demo(cx) || self.update.is_busy() || cx.global::<Services>().is_quitting() {
             return;
         }
         let Ok(operation) = Check::start() else {

@@ -10,7 +10,7 @@ const FIELD: u64 = 7;
 
 fn edit(text: &str) -> Edit {
     let mut edit = Edit::default();
-    edit.set(text.into());
+    edit.set_text(text.into());
     edit
 }
 
@@ -87,7 +87,7 @@ fn native_selections_keep_direction_and_reject_partial_foreign_or_stale_endpoint
     assert_eq!(request(&text, &select(beyond, after_a)), None);
     text.select(0, false);
     assert_eq!(document(&text).position(1), Some(after_a));
-    text.set(text.text.clone());
+    text.set_text(text.text.clone());
     assert_eq!(
         request(&text, &select(end, after_a)),
         None,
@@ -232,7 +232,7 @@ fn reveal_requests_name_ranges_of_the_current_revision_and_match_their_action() 
     ] {
         assert_eq!(reveal(&text, AccessibleAction::ScrollIntoView, &data), None);
     }
-    text.set(text.text.clone());
+    text.set_text(text.text.clone());
     assert_eq!(
         reveal(&text, AccessibleAction::ScrollIntoView, &named),
         None,

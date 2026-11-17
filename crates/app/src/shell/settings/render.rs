@@ -21,9 +21,9 @@ use crate::{
 
 impl Render for Settings {
     fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        self.vocabulary.theme(self.config.theme, cx);
-        self.recognition.theme(self.config.theme, cx);
-        self.presets.theme(self.config.theme, cx);
+        self.vocabulary.set_theme(self.config.theme, cx);
+        self.recognition.set_theme(self.config.theme, cx);
+        self.presets.set_theme(self.config.theme, cx);
         let palette = self.config.theme.palette();
         let ui = Ui {
             palette,
@@ -162,7 +162,7 @@ impl Settings {
                         self.navigation.page == page,
                         ui.press(action),
                     )
-                    .track_focus(self.navigation.focus(page))
+                    .track_focus(self.navigation.tab(page))
             }))
     }
 

@@ -27,7 +27,7 @@ pub(super) enum Edit {
 impl Editor {
     pub(super) fn clear(&self, cx: &mut Context<'_, Settings>) {
         self.field
-            .update(cx, |field, cx| field.set(String::new(), cx));
+            .update(cx, |field, cx| field.set_text(String::new(), cx));
     }
 
     pub(super) fn new(theme: Theme, window: &Window, cx: &mut Context<'_, Settings>) -> Self {
@@ -42,8 +42,8 @@ impl Editor {
         Self { field }
     }
 
-    pub(super) fn theme(&self, theme: Theme, cx: &mut Context<'_, Settings>) {
-        self.field.update(cx, |field, _| field.theme(theme));
+    pub(super) fn set_theme(&self, theme: Theme, cx: &mut Context<'_, Settings>) {
+        self.field.update(cx, |field, _| field.set_theme(theme));
     }
 }
 

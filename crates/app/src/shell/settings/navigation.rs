@@ -36,7 +36,7 @@ impl Navigation {
         }
     }
 
-    pub(super) const fn focus(&self, page: Page) -> &FocusHandle {
+    pub(super) const fn tab(&self, page: Page) -> &FocusHandle {
         match page {
             Page::Dictation => &self.tabs[0],
             Page::Words => &self.tabs[1],
@@ -52,6 +52,6 @@ impl Settings {
             self.navigation.page = page;
             self.navigation.scroll.set_offset(point(px(0.0), px(0.0)));
         }
-        self.navigation.focus(page).focus(window, cx);
+        self.navigation.tab(page).focus(window, cx);
     }
 }

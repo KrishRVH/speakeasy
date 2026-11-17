@@ -316,7 +316,7 @@ async fn navigate(settings: WindowHandle<Settings>, cx: &mut AsyncApp) -> anyhow
         (Page::Dictation, "enter"),
     ] {
         settings.update(cx, |view, window, cx| {
-            view.navigation.focus(page).focus(window, cx);
+            view.navigation.tab(page).focus(window, cx);
         })?;
         settle(cx).await;
         key(settings, activation, cx)?;
@@ -327,7 +327,7 @@ async fn navigate(settings: WindowHandle<Settings>, cx: &mut AsyncApp) -> anyhow
                 "Keyboard navigation missed its page"
             );
             ensure!(
-                view.navigation.focus(page).is_focused(window),
+                view.navigation.tab(page).is_focused(window),
                 "Page change lost keyboard focus"
             );
             ensure!(

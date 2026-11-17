@@ -66,7 +66,7 @@ fn native_accessibility_static_fixture() -> anyhow::Result<()> {
                 });
                 let field = cx.new(|cx| {
                     let mut field = TextField::new("Synthetic field", Theme::default(), cx);
-                    field.set("Synthetic private draft".into(), cx);
+                    field.set_text("Synthetic private draft".into(), cx);
                     field
                 });
                 let timer = cx.background_executor().timer(Duration::from_secs(45));

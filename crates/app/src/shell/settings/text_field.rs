@@ -67,14 +67,14 @@ impl TextField {
         &self.edit.text
     }
 
-    pub(super) fn set(&mut self, text: String, cx: &mut Context<'_, Self>) {
-        self.edit.set(text);
+    pub(super) fn set_text(&mut self, text: String, cx: &mut Context<'_, Self>) {
+        self.edit.set_text(text);
         self.layout = None;
         self.problem = None;
         cx.notify();
     }
 
-    pub(super) fn theme(&mut self, theme: Theme) {
+    pub(super) fn set_theme(&mut self, theme: Theme) {
         self.theme = theme;
     }
 

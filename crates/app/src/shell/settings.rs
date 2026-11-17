@@ -648,7 +648,7 @@ impl Settings {
         cx.notify();
     }
 
-    fn request_setup_stops(&self) {
+    fn request_setup_stop(&self) {
         if let Some(setup) = self.download.setup() {
             setup.request_stop();
         }
@@ -732,7 +732,7 @@ impl Settings {
         self.file_picker = None;
         self.microphone_listing = None;
         self.preview = None;
-        self.request_setup_stops();
+        self.request_setup_stop();
         self.update.cancel();
     }
 
@@ -751,7 +751,7 @@ impl Settings {
 impl Drop for Settings {
     fn drop(&mut self) {
         self.update.cancel();
-        self.request_setup_stops();
+        self.request_setup_stop();
 
         self.saves.flush();
     }
