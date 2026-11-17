@@ -30,21 +30,32 @@ async fn movie_recovery_retains_playable_prefix_beyond_the_annotation_journal() 
 
 #[tokio::test]
 async fn movie_startup_failure_saves_stills_with_an_explicit_video_loss() -> anyhow::Result<()> {
-    for mode in 0..4 {
+    enum Fault {
+        Missing,
+        Empty,
+        Truncated,
+        InvalidHeader,
+    }
+    for fault in [
+        Fault::Missing,
+        Fault::Empty,
+        Fault::Truncated,
+        Fault::InvalidHeader,
+    ] {
         let parent = tempfile::tempdir()?;
         let interrupted = checkpoint(parent.path()).await?.interrupted()?;
         store::movie::tests::checkpoint(interrupted.directory(), false)?;
         let path = interrupted.directory().join(store::movie::FILE);
-        match mode {
-            0 => fs::remove_file(&path)?,
-            1 => fs::write(&path, [])?,
-            2 => {
+        match fault {
+            Fault::Missing => fs::remove_file(&path)?,
+            Fault::Empty => fs::write(&path, [])?,
+            Fault::Truncated => {
                 let mut bytes = fs::read(&path)?;
                 let first = bytes.windows(4).position(|bytes| bytes == b"moof").unwrap();
                 bytes.truncate(first + 12);
                 fs::write(&path, bytes)?;
             },
-            _ => {
+            Fault::InvalidHeader => {
                 fs::remove_file(&path)?;
                 fs::write(interrupted.directory().join(store::movie::HEADER), b"{")?;
             },

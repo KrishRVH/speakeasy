@@ -82,7 +82,7 @@ async fn failed_or_cancelled_narrated_copy_keeps_new_narration_recoverable() -> 
             Origin::Recovered { pending: true },
             &active,
             || bail!("Synthetic save failure"),
-            |_| bail!("Recovery copied"),
+            uncopied,
         );
         if cancelled {
             assert!(matches!(result?, Published::Cancelled));

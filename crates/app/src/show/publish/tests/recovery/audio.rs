@@ -55,7 +55,7 @@ async fn failed_save_keeps_durable_narration_and_original_voice() -> anyhow::Res
             Origin::Live,
             &permit,
             || bail!("Synthetic bundle failure"),
-            |_| bail!("Failed publication copied")
+            uncopied,
         )
         .is_err()
     );
@@ -131,7 +131,7 @@ async fn pending_retry_preserves_edits_and_failure_does_not_publish_another_copy
             Origin::Recovered { pending: true },
             &retry,
             || bail!("A failed retry prepared another bundle"),
-            |_| bail!("Recovery copied")
+            uncopied,
         )
         .is_err()
     );
@@ -157,7 +157,7 @@ async fn pending_retry_preserves_edits_and_failure_does_not_publish_another_copy
         Origin::Recovered { pending: true },
         &retry,
         || Ok(root.path().to_owned()),
-        |_| bail!("Recovery copied"),
+        uncopied,
     )?
     else {
         bail!("Retry did not save a narrated copy")

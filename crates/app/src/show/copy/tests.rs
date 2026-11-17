@@ -45,7 +45,16 @@ async fn a_delivered_result_waits_for_native_cleanup_before_announcing_availabil
 #[tokio::test]
 async fn cancellation_receipt_loss_and_new_recordings_revoke_blocked_copies() -> anyhow::Result<()>
 {
-    for end in 0..3 {
+    enum Revocation {
+        Cancel,
+        DropReceipt,
+        NewRecording,
+    }
+    for revocation in [
+        Revocation::Cancel,
+        Revocation::DropReceipt,
+        Revocation::NewRecording,
+    ] {
         let root = tempfile::tempdir()?;
         fs::write(root.path().join("summary.md"), "PUBLIC_COPY_FIXTURE")?;
         let (sender, _events) = async_channel::bounded(1);
@@ -66,10 +75,10 @@ async fn cancellation_receipt_loss_and_new_recordings_revoke_blocked_copies() ->
             },
         )?);
         tokio::time::timeout(PATIENCE, acquired.recv()).await??;
-        match end {
-            0 => copies.cancel(),
-            1 => receipt = None,
-            _ => assert!(input.begin().unwrap().commit()),
+        match revocation {
+            Revocation::Cancel => copies.cancel(),
+            Revocation::DropReceipt => receipt = None,
+            Revocation::NewRecording => assert!(input.begin().unwrap().commit()),
         }
         let busy = copies.is_busy();
         let early = tokio::time::timeout(Duration::from_millis(10), copies.drained())

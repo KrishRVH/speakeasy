@@ -179,7 +179,7 @@ async fn revoking_finished_publication_or_recovery_keeps_its_checkpoint() -> any
             Origin::Live,
             &revoked,
             || bail!("Cancelled publication prepared storage"),
-            |_| bail!("Cancelled publication copied")
+            uncopied,
         )?,
         Published::Cancelled
     ));
@@ -202,7 +202,7 @@ async fn failed_publication_keeps_recoverable_frames_and_success_cleans_up() -> 
             Origin::Live,
             &active,
             || bail!("Synthetic disk failure"),
-            |_| bail!("Failed publication copied")
+            uncopied,
         )
         .is_err()
     );
@@ -287,7 +287,7 @@ fn recover_with(
         },
         permit,
         parent,
-        |_| anyhow::bail!("Recovery copied a summary"),
+        uncopied,
     )
 }
 

@@ -5,14 +5,7 @@ fn pointer_geometry_does_not_wait_for_a_still_or_rewind_when_one_arrives() -> an
     let started = Instant::now();
     let at = |ms| started.checked_add(Duration::from_millis(ms)).unwrap();
     let (canvas, _) = watch::channel(Canvas::default());
-    let mut take = Take::new(
-        started,
-        [1_000.0, 500.0],
-        Part::WHOLE,
-        speakeasy_show::Framing::Automatic,
-        &canvas,
-        (SessionId::FIRST, async_channel::bounded(1).0),
-    );
+    let mut take = whole_screen(started, &canvas);
     let part = Part::between([0.25, 0.25], [0.75, 0.75]);
     for (ms, pressed) in [(300, true), (320, false)] {
         take.pointer(PointerSample::Observed {
@@ -23,13 +16,7 @@ fn pointer_geometry_does_not_wait_for_a_still_or_rewind_when_one_arrives() -> an
             pressed,
         })?;
     }
-    take.frame(Frame {
-        at: at(200),
-        width: 4,
-        height: 4,
-        bgra: vec![0x80; 64],
-        part: Part::WHOLE,
-    })?;
+    take.frame(still(at(200), Part::WHOLE))?;
     let (recording, _) = take.state.finish();
     assert!(matches!(
         recording.actions.as_slice(),
@@ -50,21 +37,8 @@ fn later_frames_do_not_change_queued_pointer_distance_thresholds() -> anyhow::Re
     let started = Instant::now();
     let at = |ms| started.checked_add(Duration::from_millis(ms)).unwrap();
     let (canvas, _) = watch::channel(Canvas::default());
-    let mut take = Take::new(
-        started,
-        [1_000.0, 500.0],
-        Part::WHOLE,
-        speakeasy_show::Framing::Automatic,
-        &canvas,
-        (SessionId::FIRST, async_channel::bounded(1).0),
-    );
-    take.frame(Frame {
-        at: at(500),
-        width: 4,
-        height: 4,
-        bgra: vec![0x80; 64],
-        part: Part::WHOLE,
-    })?;
+    let mut take = whole_screen(started, &canvas);
+    take.frame(still(at(500), Part::WHOLE))?;
     let part = Part::between([0.25, 0.25], [0.75, 0.75]);
     for (ms, x, pressed) in [(300, 0.375, true), (310, 0.385, true), (320, 0.385, false)] {
         take.pointer(PointerSample::Observed {
@@ -96,14 +70,7 @@ async fn finishing_keeps_known_pointer_gaps_but_excludes_teardown_observations()
     for before_end in [true, false] {
         let (recorded, _) = record_with(
             |take| {
-                take.frame(Frame {
-                    at: take.started,
-                    width: 4,
-                    height: 4,
-                    bgra: vec![0x80; 64],
-                    part: Part::WHOLE,
-                })
-                .unwrap();
+                take.frame(still(take.started, Part::WHOLE)).unwrap();
                 take.pointer(PointerSample::Observed {
                     at: take.started,
                     position: [0.5, 0.5],

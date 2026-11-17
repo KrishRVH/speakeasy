@@ -472,7 +472,7 @@ fn a_show_that_cannot_be_copied_stays_saved() -> anyhow::Result<()> {
 }
 
 fn uncopied(_: &str) -> anyhow::Result<()> {
-    bail!("A cancelled Show is never copied")
+    panic!("Only a saved live Show copies its summary")
 }
 
 #[test]

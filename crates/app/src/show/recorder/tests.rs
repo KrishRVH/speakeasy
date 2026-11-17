@@ -29,13 +29,7 @@ impl Feed {
     }
 
     async fn frame_showing(&self, millis: u64, part: Part) {
-        let frame = Frame {
-            at: self.at(millis),
-            width: 4,
-            height: 4,
-            bgra: vec![0x80; 64],
-            part,
-        };
+        let frame = still(self.at(millis), part);
         self.frames.send(ScreenEvent::Frame(frame)).await.unwrap();
     }
 
@@ -99,20 +93,34 @@ async fn record_with(
         layouts,
         stop: async { tokio::time::sleep(TEARDOWN).await },
     };
-    let mut take = Take::new(
-        start.into_std(),
-        [1_000.0, 500.0],
-        Part::WHOLE,
-        speakeasy_show::Framing::Automatic,
-        &canvas,
-        (SessionId::FIRST, async_channel::bounded(1).0),
-    );
+    let mut take = whole_screen(start.into_std(), &canvas);
     prepare(&mut take);
     let run = async {
         let recorded = take.run(&lanes, sources).await;
         (recorded, start.elapsed())
     };
     tokio::join!(run, drive(&feed)).0
+}
+
+fn whole_screen(started: Instant, canvas: &watch::Sender<Canvas>) -> Take<'_> {
+    Take::new(
+        started,
+        [1_000.0, 500.0],
+        Part::WHOLE,
+        speakeasy_show::Framing::Automatic,
+        canvas,
+        (SessionId::FIRST, async_channel::bounded(1).0),
+    )
+}
+
+fn still(at: Instant, part: Part) -> Frame {
+    Frame {
+        at,
+        width: 4,
+        height: 4,
+        bgra: vec![0x80; 64],
+        part,
+    }
 }
 
 fn lanes(canvas: &watch::Sender<Canvas>) -> (Sender<()>, Sender<Taps>, Lanes<'_>) {
