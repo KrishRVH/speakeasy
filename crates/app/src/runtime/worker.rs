@@ -134,10 +134,13 @@ impl<W: Speech> Worker<W> {
         }
         .unwrap_or(&config.language)
         .to_owned();
-        let cleanup = Cleanup {
-            engine: config.engine,
-            fillers: config.fillers(&language),
-            corrections: config.vocabulary.clone(),
+        let engine = config.engine;
+        let wanted = match request.detail {
+            Detail::Text => Wanted::Text,
+            Detail::Words => Wanted::Words(Cleanup {
+                fillers: config.fillers(&language),
+                corrections: config.vocabulary.clone(),
+            }),
         };
         let terms = config.recognition_terms.clone();
         self.state = State::Transcribing {
@@ -145,16 +148,11 @@ impl<W: Speech> Worker<W> {
             job: Job::spawn(|mut cancelled| async move {
                 let heard = async {
                     match request.source {
-                        Source::Audio(clip) => transcript_of(
-                            &mut worker,
-                            clip,
-                            &language,
-                            request.detail,
-                            &cleanup,
-                            &terms,
-                        )
-                        .await
-                        .map(Transcription::Heard),
+                        Source::Audio(clip) => {
+                            transcript_of(&mut worker, clip, &language, engine, wanted, &terms)
+                                .await
+                                .map(Transcription::Heard)
+                        },
                         Source::Live(audio) => {
                             let text = worker.transcribe_stream(audio, &language, &terms).await?;
                             Ok(text
@@ -277,53 +275,61 @@ fn joined<T>(
     result.unwrap_or_else(|_private_panic| Err(anyhow!(message)))
 }
 
+enum Wanted {
+    Text,
+    Words(Cleanup),
+}
+
 struct Cleanup {
-    engine: Engine,
     fillers: Fillers,
     corrections: Vec<Correction>,
 }
 
 impl Cleanup {
-    fn invented<'a>(
-        &self,
-        heard: impl Iterator<Item = &'a str> + Clone,
-        audible: Duration,
-    ) -> bool {
-        self.engine == Engine::Whisper && credits::invented(heard, audible)
-    }
-
     fn narration(&self, narration: Narration) -> Narration {
         Vocabulary::new(&self.corrections).narration(transcript::for_show(narration, self.fillers))
     }
+}
+
+fn invented_credits<'a>(
+    engine: Engine,
+    heard: impl Iterator<Item = &'a str> + Clone,
+    audible: Duration,
+) -> bool {
+    engine == Engine::Whisper && credits::invented(heard, audible)
 }
 
 async fn transcript_of<W: Speech>(
     worker: &mut W,
     mut clip: Clip,
     language: &str,
-    detail: Detail,
-    cleanup: &Cleanup,
+    engine: Engine,
+    wanted: Wanted,
     terms: &Terms,
 ) -> anyhow::Result<Transcript<Native>> {
     let wav = mem::take(&mut *clip.wav);
-    Ok(match detail {
-        Detail::Text => {
+    Ok(match wanted {
+        Wanted::Text => {
             let text = Zeroizing::new(worker.transcribe(wav, language, terms).await?);
             Transcript::Text(
-                if cleanup.invented(iter::once(text.as_str()), clip.audible) {
+                if invented_credits(engine, iter::once(text.as_str()), clip.audible) {
                     Zeroizing::default()
                 } else {
                     text
                 },
             )
         },
-        Detail::Words => {
+        Wanted::Words(cleanup) => {
             let narration = worker.transcribe_words(wav, language, terms).await?;
             let invented = match &narration {
-                Narration::Text(text) => cleanup.invented(iter::once(text.as_str()), clip.audible),
-                Narration::Words(words) => {
-                    cleanup.invented(words.iter().map(|word| word.text.as_str()), clip.audible)
+                Narration::Text(text) => {
+                    invented_credits(engine, iter::once(text.as_str()), clip.audible)
                 },
+                Narration::Words(words) => invented_credits(
+                    engine,
+                    words.iter().map(|word| word.text.as_str()),
+                    clip.audible,
+                ),
             };
             Transcript::Words(if invented {
                 Narration::default()
