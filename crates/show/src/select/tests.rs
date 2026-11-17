@@ -568,7 +568,7 @@ fn same_screen_merges_stay_balanced() {
 }
 
 #[test]
-fn only_a_different_screen_cuts_into_a_drawing() {
+fn a_spoken_cue_never_cuts_into_a_drawing_on_the_same_screen() {
     let still = samples(250, 10_000, |_| 128);
     let narration = words(&[(4_000, "look")]);
     let shown = select(
@@ -578,51 +578,43 @@ fn only_a_different_screen_cuts_into_a_drawing() {
     .unwrap();
     assert_eq!(shown.shots.len(), 1);
     assert_eq!(shown.shots[0].keyframe.reason, Reason::Mark);
+}
 
-    let strokes = || vec![dab(2_000), dab(3_100), dab(4_200)];
-    let clicked = recording(strokes(), vec![click(2_500)], Narration::default());
-    let shown = select(&clicked, &still).unwrap();
-    assert_eq!(times(&shown), [4_250]);
-    assert_eq!(shown.shots[0].keyframe.marks, 0..1);
-    assert_eq!(shown.shots[0].keyframe.action, Some(click(2_500)));
-    assert!(
-        shown.shots[0]
-            .keyframe
-            .event
-            .ends_with("; clicked (x 0.50, y 0.50)"),
-        "{}",
-        shown.shots[0].keyframe.event
-    );
-
-    let twice = recording(
-        strokes(),
-        vec![click(2_500), click(3_500)],
+fn drawn(clicks: Vec<Action>) -> Recording {
+    recording(
+        vec![dab(2_000), dab(3_100), dab(4_200)],
+        clicks,
         Narration::default(),
-    );
-    let shown = select(&twice, &still).unwrap();
-    assert_eq!(times(&shown), [4_250]);
-    assert_eq!(shown.shots[0].keyframe.action, Some(click(3_500)));
+    )
+}
 
-    let before = recording(strokes(), vec![click(1_800)], Narration::default());
-    let shown = select(&before, &still).unwrap();
-    assert_eq!(times(&shown), [4_250]);
-    assert_eq!(shown.shots[0].keyframe.action, Some(click(1_800)));
+#[test]
+fn a_drawing_reports_the_last_click_on_its_screen() {
+    let still = samples(250, 10_000, |_| 128);
+    for (clicks, last) in [
+        (vec![click(2_500)], click(2_500)),
+        (vec![click(2_500), click(3_500)], click(3_500)),
+        (vec![click(1_800)], click(1_800)),
+        (vec![click(4_300)], click(4_300)),
+    ] {
+        let shown = select(&drawn(clicks), &still).unwrap();
+        assert_eq!(times(&shown), [4_250]);
+        assert_eq!(shown.shots[0].keyframe.marks, 0..1);
+        assert_eq!(reported(&shown), [Some(last)]);
+        assert!(
+            shown.shots[0]
+                .keyframe
+                .event
+                .ends_with("; clicked (x 0.50, y 0.50)"),
+            "{}",
+            shown.shots[0].keyframe.event
+        );
+    }
+}
 
-    let after = recording(strokes(), vec![click(4_300)], Narration::default());
-    let shown = select(&after, &still).unwrap();
-    assert_eq!(times(&shown), [4_250]);
-    assert_eq!(shown.shots[0].keyframe.action, Some(click(4_300)));
-
+#[test]
+fn a_click_that_changes_the_screen_keeps_its_own_keyframe_until_thinning_folds_it_in() {
     let opened = samples(250, 10_000, |at| if at >= 4_500 { 255 } else { 128 });
-    let shown = select(&after, &opened).unwrap();
-    assert_eq!(times(&shown), [4_250, 4_500]);
-    assert_eq!(shown.shots[0].keyframe.action, None);
-    assert_eq!(shown.shots[1].keyframe.action, Some(click(4_300)));
-
-    let shown = select_within(&after, &opened, 1).unwrap();
-    assert_eq!(times(&shown), [4_250]);
-    assert_eq!(shown.shots[0].keyframe.action, Some(click(4_300)));
-
     let flash = samples(250, 10_000, |at| {
         if (2_600..3_400).contains(&at) {
             255
@@ -630,13 +622,29 @@ fn only_a_different_screen_cuts_into_a_drawing() {
             128
         }
     });
-    let shown = select(&clicked, &flash).unwrap();
-    assert_eq!(times(&shown), [2_750, 4_250]);
-    assert_eq!(shown.shots[1].keyframe.action, None);
+    for (clicked, frames, apart, reports) in [
+        (
+            click(4_300),
+            &opened,
+            [4_250, 4_500],
+            [None, Some(click(4_300))],
+        ),
+        (
+            click(2_500),
+            &flash,
+            [2_750, 4_250],
+            [Some(click(2_500)), None],
+        ),
+    ] {
+        let recording = drawn(vec![clicked]);
+        let shown = select(&recording, frames).unwrap();
+        assert_eq!(times(&shown), apart);
+        assert_eq!(reported(&shown), reports);
 
-    let shown = select_within(&clicked, &flash, 1).unwrap();
-    assert_eq!(times(&shown), [4_250]);
-    assert_eq!(shown.shots[0].keyframe.action, Some(click(2_500)));
+        let shown = select_within(&recording, frames, 1).unwrap();
+        assert_eq!(times(&shown), [4_250]);
+        assert_eq!(reported(&shown), [Some(clicked)]);
+    }
 }
 
 #[test]
