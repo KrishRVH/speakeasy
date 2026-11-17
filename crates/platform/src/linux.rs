@@ -218,7 +218,7 @@ fn serve_desktop(
         .build()?;
     let host = HostSession::detect(
         std::env::var("XDG_SESSION_TYPE").ok().as_deref(),
-        std::env::var_os("WAYLAND_DISPLAY").is_some(),
+        std::env::var_os("WAYLAND_DISPLAY").is_some_and(|display| !display.is_empty()),
     );
     tokio::task::LocalSet::new().block_on(&runtime, async {
         match host {
