@@ -118,7 +118,7 @@ async fn export(
     tokio::pin!(interrupt);
     if let std::task::Poll::Ready(result) = futures_util::poll!(&mut interrupt) {
         result.context("Cannot listen for video export cancellation")?;
-        anyhow::bail!("Video export cancelled");
+        anyhow::bail!(video::CANCELLED);
     }
     let (cancel, receiver) = async_channel::bounded::<()>(1);
     let mut work = tokio::task::spawn_blocking(move || {
@@ -130,7 +130,7 @@ async fn export(
             drop(cancel);
             let result = work.await.map_err(|_private_panic| anyhow::anyhow!("Video export stopped"))?;
             signal.context("Cannot listen for video export cancellation")?;
-            result.map_err(|_cancelled| anyhow::anyhow!("Video export cancelled"))
+            result.map_err(|_cancelled| anyhow::anyhow!(video::CANCELLED))
         },
     }
 }

@@ -102,7 +102,7 @@ fn source_commands_report_samples_preserve_files_and_handle_closed_pipes() -> an
         },
     ] {
         let error = request(read)
-            .write(&mut super::super::tests::Closed)
+            .write(&mut crate::testing::Closed)
             .unwrap_err();
         assert_eq!(
             error.downcast_ref::<io::Error>().map(io::Error::kind),

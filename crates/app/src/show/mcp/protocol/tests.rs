@@ -179,20 +179,10 @@ fn tool_errors_are_distinct_from_protocol_errors_and_never_echo_arguments() -> a
 
 #[test]
 fn output_is_bounded_and_a_closed_client_ends_the_server() -> anyhow::Result<()> {
-    struct Closed;
-    impl io::Write for Closed {
-        fn write(&mut self, _bytes: &[u8]) -> io::Result<usize> {
-            Err(io::ErrorKind::BrokenPipe.into())
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
-    }
     let root = tempfile::tempdir()?;
     let roots = Roots::open(&[root.path().to_owned()]).map_err(anyhow::Error::msg)?;
     let input = serde_json::to_vec(&stateless(json!(1), "server/discover"))?;
-    serve(&roots, &mut Cursor::new(input), &mut Closed)?;
+    serve(&roots, &mut Cursor::new(input), &mut crate::testing::Closed)?;
     assert!(encode(&"x".repeat(RESPONSE_LIMIT), RESPONSE_LIMIT).is_err());
     Ok(())
 }

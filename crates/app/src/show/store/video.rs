@@ -13,7 +13,7 @@ use speakeasy_show::{Annotations, Manifest, Span};
 
 use super::{export, movie, recall, voice};
 
-const CANCELLED: &str = "Video export cancelled";
+pub(crate) const CANCELLED: &str = "Video export cancelled";
 
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Options {
