@@ -34,11 +34,11 @@ impl Step {
         }
     }
 
-    pub(super) fn next(self, prepared: bool, running: bool, recognized: bool) -> Self {
+    const fn next(self, readiness: Readiness) -> Self {
         match self {
-            Self::Prepare if prepared => Self::Permissions,
-            Self::Permissions if running => Self::Practice,
-            Self::Practice if recognized => Self::Ready,
+            Self::Prepare if readiness.prepared => Self::Permissions,
+            Self::Permissions if readiness.running => Self::Practice,
+            Self::Practice if readiness.recognized => Self::Ready,
             _ => self,
         }
     }
@@ -50,6 +50,13 @@ impl Step {
             Self::Ready => Self::Practice,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct Readiness {
+    prepared: bool,
+    running: bool,
+    recognized: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,12 +85,13 @@ fn complete(settings: &Path) -> std::io::Result<()> {
 
 impl Settings {
     pub(super) fn onboarding_next(&self, step: Step, cx: &Context<'_, Self>) -> Step {
-        step.next(
-            is_demo(cx)
+        let demo = is_demo(cx);
+        step.next(Readiness {
+            prepared: demo
                 || (!self.config.needs_engine() && !self.unsaved(cx) && self.saving.is_none()),
-            is_demo(cx) || cx.global::<Services>().is_running(),
-            !self.practice.text.trim().is_empty(),
-        )
+            running: demo || cx.global::<Services>().is_running(),
+            recognized: !self.practice.text.trim().is_empty(),
+        })
     }
 
     pub(super) fn onboarding_action(
@@ -169,21 +177,33 @@ impl Settings {
 mod tests {
     use super::*;
 
+    const PREPARED: Readiness = Readiness {
+        prepared: true,
+        running: false,
+        recognized: false,
+    };
+
+    const RUNNING: Readiness = Readiness {
+        running: true,
+        ..PREPARED
+    };
+
     #[test]
     fn permissions_remain_reachable_when_the_shortcut_cannot_start() {
-        assert_eq!(Step::Prepare.next(false, false, false), Step::Prepare);
-        assert_eq!(Step::Prepare.next(true, false, false), Step::Permissions);
-        assert_eq!(
-            Step::Permissions.next(true, false, false),
-            Step::Permissions
-        );
-        assert_eq!(Step::Permissions.next(true, true, false), Step::Practice);
+        assert_eq!(Step::Prepare.next(Readiness::default()), Step::Prepare);
+        assert_eq!(Step::Prepare.next(PREPARED), Step::Permissions);
+        assert_eq!(Step::Permissions.next(PREPARED), Step::Permissions);
+        assert_eq!(Step::Permissions.next(RUNNING), Step::Practice);
     }
 
     #[test]
     fn only_a_recognized_result_unlocks_success() {
-        assert_eq!(Step::Practice.next(true, true, false), Step::Practice);
-        assert_eq!(Step::Practice.next(true, true, true), Step::Ready);
+        assert_eq!(Step::Practice.next(RUNNING), Step::Practice);
+        let recognized = Readiness {
+            recognized: true,
+            ..RUNNING
+        };
+        assert_eq!(Step::Practice.next(recognized), Step::Ready);
         assert_eq!(Step::Ready.back(), Step::Practice);
     }
 

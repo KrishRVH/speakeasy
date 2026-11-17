@@ -33,9 +33,36 @@ pub(super) struct TextField {
     viewport: Viewport,
     focus: FocusHandle,
     theme: Theme,
-    layout: Option<(ShapedLine, Bounds<Pixels>, Pixels)>,
+    layout: Option<Layout>,
     selecting: bool,
     problem: Option<&'static str>,
+}
+
+struct Layout {
+    line: ShapedLine,
+    bounds: Bounds<Pixels>,
+    scroll: Pixels,
+}
+
+impl Layout {
+    fn origin(&self) -> Point<Pixels> {
+        point(self.bounds.left() - self.scroll, self.bounds.top())
+    }
+
+    fn x_for_index(&self, index: usize) -> Pixels {
+        self.origin().x + self.line.x_for_index(index)
+    }
+
+    fn index_for_x(&self, x: Pixels) -> usize {
+        self.line.closest_index_for_x(x - self.origin().x)
+    }
+
+    fn span(&self, range: Range<usize>) -> Bounds<Pixels> {
+        Bounds::from_corners(
+            point(self.x_for_index(range.start), self.bounds.top()),
+            point(self.x_for_index(range.end), self.bounds.bottom()),
+        )
+    }
 }
 
 pub(super) struct Submit;
@@ -240,38 +267,25 @@ impl TextField {
             .shape_line(text.into(), CONTROL_TEXT, &runs, None)
     }
 
-    fn paint_text(
-        &self,
-        line: &ShapedLine,
-        bounds: Bounds<Pixels>,
-        scroll: Pixels,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> anyhow::Result<()> {
-        let origin = point(bounds.left() - scroll, bounds.top());
+    fn paint_text(&self, layout: &Layout, window: &mut Window, cx: &mut App) -> anyhow::Result<()> {
+        let Layout { line, bounds, .. } = layout;
         let selection = self.edit.selection();
         let lamp = self.theme.palette().lamp;
-        window.with_content_mask(Some(gpui::ContentMask { bounds }), |window| {
+        window.with_content_mask(Some(gpui::ContentMask { bounds: *bounds }), |window| {
             if !selection.is_empty() {
-                window.paint_quad(fill(
-                    Bounds::from_corners(
-                        point(origin.x + line.x_for_index(selection.start), bounds.top()),
-                        point(origin.x + line.x_for_index(selection.end), bounds.bottom()),
-                    ),
-                    alpha(lamp, 0.25),
-                ));
+                window.paint_quad(fill(layout.span(selection), alpha(lamp, 0.25)));
             }
             if self.focus.is_focused(window) {
                 window.paint_quad(fill(
                     Bounds::new(
-                        point(origin.x + line.x_for_index(self.edit.cursor), bounds.top()),
+                        point(layout.x_for_index(self.edit.cursor), bounds.top()),
                         size(px(1.0), bounds.size.height),
                     ),
                     gpui::rgb(lamp),
                 ));
             }
             line.paint(
-                origin,
+                layout.origin(),
                 bounds.size.height,
                 gpui::TextAlign::Left,
                 None,
@@ -289,9 +303,8 @@ impl TextField {
     }
 
     fn select_point(&mut self, position: Point<Pixels>, extend: bool) {
-        if let Some((line, bounds, scroll)) = &self.layout {
-            let at = line.closest_index_for_x(position.x - bounds.left() + *scroll);
-            self.edit.select(at, extend);
+        if let Some(layout) = &self.layout {
+            self.edit.select(layout.index_for_x(position.x), extend);
             self.viewport.reveal_caret();
         }
     }
@@ -371,18 +384,7 @@ impl EntityInputHandler for TextField {
         _: &mut Window,
         _: &mut Context<'_, Self>,
     ) -> Option<Bounds<Pixels>> {
-        let (line, bounds, scroll) = self.layout.as_ref()?;
-        let range = self.edit.utf8(range);
-        Some(Bounds::from_corners(
-            point(
-                bounds.left() + line.x_for_index(range.start) - *scroll,
-                bounds.top(),
-            ),
-            point(
-                bounds.left() + line.x_for_index(range.end) - *scroll,
-                bounds.bottom(),
-            ),
-        ))
+        Some(self.layout.as_ref()?.span(self.edit.utf8(range)))
     }
 
     fn character_index_for_point(
@@ -391,8 +393,7 @@ impl EntityInputHandler for TextField {
         _: &mut Window,
         _: &mut Context<'_, Self>,
     ) -> Option<usize> {
-        let (line, bounds, scroll) = self.layout.as_ref()?;
-        let index = line.closest_index_for_x(position.x - bounds.left() + *scroll);
+        let index = self.layout.as_ref()?.index_for_x(position.x);
         Some(self.edit.utf16(index..index).start)
     }
 }
@@ -515,20 +516,23 @@ impl Render for TextField {
                                     );
                                 }
                                 field.update(cx, |input, cx| {
-                                    let scroll = viewport.offset;
+                                    let layout = Layout {
+                                        line,
+                                        bounds,
+                                        scroll: viewport.offset,
+                                    };
                                     input.viewport = viewport;
                                     window.handle_input(
                                         &input.focus,
                                         ElementInputHandler::new(bounds, field.clone()),
                                         cx,
                                     );
-                                    let failed =
-                                        input.paint_text(&line, bounds, scroll, window, cx).is_err();
+                                    let failed = input.paint_text(&layout, window, cx).is_err();
                                     if failed && input.problem.is_none() {
                                         input.problem = Some("Cannot render this phrase.");
                                         cx.notify();
                                     }
-                                    input.layout = Some((line, bounds, scroll));
+                                    input.layout = Some(layout);
                                 });
                             },
                         )

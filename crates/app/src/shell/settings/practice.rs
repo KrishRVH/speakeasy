@@ -1,3 +1,5 @@
+use std::ops::ControlFlow;
+
 use gpui::{Context, Task, Window};
 use zeroize::Zeroizing;
 
@@ -72,12 +74,11 @@ impl Settings {
         ));
         self.practice.task = Some(cx.spawn(async move |this, cx| {
             while let Some(event) = receipt.recv().await {
-                let current = this
-                    .update(cx, |view, cx| view.practice_event(event, cx))
-                    .unwrap_or(false);
-                if !current {
+                let Ok(ControlFlow::Continue(())) =
+                    this.update(cx, |view, cx| view.practice_event(event, cx))
+                else {
                     return;
-                }
+                };
             }
             this.update_if_alive(cx, |view, cx| {
                 view.end_practice(cx);
@@ -85,17 +86,21 @@ impl Settings {
         }));
     }
 
-    fn practice_event(&mut self, event: PracticeEvent, cx: &mut Context<'_, Self>) -> bool {
+    fn practice_event(
+        &mut self,
+        event: PracticeEvent,
+        cx: &mut Context<'_, Self>,
+    ) -> ControlFlow<()> {
         match event {
             PracticeEvent::Ready => self.practice.ready = true,
             PracticeEvent::Text(text) => self.practice.text = text,
             PracticeEvent::Unavailable(message) => {
                 self.notice = Some(Notice::Problem(message.into()));
                 self.end_practice(cx);
-                return false;
+                return ControlFlow::Break(());
             },
         }
         cx.notify();
-        true
+        ControlFlow::Continue(())
     }
 }

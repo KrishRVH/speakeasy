@@ -9,7 +9,12 @@ use gpui::{
 use speakeasy_core::machine::ModelState;
 use speakeasy_platform::Permission;
 
-use super::{Action, Notice, Reset, Settings, is_demo, menu::Menu, navigation::Page, permissions};
+use super::{
+    Action, Notice, Reset, Settings, is_demo,
+    menu::{Kind, Menu},
+    navigation::Page,
+    permissions,
+};
 use crate::{
     controls::{Kit, Tone, Weight, facet, hollow, icon, popover},
     icons,
@@ -221,16 +226,16 @@ impl Settings {
                     .map(|(index, item)| {
                         let id = (SharedString::from("menu-item"), index);
                         let press = ui.press(item.action);
-                        match item.chosen {
-                            Some(chosen) => {
-                                ui.kit()
-                                    .option(id, item.label, chosen, index == cursor, press)
+                        let highlighted = index == cursor;
+                        match item.kind {
+                            Kind::Choice { chosen } => {
+                                ui.kit().option(id, item.label, chosen, highlighted, press)
                             },
-                            None => ui.kit().menu_action(
+                            Kind::Command { destructive } => ui.kit().menu_action(
                                 id,
                                 item.label,
-                                item.destructive,
-                                index == cursor,
+                                destructive,
+                                highlighted,
                                 press,
                             ),
                         }

@@ -16,11 +16,14 @@ use crate::{
 };
 
 pub(super) struct Editor {
+    addition: Pair,
+    revision: Pair,
+    editing: Option<usize>,
+}
+
+struct Pair {
     heard: Entity<TextField>,
     written: Entity<TextField>,
-    revised_heard: Entity<TextField>,
-    revised_written: Entity<TextField>,
-    editing: Option<usize>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,70 +37,97 @@ pub(super) enum Edit {
 
 impl Editor {
     pub(super) fn new(theme: Theme, window: &Window, cx: &mut Context<'_, Settings>) -> Self {
-        let mut field = |label: &'static str, placeholder: &'static str| {
-            cx.new(|cx| TextField::new(label, theme, cx).placeholder(placeholder))
-        };
-        let heard = field("When I say", "speak easy");
-        let written = field("Write", "Speakeasy");
-        let revised_heard = field("When I say", "");
-        let revised_written = field("Write", "");
-        for (field, edit) in [
-            (&heard, Edit::Add),
-            (&written, Edit::Add),
-            (&revised_heard, Edit::Save),
-            (&revised_written, Edit::Save),
-        ] {
-            cx.observe(field, |_, _, cx| cx.notify()).detach();
-            cx.subscribe_in(field, window, move |settings, _, _: &Submit, window, cx| {
-                settings.edit_correction(edit, window, cx);
-            })
-            .detach();
-        }
         Self {
-            heard,
-            written,
-            revised_heard,
-            revised_written,
+            addition: Pair::new(["speak easy", "Speakeasy"], Edit::Add, theme, window, cx),
+            revision: Pair::new(["", ""], Edit::Save, theme, window, cx),
             editing: None,
         }
     }
 
     pub(super) fn set_theme(&self, theme: Theme, cx: &mut Context<'_, Settings>) {
-        for field in self.fields() {
-            field.update(cx, |field, _| field.set_theme(theme));
+        for pair in [&self.addition, &self.revision] {
+            pair.set_theme(theme, cx);
         }
     }
 
     pub(super) fn clear(&mut self, cx: &mut Context<'_, Settings>) {
         self.editing = None;
-        for field in self.fields() {
-            field.update(cx, |field, cx| field.set_text(String::new(), cx));
+        for pair in [&self.addition, &self.revision] {
+            pair.clear(cx);
         }
     }
 
     pub(super) const fn stop_revising(&mut self) {
         self.editing = None;
     }
+}
 
-    const fn fields(&self) -> [&Entity<TextField>; 4] {
-        [
-            &self.heard,
-            &self.written,
-            &self.revised_heard,
-            &self.revised_written,
-        ]
+impl Pair {
+    fn new(
+        placeholders: [&'static str; 2],
+        submit: Edit,
+        theme: Theme,
+        window: &Window,
+        cx: &mut Context<'_, Settings>,
+    ) -> Self {
+        let [heard, written] = placeholders;
+        let mut field = |label: &'static str, placeholder: &'static str| {
+            let field = cx.new(|cx| TextField::new(label, theme, cx).placeholder(placeholder));
+            cx.observe(&field, |_, _, cx| cx.notify()).detach();
+            cx.subscribe_in(
+                &field,
+                window,
+                move |settings, _, _: &Submit, window, cx| {
+                    settings.edit_correction(submit, window, cx);
+                },
+            )
+            .detach();
+            field
+        };
+        Self {
+            heard: field("When I say", heard),
+            written: field("Write", written),
+        }
     }
 
-    fn draft(&self, revising: bool, cx: &App) -> Correction {
-        let (heard, written) = if revising {
-            (&self.revised_heard, &self.revised_written)
-        } else {
-            (&self.heard, &self.written)
-        };
-        Correction {
-            heard: heard.read(cx).text().trim().to_owned(),
-            written: written.read(cx).text().trim().to_owned(),
+    const fn fields(&self) -> [&Entity<TextField>; 2] {
+        [&self.heard, &self.written]
+    }
+
+    fn set_theme(&self, theme: Theme, cx: &mut Context<'_, Settings>) {
+        for field in self.fields() {
+            field.update(cx, |field, _| field.set_theme(theme));
         }
+    }
+
+    fn fill(&self, Correction { heard, written }: Correction, cx: &mut Context<'_, Settings>) {
+        self.heard.update(cx, |field, cx| field.set_text(heard, cx));
+        self.written
+            .update(cx, |field, cx| field.set_text(written, cx));
+    }
+
+    fn clear(&self, cx: &mut Context<'_, Settings>) {
+        for field in self.fields() {
+            field.update(cx, |field, cx| field.set_text(String::new(), cx));
+        }
+    }
+
+    fn focus(&self, window: &mut Window, cx: &mut Context<'_, Settings>) {
+        self.heard.read(cx).focus_handle(cx).focus(window, cx);
+    }
+
+    fn draft(&self, cx: &App) -> Correction {
+        let text = |field: &Entity<TextField>| field.read(cx).text().trim().to_owned();
+        Correction {
+            heard: text(&self.heard),
+            written: text(&self.written),
+        }
+    }
+
+    fn is_complete(&self, cx: &App) -> bool {
+        self.fields()
+            .into_iter()
+            .all(|field| !field.read(cx).text().trim().is_empty())
     }
 }
 
@@ -113,37 +143,21 @@ impl Settings {
         }
         match edit {
             Edit::Add => {
-                if self.store_correction(None, cx) {
-                    for field in [&self.vocabulary.heard, &self.vocabulary.written] {
-                        field.update(cx, |field, cx| field.set_text(String::new(), cx));
-                    }
-                    self.vocabulary
-                        .heard
-                        .read(cx)
-                        .focus_handle(cx)
-                        .focus(window, cx);
+                if self.store_correction(self.vocabulary.addition.draft(cx), None, cx) {
+                    self.vocabulary.addition.clear(cx);
+                    self.vocabulary.addition.focus(window, cx);
                 }
             },
             Edit::Revise(index) => {
                 if let Some(rule) = self.config.vocabulary.get(index) {
-                    let (heard, written) = (rule.heard.clone(), rule.written.clone());
-                    self.vocabulary
-                        .revised_heard
-                        .update(cx, |field, cx| field.set_text(heard, cx));
-                    self.vocabulary
-                        .revised_written
-                        .update(cx, |field, cx| field.set_text(written, cx));
+                    self.vocabulary.revision.fill(rule.clone(), cx);
                     self.vocabulary.editing = Some(index);
-                    self.vocabulary
-                        .revised_heard
-                        .read(cx)
-                        .focus_handle(cx)
-                        .focus(window, cx);
+                    self.vocabulary.revision.focus(window, cx);
                 }
             },
             Edit::Save => {
                 if let Some(index) = self.vocabulary.editing
-                    && self.store_correction(Some(index), cx)
+                    && self.store_correction(self.vocabulary.revision.draft(cx), Some(index), cx)
                 {
                     self.vocabulary.editing = None;
                 }
@@ -164,8 +178,12 @@ impl Settings {
         cx.notify();
     }
 
-    fn store_correction(&mut self, replacing: Option<usize>, cx: &mut Context<'_, Self>) -> bool {
-        let correction = self.vocabulary.draft(replacing.is_some(), cx);
+    fn store_correction(
+        &mut self,
+        correction: Correction,
+        replacing: Option<usize>,
+        cx: &mut Context<'_, Self>,
+    ) -> bool {
         let mut rules = self.config.vocabulary.clone();
         match replacing {
             Some(index) => match rules.get_mut(index) {
@@ -187,8 +205,6 @@ impl Settings {
         let kit = ui.kit();
         let palette = ui.palette;
         let arrow = || icon(icons::ARROW_RIGHT, 14.0, palette.muted).flex_none();
-        let complete =
-            |correction: Correction| !correction.heard.is_empty() && !correction.written.is_empty();
         let labeled = |label: &'static str, field: &Entity<TextField>| {
             div()
                 .flex_1()
@@ -204,14 +220,14 @@ impl Settings {
             .items_end()
             .gap(px(10.0))
             .p(px(16.0))
-            .child(labeled("When I say", &self.vocabulary.heard))
+            .child(labeled("When I say", &self.vocabulary.addition.heard))
             .child(div().h(px(32.0)).flex().items_center().child(arrow()))
-            .child(labeled("Write", &self.vocabulary.written))
+            .child(labeled("Write", &self.vocabulary.addition.written))
             .child(ui.button_if(
                 "Add",
                 Action::Correction(Edit::Add),
                 Weight::Primary,
-                complete(self.vocabulary.draft(false, ui.cx)),
+                self.vocabulary.addition.is_complete(ui.cx),
             ));
         let mut rows = vec![add.into_any_element()];
         if self.config.vocabulary.is_empty() {
@@ -241,20 +257,20 @@ impl Settings {
                                 div()
                                     .flex_1()
                                     .min_w(px(0.0))
-                                    .child(self.vocabulary.revised_heard.clone()),
+                                    .child(self.vocabulary.revision.heard.clone()),
                             )
                             .child(arrow())
                             .child(
                                 div()
                                     .flex_1()
                                     .min_w(px(0.0))
-                                    .child(self.vocabulary.revised_written.clone()),
+                                    .child(self.vocabulary.revision.written.clone()),
                             )
                             .child(ui.button_if(
                                 "Save",
                                 Action::Correction(Edit::Save),
                                 Weight::Primary,
-                                complete(self.vocabulary.draft(true, ui.cx)),
+                                self.vocabulary.revision.is_complete(ui.cx),
                             ))
                             .child(ui.button(
                                 "Cancel",

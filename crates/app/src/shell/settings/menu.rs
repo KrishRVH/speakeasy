@@ -68,8 +68,13 @@ pub(super) fn keep_rows(rows: &mut Vec<Offered>, fresh: Vec<InputDevice>) {
 pub(super) struct Item {
     pub(super) label: SharedString,
     pub(super) action: Action,
-    pub(super) chosen: Option<bool>,
-    pub(super) destructive: bool,
+    pub(super) kind: Kind,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Kind {
+    Choice { chosen: bool },
+    Command { destructive: bool },
 }
 
 impl Item {
@@ -77,8 +82,7 @@ impl Item {
         Self {
             label: label.into(),
             action,
-            chosen: Some(chosen),
-            destructive: false,
+            kind: Kind::Choice { chosen },
         }
     }
 }
@@ -89,7 +93,7 @@ pub(super) struct Menus {
     pub(super) group: FocusHandle,
     pub(super) list: FocusHandle,
     pub(super) scroll: ScrollHandle,
-    triggers: Vec<FocusHandle>,
+    triggers: [FocusHandle; FIXED + LIMIT],
     focus_out: Option<Subscription>,
 }
 
@@ -101,9 +105,7 @@ impl Menus {
             group: cx.focus_handle(),
             list: cx.focus_handle(),
             scroll: ScrollHandle::new(),
-            triggers: (0..FIXED.saturating_add(LIMIT))
-                .map(|_| cx.focus_handle().tab_stop(true))
-                .collect(),
+            triggers: std::array::from_fn(|_| cx.focus_handle().tab_stop(true)),
             focus_out: None,
         }
     }
@@ -247,14 +249,12 @@ impl Settings {
                 Item {
                     label: "Update with current settings".into(),
                     action: Action::Preset(presets::Edit::Update(index)),
-                    chosen: None,
-                    destructive: false,
+                    kind: Kind::Command { destructive: false },
                 },
                 Item {
                     label: "Delete".into(),
                     action: Action::Preset(presets::Edit::Delete(index)),
-                    chosen: None,
-                    destructive: true,
+                    kind: Kind::Command { destructive: true },
                 },
             ],
         }
@@ -293,7 +293,7 @@ impl Settings {
         self.menus.cursor = self
             .menu_items(menu)
             .iter()
-            .position(|item| item.chosen == Some(true))
+            .position(|item| item.kind == Kind::Choice { chosen: true })
             .unwrap_or(0);
         self.menus.open = Some(menu);
         self.menus.scroll.scroll_to_item(self.menus.cursor);
