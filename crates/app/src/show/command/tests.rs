@@ -1,12 +1,31 @@
 use std::fs;
 
 use serde_json::Value;
-use speakeasy_show::Bundle;
+use speakeasy_show::{Bundle, Framing, Size};
 
 use super::*;
 
 fn parse(args: &[&str]) -> anyhow::Result<Command> {
     Command::parse(args.iter().map(OsString::from))
+}
+
+async fn interrupted(parent: &Path) -> anyhow::Result<store::checkpoint::Interrupted> {
+    let (checkpoint, writer) = store::checkpoint::Keeper::fixture(
+        parent,
+        SystemTime::now(),
+        1_000,
+        Size {
+            width: 80.0,
+            height: 60.0,
+        },
+        Framing::Automatic,
+    )?;
+    assert!(writer.close().await);
+    checkpoint
+        .close()
+        .await?
+        .context("Fixture checkpoint is missing")?
+        .interrupted()
 }
 
 #[test]
@@ -88,10 +107,7 @@ fn commands_require_explicit_paths_and_accept_only_their_options() -> anyhow::Re
 fn portable_export_reports_only_metadata_and_preserves_the_saved_summary() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let directory = root.path().join("a show");
-    Command::Demo {
-        out: Some(directory.clone()),
-    }
-    .write(&mut io::sink())?;
+    demo(Some(directory.clone()), &mut io::sink())?;
     fs::write(directory.join("summary.md"), "PRIVATE_EDITED_SUMMARY")?;
     let destination = root.path().join("portable.zip");
     let mut printed = Vec::new();
@@ -118,10 +134,7 @@ fn metadata_reports_exact_managed_identity_and_expiry_without_claiming_moved_bun
 -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let managed = root.path().join("20261020T143205Z-2");
-    Command::Demo {
-        out: Some(managed.clone()),
-    }
-    .write(&mut io::sink())?;
+    demo(Some(managed.clone()), &mut io::sink())?;
     let mut printed = Vec::new();
     output::inspect(
         &recall::Entry::open(&managed)?,
@@ -225,10 +238,7 @@ fn a_demo_is_inspectable_and_output_never_contains_its_narration() -> anyhow::Re
 fn inspection_reports_damage_before_failing_and_does_not_repair_it() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let directory = root.path().join("show");
-    Command::Demo {
-        out: Some(directory.clone()),
-    }
-    .write(&mut io::sink())?;
+    demo(Some(directory.clone()), &mut io::sink())?;
     let missing = directory.join("frames/frame-01.png");
     fs::remove_file(&missing)?;
     let mut output = Vec::new();
@@ -271,28 +281,31 @@ fn the_embedded_skill_is_emitted_verbatim_and_its_commands_are_accepted() -> any
         skill == SKILL,
         "The emitted skill differs from the embedded guide"
     );
-    let mut commands = 0;
-    for span in skill.split('`').skip(1).step_by(2) {
-        if let Some(args) = span.strip_prefix("speakeasy show ") {
-            let args: Vec<_> = args
-                .split('"')
+    let commands: Vec<Vec<&str>> = skill
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .filter_map(|span| span.strip_prefix("speakeasy show "))
+        .map(|args| {
+            args.split('"')
                 .enumerate()
                 .flat_map(|(index, part)| {
                     if index.is_multiple_of(2) {
-                        part.split_whitespace().collect::<Vec<_>>()
+                        part.split_whitespace().collect()
                     } else {
                         vec![part]
                     }
                 })
-                .collect();
-            parse(&args)?;
-            commands += 1;
-        }
-    }
+                .collect()
+        })
+        .collect();
     assert!(
-        commands > 0,
+        !commands.is_empty(),
         "The emitted skill contains no usable commands"
     );
+    for args in commands {
+        parse(&args)?;
+    }
     Ok(())
 }
 
@@ -320,45 +333,25 @@ fn closing_the_output_pipe_preserves_the_io_error_kind() {
 async fn interrupted_listing_has_distinct_identity_and_original_expiry_without_replaying()
 -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
-    let now = SystemTime::now();
-    let (checkpoint, writer) = store::checkpoint::Keeper::fixture(
-        root.path(),
-        now,
-        1_000,
-        speakeasy_show::Size {
-            width: 80.0,
-            height: 60.0,
-        },
-        speakeasy_show::Framing::Automatic,
-    )?;
-    assert!(writer.close().await);
-    let checkpoint = checkpoint
-        .close()
-        .await?
-        .context("Fixture checkpoint is missing")?;
-    let interrupted = checkpoint.interrupted()?;
+    let interrupted = interrupted(root.path()).await?;
 
     let mut bytes = Vec::new();
     output::list(std::iter::empty(), Some(root.path()), true, &mut bytes)?;
-    let listing: serde_json::Value = serde_json::from_slice(&bytes)?;
+    let listing: Value = serde_json::from_slice(&bytes)?;
     assert_eq!(listing[0]["status"], "interrupted");
     assert_eq!(listing[0]["id"], interrupted.id());
     assert!(listing[0]["durationMs"].is_null());
     let expires = listing[0]["expiresAt"].as_str().unwrap();
     assert!(expires.contains(':') && expires.ends_with('Z'));
     assert_eq!(
-        Command::parse(
-            ["discard", interrupted.id().as_str(), "--json"]
-                .map(OsString::from)
-                .into_iter()
-        )?,
+        parse(&["discard", &interrupted.id(), "--json"])?,
         Command::Discard {
             directory: interrupted.id().into(),
             json: true
         }
     );
 
-    let saved = store::fresh_directory(root.path(), now)?;
+    let saved = store::fresh_directory(root.path(), SystemTime::now())?;
     fs::create_dir(&saved)?;
     let checkpoint_id = interrupted
         .directory()
@@ -376,7 +369,7 @@ async fn interrupted_listing_has_distinct_identity_and_original_expiry_without_r
     )?;
     bytes.clear();
     output::list(std::iter::empty(), Some(root.path()), true, &mut bytes)?;
-    let listing: serde_json::Value = serde_json::from_slice(&bytes)?;
+    let listing: Value = serde_json::from_slice(&bytes)?;
     assert_eq!(listing[0]["status"], "narrationPending");
     assert_eq!(listing[0]["id"], interrupted.id());
     assert!(!String::from_utf8(bytes)?.contains("private synthetic"));
@@ -392,23 +385,8 @@ async fn interrupted_listing_has_distinct_identity_and_original_expiry_without_r
 async fn checkpoint_damage_is_reported_beside_readable_saved_shows() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let saved = root.path().join("20261030T010203Z");
-    demo(Some(saved.clone()), &mut Vec::new())?;
-    let (checkpoint, writer) = store::checkpoint::Keeper::fixture(
-        root.path(),
-        SystemTime::now(),
-        1_000,
-        speakeasy_show::Size {
-            width: 80.0,
-            height: 60.0,
-        },
-        speakeasy_show::Framing::Automatic,
-    )?;
-    assert!(writer.close().await);
-    let checkpoint = checkpoint
-        .close()
-        .await?
-        .context("Fixture checkpoint is missing")?;
-    let interrupted = checkpoint.interrupted()?;
+    demo(Some(saved.clone()), &mut io::sink())?;
+    let interrupted = interrupted(root.path()).await?;
     fs::write(interrupted.directory().join("published"), b"invalid marker")?;
     let mut bytes = Vec::new();
     output::list(
