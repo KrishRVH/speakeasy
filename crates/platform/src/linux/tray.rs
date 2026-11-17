@@ -203,13 +203,13 @@ impl Item {
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
 enum MenuEntry {
-    Pause = 1,
-    Toggle = 2,
-    Cancel = 3,
-    Settings = 4,
-    Quit = 5,
-    Status = 6,
-    PasteLast = 7,
+    Status = 1,
+    Pause,
+    Toggle,
+    Cancel,
+    PasteLast,
+    Settings,
+    Quit,
 }
 
 impl MenuEntry {
@@ -219,13 +219,13 @@ impl MenuEntry {
 
     const fn action(self) -> Option<TrayAction> {
         match self {
+            Self::Status => None,
             Self::Pause => Some(TrayAction::Pause),
             Self::Toggle => Some(TrayAction::Toggle),
             Self::Cancel => Some(TrayAction::Cancel),
             Self::PasteLast => Some(TrayAction::PasteLast),
             Self::Settings => Some(TrayAction::Settings),
             Self::Quit => Some(TrayAction::Quit),
-            Self::Status => None,
         }
     }
 }
@@ -517,11 +517,11 @@ async fn refresh_availability(
     events: &Sender<TrayAction>,
     available: bool,
 ) -> bool {
-    let now = register(connection).await;
-    if now != available {
-        offer(events, TrayAction::Available(now));
+    let registered = register(connection).await;
+    if registered != available {
+        offer(events, TrayAction::Available(registered));
     }
-    now
+    registered
 }
 
 async fn present(
