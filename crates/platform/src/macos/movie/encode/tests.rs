@@ -1,6 +1,6 @@
 mod timing;
 
-use std::{fs::File, time::Duration};
+use std::fs::File;
 
 use speakeasy_show::MoviePrefix;
 
@@ -15,12 +15,12 @@ fn native_mac_movie_encoding() -> anyhow::Result<()> {
             .context("Choose the synthetic Mac encoder artifact directory")?,
     );
     std::fs::create_dir_all(&directory)?;
-    for (name, count, size) in [
-        ("moving", 120, [320, 240]),
-        ("single", 1, [320, 240]),
-        ("hd", 2, [1280, 720]),
-        ("held", 180, [320, 240]),
-        ("large", 90, [2560, 1440]),
+    for (name, count, size, picture, pace) in [
+        ("moving", 120, [320, 240], Picture::Moving, Pace::Burst),
+        ("single", 1, [320, 240], Picture::Moving, Pace::Burst),
+        ("hd", 2, [1280, 720], Picture::Moving, Pace::Burst),
+        ("held", 180, [320, 240], Picture::Held, Pace::Burst),
+        ("large", 90, [2560, 1440], Picture::Moving, Pace::RealTime),
     ] {
         let path = directory.join(format!("{name}.mp4"));
         let mut encoder = Codec::open(&path, size, 384 << 20)?;
@@ -28,13 +28,12 @@ fn native_mac_movie_encoding() -> anyhow::Result<()> {
         let patterns = [0, 1].map(|index| crate::movie::tests::color_frame(index, size));
         let started = Instant::now();
         for index in 0..count {
-            if name == "large" {
+            if pace == Pace::RealTime {
                 let due = Duration::from_nanos(u64::try_from(index)? * 1_000_000_000 / 30);
                 std::thread::sleep(due.saturating_sub(started.elapsed()));
             }
-            let painted = if name == "held" { 0 } else { index };
             assert!(encoder.write(
-                &patterns[painted % 2].bgra,
+                &patterns[picture.pattern(index)].bgra,
                 u32::try_from(index)?,
                 &mut || false
             )?);
@@ -56,7 +55,7 @@ fn native_mac_movie_encoding() -> anyhow::Result<()> {
                 crate::read_movie_frame(file, &prefix, prefix.samples()[index].at, || false)?
                     .context("Synthetic movie was cancelled")?;
             assert_eq!(frame.at, prefix.samples()[index].at);
-            crate::movie::tests::check_colors(&frame, if name == "held" { 0 } else { index });
+            crate::movie::tests::check_colors(&frame, picture.pattern(index));
         }
     }
     let path = directory.join("cancelled.mp4");
@@ -113,6 +112,27 @@ fn native_mac_movie_encoding() -> anyhow::Result<()> {
     assert!(prefix.frames > 0 && prefix.frames < 120);
     timing::verify(&directory)?;
     Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum Picture {
+    Moving,
+    Held,
+}
+
+impl Picture {
+    const fn pattern(self, frame: usize) -> usize {
+        match self {
+            Self::Moving => frame % 2,
+            Self::Held => 0,
+        }
+    }
+}
+
+#[derive(PartialEq, Eq)]
+enum Pace {
+    Burst,
+    RealTime,
 }
 
 fn inspect(path: &Path) -> anyhow::Result<MoviePrefix> {
