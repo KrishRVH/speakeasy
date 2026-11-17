@@ -522,6 +522,27 @@ fn startup_classifies_saved_settings() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+fn settings_that_cannot_be_checked_are_unreadable_rather_than_absent() -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+    let directory = tempfile::tempdir()?;
+    let folder = directory.path().join("speakeasy");
+    fs::create_dir(&folder)?;
+    let path = folder.join("settings.json");
+    fs::write(&path, r#"{"start_at_login":true}"#)?;
+    fs::set_permissions(&folder, fs::Permissions::from_mode(0o000))?;
+    let startup = Config::load(&path).1;
+    let unreadable = Config::is_unreadable(&path);
+    fs::set_permissions(&folder, fs::Permissions::from_mode(0o700))?;
+    let Startup::Invalid(notice) = startup else {
+        bail!("Settings that could not be checked started as a fresh install");
+    };
+    assert!(notice.starts_with(&format!("Cannot read {}: ", path.display())));
+    assert!(unreadable, "Setup could replace settings it cannot read");
+    Ok(())
+}
+
 #[test]
 fn vocabulary_saves_preserve_other_hand_edits_and_require_session_reconfiguration()
 -> anyhow::Result<()> {

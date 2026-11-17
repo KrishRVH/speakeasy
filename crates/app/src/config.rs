@@ -197,7 +197,7 @@ impl Config {
     }
 
     pub(crate) fn is_unreadable(path: &Path) -> bool {
-        path.exists() && Self::read(path).is_err()
+        !absent(path) && Self::read(path).is_err()
     }
 
     pub(crate) fn discard(path: &Path) -> io::Result<()> {
@@ -208,7 +208,7 @@ impl Config {
     }
 
     pub(crate) fn load(path: &Path) -> (Self, Startup) {
-        if !path.exists() {
+        if absent(path) {
             return (Self::default(), Startup::Unconfigured);
         }
         let config = match Self::read(path) {
@@ -225,10 +225,10 @@ impl Config {
     }
 
     pub(crate) fn held_by(path: &Path, draft: &Self) -> Self {
-        if path.exists() {
-            draft.clone()
-        } else {
+        if absent(path) {
             Self::default()
+        } else {
+            draft.clone()
         }
     }
 
@@ -466,6 +466,10 @@ fn from_json<'de, T: Deserialize<'de>>(contents: &'de [u8]) -> anyhow::Result<T>
     })?;
     json.end()?;
     Ok(value)
+}
+
+fn absent(path: &Path) -> bool {
+    matches!(path.try_exists(), Ok(false))
 }
 
 fn link_target(path: &Path) -> io::Result<PathBuf> {
