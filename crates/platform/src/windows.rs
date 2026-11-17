@@ -1,4 +1,6 @@
 mod dialog;
+#[cfg(test)]
+mod fixture;
 mod input;
 mod insertion;
 pub(crate) mod installation;
@@ -46,8 +48,6 @@ pub(crate) use self::{
     input::{Monitor, start},
     insertion::{copy_content, copy_text},
 };
-#[cfg(test)]
-use crate::NativeWindow;
 use crate::keyboard::{self, Modifiers};
 
 const OWN_INPUT: usize = 0x5350_4541;
@@ -192,71 +192,13 @@ fn is_own_window(window: HWND) -> bool {
     window_process(window) == Some(std::process::id())
 }
 
-#[cfg(test)]
-unsafe fn native_window(hwnd: HWND) -> anyhow::Result<NativeWindow> {
-    let raw = std::num::NonZeroIsize::new(hwnd as isize).context("Missing window")?;
-    let raw = RawWindowHandle::Win32(raw_window_handle::Win32WindowHandle::new(raw));
-
-    NativeWindow::new(unsafe { WindowHandle::borrow_raw(raw) })
-}
-
 fn to_wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain([0]).collect()
 }
 
 #[cfg(test)]
-fn with_foreign_window<O: Send, T>(
-    on_owner: impl FnOnce(HWND) -> O + Send,
-    elsewhere: impl FnOnce(HWND) -> T,
-) -> anyhow::Result<(O, T)> {
-    use std::{convert::Infallible, ptr::null, sync::mpsc, thread};
-
-    use windows_sys::Win32::{
-        System::LibraryLoader::GetModuleHandleW,
-        UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, HWND_MESSAGE},
-    };
-
-    thread::scope(|scope| {
-        let (created, window) = mpsc::channel();
-        let (release, released) = mpsc::channel::<Infallible>();
-        let owner = scope.spawn(move || -> anyhow::Result<()> {
-            let hwnd = unsafe {
-                CreateWindowExW(
-                    0,
-                    w!("STATIC"),
-                    null(),
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    HWND_MESSAGE,
-                    null_mut(),
-                    GetModuleHandleW(null()),
-                    null(),
-                )
-            };
-            ensure!(!hwnd.is_null(), "Cannot create the test window");
-            if created.send((hwnd as isize, on_owner(hwnd))).is_ok() {
-                let Err(_released) = released.recv();
-            }
-
-            unsafe { DestroyWindow(hwnd) };
-            Ok(())
-        });
-        let shared = window.recv().map(|(hwnd, from_owner)| {
-            let from_here = elsewhere(hwnd as HWND);
-            drop(release);
-            (from_owner, from_here)
-        });
-        owner.join().expect("The window's owner thread panicked")?;
-        Ok(shared?)
-    })
-}
-
-#[cfg(test)]
 mod tests {
-    use super::*;
+    use super::fixture::{native_window, with_foreign_window};
 
     #[test]
     #[ignore = "Creates an owned native window; no microphone, hook, clipboard, or injected input"]

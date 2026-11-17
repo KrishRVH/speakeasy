@@ -19,20 +19,18 @@ use windows_sys::{
                 MONITOR_DEFAULTTOPRIMARY, PAINTSTRUCT, SetDIBitsToDevice,
             },
         },
-        System::LibraryLoader::GetModuleHandleW,
         UI::{
             HiDpi::{
                 AreDpiAwarenessContextsEqual, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
                 GetDpiAwarenessContextForProcess, SetProcessDpiAwarenessContext,
             },
             WindowsAndMessaging::{
-                CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWL_EXSTYLE,
-                GetClientRect, GetWindowLongW, GetWindowRect, IsWindowVisible, MSG,
-                NCCALCSIZE_PARAMS, PM_REMOVE, PeekMessageW, RegisterClassW, SW_SHOWMINNOACTIVE,
-                SWP_NOZORDER, SetWindowDisplayAffinity, TranslateMessage, UnregisterClassW,
+                DefWindowProcW, DispatchMessageW, GWL_EXSTYLE, GetClientRect, GetWindowLongW,
+                GetWindowRect, IsWindowVisible, MSG, NCCALCSIZE_PARAMS, PM_REMOVE, PeekMessageW,
+                SW_SHOWMINNOACTIVE, SWP_NOZORDER, SetWindowDisplayAffinity, TranslateMessage,
                 WDA_EXCLUDEFROMCAPTURE, WDA_MONITOR, WDA_NONE, WM_DPICHANGED, WM_NCCALCSIZE,
-                WM_PAINT, WNDCLASSW, WNDPROC, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-                WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_OVERLAPPEDWINDOW, WS_POPUP,
+                WM_PAINT, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+                WS_EX_TRANSPARENT, WS_OVERLAPPEDWINDOW, WS_POPUP,
             },
         },
     },
@@ -46,7 +44,10 @@ use super::{
     readback::{BYTES_PER_PIXEL, created, texture_description},
     *,
 };
-use crate::{ScreenCapture, WindowLayer, windows::native_window};
+use crate::{
+    ScreenCapture, WindowLayer,
+    windows::fixture::{Class, Popup, native_window},
+};
 
 const PATTERN_WIDTH: i32 = 640;
 const PATTERN_HEIGHT: i32 = 400;
@@ -966,76 +967,9 @@ fn brush([red, green, blue]: [u8; 3]) -> HBRUSH {
     unsafe { CreateSolidBrush(u32::from_le_bytes([red, green, blue, 0])) }
 }
 
-struct Class(PCWSTR);
-
-impl Class {
-    fn register(name: PCWSTR, procedure: WNDPROC, background: HBRUSH) -> anyhow::Result<Self> {
-        let class = WNDCLASSW {
-            lpfnWndProc: procedure,
-            hInstance: unsafe { GetModuleHandleW(null()) },
-            hbrBackground: background,
-            lpszClassName: name,
-            ..Default::default()
-        };
-
-        let registered = unsafe { RegisterClassW(&raw const class) } != 0;
-        ensure!(registered, "Cannot register a test window class");
-        Ok(Self(name))
-    }
-}
-
-impl Drop for Class {
-    fn drop(&mut self) {
-        unsafe { UnregisterClassW(self.0, GetModuleHandleW(null())) };
-    }
-}
-
-struct Popup(HWND);
-
 impl Popup {
-    fn create(class: PCWSTR, extended: u32, bounds: [i32; 4]) -> anyhow::Result<Self> {
-        Self::styled(class, [WS_POPUP, extended], bounds)
-    }
-
-    fn styled(
-        class: PCWSTR,
-        [style, extended]: [u32; 2],
-        [left, top, right, bottom]: [i32; 4],
-    ) -> anyhow::Result<Self> {
-        let [width, height] = [right.saturating_sub(left), bottom.saturating_sub(top)];
-
-        let hwnd = unsafe {
-            CreateWindowExW(
-                extended,
-                class,
-                class,
-                style,
-                left,
-                top,
-                width,
-                height,
-                null_mut(),
-                null_mut(),
-                GetModuleHandleW(null()),
-                null(),
-            )
-        };
-        ensure!(!hwnd.is_null(), "Cannot create a test window");
-        Ok(Self(hwnd))
-    }
-
-    fn show(&self) {
-        unsafe { ShowWindow(self.0, SW_SHOWNOACTIVATE) };
-    }
-
     fn window(&self) -> Window {
         Window(self.0 as isize)
-    }
-}
-
-impl Drop for Popup {
-    fn drop(&mut self) {
-        unsafe { DestroyWindow(self.0) };
     }
 }
 

@@ -53,7 +53,7 @@ dropped on the acquiring thread.
 
 Owners: `crates/platform/src/windows.rs`, `windows/input.rs`, `windows/insertion.rs`,
 `windows/dialog.rs`, `windows/presentation.rs`, `windows/login.rs`, `windows/installation.rs`,
-`windows/registry.rs`, `wsl.rs`.
+`windows/registry.rs`, `wsl.rs`; the test-only `windows/fixture.rs`.
 
 `take_handle` accepts only a fresh unowned kernel-object handle from an API that reports failure
 with null and requires `CloseHandle`; it is not an adopter for pseudo-handles, window handles, or

@@ -122,7 +122,7 @@ unsafe extern "system" fn always_excluded(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::windows::with_foreign_window;
+    use crate::windows::fixture::with_foreign_window;
 
     #[test]
     #[ignore = "Creates an owned native window; no microphone, hook, clipboard, or injected input"]

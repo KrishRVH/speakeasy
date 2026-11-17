@@ -249,20 +249,18 @@ unsafe fn request_hide(hwnd: HWND) {
 mod tests {
     use std::{
         cell::Cell,
-        io,
         ptr::{null, null_mut},
     };
 
     use windows_sys::Win32::{
         Graphics::Gdi::{GetUpdateRect, InvalidateRect, ValidateRect},
-        System::LibraryLoader::GetModuleHandleW,
-        UI::WindowsAndMessaging::{
-            CreateWindowExW, DefWindowProcW, DestroyWindow, RegisterClassW, SendMessageW,
-            UnregisterClassW, WNDCLASSW,
-        },
+        UI::WindowsAndMessaging::{DefWindowProcW, SendMessageW},
     };
 
-    use super::{super::native_window, *};
+    use super::{
+        super::fixture::{Class, Popup, native_window},
+        *,
+    };
 
     const PAINT_TEST_CLASS: PCWSTR = w!("SpeakeasyPaintTest");
 
@@ -290,48 +288,12 @@ mod tests {
         }
     }
 
-    struct Window(HWND);
-
-    impl Drop for Window {
-        fn drop(&mut self) {
-            unsafe {
-                DestroyWindow(self.0);
-                UnregisterClassW(PAINT_TEST_CLASS, GetModuleHandleW(null()));
-            }
-        }
-    }
-
     #[test]
     #[ignore = "Creates an owned native window; no microphone, hook, clipboard, or injected input"]
     fn hidden_pill_consumes_paint_and_visible_pill_reaches_renderer() -> anyhow::Result<()> {
-        let hwnd = unsafe {
-            let instance = GetModuleHandleW(null());
-            let definition = WNDCLASSW {
-                lpfnWndProc: Some(renderer),
-                hInstance: instance,
-                lpszClassName: PAINT_TEST_CLASS,
-                ..Default::default()
-            };
-            if RegisterClassW(&raw const definition) == 0 {
-                return Err(io::Error::last_os_error().into());
-            }
-            CreateWindowExW(
-                WS_EX_NOACTIVATE,
-                PAINT_TEST_CLASS,
-                PAINT_TEST_CLASS,
-                WS_POPUP,
-                0,
-                0,
-                1,
-                1,
-                null_mut(),
-                null_mut(),
-                instance,
-                null(),
-            )
-        };
-        let _window = Window(hwnd);
-        ensure!(!hwnd.is_null(), "Cannot create paint test window");
+        let _class = Class::register(PAINT_TEST_CLASS, Some(renderer), null_mut())?;
+        let pill = Popup::styled(PAINT_TEST_CLASS, [WS_POPUP, WS_EX_NOACTIVATE], [0, 0, 1, 1])?;
+        let hwnd = pill.0;
 
         unsafe { native_window(hwnd) }?.configure_pill()?;
         let repaint = || {
@@ -351,7 +313,7 @@ mod tests {
             "A hidden pill must finish its paint cycle"
         );
 
-        unsafe { ShowWindow(hwnd, SW_SHOWNOACTIVATE) };
+        pill.show();
         assert_eq!(repaint(), 1, "Visible paint must reach the renderer");
 
         unsafe { ShowWindow(hwnd, SW_HIDE) };
@@ -366,35 +328,17 @@ mod tests {
     #[test]
     #[ignore = "Creates an owned native window; no microphone, hook, clipboard, or injected input"]
     fn a_window_minimizes_to_one_tray_lane_until_it_is_destroyed() -> anyhow::Result<()> {
-        let hwnd = unsafe {
-            CreateWindowExW(
-                0,
-                w!("STATIC"),
-                null(),
-                WS_POPUP,
-                0,
-                0,
-                0,
-                0,
-                null_mut(),
-                null_mut(),
-                GetModuleHandleW(null()),
-                null(),
-            )
-        };
-        ensure!(!hwnd.is_null(), "Cannot create the settings test window");
+        let settings = Popup::create(w!("STATIC"), 0, [0; 4])?;
         let (first, first_hides) = async_channel::bounded(1);
         let (second, second_hides) = async_channel::bounded(1);
         let again = {
-            let window = unsafe { native_window(hwnd) }?;
+            let window = unsafe { native_window(settings.0) }?;
             window.minimize_to_tray(first)?;
             window.minimize_to_tray(second)
         };
 
-        unsafe {
-            SendMessageW(hwnd, WM_SYSCOMMAND, SC_MINIMIZE as usize, 0);
-            DestroyWindow(hwnd);
-        }
+        unsafe { SendMessageW(settings.0, WM_SYSCOMMAND, SC_MINIMIZE as usize, 0) };
+        drop(settings);
         assert!(again.is_err(), "A second tray lane was installed");
         assert_eq!(
             first_hides.try_recv(),
