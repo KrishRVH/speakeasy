@@ -206,8 +206,10 @@ keyframe quotes you: the summary lists the narration once, in its own labeled un
 `Show ID` line names the ID an agent with Speakeasy's MCP tools can open. On Windows, when a WSL
 distribution is installed, the summary also gives the Show folder as the default distribution sees
 it, under the drive mount its `/etc/wsl.conf` sets (`/mnt/` unless changed), so an agent running in
-WSL opens the same files. A Show on a network share, or a distribution with drive mounting turned
-off, gets no WSL line.
+WSL opens the same files. Finding that setting can start WSL, so Speakeasy looks once per run, when
+you first record a Show or open Shows; if WSL has not answered within a second of saving, that Show
+has no WSL line. A Show on a network share, or a distribution with drive mounting turned off, gets
+no WSL line.
 
 A Show records only what you name. With no window to record under the pointer, or if you finish
 before dragging out an area, it is cancelled, narration and all: nothing is pasted or saved, and the
@@ -322,11 +324,12 @@ creating another copy. **Discard audio** removes its recovery checkpoint and lea
 alone. Discard always requires confirmation.
 
 An agent on the same machine can inspect a Show without launching the app or opening the microphone.
-Every summary names its Show's exact ID; when retained samples and a usable command are available,
-it also names the local executable. Quote that executable path for your shell; the app does not
-install it on PATH. In Windows PowerShell, use `& 'PATH\speakeasy-cli.exe' show …` for the commands
-below. If the package moves, use its new path. A moved Show uses its explicit folder path instead of
-its ID.
+A summary names its Show's exact ID when Speakeasy saved it in the Shows folder; `show demo --out`
+writes a summary that names only its folder. When retained samples and a usable command are
+available, a summary also names the local executable. Quote that executable path for your shell; the
+app does not install it on PATH. In Windows PowerShell, use `& 'PATH\speakeasy-cli.exe' show …` for
+the commands below. If the package moves, use its new path. A moved Show uses its explicit folder
+path instead of its ID.
 
 ```sh
 speakeasy show list --json

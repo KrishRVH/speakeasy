@@ -188,6 +188,10 @@ struct Configuration {
 }
 
 impl Runtime {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "The service owner hands over each lane and handle the desktop runtime uses; a parameter struct would only rename this list"
+    )]
     pub(crate) fn start(
         config: ValidConfig,
         baseline: Config,
@@ -195,6 +199,7 @@ impl Runtime {
         snapshots: watch::Sender<Snapshot>,
         meter: watch::Sender<Meter>,
         canvas: watch::Sender<Canvas>,
+        wsl: show::wsl::Lookup,
         own_focus: OwnFocus,
     ) -> anyhow::Result<(Self, InputMonitor)> {
         let (input, inputs) = input_lane();
@@ -203,6 +208,7 @@ impl Runtime {
         let ports = Desktop {
             inserter,
             canvas,
+            wsl,
             sounds: Sounds::start()?,
             mac_shortcut: config.mac_shortcut,
         };
@@ -401,6 +407,7 @@ impl<Host> Drop for Runtime<Host> {
 struct Desktop {
     inserter: Inserter,
     canvas: watch::Sender<Canvas>,
+    wsl: show::wsl::Lookup,
     sounds: Sounds,
     mac_shortcut: speakeasy_platform::MacShortcut,
 }
@@ -436,6 +443,7 @@ impl Ports for Desktop {
         log: Option<show::FrameLog>,
         events: Sender<ShowEvent>,
     ) -> anyhow::Result<ScreenRecorder> {
+        self.wsl.prepare();
         ScreenRecorder::start(
             id,
             started,
@@ -452,7 +460,7 @@ impl Ports for Desktop {
         publication: show::Publication,
         permit: InsertPermit,
     ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static {
-        show::publish(publication, permit)
+        show::publish(publication, permit, self.wsl.clone())
     }
 
     fn reopen(

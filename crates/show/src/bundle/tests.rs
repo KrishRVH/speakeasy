@@ -9,7 +9,7 @@ use crate::{
 mod framing;
 
 fn located(directory: &Path) -> Location<'_> {
-    Location::new(directory, None).unwrap()
+    Location::managed(directory, None).unwrap()
 }
 
 #[test]
@@ -282,7 +282,7 @@ fn the_summary_names_the_show_id_and_its_folder_as_wsl_sees_it() {
     let summary = |directory: &str, wsl| {
         Summary {
             manifest: &manifest,
-            location: Location::new(Path::new(directory), wsl).unwrap(),
+            location: Location::managed(Path::new(directory), wsl).unwrap(),
             command: None,
         }
         .to_string()
@@ -316,6 +316,22 @@ fn the_summary_names_the_show_id_and_its_folder_as_wsl_sees_it() {
             "{unmapped}"
         );
     }
+    let chosen = Summary {
+        manifest: &manifest,
+        location: Location::unmanaged(Path::new(drive), Some(&wsl)),
+        command: Some(Path::new("C:/Program Files/Speakeasy/speakeasy-cli.exe")),
+    }
+    .to_string();
+    assert!(
+        chosen.contains("From WSL, the same files are under"),
+        "{chosen}"
+    );
+    assert!(
+        !["Show ID", "MCP", "show inspect", "Local command"]
+            .iter()
+            .any(|claim| chosen.contains(claim)),
+        "A folder outside the Shows folder claimed an ID: {chosen}"
+    );
 }
 
 #[test]

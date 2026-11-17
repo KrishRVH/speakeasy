@@ -5,10 +5,11 @@ use std::{
 
 use anyhow::{Context as _, anyhow};
 use speakeasy_platform::InsertPermit;
-use speakeasy_show::{Framing, NarrationLoss, Typeface, Wsl, compose, select};
+use speakeasy_show::{Framing, Location, NarrationLoss, Typeface, compose, select};
 
 use super::{
     Checkpoint, Interrupted, SavedShow, recorder::NOTHING_RECORDED, store, store::checkpoint,
+    wsl::Lookup,
 };
 use crate::runtime::ports::{Footage, PUBLISH_STOPPED, Preservation, Published};
 
@@ -30,7 +31,7 @@ pub(crate) enum Origin {
 #[derive(Clone, Copy, Default)]
 struct Handoff<'a> {
     command: Option<&'a Path>,
-    wsl: Option<&'a Wsl>,
+    wsl: Option<&'a Lookup>,
 }
 
 pub(crate) struct Reopened {
@@ -50,6 +51,7 @@ pub(crate) struct RecoveredSpeech {
 pub(crate) async fn publish(
     publication: Publication,
     permit: InsertPermit,
+    wsl: Lookup,
 ) -> anyhow::Result<Published> {
     let Publication {
         footage,
@@ -71,11 +73,10 @@ pub(crate) async fn publish(
     };
     tokio::task::spawn_blocking(move || {
         let command = crate::paths::command();
-        let wsl = speakeasy_platform::wsl();
         publish_with(
             Handoff {
                 command: command.as_deref(),
-                wsl: wsl.as_ref(),
+                wsl: Some(&wsl),
             },
             footage,
             checkpoint,
@@ -293,18 +294,18 @@ fn persist(
         .transpose()?
         .unwrap_or_else(SystemTime::now);
     let directory = store::fresh_directory(&parent()?, recorded)?;
+    let wsl = handoff.wsl.and_then(Lookup::found);
     if cancelled() {
         return Ok(None);
     }
     let mut staged = store::stage(
-        &directory,
+        Location::managed(&directory, wsl.as_ref()).context(store::UNNAMED)?,
         bundle,
         Some(store::Retained {
             journal: &journal,
             duration,
             command: handoff.command,
         }),
-        handoff.wsl,
     )?;
     let movie_lost = match checkpoint {
         Some(checkpoint) => checkpoint.retain_movie(&mut staged, duration)?,

@@ -44,6 +44,7 @@ pub(crate) fn reveal_shows(cx: &mut App) {
     let source = if services.mode.is_demo() {
         Source::Demo
     } else {
+        services.wsl.prepare();
         Source::Saved
     };
     let result = review::open(

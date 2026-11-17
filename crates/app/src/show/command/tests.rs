@@ -161,10 +161,16 @@ fn metadata_reports_exact_managed_identity_and_expiry_without_claiming_moved_bun
 fn a_demo_is_inspectable_and_output_never_contains_its_narration() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let directory = root.path().join("demo with spaces");
+    let mut written = Vec::new();
     Command::Demo {
         out: Some(directory.clone()),
     }
-    .write(&mut io::sink())?;
+    .write(&mut written)?;
+    let written = String::from_utf8(written)?;
+    assert!(
+        written.contains("demo with spaces") && !written.contains("Show ID"),
+        "A demo outside the Shows folder claimed a Show ID: {written}"
+    );
     let summary = directory.join(Bundle::SUMMARY);
     let edited = b"PRIVATE_USER_EDIT";
     fs::write(&summary, edited)?;

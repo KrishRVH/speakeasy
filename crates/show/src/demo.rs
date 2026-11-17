@@ -473,7 +473,7 @@ mod tests {
         let bundle = Demo::new(typeface()).bundle((720, 450)).unwrap();
         let expected = bundle.manifest.clone();
         let directory = Path::new("shows").join("demo");
-        let location = Location::new(&directory, None).unwrap();
+        let location = Location::managed(&directory, None).unwrap();
         let (summary, files) = bundle.into_files(location, None).unwrap();
         assert_eq!(
             summary,
@@ -537,7 +537,7 @@ Show ID: `demo`. An agent with Speakeasy's MCP tools can open this Show by that 
         untimed.narration = Narration::Text(NARRATION.map(|(_, phrase)| phrase).join(" "));
         let bundle = Demo::new(typeface()).compose(untimed, (720, 450)).unwrap();
         let directory = Path::new("shows").join("demo");
-        let location = Location::new(&directory, None).unwrap();
+        let location = Location::managed(&directory, None).unwrap();
         let (summary, _) = bundle.into_files(location, None).unwrap();
         assert_eq!(
             summary,

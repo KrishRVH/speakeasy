@@ -10,7 +10,7 @@ use std::{
 };
 
 use anyhow::Context as _;
-use speakeasy_show::{Demo, Typeface};
+use speakeasy_show::{Demo, Location, Typeface};
 
 use super::{
     evidence::query::{self, Query},
@@ -370,9 +370,9 @@ fn install_skill(directory: &Path) -> anyhow::Result<PathBuf> {
     Ok(path)
 }
 
-fn demo(directory: Option<PathBuf>, out: &mut impl io::Write) -> anyhow::Result<()> {
-    let directory = directory.map(std::path::absolute).transpose()?;
-    if let Some(directory) = &directory {
+fn demo(chosen: Option<PathBuf>, out: &mut impl io::Write) -> anyhow::Result<()> {
+    let chosen = chosen.map(std::path::absolute).transpose()?;
+    if let Some(directory) = &chosen {
         anyhow::ensure!(
             !directory.exists(),
             "{} already exists; choose a new directory",
@@ -380,12 +380,15 @@ fn demo(directory: Option<PathBuf>, out: &mut impl io::Write) -> anyhow::Result<
         );
     }
     let bundle = Demo::new(Typeface::parse(crate::BRAND_FONT_FILE)?).bundle(DEMO_SIZE)?;
-    let directory = match directory {
-        Some(directory) => directory,
-        None => store::fresh_directory(&store::private_directory()?, SystemTime::now())?,
-    };
     let wsl = speakeasy_platform::wsl();
-    let (_, summary) = store::stage(&directory, bundle, None, wsl.as_ref())?.persist()?;
+    let fresh;
+    let location = if let Some(directory) = &chosen {
+        Location::unmanaged(directory, wsl.as_ref())
+    } else {
+        fresh = store::fresh_directory(&store::private_directory()?, SystemTime::now())?;
+        Location::managed(&fresh, wsl.as_ref()).context(store::UNNAMED)?
+    };
+    let (_, summary) = store::stage(location, bundle, None)?.persist()?;
     write!(out, "{summary}")?;
     Ok(())
 }

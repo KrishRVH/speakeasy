@@ -9,7 +9,7 @@ use std::{
 
 use anyhow::Context as _;
 use gpui::App;
-use speakeasy_show::{Bundle, Journal, Location, Moment, Wsl};
+use speakeasy_show::{Bundle, Journal, Location, Moment};
 
 const KEPT_FOR: Duration = Duration::from_hours(7 * 24);
 
@@ -22,6 +22,8 @@ const PIN: &str = ".pinned";
 const STAGING_PREFIX: &str = ".partial-";
 
 const EXPIRED_PREFIX: &str = ".expired-";
+
+pub(super) const UNNAMED: &str = "A Show's folder needs a name made of Unicode text";
 
 pub(super) fn directory() -> anyhow::Result<PathBuf> {
     Ok(crate::paths::data_root()?.join("shows"))
@@ -157,18 +159,16 @@ fn staging(parent: &Path) -> io::Result<tempfile::TempDir> {
 }
 
 pub(super) fn stage(
-    directory: &Path,
+    location: Location<'_>,
     bundle: Bundle,
     retained: Option<Retained<'_>>,
-    wsl: Option<&Wsl>,
 ) -> anyhow::Result<Staged> {
+    let directory = location.directory();
     anyhow::ensure!(
         !directory.exists(),
         "{} already exists, and a Show never replaces one",
         directory.display()
     );
-    let location = Location::new(directory, wsl)
-        .context("A Show's folder needs a name made of Unicode text")?;
     let parent = directory
         .parent()
         .context("A Show's directory needs a parent")?;

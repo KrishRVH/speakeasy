@@ -522,21 +522,28 @@ module unless a test file is named.
   [describe.rs](../crates/show/src/describe.rs).
   [bundle/tests.rs](../crates/show/src/bundle/tests.rs) checks paginated sheets and pins
   `show.json`; the demo's summary in demo.rs pins what agents read. A `Location` carries the folder,
-  its ID, and an optional WSL mapping: every summary names the ID before any retrieval note, and a
-  mapped folder gets a WSL line after any ending or narration notice, so those stay on the second
+  an optional WSL mapping, and a Show ID only when the store chose the folder in the Shows folder;
+  `show demo --out` folders have none. A summary with an ID names it before any retrieval note, and
+  a mapped folder gets a WSL line after any ending or narration notice, so those stay on the second
   line. [wsl.rs](../crates/show/src/wsl.rs) parses `wsl.conf` as WSL does (first value wins, `#`
   comments outside quotes, invalid lines skipped) and maps only lettered-drive paths under an
   absolute automount root; [platform wsl.rs](../crates/platform/src/wsl.rs) finds the default
-  distribution's settings and gives up rather than guess. Retrieval notes take an explicit command.
-  The store writes source frames before rendering the summary, so a failed optional source write
-  never advertises retrieval. [paths.rs](../crates/app/src/paths.rs) finds the console sibling on
-  Windows, the original AppImage on Linux, or a durable app executable; temporary mounts and
-  unavailable commands are omitted. Existing summaries are never regenerated.
-  [bundle/read.rs](../crates/show/src/bundle/read.rs) validates format versions and references
-  without I/O, accepts only the current format, exposes sheet membership, and strips private decoder
-  messages from failures. A keyframe `crop` must be a proper part of the unit square. Its
-  [tests](../crates/show/src/bundle/read/tests.rs) reject broken references and exercise generated
-  manifest mutations and sheet sizes.
+  distribution's settings and gives up rather than guess. In the app,
+  [show/wsl.rs](../crates/app/src/show/wsl.rs) runs that lookup at most once per process, starting
+  when a Show starts recording or the Shows window opens, so the app never starts WSL on its own.
+  Publication asks after saving narration and checking its permit, and Send to agent asks while
+  preparing its prompt; each waits at most a second, then goes on without a WSL line.
+  [wsl/tests.rs](../crates/app/src/show/wsl/tests.rs) checks the idle start and the bound; Windows
+  publish and copy tests check that the found mapping reaches the summary and prompt. Retrieval
+  notes need the ID and an explicit command. The store writes source frames before rendering the
+  summary, so a failed optional source write never advertises retrieval.
+  [paths.rs](../crates/app/src/paths.rs) finds the console sibling on Windows, the original AppImage
+  on Linux, or a durable app executable; temporary mounts and unavailable commands are omitted.
+  Existing summaries are never regenerated. [bundle/read.rs](../crates/show/src/bundle/read.rs)
+  validates format versions and references without I/O, accepts only the current format, exposes
+  sheet membership, and strips private decoder messages from failures. A keyframe `crop` must be a
+  proper part of the unit square. Its [tests](../crates/show/src/bundle/read/tests.rs) reject broken
+  references and exercise generated manifest mutations and sheet sizes.
 - **Show store**: [show/store.rs](../crates/app/src/show/store.rs) names, writes, and expires
   bundles, and [store/recall.rs](../crates/app/src/show/store/recall.rs) reads a saved one back; it
   also discovers and inspects saved Shows without changing them.

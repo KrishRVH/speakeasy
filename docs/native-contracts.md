@@ -8,8 +8,8 @@ APIs also require these thread, buffer, and callback lifetime rules.
 ## Owned threads and insertion authority
 
 Owners: `crates/platform/src/owned_thread.rs`, `input.rs`, `insertion.rs`, `insertion/commit.rs`,
-`clipboard.rs`, `monitor.rs`; `crates/app/src/show/recorder.rs` and `instance.rs` hold the app's
-recorder and instance-listener threads.
+`clipboard.rs`, `monitor.rs`; `crates/app/src/show/recorder.rs`, `show/wsl.rs`, and `instance.rs`
+hold the app's recorder, WSL lookup, and instance-listener threads.
 
 `OwnedThread` owns exactly one join handle. Its exit lane closes after the body returns or unwinds;
 thread-local destructors can still run afterward. Async join therefore performs the final OS join on
@@ -37,6 +37,12 @@ Debug/error output.
 remains effective; retirement removes the handle before a later stop can wake it. This lock cannot
 become owner-only state because a blocked native run loop does not receive ordinary owner messages.
 
+The WSL lookup thread is the one app thread nothing joins: its single lookup can block in the
+Windows redirector for as long as WSL takes to start, or indefinitely on a wedged share. Handles ask
+it over a channel, each question carrying its own one-slot reply lane, and a caller that stops
+waiting drops that lane, so a late answer is discarded. The thread ends once every handle is gone
+and the lookup has returned; process exit ends one still blocked.
+
 The instance listener owns its current-thread Tokio executor and bounded set of control tasks for
 receipt/disconnect waits. Shutdown aborts and drains those tasks before the server thread joins;
 application state changes remain on the Services or session owner.
@@ -54,9 +60,8 @@ buffers have checked ABI lengths and remain alive through the synchronous call. 
 bounded and terminated, then validated before becoming an installation path or a WSL share name: the
 default distribution's key holds only hex digits, braces, and hyphens, and its name only letters,
 digits, `.`, `_`, and `-`. Reading `/etc/wsl.conf` through `\\wsl.localhost` or `\\wsl$` can start
-the WSL VM and block for seconds, so only worker threads detect WSL: publication's blocking task,
-the copy worker, and the CLI. The file is bounded to 64 KiB; an unreadable or oversized file gives
-no WSL path.
+the WSL VM and block, so the app reads it only on the WSL lookup thread; the CLI reads it
+synchronously. The file is bounded to 64 KiB; an unreadable or oversized file gives no WSL path.
 
 Windows presentation/subclass operations run on the HWND's owning thread. `Window::new` verifies
 that ownership. A subclass is removed during native destruction. Low-level hook callbacks without a

@@ -1,4 +1,4 @@
-use std::{fs, io, path::Path, time::Instant};
+use std::{fs, io, path::Path, sync::mpsc, time::Instant};
 
 use anyhow::bail;
 use speakeasy_platform::{InputSender, InsertPermit};
@@ -208,6 +208,7 @@ async fn unknown_checkpoint_state_precedes_composition_and_respects_cancellation
                 origin: Origin::Live,
             },
             permit,
+            Lookup::spawn(|| None, crate::testing::PATIENCE),
         )
         .await;
         if cancelled {
@@ -475,13 +476,24 @@ fn uncopied(_: &str) -> anyhow::Result<()> {
 }
 
 #[test]
-fn a_cancelled_show_never_reaches_the_disk() -> anyhow::Result<()> {
+fn a_cancelled_show_never_reaches_the_disk_or_wsl() -> anyhow::Result<()> {
     let (input, permit) = permit();
     input.cancel();
     let unprepared = || bail!("A cancelled Show never prepares its folder");
+    let (asked, questions) = mpsc::channel();
+    let wsl = Lookup::spawn(
+        move || {
+            asked.send(()).ok()?;
+            None
+        },
+        crate::testing::PATIENCE,
+    );
     let (footage, narration) = rehearse(32, 20);
     let published = publish_with(
-        Handoff::default(),
+        Handoff {
+            command: None,
+            wsl: Some(&wsl),
+        },
         narrated(footage, narration, None),
         None,
         Origin::Live,
@@ -490,6 +502,10 @@ fn a_cancelled_show_never_reaches_the_disk() -> anyhow::Result<()> {
         uncopied,
     )?;
     assert!(matches!(published, Published::Cancelled));
+    assert!(
+        questions.try_recv().is_err(),
+        "A cancelled Show reached into WSL"
+    );
     Ok(())
 }
 
@@ -687,14 +703,13 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let directory = root.path().join("show");
     let staged = store::stage(
-        &directory,
+        speakeasy_show::Location::managed(&directory, None).context(store::UNNAMED)?,
         bundle,
         Some(store::Retained {
             journal: &journal,
             duration: Moment::from_millis(60_000),
             command: None,
         }),
-        None,
     )?;
     assert!(!staged.source_lost);
     staged.persist()?;
@@ -767,6 +782,44 @@ fn retrieval_is_advertised_only_when_both_source_and_command_are_available() -> 
         }
         assert_eq!(store::source::size(show.directory())?.is_some(), source_ok);
     }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn a_published_summary_names_the_folder_the_wsl_lookup_maps() -> anyhow::Result<()> {
+    use speakeasy_show::Wsl;
+
+    let root = tempfile::tempdir()?;
+    let wsl = Lookup::spawn(|| Some(Wsl::configured("")), crate::testing::PATIENCE);
+    let (footage, narration) = rehearse(32, 20);
+    let (_input, permit) = permit();
+    let mut copied = String::new();
+    let Published::Saved { show, .. } = publish_with(
+        Handoff {
+            command: None,
+            wsl: Some(&wsl),
+        },
+        narrated(footage, narration, None),
+        None,
+        Origin::Live,
+        &permit,
+        || Ok(root.path().join("shows")),
+        |summary| {
+            summary.clone_into(&mut copied);
+            Ok(())
+        },
+    )?
+    else {
+        bail!("Expected a saved Show");
+    };
+    let mapped = Wsl::configured("")
+        .path(show.directory())
+        .context("A temporary folder on a lettered drive maps into WSL")?;
+    assert!(
+        copied.contains(&format!("From WSL, the same files are under `{mapped}`.")),
+        "{copied}"
+    );
     Ok(())
 }
 

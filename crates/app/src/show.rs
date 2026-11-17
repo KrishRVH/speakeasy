@@ -9,6 +9,7 @@ mod publish;
 mod recorder;
 pub(crate) mod review;
 mod store;
+pub(crate) mod wsl;
 
 pub(crate) use self::{
     command::Command,

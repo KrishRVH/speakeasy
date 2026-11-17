@@ -59,15 +59,28 @@ pub struct Bundle {
 #[derive(Clone, Copy, Debug)]
 pub struct Location<'a> {
     directory: &'a Path,
-    id: &'a str,
+    id: Option<&'a str>,
     wsl: Option<&'a Wsl>,
 }
 
 impl<'a> Location<'a> {
     #[must_use]
-    pub fn new(directory: &'a Path, wsl: Option<&'a Wsl>) -> Option<Self> {
+    pub fn managed(directory: &'a Path, wsl: Option<&'a Wsl>) -> Option<Self> {
         let id = directory.file_name()?.to_str()?;
-        Some(Self { directory, id, wsl })
+        Some(Self {
+            directory,
+            id: Some(id),
+            wsl,
+        })
+    }
+
+    #[must_use]
+    pub const fn unmanaged(directory: &'a Path, wsl: Option<&'a Wsl>) -> Self {
+        Self {
+            directory,
+            id: None,
+            wsl,
+        }
     }
 
     #[must_use]
@@ -76,7 +89,7 @@ impl<'a> Location<'a> {
     }
 
     #[must_use]
-    pub const fn id(&self) -> &'a str {
+    pub const fn id(&self) -> Option<&'a str> {
         self.id
     }
 
@@ -351,39 +364,43 @@ impl fmt::Display for Summary<'_> {
                 Frames(several)
             )?,
         }
+        let Some(id) = id else {
+            return Ok(());
+        };
         writeln!(
             f,
             "Show ID: {}. An agent with Speakeasy's MCP tools can open this Show by that ID.",
             Code(id)
         )?;
-        if let Some(command) = command {
-            writeln!(
-                f,
-                "Screen samples between keyframes are retained. Local command: {} (a path, not \
-                 shell syntax; quote it for your shell).",
-                Code(command.display())
-            )?;
-            writeln!(
-                f,
-                "Use {inspect} to check this Show and {frames} for sample times; add --at \
-                 M:SS.mmm, --phrase TEXT, or --mark N to focus. {skill} explains image exports \
-                 and sampling gaps. If the ID does not resolve, pass the folder above as one SHOW \
-                 argument. If the command has moved, read the bundle files directly.",
-                inspect = Code(format!("show inspect {id} --json")),
-                frames = Code(format!("show frames {id} --json")),
-                skill = Code("show skill"),
-            )?;
-            if !cropped.is_empty() {
-                writeln!(
-                    f,
-                    "For the whole screen behind a cropped frame, run {} with that frame's time.",
-                    Code(format!(
-                        "show frame {id} --at M:SS.mmm --out NEW.png --json"
-                    ))
-                )?;
-            }
+        let Some(command) = command else {
+            return Ok(());
+        };
+        writeln!(
+            f,
+            "Screen samples between keyframes are retained. Local command: {} (a path, not shell \
+             syntax; quote it for your shell).",
+            Code(command.display())
+        )?;
+        writeln!(
+            f,
+            "Use {inspect} to check this Show and {frames} for sample times; add --at M:SS.mmm, \
+             --phrase TEXT, or --mark N to focus. {skill} explains image exports and sampling \
+             gaps. If the ID does not resolve, pass the folder above as one SHOW argument. If the \
+             command has moved, read the bundle files directly.",
+            inspect = Code(format!("show inspect {id} --json")),
+            frames = Code(format!("show frames {id} --json")),
+            skill = Code("show skill"),
+        )?;
+        if cropped.is_empty() {
+            return Ok(());
         }
-        Ok(())
+        writeln!(
+            f,
+            "For the whole screen behind a cropped frame, run {} with that frame's time.",
+            Code(format!(
+                "show frame {id} --at M:SS.mmm --out NEW.png --json"
+            ))
+        )
     }
 }
 

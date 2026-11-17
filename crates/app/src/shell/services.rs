@@ -137,6 +137,7 @@ pub(crate) struct Services {
     pub(super) show_edits: crate::show::edits::Edits,
     show_copies: crate::show::copy::Copies,
     pub(super) show_previews: crate::show::preview::Reads,
+    pub(super) wsl: crate::show::wsl::Lookup,
     purging: Option<(OwnedThread, Task<()>)>,
 }
 
@@ -158,6 +159,7 @@ impl Services {
         instance: Option<Instance>,
         mode: LaunchMode,
     ) -> Self {
+        let wsl = crate::show::wsl::Lookup::native();
         Self {
             lifecycle: Lifecycle::default(),
             retirement: None,
@@ -186,8 +188,9 @@ impl Services {
             microphone_scan: None,
             instance,
             show_edits: crate::show::edits::Edits::default(),
-            show_copies: crate::show::copy::Copies::default(),
+            show_copies: crate::show::copy::Copies::new(wsl.clone()),
             show_previews: crate::show::preview::Reads::default(),
+            wsl,
             purging: None,
         }
     }
@@ -391,6 +394,7 @@ impl Services {
             output,
             meter,
             canvas,
+            wsl,
             styles,
             focus,
             ..
@@ -405,6 +409,7 @@ impl Services {
                 output.clone(),
                 meter.clone(),
                 canvas.clone(),
+                wsl.clone(),
                 focus.subscribe(),
             )?;
             anyhow::Ok(Owners { runtime, monitor })
