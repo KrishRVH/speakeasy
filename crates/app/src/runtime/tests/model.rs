@@ -72,7 +72,10 @@ impl Ports for ModelPorts {
     ) -> anyhow::Result<ModelDevice> {
         self.log
             .try_send(Log::MicrophoneOpened(id, events.clone()))?;
-        events.try_send(CaptureEvent::Ready(id))?;
+        events.try_send(CaptureEvent::Ready(
+            id,
+            crate::runtime::ports::MicrophoneSource::Chosen,
+        ))?;
         Ok(self.device(Recorder::Microphone, id))
     }
 

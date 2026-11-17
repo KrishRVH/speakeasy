@@ -216,7 +216,10 @@ impl Ports for FakePorts {
             segmentation.try_send(recognition == RecognitionMode::Segmented)?;
         }
         self.captures.try_send((id, events.clone()))?;
-        events.try_send(CaptureEvent::Ready(id))?;
+        events.try_send(CaptureEvent::Ready(
+            id,
+            crate::runtime::ports::MicrophoneSource::Chosen,
+        ))?;
         Ok(FakeMicrophone {
             id,
             events,

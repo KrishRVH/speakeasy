@@ -42,6 +42,7 @@ const DETAILS: &str = "Details in Settings";
 const TRAY_HINT_FOR: Duration = Duration::from_secs(3);
 const DRAW_HINT_FOR: Duration = Duration::from_secs(3);
 const SECURE_INPUT_FOR: Duration = Duration::from_secs(5);
+const DEFAULT_MICROPHONE_FOR: Duration = Duration::from_secs(4);
 
 pub(crate) const COUNTDOWN: Duration = Duration::from_secs(30);
 const SWEEP_DELAY: Duration = Duration::from_millis(250);
@@ -84,6 +85,7 @@ pub(crate) struct Pill {
     draw_hint_until: Option<Instant>,
     secure_input: fn() -> bool,
     secure_input_until: Option<Instant>,
+    default_microphone_until: Option<Instant>,
     frame_at: Instant,
     frame_due: Instant,
     reduced_motion: bool,
@@ -134,6 +136,7 @@ impl Pill {
             draw_hint_until: None,
             secure_input,
             secure_input_until: None,
+            default_microphone_until: None,
             frame_at: now,
             frame_due: now,
             reduced_motion,
@@ -178,6 +181,7 @@ impl Pill {
             || snapshot.message != previous.message
             || snapshot.hands_free != previous.hands_free
             || snapshot.for_script != previous.for_script
+            || snapshot.default_microphone != previous.default_microphone
             || snapshot.show != previous.show
             || snapshot.ending != previous.ending
             || snapshot.narration_lost != previous.narration_lost;
@@ -193,6 +197,8 @@ impl Pill {
             self.secure_input_until,
             self.secure_input,
         );
+        self.default_microphone_until =
+            default_microphone_until(previous, &snapshot, now, self.default_microphone_until);
         self.draw_hint_until = draw_hint_until(
             previous,
             &snapshot,
@@ -238,6 +244,7 @@ impl Pill {
             tray_hint: remaining(self.tray_hint_until),
             draw_hint: remaining(self.draw_hint_until),
             secure_input: remaining(self.secure_input_until),
+            default_microphone: remaining(self.default_microphone_until),
             hands_free: self.snapshot.hands_free,
             for_script: self.snapshot.for_script,
             show: self.snapshot.show,
@@ -416,6 +423,7 @@ struct Scene {
     tray_hint: Option<Duration>,
     draw_hint: Option<Duration>,
     secure_input: Option<Duration>,
+    default_microphone: Option<Duration>,
     hands_free: bool,
     for_script: bool,
     show: bool,
@@ -452,6 +460,9 @@ impl Scene {
         }
         if self.shows_secure_input() {
             return Content::SecureInput;
+        }
+        if self.shows_default_microphone() {
+            return Content::DefaultMicrophone;
         }
         match self.phase {
             Phase::Error => Content::Error,
@@ -492,6 +503,10 @@ impl Scene {
         self.secure_input.is_some() && self.is_capturing() && !self.clock.near_limit
     }
 
+    fn shows_default_microphone(&self) -> bool {
+        self.default_microphone.is_some() && self.is_capturing() && !self.clock.near_limit
+    }
+
     fn capsule_size(&self) -> Size<f32> {
         if !self.is_shown() {
             return RESTING_SIZE;
@@ -499,7 +514,7 @@ impl Scene {
         if self.tray_hint.is_some() {
             return size(MESSAGE_WIDTH, 36.0);
         }
-        if self.shows_secure_input() {
+        if self.shows_secure_input() || self.shows_default_microphone() {
             return MESSAGE_SIZE;
         }
         let mut bounds = match self.phase {
@@ -525,7 +540,7 @@ impl Scene {
         self.feedback().or(self.tray_hint).or_else(|| {
             if self.is_capturing() {
                 Some(
-                    [self.draw_hint, self.secure_input]
+                    [self.draw_hint, self.secure_input, self.default_microphone]
                         .into_iter()
                         .flatten()
                         .fold(self.clock.next_tick, Duration::min),
@@ -556,6 +571,7 @@ impl Scene {
 enum Content {
     TrayHint,
     SecureInput,
+    DefaultMicrophone,
     Error,
     Notice,
     Slot,
@@ -566,7 +582,7 @@ impl Content {
     const fn is_inlaid(self) -> bool {
         matches!(
             self,
-            Self::SecureInput | Self::Error | Self::Notice | Self::Slot
+            Self::SecureInput | Self::DefaultMicrophone | Self::Error | Self::Notice | Self::Slot
         )
     }
 }
@@ -736,6 +752,20 @@ fn secure_input_until(
     let was_recording = same_session && previous.phase == Phase::Recording;
     if snapshot.phase == Phase::Recording && !was_recording {
         now.checked_add(SECURE_INPUT_FOR).filter(|_| secure_input())
+    } else {
+        until.filter(|_| same_session)
+    }
+}
+
+fn default_microphone_until(
+    previous: &Snapshot,
+    snapshot: &Snapshot,
+    now: Instant,
+    until: Option<Instant>,
+) -> Option<Instant> {
+    let same_session = snapshot.session == previous.session;
+    if snapshot.default_microphone && !(same_session && previous.default_microphone) {
+        now.checked_add(DEFAULT_MICROPHONE_FOR)
     } else {
         until.filter(|_| same_session)
     }

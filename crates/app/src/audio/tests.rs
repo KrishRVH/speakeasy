@@ -242,7 +242,7 @@ fn samples_that_arrive_late_restart_the_stall_clock() -> anyhow::Result<()> {
                 .outcome
         });
         let ready = std::iter::from_fn(|| reports.recv_blocking().ok())
-            .any(|event| matches!(event, CaptureEvent::Ready(_)));
+            .any(|event| matches!(event, CaptureEvent::Ready(..)));
         control.finish();
         (ready, recording.join())
     });
@@ -438,7 +438,10 @@ async fn consumer_wakes(cancel: bool, wake_before_park: bool) -> anyhow::Result<
 #[tokio::test]
 async fn closing_audio_events_unblocks_owned_capture_retirement() -> anyhow::Result<()> {
     let (events, audio) = async_channel::bounded(1);
-    events.try_send(CaptureEvent::Ready(SessionId::FIRST))?;
+    events.try_send(CaptureEvent::Ready(
+        SessionId::FIRST,
+        MicrophoneSource::Chosen,
+    ))?;
     let capture = Capture::spawn(SessionId::FIRST, events, |_, _, _| {
         Ok(Captured {
             outcome: Outcome::Finished(Ok(None)),

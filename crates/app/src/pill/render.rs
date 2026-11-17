@@ -29,6 +29,9 @@ const DRAW_HINT: &str = "Hold Shift to draw";
 const SECURE_INPUT: &str =
     "Secure keyboard entry is on, so Escape, Space, Return, V, S, W, and A won’t reach Speakeasy.";
 const SECURE_INPUT_SOURCES: &str = "Often a password field or terminal";
+const DEFAULT_MICROPHONE: &str =
+    "Your chosen microphone isn’t connected, so this uses the default one.";
+const DEFAULT_MICROPHONE_SOURCE: &str = "Choose another in Settings";
 
 impl Pill {
     pub(super) fn render_capsule(&self, scene: Scene) -> Div {
@@ -85,6 +88,13 @@ impl Pill {
                 facet(palette.live, JEWEL),
                 SECURE_INPUT.into(),
                 Some(SECURE_INPUT_SOURCES),
+                palette,
+            )
+            .into_any_element(),
+            Content::DefaultMicrophone => message_row(
+                facet(palette.live, JEWEL),
+                DEFAULT_MICROPHONE.into(),
+                Some(DEFAULT_MICROPHONE_SOURCE),
                 palette,
             )
             .into_any_element(),

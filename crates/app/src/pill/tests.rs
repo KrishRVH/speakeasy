@@ -100,6 +100,7 @@ fn recording(elapsed: Duration) -> Scene {
         tray_hint: None,
         draw_hint: None,
         secure_input: None,
+        default_microphone: None,
         hands_free: true,
         for_script: false,
         show: false,
@@ -441,4 +442,53 @@ fn a_dictation_for_a_script_says_so_while_it_records() {
     assert!(captured.shows_clock());
     assert!(captured.capsule_size().width > recording(Duration::from_secs(3)).capsule_size().width);
     assert_eq!(script(Phase::Processing).label(), None);
+}
+
+#[test]
+fn a_fallback_microphone_is_named_once_as_capture_opens_and_yields_to_secure_input() {
+    let left = Duration::from_secs(2);
+    let fallback = |phase| Scene {
+        phase,
+        default_microphone: Some(left),
+        ..recording(Duration::from_secs(1))
+    };
+    let recording = fallback(Phase::Recording);
+    assert_eq!(recording.content(), Content::DefaultMicrophone);
+    assert_eq!(recording.capsule_size(), MESSAGE_SIZE);
+    assert_eq!(
+        recording.wake_after(),
+        Some(Duration::from_millis(1_000).min(left))
+    );
+    assert_eq!(fallback(Phase::Processing).content(), Content::Slot);
+    let both = Scene {
+        secure_input: Some(left),
+        ..fallback(Phase::Recording)
+    };
+    assert_eq!(both.content(), Content::SecureInput);
+
+    let now = Instant::now();
+    let opened = Snapshot {
+        session: 4,
+        phase: Phase::Recording,
+        default_microphone: true,
+        ..Snapshot::default()
+    };
+    let before = Snapshot {
+        session: 4,
+        phase: Phase::Recording,
+        ..Snapshot::default()
+    };
+    let until = default_microphone_until(&before, &opened, now, None);
+    assert_eq!(until, now.checked_add(DEFAULT_MICROPHONE_FOR));
+    let later = now + Duration::from_secs(1);
+    assert_eq!(
+        default_microphone_until(&opened, &opened, later, until),
+        until,
+        "Later snapshots of the same session keep the original deadline"
+    );
+    let next = Snapshot {
+        session: 5,
+        ..before
+    };
+    assert_eq!(default_microphone_until(&opened, &next, later, until), None);
 }

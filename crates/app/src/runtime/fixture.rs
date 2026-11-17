@@ -52,7 +52,10 @@ impl Ports for Fixture {
         events: Sender<CaptureEvent>,
     ) -> anyhow::Result<FixtureDevice> {
         let Some(replay) = &self.replay else {
-            events.try_send(CaptureEvent::Ready(id))?;
+            events.try_send(CaptureEvent::Ready(
+                id,
+                crate::runtime::ports::MicrophoneSource::Chosen,
+            ))?;
             return Ok(FixtureDevice::Whole {
                 id,
                 wav: self.wav.clone(),

@@ -85,6 +85,9 @@ module unless a test file is named.
   [cuts.rs](../crates/app/src/audio/cuts.rs), and [live.rs](../crates/app/src/audio/live.rs)
   capture, meter, and seal a trimmed WAV before driver teardown;
   [microphones.rs](../crates/app/src/audio/microphones.rs) lists the input devices Settings offers.
+  A chosen microphone that is missing at start falls back to the system default; `Ready` carries
+  that source, and the owner marks only that session's snapshot so the pill can name it. The live
+  stream also owns the platform `Awake` guard, so idle sleep waits while the microphone is open.
   [audio/tests.rs](../crates/app/src/audio/tests.rs) and
   [stream/tests.rs](../crates/app/src/audio/stream/tests.rs) use synthetic samples; microphones.rs
   checks that a scan the driver blocks serves the next request. The energy gate retains audio after

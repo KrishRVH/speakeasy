@@ -993,3 +993,24 @@ async fn preset_library_edits_keep_recording_but_loading_words_cancels_old_infer
     );
     h.close().await
 }
+
+#[tokio::test(start_paused = true)]
+async fn the_default_microphone_is_named_only_for_the_session_that_fell_back() -> anyhow::Result<()>
+{
+    let mut h = Harness::new()?;
+    let (id, events) = h.start().await?;
+    assert!(!h.snapshot().default_microphone);
+    events
+        .send(CaptureEvent::Ready(
+            id,
+            crate::runtime::ports::MicrophoneSource::Default,
+        ))
+        .await?;
+    h.observe(|snapshot| snapshot.default_microphone).await?;
+    h.finish_as("Fallback words.").await?;
+    assert_eq!(receive(&h.pasted).await?, "Fallback words.");
+    h.phase(Phase::Done).await?;
+    h.start().await?;
+    assert!(!h.snapshot().default_microphone);
+    h.close().await
+}

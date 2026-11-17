@@ -36,7 +36,7 @@ use super::{
     device::Device,
     native::{self, Clip, Delivered, Native},
     now,
-    ports::{CaptureEvent, Ports, Published, ShowEvent},
+    ports::{CaptureEvent, MicrophoneSource, Ports, Published, ShowEvent},
     worker::Worker,
 };
 use crate::{
@@ -105,6 +105,7 @@ struct World<P: Ports> {
     epoch: SnapshotEpoch,
     shortcut: Arc<str>,
     cancel_shortcut: Arc<str>,
+    default_microphone: Option<SessionId>,
 }
 
 impl<P: Ports> Owner<P> {
@@ -163,6 +164,7 @@ impl<P: Ports> Owner<P> {
             epoch,
             shortcut: speakeasy_platform::SHORTCUT.into(),
             cancel_shortcut: speakeasy_platform::CANCEL_SHORTCUT.into(),
+            default_microphone: None,
         };
         let machine = Machine::new(
             Timing::DICTATION,
@@ -226,7 +228,13 @@ impl<P: Ports> Owner<P> {
             },
             Wake::Configuration => Event::Configure(world.changes.borrow_and_update().clone()),
             Wake::Command(directive) => return world.direct(directive),
-            Wake::Capture(event) => capture(event),
+            Wake::Capture(event) => {
+                if let CaptureEvent::Ready(session, source) = &event {
+                    world.default_microphone =
+                        (*source == MicrophoneSource::Default).then_some(*session);
+                }
+                capture(event)
+            },
             Wake::Show(event) => screening(event),
             Wake::Worker(completion) => Event::Worker(completion),
             Wake::Delivered(result) => {
@@ -272,6 +280,7 @@ impl<P: Ports> Owner<P> {
             phase: machine.phase(),
             hands_free: machine.hands_free(),
             for_script: machine.for_script(),
+            default_microphone: world.default_microphone == Some(machine.latest_session()),
             show: machine.shows(),
             ending,
             narration_lost,
@@ -715,7 +724,7 @@ pub(super) async fn run<P: Ports>(wiring: Wiring<P>) {
 fn capture(event: CaptureEvent) -> Event<Native> {
     let (session, capture) = match event {
         CaptureEvent::Streaming(session, audio) => (session, Capture::Streaming(audio)),
-        CaptureEvent::Ready(session) => (session, Capture::Ready),
+        CaptureEvent::Ready(session, _) => (session, Capture::Ready),
         CaptureEvent::CheckpointLost(session) => (session, Capture::CheckpointLost),
         CaptureEvent::Level(session, level) => (session, Capture::Level(level)),
         CaptureEvent::Piece(session, number, audio) => {

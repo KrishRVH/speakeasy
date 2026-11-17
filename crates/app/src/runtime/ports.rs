@@ -21,9 +21,15 @@ pub(crate) const STARTUP_CANCELLED: &str = "Local model startup cancelled";
 pub(crate) const PUBLISH_STOPPED: &str =
     "Saving the Show stopped unexpectedly. Start the Show again.";
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MicrophoneSource {
+    Chosen,
+    Default,
+}
+
 pub(crate) enum CaptureEvent {
     Streaming(SessionId, LiveAudio),
-    Ready(SessionId),
+    Ready(SessionId, MicrophoneSource),
     CheckpointLost(SessionId),
     Level(SessionId, f32),
     Piece(SessionId, u32, Sealed),

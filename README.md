@@ -127,6 +127,8 @@ the pill shows:
 - **Microphone lost.** The microphone disconnected, failed, or stopped sending audio after you
   spoke. Speakeasy transcribes what it heard but doesn't type it; the pill says what happened and
   how to paste the words with Paste last dictation. A brief audio dropout only leaves a gap.
+- **Default microphone.** If the microphone you chose in Settings isn't connected when you start,
+  Speakeasy records from the system default instead and says so for a few seconds.
 - **Needs attention.** An error says what to do next and stays in Settings after the pill fades.
 
 Soft kalimba notes mark the moments you may not be watching: a high note once Speakeasy is

@@ -125,7 +125,7 @@ impl Script {
             ),
             (
                 Phase::Error,
-                "The selected microphone is disconnected. Reconnect it, or choose another microphone in Settings.",
+                "No microphone found. Connect one, then try again.",
                 Duration::from_secs(2),
             ),
         ] {

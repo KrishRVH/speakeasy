@@ -44,7 +44,9 @@ use self::{
     stream::{CallbackState, Pulse, build_stream, microphone_error, rate_and_channels},
 };
 use crate::{
-    runtime::ports::{CaptureEvent, Capturing, Listening, Lost, Partition, Sealed},
+    runtime::ports::{
+        CaptureEvent, Capturing, Listening, Lost, MicrophoneSource, Partition, Sealed,
+    },
     show::AudioLog,
 };
 
@@ -277,6 +279,7 @@ struct Recorder<D = LiveStream> {
     recognition: Recognition,
     sounded: bool,
     pulse: Pulse,
+    source: MicrophoneSource,
     #[cfg(test)]
     profile: Option<fixture::Profile>,
 }
@@ -298,7 +301,7 @@ impl Recorder {
         proceed()?;
         let host = cpal::default_host();
         proceed()?;
-        let device = select_device(&host, microphone, proceed)?;
+        let (device, source) = select_device(&host, microphone, proceed)?;
         proceed()?;
         let format = device.default_input_config().map_err(microphone_error)?;
         proceed()?;
@@ -324,7 +327,10 @@ impl Recorder {
             _host: host,
             _awake: Awake::hold(),
         };
-        Ok(Self::new(device, ring, stream_errors, started, rate, mode))
+        Ok(Self {
+            source,
+            ..Self::new(device, ring, stream_errors, started, rate, mode)
+        })
     }
 }
 
@@ -351,6 +357,7 @@ impl<D> Recorder<D> {
             recognition: Recognition::new(mode, rate),
             sounded: false,
             pulse: Pulse::new(Instant::now()),
+            source: MicrophoneSource::Chosen,
             #[cfg(test)]
             profile: None,
         }
@@ -444,7 +451,7 @@ impl<D> Recorder<D> {
 
             if !ready && self.pcm.samples() > 0 {
                 ready = true;
-                events.send_blocking(CaptureEvent::Ready(id))?;
+                events.send_blocking(CaptureEvent::Ready(id, self.source))?;
             }
             keeping.classify(&mut self.speech, self.pcm.audio(), &requests.cues);
             if !keeping.offer(self.pcm.audio(), self.rate) {
@@ -585,23 +592,25 @@ fn select_device(
     host: &cpal::Host,
     microphone: Option<&str>,
     proceed: impl Fn() -> Result<(), Startup>,
-) -> Result<cpal::Device, Startup> {
-    let Some(id) = microphone else {
-        return Ok(host
-            .default_input_device()
-            .context("No microphone found. Connect one, then try again.")?);
-    };
-    for device in host.input_devices().map_err(microphone_error)? {
-        proceed()?;
-        if device.id().is_ok_and(|actual| actual.to_string() == id) {
-            return Ok(device);
+) -> Result<(cpal::Device, MicrophoneSource), Startup> {
+    if let Some(id) = microphone {
+        for device in host.input_devices().map_err(microphone_error)? {
+            proceed()?;
+            if device.id().is_ok_and(|actual| actual.to_string() == id) {
+                return Ok((device, MicrophoneSource::Chosen));
+            }
         }
+        proceed()?;
     }
-    proceed()?;
-    Err(
-        anyhow!("The selected microphone is disconnected. Reconnect it, or choose another microphone in Settings.")
-            .into(),
-    )
+    let source = if microphone.is_some() {
+        MicrophoneSource::Default
+    } else {
+        MicrophoneSource::Chosen
+    };
+    let device = host
+        .default_input_device()
+        .context("No microphone found. Connect one, then try again.")?;
+    Ok((device, source))
 }
 
 fn consume_pcm(ring: &mut Consumer<f32>, pcm: &mut Pcm16, meter: &mut LevelMeter) -> bool {
