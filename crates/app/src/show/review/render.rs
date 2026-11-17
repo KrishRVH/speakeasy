@@ -365,11 +365,11 @@ impl Review {
                     Confirmation {
                         message: format!("Permanently delete {name}? {DELETE_SHOW}"),
                         cancel: Action::CancelDelete,
+                        can_cancel: self.can_dismiss(),
                         confirm: Action::ConfirmDelete(offer),
+                        can_confirm: self.can_delete(),
                         label: "Delete permanently",
                     },
-                    self.can_dismiss(),
-                    self.can_delete(),
                     kit,
                     palette,
                     cx,
@@ -461,6 +461,15 @@ impl Review {
                 _ => None,
             }
         });
+        let pane = |pane: Pane, label: &'static str| {
+            let action = Action::Pane(pane);
+            kit.segment(
+                id(action),
+                label,
+                self.pane == pane,
+                press(action, true, cx),
+            )
+        };
         div()
             .id("show-detail")
             .flex_1()
@@ -493,22 +502,8 @@ impl Review {
             .child(
                 div().flex().child(
                     kit.segmented("show-panes", "Show text")
-                        .child(segment(
-                            kit,
-                            Action::Pane(Pane::Summary),
-                            "Summary",
-                            self.pane == Pane::Summary,
-                            true,
-                            cx,
-                        ))
-                        .child(segment(
-                            kit,
-                            Action::Pane(Pane::Narration),
-                            "Narration",
-                            self.pane == Pane::Narration,
-                            true,
-                            cx,
-                        )),
+                        .child(pane(Pane::Summary, "Summary"))
+                        .child(pane(Pane::Narration, "Narration")),
                 ),
             )
             .child(match self.pane {
@@ -519,13 +514,12 @@ impl Review {
 
     fn modes(&self, detail: &Detail, kit: Kit<'_>, cx: &Context<'_, Self>) -> Div {
         let mode = |mode: Mode, label: &'static str, enabled: bool| {
-            segment(
-                kit,
-                Action::Mode(mode),
+            let action = Action::Mode(mode);
+            kit.segment(
+                id(action),
                 label,
                 self.mode == mode,
-                enabled,
-                cx,
+                press(action, enabled, cx),
             )
         };
         div()
@@ -952,11 +946,11 @@ impl Review {
                             Confirmation {
                                 message: discard_warning(interrupted).into(),
                                 cancel: Action::CancelDiscard,
+                                can_cancel: self.can_dismiss(),
                                 confirm: Action::ConfirmDiscard,
+                                can_confirm: !busy,
                                 label: "Discard permanently",
                             },
-                            self.can_dismiss(),
-                            !busy,
                             kit,
                             palette,
                             cx,
@@ -1115,14 +1109,14 @@ fn bar(palette: &Palette) -> Div {
 struct Confirmation {
     message: String,
     cancel: Action,
+    can_cancel: bool,
     confirm: Action,
+    can_confirm: bool,
     label: &'static str,
 }
 
 fn confirm(
     confirmation: Confirmation,
-    can_cancel: bool,
-    can_confirm: bool,
     kit: Kit<'_>,
     palette: &Palette,
     cx: &Context<'_, Review>,
@@ -1148,7 +1142,7 @@ fn confirm(
                     confirmation.cancel,
                     "Cancel",
                     Weight::Secondary,
-                    can_cancel,
+                    confirmation.can_cancel,
                     cx,
                 ))
                 .child(command(
@@ -1156,7 +1150,7 @@ fn confirm(
                     confirmation.confirm,
                     confirmation.label,
                     Weight::ConfirmDestroy,
-                    can_confirm,
+                    confirmation.can_confirm,
                     cx,
                 )),
         )
@@ -1229,17 +1223,6 @@ fn command(
     cx: &Context<'_, Review>,
 ) -> Stateful<Div> {
     kit.button(id(action), label, weight, press(action, enabled, cx))
-}
-
-fn segment(
-    kit: Kit<'_>,
-    action: Action,
-    label: &'static str,
-    selected: bool,
-    enabled: bool,
-    cx: &Context<'_, Review>,
-) -> Stateful<Div> {
-    kit.segment(id(action), label, selected, press(action, enabled, cx))
 }
 
 fn chip(
