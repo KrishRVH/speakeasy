@@ -541,7 +541,9 @@ fn changes<'a, T: Serialize + 'a>(
         .collect::<serde_json::Result<Vec<_>>>()?;
     let draft = serde_json::to_value(draft)?;
     let Value::Object(validated) = serde_json::to_value(validated)? else {
-        return Ok(Vec::new());
+        return Err(serde::ser::Error::custom(
+            "Settings must serialize as an object",
+        ));
     };
     Ok(validated
         .into_iter()

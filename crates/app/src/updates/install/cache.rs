@@ -53,7 +53,7 @@ fn clean(root: &Path) -> io::Result<()> {
             if child.file_name() != NAME
                 || !metadata.is_file()
                 || linked(&metadata)
-                || children.next().is_some()
+                || children.next().transpose()?.is_some()
             {
                 continue;
             }
