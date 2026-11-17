@@ -110,11 +110,6 @@ impl Readback {
     }
 
     #[cfg(test)]
-    pub(super) const fn size(&self) -> [u32; 2] {
-        self.size
-    }
-
-    #[cfg(test)]
     pub(super) fn level(&self) -> u32 {
         self.mips.as_ref().map_or(0, |mips| mips.level.get())
     }

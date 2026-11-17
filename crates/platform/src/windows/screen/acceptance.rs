@@ -375,7 +375,7 @@ fn gpu_halving_reads_back_exact_pixels() -> anyhow::Result<()> {
             for longest_edge in [u32::MAX, 2560, 960] {
                 let readback = Readback::new(&device, size, longest_edge)?;
                 let image = readback.read(&context, &frame, origin)?;
-                let [width, height] = readback.size();
+                let scaled @ [width, height] = image.size();
                 let level = readback.level();
                 let expected: Vec<u8> = (0..height)
                     .flat_map(|y| (0..width).map(move |x| [x, y]))
@@ -383,14 +383,10 @@ fn gpu_halving_reads_back_exact_pixels() -> anyhow::Result<()> {
                     .collect();
                 assert!(
                     image.pixels() == expected,
-                    "{size:?} at {origin:?} of {source:?} read back at {:?}",
-                    readback.size()
+                    "{size:?} at {origin:?} of {source:?} read back at {scaled:?}"
                 );
                 let [median, slowest] = cost(&readback, &context, &frame, origin)?;
-                println!(
-                    "{size:?} → {:?}: median {median:.2?}, slowest {slowest:.2?}",
-                    readback.size()
-                );
+                println!("{size:?} → {scaled:?}: median {median:.2?}, slowest {slowest:.2?}");
             }
         }
     }
