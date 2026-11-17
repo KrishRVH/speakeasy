@@ -1,21 +1,11 @@
 use super::*;
-use crate::audio::fixture::Statistics;
 
 fn report(reference: &str, text: &str, latency: Option<f64>, speed: u32) -> Report {
-    Report {
-        segmenting: false,
-        continuous: false,
+    Report::scored(
+        paired::Evaluation::Production(Score::new(reference, text)),
+        latency,
         speed,
-        startup_ms: 0.0,
-        shutdown_ms: 0.0,
-        stop_to_fake_insert_ms: latency,
-        wav_sha256: String::new(),
-        reference_sha256: String::new(),
-        requests: Vec::new(),
-        capture: Statistics::default(),
-        evaluation: paired::Evaluation::Production(Score::new(reference, text)),
-        total_inference_ms: Some(0.0),
-    }
+    )
 }
 
 #[test]

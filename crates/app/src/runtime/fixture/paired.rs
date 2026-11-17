@@ -8,6 +8,8 @@ use super::{
 };
 use crate::transcript::{self, style::Style};
 
+pub(super) const RAW_REPLAY: &str = "raw-replay";
+
 pub(super) enum Cleanup {
     Production,
     Raw { candidate: Option<Box<Config>> },
@@ -66,7 +68,7 @@ impl Cleanup {
                     scored
                 });
                 Evaluation::Raw {
-                    cleanup: "raw-replay",
+                    cleanup: RAW_REPLAY,
                     raw,
                     policies: iter::once(baseline).chain(candidate).collect(),
                 }

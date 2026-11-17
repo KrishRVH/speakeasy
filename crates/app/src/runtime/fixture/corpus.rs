@@ -154,7 +154,7 @@ impl Summary {
             .is_some_and(|(_, report)| matches!(report.evaluation, paired::Evaluation::Raw { .. }))
         {
             Self::Raw {
-                cleanup: "raw-replay",
+                cleanup: paired::RAW_REPLAY,
                 overall: paired::Metrics::new(reports),
                 by_tag: groups
                     .into_iter()

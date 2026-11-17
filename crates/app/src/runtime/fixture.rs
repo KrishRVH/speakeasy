@@ -422,6 +422,29 @@ struct Report {
     total_inference_ms: Option<f64>,
 }
 
+impl Report {
+    fn scored(
+        evaluation: paired::Evaluation,
+        stop_to_fake_insert_ms: Option<f64>,
+        speed: u32,
+    ) -> Self {
+        Self {
+            segmenting: false,
+            continuous: false,
+            speed,
+            startup_ms: 0.0,
+            shutdown_ms: 0.0,
+            stop_to_fake_insert_ms,
+            wav_sha256: String::new(),
+            reference_sha256: String::new(),
+            requests: Vec::new(),
+            capture: Statistics::default(),
+            evaluation,
+            total_inference_ms: Some(0.0),
+        }
+    }
+}
+
 async fn recording(
     config: &Config,
     clip: Clip,

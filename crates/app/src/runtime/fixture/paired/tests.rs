@@ -146,20 +146,7 @@ fn language_gating_keeps_non_english_fillers_and_summary_has_no_latency() {
 }
 
 fn report(evaluation: Evaluation) -> Report {
-    Report {
-        segmenting: false,
-        continuous: false,
-        speed: 1,
-        startup_ms: 0.0,
-        shutdown_ms: 0.0,
-        stop_to_fake_insert_ms: Some(12.0),
-        wav_sha256: String::new(),
-        reference_sha256: String::new(),
-        requests: Vec::new(),
-        capture: crate::audio::fixture::Statistics::default(),
-        evaluation,
-        total_inference_ms: Some(0.0),
-    }
+    Report::scored(evaluation, Some(12.0), 1)
 }
 
 #[test]
