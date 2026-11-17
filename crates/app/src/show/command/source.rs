@@ -128,37 +128,29 @@ pub(super) fn parse(
         destination.is_some() || (most.is_none() && crop.is_none()),
         "--most and --crop require --out NEW.png"
     );
-    let read = match focus {
-        None => Read::Coverage,
-        Some(focus) if video => {
-            let Some(destination) = destination else {
-                anyhow::bail!("show frame needs a focus and --out NEW.png");
-            };
-            Read::Video {
-                focus,
-                destination,
-                crop,
-                annotated,
-            }
+    let read = match (focus, destination) {
+        (None, _) => Read::Coverage,
+        (Some(_), None) if verb == Verb::Frame => {
+            anyhow::bail!("show frame needs a focus and --out NEW.png")
         },
-        Some(focus) => {
-            let output = match (verb, destination) {
+        (Some(focus), Some(destination)) if video => Read::Video {
+            focus,
+            destination,
+            crop,
+            annotated,
+        },
+        (Some(focus), destination) => Read::Source {
+            focus,
+            around: around.unwrap_or(AROUND),
+            output: match (verb, destination) {
+                (_, None) => Output::List,
                 (Verb::Frame, Some(destination)) => Output::Frame { destination, crop },
                 (Verb::Frames, Some(destination)) => Output::Sheet {
                     destination,
                     crop,
                     most: most.unwrap_or(6),
                 },
-                (Verb::Frames, None) => Output::List,
-                (Verb::Frame, None) => {
-                    anyhow::bail!("show frame needs a focus and --out NEW.png")
-                },
-            };
-            Read::Source {
-                focus,
-                around: around.unwrap_or(AROUND),
-                output,
-            }
+            },
         },
     };
     Ok(super::Command::Source(Request {
