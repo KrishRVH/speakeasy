@@ -196,30 +196,18 @@ impl PointerSample {
         }
     }
 
-    fn differs(&self, other: &Self) -> bool {
-        match (self, other) {
-            (
-                Self::Observed {
-                    position,
-                    part,
-                    drawing,
-                    pressed,
-                    ..
-                },
-                Self::Observed {
-                    position: other_position,
-                    part: other_part,
-                    drawing: other_drawing,
-                    pressed: other_pressed,
-                    ..
-                },
-            ) => {
-                (position, part, drawing, pressed)
-                    != (other_position, other_part, other_drawing, other_pressed)
-            },
-            (Self::Gap(_), Self::Gap(_)) => false,
-            _ => true,
-        }
+    fn differs(self, other: Self) -> bool {
+        let untimed = |sample: Self| match sample {
+            Self::Observed {
+                position,
+                part,
+                drawing,
+                pressed,
+                ..
+            } => Some((position, part, drawing, pressed)),
+            Self::Gap(_) => None,
+        };
+        untimed(self) != untimed(other)
     }
 }
 
@@ -296,7 +284,7 @@ struct Samples {
 impl Samples {
     fn send(&mut self, sample: Option<PointerSample>, now: Instant) {
         let mut sample = sample.unwrap_or(PointerSample::Gap(now));
-        if self.last.is_some_and(|last| !last.differs(&sample)) {
+        if self.last.is_some_and(|last| !last.differs(sample)) {
             return;
         }
 
@@ -308,7 +296,7 @@ impl Samples {
         {
             sample = PointerSample::Gap(sample.at());
         }
-        if self.last.is_none_or(|last| last.differs(&sample))
+        if self.last.is_none_or(|last| last.differs(sample))
             && self.outgoing.try_send(sample).is_ok()
         {
             self.last = Some(sample);
