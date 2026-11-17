@@ -1,7 +1,7 @@
-use proptest::prelude::*;
+use proptest::{prelude::*, sample::Index};
 
 use super::*;
-use crate::journal::record::framed;
+use crate::journal::record::{damaged, framed};
 
 fn encode(journal: &Journal, duration: Moment) -> Vec<u8> {
     let mut bytes = Vec::new();
@@ -176,6 +176,31 @@ proptest! {
         let size = u64::try_from(index.len()).unwrap().to_le_bytes();
         let archive = [MAGIC.as_slice(), &index, &size, FOOTER].concat();
         prop_assert!(open(&archive).is_err());
+    }
+
+    #[test]
+    fn damage_inside_a_well_framed_index_is_read_or_refused_without_panicking(
+        at in any::<Index>(),
+        byte in any::<u8>(),
+        keep in prop::option::of(any::<Index>()),
+    ) {
+        let (journal, duration) = fixture();
+        let bytes = encode(&journal, duration);
+        let (data, footer) = bytes.split_last_chunk::<16>().unwrap();
+        let size = usize::try_from(u64::from_le_bytes(*footer.first_chunk().unwrap())).unwrap();
+        let (tiles, index) = data.split_at(data.len().checked_sub(size).unwrap());
+        let index = damaged(index, at, byte, keep);
+        let size = u64::try_from(index.len()).unwrap().to_le_bytes();
+        let archive = [tiles, &index, &size, FOOTER].concat();
+        if let Ok(source) = open(&archive) {
+            for moment in source.moments() {
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "A damaged index may still serve or refuse a frame; the property only rejects panics"
+                )]
+                let _ = source.frame(*moment, |range| read(&archive, range));
+            }
+        }
     }
 }
 

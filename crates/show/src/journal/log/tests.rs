@@ -1,6 +1,7 @@
-use proptest::prelude::*;
+use proptest::{prelude::*, sample::Index};
 
 use super::*;
+use crate::journal::record::damaged;
 
 mod gaps;
 
@@ -38,6 +39,47 @@ fn replay(bytes: &[u8]) -> Result<Take, SourceError> {
         rest = tail;
     }
     Ok(take)
+}
+
+fn every_kind_of_event() -> Vec<TakeEvent> {
+    let mut take = Take::new(1_000, surface(), Framing::Automatic);
+    let mut arrive = |at, shade| {
+        take.arrive(Moment::from_millis(at), || {
+            Some(Image::filled(70, 66, [shade; 3]).unwrap())
+        })
+        .unwrap()
+    };
+    let (whole, changed) = (arrive(100, 40), arrive(200, 80));
+    vec![
+        TakeEvent::Surface(surface()),
+        TakeEvent::Pointer {
+            at: Moment::from_millis(150),
+            point: Point::new(0.4, 0.6),
+            part: Rect::from([0.0, 0.0, 1.0, 1.0]),
+            drawing: true,
+            pressed: false,
+        },
+        TakeEvent::PointerGap(Moment::from_millis(160)),
+        TakeEvent::Windows(Layout {
+            at: Moment::from_millis(170),
+            windows: vec![Window {
+                id: 1,
+                app: 2,
+                layer: Layer::Floating,
+                bounds: Rect::from([0.1, 0.1, 0.6, 0.7]),
+            }],
+        }),
+        TakeEvent::Pin(Span::new(
+            Moment::from_millis(180),
+            Moment::from_millis(190),
+        )),
+        whole,
+        changed,
+        TakeEvent::End {
+            at: Moment::from_millis(300),
+            ending: Ending::WindowClosed,
+        },
+    ]
 }
 
 proptest! {
@@ -86,6 +128,29 @@ proptest! {
             prop_assert_eq!(before.at, after.at);
             prop_assert_eq!(&before.signature, &after.signature);
             prop_assert_eq!(journal.frame_at(before.at), held.frame_at(before.at));
+        }
+    }
+
+    #[test]
+    fn damage_inside_a_well_framed_event_is_decoded_or_refused_without_panicking(
+        chosen in any::<Index>(),
+        at in any::<Index>(),
+        byte in any::<u8>(),
+        keep in prop::option::of(any::<Index>()),
+    ) {
+        let events = every_kind_of_event();
+        let position = chosen.index(events.len());
+        let record = Log::encode(&events[position]).unwrap();
+        if let Ok(event) = Log::decode(&damaged(&record, at, byte, keep)) {
+            let mut take = Take::new(1_000, surface(), Framing::Automatic);
+            for earlier in &events[..position] {
+                take.apply(earlier).unwrap();
+            }
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "Replay may accept or refuse the damaged event; the property only rejects panics"
+            )]
+            let _ = take.apply(&event);
         }
     }
 

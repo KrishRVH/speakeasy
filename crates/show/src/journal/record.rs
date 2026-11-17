@@ -95,3 +95,19 @@ impl<'a> Cursor<'a> {
         Ok(head)
     }
 }
+
+#[cfg(test)]
+pub(super) fn damaged(
+    record: &[u8],
+    at: proptest::sample::Index,
+    byte: u8,
+    keep: Option<proptest::sample::Index>,
+) -> Vec<u8> {
+    let kind = record[size_of::<u32>()];
+    let mut data = payload(record, kind).unwrap().to_vec();
+    *at.get_mut(&mut data) = byte;
+    if let Some(keep) = keep {
+        data.truncate(keep.index(data.len()));
+    }
+    framed(kind, &data).unwrap()
+}
