@@ -416,7 +416,7 @@ async fn serve_control(
                     let mut extra = [0];
                     let received = tokio::select! {
                         biased;
-                        _ = stream.read(&mut extra) => return Ok(()),
+                        read = stream.read(&mut extra) => return read.map(drop),
                         result = tokio::time::timeout_at(deadline.into(), receipt.recv()) => result,
                     };
                     match received {
