@@ -1,12 +1,11 @@
-use std::{fs, path::Path, time::Duration};
+use std::{fs, path::Path};
 
 use serde_json::json;
 use speakeasy_platform::{InputSender, OwnedThread};
 use speakeasy_show::{Image, Manifest};
 
 use super::*;
-
-const PATIENCE: Duration = Duration::from_secs(5);
+use crate::testing::{PATIENCE, still_pending};
 
 fn no_wsl() -> Lookup {
     Lookup::spawn(|| None, PATIENCE)
@@ -25,12 +24,10 @@ async fn a_delivered_result_waits_for_native_cleanup_before_announcing_availabil
     })?;
     let mut receipt = Box::pin(completed(result, thread.exited()));
     tokio::time::timeout(PATIENCE, observed.recv()).await??;
-    let early = tokio::time::timeout(Duration::from_millis(10), &mut receipt)
-        .await
-        .is_ok();
+    let waiting = still_pending(&mut receipt).await;
     release.send(())?;
     assert!(
-        !early,
+        waiting,
         "Copy success was announced before native cleanup acknowledged"
     );
     assert!(matches!(
@@ -81,16 +78,14 @@ async fn cancellation_receipt_loss_and_new_recordings_revoke_blocked_copies() ->
             Revocation::NewRecording => assert!(input.begin().unwrap().commit()),
         }
         let busy = copies.is_busy();
-        let early = tokio::time::timeout(Duration::from_millis(10), copies.drained())
-            .await
-            .is_ok();
+        let waiting = still_pending(copies.drained()).await;
         let replacement = copies.start(Request::Summary(root.path().to_owned()), None, |_, _| {
             Ok(true)
         });
         release.send(())?;
         tokio::time::timeout(PATIENCE, copies.drained()).await?;
         assert!(
-            busy && !early,
+            busy && waiting,
             "A cancelled native operation stopped being owned before acknowledging"
         );
         assert!(
@@ -157,7 +152,7 @@ async fn native_failure_reaches_the_requester_and_the_next_copy_can_run() -> any
 }
 
 fn saved_show(root: &Path) -> anyhow::Result<PathBuf> {
-    let directory = root.join("2026-11-01_09-30-00");
+    let directory = root.join("20261101T093000Z");
     fs::create_dir_all(directory.join("frames"))?;
     let keyframes: Vec<_> = (1..=7)
         .zip((100..=700).step_by(100))
@@ -195,10 +190,7 @@ fn an_agent_prompt_points_at_every_sheet_in_order_without_private_text() -> anyh
         "The prompt lost or reordered a contact sheet"
     );
     assert!(prompt.contains(&directory.join(Bundle::SUMMARY).display().to_string()));
-    assert!(
-        prompt.contains("\nShow ID: 2026-11-01_09-30-00\n"),
-        "{prompt}"
-    );
+    assert!(prompt.contains("\nShow ID: 20261101T093000Z\n"), "{prompt}");
     assert!(!prompt.contains("WSL"), "{prompt}");
     assert!(
         ["PRIVATE_SUMMARY", "PRIVATE_NARRATION", "PRIVATE_EVENT"]

@@ -1,6 +1,7 @@
 use speakeasy_show::{Ending, Image, Moment, Take};
 
 use super::{super::list, *};
+use crate::testing::{PATIENCE, still_pending};
 
 fn surface() -> Size {
     Size {
@@ -38,11 +39,7 @@ async fn closing_frames_flushes_them_without_waiting_for_audio_or_releasing_the_
     assert_eq!(list(root.path(), SystemTime::now()).shows, []);
     let closing = keeper.close();
     tokio::pin!(closing);
-    assert!(
-        tokio::time::timeout(Duration::from_millis(10), &mut closing)
-            .await
-            .is_err()
-    );
+    assert!(still_pending(&mut closing).await);
     assert!(audio.begin(8_000, Duration::from_millis(100), "en".into()));
     assert!(audio.finish(&[3, 0, 4, 0], &[(0, 0)]));
     let checkpoint = closing.await?.context("Fixture checkpoint is missing")?;
@@ -86,11 +83,7 @@ async fn emergency_drop_stops_the_keeper_with_a_live_audio_producer() -> anyhow:
     } = begin(root.path())?;
     record_frame(&mut frames)?;
     assert!(frames.close().await);
-    tokio::time::timeout(
-        crate::testing::PATIENCE,
-        tokio::task::spawn_blocking(move || drop(keeper)),
-    )
-    .await??;
+    tokio::time::timeout(PATIENCE, tokio::task::spawn_blocking(move || drop(keeper))).await??;
     assert!(!audio.begin(8_000, Duration::ZERO, "en".into()));
     let interrupted = list(root.path(), SystemTime::now()).shows.remove(0);
     assert!(interrupted.lock()?.replay()?.ended());
@@ -135,13 +128,11 @@ async fn failed_frame_and_closed_audio_lanes_cannot_unlock_a_native_movie() -> a
     drop(audio);
     let closing = keeper.close();
     tokio::pin!(closing);
-    let waiting = tokio::time::timeout(Duration::from_millis(20), &mut closing)
-        .await
-        .is_err();
+    let waiting = still_pending(&mut closing).await;
     let cancelled = target.cancelled();
     let unlocked = list(root.path(), SystemTime::now()).shows;
     drop(target);
-    let checkpoint = tokio::time::timeout(crate::testing::PATIENCE, closing)
+    let checkpoint = tokio::time::timeout(PATIENCE, closing)
         .await??
         .context("Fixture checkpoint is missing")?;
     assert!(waiting);
@@ -165,20 +156,16 @@ async fn emergency_drop_cancels_but_waits_for_the_native_movie_file_lease() -> a
     assert!(frames.close().await);
     drop(audio);
     let mut dropping = tokio::task::spawn_blocking(move || drop(keeper));
-    tokio::time::timeout(crate::testing::PATIENCE, async {
+    tokio::time::timeout(PATIENCE, async {
         while !target.cancelled() {
             tokio::task::yield_now().await;
         }
     })
     .await?;
-    assert!(
-        tokio::time::timeout(Duration::from_millis(20), &mut dropping)
-            .await
-            .is_err()
-    );
+    assert!(still_pending(&mut dropping).await);
     assert_eq!(list(root.path(), SystemTime::now()).shows, []);
     drop(target);
-    tokio::time::timeout(crate::testing::PATIENCE, dropping).await??;
+    tokio::time::timeout(PATIENCE, dropping).await??;
     assert_eq!(list(root.path(), SystemTime::now()).shows.len(), 1);
     Ok(())
 }
@@ -195,7 +182,7 @@ async fn a_lost_completion_stays_an_error_after_checkpoint_files_are_written() -
     record_frame(&mut frames)?;
     assert!(frames.close().await);
     drop(audio);
-    let checkpoint = tokio::time::timeout(crate::testing::PATIENCE, keeper.closed.recv())
+    let checkpoint = tokio::time::timeout(PATIENCE, keeper.closed.recv())
         .await???
         .context("Fixture checkpoint is missing")?;
     let interrupted = checkpoint.interrupted()?;

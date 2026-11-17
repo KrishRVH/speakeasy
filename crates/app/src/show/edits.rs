@@ -68,9 +68,8 @@ impl Edits {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use super::*;
+    use crate::testing::still_pending;
 
     #[tokio::test]
     async fn closing_the_view_keeps_accepted_writes_and_quit_waits_for_them() -> anyhow::Result<()>
@@ -87,11 +86,7 @@ mod tests {
         drop(receipt);
         let (busy, _) = Edit::new(|| ());
         assert!(edits.submit(busy, None).is_err());
-        assert!(
-            tokio::time::timeout(Duration::from_millis(10), edits.drained())
-                .await
-                .is_err()
-        );
+        assert!(still_pending(edits.drained()).await);
         release.send(())?;
         edits.drained().await;
         written.try_recv()?;
