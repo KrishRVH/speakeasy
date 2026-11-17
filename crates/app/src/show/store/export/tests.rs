@@ -45,7 +45,7 @@ fn archive_moves_with_edited_summary_images_and_retained_samples_but_no_extra_fi
         "voice.log",
         "voice.expires",
         ".pinned",
-        ".recovery",
+        ".checkpoint",
         "unrelated.txt",
     ] {
         fs::write(directory.join(name), b"PRIVATE_NOT_EXPORTED")?;

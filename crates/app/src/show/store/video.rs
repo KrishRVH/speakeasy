@@ -47,9 +47,10 @@ impl Exported {
             ""
         };
         format!(
-            "Exported {} {voice}, with {} caption cues.{annotations} This copy does not expire automatically.",
+            "Exported {} {voice}, with {} caption cue{}.{annotations} This copy does not expire automatically.",
             self.path.display(),
-            self.captions
+            self.captions,
+            if self.captions == 1 { "" } else { "s" }
         )
     }
 }

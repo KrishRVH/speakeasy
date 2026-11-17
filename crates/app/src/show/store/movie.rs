@@ -17,7 +17,7 @@ use super::{recall, sync_directory};
 
 pub(crate) const FILE: &str = "recording.mp4";
 pub(crate) const HEADER: &str = "recording.json";
-pub(super) const HEADER_LIMIT: u64 = 4 << 20;
+const HEADER_LIMIT: u64 = 4 << 20;
 const FRAME_SLACK_MS: u64 = 34;
 const SUBMITTED_LIMIT: u32 = 9_001;
 

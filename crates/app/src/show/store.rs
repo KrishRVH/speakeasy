@@ -62,7 +62,7 @@ pub(super) fn fresh_directory(parent: &Path, now: SystemTime) -> anyhow::Result<
             1 => parent.join(&stamp),
             _ => parent.join(format!("{stamp}-{attempt}")),
         })
-        .find(|candidate| !candidate.exists())
+        .find(|candidate| fs::symlink_metadata(candidate).is_err())
         .context("Too many Shows were written this second")
 }
 
