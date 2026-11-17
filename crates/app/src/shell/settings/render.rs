@@ -245,12 +245,7 @@ impl Settings {
     fn banner(&self, ui: &Ui<'_>) -> Option<Div> {
         let kit = ui.kit();
         if self.unreadable {
-            return Some(kit.banner(
-                Tone::Warn,
-                "Settings can't be read",
-                unreadable_text(ui.cx),
-                Some(self.reset_controls(ui)),
-            ));
+            return Some(self.unreadable_banner(ui));
         }
         if is_demo(ui.cx) {
             return Some(kit.banner(
@@ -348,7 +343,23 @@ impl Settings {
             .is_some_and(|permissions| permissions::blocked(permissions.microphone))
     }
 
-    pub(super) fn reset_controls(&self, ui: &Ui<'_>) -> Div {
+    pub(super) fn unreadable_banner(&self, ui: &Ui<'_>) -> Div {
+        let path = &ui.cx.global::<Services>().path;
+        let file = path.file_name().map_or_else(
+            || path.display().to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+        ui.kit().banner(
+            Tone::Warn,
+            "Settings can't be read",
+            format!(
+                "Speakeasy can't read {file}, often because another version wrote it. Fix the error and restart, or start fresh: Speakeasy removes its settings and downloads, then downloads Parakeet again. Your Shows stay."
+            ),
+            Some(self.reset_controls(ui)),
+        )
+    }
+
+    fn reset_controls(&self, ui: &Ui<'_>) -> Div {
         let enabled = self.can_reset(ui.cx);
         let controls = div().flex().flex_wrap().items_center().gap(px(8.0));
         match self.reset {
@@ -439,17 +450,6 @@ impl Settings {
             .child(ui.button("Shows", Action::Shows, Weight::Quiet))
             .child(ui.button("Quit", Action::Quit, Weight::Quiet))
     }
-}
-
-fn unreadable_text(cx: &App) -> String {
-    let path = &cx.global::<Services>().path;
-    let file = path.file_name().map_or_else(
-        || path.display().to_string(),
-        |name| name.to_string_lossy().into_owned(),
-    );
-    format!(
-        "Speakeasy can't read {file}, often because another version wrote it. Fix the error and restart, or start fresh: Speakeasy removes its settings and downloads, then downloads Parakeet again. Your Shows stay."
-    )
 }
 
 const fn setup_detail() -> &'static str {

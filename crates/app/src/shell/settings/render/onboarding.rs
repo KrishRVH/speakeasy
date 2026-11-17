@@ -2,7 +2,7 @@ use gpui::{Div, FontWeight, div, prelude::*, px, rgb};
 
 use super::{Action, Notice, Settings, Ui, dictation::level, fraction, progress_text};
 use crate::{
-    controls::{Tone, Weight, icon},
+    controls::{Weight, icon},
     icons,
     shell::{
         Services,
@@ -181,12 +181,7 @@ impl Settings {
             && !is_demo(ui.cx)
             && (self.config.needs_engine() || installing.is_some());
         let state = if self.locked() {
-            kit.banner(
-                Tone::Warn,
-                "Settings can't be read",
-                super::unreadable_text(ui.cx),
-                Some(self.reset_controls(ui)),
-            )
+            self.unreadable_banner(ui)
         } else if needs_setup {
             kit.group(vec![
                 div()
