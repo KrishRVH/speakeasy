@@ -50,3 +50,34 @@ pub(crate) fn managed_id(parent: &Path, directory: &Path) -> io::Result<Option<S
         && directory.canonicalize()? == managed.join(id.as_str()))
     .then_some(id))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exact_ids_never_fall_back_to_relative_paths() -> anyhow::Result<()> {
+        let parent = Path::new("/managed");
+        let id = "20261030T101010Z-2";
+        assert_eq!(
+            resolve(Path::new(id), || Ok(parent.into()))?,
+            parent.join(id)
+        );
+        let explicit = format!("./{id}");
+        assert_eq!(
+            resolve(Path::new(&explicit), || panic!(
+                "explicit path consulted storage"
+            ))?,
+            std::path::absolute(&explicit)?
+        );
+        for invalid in [
+            "latest",
+            "../20261030T101010Z",
+            "20261030T101010Z/",
+            "20261030T101010Z-a",
+        ] {
+            assert!(ShowId::parse(invalid).is_none());
+        }
+        Ok(())
+    }
+}

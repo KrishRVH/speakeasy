@@ -142,32 +142,6 @@ fn linked_folders_are_refused_and_linked_pins_never_change_their_target() -> any
     Ok(())
 }
 
-#[test]
-fn exact_ids_never_fall_back_to_relative_paths() -> anyhow::Result<()> {
-    let parent = Path::new("/managed");
-    let id = "20261030T101010Z-2";
-    assert_eq!(
-        address::resolve(Path::new(id), || Ok(parent.into()))?,
-        parent.join(id)
-    );
-    let explicit = format!("./{id}");
-    assert_eq!(
-        address::resolve(Path::new(&explicit), || panic!(
-            "explicit path consulted storage"
-        ))?,
-        std::path::absolute(&explicit)?
-    );
-    for invalid in [
-        "latest",
-        "../20261030T101010Z",
-        "20261030T101010Z/",
-        "20261030T101010Z-a",
-    ] {
-        assert!(address::ShowId::parse(invalid).is_none());
-    }
-    Ok(())
-}
-
 #[cfg(target_os = "windows")]
 #[test]
 fn an_open_windows_file_reports_blocked_cleanup_without_damaging_the_show() -> anyhow::Result<()> {
