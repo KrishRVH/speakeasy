@@ -17,6 +17,7 @@ use super::{entry_exists, found, recall, sync_directory};
 
 pub(crate) const FILE: &str = "recording.mp4";
 pub(crate) const HEADER: &str = "recording.json";
+const VERSION: u8 = 2;
 const HEADER_LIMIT: u64 = 4 << 20;
 const FRAME_SLACK_MS: u64 = 34;
 const SUBMITTED_LIMIT: u32 = 9_001;
@@ -78,7 +79,7 @@ impl Metadata {
             .map_err(|_unavailable| anyhow::anyhow!("Cannot create a private movie identifier"))?;
         let geometry = geometry::Writing::create(directory, identity, size)?;
         let metadata = Self {
-            version: 2,
+            version: VERSION,
             identity,
             origin_ms: u64::try_from(origin.as_millis())?,
             size,
@@ -272,7 +273,7 @@ fn read_metadata(directory: &Path) -> anyhow::Result<Metadata> {
     let metadata: Metadata = serde_json::from_slice(&bytes)
         .map_err(|_private_content| anyhow::anyhow!("Movie timing metadata is damaged"))?;
     anyhow::ensure!(
-        metadata.version == 2
+        metadata.version == VERSION
             && metadata.geometry.is_some() == metadata.coverage.is_some()
             && metadata.origin_ms < u64::try_from(RECORDING_LIMIT.as_millis())?,
         "Movie timing metadata is unsupported"

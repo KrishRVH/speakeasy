@@ -68,10 +68,10 @@ fn lost_video_or_edited_coverage_never_passes_inspection_as_an_ordinary_show() -
         open(source.path())?.unwrap(),
         Moment::from_millis(500),
     )?;
-    metadata.version = 1;
+    metadata.version = VERSION + 1;
     metadata.replace(destination.path())?;
     assert!(saved(destination.path(), Moment::from_millis(500)).is_err());
-    metadata.version = 2;
+    metadata.version = VERSION;
     metadata.coverage.as_mut().unwrap().frames += 1;
     metadata.replace(destination.path())?;
     assert!(saved(destination.path(), Moment::from_millis(500)).is_err());

@@ -27,6 +27,7 @@ const NARRATED: &str = "\nnarrated";
 const MARKER_LIMIT: u64 = 128;
 const PROVENANCE: &str = ".checkpoint";
 const NARRATION: &str = "narration.json";
+const NARRATION_VERSION: u32 = 1;
 const NARRATION_LIMIT: u64 = 4 << 20;
 const GONE: &str = "This interrupted Show expired, was discarded, or was already recovered. \
                    Refresh Shows.";
@@ -216,7 +217,7 @@ impl Checkpoint {
     pub(crate) fn narrate(&self, narration: &Narration, incomplete: bool) -> anyhow::Result<()> {
         let bytes = zeroize::Zeroizing::new(
             serde_json::to_vec(&StoredNarration {
-                version: 1,
+                version: NARRATION_VERSION,
                 narration,
                 incomplete,
             })
@@ -250,7 +251,7 @@ impl Checkpoint {
                 anyhow::anyhow!("The saved Show narration is damaged or unsupported")
             })?;
         anyhow::ensure!(
-            saved.version == 1,
+            saved.version == NARRATION_VERSION,
             "The saved Show narration is unsupported"
         );
         Ok(Some((saved.narration, saved.incomplete)))
