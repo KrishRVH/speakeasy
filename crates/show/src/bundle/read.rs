@@ -49,6 +49,11 @@ fn malformed(error: serde_json::Error) -> Unreadable {
     }
 }
 
+const _: () = assert!(
+    MOST_KEYFRAMES == 36,
+    "the keyframe count rule names the selection limit"
+);
+
 impl Manifest {
     pub fn parse(bytes: &[u8]) -> Result<Self, Unreadable> {
         #[derive(Deserialize)]
