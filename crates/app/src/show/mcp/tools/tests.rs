@@ -1,4 +1,7 @@
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use super::{
     super::tests::{fixture, fixture_manifest},
@@ -12,7 +15,7 @@ fn content(result: &Value) -> anyhow::Result<Value> {
     )?)
 }
 
-fn snapshot(directory: &Path) -> anyhow::Result<Vec<(std::path::PathBuf, Vec<u8>)>> {
+fn snapshot(directory: &Path) -> anyhow::Result<Vec<(PathBuf, Vec<u8>)>> {
     let mut found = Vec::new();
     for entry in fs::read_dir(directory)? {
         let entry = entry?;
@@ -22,7 +25,7 @@ fn snapshot(directory: &Path) -> anyhow::Result<Vec<(std::path::PathBuf, Vec<u8>
             found.push((entry.path(), fs::read(entry.path())?));
         }
     }
-    found.sort_by(|one, two| one.0.cmp(&two.0));
+    found.sort();
     Ok(found)
 }
 

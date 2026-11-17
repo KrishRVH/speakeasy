@@ -20,6 +20,26 @@ struct Root {
 }
 
 impl Root {
+    fn open(root: &Path) -> Result<Self, &'static str> {
+        let metadata =
+            fs::symlink_metadata(root).map_err(|_private| "Cannot read an MCP root folder")?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err("An MCP root must be an existing directory, not a symlink");
+        }
+        let requested =
+            std::path::absolute(root).map_err(|_private| "Cannot resolve an MCP root folder")?;
+        let directory = root
+            .canonicalize()
+            .map_err(|_private| "Cannot resolve an MCP root folder")?;
+        if requested.to_str().is_none() || directory.to_str().is_none() {
+            return Err("An MCP root path must be valid UTF-8");
+        }
+        Ok(Self {
+            directory,
+            requested,
+        })
+    }
+
     fn translate(&self, path: &Path) -> Result<Option<PathBuf>, &'static str> {
         let Ok(relative) = path
             .strip_prefix(&self.directory)
@@ -48,30 +68,14 @@ impl Root {
 
 impl Roots {
     pub(super) fn open(roots: Vec<PathBuf>) -> Result<Self, &'static str> {
-        let mut canonical = Vec::new();
-        for root in roots {
-            let metadata =
-                fs::symlink_metadata(&root).map_err(|_private| "Cannot read an MCP root folder")?;
-            if !metadata.is_dir() || metadata.file_type().is_symlink() {
-                return Err("An MCP root must be an existing directory, not a symlink");
-            }
-            let requested = std::path::absolute(&root)
-                .map_err(|_private| "Cannot resolve an MCP root folder")?;
-            let directory = root
-                .canonicalize()
-                .map_err(|_private| "Cannot resolve an MCP root folder")?;
-            if requested.to_str().is_none() || directory.to_str().is_none() {
-                return Err("An MCP root path must be valid UTF-8");
-            }
-            canonical.push(Root {
-                directory,
-                requested,
-            });
-        }
-        if canonical.is_empty() {
+        let roots = roots
+            .iter()
+            .map(|root| Root::open(root))
+            .collect::<Result<Vec<_>, _>>()?;
+        if roots.is_empty() {
             return Err("MCP needs at least one explicit root");
         }
-        Ok(Self(canonical))
+        Ok(Self(roots))
     }
 
     pub(super) fn resolve(&self, show: &str) -> Result<PathBuf, &'static str> {
@@ -87,9 +91,11 @@ impl Roots {
         if path.is_absolute() {
             return self.check(path);
         }
-        if path.components().count() != 1
-            || !matches!(path.components().next(), Some(Component::Normal(_)))
-        {
+        let mut parts = path.components();
+        if !matches!(
+            (parts.next(), parts.next()),
+            (Some(Component::Normal(_)), None)
+        ) {
             return Err("Use an absolute Show path or an exact folder name");
         }
         let mut found = None;

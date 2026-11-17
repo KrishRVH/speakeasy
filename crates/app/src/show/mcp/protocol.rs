@@ -12,6 +12,13 @@ const CAPABILITIES_META: &str = "io.modelcontextprotocol/clientCapabilities";
 const LINE_LIMIT: usize = 64 << 10;
 const RESPONSE_LIMIT: usize = 12 << 20;
 
+const PARSE_ERROR: i32 = -32700;
+const INVALID_REQUEST: i32 = -32600;
+const METHOD_NOT_FOUND: i32 = -32601;
+const INVALID_PARAMS: i32 = -32602;
+const INTERNAL_ERROR: i32 = -32603;
+const UNSUPPORTED_VERSION: i32 = -32022;
+
 #[derive(Default)]
 enum Protocol {
     #[default]
@@ -31,11 +38,11 @@ pub(super) fn serve(
             Line::Eof => return Ok(()),
             Line::Message(line) => match serde_json::from_slice::<Value>(&line) {
                 Ok(value) => protocol.respond(roots, value),
-                Err(_private) => Some(error(Value::Null, -32700, "Invalid JSON", None)),
+                Err(_private) => Some(error(Value::Null, PARSE_ERROR, "Invalid JSON", None)),
             },
             Line::Oversized => Some(error(
                 Value::Null,
-                -32700,
+                PARSE_ERROR,
                 "MCP input line exceeds 64 KiB",
                 None,
             )),
@@ -46,7 +53,7 @@ pub(super) fn serve(
                 Err(_private) => encode(
                     &error(
                         response.get("id").cloned().unwrap_or(Value::Null),
-                        -32603,
+                        INTERNAL_ERROR,
                         "MCP response exceeds the output limit",
                         None,
                     ),
@@ -110,11 +117,11 @@ fn read_line(input: &mut impl BufRead) -> io::Result<Line> {
 }
 
 impl Protocol {
-    fn respond(&mut self, roots: &Roots, value: Value) -> Option<Value> {
+    fn respond(&mut self, roots: &Roots, mut value: Value) -> Option<Value> {
         let Some(request) = value.as_object() else {
             return Some(error(
                 Value::Null,
-                -32600,
+                INVALID_REQUEST,
                 "Expected one JSON-RPC request object",
                 None,
             ));
@@ -129,7 +136,7 @@ impl Protocol {
         }) else {
             return Some(error(
                 valid_id.cloned().unwrap_or(Value::Null),
-                -32600,
+                INVALID_REQUEST,
                 "Invalid JSON-RPC request",
                 None,
             ));
@@ -147,7 +154,7 @@ impl Protocol {
             Some(_) => {
                 return Some(error(
                     id,
-                    -32602,
+                    INVALID_PARAMS,
                     "Request parameters must be an object",
                     None,
                 ));
@@ -175,7 +182,12 @@ impl Protocol {
             }),
             "tools/list" => {
                 if params.get("cursor").is_some() {
-                    return Some(error(id, -32602, "This tool list has no next page", None));
+                    return Some(error(
+                        id,
+                        INVALID_PARAMS,
+                        "This tool list has no next page",
+                        None,
+                    ));
                 }
                 let mut result = Map::from_iter([("tools".into(), tools::definitions())]);
                 if modern {
@@ -186,26 +198,31 @@ impl Protocol {
             },
             "tools/call" => {
                 let Some(name) = params.get("name").and_then(Value::as_str) else {
-                    return Some(error(id, -32602, "A tool name is required", None));
+                    return Some(error(id, INVALID_PARAMS, "A tool name is required", None));
                 };
                 let Some(tool) = tools::Tool::parse(name) else {
-                    return Some(error(id, -32602, "Unknown tool", None));
+                    return Some(error(id, INVALID_PARAMS, "Unknown tool", None));
                 };
-                let arguments = params
-                    .get("arguments")
-                    .cloned()
-                    .unwrap_or_else(|| json!({}));
+                let arguments = value
+                    .get_mut("params")
+                    .and_then(|params| params.get_mut("arguments"))
+                    .map_or_else(|| json!({}), Value::take);
                 tools::call(roots, tool, arguments)
             },
             "ping" if !modern && matches!(self, Self::Ready) => json!({}),
-            _ => return Some(error(id, -32601, "Method not found", None)),
+            _ => return Some(error(id, METHOD_NOT_FOUND, "Method not found", None)),
         };
         Some(success(id, result, modern))
     }
 
     fn initialize(&mut self, id: Value, params: &Map<String, Value>) -> Value {
         if !matches!(self, Self::New) {
-            return error(id, -32600, "MCP initialization is already complete", None);
+            return error(
+                id,
+                INVALID_REQUEST,
+                "MCP initialization is already complete",
+                None,
+            );
         }
         if !params.get("protocolVersion").is_some_and(Value::is_string)
             || !params.get("capabilities").is_some_and(Value::is_object)
@@ -216,7 +233,7 @@ impl Protocol {
         {
             return error(
                 id,
-                -32602,
+                INVALID_PARAMS,
                 "Initialize needs protocolVersion, capabilities and clientInfo",
                 None,
             );
@@ -244,21 +261,21 @@ fn metadata(params: &Map<String, Value>) -> Result<(), MetadataError> {
     let capabilities = meta.and_then(|meta| meta.get(CAPABILITIES_META));
     let Some(version) = version.filter(|version| version.len() <= 64) else {
         return Err(MetadataError {
-            code: -32602,
+            code: INVALID_PARAMS,
             message: "Each modern request needs protocolVersion and clientCapabilities metadata",
             data: None,
         });
     };
     if version != STATELESS_VERSION {
         return Err(MetadataError {
-            code: -32022,
+            code: UNSUPPORTED_VERSION,
             message: "Unsupported protocol version",
             data: Some(json!({"supported": [STATELESS_VERSION], "requested": version})),
         });
     }
     if !capabilities.is_some_and(Value::is_object) {
         return Err(MetadataError {
-            code: -32602,
+            code: INVALID_PARAMS,
             message: "Each modern request needs clientCapabilities metadata",
             data: None,
         });
@@ -272,7 +289,7 @@ fn server_info() -> Value {
 
 fn success(id: Value, result: Value, modern: bool) -> Value {
     let Value::Object(mut result) = result else {
-        return error(id, -32603, "MCP result must be an object", None);
+        return error(id, INTERNAL_ERROR, "MCP result must be an object", None);
     };
     if modern {
         result.insert("resultType".into(), json!("complete"));

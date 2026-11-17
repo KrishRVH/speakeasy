@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -152,13 +154,12 @@ fn narration(manifest: &Manifest) -> Value {
             json!({"kind": "untimed", "lost": recording.narration_lost, "excerpt": excerpt(value)})
         },
         Narration::Words(words) => {
-            let mut bytes = 0_usize;
             let selected: Vec<_> = words
                 .iter()
                 .take(WORD_LIMIT)
-                .take_while(|word| {
-                    bytes = bytes.saturating_add(word.text.len());
-                    bytes <= TEXT_LIMIT
+                .scan(0_usize, |bytes, word| {
+                    *bytes = bytes.saturating_add(word.text.len());
+                    (*bytes <= TEXT_LIMIT).then_some(word)
                 })
                 .collect();
             let kind = match (words.is_empty(), recording.narration_lost) {
@@ -184,17 +185,21 @@ struct Image {
     occurrence: Option<usize>,
 }
 
+enum Picture {
+    Sheet(usize),
+    Keyframe(usize),
+    Source(Query),
+}
+
 fn image(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
     let request: Image = decode(arguments)?;
     let query = lookup(request.at, request.mark, request.phrase, request.occurrence)?;
-    if chosen([
-        request.sheet.is_some(),
-        request.keyframe.is_some(),
-        query.is_some(),
-    ]) != 1
-    {
-        return Err("Choose exactly one sheet, keyframe, time, mark or phrase".to_owned());
-    }
+    let picture = match (request.sheet, request.keyframe, query) {
+        (Some(number), None, None) => Picture::Sheet(number),
+        (None, Some(number), None) => Picture::Keyframe(number),
+        (None, None, Some(query)) => Picture::Source(query),
+        _ => return Err("Choose exactly one sheet, keyframe, time, mark or phrase".to_owned()),
+    };
     let directory = roots.resolve(&request.show)?;
     let entry = recall::Entry::open(&directory).map_err(|_private| "Cannot read that Show")?;
     let show = entry
@@ -202,38 +207,39 @@ fn image(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
         .as_ref()
         .map_err(|_private| "That Show's manifest is damaged or unsupported")?;
     let manifest = &show.manifest;
-    let (png, metadata) = if let Some(number) = request.sheet {
-        let (name, frames) = number
-            .checked_sub(1)
-            .and_then(|index| manifest.sheets().nth(index))
-            .ok_or("That Show has no sheet with that number")?;
-        let png = recall::read_file(&directory, &name, IMAGE_LIMIT)
-            .map_err(|_private| "That saved sheet is unavailable or exceeds 8 MiB")?;
-        (
-            png,
-            json!({"show": directory, "sheet": number, "frames": frames.iter().map(|frame| frame.index).collect::<Vec<_>>(), "annotations": true}),
-        )
-    } else if let Some(number) = request.keyframe {
-        let frame = number
-            .checked_sub(1)
-            .and_then(|index| manifest.keyframes().get(index))
-            .ok_or("That Show has no keyframe with that number")?;
-        let png = recall::read_file(&directory, &frame.file(), IMAGE_LIMIT)
-            .map_err(|_private| "That saved keyframe is unavailable or exceeds 8 MiB")?;
-        let marks: Vec<_> = manifest
-            .marks()
-            .get(frame.marks.clone())
-            .unwrap_or_default()
-            .iter()
-            .map(|mark| mark.number)
-            .collect();
-        (
-            png,
-            json!({"show": directory, "keyframe": number, "atMs": frame.at.as_millis(), "marks": marks, "crop": frame.crop, "annotations": true}),
-        )
-    } else {
-        let query = query.ok_or("A source image needs a time, mark or phrase")?;
-        source_image(&directory, manifest, &query)?
+    let (png, metadata) = match picture {
+        Picture::Sheet(number) => {
+            let (name, frames) = number
+                .checked_sub(1)
+                .and_then(|index| manifest.sheets().nth(index))
+                .ok_or("That Show has no sheet with that number")?;
+            let png = recall::read_file(&directory, &name, IMAGE_LIMIT)
+                .map_err(|_private| "That saved sheet is unavailable or exceeds 8 MiB")?;
+            (
+                png,
+                json!({"show": directory, "sheet": number, "frames": frames.iter().map(|frame| frame.index).collect::<Vec<_>>(), "annotations": true}),
+            )
+        },
+        Picture::Keyframe(number) => {
+            let frame = number
+                .checked_sub(1)
+                .and_then(|index| manifest.keyframes().get(index))
+                .ok_or("That Show has no keyframe with that number")?;
+            let png = recall::read_file(&directory, &frame.file(), IMAGE_LIMIT)
+                .map_err(|_private| "That saved keyframe is unavailable or exceeds 8 MiB")?;
+            let marks: Vec<_> = manifest
+                .marks()
+                .get(frame.marks.clone())
+                .unwrap_or_default()
+                .iter()
+                .map(|mark| mark.number)
+                .collect();
+            (
+                png,
+                json!({"show": directory, "keyframe": number, "atMs": frame.at.as_millis(), "marks": marks, "crop": frame.crop, "annotations": true}),
+            )
+        },
+        Picture::Source(query) => source_image(&directory, manifest, &query)?,
     };
     if !u64::try_from(png.len()).is_ok_and(|length| length <= IMAGE_LIMIT) {
         return Err("The selected image is not a PNG of at most 8 MiB".to_owned());
@@ -255,7 +261,7 @@ fn image(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
 }
 
 fn source_image(
-    directory: &std::path::Path,
+    directory: &Path,
     manifest: &Manifest,
     query: &Query,
 ) -> Result<(Vec<u8>, Value), String> {
@@ -283,34 +289,24 @@ fn lookup(
     mark: Option<usize>,
     phrase: Option<String>,
     occurrence: Option<usize>,
-) -> Result<Option<Query>, String> {
-    if chosen([at.is_some(), mark.is_some(), phrase.is_some()]) > 1
-        || occurrence.is_some() && phrase.is_none()
-    {
-        return Err("Choose at most one time, mark or phrase; match requires phrase".to_owned());
-    }
-    if mark == Some(0) || occurrence == Some(0) {
-        return Err("Mark and match numbers start at 1".to_owned());
-    }
-    if let Some(at) = at {
-        if at.len() > 32 {
-            return Err("Time must be seconds or M:SS.mmm".to_owned());
-        }
-        return query::time(&at)
+) -> Result<Option<Query>, &'static str> {
+    const TIME: &str = "Time must be seconds or M:SS.mmm";
+    match (at, mark, phrase, occurrence) {
+        (None, None, None, None) => Ok(None),
+        (Some(at), None, None, None) if at.len() <= 32 => query::time(&at)
             .map(|at| Some(Query::At(at)))
-            .map_err(|_private| "Time must be seconds or M:SS.mmm".to_owned());
+            .map_err(|_private| TIME),
+        (Some(_), None, None, None) => Err(TIME),
+        (None, Some(0), None, None) | (None, None, Some(_), Some(0)) => {
+            Err("Mark and match numbers start at 1")
+        },
+        (None, Some(mark), None, None) => Ok(Some(Query::Mark(mark))),
+        (None, None, Some(phrase), None) => Ok(Some(Query::Phrase(phrase))),
+        (None, None, Some(phrase), Some(occurrence)) => {
+            Ok(Some(Query::Match { phrase, occurrence }))
+        },
+        _ => Err("Choose at most one time, mark or phrase; match requires phrase"),
     }
-    if let Some(mark) = mark {
-        return Ok(Some(Query::Mark(mark)));
-    }
-    Ok(phrase.map(|phrase| match occurrence {
-        Some(occurrence) => Query::Match { phrase, occurrence },
-        None => Query::Phrase(phrase),
-    }))
-}
-
-fn chosen(selectors: [bool; 3]) -> usize {
-    selectors.into_iter().filter(|&chosen| chosen).count()
 }
 
 fn decode<T: serde::de::DeserializeOwned>(arguments: Value) -> Result<T, String> {
