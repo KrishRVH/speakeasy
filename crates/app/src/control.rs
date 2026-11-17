@@ -160,9 +160,9 @@ impl Reply {
     }
 
     pub(crate) fn decode(bytes: &[u8]) -> Option<Self> {
-        serde_json::from_slice(bytes)
+        serde_json::from_slice::<Self>(bytes)
             .ok()
-            .filter(|reply: &Self| reply.v == VERSION)
+            .filter(|reply| reply.v == VERSION)
     }
 }
 
