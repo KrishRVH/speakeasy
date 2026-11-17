@@ -382,7 +382,11 @@ module unless a test file is named.
   read-only tools within explicit launch roots, refuses child symlinks, bounds lines/content/images,
   and reports actual source sample times. It serves the 2026-07-28 stateless protocol and the
   2025-11-25 initialized protocol used by current external clients. No tool exports, sends, or reads
-  ordinary dictation. Setup resolves the durable installed launcher and only prints client stanzas.
+  ordinary dictation. Initialization instructions are the disclosure followed by the embedded
+  skill's reading guide without its front matter. Setup resolves the durable installed launcher and
+  only prints client stanzas, adding one for an agent in WSL that runs the Windows command through
+  interop with Windows roots, or a note when interop, drive mounting, or a lettered drive is
+  missing.
 - **Show recording and publication**: [show.rs](../crates/app/src/show.rs),
   [show/recorder.rs](../crates/app/src/show/recorder.rs),
   [show/publish.rs](../crates/app/src/show/publish.rs), and the session owner.

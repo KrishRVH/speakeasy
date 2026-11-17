@@ -57,6 +57,7 @@ fn startup_requires_roots_and_setup_does_not_create_them() -> anyhow::Result<()>
     setup(
         Some(PathBuf::from("/fixture app/speakeasy")),
         &missing,
+        None,
         &mut output,
     )?;
     assert!(!missing.exists());
@@ -69,6 +70,36 @@ fn startup_requires_roots_and_setup_does_not_create_them() -> anyhow::Result<()>
     assert!(output.contains("--root") && output.contains("/fixture app/speakeasy"));
     let command = Command::parse([OsString::from("--root"), missing.into_os_string()].into_iter())?;
     assert!(!format!("{command:?}").contains("missing root"));
+    Ok(())
+}
+
+#[test]
+fn setup_gives_an_agent_in_wsl_the_windows_command_through_interop() -> anyhow::Result<()> {
+    let executable = PathBuf::from(r"C:\Program Files\Speakeasy\speakeasy-cli.exe");
+    let shows = r"C:\Users\ada\AppData\Local\speakeasy\shows";
+    let print = |wsl: Option<&Wsl>| -> anyhow::Result<String> {
+        let mut output = Vec::new();
+        setup(Some(executable.clone()), Path::new(shows), wsl, &mut output)?;
+        Ok(String::from_utf8(output)?)
+    };
+    let output = print(Some(&Wsl::configured("")))?;
+    let (_, stanza) = output
+        .split_once("Agent in WSL (")
+        .and_then(|(_, heading)| heading.split_once('\n'))
+        .context("A WSL agent gets its own stanza")?;
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(stanza)?,
+        json!({
+            "command": "/mnt/c/Program Files/Speakeasy/speakeasy-cli.exe",
+            "args": ["show", "mcp", "--root", shows],
+        })
+    );
+    let refused = print(Some(&Wsl::configured("[interop]\nenabled = false\n")))?;
+    assert!(
+        refused.contains("Agent in WSL: unavailable") && !refused.contains("/mnt/"),
+        "{refused}"
+    );
+    assert!(!print(None)?.contains("WSL"));
     Ok(())
 }
 
@@ -196,13 +227,14 @@ fn setup_uses_the_resolved_appimage_launcher_without_resolving_the_mount_again()
     setup(
         Some(PathBuf::from(executable)),
         Path::new("/home/public/Shows"),
+        None,
         &mut output,
     )?;
     let output = String::from_utf8(output)?;
     assert_eq!(output.matches(executable).count(), 3);
     assert!(!output.contains(".mount_"));
     let mut refused = Vec::new();
-    assert!(setup(None, Path::new("/home/public/Shows"), &mut refused).is_err());
+    assert!(setup(None, Path::new("/home/public/Shows"), None, &mut refused).is_err());
     assert_eq!(refused, [] as [u8; 0]);
     Ok(())
 }

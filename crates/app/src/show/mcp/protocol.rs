@@ -3,7 +3,7 @@ use std::io::{self, BufRead, Write};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 
-use super::{DISCLOSURE, Roots, tools};
+use super::{Roots, instructions, tools};
 
 const STATELESS_VERSION: &str = "2026-07-28";
 const INITIALIZED_VERSION: &str = "2025-11-25";
@@ -171,7 +171,7 @@ impl Protocol {
             "server/discover" => json!({
                 "supportedVersions": [STATELESS_VERSION, INITIALIZED_VERSION], "capabilities": {"tools": {}},
                 "_meta": {"io.modelcontextprotocol/serverInfo": server_info()},
-                "instructions": DISCLOSURE, "ttlMs": 0, "cacheScope": "private"
+                "instructions": instructions(), "ttlMs": 0, "cacheScope": "private"
             }),
             "tools/list" => {
                 if params.get("cursor").is_some() {
@@ -224,7 +224,7 @@ impl Protocol {
         *self = Self::Initializing;
         success(
             id,
-            json!({"protocolVersion": INITIALIZED_VERSION, "capabilities": {"tools": {}}, "serverInfo": server_info(), "instructions": DISCLOSURE}),
+            json!({"protocolVersion": INITIALIZED_VERSION, "capabilities": {"tools": {}}, "serverInfo": server_info(), "instructions": instructions()}),
             false,
         )
     }

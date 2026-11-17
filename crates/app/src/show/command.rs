@@ -19,6 +19,13 @@ use super::{
 
 const SKILL: &str = include_str!("../../../../skills/speakeasy-show/SKILL.md");
 
+pub(super) fn reading_guide() -> &'static str {
+    SKILL
+        .strip_prefix("---\n")
+        .and_then(|front| front.split_once("\n---\n"))
+        .map_or(SKILL, |(_, guide)| guide.trim_start())
+}
+
 const DEMO_SIZE: (u32, u32) = (1_440, 900);
 
 const AROUND: Duration = Duration::from_secs(1);

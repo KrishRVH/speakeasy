@@ -430,7 +430,11 @@ a folder containing Shows. `show_list`, `show_read`, and `show_image` expose onl
 requests cannot add folders. Tools can read the edited summary, bounded narration, saved images, and
 retained source frames by time, mark, or phrase. They report actual sample times and gaps. They do
 not expose ordinary dictation or export video. Requested content reaches the calling agent and may
-reach its model provider. Setup prints configuration without changing client settings.
+reach its model provider. Setup prints configuration without changing client settings. On Windows
+with a WSL distribution, setup also prints a stanza for an agent running in WSL: WSL interop starts
+the Windows `speakeasy-cli.exe`, so roots and Show paths stay Windows paths, and Show IDs work
+unchanged. The server's initialization instructions carry the disclosure above and the reading guide
+that `speakeasy show skill` prints.
 
 Scripts can control a running desktop app without reading dictation text:
 

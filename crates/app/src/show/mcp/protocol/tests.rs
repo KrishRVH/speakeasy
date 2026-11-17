@@ -1,6 +1,8 @@
 use std::io::Cursor;
 
-use super::*;
+use anyhow::Context as _;
+
+use super::{super::DISCLOSURE, *};
 
 fn modern(id: Value, method: &str) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "method": method, "params": {"_meta": {VERSION_META: STATELESS_VERSION, CAPABILITIES_META: {}}}})
@@ -83,6 +85,25 @@ fn initialized_clients_negotiate_a_supported_version_and_notifications_are_silen
     let listed: Value =
         serde_json::from_str(replies[4]["result"]["content"][0]["text"].as_str().unwrap())?;
     assert_eq!(listed["shows"], json!([]));
+    Ok(())
+}
+
+#[test]
+fn both_handshakes_carry_the_disclosure_and_the_reading_guide() -> anyhow::Result<()> {
+    let replies = exchange(&[
+        json!({"jsonrpc": "2.0", "id": "init", "method": "initialize", "params": {"protocolVersion": INITIALIZED_VERSION, "capabilities": {}, "clientInfo": {"name": "fixture", "version": "1"}}}),
+        modern(json!("discover"), "server/discover"),
+    ])?;
+    assert_eq!(replies.len(), 2);
+    for reply in &replies {
+        let (disclosure, guide) = reply["result"]["instructions"]
+            .as_str()
+            .and_then(|instructions| instructions.split_once("\n\n"))
+            .context("Instructions lead with the disclosure")?;
+        assert_eq!(disclosure, DISCLOSURE);
+        assert!(guide.starts_with("# Read a Speakeasy Show\n"), "{guide}");
+        assert!(guide.contains("`show_read`"), "{guide}");
+    }
     Ok(())
 }
 
