@@ -277,6 +277,24 @@ mod tests {
     }
 
     #[test]
+    fn cropping_keeps_exactly_the_pixels_inside_the_region() {
+        let red = |width, height, levels: &[u8]| {
+            let rgba = levels
+                .iter()
+                .flat_map(|&level| [level, 0, 0, 255])
+                .collect();
+            Image::from_rgba(width, height, rgba).unwrap()
+        };
+        let image = red(3, 2, &[10, 20, 30, 40, 50, 60]);
+        assert_eq!(
+            image.cropped(1, 0, 2, 2).unwrap(),
+            red(2, 2, &[20, 30, 50, 60])
+        );
+        assert_eq!(image.cropped(0, 1, 2, 1).unwrap(), red(2, 1, &[40, 50]));
+        assert!(image.cropped(2, 0, 2, 2).is_err());
+    }
+
+    #[test]
     fn png_round_trips_straight_alpha() {
         let image = Image::from_rgba(2, 1, vec![200, 100, 50, 255, 255, 0, 0, 128]).unwrap();
         let decoded = Image::decode_png(&image.encode_png().unwrap());

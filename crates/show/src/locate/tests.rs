@@ -2,7 +2,7 @@ use proptest::prelude::*;
 use serde_json::json;
 
 use super::*;
-use crate::{Image, SourceFrame};
+use crate::{Image, SourceFrame, typeface::tests::typeface};
 
 fn manifest() -> Manifest {
     Manifest::parse(&serde_json::to_vec(&json!({
@@ -18,7 +18,7 @@ fn manifest() -> Manifest {
 }
 
 #[test]
-fn phrase_queries_return_every_location_without_private_text() {
+fn a_phrase_matches_whole_words_in_any_case_at_every_location() {
     let found = manifest().locate(Focus::Phrase("save THE café")).unwrap();
     assert_eq!(
         found,
@@ -28,14 +28,11 @@ fn phrase_queries_return_every_location_without_private_text() {
         ]
     );
     assert_eq!(manifest().locate(Focus::Phrase("ave")).unwrap(), []);
+}
+
+#[test]
+fn a_phrase_needs_a_word_and_timed_narration() {
     assert!(manifest().locate(Focus::Phrase("---")).is_err());
-    assert!(!format!("{:?}", Focus::Phrase("private")).contains("private"));
-    assert!(manifest().locate(Focus::Mark(2)).is_err());
-    assert!(
-        manifest()
-            .locate(Focus::At(Moment::from_millis(4001)))
-            .is_err()
-    );
     let mut manifest = manifest();
     manifest.recording.narration = Narration::Text("private".into());
     assert!(
@@ -47,6 +44,21 @@ fn phrase_queries_return_every_location_without_private_text() {
     );
     manifest.recording.narration = Narration::default();
     assert!(manifest.locate(Focus::Phrase("private")).is_err());
+}
+
+#[test]
+fn a_missing_mark_or_a_time_past_the_end_is_unlocated() {
+    assert!(manifest().locate(Focus::Mark(2)).is_err());
+    assert!(
+        manifest()
+            .locate(Focus::At(Moment::from_millis(4001)))
+            .is_err()
+    );
+}
+
+#[test]
+fn debugging_a_focus_never_prints_its_phrase() {
+    assert!(!format!("{:?}", Focus::Phrase("private")).contains("private"));
 }
 
 #[test]
@@ -122,8 +134,7 @@ proptest! {
 }
 
 #[test]
-fn cropped_evidence_preserves_pixels_times_and_bounded_loads() {
-    let typeface = crate::typeface::tests::typeface();
+fn cropped_evidence_loads_each_frame_once_and_keeps_its_time_and_crop() {
     let moments = [Moment::from_millis(100), Moment::from_millis(2500)];
     let mut loaded = 0;
     let evidence = Evidence::compose::<crate::Error>(
@@ -136,7 +147,7 @@ fn cropped_evidence_preserves_pixels_times_and_bounded_loads() {
                 image: Image::filled(100, 100, [1, 2, 3])?,
             })
         },
-        &typeface,
+        &typeface(),
     )
     .unwrap();
     assert_eq!(loaded, 2);
@@ -157,32 +168,18 @@ fn cropped_evidence_preserves_pixels_times_and_bounded_loads() {
             height: 21
         })
     );
-    let red = |width, height, levels: &[u8]| {
-        let rgba = levels
-            .iter()
-            .flat_map(|&level| [level, 0, 0, 255])
-            .collect();
-        Image::from_rgba(width, height, rgba).unwrap()
+}
+
+#[test]
+fn cropped_evidence_refuses_a_surface_that_resized_between_frames() {
+    let moments = [Moment::from_millis(100), Moment::from_millis(2500)];
+    let widening = |at| {
+        Ok(SourceFrame {
+            at,
+            image: Image::filled(if at == moments[0] { 100 } else { 200 }, 100, [1, 2, 3])?,
+        })
     };
-    let image = red(3, 2, &[10, 20, 30, 40, 50, 60]);
-    assert_eq!(
-        image.cropped(1, 0, 2, 2).unwrap(),
-        red(2, 2, &[20, 30, 50, 60])
-    );
-    assert_eq!(image.cropped(0, 1, 2, 1).unwrap(), red(2, 1, &[40, 50]));
-    assert!(image.cropped(2, 0, 2, 2).is_err());
-    assert!(
-        Evidence::compose::<crate::Error>(
-            &moments,
-            Some(manifest().marks()[0].bounds),
-            |at| {
-                Ok(SourceFrame {
-                    at,
-                    image: Image::filled(if at == moments[0] { 100 } else { 200 }, 100, [1, 2, 3])?,
-                })
-            },
-            &typeface
-        )
-        .is_err()
-    );
+    let crop = Some(manifest().marks()[0].bounds);
+    assert!(Evidence::compose::<crate::Error>(&moments, crop, widening, &typeface()).is_err());
+    assert!(Evidence::compose::<crate::Error>(&moments, None, widening, &typeface()).is_ok());
 }
