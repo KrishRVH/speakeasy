@@ -61,9 +61,12 @@ pub(super) fn retain(
     if SystemTime::now() >= expires {
         return Ok(());
     }
-    match recall::regular_file(checkpoint, audio::FILE, audio::FILE_LIMIT) {
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        result => result.context("Cannot retain Show voice; its checkpoint remains available")?,
+    let voice = recall::regular_file(checkpoint, audio::FILE, audio::FILE_LIMIT);
+    if found(voice)
+        .context("Cannot retain Show voice; its checkpoint remains available")?
+        .is_none()
+    {
+        return Ok(());
     }
     let mut input =
         File::open(checkpoint.join(audio::FILE))?.take(audio::FILE_LIMIT.saturating_add(1));
