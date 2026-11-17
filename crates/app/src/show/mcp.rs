@@ -50,7 +50,7 @@ impl fmt::Debug for Command {
 }
 
 impl Command {
-    pub(crate) fn parse(mut args: impl Iterator<Item = OsString>) -> anyhow::Result<Self> {
+    pub(super) fn parse(mut args: impl Iterator<Item = OsString>) -> anyhow::Result<Self> {
         let mut roots = Vec::new();
         let mut setup = false;
         while let Some(arg) = args.next() {
@@ -78,7 +78,7 @@ impl Command {
         Ok(Self::Serve { roots })
     }
 
-    pub(crate) fn write(self, out: &mut impl io::Write) -> anyhow::Result<()> {
+    pub(super) fn write(self, out: &mut impl io::Write) -> anyhow::Result<()> {
         match self {
             Self::Help => writeln!(out, "{HELP}")?,
             Self::Setup => setup(

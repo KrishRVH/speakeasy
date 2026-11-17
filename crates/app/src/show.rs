@@ -1,8 +1,8 @@
 mod command;
 pub(crate) mod copy;
 pub(crate) mod edits;
-pub(crate) mod evidence;
-pub(crate) mod mcp;
+mod evidence;
+mod mcp;
 mod overlay;
 pub(crate) mod preview;
 mod publish;

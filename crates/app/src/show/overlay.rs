@@ -69,7 +69,7 @@ impl Canvas {
         }
     }
 
-    pub(crate) const fn display(&self) -> Option<Display> {
+    pub(super) const fn display(&self) -> Option<Display> {
         match self {
             Self::Hidden => None,
             Self::Picking { display, .. } | Self::Covering { display, .. } => Some(*display),
@@ -128,7 +128,7 @@ impl Sheet {
         }
     }
 
-    pub(crate) fn track(&mut self, part: Part) -> bool {
+    pub(super) fn track(&mut self, part: Part) -> bool {
         let moved = part != self.part;
         self.part = part;
         moved

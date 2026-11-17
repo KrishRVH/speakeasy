@@ -43,7 +43,7 @@ impl Lookup {
         let _ = self.asks.send(Ask::Prepare);
     }
 
-    pub(crate) fn found(&self) -> Option<Wsl> {
+    pub(super) fn found(&self) -> Option<Wsl> {
         let (reply, answer) = mpsc::sync_channel(1);
         self.asks.send(Ask::Answer(reply)).ok()?;
         answer.recv_timeout(self.patience).ok().flatten()
