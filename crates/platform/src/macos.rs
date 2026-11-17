@@ -583,11 +583,11 @@ pub(super) fn reduced_motion() -> bool {
 
 #[link(name = "Carbon", kind = "framework")]
 unsafe extern "C" {
-    safe fn IsSecureEventInputEnabled() -> u8;
+    fn IsSecureEventInputEnabled() -> u8;
 }
 
 pub(super) fn secure_input() -> bool {
-    MainThreadMarker::new().is_some() && IsSecureEventInputEnabled() != 0
+    MainThreadMarker::new().is_some_and(|_| unsafe { IsSecureEventInputEnabled() } != 0)
 }
 
 pub(super) fn attach_stdio() -> bool {

@@ -139,11 +139,11 @@ dispatches item actions as `MenuEvent`s and updates the same NSMenu. Dropping th
 from the status bar.
 
 `secure_input` reads Carbon's `IsSecureEventInputEnabled`, which reports whether any process holds
-Secure Event Input. It takes no arguments and has no preconditions, so the `unsafe extern` block
-that links Carbon declares it `safe`, and the block alone vouches for its `Boolean` signature. Its
-header marks it not thread safe, so it answers only on the main thread and reports false elsewhere;
-the pill calls it there once as each recording opens, and nothing polls it. While another process
-holds Secure Event Input, the session tap still receives FlagsChanged but no KeyDown or KeyUp.
+Secure Event Input. The `unsafe extern` block that links Carbon vouches for its argumentless
+`Boolean` signature. Its header marks it not thread safe, so the main thread is the precondition
+each call discharges: `secure_input` calls it only once `MainThreadMarker` proves that thread, and
+reports false elsewhere. While another process holds Secure Event Input, the session tap still
+receives FlagsChanged but no KeyDown or KeyUp.
 
 Permission queries report consent only; they do not open a microphone, prove device readiness or
 install a hook. The Mac clipboard's private/transient marks precede user content, and change-count
