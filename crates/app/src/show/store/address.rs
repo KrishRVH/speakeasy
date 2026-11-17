@@ -29,7 +29,7 @@ pub(crate) fn resolve(
 
 pub(crate) fn managed_id(parent: &Path, directory: &Path) -> io::Result<Option<ShowId>> {
     let metadata = fs::symlink_metadata(directory)?;
-    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+    if !metadata.is_dir() {
         return Ok(None);
     }
     let Some(id) = directory

@@ -106,7 +106,7 @@ pub(crate) fn interval(duration: Duration) -> String {
 pub(super) fn lock(parent: &Path) -> io::Result<File> {
     let path = parent.join(".retention.lock");
     match fs::symlink_metadata(&path) {
-        Ok(metadata) if !metadata.is_file() || metadata.file_type().is_symlink() => {
+        Ok(metadata) if !metadata.is_file() => {
             return Err(io::Error::other(format!(
                 "{} must be a regular file",
                 path.display()

@@ -182,7 +182,7 @@ pub(super) fn regular_file(directory: &Path, name: &str, limit: u64) -> io::Resu
         path.push(part);
         let metadata = fs::symlink_metadata(&path)?;
         if parts.peek().is_some() {
-            if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            if !metadata.is_dir() {
                 return Err(io::Error::other("parent must be a directory, not a link"));
             }
         } else {

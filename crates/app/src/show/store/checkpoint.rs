@@ -28,6 +28,7 @@ const NARRATION_LIMIT: u64 = 4 << 20;
 const GONE: &str = "This interrupted Show expired, was discarded, or was already recovered. \
                    Refresh Shows.";
 const NO_FRAMES: &str = "No complete frame survived. Discard this interrupted Show.";
+const ROOT_LINKED: &str = "Show checkpoints must be a directory, not a link";
 
 const FILE_LIMIT: u64 = 1 << 30;
 const EVENT_LIMIT: usize = 200_000;
@@ -107,11 +108,7 @@ impl Checkpoint {
         super::make_private(&root)?;
         #[cfg(not(unix))]
         fs::create_dir_all(&root)?;
-        let metadata = fs::symlink_metadata(&root)?;
-        anyhow::ensure!(
-            metadata.is_dir() && !metadata.file_type().is_symlink(),
-            "Show checkpoints must be a directory, not a link"
-        );
+        anyhow::ensure!(fs::symlink_metadata(&root)?.is_dir(), ROOT_LINKED);
         let directory = loop {
             let candidate = super::fresh_directory(&root, recorded)?;
             match fs::create_dir(&candidate) {
@@ -295,7 +292,7 @@ impl Checkpoint {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error.into()),
         };
-        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        if !metadata.is_dir() {
             return Ok(None);
         }
         match recall::read_file(&target, PROVENANCE, MARKER_LIMIT) {
@@ -505,10 +502,7 @@ fn visit(
 
 fn entries(root: &Path) -> anyhow::Result<Option<fs::ReadDir>> {
     match fs::symlink_metadata(root) {
-        Ok(metadata) => anyhow::ensure!(
-            metadata.is_dir() && !metadata.file_type().is_symlink(),
-            "Show checkpoints must be a directory, not a link"
-        ),
+        Ok(metadata) => anyhow::ensure!(metadata.is_dir(), ROOT_LINKED),
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     }
@@ -549,14 +543,12 @@ fn lock(directory: &Path) -> io::Result<Option<Checkpoint>> {
     let parent = directory
         .parent()
         .ok_or_else(|| io::Error::other("Checkpoint has no parent"))?;
-    let metadata = fs::symlink_metadata(parent)?;
-    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+    if !fs::symlink_metadata(parent)?.is_dir() {
         return Err(io::Error::other(
             "Checkpoint parent must be a directory, not a link",
         ));
     }
-    let metadata = fs::symlink_metadata(directory)?;
-    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+    if !fs::symlink_metadata(directory)?.is_dir() {
         return Err(io::Error::other(
             "Checkpoint must be a directory, not a link",
         ));
@@ -619,8 +611,7 @@ impl Checkpointing {
 }
 
 fn regular(path: &Path) -> io::Result<()> {
-    let metadata = fs::symlink_metadata(path)?;
-    if metadata.is_file() && !metadata.file_type().is_symlink() {
+    if fs::symlink_metadata(path)?.is_file() {
         Ok(())
     } else {
         Err(io::Error::other(
