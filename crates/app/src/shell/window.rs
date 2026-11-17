@@ -15,7 +15,7 @@ use crate::gpui_ext::native_window;
 use crate::{
     config::Config,
     gpui_ext::{Presence, WindowUpdate, present},
-    show::review::{self, Source},
+    show::review::{self, Collection},
 };
 
 #[cfg(target_os = "windows")]
@@ -42,14 +42,14 @@ pub(crate) fn reveal_shows(cx: &mut App) {
         shows.update_if_open(cx, |view, window, cx| view.reveal(window, cx));
         return;
     }
-    let source = if services.mode.is_demo() {
-        Source::Demo
+    let collection = if services.mode.is_demo() {
+        Collection::Demo
     } else {
         services.wsl.prepare();
-        Source::Saved
+        Collection::Saved
     };
     let result = review::open(
-        source,
+        collection,
         services.config.theme,
         services.output.subscribe(),
         review::Actions {

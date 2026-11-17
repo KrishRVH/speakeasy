@@ -7,8 +7,8 @@ use gpui::{
 use speakeasy_show::NarrationLoss;
 
 use super::{
-    Action, Confirm, CopyKind, Direction, Export, ExportKind, ImageState, Kind, Modality, Mode,
-    Pane, Review, Source, Write, discard_warning,
+    Action, Collection, Confirm, CopyKind, Direction, Export, ExportKind, ImageState, Kind,
+    Modality, Mode, Pane, Review, Write, discard_warning,
     library::{Detail, Key, Row},
     narration::{self, Narration},
     navigation::{Origin, Stamp},
@@ -152,7 +152,7 @@ impl Review {
                         cx,
                     )),
             )
-            .when(self.source == Source::Demo, |pane| {
+            .when(self.collection == Collection::Demo, |pane| {
                 pane.child(
                     kit.detail("Preview · synthetic recordings")
                         .px(px(20.0))

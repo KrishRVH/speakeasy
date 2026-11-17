@@ -439,6 +439,13 @@ impl<T: fmt::Display> fmt::Display for Code<T> {
 impl Bundle {
     pub const SUMMARY: &str = "summary.md";
 
+    #[must_use]
+    pub fn ended(mut self, ending: Ending, narration_lost: Option<NarrationLoss>) -> Self {
+        self.manifest.recording.ending = ending;
+        self.manifest.recording.narration_lost = narration_lost;
+        self
+    }
+
     pub fn into_files(
         self,
         location: Location<'_>,

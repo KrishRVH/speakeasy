@@ -58,7 +58,7 @@ async fn exercise_video(cx: &mut AsyncApp) -> anyhow::Result<()> {
         |window, cx| {
             cx.new(|cx| {
                 let mut review = Review::new(
-                    Source::Saved,
+                    Collection::Saved,
                     Theme::default(),
                     snapshots,
                     Actions {

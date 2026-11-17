@@ -1,3 +1,4 @@
+mod collection;
 mod deletion;
 mod export;
 mod handoff;
@@ -6,7 +7,6 @@ mod menu;
 mod narration;
 mod navigation;
 mod render;
-mod source;
 mod timeline;
 
 use std::{
@@ -17,6 +17,8 @@ use std::{
 };
 
 use anyhow::Context as _;
+pub(crate) use collection::Collection;
+use collection::Root;
 use export::Kind as ExportKind;
 use gpui::{
     App, AppContext, Bounds, Context, FocusHandle, ScrollHandle, Subscription, Task,
@@ -24,8 +26,6 @@ use gpui::{
 };
 use library::{Detail, Key, Kind, Library, Mode};
 use navigation::{Origin, Request};
-use source::Root;
-pub(crate) use source::Source;
 use tokio::sync::watch;
 
 use super::{
@@ -140,7 +140,7 @@ impl Confirm {
 
 pub(crate) struct Review {
     focus: FocusHandle,
-    source: Source,
+    collection: Collection,
     theme: Theme,
     actions: Actions,
     library: Library,
@@ -171,7 +171,7 @@ pub(crate) struct Review {
 }
 
 pub(crate) fn open(
-    source: Source,
+    collection: Collection,
     theme: Theme,
     snapshots: watch::Receiver<Snapshot>,
     actions: Actions,
@@ -200,7 +200,7 @@ pub(crate) fn open(
             show: false,
             ..Default::default()
         },
-        |window, cx| cx.new(|cx| Review::new(source, theme, snapshots, actions, window, cx)),
+        |window, cx| cx.new(|cx| Review::new(collection, theme, snapshots, actions, window, cx)),
     )?;
     handle.update(cx, |view, window, cx| view.reveal(window, cx))?;
     Ok(handle)
@@ -208,7 +208,7 @@ pub(crate) fn open(
 
 impl Review {
     fn new(
-        source: Source,
+        collection: Collection,
         theme: Theme,
         snapshots: watch::Receiver<Snapshot>,
         actions: Actions,
@@ -220,7 +220,7 @@ impl Review {
         crate::shell::report_focus(window, cx);
         Self {
             focus,
-            source,
+            collection,
             theme,
             actions,
             library: Library::default(),
@@ -293,12 +293,12 @@ impl Review {
         }
         self.notice = None;
         self.request = None;
-        let source = self.source;
+        let collection = self.collection;
         let existing = self.root.clone();
         let work = cx.background_executor().spawn(async move {
             let root = match existing {
                 Some(root) => root,
-                None => source.load()?,
+                None => collection.load()?,
             };
             let rows = library::list(&root.directory)
                 .with_context(|| format!("Cannot open {}", root.directory.display()))?;
@@ -585,7 +585,7 @@ impl Review {
     }
 
     fn can_copy(&self, cx: &App) -> bool {
-        self.source != Source::Demo
+        self.collection != Collection::Demo
             && (self.actions.can_copy)(cx)
             && self.copying.is_none()
             && self

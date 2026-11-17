@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn retained_frames_need_the_saved_shows_timeline_without_losing_keyframes_or_edits()
 -> anyhow::Result<()> {
-    let root = Source::Demo.load()?;
+    let root = Collection::Demo.load()?;
     let (rows, _) = list(&root.directory)?;
     let path = &rows[0].directory;
     let duration = recall::Entry::open(path)?

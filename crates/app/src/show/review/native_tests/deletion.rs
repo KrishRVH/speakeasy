@@ -99,9 +99,9 @@ pub(super) async fn exercise(
 
     select(window, first, cx).await?;
     window.update(cx, |view, _, cx| {
-        let source = view.source;
+        let collection = view.collection;
         let can_copy = view.actions.can_copy;
-        view.source = Source::Saved;
+        view.collection = Collection::Saved;
         view.actions.can_copy = |_| true;
         let offer = view.library.offer(
             view.library
@@ -125,7 +125,7 @@ pub(super) async fn exercise(
             .context("The second fixture is listed")?;
         view.act(Action::Show(view.library.offer(next)), cx);
         assert!(view.can_copy(cx));
-        view.source = source;
+        view.collection = collection;
         view.actions.can_copy = can_copy;
         view.notice = Some("Synthetic newer selection notice".into());
         anyhow::Ok(())

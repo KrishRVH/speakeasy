@@ -95,7 +95,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         |window, cx| {
             cx.new(|cx| {
                 Review::new(
-                    Source::Demo,
+                    Collection::Demo,
                     Theme::default(),
                     snapshots,
                     Actions {
@@ -930,7 +930,7 @@ async fn copy_selected(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyho
             agent: None,
         });
 
-        view.source = Source::Saved;
+        view.collection = Collection::Saved;
         view.actions.can_copy = |_| true;
         view.actions.copy = |request, cx| {
             let copy::Request::Moment { text, image } = request else {
@@ -957,7 +957,7 @@ async fn copy_selected(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyho
             Ok(Box::pin(async { Ok(copy::Outcome::Copied) }))
         };
         view.copy(CopyKind::Evidence, cx);
-        view.source = Source::Demo;
+        view.collection = Collection::Demo;
         view.actions.can_copy = |_| false;
         view.actions.copy = |_, _| anyhow::bail!("Synthetic review does not use the clipboard");
         anyhow::Ok(())
@@ -976,7 +976,7 @@ async fn copy_selected(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyho
     );
 
     let selected = window.update(cx, |view, _, cx| {
-        view.source = Source::Saved;
+        view.collection = Collection::Saved;
         view.actions.can_copy = |_| true;
         view.actions.copy = |request, cx| {
             let copy::Request::Agent(directory) = request else {
@@ -986,7 +986,7 @@ async fn copy_selected(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyho
             Ok(Box::pin(async { Ok(copy::Outcome::Copied) }))
         };
         view.act(Action::Copy(CopyKind::Agent), cx);
-        view.source = Source::Demo;
+        view.collection = Collection::Demo;
         view.actions.can_copy = |_| false;
         view.actions.copy = |_, _| anyhow::bail!("Synthetic review does not use the clipboard");
         view.library.selected().map(|key| key.directory.clone())

@@ -109,7 +109,7 @@ fn the_more_menu_opens_once_per_press_and_keyboard_skips_unavailable_actions() {
 
 #[test]
 fn a_cropped_keyframe_says_so_and_offers_the_whole_screen() -> anyhow::Result<()> {
-    let root = Source::Demo.load()?;
+    let root = Collection::Demo.load()?;
     let (rows, _) = list(&root.directory)?;
     let detail = Detail::open(&rows[0].directory, library::Mode::Keyframes)?;
     assert!(detail.frames.iter().any(|frame| frame.cropped));
@@ -135,7 +135,7 @@ fn a_cropped_keyframe_says_so_and_offers_the_whole_screen() -> anyhow::Result<()
 
 #[test]
 fn the_demo_is_an_isolated_set_of_pinned_early_and_damaged_shows() -> anyhow::Result<()> {
-    let root = Source::Demo.load()?;
+    let root = Collection::Demo.load()?;
     assert!(root.fixture.is_some());
     let (rows, _) = list(&root.directory)?;
     assert_eq!(rows.len(), 3);
@@ -147,7 +147,7 @@ fn the_demo_is_an_isolated_set_of_pinned_early_and_damaged_shows() -> anyhow::Re
 
 #[tokio::test]
 async fn a_damaged_show_fails_only_the_preview_of_its_missing_frame() -> anyhow::Result<()> {
-    let root = Source::Demo.load()?;
+    let root = Collection::Demo.load()?;
     let (rows, _) = list(&root.directory)?;
     let damaged = &rows[2].directory;
     let detail = Detail::open(damaged, library::Mode::Keyframes)?;
@@ -172,7 +172,7 @@ async fn a_damaged_show_fails_only_the_preview_of_its_missing_frame() -> anyhow:
 
 #[test]
 fn a_mark_without_a_frame_warns_without_revealing_private_text() -> anyhow::Result<()> {
-    let root = Source::Demo.load()?;
+    let root = Collection::Demo.load()?;
     let (rows, _) = list(&root.directory)?;
     let path = &rows[0].directory;
     let manifest_path = path.join("show.json");
@@ -196,7 +196,7 @@ fn a_mark_without_a_frame_warns_without_revealing_private_text() -> anyhow::Resu
 
 #[test]
 fn an_unreadable_manifest_keeps_the_summary_and_warns_without_private_text() -> anyhow::Result<()> {
-    let root = Source::Demo.load()?;
+    let root = Collection::Demo.load()?;
     let (rows, _) = list(&root.directory)?;
     let path = &rows[0].directory;
     let summary_path = path.join("summary.md");
@@ -216,7 +216,7 @@ fn an_unreadable_manifest_keeps_the_summary_and_warns_without_private_text() -> 
 
 #[test]
 fn an_unreadable_manifest_still_reports_the_shows_pin() -> anyhow::Result<()> {
-    let root = Source::Demo.load()?;
+    let root = Collection::Demo.load()?;
     let (rows, _) = list(&root.directory)?;
     let path = &rows[0].directory;
     fs::write(path.join("show.json"), br#"{"version":99}"#)?;
