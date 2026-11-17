@@ -13,6 +13,7 @@ use super::{LaunchMode, Services, settings::Settings};
 #[cfg(target_os = "windows")]
 use crate::gpui_ext::native_window;
 use crate::{
+    config::Config,
     gpui_ext::{Presence, WindowUpdate, present},
     show::review::{self, Source},
 };
@@ -208,7 +209,7 @@ pub(super) fn open(cx: &mut App) -> anyhow::Result<()> {
     let services = cx.global::<Services>();
     let config = services.config.clone();
     let mode = services.mode;
-    let fresh_install = !mode.is_demo() && !services.path.exists();
+    let fresh_install = !mode.is_demo() && Config::is_absent(&services.path);
     let updates = services.output.subscribe();
     let settings = cx.open_window(window_options(cx), |window, cx| {
         if mode.is_resident() {

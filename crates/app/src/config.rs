@@ -195,8 +195,12 @@ impl Config {
         Ok(parse(&contents, path)?.0)
     }
 
+    pub(crate) fn is_absent(path: &Path) -> bool {
+        matches!(path.try_exists(), Ok(false))
+    }
+
     pub(crate) fn is_unreadable(path: &Path) -> bool {
-        !absent(path) && Self::read(path).is_err()
+        !Self::is_absent(path) && Self::read(path).is_err()
     }
 
     pub(crate) fn discard(path: &Path) -> io::Result<()> {
@@ -207,7 +211,7 @@ impl Config {
     }
 
     pub(crate) fn load(path: &Path) -> (Self, Startup) {
-        if absent(path) {
+        if Self::is_absent(path) {
             return (Self::default(), Startup::Unconfigured);
         }
         let config = match Self::read(path) {
@@ -224,7 +228,7 @@ impl Config {
     }
 
     pub(crate) fn held_by(path: &Path, draft: &Self) -> Self {
-        if absent(path) {
+        if Self::is_absent(path) {
             Self::default()
         } else {
             draft.clone()
@@ -469,10 +473,6 @@ fn from_json<'de, T: Deserialize<'de>>(contents: &'de [u8]) -> anyhow::Result<T>
 
 fn managed_model(engine: Engine, model: &Path, marker: Option<Model>) -> Option<Model> {
     marker.filter(|&choice| engine == Engine::Nemo && Model::at(model) == Some(choice))
-}
-
-fn absent(path: &Path) -> bool {
-    matches!(path.try_exists(), Ok(false))
 }
 
 fn link_target(path: &Path) -> io::Result<PathBuf> {
