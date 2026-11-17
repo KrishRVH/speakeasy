@@ -207,7 +207,7 @@ async fn a_stalled_writer_reports_the_held_prefix_even_without_a_new_capture() -
     let Some(crate::MovieEvent::Started { at, accepted, .. }) = control.next().await else {
         anyhow::bail!("Synthetic movie did not request its origin");
     };
-    accepted.send(true).await?;
+    assert!(accepted.send(true).is_ok());
     let Some(crate::MovieEvent::Geometry {
         sample, accepted, ..
     }) = control.next().await
@@ -215,7 +215,7 @@ async fn a_stalled_writer_reports_the_held_prefix_even_without_a_new_capture() -
         anyhow::bail!("Synthetic movie did not request its content rectangle");
     };
     assert_eq!(sample, 0);
-    accepted.send(true).await?;
+    assert!(accepted.send(true).is_ok());
     native.join().await?;
     let Some(crate::MovieEvent::Finished {
         last,

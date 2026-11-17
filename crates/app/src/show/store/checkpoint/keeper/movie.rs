@@ -39,7 +39,7 @@ impl Writing {
                 if fresh {
                     self.recording = Metadata::begin(directory, self.started, at, size).ok();
                 }
-                if !fresh || self.recording.is_none() || accepted.try_send(true).is_err() {
+                if !fresh || self.recording.is_none() || accepted.send(true).is_err() {
                     self.stop();
                 }
             },
@@ -59,7 +59,7 @@ impl Writing {
                         .is_ok()
                 });
 
-                if accepted.try_send(saved).is_err() {
+                if accepted.send(saved).is_err() {
                     self.stop();
                 }
             },
@@ -96,6 +96,8 @@ pub(super) async fn next(writing: Option<&Writing>) -> Option<MovieEvent> {
 
 #[cfg(test)]
 mod tests {
+    use tokio::sync::oneshot;
+
     use super::*;
 
     #[test]
@@ -103,7 +105,7 @@ mod tests {
         let directory = tempfile::tempdir()?;
         let started = Instant::now();
         let (mut writing, target) = Writing::new(directory.path(), started)?;
-        let (accepted, answer) = async_channel::bounded(1);
+        let (accepted, mut answer) = oneshot::channel();
         writing.event(
             directory.path(),
             MovieEvent::Started {
@@ -116,7 +118,7 @@ mod tests {
         let journal = directory.path().join(geometry::FILE);
         let before = std::fs::read(&journal)?;
         for (sample, expected) in [(0, true), (0, false)] {
-            let (accepted, answer) = async_channel::bounded(1);
+            let (accepted, mut answer) = oneshot::channel();
             writing.event(
                 directory.path(),
                 MovieEvent::Geometry {
@@ -146,7 +148,7 @@ mod tests {
             let directory = tempfile::tempdir()?;
             let started = Instant::now();
             let (mut writing, target) = Writing::new(directory.path(), started)?;
-            let (accepted, answer) = async_channel::bounded(1);
+            let (accepted, mut answer) = oneshot::channel();
             let header = directory.path().join(crate::show::store::movie::HEADER);
             if refused {
                 std::fs::create_dir(&header)?;

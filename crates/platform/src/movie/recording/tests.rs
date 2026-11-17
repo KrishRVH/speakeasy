@@ -45,7 +45,7 @@ async fn a_cancelled_active_movie_releases_its_file_without_a_new_frame() -> any
     let Some(crate::MovieEvent::Started { accepted, .. }) = control.next().await else {
         anyhow::bail!("Synthetic movie did not request its origin");
     };
-    accepted.send(true).await?;
+    assert!(accepted.send(true).is_ok());
     let Some(crate::MovieEvent::Geometry {
         sample, accepted, ..
     }) = control.next().await
@@ -53,7 +53,7 @@ async fn a_cancelled_active_movie_releases_its_file_without_a_new_frame() -> any
         anyhow::bail!("Synthetic movie did not request its content rectangle");
     };
     assert_eq!(sample, 0);
-    accepted.send(true).await?;
+    assert!(accepted.send(true).is_ok());
     wrote.recv().await?;
     control.request_stop();
     poll.send(()).await?;

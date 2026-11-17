@@ -137,7 +137,7 @@ async fn rejected_and_cancelled_geometry_never_submit_the_unacknowledged_layout(
         let Some(crate::MovieEvent::Started { accepted, .. }) = control.next().await else {
             anyhow::bail!("Missing synthetic origin");
         };
-        accepted.send(true).await?;
+        assert!(accepted.send(true).is_ok());
         let Some(crate::MovieEvent::Geometry {
             sample: 0,
             accepted,
@@ -146,7 +146,7 @@ async fn rejected_and_cancelled_geometry_never_submit_the_unacknowledged_layout(
         else {
             anyhow::bail!("Missing synthetic first rectangle");
         };
-        accepted.send(true).await?;
+        assert!(accepted.send(true).is_ok());
         let Some(crate::MovieEvent::Geometry {
             sample: 3,
             accepted,
@@ -156,7 +156,7 @@ async fn rejected_and_cancelled_geometry_never_submit_the_unacknowledged_layout(
             anyhow::bail!("Missing synthetic resize rectangle");
         };
         if rejected {
-            accepted.send(false).await?;
+            assert!(accepted.send(false).is_ok());
         } else {
             control.request_stop();
         }

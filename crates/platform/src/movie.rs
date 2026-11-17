@@ -15,6 +15,7 @@ use std::{
 
 use async_channel::{Receiver, Sender};
 use speakeasy_show::{MAX_FRAME_EDGE, MoviePrefix};
+use tokio::sync::oneshot;
 
 pub(crate) const RECORDING_LIMIT: Duration = Duration::from_secs(300);
 
@@ -68,13 +69,13 @@ pub enum MovieEvent {
     Started {
         at: Instant,
         size: [u32; 2],
-        accepted: Sender<bool>,
+        accepted: oneshot::Sender<bool>,
     },
     Geometry {
         sample: u32,
         content: [u32; 4],
         part: crate::Part,
-        accepted: Sender<bool>,
+        accepted: oneshot::Sender<bool>,
     },
     Finished {
         last: Instant,
@@ -165,7 +166,7 @@ impl MovieTarget {
         if at >= self.deadline || self.cancelled() {
             return false;
         }
-        let (accepted, answer) = async_channel::bounded(1);
+        let (accepted, answer) = oneshot::channel();
         if self
             .events
             .try_send(MovieEvent::Started { at, size, accepted })
@@ -187,7 +188,7 @@ impl MovieTarget {
         if self.cancelled() || stopping.is_closed() {
             return Ok(false);
         }
-        let (accepted, answer) = async_channel::bounded(1);
+        let (accepted, answer) = oneshot::channel();
         self.events
             .try_send(MovieEvent::Geometry {
                 sample,
@@ -202,7 +203,7 @@ impl MovieTarget {
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     fn accepted(
         &self,
-        answer: Receiver<bool>,
+        answer: oneshot::Receiver<bool>,
         stopping: &Receiver<Infallible>,
     ) -> anyhow::Result<bool> {
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -214,7 +215,7 @@ impl MovieTarget {
                 _cancelled = self.cancelled.recv() => None,
                 _stopped = stopping.recv() => None,
                 () = tokio::time::sleep_until(tokio::time::Instant::from_std(self.deadline)) => None,
-                accepted = answer.recv() => Some(accepted.unwrap_or(false)),
+                accepted = answer => Some(accepted.unwrap_or(false)),
             }
         }) else {
             return Ok(false);
