@@ -102,12 +102,16 @@ impl fmt::Display for Marker<'_> {
         match (keyframe.reason, keyframe.action) {
             (Reason::Click, Some(action)) => write!(f, " [{}]", Verb(action)),
             (Reason::Mark, during) if !marks.is_empty() => {
-                let marks = marks
-                    .iter()
-                    .map(|mark| format!("{} {}", Numeral(mark.number), mark.shape.verb()));
-                let action = during.map(|action| Verb(action).to_string());
-                let parts: Vec<String> = marks.chain(action).collect();
-                write!(f, " [{}]", parts.join(", "))
+                let mut separator = " [";
+                for mark in *marks {
+                    let (numeral, verb) = (Numeral(mark.number), mark.shape.verb());
+                    write!(f, "{separator}{numeral} {verb}")?;
+                    separator = ", ";
+                }
+                if let Some(action) = during {
+                    write!(f, ", {}", Verb(action))?;
+                }
+                f.write_str("]")
             },
             _ => Ok(()),
         }

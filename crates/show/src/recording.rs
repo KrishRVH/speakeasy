@@ -1,6 +1,6 @@
 use std::{fmt, time::Duration};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 
 use crate::{Mark, Moment, Point, Rect, Span};
 
@@ -101,8 +101,8 @@ impl From<InkPoint> for (f32, f32, Moment) {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(try_from = "Vec<InkPoint>", into = "Vec<InkPoint>")]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(try_from = "Vec<InkPoint>")]
 pub struct Stroke {
     points: Vec<InkPoint>,
     first: InkPoint,
@@ -171,9 +171,9 @@ impl TryFrom<Vec<InkPoint>> for Stroke {
     }
 }
 
-impl From<Stroke> for Vec<InkPoint> {
-    fn from(stroke: Stroke) -> Self {
-        stroke.points
+impl Serialize for Stroke {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.points.serialize(serializer)
     }
 }
 

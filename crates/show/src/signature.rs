@@ -1,4 +1,4 @@
-use std::{fmt, ops::Range};
+use std::{fmt, ops::Range, sync::Arc};
 
 use crate::{Image, Moment, Rect, convert};
 
@@ -36,7 +36,7 @@ pub struct Sample {
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct Signature {
-    cells: Box<[u8; CELLS]>,
+    cells: Arc<[u8; CELLS]>,
 }
 
 impl fmt::Debug for Signature {
@@ -54,7 +54,7 @@ impl Signature {
 
     pub(crate) fn from_bytes(bytes: &[u8]) -> Option<Self> {
         Some(Self {
-            cells: Box::new(bytes.try_into().ok()?),
+            cells: Arc::new(bytes.try_into().ok()?),
         })
     }
 
@@ -62,7 +62,7 @@ impl Signature {
     pub(crate) fn of(image: &Image) -> Self {
         let pixels: Vec<&[[u8; 4]]> = image.rows().map(|row| row.as_chunks::<4>().0).collect();
         let column_spans = spans(convert::count(image.width()), COLUMNS);
-        let mut cells = Box::new([0; CELLS]);
+        let mut cells = [0; CELLS];
         for (line, rows) in cells
             .as_chunks_mut::<COLUMNS>()
             .0
@@ -73,7 +73,9 @@ impl Signature {
                 *cell = mean_luma(&pixels, rows.clone(), columns.clone());
             }
         }
-        Self { cells }
+        Self {
+            cells: Arc::new(cells),
+        }
     }
 
     pub(crate) fn change(&self, other: &Self) -> f32 {
