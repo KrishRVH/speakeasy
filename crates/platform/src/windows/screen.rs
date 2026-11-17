@@ -331,7 +331,7 @@ pub(crate) fn capture(
     {
         #[expect(
             clippy::let_underscore_must_use,
-            reason = "A closed lane means nobody is left to tell"
+            reason = "The final failure replaces a queued event; a closed lane means nobody is left to tell"
         )]
         let _ = events.force_send(failure.into());
     }

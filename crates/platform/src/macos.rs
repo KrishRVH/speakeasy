@@ -472,7 +472,7 @@ impl Window {
     }
 }
 
-pub(super) fn modifiers_for(shortcut: MacShortcut) -> Modifiers {
+fn modifiers_for(shortcut: MacShortcut) -> Modifiers {
     let mut held = shortcut.modifiers(
         cg::CGEventSource::flags_state(cg::CGEventSourceStateID::CombinedSessionState).0,
     );
@@ -488,7 +488,7 @@ fn shortcut_key_down(shortcut: MacShortcut) -> bool {
     })
 }
 
-pub(super) struct Insert {
+struct Insert {
     shortcut: MacShortcut,
 }
 
@@ -498,7 +498,7 @@ impl insertion::NativeInsert for Insert {
     type Mark = isize;
 
     fn acquire(&mut self) -> anyhow::Result<clipboard::Lease> {
-        clipboard::acquire()
+        Ok(clipboard::acquire())
     }
 
     fn write(&mut self, lease: clipboard::Lease, text: &str) -> anyhow::Result<()> {

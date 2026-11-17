@@ -43,7 +43,7 @@ use windows_sys::{
 
 pub(crate) use self::{
     input::{Monitor, start},
-    insertion::{Insert, copy_content, copy_text},
+    insertion::{copy_content, copy_text},
 };
 #[cfg(test)]
 use crate::NativeWindow;
@@ -57,7 +57,7 @@ fn is_key_down(key: VIRTUAL_KEY) -> bool {
     unsafe { GetAsyncKeyState(i32::from(key)) < 0 }
 }
 
-pub(crate) fn modifiers() -> Modifiers {
+fn modifiers() -> Modifiers {
     keyboard::Windows::modifiers(is_key_down)
 }
 

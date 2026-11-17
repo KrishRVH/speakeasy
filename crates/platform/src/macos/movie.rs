@@ -196,7 +196,15 @@ fn decoded(
             .as_ref()
             .and_then(|object| object.downcast_ref::<NSError>())
             .map(NSError::code);
-        anyhow::anyhow!("macOS could not decode this video ({code:?}, {detail:?})")
+        match (code, detail) {
+            (Some(code), Some(detail)) => {
+                anyhow::anyhow!("macOS could not decode this video ({code}, {detail})")
+            },
+            (Some(code), None) | (None, Some(code)) => {
+                anyhow::anyhow!("macOS could not decode this video ({code})")
+            },
+            (None, None) => anyhow::anyhow!("macOS could not decode this video"),
+        }
     })?;
     Ok(MovieFrame {
         at: sample.timestamp(at)?,

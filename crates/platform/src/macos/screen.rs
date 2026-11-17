@@ -293,9 +293,9 @@ fn capture_stills_owned(
     let Ok(runtime) = runtime::Builder::new_current_thread().enable_time().build() else {
         #[expect(
             clippy::let_underscore_must_use,
-            reason = "A closed lane means nobody is waiting for this capture"
+            reason = "The failure replaces a queued still; a closed lane means nobody is waiting for this capture"
         )]
-        let _ = events.try_send(Failure::Unstarted.into());
+        let _ = events.force_send(Failure::Unstarted.into());
         return;
     };
     runtime.block_on(async {

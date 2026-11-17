@@ -1,6 +1,6 @@
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use anyhow::{anyhow, ensure};
+use anyhow::ensure;
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use objc2_app_kit::{
     NSPasteboard, NSPasteboardContentsOptions, NSPasteboardItem, NSPasteboardTypePNG,
@@ -14,23 +14,21 @@ use objc2_foundation::{NSArray, NSData, NSString};
 )]
 static ACCESS: Mutex<()> = Mutex::new(());
 
-pub(crate) struct Lease {
+pub(super) struct Lease {
     pasteboard: Retained<NSPasteboard>,
     _access: MutexGuard<'static, ()>,
 }
 
-pub(super) fn acquire() -> anyhow::Result<Lease> {
-    let access = ACCESS
-        .lock()
-        .map_err(|_poison| anyhow!("Clipboard access stopped unexpectedly; restart Speakeasy"))?;
-    Ok(Lease {
+pub(super) fn acquire() -> Lease {
+    let access = ACCESS.lock().unwrap_or_else(PoisonError::into_inner);
+    Lease {
         pasteboard: NSPasteboard::generalPasteboard(),
         _access: access,
-    })
+    }
 }
 
 pub(crate) fn copy_text(text: &str) -> anyhow::Result<()> {
-    objc2::rc::autoreleasepool(|_| write(acquire()?, text))
+    objc2::rc::autoreleasepool(|_| write(acquire(), text))
 }
 
 pub(super) fn write(lease: Lease, text: &str) -> anyhow::Result<()> {
@@ -44,7 +42,7 @@ pub(crate) fn copy_content(
 ) -> anyhow::Result<bool> {
     objc2::rc::autoreleasepool(|_| {
         let item = item(&content.text, content.image.as_ref())?;
-        crate::clipboard::copy_when(authorized, acquire, |lease| publish(lease, &item))
+        crate::clipboard::copy_when(authorized, || Ok(acquire()), |lease| publish(lease, &item))
     })
 }
 

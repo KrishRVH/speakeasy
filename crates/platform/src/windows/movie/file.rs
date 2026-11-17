@@ -10,7 +10,7 @@ use std::{
 use windows::Win32::{
     Foundation::{
         E_FAIL, E_NOTIMPL, E_POINTER, S_FALSE, S_OK, STG_E_ACCESSDENIED, STG_E_INVALIDFUNCTION,
-        STG_E_MEDIUMFULL, STG_E_READFAULT, STG_E_WRITEFAULT,
+        STG_E_MEDIUMFULL, STG_E_READFAULT, STG_E_SEEKERROR, STG_E_WRITEFAULT,
     },
     Media::MediaFoundation::{IMFByteStream, MFCreateMFByteStreamOnStream},
     System::Com::{
@@ -171,7 +171,11 @@ impl ISequentialStream_Impl for CappedFile_Impl {
             let length = usize::try_from(u64::from(count).min(available))
                 .map_err(|_invalid_count| Error::from_hresult(STG_E_READFAULT))?;
 
-            let bytes = unsafe { std::slice::from_raw_parts_mut(destination.cast(), length) };
+            let bytes = unsafe {
+                let destination = destination.cast::<u8>();
+                destination.write_bytes(0, length);
+                std::slice::from_raw_parts_mut(destination, length)
+            };
             let read_bytes = u32::try_from(file.read(bytes).map_err(io_error(STG_E_READFAULT))?)
                 .map_err(|_invalid_count| Error::from_hresult(STG_E_READFAULT))?;
             drop(file);
@@ -225,7 +229,7 @@ impl IStream_Impl for CappedFile_Impl {
         let mut file = self.file()?;
         let base = match origin {
             STREAM_SEEK_SET => 0,
-            STREAM_SEEK_CUR => file.stream_position().map_err(io_error(STG_E_READFAULT))?,
+            STREAM_SEEK_CUR => file.stream_position().map_err(io_error(STG_E_SEEKERROR))?,
             STREAM_SEEK_END if self.access == Access::Read => self.limit,
             STREAM_SEEK_END => file.metadata().map_err(io_error(STG_E_READFAULT))?.len(),
             _ => return Err(Error::from_hresult(STG_E_INVALIDFUNCTION)),
@@ -235,7 +239,7 @@ impl IStream_Impl for CappedFile_Impl {
             .filter(|next| *next <= self.limit)
             .ok_or_else(|| Error::from_hresult(STG_E_INVALIDFUNCTION))?;
         file.seek(SeekFrom::Start(next))
-            .map_err(io_error(STG_E_WRITEFAULT))?;
+            .map_err(io_error(STG_E_SEEKERROR))?;
         drop(file);
         if !position.is_null() {
             unsafe { position.write(next) };

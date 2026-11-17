@@ -63,9 +63,9 @@ fn write_clipboard(
     })
 }
 
-pub(crate) struct Insert;
+pub(super) struct Insert;
 
-pub(crate) enum Keys {
+pub(super) enum Keys {
     Paste([INPUT; 4]),
     Text(Vec<INPUT>),
 }
