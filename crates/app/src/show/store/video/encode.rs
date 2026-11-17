@@ -1,5 +1,6 @@
 use std::{
     borrow::Cow,
+    num::NonZeroU32,
     path::{Path, PathBuf},
     process::Stdio,
     time::Duration,
@@ -51,7 +52,7 @@ pub(super) struct Inputs<'a> {
     pub movie: &'a Inspected,
     pub scene: &'a Annotations,
     pub timing: &'a Timing,
-    pub rate: Option<u32>,
+    pub rate: Option<NonZeroU32>,
     pub captions: bool,
 }
 

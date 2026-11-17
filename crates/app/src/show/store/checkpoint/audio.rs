@@ -1,6 +1,7 @@
 use std::{
     fs::File,
     io::{self, BufReader},
+    num::NonZeroU32,
     time::Duration,
 };
 
@@ -27,7 +28,7 @@ const CUE: u8 = 3;
 const END: u8 = 4;
 
 pub(crate) struct KeptAudio {
-    pub rate: u32,
+    pub rate: NonZeroU32,
     pub start: Duration,
     pub language: Box<str>,
     pub pcm: Zeroizing<Vec<u8>>,
@@ -122,15 +123,16 @@ fn decode(mut file: impl io::Read, bytes: usize) -> anyhow::Result<KeptAudio> {
     };
     let (rate, header) = header.split_first_chunk::<4>().context(DAMAGED)?;
     let (start, language) = header.split_first_chunk::<8>().context(DAMAGED)?;
-    let (rate, start) = (u32::from_le_bytes(*rate), u64::from_le_bytes(*start));
+    let rate = NonZeroU32::new(u32::from_le_bytes(*rate)).context(DAMAGED)?;
+    let start = u64::from_le_bytes(*start);
     ensure!(
-        (1..=MAX_RATE).contains(&rate) && start <= MAX_START_MS && language.len() <= LANGUAGE_BYTES,
+        rate.get() <= MAX_RATE && start <= MAX_START_MS && language.len() <= LANGUAGE_BYTES,
         DAMAGED
     );
     let language = std::str::from_utf8(language)
         .map_err(|_private_content| anyhow::anyhow!(DAMAGED))?
         .into();
-    let limit = pcm_limit(rate);
+    let limit = pcm_limit(rate.get());
     let mut audio = KeptAudio {
         rate,
         start: Duration::from_millis(start),

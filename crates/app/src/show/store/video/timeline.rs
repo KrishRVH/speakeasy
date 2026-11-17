@@ -45,7 +45,7 @@ impl Timing {
                     u64::try_from(audio.pcm.len() / 2)
                         .unwrap_or(u64::MAX)
                         .saturating_mul(1000)
-                        .div_ceil(u64::from(audio.rate.max(1))),
+                        .div_ceil(u64::from(audio.rate.get())),
                 );
             coverage.end_ms.max(audio_end).min(limit)
         });
@@ -83,11 +83,11 @@ pub(super) fn audio(
 ) -> anyhow::Result<()> {
     let sample_at = |time: Duration| -> anyhow::Result<usize> {
         Ok(usize::try_from(
-            time.as_nanos().saturating_mul(u128::from(audio.rate)) / 1_000_000_000,
+            time.as_nanos().saturating_mul(u128::from(audio.rate.get())) / 1_000_000_000,
         )?)
     };
     let start = Duration::from_millis(timing.start_ms);
-    let samples = usize::try_from(timing.frames.saturating_mul(u64::from(audio.rate)) / FPS)?;
+    let samples = usize::try_from(timing.frames.saturating_mul(u64::from(audio.rate.get())) / FPS)?;
     let content = sample_at(Duration::from_millis(
         timing.end_ms.saturating_sub(timing.start_ms),
     ))?

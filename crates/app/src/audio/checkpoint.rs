@@ -105,7 +105,7 @@ pub(crate) fn seal_kept(audio: KeptAudio) -> anyhow::Result<(Option<Sealed>, Dur
         complete: _,
     } = audio;
     let pcm = Pcm16::from_kept(pcm);
-    let mut speech = Audibility::new(rate);
+    let mut speech = Audibility::new(rate.get());
     for (before, at) in cues {
         if let (Some(previous), Some(prefix)) = (pcm.audio().get(..before), pcm.audio().get(..at)) {
             speech.extend(previous);
@@ -114,7 +114,7 @@ pub(crate) fn seal_kept(audio: KeptAudio) -> anyhow::Result<(Option<Sealed>, Dur
         }
     }
     speech.extend(pcm.audio());
-    Ok((pcm.seal(speech, rate)?, start, language))
+    Ok((pcm.seal(speech, rate.get())?, start, language))
 }
 
 #[cfg(test)]

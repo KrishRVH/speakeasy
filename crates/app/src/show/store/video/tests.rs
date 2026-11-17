@@ -1,5 +1,6 @@
 use std::{
     fs,
+    num::NonZeroU32,
     process::{Command, Stdio},
     time::Instant,
 };
@@ -15,7 +16,7 @@ const CAPTION: &str = r"Q&A <demo> {\i1}back\slash \N \n {\r} &amp;.";
 
 fn audio(start: u64) -> KeptAudio {
     KeptAudio {
-        rate: 30,
+        rate: NonZeroU32::new(30).unwrap(),
         start: Duration::from_millis(start),
         language: "en".into(),
         pcm: Zeroizing::new([1000_i16.to_le_bytes(); 60].concat()),
