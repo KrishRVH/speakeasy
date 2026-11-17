@@ -71,14 +71,14 @@ fn read_range(file: &mut File, range: Range<u64>) -> anyhow::Result<Vec<u8>> {
 
 pub(super) fn write(directory: &Path, journal: &Journal, duration: Moment) -> anyhow::Result<()> {
     let mut staging = tempfile::NamedTempFile::new_in(directory)?;
-    {
-        let mut output = BufWriter::new(staging.as_file_mut());
-        journal.write_source(duration, |bytes| {
-            output.write_all(bytes).map_err(anyhow::Error::from)
-        })?;
-        output.flush()?;
-        output.get_ref().sync_all()?;
-    }
+    let mut output = BufWriter::new(staging.as_file_mut());
+    journal.write_source(duration, |bytes| {
+        output.write_all(bytes).map_err(anyhow::Error::from)
+    })?;
+    output
+        .into_inner()
+        .map_err(io::IntoInnerError::into_error)?
+        .sync_all()?;
     staging
         .persist_noclobber(directory.join(FILE))
         .map_err(|error| error.error)?;
