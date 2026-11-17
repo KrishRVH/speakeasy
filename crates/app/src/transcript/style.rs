@@ -1,4 +1,7 @@
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
+use serde::{
+    Deserialize, Deserializer, Serialize, Serializer,
+    de::{Error as _, Unexpected},
+};
 
 use super::Fillers;
 
@@ -82,9 +85,8 @@ impl Serialize for Style {
 impl<'de> Deserialize<'de> for Style {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let name = String::deserialize(deserializer)?;
-        Self::parse(&name).ok_or_else(|| {
-            D::Error::custom("Choose prose, verbatim, camel, pascal, snake, kebab or constant.")
-        })
+        Self::parse(&name)
+            .ok_or_else(|| D::Error::invalid_value(Unexpected::Str(&name), &"a dictation style"))
     }
 }
 
