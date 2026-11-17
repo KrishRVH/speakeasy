@@ -2,7 +2,10 @@ use anyhow::ensure;
 use gpui::{AsyncApp, WindowHandle};
 
 use super::{Action, Step};
-use crate::shell::settings::{Action as SettingsAction, Settings, native_interaction::settle};
+use crate::shell::settings::{
+    Action as SettingsAction, Settings,
+    native_interaction::{key, settle},
+};
 
 #[expect(
     clippy::future_not_send,
@@ -47,19 +50,22 @@ pub(in crate::shell::settings) async fn exercise(
             view.onboarding == Some(Step::Practice),
             "Empty recognition claimed success"
         );
-        view.act(SettingsAction::Practice, window, cx);
-        ensure!(
-            !view.practice.text.is_empty(),
-            "Demo practice produced no simulated result"
-        );
+        window.blur(cx);
         anyhow::Ok(())
     })??;
     settle(cx).await;
-    settings.update(cx, |view, window, cx| {
-        view.act(SettingsAction::Onboarding(Action::Next), window, cx);
+    settings.update(cx, |_, window, cx| window.focus_prev(cx))?;
+    key(settings, "enter", cx)?;
+    ensure!(
+        settings.read_with(cx, |view, _| !view.practice.text.trim().is_empty())?,
+        "Demo practice produced no simulated result"
+    );
+    settle(cx).await;
+    key(settings, "enter", cx)?;
+    settings.update(cx, |view, _, _| {
         ensure!(
             view.onboarding == Some(Step::Ready),
-            "Recognition did not unlock completion"
+            "Recognition did not unlock completion from the focused primary control"
         );
         ensure!(
             view.practice.text.is_empty(),

@@ -389,6 +389,17 @@ impl Settings {
         };
         let service = ui.cx.global::<Services>().service_state();
         let busy = self.unreadable || self.resetting();
+        let (label, action, weight, enabled) = match service {
+            ServiceState::Paused if !busy && !is_demo(ui.cx) => {
+                ("Resume", Action::Resume, Weight::Primary, true)
+            },
+            _ => (
+                "Pause",
+                Action::Pause,
+                Weight::Quiet,
+                service == ServiceState::Running && !busy,
+            ),
+        };
         div()
             .flex_none()
             .min_h(px(52.0))
@@ -420,17 +431,12 @@ impl Settings {
                         status.child(icon(icons::CHECK, 14.0, palette.lamp))
                     }),
             )
-            .map(|footer| match service {
-                ServiceState::Paused if !busy && !is_demo(ui.cx) => {
-                    footer.child(ui.button("Resume", Action::Resume, Weight::Primary))
-                },
-                _ => footer.child(ui.button_if(
-                    "Pause",
-                    Action::Pause,
-                    Weight::Quiet,
-                    service == ServiceState::Running && !busy,
-                )),
-            })
+            .child(ui.kit().button(
+                "dictation-service",
+                label,
+                weight,
+                enabled.then(|| ui.press(action)),
+            ))
             .child(ui.button("Shows", Action::Shows, Weight::Quiet))
             .child(ui.button("Quit", Action::Quit, Weight::Quiet))
     }

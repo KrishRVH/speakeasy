@@ -129,11 +129,11 @@ impl Settings {
                                     .child(text)
                             }),
                     )
-                    .child(ui.button_if(
+                    .child(kit.button(
+                        "onboarding-primary",
                         label,
-                        action,
                         Weight::Primary,
-                        enabled && self.onboarding_completion.is_none(),
+                        (enabled && self.onboarding_completion.is_none()).then(|| ui.press(action)),
                     )),
             )
     }

@@ -402,7 +402,7 @@ fn close(settings: WindowHandle<Settings>, cx: &mut App) -> anyhow::Result<()> {
     })
 }
 
-fn key(
+pub(super) fn key(
     settings: WindowHandle<Settings>,
     name: &'static str,
     cx: &mut AsyncApp,

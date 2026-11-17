@@ -689,14 +689,15 @@ impl Settings {
             kit.setting(
                 "Keep clipboard",
                 "Type text instead of pasting it, so your clipboard stays as it was.",
-                ui.switch(
+                kit.switch(
+                    "keep-clipboard",
                     "Keep clipboard",
                     keep,
-                    Action::SelectDelivery(if keep {
+                    Some(ui.press(Action::SelectDelivery(if keep {
                         TextDelivery::Paste
                     } else {
                         TextDelivery::Type
-                    }),
+                    }))),
                 ),
             )
         };
