@@ -31,6 +31,8 @@ use crate::{
     progress::Progress,
 };
 
+pub(crate) const LOCK: &str = "setup.lock";
+
 const PARAKEET: Download<'static> = Download {
     url: "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3/resolve/541d1f99c6b0c3cd0b11a95167540bb8edefd82b/parakeet-tdt-0.6b-v3.q8_0.gguf",
     size: 713_975_456,
@@ -230,7 +232,7 @@ impl Installation {
             .truncate(false)
             .read(true)
             .write(true)
-            .open(root.join("setup.lock"))
+            .open(root.join(LOCK))
             .map_err(file_error(root))?;
         loop {
             match lock.try_lock() {

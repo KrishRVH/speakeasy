@@ -47,7 +47,7 @@ fn the_default_distribution_names_where_its_settings_live() {
                 r"\\wsl$\Ubuntu\etc".to_owned()
             ]
         ),
-        "An older share answers when the newer one cannot"
+        "\\\\wsl$ answers when \\\\wsl.localhost cannot"
     );
     assert_eq!(
         lookup(installed("Ubuntu"), &[]).0,

@@ -45,8 +45,8 @@ pub use crate::{
     moment::{Moment, Span},
     movie::{MovieError, MovieNormalization, MoviePrefix, MovieSample},
     recording::{
-        Action, EmptyStroke, Ending, InkPoint, Narration, NarrationLoss, Pin, Recording, Size,
-        Spaces, Stroke, Word,
+        Action, Ending, InkPoint, Narration, NarrationLoss, Pin, Recording, Size, Spaces, Stroke,
+        Word,
     },
     select::{Keyframe, Reason, SAMPLE_INTERVAL, Selection, select},
     signature::{Sample, Signature},

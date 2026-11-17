@@ -160,7 +160,6 @@ impl Signature {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Changed {
     cells: Box<[bool; POOLED_CELLS]>,
 }

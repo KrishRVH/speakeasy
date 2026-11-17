@@ -152,22 +152,11 @@ impl Stroke {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct EmptyStroke;
-
-impl fmt::Display for EmptyStroke {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("a stroke needs at least one point")
-    }
-}
-
-impl std::error::Error for EmptyStroke {}
-
 impl TryFrom<Vec<InkPoint>> for Stroke {
-    type Error = EmptyStroke;
+    type Error = &'static str;
 
     fn try_from(points: Vec<InkPoint>) -> Result<Self, Self::Error> {
-        Self::new(points).ok_or(EmptyStroke)
+        Self::new(points).ok_or("a stroke needs at least one point")
     }
 }
 

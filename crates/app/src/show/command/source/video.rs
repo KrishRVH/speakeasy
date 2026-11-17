@@ -36,10 +36,6 @@ pub(super) fn frame(
         .context("Movie has no published coverage")?;
     let found = match focus {
         Query::At(at) => {
-            anyhow::ensure!(
-                (metadata.origin_ms..=coverage.end_ms).contains(&at.as_millis()),
-                "Requested time is outside the retained video coverage"
-            );
             let span = Span::at(*at);
             query::Found {
                 kind: query::Kind::Time,

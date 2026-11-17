@@ -5,7 +5,7 @@ use speakeasy_show::Moment;
 use super::library::Frame;
 use crate::show::{
     preview::Content,
-    store::movie::{AnnotationState, decoder_time},
+    store::movie::{AnnotationState, code, decoder_time},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -147,11 +147,4 @@ fn video_query(frame: &Frame, span: &Range<Duration>, sampled: Duration) -> Opti
         u64::try_from(start.max(sampled).as_nanos().div_ceil(1_000_000)).ok()?,
     );
     (requested < decoder_time(end)).then(|| requested.into())
-}
-
-fn code(path: &Path) -> String {
-    let text = path.display().to_string();
-    let longest = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
-    let fence = "`".repeat(longest.saturating_add(1));
-    format!("{fence} {text} {fence}")
 }

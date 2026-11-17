@@ -21,11 +21,11 @@ fn purge_with(
 ) -> anyhow::Result<()> {
     fs::create_dir_all(data).map_err(|error| cannot("create", data, &error))?;
     let _setup = claim(
-        &data.join("setup.lock"),
+        &data.join(crate::setup::LOCK),
         "Another Speakeasy copy is setting up local speech. Let it finish, then try again.",
     )?;
     let _update = claim(
-        &data.join("updates.lock"),
+        &data.join(crate::updates::LOCK),
         "Another Speakeasy copy is preparing an update. Finish or cancel it, then try again.",
     )?;
     for folder in DOWNLOADS.map(|folder| data.join(folder)) {

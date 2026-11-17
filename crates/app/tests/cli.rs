@@ -92,8 +92,8 @@ fn mcp_stdio_roundtrips_both_protocols_through_the_console_process() -> anyhow::
     let png = speakeasy_show::Image::from_bgra(2, 2, [20, 40, 60, 255].repeat(4))?.encode_png()?;
     fs::write(directory.join("contact-sheet.png"), &png)?;
     fs::write(directory.join("frames/frame-01.png"), png)?;
-    for modern in [false, true] {
-        let first = if modern {
+    for discovery in [false, true] {
+        let first = if discovery {
             json!({"jsonrpc": "2.0", "id": 1, "method": "server/discover", "params": {}})
         } else {
             json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
@@ -103,7 +103,7 @@ fn mcp_stdio_roundtrips_both_protocols_through_the_console_process() -> anyhow::
             }})
         };
         let mut requests = vec![first];
-        if !modern {
+        if !discovery {
             requests.push(json!({"jsonrpc": "2.0", "method": "notifications/initialized"}));
         }
         requests.extend([
@@ -112,7 +112,7 @@ fn mcp_stdio_roundtrips_both_protocols_through_the_console_process() -> anyhow::
                 "name": "show_read", "arguments": {"show": name}
             }}),
         ]);
-        if modern {
+        if discovery {
             for request in &mut requests {
                 request["params"]["_meta"] = json!({
                     "io.modelcontextprotocol/protocolVersion": "2026-07-28",
@@ -152,7 +152,7 @@ fn mcp_stdio_roundtrips_both_protocols_through_the_console_process() -> anyhow::
             assert_eq!(reply["id"], id);
             assert!(reply.get("error").is_none());
         }
-        if modern {
+        if discovery {
             assert_eq!(replies[0]["result"]["resultType"], "complete");
         } else {
             assert_eq!(replies[0]["result"]["protocolVersion"], "2025-11-25");

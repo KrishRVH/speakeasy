@@ -159,11 +159,9 @@ impl Metadata {
         } else {
             ""
         };
-        let path = path.display().to_string();
-        let longest_run = path.split(|c| c != '`').map(str::len).max().unwrap_or(0);
-        let fence = "`".repeat(longest_run.saturating_add(1));
+        let path = code(path);
         Ok(format!(
-            "\n\nSilent video: {fence} {path} {fence}. Recorded session coverage: {}–{} ms. {partial}The video has no narration audio or drawn annotations; its last image may be held through the end. Marks and narration in show.json are documented through {} ms.{geometry}\n",
+            "\n\nSilent video: {path}. Recorded session coverage: {}–{} ms. {partial}The video has no narration audio or drawn annotations; its last image may be held through the end. Marks and narration in show.json are documented through {} ms.{geometry}\n",
             self.origin_ms, coverage.end_ms, coverage.annotations_through_ms
         ))
     }
@@ -418,3 +416,10 @@ pub(in crate::show::store) fn retain(
 
 #[cfg(test)]
 pub(in crate::show) mod tests;
+
+pub(crate) fn code(path: &Path) -> String {
+    let text = path.display().to_string();
+    let longest = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    let fence = "`".repeat(longest.saturating_add(1));
+    format!("{fence} {text} {fence}")
+}

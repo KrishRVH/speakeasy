@@ -93,7 +93,7 @@ impl Entry {
 }
 
 pub(crate) fn list(parent: &Path) -> io::Result<impl Iterator<Item = io::Result<Entry>>> {
-    let paths = discover(parent)?;
+    let paths = directories(parent)?;
     Ok(paths.into_iter().filter_map(|path| {
         found(Entry::open(&path).and_then(|entry| {
             fs::metadata(&entry.directory)?;
@@ -104,10 +104,6 @@ pub(crate) fn list(parent: &Path) -> io::Result<impl Iterator<Item = io::Result<
 }
 
 pub(crate) fn directories(parent: &Path) -> io::Result<Vec<PathBuf>> {
-    discover(parent)
-}
-
-fn discover(parent: &Path) -> io::Result<Vec<PathBuf>> {
     let Some(entries) = found(fs::read_dir(parent))? else {
         return Ok(Vec::new());
     };

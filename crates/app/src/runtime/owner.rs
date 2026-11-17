@@ -509,12 +509,7 @@ impl<P: Ports> Env<Native> for World<P> {
         style: Style,
         config: &Config,
     ) -> Option<Zeroizing<String>> {
-        let text = transcript::for_dictation(
-            &heard,
-            style,
-            config.writing(&config.language),
-            &config.vocabulary,
-        );
+        let text = transcript::for_dictation(&heard, style, config.writing(), &config.vocabulary);
         (!text.is_empty()).then(|| Zeroizing::new(text))
     }
 

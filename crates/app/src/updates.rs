@@ -8,6 +8,8 @@ use speakeasy_platform::StoppableThread;
 
 use crate::http::{Trust, client_builder};
 
+pub(crate) const LOCK: &str = "updates.lock";
+
 const RELEASE: &str = "https://api.github.com/repos/KrishRVH/speakeasy/releases/latest";
 const FAILED: &str = "Cannot check for updates. Check your connection and try again.";
 const MAX_REPLY: usize = 2 * 1024 * 1024;

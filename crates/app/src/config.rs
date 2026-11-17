@@ -163,9 +163,9 @@ impl Config {
         }
     }
 
-    pub(crate) fn writing(&self, language: &str) -> Writing {
+    pub(crate) fn writing(&self) -> Writing {
         Writing {
-            fillers: self.fillers(language),
+            fillers: self.fillers(&self.language),
             symbols: if self.spoken_symbols {
                 Symbols::Write
             } else {

@@ -9,7 +9,6 @@ const SHIFT_TAP: Duration = Duration::from_millis(300);
 
 const SHIFT_TAP_GAP: Duration = Duration::from_millis(400);
 
-#[cfg(any(target_os = "windows", target_os = "macos", test))]
 const APPLICATION_SHORTCUT: Duration = Duration::from_millis(250);
 
 #[derive(Default)]

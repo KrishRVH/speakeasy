@@ -124,12 +124,8 @@ impl Policy {
         raw_score: &Score,
         config: &Config,
     ) -> Self {
-        let text = transcript::for_dictation(
-            raw,
-            Style::Prose,
-            config.writing(&config.language),
-            &config.vocabulary,
-        );
+        let text =
+            transcript::for_dictation(raw, Style::Prose, config.writing(), &config.vocabulary);
         let score = Score::new(reference, &text);
         Self {
             name,

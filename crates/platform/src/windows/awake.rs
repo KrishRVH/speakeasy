@@ -2,7 +2,7 @@ use windows_sys::Win32::{
     Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE},
     System::{
         Power::{
-            POWER_REQUEST_TYPE, PowerClearRequest, PowerCreateRequest, PowerRequestDisplayRequired,
+            PowerClearRequest, PowerCreateRequest, PowerRequestDisplayRequired,
             PowerRequestSystemRequired, PowerSetRequest,
         },
         Threading::{POWER_REQUEST_CONTEXT_SIMPLE_STRING, REASON_CONTEXT, REASON_CONTEXT_0},
@@ -16,7 +16,7 @@ const CONTEXT_VERSION: u32 = 0;
 
 pub(crate) struct Awake {
     request: HANDLE,
-    set: Vec<POWER_REQUEST_TYPE>,
+    display: bool,
 }
 
 unsafe impl Send for Awake {}
@@ -35,27 +35,21 @@ impl Awake {
         if request.is_null() || request == INVALID_HANDLE_VALUE {
             return None;
         }
-        let mut awake = Self {
-            request,
-            set: Vec::new(),
-        };
-        if unsafe { PowerSetRequest(awake.request, PowerRequestSystemRequired) } == 0 {
+        if unsafe { PowerSetRequest(request, PowerRequestSystemRequired) } == 0 {
+            unsafe { CloseHandle(request) };
             return None;
         }
-        awake.set.push(PowerRequestSystemRequired);
-        if keep == Keep::Display
-            && unsafe { PowerSetRequest(awake.request, PowerRequestDisplayRequired) } != 0
-        {
-            awake.set.push(PowerRequestDisplayRequired);
-        }
-        Some(awake)
+        let display = keep == Keep::Display
+            && unsafe { PowerSetRequest(request, PowerRequestDisplayRequired) } != 0;
+        Some(Self { request, display })
     }
 }
 
 impl Drop for Awake {
     fn drop(&mut self) {
-        for &kind in &self.set {
-            unsafe { PowerClearRequest(self.request, kind) };
+        unsafe { PowerClearRequest(self.request, PowerRequestSystemRequired) };
+        if self.display {
+            unsafe { PowerClearRequest(self.request, PowerRequestDisplayRequired) };
         }
         unsafe { CloseHandle(self.request) };
     }
@@ -63,13 +57,12 @@ impl Drop for Awake {
 
 #[cfg(test)]
 mod tests {
-    use super::{Awake, Keep, PowerRequestSystemRequired};
+    use super::{Awake, Keep};
 
     #[test]
     fn a_refused_display_request_still_keeps_the_system_awake() {
         let system = Awake::hold(Keep::System).expect("Windows refused the system request");
-        let display = Awake::hold(Keep::Display).expect("The system request was lost");
-        assert_eq!(system.set, [PowerRequestSystemRequired]);
-        assert_eq!(display.set.first(), Some(&PowerRequestSystemRequired));
+        assert!(!system.display);
+        Awake::hold(Keep::Display).expect("A refused display request lost the system request");
     }
 }

@@ -251,11 +251,11 @@ A screen Show's window watch lists windows on its own stoppable thread every fra
 sends only changed layouts over a bounded lane, dropping a change the lane cannot take until the
 next interval. It reads bounds, a layer class, and the owning process; never titles, app names, or
 pixels. Windows marks topmost windows other than taskbars, menus, and popups floating; Mac marks
-levels above normal and up to utility floating. Window and process identifiers become small
-per-watch numbers before they leave the thread. Windows walks `EnumWindows` front to back and reads
-DWM extended frame bounds for visible, uncloaked, not minimized windows that accept clicks; Mac
-reads on-screen `CGWindowListCopyWindowInfo` entries. Both leave out Speakeasy's process, as frames
-do.
+levels above normal and up to utility floating, the pop-up menu level a menu, and the main-menu and
+Dock levels bars. Window and process identifiers become small per-watch numbers before they leave
+the thread. Windows walks `EnumWindows` front to back and reads DWM extended frame bounds for
+visible, uncloaked, not minimized windows that accept clicks; Mac reads on-screen
+`CGWindowListCopyWindowInfo` entries. Both leave out Speakeasy's process, as frames do.
 
 Owned-window acceptance creates and destroys its window classes and HWNDs on their owning thread.
 Monitor enumeration writes only to the local vector that remains live throughout the synchronous

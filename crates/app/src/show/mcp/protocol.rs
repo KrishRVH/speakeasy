@@ -261,7 +261,7 @@ fn metadata(params: &Map<String, Value>) -> Result<(), MetadataError> {
     let Some(version) = version.filter(|version| version.len() <= 64) else {
         return Err(MetadataError {
             code: INVALID_PARAMS,
-            message: "Each modern request needs protocolVersion and clientCapabilities metadata",
+            message: "Each stateless request needs protocolVersion and clientCapabilities metadata",
             data: None,
         });
     };
@@ -275,7 +275,7 @@ fn metadata(params: &Map<String, Value>) -> Result<(), MetadataError> {
     if !capabilities.is_some_and(Value::is_object) {
         return Err(MetadataError {
             code: INVALID_PARAMS,
-            message: "Each modern request needs clientCapabilities metadata",
+            message: "Each stateless request needs clientCapabilities metadata",
             data: None,
         });
     }

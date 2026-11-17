@@ -1030,11 +1030,10 @@ file, and requires a canonical mono PCM16 WAV. Alternatively, `SPEAKEASY_FIXTURE
 [public corpus manifest](performance.md#public-corpus-replay); it replaces the WAV/reference
 variables. `SPEAKEASY_FIXTURE_SEGMENT=1` admits segmentation for Parakeet; otherwise it measures
 whole-clip inference. `SPEAKEASY_FIXTURE_SPEED` defaults to one (real time); larger integers
-accelerate quality replays. `SPEAKEASY_FIXTURE_CLEANUP` selects `production` (the default) or `raw`;
-only raw mode accepts `SPEAKEASY_FIXTURE_CANDIDATE`, a settings file differing only in corrections
-and filler removal. The [public corpus replay](performance.md#public-corpus-replay) describes paired
-scoring and its latency limits. The [README](../README.md#build-and-verify) lists packaging scripts
-and native checks.
+accelerate quality replays. `SPEAKEASY_FIXTURE_CLEANUP` and `SPEAKEASY_FIXTURE_CANDIDATE` compare
+cleanup policies; the [public corpus replay](performance.md#public-corpus-replay) defines them and
+describes paired scoring and its latency limits. The [README](../README.md#build-and-verify) lists
+packaging scripts and native checks.
 
 Default checks cannot establish live microphone, screen capture, overlay placement, hooks, clipboard
 and editor acceptance, compositor behavior, or mixed-display frame pacing.

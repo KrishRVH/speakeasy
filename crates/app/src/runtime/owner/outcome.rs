@@ -1,6 +1,7 @@
-use speakeasy_core::machine::{Failure, Notice, Outcome};
+use speakeasy_core::machine::{Failure, Notice, Outcome, Refusal};
 use speakeasy_show::{Ending, NarrationLoss};
 
+use super::commands;
 use crate::runtime::{
     LOADING, SHOW_COPIED, SHOW_GONE,
     native::{Copied, Native, Restored},
@@ -26,7 +27,7 @@ const WITHHELD_HINT: &str = if cfg!(any(target_os = "macos", target_os = "window
 
 pub(super) fn message(outcome: &Outcome<Native>, notice: Option<&Notice<Native>>) -> String {
     let mut message = match outcome {
-        Outcome::NothingToPaste => "No dictation to paste yet.".into(),
+        Outcome::NothingToPaste => commands::refusal(Refusal::NothingToPaste).into(),
         Outcome::Copied(message) => message.clone(),
         Outcome::Withheld(notice) => format!("{notice}{WITHHELD_HINT}"),
         Outcome::Practiced => "Practice complete. Your words stay in Settings.".into(),

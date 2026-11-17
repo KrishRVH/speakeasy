@@ -77,13 +77,18 @@ fn restore_clipboard(saved: &[(u32, Vec<u8>)], mark: Option<NonZeroU32>) -> anyh
         return Ok(());
     }
     clipboard_win::raw::empty()?;
+    mark_private()?;
+    for (format, data) in saved {
+        clipboard_win::raw::set_without_clear(*format, data)?;
+    }
+    Ok(())
+}
+
+fn mark_private() -> anyhow::Result<()> {
     for name in PRIVATE_FORMATS {
         let format = clipboard_win::raw::register_format(name)
             .context("Cannot register a clipboard format")?;
         clipboard_win::raw::set_without_clear(format.get(), &0_u32.to_ne_bytes())?;
-    }
-    for (format, data) in saved {
-        clipboard_win::raw::set_without_clear(*format, data)?;
     }
     Ok(())
 }
@@ -102,11 +107,7 @@ fn write_clipboard(
         .transpose()?;
     let write = || -> anyhow::Result<()> {
         clipboard_win::raw::empty()?;
-        for name in PRIVATE_FORMATS {
-            let format = clipboard_win::raw::register_format(name)
-                .context("Cannot register a clipboard format")?;
-            clipboard_win::raw::set_without_clear(format.get(), &0_u32.to_ne_bytes())?;
-        }
+        mark_private()?;
         if let Some((image, png)) = image {
             clipboard_win::raw::set_without_clear(png.get(), &image.png)?;
             clipboard_win::raw::set_without_clear(clipboard_win::formats::CF_DIBV5, &image.dib)?;

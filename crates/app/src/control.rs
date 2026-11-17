@@ -15,7 +15,7 @@ use crate::{config::presets::validate_name, paths, transcript::style::Style};
 const VERSION: u8 = 1;
 pub(crate) const MAX_BYTES: usize = 4096;
 pub(crate) const MAX_REPLY_BYTES: usize = 65_535;
-pub(crate) const TIMEOUT: Duration = Duration::from_secs(2);
+const TIMEOUT: Duration = Duration::from_secs(2);
 const PRINT_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Clone, PartialEq, Eq, Serialize)]

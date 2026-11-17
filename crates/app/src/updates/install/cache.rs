@@ -18,7 +18,7 @@ pub(super) fn acquire(root: &Path) -> anyhow::Result<File> {
         .write(true)
         .create(true)
         .truncate(false)
-        .open(root.join("updates.lock"))
+        .open(root.join(crate::updates::LOCK))
         .context(CACHE_ACCESS)?;
 
     match lock.try_lock() {

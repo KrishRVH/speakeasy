@@ -133,7 +133,7 @@ impl Copies {
         Self { pending: None, wsl }
     }
 
-    pub(crate) fn is_busy(&self) -> bool {
+    fn is_busy(&self) -> bool {
         self.pending
             .as_ref()
             .is_some_and(|pending| !pending.is_finished())

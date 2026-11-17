@@ -1431,10 +1431,7 @@ impl<P: Payload> Machine<P> {
 
     fn end_session(&mut self, outcome: Outcome<P>, env: &mut impl Env<P>) {
         if let Some(mut session) = self.session.take() {
-            env.revoke(&session.permit);
-            if let Some(call) = session.take_caller() {
-                env.respond(call, Err(Refusal::Unheard));
-            }
+            close(&mut session, env);
         }
         self.gesture.complete();
         self.clear_warning();
@@ -1453,10 +1450,7 @@ impl<P: Payload> Machine<P> {
         let Some(mut session) = self.session.take() else {
             return;
         };
-        env.revoke(&session.permit);
-        if let Some(call) = session.take_caller() {
-            env.respond(call, Err(Refusal::Unheard));
-        }
+        close(&mut session, env);
         if session.is_show() {
             self.retire(Recorder::Screen, env);
         }
@@ -1637,12 +1631,9 @@ impl<P: Payload> Machine<P> {
         command: Command<P>,
         env: &mut impl Env<P>,
     ) -> ControlFlow<Halt> {
-        if let Command::Print(token) = command {
-            return self.print(now, call, token, env);
-        }
         let reply = match command {
             Command::Status => Ok(()),
-            Command::Print(_) => Err(Refusal::NotActive),
+            Command::Print(token) => return self.print(now, call, token, env),
             Command::Start(style) | Command::Capture(style) => {
                 if self.is_busy() {
                     Err(Refusal::Busy)
@@ -1724,6 +1715,13 @@ impl<P: Payload> Machine<P> {
             .as_ref()
             .filter(|session| session.is_dictation())
             .map(|session| session.id)
+    }
+}
+
+fn close<P: Payload>(session: &mut Session<P>, env: &mut impl Env<P>) {
+    env.revoke(&session.permit);
+    if let Some(call) = session.take_caller() {
+        env.respond(call, Err(Refusal::Unheard));
     }
 }
 

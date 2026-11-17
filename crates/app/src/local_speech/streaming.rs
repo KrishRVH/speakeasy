@@ -18,8 +18,7 @@ use super::{
 };
 use crate::{recognition_terms::Terms, runtime::ports::LiveAudio};
 
-const FAILED: &str =
-    "Continuous recognition stopped. Retrying this recording with the selected model.";
+const FAILED: &str = "Continuous recognition stopped.";
 const FINAL_TIMEOUT: Duration = Duration::from_secs(10);
 type Socket = WebSocketStream<TcpStream>;
 

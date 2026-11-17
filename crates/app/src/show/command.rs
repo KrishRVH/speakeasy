@@ -264,20 +264,12 @@ impl Command {
                 let directory = locate(&directory)?;
                 let entry = recall::Entry::open(&directory)
                     .with_context(|| format!("Cannot open Show {}", directory.display()))?;
-                output::inspect(&entry, store::directory().ok().as_deref(), json, out)?;
-                anyhow::ensure!(
-                    entry.health() == recall::Health::Ok,
-                    "The Show is damaged or unsupported; inspection lists the problems."
-                );
+                inspect(&entry, store::directory().ok().as_deref(), json, out)?;
             },
             Self::Wait { patience, json } => {
                 let parent = store::directory()?;
                 let entry = wait::next_saved(&parent, patience)?;
-                output::inspect(&entry, Some(&parent), json, out)?;
-                anyhow::ensure!(
-                    entry.health() == recall::Health::Ok,
-                    "The Show is damaged or unsupported; inspection lists the problems."
-                );
+                inspect(&entry, Some(&parent), json, out)?;
             },
             Self::Keep {
                 directory,
@@ -372,6 +364,20 @@ fn matching(focus: Option<Query>, occurrence: Option<usize>) -> anyhow::Result<O
         (_, Some(_)) => anyhow::bail!("--match requires --phrase"),
         (focus, None) => Ok(focus),
     }
+}
+
+fn inspect(
+    entry: &recall::Entry,
+    parent: Option<&Path>,
+    json: bool,
+    out: &mut impl io::Write,
+) -> anyhow::Result<()> {
+    output::inspect(entry, parent, json, out)?;
+    anyhow::ensure!(
+        entry.health() == recall::Health::Ok,
+        "The Show is damaged or unsupported; inspection lists the problems."
+    );
+    Ok(())
 }
 
 fn locate(show: &Path) -> anyhow::Result<PathBuf> {
