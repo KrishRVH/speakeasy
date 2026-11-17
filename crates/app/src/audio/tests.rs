@@ -5,10 +5,9 @@ use speakeasy_core::machine::Cue;
 use tokio::time::timeout;
 use zeroize::Zeroizing;
 
-use super::{pcm::SAMPLE_BYTES, stream::STALL, *};
+use super::{stream::STALL, *};
 use crate::{
     show::{Keeper, Kept},
-    sounds,
     testing::{PATIENCE, still_pending},
 };
 
@@ -535,11 +534,7 @@ fn pcm_chunks_wrap_clamp_invalid_samples_and_enforce_the_limit() -> anyhow::Resu
 
 #[test]
 fn a_cue_noticed_after_its_first_samples_arrive_still_counts_only_by_its_voice_band() {
-    let loud_show_cue: Vec<u8> = sounds::pcm(Cue::Show)
-        .as_chunks::<SAMPLE_BYTES>()
-        .0
-        .iter()
-        .flat_map(|pair| i16::from_le_bytes(*pair).saturating_mul(3).to_le_bytes())
+    let loud_show_cue: Vec<u8> = fixture::loud_cue(Cue::Show)
         .chain(std::iter::repeat_n(0, 96_000))
         .collect();
     let retained = |noticed: bool| {

@@ -1,8 +1,10 @@
 use std::num::NonZeroUsize;
 
 use serde::Serialize;
+use speakeasy_core::machine::Cue;
 
-use super::*;
+use super::{pcm::SAMPLE_BYTES, *};
+use crate::sounds;
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub(crate) struct Statistics {
@@ -144,4 +146,12 @@ pub(crate) fn square_wave(amplitude: i16) -> impl Iterator<Item = i16> {
     half.into_iter()
         .chain(half.map(i16::saturating_neg))
         .cycle()
+}
+
+pub(crate) fn loud_cue(cue: Cue) -> impl Iterator<Item = u8> {
+    sounds::pcm(cue)
+        .as_chunks::<SAMPLE_BYTES>()
+        .0
+        .iter()
+        .flat_map(|sample| i16::from_le_bytes(*sample).saturating_mul(3).to_le_bytes())
 }
