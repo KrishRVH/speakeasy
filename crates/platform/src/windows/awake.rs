@@ -39,15 +39,14 @@ impl Awake {
             request,
             set: Vec::new(),
         };
-        let wanted: &[POWER_REQUEST_TYPE] = match keep {
-            Keep::System => &[PowerRequestSystemRequired],
-            Keep::Display => &[PowerRequestSystemRequired, PowerRequestDisplayRequired],
-        };
-        for &kind in wanted {
-            if unsafe { PowerSetRequest(awake.request, kind) } == 0 {
-                return None;
-            }
-            awake.set.push(kind);
+        if unsafe { PowerSetRequest(awake.request, PowerRequestSystemRequired) } == 0 {
+            return None;
+        }
+        awake.set.push(PowerRequestSystemRequired);
+        if keep == Keep::Display
+            && unsafe { PowerSetRequest(awake.request, PowerRequestDisplayRequired) } != 0
+        {
+            awake.set.push(PowerRequestDisplayRequired);
         }
         Some(awake)
     }
@@ -64,14 +63,13 @@ impl Drop for Awake {
 
 #[cfg(test)]
 mod tests {
-    use super::{Awake, Keep};
+    use super::{Awake, Keep, PowerRequestSystemRequired};
 
     #[test]
-    fn windows_grants_and_releases_recording_power_requests() {
+    fn a_refused_display_request_still_keeps_the_system_awake() {
         let system = Awake::hold(Keep::System).expect("Windows refused the system request");
-        let display = Awake::hold(Keep::Display).expect("Windows refused the display request");
-        assert_eq!(display.set.len(), 2);
-        drop(system);
-        drop(display);
+        let display = Awake::hold(Keep::Display).expect("The system request was lost");
+        assert_eq!(system.set, [PowerRequestSystemRequired]);
+        assert_eq!(display.set.first(), Some(&PowerRequestSystemRequired));
     }
 }
