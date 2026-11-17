@@ -1,7 +1,7 @@
 use super::*;
 use crate::transcript::style::Case;
 
-fn status() -> Status {
+pub(crate) fn status() -> Status {
     Status {
         version: env!("CARGO_PKG_VERSION").into(),
         service: "running".into(),

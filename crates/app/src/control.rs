@@ -372,4 +372,4 @@ fn session(token: &str) -> anyhow::Result<String> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

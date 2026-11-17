@@ -1,22 +1,5 @@
 use super::*;
-use crate::{
-    control::{Command, Disposition, MAX_BYTES, Reply, Status},
-    transcript::style::Style,
-};
-
-fn status() -> Status {
-    Status {
-        version: env!("CARGO_PKG_VERSION").into(),
-        service: "running".into(),
-        phase: "idle".into(),
-        model: "ready".into(),
-        desktop_ready: true,
-        session: None,
-        style: Style::Prose,
-        preset: None,
-        last_dictation: false,
-    }
-}
+use crate::control::{Command, Disposition, MAX_BYTES, Reply, tests::status};
 
 fn next_call(requests: &Receiver<Event>) -> anyhow::Result<Call> {
     match next_event(requests)? {
@@ -48,9 +31,7 @@ fn control_waits_for_its_owner_and_preserves_the_reply() -> anyhow::Result<()> {
         "Admission was reported as completion"
     );
     assert!(call.is_live());
-    let mut accepted = status();
-    accepted.session = Some("0123456789abcdef-7".into());
-    call.respond(Reply::ok(accepted));
+    call.respond(Reply::ok(status()));
     let reply = client.join().unwrap();
     assert_eq!(reply.result, Disposition::Ok);
     assert_eq!(reply.session.as_deref(), Some("0123456789abcdef-7"));
