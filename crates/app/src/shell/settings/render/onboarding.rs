@@ -148,9 +148,11 @@ impl Settings {
             },
             Step::Prepare if self.engine_work.is_pausing() => ("Pausing download…", next, false),
             Step::Prepare | Step::Practice if self.saving.is_some() => ("Saving…", next, false),
-            Step::Prepare if !is_demo(ui.cx) && self.config.needs_engine() => {
-                ("Set up automatically · 0.8 GB", Action::Setup, true)
-            },
+            Step::Prepare if !is_demo(ui.cx) && self.config.needs_engine() => (
+                "Set up automatically · 0.8 GB",
+                Action::Setup,
+                !self.engine_work.is_busy(),
+            ),
             Step::Permissions | Step::Practice if !running => {
                 ("Retry dictation", Action::Resume, true)
             },

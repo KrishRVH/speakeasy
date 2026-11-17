@@ -214,7 +214,9 @@ module unless a test file is named.
   Unsupported fields and values stop loading and saving without replacing the file; saves preserve
   concurrent edits to current settings. One `text_delivery` choice controls insertion.
   [settings/speech.rs](../crates/app/src/shell/settings/speech.rs) reads the settings as a managed
-  model or the user's own engine, and switching engines clears the inactive engine's files.
+  model or the user's own engine, and switching engines clears the inactive engine's files. Settings
+  runs one engine job at a time: an open file choice, a model setup, and a pausing setup each refuse
+  the others, and a file chosen for an engine the user has since left is dropped.
   [config/presets.rs](../crates/app/src/config/presets.rs) stores bounded named dictation choices,
   validates them without opening inactive model paths, loads them into the settings, and matches
   them against the current settings. Its snapshot excludes microphone, delivery, shortcuts, sound,
@@ -335,11 +337,10 @@ module unless a test file is named.
   a repeated purge succeeds. Services pauses dictation, retires the runtime, and purges on an owned
   thread that Quit drains; nothing resumes until it exits, and a failed purge restores the previous
   settings. Settings refuses reset during setup, saves, or a held Windows update and refuses setup
-  while settings are unreadable, a reset runs, or an engine file choice is open; a file chosen for
-  an engine the user has since switched away from is dropped. On success it adopts default settings
-  as its saved baseline and starts automatic setup; as on a new install, the first complete save
-  enables dictation, even if it was paused. [reset/tests.rs](../crates/app/src/reset/tests.rs)
-  covers what stays, refusals, failure order, and linked folders. Update preparation holds the same
+  while settings are unreadable or a reset runs. On success it adopts default settings as its saved
+  baseline and starts automatic setup; as on a new install, the first complete save enables
+  dictation, even if it was paused. [reset/tests.rs](../crates/app/src/reset/tests.rs) covers what
+  stays, refusals, failure order, and linked folders. Update preparation holds the same
   `updates.lock` outside its removable cache; deleting payloads cannot replace a live lease.
 - **Tray and status**: [tray.rs](../crates/app/src/tray.rs), [tray/](../crates/app/src/tray),
   [status.rs](../crates/app/src/status.rs),
