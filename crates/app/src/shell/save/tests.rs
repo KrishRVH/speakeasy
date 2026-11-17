@@ -121,7 +121,11 @@ async fn a_revert_queued_behind_a_write_reaches_the_file() -> anyhow::Result<()>
     let first = queue
         .submit(draft(Theme::Iris), epoch)
         .context("The first save was queued")?;
-    assert!(queue.submit(draft(original.theme), epoch).is_none());
+    assert!(
+        queue.needs_save(&original),
+        "A revert made while the first write ran had nothing to save"
+    );
+    assert!(queue.submit(original.clone(), epoch).is_none());
     let revert = queue.finish(write_result(first).await?);
     let SaveProgress::Finished { error, .. } = queue.finish(write_result(revert).await?) else {
         bail!("The revert did not finish");
@@ -246,11 +250,15 @@ async fn a_draft_needs_saving_until_the_file_holds_it_or_a_write_is_making_it() 
     );
     let unwritable = Config {
         model: "missing.gguf".into(),
-        ..edited
+        ..edited.clone()
     };
     let write = queue
         .submit(unwritable.clone(), epoch)
         .context("The failing save was queued")?;
+    assert!(
+        queue.needs_save(&edited),
+        "A revert made while a later write ran had nothing to save"
+    );
     let SaveProgress::Finished { error, .. } = queue.finish(write_result(write).await?) else {
         bail!("The failing save did not finish");
     };

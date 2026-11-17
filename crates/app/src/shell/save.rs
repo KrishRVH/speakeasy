@@ -57,11 +57,11 @@ impl SaveQueue {
     }
 
     pub(super) fn needs_save(&self, draft: &Config) -> bool {
-        let saved = match &self.opened {
-            Some(opened) => opened == draft,
-            None => self.durable.contains(draft),
-        };
-        !saved && self.requested.as_ref() != Some(draft)
+        match (&self.requested, &self.opened) {
+            (Some(requested), _) => requested != draft,
+            (None, Some(opened)) => opened != draft,
+            (None, None) => !self.durable.contains(draft),
+        }
     }
 
     pub(super) fn submit(&mut self, draft: Config, epoch: ConfigEpoch) -> Option<SaveProgress> {
