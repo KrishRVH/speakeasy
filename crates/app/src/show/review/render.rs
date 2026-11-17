@@ -1270,7 +1270,6 @@ impl Review {
             return;
         }
         let row = self.library.position();
-        let frame = self.library.selected().map_or(0, |key| key.frame);
         let last = self
             .detail
             .as_ref()
@@ -1298,8 +1297,8 @@ impl Review {
                 self.library
                     .offer(row.map_or(0, |row| row.saturating_add(1))),
             )),
-            "left" => Some(Action::Frame(frame.saturating_sub(1))),
-            "right" => Some(Action::Frame(frame.saturating_add(1))),
+            "left" => Some(Action::Step(Direction::Back)),
+            "right" => Some(Action::Step(Direction::Forward)),
             "pageup" => Some(Action::Jump(Direction::Back)),
             "pagedown" => Some(Action::Jump(Direction::Forward)),
             "home" => Some(Action::Frame(0)),
