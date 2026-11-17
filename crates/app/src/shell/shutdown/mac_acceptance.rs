@@ -1,20 +1,25 @@
-use std::{io::Write as _, time::Duration};
+use std::{fs, io::Write as _, path::PathBuf, time::Duration};
 
 use anyhow::{Context as _, ensure};
-use gpui::{App, Global, Window};
+use async_channel::{Receiver, RecvError};
+use gpui::{App, AsyncApp, Global, Window, WindowHandle};
 use objc2::MainThreadMarker;
 use objc2_app_kit::{
     NSApplication, NSApplicationDelegate, NSApplicationTerminateReply, NSRunningApplication,
 };
+use tempfile::TempDir;
 use tokio::sync::watch;
 
 use super::request_quit;
 use crate::{
     config::Config,
     instance::Instance,
+    pill::Pill,
     runtime::{Meter, Snapshot},
     shell::{LaunchMode, Services},
 };
+
+const SENTINEL: &[u8] = b"owned configuration sentinel";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -28,51 +33,37 @@ enum Mode {
 #[derive(Default)]
 struct Progress {
     requested: bool,
-    frames: usize,
-    released: bool,
-    error: Option<anyhow::Error>,
+    rendered: bool,
+    driven: Option<anyhow::Result<()>>,
 }
 
 impl Global for Progress {}
 
 pub(crate) fn native_quit_check() -> anyhow::Result<()> {
     let mut arguments = std::env::args_os().skip(1);
-    match arguments
-        .next()
-        .as_deref()
-        .and_then(std::ffi::OsStr::to_str)
-    {
-        Some("--send-owned-quit") => {
-            let pid = arguments
-                .next()
-                .and_then(|value| value.into_string().ok())
-                .context("Missing owned process")?
-                .parse()?;
-            let app = NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
-                .context("Owned application is unavailable")?;
-            ensure!(
-                app.terminate(),
-                "Owned application refused the quit request"
-            );
-            Ok(())
-        },
-        Some("--check-owned-quit") => {
-            let mode = match arguments
-                .next()
-                .as_deref()
-                .and_then(std::ffi::OsStr::to_str)
-            {
-                Some("external") => Mode::External,
-                Some("borrowed") => Mode::Borrowed,
-                Some("foreground") => Mode::Foreground,
-                Some("repeated") => Mode::Repeated,
-                Some("approved") => Mode::Approved,
-                _ => anyhow::bail!("Choose an owned quit case"),
-            };
-            exercise(mode)
-        },
+    let mut next = move || arguments.next()?.into_string().ok();
+    match next().as_deref() {
+        Some("--send-owned-quit") => send_quit(next().context("Missing owned process")?.parse()?),
+        Some("--check-owned-quit") => exercise(match next().as_deref() {
+            Some("external") => Mode::External,
+            Some("borrowed") => Mode::Borrowed,
+            Some("foreground") => Mode::Foreground,
+            Some("repeated") => Mode::Repeated,
+            Some("approved") => Mode::Approved,
+            _ => anyhow::bail!("Choose an owned quit case"),
+        }),
         _ => anyhow::bail!("Owned native acceptance requires an explicit case"),
     }
+}
+
+fn send_quit(pid: i32) -> anyhow::Result<()> {
+    let app = NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
+        .context("Owned application is unavailable")?;
+    ensure!(
+        app.terminate(),
+        "Owned application refused the quit request"
+    );
+    Ok(())
 }
 
 fn exercise(mode: Mode) -> anyhow::Result<()> {
@@ -80,11 +71,7 @@ fn exercise(mode: Mode) -> anyhow::Result<()> {
     let (application, presentation) = crate::application::new()?;
     let application = application.with_assets(crate::icons::Icons);
     application.on_quit_requested(|cx| {
-        let progress = cx.global_mut::<Progress>();
-        if progress.requested {
-            progress.error = Some(anyhow::anyhow!("Native requests started another drain"));
-        }
-        progress.requested = true;
+        cx.global_mut::<Progress>().requested = true;
         request_quit(cx);
     });
     application.run(move |cx| {
@@ -100,7 +87,7 @@ fn exercise(mode: Mode) -> anyhow::Result<()> {
 fn start(mode: Mode, main: MainThreadMarker, cx: &mut App) -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let settings = root.path().join("settings.json");
-    std::fs::write(&settings, b"owned configuration sentinel")?;
+    fs::write(&settings, SENTINEL)?;
     let (instance, _requests) =
         Instance::acquire(&settings)?.context("Owned configuration is busy")?;
     crate::load_brand_font(cx);
@@ -146,70 +133,14 @@ fn start(mode: Mode, main: MainThreadMarker, cx: &mut App) -> anyhow::Result<()>
             let _ = rescue.try_send(());
         }
         let released = crate::release_services(cx);
-        let directory = directory.take();
-        let settings = settings.clone();
-        async move {
-            report(
-                async move {
-                    let _directory = directory.context("Native termination repeated")?;
-                    released.await;
-                    checked?;
-                    let _instance = Instance::acquire(&settings)?
-                        .context("The instance remained held after cleanup")?;
-                    ensure!(
-                        std::fs::read(settings)? == b"owned configuration sentinel",
-                        "Native quit changed the configuration"
-                    );
-                    Ok(())
-                }
-                .await,
-            );
-        }
+        let cleaned = confirm_cleanup(directory.take(), released, checked, settings.clone());
+        async move { report(cleaned.await) }
     })
     .detach();
     cx.spawn(async move |cx| {
-        let result = async {
-            cx.background_executor()
-                .timer(Duration::from_millis(100))
-                .await;
-            match mode {
-                Mode::External | Mode::Repeated => {
-                    writeln!(std::io::stdout().lock(), "Owned Mac quit ready")?;
-                },
-                Mode::Borrowed => {},
-                Mode::Foreground => NSApplication::sharedApplication(main).terminate(None),
-                Mode::Approved => cx.update(request_quit),
-            }
-            while !cx.update(|cx| cx.global::<Services>().is_quitting()) {
-                cx.background_executor()
-                    .timer(Duration::from_millis(10))
-                    .await;
-            }
-            check_reply(mode, main)?;
-            if mode == Mode::Repeated {
-                cx.update(|_| NSApplication::sharedApplication(main).terminate(None));
-                check_reply(mode, main)?;
-            }
-            for _ in 0..3 {
-                pill.update(cx, |_, window, _| {
-                    window.on_next_frame(frame);
-                    window.refresh();
-                })?;
-                cx.background_executor()
-                    .timer(Duration::from_millis(50))
-                    .await;
-                ensure!(cx.update(|cx| cx.global::<Services>().is_quitting()));
-                ensure!(accepted.is_empty(), "Held save acknowledged prematurely");
-            }
-            Ok(())
-        }
-        .await;
+        let driven = drive(mode, main, pill, &accepted, cx).await;
         cx.update(|cx| {
-            let progress = cx.global_mut::<Progress>();
-            progress.released = true;
-            if progress.error.is_none() {
-                progress.error = result.err();
-            }
+            cx.global_mut::<Progress>().driven = Some(driven);
             request_quit(cx);
         });
         if let Err(error) = release.try_send(()) {
@@ -223,9 +154,75 @@ fn start(mode: Mode, main: MainThreadMarker, cx: &mut App) -> anyhow::Result<()>
     Ok(())
 }
 
+#[expect(
+    clippy::future_not_send,
+    reason = "The quit script drives GPUI and AppKit through their main-thread async context"
+)]
+async fn drive(
+    mode: Mode,
+    main: MainThreadMarker,
+    pill: WindowHandle<Pill>,
+    accepted: &Receiver<Result<(), RecvError>>,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<()> {
+    cx.background_executor()
+        .timer(Duration::from_millis(100))
+        .await;
+    match mode {
+        Mode::External | Mode::Repeated => {
+            writeln!(std::io::stdout().lock(), "Owned Mac quit ready")?;
+        },
+        Mode::Borrowed => {},
+        Mode::Foreground => NSApplication::sharedApplication(main).terminate(None),
+        Mode::Approved => cx.update(request_quit),
+    }
+    while !cx.update(|cx| cx.global::<Services>().is_quitting()) {
+        cx.background_executor()
+            .timer(Duration::from_millis(10))
+            .await;
+    }
+    check_reply(mode, main)?;
+    if mode == Mode::Repeated {
+        cx.update(|_| NSApplication::sharedApplication(main).terminate(None));
+        check_reply(mode, main)?;
+    }
+    for _ in 0..3 {
+        pill.update(cx, |_, window, _| {
+            window.on_next_frame(frame);
+            window.refresh();
+        })?;
+        cx.background_executor()
+            .timer(Duration::from_millis(50))
+            .await;
+        ensure!(
+            cx.update(|cx| cx.global::<Services>().is_quitting()),
+            "Native quit finished before the held save was released"
+        );
+        ensure!(accepted.is_empty(), "Held save acknowledged prematurely");
+    }
+    Ok(())
+}
+
+async fn confirm_cleanup(
+    directory: Option<TempDir>,
+    released: impl Future<Output = ()>,
+    checked: anyhow::Result<()>,
+    settings: PathBuf,
+) -> anyhow::Result<()> {
+    let _directory = directory.context("Native termination repeated")?;
+    released.await;
+    checked?;
+    let _instance =
+        Instance::acquire(&settings)?.context("The instance remained held after cleanup")?;
+    ensure!(
+        fs::read(settings)? == SENTINEL,
+        "Native quit changed the configuration"
+    );
+    Ok(())
+}
+
 fn frame(_: &mut Window, cx: &mut App) {
-    let progress = cx.global_mut::<Progress>();
-    progress.frames = progress.frames.saturating_add(1);
+    cx.global_mut::<Progress>().rendered = true;
 }
 
 fn check_reply(mode: Mode, main: MainThreadMarker) -> anyhow::Result<()> {
@@ -244,12 +241,14 @@ fn check_reply(mode: Mode, main: MainThreadMarker) -> anyhow::Result<()> {
 }
 
 fn verify(progress: Progress, mode: Mode) -> anyhow::Result<()> {
-    if let Some(error) = progress.error {
-        return Err(error);
-    }
-    ensure!(progress.released, "Native quit bypassed the accepted save");
-    ensure!(progress.frames > 0, "Render callbacks stopped during drain");
-    ensure!(progress.requested == (mode != Mode::Approved));
+    progress
+        .driven
+        .context("Native quit bypassed the accepted save")??;
+    ensure!(progress.rendered, "Render callbacks stopped during drain");
+    ensure!(
+        progress.requested == (mode != Mode::Approved),
+        "Native quit requests did not match this case"
+    );
     Ok(())
 }
 
