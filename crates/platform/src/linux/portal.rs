@@ -566,7 +566,7 @@ async fn start_remote_desktop(
         .await?;
     Ok(Remote {
         session,
-        sender: ei::Sender::connect(libei, descriptor.into(), paste == LinuxPaste::Terminal)?,
+        sender: ei::Sender::connect(libei, descriptor.into(), paste)?,
         shares_clipboard,
     })
 }

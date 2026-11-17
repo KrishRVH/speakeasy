@@ -178,11 +178,9 @@ impl Paster {
     }
 
     fn paste_copied(&self, request: &Insertion, owner: Window) -> anyhow::Result<Inserted> {
-        let terminal = self.options.paste == LinuxPaste::Terminal;
-
-        let Some(chord) =
-            PasteChord::resolve(terminal, |symbol| self.keyboard.unshifted_keycode(symbol))
-        else {
+        let Some(chord) = PasteChord::resolve(self.options.paste, |symbol| {
+            self.keyboard.unshifted_keycode(symbol)
+        }) else {
             return Ok(NO_PASTE_BINDING);
         };
         let connection = &self.clipboard.connection;
