@@ -32,9 +32,12 @@ impl Terms {
         })
     }
 
-    pub(crate) fn remove(&mut self, index: usize) {
+    pub(crate) fn remove(&mut self, index: usize) -> bool {
         if index < self.0.len() {
             self.0.remove(index);
+            true
+        } else {
+            false
         }
     }
 
@@ -87,6 +90,18 @@ mod tests {
             assert_eq!(terms, before);
         }
         assert!(!format!("{terms:?}").contains("Private"));
+        Ok(())
+    }
+
+    #[test]
+    fn removal_reports_whether_the_hints_changed() -> anyhow::Result<()> {
+        let mut terms = Terms::default();
+        terms.add("Kubernetes")?;
+        assert!(!terms.remove(1));
+        assert_eq!(terms.phrases(), ["Kubernetes"]);
+        assert!(terms.remove(0));
+        assert!(!terms.remove(0));
+        assert_eq!(terms, Terms::default());
         Ok(())
     }
 }

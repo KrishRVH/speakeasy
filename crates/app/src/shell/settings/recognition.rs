@@ -72,8 +72,7 @@ impl Settings {
                 }
             },
             Edit::Remove(index) => {
-                if index < self.config.recognition_terms.phrases().len() {
-                    self.config.recognition_terms.remove(index);
+                if self.config.recognition_terms.remove(index) {
                     self.edited(cx);
                 }
             },
