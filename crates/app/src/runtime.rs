@@ -494,7 +494,9 @@ impl Ports for Desktop {
     }
 }
 
-pub(crate) type RecoveryReceipt = oneshot::Receiver<Result<SavedShow, String>>;
+pub(crate) type RecoveryReceipt = oneshot::Receiver<RecoveryResult>;
+
+type RecoveryResult = Result<SavedShow, String>;
 
 pub(crate) enum PracticeEvent {
     Ready,
@@ -504,7 +506,7 @@ pub(crate) enum PracticeEvent {
 
 struct Recovery {
     interrupted: Interrupted,
-    completed: oneshot::Sender<Result<SavedShow, String>>,
+    completed: oneshot::Sender<RecoveryResult>,
 }
 
 struct Wiring<P> {

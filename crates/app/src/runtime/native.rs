@@ -14,7 +14,7 @@ use tokio::{
 use zeroize::Zeroizing;
 
 use super::{
-    PracticeEvent,
+    PracticeEvent, RecoveryResult,
     ports::{Footage, LiveAudio, Partition, Preservation, Published, Sealed, Unchosen},
 };
 use crate::{
@@ -44,7 +44,7 @@ impl Payload for Native {
     type Permit = InsertPermit;
     type Practice = mpsc::Sender<PracticeEvent>;
     type Range = Range<usize>;
-    type Receipt = oneshot::Sender<Result<SavedShow, String>>;
+    type Receipt = oneshot::Sender<RecoveryResult>;
     type Recovered = Restored;
     type Saved = Copied;
     type Scope = Scope;

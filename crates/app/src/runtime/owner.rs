@@ -31,7 +31,8 @@ use tokio::{
 use zeroize::Zeroizing;
 
 use super::{
-    Directive, Meter, PracticeEvent, Recovery, Report, Snapshot, SnapshotEpoch, Wiring,
+    Directive, Meter, PracticeEvent, Recovery, RecoveryResult, Report, Snapshot, SnapshotEpoch,
+    Wiring,
     device::Device,
     native::{self, Clip, Delivered, Native},
     now,
@@ -521,7 +522,7 @@ impl<P: Ports> Env<Native> for World<P> {
         &mut self,
         publication: Publication<Native>,
         permit: &InsertPermit,
-        receipt: Option<oneshot::Sender<Result<SavedShow, String>>>,
+        receipt: Option<oneshot::Sender<RecoveryResult>>,
     ) {
         let Publication {
             mut footage,
@@ -578,7 +579,7 @@ impl<P: Ports> Env<Native> for World<P> {
 
     fn refuse_recovery(
         &mut self,
-        receipt: oneshot::Sender<Result<SavedShow, String>>,
+        receipt: oneshot::Sender<RecoveryResult>,
         failure: &Failure<Native>,
     ) {
         #[expect(
