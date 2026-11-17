@@ -56,6 +56,14 @@ fn a_mark_cannot_declare_inside_out_bounds() {
 }
 
 #[test]
+fn a_sample_past_the_recording_cannot_be_annotated() {
+    let scene = Annotations::new(&recording(Vec::new()), &[]).unwrap();
+    let paint = |at| scene.paint(&mut blank(), at, VIEW, &typeface(), || false);
+    assert!(paint(Duration::from_secs(3)).is_ok());
+    assert!(paint(Duration::from_secs(3) + Duration::from_nanos(1)).is_err());
+}
+
+#[test]
 fn cancellation_between_primitives_leaves_the_original_frame_untouched() {
     let recording = recording(vec![
         stroke(&[(0.1, 0.3, 100), (0.8, 0.3, 200)]),

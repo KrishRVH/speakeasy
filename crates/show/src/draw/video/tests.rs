@@ -221,17 +221,6 @@ fn actions_wait_for_release_and_incompatible_coordinates_are_omitted() {
             }
         )
     );
-    assert!(
-        scene
-            .paint(
-                &mut blank(),
-                Duration::from_nanos(1_000_000_001),
-                VIEW,
-                &typeface(),
-                || false
-            )
-            .is_err()
-    );
 }
 
 #[test]
