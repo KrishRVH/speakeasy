@@ -204,8 +204,9 @@ async fn unknown_checkpoint_state_precedes_composition_and_respects_cancellation
         let result = publish(
             Publication {
                 footage: Rehearsal::new(80, 60).finish(500),
-                checkpoint: Some(crate::show::Checkpointing::Writing(keeper)),
-                origin: Origin::Live,
+                origin: Origin::Live {
+                    checkpoint: Some(crate::show::Checkpointing::Writing(keeper)),
+                },
             },
             permit,
             Lookup::spawn(|| None, crate::testing::PATIENCE),
@@ -261,8 +262,7 @@ async fn unavailable_checkpoint_preserves_in_memory_publication_and_cancellation
         let result = publish_with(
             Handoff::default(),
             narrated(footage, narration.clone(), None),
-            checkpoint,
-            Origin::Live,
+            Origin::Live { checkpoint },
             &permit,
             || Ok(root.path().to_owned()),
             |_| {
@@ -311,8 +311,7 @@ fn a_show_publishes_a_complete_private_bundle() -> anyhow::Result<()> {
     let published = publish_with(
         Handoff::default(),
         narrated(footage, narration.clone(), None),
-        None,
-        Origin::Live,
+        Origin::Live { checkpoint: None },
         &permit,
         || Ok(shows.clone()),
         |summary| {
@@ -403,8 +402,7 @@ fn only_a_screen_show_crops_its_frames_to_the_activity() -> anyhow::Result<()> {
                 framing,
                 ..show.finish(4_000)
             },
-            None,
-            Origin::Live,
+            Origin::Live { checkpoint: None },
             &permit,
             || Ok(root.path().to_owned()),
             |_| Ok(()),
@@ -449,8 +447,7 @@ fn a_show_that_cannot_be_copied_stays_saved() -> anyhow::Result<()> {
     let published = publish_with(
         Handoff::default(),
         narrated(footage, narration, None),
-        None,
-        Origin::Live,
+        Origin::Live { checkpoint: None },
         &permit,
         || Ok(shows.clone()),
         |_| bail!("Another app holds the clipboard"),
@@ -495,8 +492,7 @@ fn a_cancelled_show_never_reaches_the_disk_or_wsl() -> anyhow::Result<()> {
             wsl: Some(&wsl),
         },
         narrated(footage, narration, None),
-        None,
-        Origin::Live,
+        Origin::Live { checkpoint: None },
         &permit,
         unprepared,
         uncopied,
@@ -525,8 +521,7 @@ fn a_show_cancelled_before_staging_never_writes_its_files() -> anyhow::Result<()
     let published = publish_with(
         Handoff::default(),
         narrated(footage, narration, None),
-        None,
-        Origin::Live,
+        Origin::Live { checkpoint: None },
         &permit,
         cancel_once_composed,
         uncopied,
@@ -545,8 +540,7 @@ fn a_show_that_lost_its_narration_says_why_in_its_files() -> anyhow::Result<()> 
     let published = publish_with(
         Handoff::default(),
         narrated(footage, Narration::default(), Some(lost)),
-        None,
-        Origin::Live,
+        Origin::Live { checkpoint: None },
         &permit,
         || Ok(shows.path().to_owned()),
         |summary| {
@@ -746,8 +740,7 @@ fn retrieval_is_advertised_only_when_both_source_and_command_are_available() -> 
                 wsl: None,
             },
             narrated(footage, narration, None),
-            None,
-            Origin::Live,
+            Origin::Live { checkpoint: None },
             &permit,
             || Ok(root.path().join("shows")),
             |summary| {
@@ -801,8 +794,7 @@ fn a_published_summary_names_the_folder_the_wsl_lookup_maps() -> anyhow::Result<
             wsl: Some(&wsl),
         },
         narrated(footage, narration, None),
-        None,
-        Origin::Live,
+        Origin::Live { checkpoint: None },
         &permit,
         || Ok(root.path().join("shows")),
         |summary| {

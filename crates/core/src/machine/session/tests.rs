@@ -52,7 +52,12 @@ fn publication_closes_producers_before_it_hands_over_the_checkpoint() {
         }]
     );
     let publication = log.published.unwrap();
-    assert_eq!(publication.checkpoint, Some("checkpoint"));
+    assert!(matches!(
+        publication.origin,
+        Origin::Live {
+            checkpoint: Some("checkpoint")
+        }
+    ));
     assert_eq!(publication.footage, "footage");
 }
 

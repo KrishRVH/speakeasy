@@ -51,8 +51,9 @@ async fn failed_or_cancelled_narrated_copy_keeps_new_narration_recoverable() -> 
             publish_with(
                 Handoff::default(),
                 captured,
-                Some(checkpoint),
-                Origin::Live,
+                Origin::Live {
+                    checkpoint: Some(checkpoint)
+                },
                 &active,
                 || Ok(root.path().to_owned()),
                 |_| Ok(())
@@ -78,8 +79,10 @@ async fn failed_or_cancelled_narrated_copy_keeps_new_narration_recoverable() -> 
         let result = publish_with(
             Handoff::default(),
             captured,
-            Some(reopened.checkpoint),
-            Origin::Recovered { pending: true },
+            Origin::Recovered {
+                checkpoint: reopened.checkpoint,
+                pending: true,
+            },
             &active,
             || bail!("Synthetic save failure"),
             uncopied,
@@ -120,8 +123,9 @@ async fn durable_bundle_retires_checkpoint_even_when_narration_checkpoint_write_
         publish_with(
             Handoff::default(),
             captured,
-            Some(checkpoint),
-            Origin::Live,
+            Origin::Live {
+                checkpoint: Some(checkpoint)
+            },
             &active,
             || Ok(root.path().to_owned()),
             |_| Ok(())
@@ -159,8 +163,9 @@ async fn only_audio_that_may_hold_speech_is_kept_for_retry_or_as_voice() -> anyh
         } = publish_with(
             Handoff::default(),
             captured,
-            Some(checkpoint),
-            Origin::Live,
+            Origin::Live {
+                checkpoint: Some(checkpoint),
+            },
             &active,
             || Ok(root.path().to_owned()),
             |_| Ok(()),

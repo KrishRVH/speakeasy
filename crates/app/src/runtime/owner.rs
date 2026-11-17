@@ -527,7 +527,6 @@ impl<P: Ports> Env<Native> for World<P> {
             mut footage,
             narration,
             loss,
-            checkpoint,
             origin,
         } = publication;
         footage.recording.narration = narration;
@@ -535,10 +534,15 @@ impl<P: Ports> Env<Native> for World<P> {
         let publication = self.ports.publish(
             show::Publication {
                 footage: *footage,
-                checkpoint,
                 origin: match origin {
-                    machine::Origin::Live => show::Origin::Live,
-                    machine::Origin::Recovered { pending } => show::Origin::Recovered { pending },
+                    machine::Origin::Live { checkpoint } => show::Origin::Live { checkpoint },
+                    machine::Origin::Recovered {
+                        checkpoint,
+                        pending,
+                    } => show::Origin::Recovered {
+                        checkpoint,
+                        pending,
+                    },
                 },
             },
             permit.clone(),

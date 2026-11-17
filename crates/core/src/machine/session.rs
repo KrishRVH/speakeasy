@@ -63,8 +63,22 @@ pub enum Recognized<P: Payload> {
 
 #[cfg_attr(test, derive(Clone, Debug))]
 pub enum Origin<P: Payload> {
-    Live,
-    Recovered { pending: P::Pending },
+    Live {
+        checkpoint: Option<P::Checkpoint>,
+    },
+    Recovered {
+        checkpoint: P::Checkpoint,
+        pending: P::Pending,
+    },
+}
+
+impl<P: Payload> Origin<P> {
+    fn into_checkpoint(self) -> Option<P::Checkpoint> {
+        match self {
+            Self::Live { checkpoint } => checkpoint,
+            Self::Recovered { checkpoint, .. } => Some(checkpoint),
+        }
+    }
 }
 
 #[cfg_attr(test, derive(Clone, Debug))]
@@ -72,7 +86,6 @@ pub struct Publication<P: Payload> {
     pub footage: P::Footage,
     pub narration: P::Narration,
     pub loss: Option<NarrationLoss>,
-    pub checkpoint: Option<P::Checkpoint>,
     pub origin: Origin<P>,
 }
 
@@ -87,7 +100,6 @@ pub(super) struct Show<P: Payload> {
     screen: Screen<P>,
     audio: Option<P::AudioLog>,
     frames: Option<P::FrameLog>,
-    checkpoint: Option<P::Checkpoint>,
     disposition: Disposition,
     origin: Origin<P>,
 }
@@ -105,9 +117,8 @@ impl<P: Payload> Show<P> {
             screen,
             audio: None,
             frames: None,
-            checkpoint: None,
             disposition: Disposition::Unfinished,
-            origin: Origin::Live,
+            origin: Origin::Live { checkpoint: None },
         }
     }
 
@@ -256,9 +267,11 @@ impl<P: Payload> Session<P> {
             Recognized::Narration { narration, loss } => Stage::AwaitingFootage { narration, loss },
         };
         self.purpose = Purpose::Show(Show {
-            checkpoint: Some(checkpoint),
             disposition: Disposition::Finished,
-            origin: Origin::Recovered { pending },
+            origin: Origin::Recovered {
+                checkpoint,
+                pending,
+            },
             ..Show::new(Screen::Recorded(footage))
         });
     }
@@ -271,10 +284,16 @@ impl<P: Payload> Session<P> {
     }
 
     pub(super) fn keep(&mut self, kept: Kept<P>) {
-        if let Some(show) = self.show_mut() {
-            show.checkpoint = Some(kept.checkpoint);
-            show.audio = Some(kept.audio);
-            show.frames = Some(kept.frames);
+        if let Some(Show {
+            origin: Origin::Live { checkpoint },
+            audio,
+            frames,
+            ..
+        }) = self.show_mut()
+        {
+            *checkpoint = Some(kept.checkpoint);
+            *audio = Some(kept.audio);
+            *frames = Some(kept.frames);
         }
     }
 
@@ -623,14 +642,12 @@ impl<P: Payload> Session<P> {
         let narration = mem::take(narration);
         let loss = *loss;
         show.close_producers();
-        let origin = mem::replace(&mut show.origin, Origin::Live);
-        let checkpoint = show.checkpoint.take();
+        let origin = mem::replace(&mut show.origin, Origin::Live { checkpoint: None });
         env.publish(
             Publication {
                 footage,
                 narration,
                 loss,
-                checkpoint,
                 origin,
             },
             &self.permit,
@@ -658,7 +675,7 @@ impl<P: Payload> Session<P> {
             Disposition::Unfinished | Disposition::Forfeited => Release::Discard,
         };
         show.close_producers();
-        let Some(checkpoint) = show.checkpoint else {
+        let Some(checkpoint) = show.origin.into_checkpoint() else {
             return false;
         };
         env.release(self.id, checkpoint, release);

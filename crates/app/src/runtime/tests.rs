@@ -261,11 +261,11 @@ impl Ports for FakePorts {
         publication: show::Publication,
         permit: InsertPermit,
     ) -> impl Future<Output = anyhow::Result<Published>> + Send + 'static {
-        let show::Publication {
-            footage,
-            checkpoint,
-            origin,
-        } = publication;
+        let show::Publication { footage, origin } = publication;
+        let (checkpoint, recovered) = match origin {
+            show::Origin::Live { checkpoint } => (checkpoint, false),
+            show::Origin::Recovered { checkpoint, .. } => (Some(checkpoint), true),
+        };
         let narration = footage.recording.narration.clone();
         let lost = footage.recording.narration_lost;
         let recovery = self.show_recovery.clone();
@@ -278,7 +278,7 @@ impl Ports for FakePorts {
             if let Some(checkpoint) = checkpoint {
                 checkpoint.release(show::Release::Keep(None)).await?;
             }
-            if matches!(origin, show::Origin::Recovered { .. }) {
+            if recovered {
                 if let Some(gate) = recovery {
                     gate.pass(permit.clone()).await?;
                 }

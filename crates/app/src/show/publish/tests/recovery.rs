@@ -175,8 +175,9 @@ async fn revoking_finished_publication_or_recovery_keeps_its_checkpoint() -> any
         publish_with(
             Handoff::default(),
             captured,
-            Some(checkpoint),
-            Origin::Live,
+            Origin::Live {
+                checkpoint: Some(checkpoint)
+            },
             &revoked,
             || bail!("Cancelled publication prepared storage"),
             uncopied,
@@ -198,8 +199,9 @@ async fn failed_publication_keeps_recoverable_frames_and_success_cleans_up() -> 
         publish_with(
             Handoff::default(),
             footage(&checkpoint)?,
-            Some(checkpoint),
-            Origin::Live,
+            Origin::Live {
+                checkpoint: Some(checkpoint)
+            },
             &active,
             || bail!("Synthetic disk failure"),
             uncopied,
@@ -216,8 +218,9 @@ async fn failed_publication_keeps_recoverable_frames_and_success_cleans_up() -> 
         publish_with(
             Handoff::default(),
             captured,
-            Some(checkpoint),
-            Origin::Live,
+            Origin::Live {
+                checkpoint: Some(checkpoint)
+            },
             &active,
             || Ok(parent.path().to_owned()),
             |_| Ok(())
@@ -243,8 +246,7 @@ fn optional_source_failure_still_saves_selected_keyframes_and_reports_the_loss()
     let result = publish_with(
         Handoff::default(),
         narrated(footage, narration, None),
-        None,
-        Origin::Live,
+        Origin::Live { checkpoint: None },
         &permit,
         || Ok(root.path().to_owned()),
         |_| Ok(()),
@@ -281,8 +283,8 @@ fn recover_with(
     publish_with(
         Handoff::default(),
         reopened.footage,
-        Some(reopened.checkpoint),
         Origin::Recovered {
+            checkpoint: reopened.checkpoint,
             pending: reopened.pending,
         },
         permit,

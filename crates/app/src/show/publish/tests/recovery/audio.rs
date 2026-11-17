@@ -51,8 +51,9 @@ async fn failed_save_keeps_durable_narration_and_original_voice() -> anyhow::Res
         publish_with(
             Handoff::default(),
             captured,
-            Some(checkpoint),
-            Origin::Live,
+            Origin::Live {
+                checkpoint: Some(checkpoint)
+            },
             &permit,
             || bail!("Synthetic bundle failure"),
             uncopied,
@@ -96,8 +97,9 @@ async fn pending_retry_preserves_edits_and_failure_does_not_publish_another_copy
     } = publish_with(
         Handoff::default(),
         captured,
-        Some(checkpoint),
-        Origin::Live,
+        Origin::Live {
+            checkpoint: Some(checkpoint),
+        },
         &active,
         || Ok(root.path().to_owned()),
         |_| Ok(()),
@@ -127,8 +129,10 @@ async fn pending_retry_preserves_edits_and_failure_does_not_publish_another_copy
         publish_with(
             Handoff::default(),
             captured,
-            Some(reopened.checkpoint),
-            Origin::Recovered { pending: true },
+            Origin::Recovered {
+                checkpoint: reopened.checkpoint,
+                pending: true
+            },
             &retry,
             || panic!("A failed retry prepared another bundle"),
             uncopied,
@@ -153,8 +157,10 @@ async fn pending_retry_preserves_edits_and_failure_does_not_publish_another_copy
     } = publish_with(
         Handoff::default(),
         captured,
-        Some(reopened.checkpoint),
-        Origin::Recovered { pending: true },
+        Origin::Recovered {
+            checkpoint: reopened.checkpoint,
+            pending: true,
+        },
         &retry,
         || Ok(root.path().to_owned()),
         uncopied,
@@ -196,8 +202,9 @@ async fn kept_bundle_cannot_extend_audio_expiry_and_discard_audio_leaves_it_unto
         } = publish_with(
             Handoff::default(),
             captured,
-            Some(checkpoint),
-            Origin::Live,
+            Origin::Live {
+                checkpoint: Some(checkpoint),
+            },
             &active,
             || Ok(root.path().to_owned()),
             |_| Ok(()),

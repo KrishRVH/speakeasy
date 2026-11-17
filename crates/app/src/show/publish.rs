@@ -8,24 +8,51 @@ use speakeasy_platform::InsertPermit;
 use speakeasy_show::{Framing, Location, NarrationLoss, Typeface, compose, select};
 
 use super::{
-    Checkpoint, Interrupted, SavedShow, recorder::NOTHING_RECORDED, store, store::checkpoint,
-    wsl::Lookup,
+    Checkpoint, Checkpointing, Interrupted, SavedShow, recorder::NOTHING_RECORDED, store,
+    store::checkpoint, wsl::Lookup,
 };
 use crate::runtime::ports::{Footage, PUBLISH_STOPPED, Preservation, Published};
 
 pub(crate) struct Publication {
     pub footage: Footage,
-    pub checkpoint: Option<super::Checkpointing>,
-    pub origin: Origin,
+    pub origin: Origin<Checkpointing>,
 }
 
-#[derive(Clone, Copy, Default)]
-pub(crate) enum Origin {
-    #[default]
-    Live,
-    Recovered {
-        pending: bool,
-    },
+pub(crate) enum Origin<C> {
+    Live { checkpoint: Option<C> },
+    Recovered { checkpoint: C, pending: bool },
+}
+
+impl<C> Origin<C> {
+    const fn checkpoint(&self) -> Option<&C> {
+        match self {
+            Self::Live { checkpoint } => checkpoint.as_ref(),
+            Self::Recovered { checkpoint, .. } => Some(checkpoint),
+        }
+    }
+}
+
+impl Origin<Checkpointing> {
+    async fn close(self) -> anyhow::Result<Origin<Checkpoint>> {
+        Ok(match self {
+            Self::Live { checkpoint } => Origin::Live {
+                checkpoint: match checkpoint {
+                    Some(checkpoint) => checkpoint.close().await?,
+                    None => None,
+                },
+            },
+            Self::Recovered {
+                checkpoint,
+                pending,
+            } => Origin::Recovered {
+                checkpoint: checkpoint
+                    .close()
+                    .await?
+                    .context("Show checkpoint stopped before returning its files")?,
+                pending,
+            },
+        })
+    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -53,23 +80,15 @@ pub(crate) async fn publish(
     permit: InsertPermit,
     wsl: Lookup,
 ) -> anyhow::Result<Published> {
-    let Publication {
-        footage,
-        checkpoint,
-        origin,
-    } = publication;
-
-    let checkpoint = match checkpoint {
-        Some(checkpoint) => match checkpoint.close().await {
-            Ok(checkpoint) => checkpoint,
-            Err(_cancelled) if !permit.active() => return Ok(Published::Cancelled),
-            Err(error) => {
-                return Err(error.context(
-                    "The Show could not be saved because its checkpoint failed. Check Shows for recoverable footage.",
-                ));
-            },
+    let Publication { footage, origin } = publication;
+    let origin = match origin.close().await {
+        Ok(origin) => origin,
+        Err(_cancelled) if !permit.active() => return Ok(Published::Cancelled),
+        Err(error) => {
+            return Err(error.context(
+                "The Show could not be saved because its checkpoint failed. Check Shows for recoverable footage.",
+            ));
         },
-        None => None,
     };
     tokio::task::spawn_blocking(move || {
         let command = crate::paths::command();
@@ -79,7 +98,6 @@ pub(crate) async fn publish(
                 wsl: Some(&wsl),
             },
             footage,
-            checkpoint,
             origin,
             &permit,
             store::private_directory,
@@ -93,8 +111,7 @@ pub(crate) async fn publish(
 fn publish_with(
     handoff: Handoff<'_>,
     footage: Footage,
-    checkpoint: Option<Checkpoint>,
-    origin: Origin,
+    origin: Origin<Checkpoint>,
     permit: &InsertPermit,
     parent: impl FnOnce() -> anyhow::Result<PathBuf>,
     copy: impl FnOnce(&str) -> anyhow::Result<()>,
@@ -109,8 +126,9 @@ fn publish_with(
             checkpoint::Publication::Narrated
         },
     };
+    let checkpoint = origin.checkpoint();
     if completion == checkpoint::Publication::Narrated
-        && let Some(checkpoint) = &checkpoint
+        && let Some(checkpoint) = checkpoint
     {
         #[expect(
             clippy::let_underscore_must_use,
@@ -124,7 +142,7 @@ fn publish_with(
     if !permit.active() {
         return Ok(Published::Cancelled);
     }
-    if matches!(origin, Origin::Recovered { pending: true })
+    if matches!(origin, Origin::Recovered { pending: true, .. })
         && completion == checkpoint::Publication::Pending
     {
         anyhow::bail!(
@@ -132,17 +150,8 @@ fn publish_with(
         );
     }
     let audio_kept = completion == checkpoint::Publication::Pending
-        && checkpoint
-            .as_ref()
-            .is_some_and(|checkpoint| checkpoint.has_audio().unwrap_or(true));
-    let result = persist(
-        handoff,
-        footage,
-        checkpoint.as_ref(),
-        completion,
-        permit,
-        parent,
-    );
+        && checkpoint.is_some_and(|checkpoint| checkpoint.has_audio().unwrap_or(true));
+    let result = persist(handoff, footage, checkpoint, completion, permit, parent);
     match result {
         Ok(Some(Persisted {
             show,
@@ -150,9 +159,6 @@ fn publish_with(
             source_lost,
             movie_lost,
         })) => {
-            if !audio_kept {
-                remove_published(checkpoint);
-            }
             let preservation = Preservation {
                 narration_lost: lost,
                 source_lost,
@@ -160,17 +166,30 @@ fn publish_with(
                 audio_kept,
             };
             match origin {
-                Origin::Live => Ok(Published::Saved {
-                    show,
-                    ending,
-                    preservation,
-                    copied: copy(&summary),
-                }),
-                Origin::Recovered { pending } => Ok(Published::Recovered {
-                    show,
-                    preservation,
-                    narrated_copy: pending,
-                }),
+                Origin::Live { checkpoint } => {
+                    if !audio_kept && let Some(checkpoint) = checkpoint {
+                        remove_published(checkpoint);
+                    }
+                    Ok(Published::Saved {
+                        show,
+                        ending,
+                        preservation,
+                        copied: copy(&summary),
+                    })
+                },
+                Origin::Recovered {
+                    checkpoint,
+                    pending,
+                } => {
+                    if !audio_kept {
+                        remove_published(checkpoint);
+                    }
+                    Ok(Published::Recovered {
+                        show,
+                        preservation,
+                        narrated_copy: pending,
+                    })
+                },
             }
         },
         Ok(None) => Ok(Published::Cancelled),
@@ -234,14 +253,12 @@ fn reopen_with(interrupted: Interrupted) -> anyhow::Result<Reopened> {
     })
 }
 
-fn remove_published(checkpoint: Option<Checkpoint>) {
-    if let Some(checkpoint) = checkpoint {
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "Durable publication markers let expiry cleanup retry without offering duplicate recovery"
-        )]
-        let _ = checkpoint.discard();
-    }
+fn remove_published(checkpoint: Checkpoint) {
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "Durable publication markers let expiry cleanup retry without offering duplicate recovery"
+    )]
+    let _ = checkpoint.discard();
 }
 
 struct Persisted {
