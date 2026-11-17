@@ -8,8 +8,19 @@ fn irregular_captures_never_appear_before_their_capture_time() -> anyhow::Result
     let directory = probe_directory()?;
     let path = directory.join("resizing.mp4");
     let mut encoder = Encoder::open(&path, canvas::Canvas::new([320, 240])?, FILE_LIMIT)?;
-    let inputs = [0_u64, 33, 67, 101, 437, 753, 1121, 1999, 2501, 2700];
-    for (index, at) in inputs.iter().copied().enumerate() {
+    let captures = [
+        (0_u64, 40_u8),
+        (33, 60),
+        (67, 80),
+        (101, 100),
+        (437, 120),
+        (753, 140),
+        (1121, 160),
+        (1999, 180),
+        (2501, 200),
+        (2700, 220),
+    ];
+    for (index, &(ms, shade)) in captures.iter().enumerate() {
         let [width, height] = match index % 3 {
             0 => [320, 240],
             1 => [160, 240],
@@ -18,8 +29,8 @@ fn irregular_captures_never_appear_before_their_capture_time() -> anyhow::Result
         assert!(
             encoder
                 .write(
-                    &frame(width, height, 40 + u8::try_from(index)? * 20),
-                    Duration::from_millis(at),
+                    &frame(width, height, shade),
+                    Duration::from_millis(ms),
                     &mut || false,
                 )?
                 .is_continue()
@@ -31,49 +42,42 @@ fn irregular_captures_never_appear_before_their_capture_time() -> anyhow::Result
             .is_continue()
     );
     encoder.finish()?;
-    let bytes = path.metadata()?.len();
+    let samples = sample_times(&path)?;
+    assert_eq!(samples.len(), 90, "Three seconds at 30 fps");
     let mut log = std::fs::File::create_new(directory.join("resizing.csv"))?;
     writeln!(log, "pts100ns,duration100ns,source,sourceMs")?;
-    for (ticks, duration) in sample_times(&path)? {
+    for (ticks, duration) in samples {
         let at = Duration::from_nanos(u64::try_from(ticks)?.saturating_mul(100));
         let decoded = decode(&path, [320, 240], at)?;
         let shade = decoded.image.pixels()[(120 * 320 + 160) * 4];
-        let source = inputs
+        let (source, &(captured_ms, _)) = captures
             .iter()
             .enumerate()
-            .min_by_key(|(index, _)| shade.abs_diff(40 + u8::try_from(*index).unwrap() * 20))
-            .map(|(index, at)| (index, *at))
+            .min_by_key(|(_, (_, written))| shade.abs_diff(*written))
             .unwrap();
-        writeln!(log, "{ticks},{duration},{},{}", source.0, source.1)?;
-        let expected = inputs
-            .partition_point(|ms| {
-                u128::from(*ms).saturating_mul(1_000_000) <= decoded.at.as_nanos()
-            })
+        writeln!(log, "{ticks},{duration},{source},{captured_ms}")?;
+        let expected = captures
+            .partition_point(|&(ms, _)| Duration::from_millis(ms) <= decoded.at)
             .saturating_sub(1);
         assert_eq!(
-            source.0, expected,
+            source, expected,
             "Presentation at {ticks} used a future or stale captured image"
         );
     }
-    assert!(bytes > 0);
     Ok(())
 }
 
 #[test]
 #[ignore = "Opt in: native encoder/decoder with synthetic pixels; no capture or input"]
-fn pending_images_and_quiet_output_keep_capture_and_presentation_distinct() -> anyhow::Result<()> {
+fn pending_captures_reach_the_video_only_as_the_newest_at_a_later_tick() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
-    for stop in [true, false] {
-        let path = directory
-            .path()
-            .join(if stop { "stopped.mp4" } else { "coalesced.mp4" });
+    for (name, through, read, presented, shown) in [
+        ("stopped.mp4", None, 32, 0, 40),
+        ("coalesced.mp4", Some(34), 34, 33_333_300, 120),
+    ] {
+        let path = directory.path().join(name);
         let mut encoder = Encoder::open(&path, canvas::Canvas::new([320, 240])?, FILE_LIMIT)?;
-        assert!(
-            encoder
-                .write(&frame(320, 240, 40), Duration::ZERO, &mut || false)?
-                .is_continue()
-        );
-        for (ms, shade) in [(31, 80), (32, 120)] {
+        for (ms, shade) in [(0, 40), (31, 80), (32, 120)] {
             assert!(
                 encoder
                     .write(
@@ -84,41 +88,28 @@ fn pending_images_and_quiet_output_keep_capture_and_presentation_distinct() -> a
                     .is_continue()
             );
         }
-        assert!(
-            encoder
-                .write(
-                    &frame(320, 240, 200),
-                    Duration::from_millis(30),
-                    &mut || false
-                )
-                .is_err()
-        );
-        assert_eq!(encoder.coverage().unwrap().last, Duration::ZERO);
-        assert_eq!(encoder.coverage().unwrap().frames, 1);
-        if !stop {
+        if let Some(through) = through {
             assert!(
                 encoder
-                    .advance(End::Through(Duration::from_millis(34)), &mut || false)?
+                    .advance(End::Through(Duration::from_millis(through)), &mut || false)?
                     .is_continue()
             );
-            assert_eq!(encoder.coverage().unwrap().last, Duration::from_millis(32));
-            assert_eq!(encoder.coverage().unwrap().frames, 2);
         }
         encoder.finish()?;
-        let decoded = decode(
-            &path,
-            [320, 240],
-            Duration::from_millis(if stop { 32 } else { 34 }),
-        )?;
-        assert_eq!(decoded.at.as_nanos(), if stop { 0 } else { 33_333_300 });
-        let expected: u8 = if stop { 40 } else { 120 };
-
+        let decoded = decode(&path, [320, 240], Duration::from_millis(read))?;
+        assert_eq!(decoded.at.as_nanos(), presented, "{name}");
         assert!(
-            decoded.image.pixels()[0].abs_diff(expected) <= 8,
-            "An unpresented or superseded image reached the video"
+            decoded.image.pixels()[0].abs_diff(shown) <= 8,
+            "An unpresented or superseded image reached {name}"
         );
     }
+    Ok(())
+}
 
+#[test]
+#[ignore = "Opt in: native encoder/decoder with synthetic pixels; no capture or input"]
+fn a_quiet_screen_saves_a_readable_fragment_before_finalization() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
     let path = directory.path().join("quiet.mp4");
     let mut encoder = Encoder::open(&path, canvas::Canvas::new([320, 240])?, FILE_LIMIT)?;
     assert!(

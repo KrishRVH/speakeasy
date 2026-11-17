@@ -170,3 +170,63 @@ fn a_capture_too_far_ahead_fails_instead_of_backfilling_it() -> anyhow::Result<(
     assert_eq!(encoder.codec.shades, [10; 61]);
     Ok(())
 }
+
+#[test]
+fn a_capture_earlier_than_the_last_is_rejected() -> anyhow::Result<()> {
+    let mut encoder = open(2)?;
+    for (ms, shade) in [(0, 10), (32, 20)] {
+        let at = Duration::from_millis(ms);
+        assert!(
+            encoder
+                .write(&frame(2, 2, shade), at, &mut || false)?
+                .is_continue()
+        );
+    }
+    let earlier = encoder
+        .write(&frame(2, 2, 30), Duration::from_millis(30), &mut || false)
+        .err()
+        .context("A capture earlier than the last one was accepted")?;
+    assert_eq!(earlier.to_string(), "Movie capture time is invalid");
+    assert!(
+        encoder
+            .advance(End::Through(Duration::from_millis(34)), &mut || false)?
+            .is_continue()
+    );
+    assert_eq!(encoder.codec.shades, [10, 20]);
+    encoder.finish()
+}
+
+#[test]
+fn captures_between_ticks_wait_and_the_next_tick_presents_only_the_newest() -> anyhow::Result<()> {
+    let mut encoder = open(2)?;
+    for (ms, shade) in [(0, 10), (31, 20), (32, 30)] {
+        let at = Duration::from_millis(ms);
+        assert!(
+            encoder
+                .write(&frame(2, 2, shade), at, &mut || false)?
+                .is_continue()
+        );
+    }
+    assert_eq!(
+        encoder.codec.shades,
+        [10],
+        "A capture was presented before its tick"
+    );
+    assert!(
+        encoder
+            .advance(End::Through(Duration::from_millis(34)), &mut || false)?
+            .is_continue()
+    );
+    assert_eq!(
+        encoder.codec.shades,
+        [10, 30],
+        "A superseded capture was presented"
+    );
+    let coverage = encoder.coverage().context("No sample was written")?;
+    assert_eq!(
+        (coverage.last, coverage.at, coverage.frames),
+        (Duration::from_millis(32), Tape::CLOCK.time(1), 2),
+        "Coverage confused the capture time with the presentation time"
+    );
+    encoder.finish()
+}
