@@ -258,12 +258,7 @@ impl Settings {
             Action::Choose(file) => self.choose(file, window, cx),
             Action::SelectMicrophone(index) => self.select_microphone(index, cx),
             Action::SelectLanguage(language) => {
-                self.config.language = if self.config.engine == Engine::Whisper {
-                    crate::models::whisper_language(language)
-                } else {
-                    language
-                }
-                .into();
+                self.config.language = language.into();
                 self.edited(cx);
             },
             Action::SelectDelivery(delivery) => {
