@@ -4,7 +4,7 @@ use anyhow::Context as _;
 
 use super::{super::DISCLOSURE, *};
 
-fn modern(id: Value, method: &str) -> Value {
+fn stateless(id: Value, method: &str) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "method": method, "params": {"_meta": {VERSION_META: STATELESS_VERSION, CAPABILITIES_META: {}}}})
 }
 
@@ -26,17 +26,17 @@ fn exchange(lines: &[Value]) -> anyhow::Result<Vec<Value>> {
 }
 
 #[test]
-fn modern_requests_are_stateless_and_each_requires_metadata() -> anyhow::Result<()> {
-    let mut missing = modern(json!(3), "tools/list");
+fn stateless_requests_each_require_metadata() -> anyhow::Result<()> {
+    let mut missing = stateless(json!(3), "tools/list");
     missing["params"]["_meta"] = json!({VERSION_META: STATELESS_VERSION});
-    let mut wrong = modern(json!(4), "tools/list");
+    let mut wrong = stateless(json!(4), "tools/list");
     wrong["params"]["_meta"][VERSION_META] = json!("2099-01-01");
     let replies = exchange(&[
-        modern(json!(1), "tools/list"),
+        stateless(json!(1), "tools/list"),
         json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
         missing,
         wrong,
-        modern(json!(5), "server/discover"),
+        stateless(json!(5), "server/discover"),
     ])?;
     assert_eq!(replies.len(), 5);
     assert_eq!(replies[0]["result"]["tools"].as_array().unwrap().len(), 3);
@@ -89,10 +89,29 @@ fn initialized_clients_negotiate_a_supported_version_and_notifications_are_silen
 }
 
 #[test]
+fn ping_answers_from_initialization_on_but_not_before_it_or_statelessly() -> anyhow::Result<()> {
+    let ping = |id: u8| json!({"jsonrpc": "2.0", "id": id, "method": "ping"});
+    let replies = exchange(&[
+        ping(1),
+        json!({"jsonrpc": "2.0", "id": "init", "method": "initialize", "params": {"protocolVersion": INITIALIZED_VERSION, "capabilities": {}, "clientInfo": {"name": "fixture", "version": "1"}}}),
+        ping(2),
+        json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+        ping(3),
+        stateless(json!(4), "ping"),
+    ])?;
+    assert_eq!(replies.len(), 5);
+    assert_eq!(replies[0]["error"]["code"], -32602);
+    assert_eq!(replies[2]["result"], json!({}));
+    assert_eq!(replies[3]["result"], json!({}));
+    assert_eq!(replies[4]["error"]["code"], -32601);
+    Ok(())
+}
+
+#[test]
 fn both_handshakes_carry_the_disclosure_and_the_reading_guide() -> anyhow::Result<()> {
     let replies = exchange(&[
         json!({"jsonrpc": "2.0", "id": "init", "method": "initialize", "params": {"protocolVersion": INITIALIZED_VERSION, "capabilities": {}, "clientInfo": {"name": "fixture", "version": "1"}}}),
-        modern(json!("discover"), "server/discover"),
+        stateless(json!("discover"), "server/discover"),
     ])?;
     assert_eq!(replies.len(), 2);
     for reply in &replies {
@@ -117,7 +136,7 @@ fn malformed_oversized_and_invalid_requests_recover_at_the_next_line() -> anyhow
     for line in [
         json!([]),
         json!({"jsonrpc": "2.0", "id": null, "method": "tools/list"}),
-        modern(json!(9), "tools/list"),
+        stateless(json!(9), "tools/list"),
     ] {
         serde_json::to_writer(&mut input, &line)?;
         writeln!(input)?;
@@ -145,12 +164,12 @@ fn malformed_oversized_and_invalid_requests_recover_at_the_next_line() -> anyhow
 
 #[test]
 fn tool_errors_are_distinct_from_protocol_errors_and_never_echo_arguments() -> anyhow::Result<()> {
-    let mut unknown = modern(json!(1), "tools/call");
+    let mut unknown = stateless(json!(1), "tools/call");
     unknown["params"]["name"] = json!("PRIVATE_UNKNOWN_TOOL");
-    let mut invalid = modern(json!(2), "tools/call");
+    let mut invalid = stateless(json!(2), "tools/call");
     invalid["params"]["name"] = json!("show_read");
     invalid["params"]["arguments"] = json!({"show": "PRIVATE_OUTSIDE", "private": "PRIVATE_BODY"});
-    let replies = exchange(&[unknown, invalid, modern(json!(3), "resources/list")])?;
+    let replies = exchange(&[unknown, invalid, stateless(json!(3), "resources/list")])?;
     assert_eq!(replies[0]["error"]["code"], -32602);
     assert_eq!(replies[1]["result"]["isError"], true);
     assert_eq!(replies[2]["error"]["code"], -32601);
@@ -172,7 +191,7 @@ fn output_is_bounded_and_a_closed_client_ends_the_server() -> anyhow::Result<()>
     }
     let root = tempfile::tempdir()?;
     let roots = Roots::open(&[root.path().to_owned()]).map_err(anyhow::Error::msg)?;
-    let input = serde_json::to_vec(&modern(json!(1), "server/discover"))?;
+    let input = serde_json::to_vec(&stateless(json!(1), "server/discover"))?;
     serve(&roots, &mut Cursor::new(input), &mut Closed)?;
     assert!(encode(&"x".repeat(RESPONSE_LIMIT), RESPONSE_LIMIT).is_err());
     Ok(())

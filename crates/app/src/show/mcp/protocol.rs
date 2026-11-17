@@ -163,16 +163,16 @@ impl Protocol {
         if method == "initialize" {
             return Some(self.initialize(id, params));
         }
-        let modern = params.get("_meta").is_some_and(|meta| {
+        let stateless = params.get("_meta").is_some_and(|meta| {
             meta.get(VERSION_META).is_some() || meta.get(CAPABILITIES_META).is_some()
         });
-        if modern || !matches!(self, Self::Ready) || method == "server/discover" {
-            if method == "ping" && !matches!(self, Self::New) && !modern {
-                return Some(success(id, json!({}), false));
-            }
-            if let Err(failure) = metadata(params) {
-                return Some(error(id, failure.code, failure.message, failure.data));
-            }
+        if method == "ping" && !stateless && !matches!(self, Self::New) {
+            return Some(success(id, json!({}), false));
+        }
+        if (stateless || !matches!(self, Self::Ready) || method == "server/discover")
+            && let Err(failure) = metadata(params)
+        {
+            return Some(error(id, failure.code, failure.message, failure.data));
         }
         let result = match method {
             "server/discover" => json!({
@@ -190,7 +190,7 @@ impl Protocol {
                     ));
                 }
                 let mut result = Map::from_iter([("tools".into(), tools::definitions())]);
-                if modern {
+                if stateless {
                     result.insert("ttlMs".into(), json!(0));
                     result.insert("cacheScope".into(), json!("private"));
                 }
@@ -209,10 +209,9 @@ impl Protocol {
                     .map_or_else(|| json!({}), Value::take);
                 tools::call(roots, tool, arguments)
             },
-            "ping" if !modern && matches!(self, Self::Ready) => json!({}),
             _ => return Some(error(id, METHOD_NOT_FOUND, "Method not found", None)),
         };
-        Some(success(id, result, modern))
+        Some(success(id, result, stateless))
     }
 
     fn initialize(&mut self, id: Value, params: &Map<String, Value>) -> Value {
@@ -287,11 +286,11 @@ fn server_info() -> Value {
     json!({"name": "speakeasy-show", "version": env!("CARGO_PKG_VERSION")})
 }
 
-fn success(id: Value, result: Value, modern: bool) -> Value {
+fn success(id: Value, result: Value, stateless: bool) -> Value {
     let Value::Object(mut result) = result else {
         return error(id, INTERNAL_ERROR, "MCP result must be an object", None);
     };
-    if modern {
+    if stateless {
         result.insert("resultType".into(), json!("complete"));
     }
     json!({"jsonrpc": "2.0", "id": id, "result": result})
