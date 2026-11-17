@@ -401,11 +401,15 @@ impl crate::MacShortcut {
             Self::Function => Mac::FUNCTION,
             Self::RightOption => Mac::RIGHT_OPTION,
             Self::RightCommand => Mac::RIGHT_COMMAND,
-            Self::F13 => 105,
+            Self::F13 => Mac::F13,
         }
     }
 
     pub(super) const fn modifiers(self, flags: u64) -> Modifiers {
+        const LEFT_COMMAND: u64 = 0x08;
+        const RIGHT_COMMAND: u64 = 0x10;
+        const LEFT_OPTION: u64 = 0x20;
+        const RIGHT_OPTION: u64 = 0x40;
         const SHIFT: u64 = 0x0002_0000;
         const CONTROL: u64 = 0x0004_0000;
         const OPTION: u64 = 0x0008_0000;
@@ -418,8 +422,8 @@ impl crate::MacShortcut {
         };
         let (talk_mask, own_group, opposite) = match self {
             Self::Function => (FUNCTION, FUNCTION, 0),
-            Self::RightOption => (0x40, OPTION, 0x20),
-            Self::RightCommand => (0x10, COMMAND, 0x08),
+            Self::RightOption => (RIGHT_OPTION, OPTION, LEFT_OPTION),
+            Self::RightCommand => (RIGHT_COMMAND, COMMAND, LEFT_COMMAND),
             Self::F13 => (0, 0, 0),
         };
         let talk = flags & talk_mask != 0;
@@ -483,6 +487,7 @@ pub(super) struct Mac {
 impl Mac {
     const AREA: i64 = 0;
     const ESCAPE: i64 = 53;
+    const F13: i64 = 105;
     const FUNCTION: i64 = 63;
     const LEFT_COMMAND: i64 = 55;
     const LEFT_CONTROL: i64 = 59;

@@ -1,5 +1,4 @@
 use super::*;
-use crate::MacShortcut;
 
 #[test]
 fn f13_autorepeat_preserves_shift_taps_during_a_show() {
@@ -35,7 +34,7 @@ fn f13_autorepeat_preserves_shift_taps_during_a_show() {
 
 fn f13(down: bool, repeat: bool, held: Modifiers) -> MacEvent {
     MacEvent::Key {
-        code: 105,
+        code: MAC_F13,
         down,
         repeat,
         held,
@@ -68,7 +67,7 @@ fn f13_hold_commands_are_immediate_and_escape_stays_passive() {
         (MAC_S, Action::Show(Scope::Screen)),
         (MAC_W, Action::Show(Scope::Window)),
         (MAC_A, Action::Show(Scope::Area)),
-        (9, Action::PasteLast),
+        (MAC_V, Action::PasteLast),
     ] {
         let mut policy = Mac::new(MacShortcut::F13);
         let at = now();

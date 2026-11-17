@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 use anyhow::Context as _;
 
 use super::*;
+use crate::MacShortcut;
 
 mod f13;
 
@@ -36,156 +37,12 @@ const MAC_S: i64 = 1;
 const MAC_W: i64 = 13;
 const MAC_A: i64 = 0;
 const MAC_Q: i64 = 12;
+const MAC_V: i64 = 9;
+const MAC_F13: i64 = 105;
 const NONE_HELD: Physical = Physical {
     chord_keys: [false; 4],
     other_shortcut: false,
 };
-
-#[test]
-fn paste_last_is_a_single_held_press_and_its_release_stays_swallowed() {
-    let mut chord = Chord::default();
-    assert!(!chord.hold_key(HoldKey::PasteLast, true).swallows());
-    chord.press();
-    let first = chord.hold_key(HoldKey::PasteLast, true);
-    assert!(first.swallows());
-    assert_eq!(first.action, Some(Action::PasteLast));
-    let repeat = chord.hold_key(HoldKey::PasteLast, true);
-    assert!(repeat.swallows());
-    assert_eq!(repeat.action, None);
-    chord.release();
-    assert!(chord.hold_key(HoldKey::PasteLast, false).swallows());
-    assert!(!chord.hold_key(HoldKey::PasteLast, true).swallows());
-}
-
-#[test]
-fn mac_presets_keep_hands_free_shows_and_escape_without_claiming_left_modifiers() {
-    use crate::MacShortcut;
-    for (shortcut, flags, left_code, left_flag) in [
-        (
-            MacShortcut::Function,
-            0x0080_0000,
-            MAC_LEFT_OPTION,
-            0x0008_0020,
-        ),
-        (
-            MacShortcut::RightOption,
-            0x0008_0040,
-            MAC_LEFT_OPTION,
-            0x0008_0020,
-        ),
-        (
-            MacShortcut::RightCommand,
-            0x0010_0010,
-            MAC_LEFT_COMMAND,
-            0x0010_0008,
-        ),
-    ] {
-        let held = shortcut.modifiers(flags);
-        assert!(held.talk && !held.other_shortcut);
-        assert!(!shortcut.modifiers(left_flag).talk);
-        assert!(shortcut.modifiers(left_flag).other_shortcut);
-        for (code, expected) in [
-            (MAC_SPACE, Action::Lock),
-            (MAC_S, Action::Show(Scope::Screen)),
-            (MAC_W, Action::Show(Scope::Window)),
-            (MAC_A, Action::Show(Scope::Area)),
-        ] {
-            let mut policy = Mac::new(shortcut);
-            assert!(
-                policy
-                    .observe(
-                        MacEvent::FlagsChanged {
-                            code: shortcut.key_code(),
-                            held
-                        },
-                        || false,
-                        now()
-                    )
-                    .starts()
-            );
-            let decision = policy.observe(
-                key(code, true, held),
-                || true,
-                now() + Duration::from_millis(250),
-            );
-            assert_eq!(decision.action, Some(expected));
-            assert!(decision.swallows());
-            let escape = policy.observe(key(MAC_ESCAPE, true, held), || true, now());
-            assert_eq!(escape.action, Some(Action::Escape));
-            assert!(!escape.swallows());
-            let other = policy.observe(
-                MacEvent::FlagsChanged {
-                    code: left_code,
-                    held: shortcut.modifiers(flags | left_flag),
-                },
-                || true,
-                now(),
-            );
-            assert_eq!(other.action, Some(Action::Interrupt));
-        }
-        let mut policy = Mac::new(shortcut);
-        assert!(
-            !policy
-                .observe(
-                    MacEvent::FlagsChanged {
-                        code: shortcut.key_code(),
-                        held: shortcut.modifiers(flags | left_flag)
-                    },
-                    || true,
-                    now()
-                )
-                .starts()
-        );
-    }
-}
-
-#[test]
-fn mac_alternative_modifiers_preserve_quick_application_shortcuts() {
-    for shortcut in [
-        crate::MacShortcut::RightOption,
-        crate::MacShortcut::RightCommand,
-    ] {
-        for code in [MAC_S, MAC_W, MAC_A, MAC_SPACE] {
-            let mut policy = Mac::new(shortcut);
-            let held = FN_HELD;
-            let start = now();
-            policy.observe(
-                MacEvent::FlagsChanged {
-                    code: shortcut.key_code(),
-                    held,
-                },
-                || true,
-                start,
-            );
-            let decision = policy.observe(
-                key(code, true, held),
-                || true,
-                start + Duration::from_millis(100),
-            );
-            assert!(!decision.swallows());
-            assert_eq!(decision.action, Some(Action::Interrupt));
-            assert!(
-                !policy
-                    .observe(
-                        key(code, false, held),
-                        || true,
-                        start + Duration::from_millis(300)
-                    )
-                    .swallows()
-            );
-            assert_eq!(
-                policy
-                    .observe(
-                        key(code, true, held),
-                        || true,
-                        start + Duration::from_millis(500)
-                    )
-                    .action,
-                None
-            );
-        }
-    }
-}
 
 const NO_MODIFIERS: Modifiers = Modifiers {
     shift: false,
@@ -271,6 +128,148 @@ fn mac_holding() -> Mac {
     let mut mac = Mac::default();
     assert!(mac.observe(function(true), keyboard_fn_up, now()).starts());
     mac
+}
+
+#[test]
+fn paste_last_is_a_single_held_press_and_its_release_stays_swallowed() {
+    let mut chord = Chord::default();
+    assert!(!chord.hold_key(HoldKey::PasteLast, true).swallows());
+    chord.press();
+    let first = chord.hold_key(HoldKey::PasteLast, true);
+    assert!(first.swallows());
+    assert_eq!(first.action, Some(Action::PasteLast));
+    let repeat = chord.hold_key(HoldKey::PasteLast, true);
+    assert!(repeat.swallows());
+    assert_eq!(repeat.action, None);
+    chord.release();
+    assert!(chord.hold_key(HoldKey::PasteLast, false).swallows());
+    assert!(!chord.hold_key(HoldKey::PasteLast, true).swallows());
+}
+
+#[test]
+fn mac_presets_keep_hands_free_shows_and_escape_without_claiming_left_modifiers() {
+    for (shortcut, flags, left_code, left_flag) in [
+        (
+            MacShortcut::Function,
+            0x0080_0000,
+            MAC_LEFT_OPTION,
+            0x0008_0020,
+        ),
+        (
+            MacShortcut::RightOption,
+            0x0008_0040,
+            MAC_LEFT_OPTION,
+            0x0008_0020,
+        ),
+        (
+            MacShortcut::RightCommand,
+            0x0010_0010,
+            MAC_LEFT_COMMAND,
+            0x0010_0008,
+        ),
+    ] {
+        let held = shortcut.modifiers(flags);
+        assert!(held.talk && !held.other_shortcut);
+        assert!(!shortcut.modifiers(left_flag).talk);
+        assert!(shortcut.modifiers(left_flag).other_shortcut);
+        for (code, expected) in [
+            (MAC_SPACE, Action::Lock),
+            (MAC_S, Action::Show(Scope::Screen)),
+            (MAC_W, Action::Show(Scope::Window)),
+            (MAC_A, Action::Show(Scope::Area)),
+        ] {
+            let mut policy = Mac::new(shortcut);
+            assert!(
+                policy
+                    .observe(
+                        MacEvent::FlagsChanged {
+                            code: shortcut.key_code(),
+                            held
+                        },
+                        || false,
+                        now()
+                    )
+                    .starts()
+            );
+            let decision = policy.observe(
+                key(code, true, held),
+                || true,
+                now() + Duration::from_millis(250),
+            );
+            assert_eq!(decision.action, Some(expected));
+            assert!(decision.swallows());
+            let escape = policy.observe(key(MAC_ESCAPE, true, held), || true, now());
+            assert_eq!(escape.action, Some(Action::Escape));
+            assert!(!escape.swallows());
+            let other = policy.observe(
+                MacEvent::FlagsChanged {
+                    code: left_code,
+                    held: shortcut.modifiers(flags | left_flag),
+                },
+                || true,
+                now(),
+            );
+            assert_eq!(other.action, Some(Action::Interrupt));
+        }
+        let mut policy = Mac::new(shortcut);
+        assert!(
+            !policy
+                .observe(
+                    MacEvent::FlagsChanged {
+                        code: shortcut.key_code(),
+                        held: shortcut.modifiers(flags | left_flag)
+                    },
+                    || true,
+                    now()
+                )
+                .starts()
+        );
+    }
+}
+
+#[test]
+fn mac_alternative_modifiers_preserve_quick_application_shortcuts() {
+    for shortcut in [MacShortcut::RightOption, MacShortcut::RightCommand] {
+        for code in [MAC_S, MAC_W, MAC_A, MAC_SPACE] {
+            let mut policy = Mac::new(shortcut);
+            let held = FN_HELD;
+            let start = now();
+            policy.observe(
+                MacEvent::FlagsChanged {
+                    code: shortcut.key_code(),
+                    held,
+                },
+                || true,
+                start,
+            );
+            let decision = policy.observe(
+                key(code, true, held),
+                || true,
+                start + Duration::from_millis(100),
+            );
+            assert!(!decision.swallows());
+            assert_eq!(decision.action, Some(Action::Interrupt));
+            assert!(
+                !policy
+                    .observe(
+                        key(code, false, held),
+                        || true,
+                        start + Duration::from_millis(300)
+                    )
+                    .swallows()
+            );
+            assert_eq!(
+                policy
+                    .observe(
+                        key(code, true, held),
+                        || true,
+                        start + Duration::from_millis(500)
+                    )
+                    .action,
+                None
+            );
+        }
+    }
 }
 
 #[test]
@@ -569,8 +568,6 @@ fn shift_taps_pin_beside_the_held_talk_shortcut() {
 
 #[test]
 fn mac_shift_pairs_require_the_talk_modifier_to_stay_unchanged() {
-    use crate::MacShortcut;
-
     let start = now();
     let at = |millis| start + Duration::from_millis(millis);
     for shortcut in [
