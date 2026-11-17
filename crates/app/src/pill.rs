@@ -238,20 +238,13 @@ impl Pill {
     }
 
     fn scene(&self, now: Instant) -> Scene {
-        let phase = self.snapshot.phase;
-        let since_phase = now.duration_since(self.phase_at);
+        let remaining = |until: Option<Instant>| until?.checked_duration_since(now);
         Scene {
-            phase,
-            since_phase,
-            tray_hint: self
-                .tray_hint_until
-                .and_then(|until| until.checked_duration_since(now)),
-            draw_hint: self
-                .draw_hint_until
-                .and_then(|until| until.checked_duration_since(now)),
-            secure_input: self
-                .secure_input_until
-                .and_then(|until| until.checked_duration_since(now)),
+            phase: self.snapshot.phase,
+            since_phase: now.duration_since(self.phase_at),
+            tray_hint: remaining(self.tray_hint_until),
+            draw_hint: remaining(self.draw_hint_until),
+            secure_input: remaining(self.secure_input_until),
             hands_free: self.snapshot.hands_free,
             show: self.snapshot.show,
             style: self.snapshot.style,
