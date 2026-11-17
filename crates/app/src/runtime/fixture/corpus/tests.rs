@@ -60,6 +60,25 @@ fn scoring_separates_formatting_from_words_and_retains_silence_hallucinations() 
 }
 
 #[test]
+fn production_summaries_count_a_report_under_every_tag_of_its_case() {
+    let case = Case {
+        id: "clip".into(),
+        tags: BTreeSet::from(["english".into(), "short".into()]),
+        wav: PathBuf::from("clip.wav"),
+        reference: PathBuf::from("reference.txt"),
+        wav_sha256: String::new(),
+        reference_sha256: String::new(),
+    };
+    let results = [(&case, report("public words", "public", Some(7.0), 1))];
+    let Summary::Production { overall, by_tag } = Summary::new(&results) else {
+        panic!("Production summary required");
+    };
+    assert_eq!(overall.quality.word_errors, 1);
+    assert_eq!(by_tag["short"].quality.word_errors, 1);
+    assert_eq!(by_tag["english"].quality.reference_words, 2);
+}
+
+#[test]
 fn corpus_verifies_both_files_and_rejects_duplicate_cases() -> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;
     std::fs::write(temp.path().join("clip.wav"), b"synthetic audio")?;
@@ -78,13 +97,6 @@ fn corpus_verifies_both_files_and_rejects_duplicate_cases() -> anyhow::Result<()
     let corpus = Corpus::read(&path)?;
     let case_read = corpus.clips.first().unwrap();
     case_read.load(temp.path())?;
-    let results = [(case_read, report("public words", "public", Some(7.0), 1))];
-    let Summary::Production { overall, by_tag } = Summary::new(&results) else {
-        panic!("Production summary required");
-    };
-    assert_eq!(overall.quality.word_errors, 1);
-    assert_eq!(by_tag["short"].quality.word_errors, 1);
-    assert_eq!(by_tag["english"].quality.reference_words, 2);
     std::fs::write(temp.path().join("reference.txt"), "changed words")?;
     assert!(
         case_read
