@@ -223,9 +223,8 @@ mod tests {
         );
     }
 
-    fn lookup(vars: &[(&'static str, &'static str)]) -> impl Fn(&str) -> Option<OsString> {
-        let vars = vars.to_vec();
-        move |name| {
+    fn lookup(vars: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> {
+        |name| {
             vars.iter()
                 .find(|(key, _)| *key == name)
                 .map(|(_, value)| value.into())

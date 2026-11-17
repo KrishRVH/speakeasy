@@ -120,11 +120,10 @@ impl Preset {
                 .find_map(|&(code, name)| (code == self.language).then_some(name))
                 .map_or_else(|| self.language.clone(), str::to_owned)
         });
-        let count = |amount: usize, noun: &str| {
-            (amount > 0).then(|| match amount {
-                1 => format!("1 {noun}"),
-                _ => format!("{amount} {noun}s"),
-            })
+        let count = |amount: usize, noun: &str| match amount {
+            0 => None,
+            1 => Some(format!("1 {noun}")),
+            _ => Some(format!("{amount} {noun}s")),
         };
         [
             Some(model.to_owned()),
@@ -145,8 +144,7 @@ pub(crate) fn validate(presets: &[Preset]) -> anyhow::Result<()> {
         "Keep at most {LIMIT} dictation presets."
     );
     let mut names = HashSet::new();
-    for (index, preset) in presets.iter().enumerate() {
-        let row = index.saturating_add(1);
+    for (row, preset) in (1..).zip(presets) {
         validate_name(&preset.name).with_context(|| format!("Preset {row}"))?;
         ensure!(
             names.insert(preset.name.to_lowercase()),
