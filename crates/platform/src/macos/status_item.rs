@@ -1,6 +1,6 @@
 use std::fmt;
 
-use anyhow::Context as _;
+use anyhow::{Context as _, bail};
 use muda::ContextMenu as _;
 use objc2::{AllocAnyThread as _, MainThreadMarker, rc::Retained};
 use objc2_app_kit::{
@@ -14,8 +14,8 @@ const MENU_BAR_POINTS: f64 = 22.0;
 
 pub struct StatusItem {
     item: Retained<NSStatusItem>,
+    button: Retained<NSStatusBarButton>,
     _menu: muda::Menu,
-    main: MainThreadMarker,
 }
 
 impl StatusItem {
@@ -23,12 +23,17 @@ impl StatusItem {
         let main = MainThreadMarker::new().context("The menu bar item opens on the main thread")?;
         let native = unsafe { Retained::retain(menu.ns_menu().cast::<NSMenu>()) }
             .context("The menu bar item's menu has no AppKit menu")?;
-        let item = NSStatusBar::systemStatusBar().statusItemWithLength(NSVariableStatusItemLength);
+        let bar = NSStatusBar::systemStatusBar();
+        let item = bar.statusItemWithLength(NSVariableStatusItemLength);
+        let Some(button) = item.button(main) else {
+            bar.removeStatusItem(&item);
+            bail!("The menu bar item has no button");
+        };
         item.setMenu(Some(&native));
         Ok(Self {
             item,
+            button,
             _menu: menu,
-            main,
         })
     }
 
@@ -39,20 +44,12 @@ impl StatusItem {
         let points = f64::from(side).min(MENU_BAR_POINTS);
         image.setSize(NSSize::new(points, points));
         image.setTemplate(true);
-        self.button()?.setImage(Some(&image));
+        self.button.setImage(Some(&image));
         Ok(())
     }
 
-    pub fn set_tooltip(&self, tooltip: &str) -> anyhow::Result<()> {
-        self.button()?
-            .setToolTip(Some(&NSString::from_str(tooltip)));
-        Ok(())
-    }
-
-    fn button(&self) -> anyhow::Result<Retained<NSStatusBarButton>> {
-        self.item
-            .button(self.main)
-            .context("The menu bar item has no button")
+    pub fn set_tooltip(&self, tooltip: &str) {
+        self.button.setToolTip(Some(&NSString::from_str(tooltip)));
     }
 }
 

@@ -167,7 +167,8 @@ secondary Fn flag can accompany function keys, so it does not make F13 another m
 insertion worker retains the configured shortcut and polls physical F13 state for both its release
 wait and its final preflight. Its per-request autorelease pool encloses native delivery.
 
-`StatusItem` is created, updated and removed on the main thread and holds its `MainThreadMarker`, so
+`StatusItem` is created, updated and removed on the main thread. It takes the item's button at
+creation, removing the item again if AppKit offers none, and holds that main-thread-only button, so
 it is not Send. It owns the muda menu and retains muda's borrowed NSMenu pointer once, while that
 menu is held, as the status item's own menu. AppKit therefore tracks the menu from the user's own
 click, as for any status item with a menu, rather than from a synthesized `performClick`; muda still

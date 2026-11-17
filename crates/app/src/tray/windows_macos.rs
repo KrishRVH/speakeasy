@@ -58,13 +58,13 @@ impl Presenter {
     fn present(&mut self, state: &TrayState) {
         best_effort(self.redraw_icon(state.status.indicator, state.theme));
         self.status.set_text(&state.status.description);
-        best_effort(set_tooltip(
+        set_tooltip(
             &self.icon,
             &format!(
                 "Speakeasy · {}\nHold {} to dictate",
                 state.status.description, state.shortcut
             ),
-        ));
+        );
         let TrayMenu {
             pause,
             toggle,
@@ -261,7 +261,7 @@ fn build_icon(menu: Menu, rgba: Vec<u8>) -> anyhow::Result<NativeIcon> {
 fn build_icon(menu: Menu, rgba: Vec<u8>) -> anyhow::Result<NativeIcon> {
     let item = StatusItem::new(menu)?;
     item.set_template_image(&rgba, icon::SIZE)?;
-    item.set_tooltip("Speakeasy")?;
+    item.set_tooltip("Speakeasy");
     Ok(item)
 }
 
@@ -276,13 +276,13 @@ fn set_image(native: &NativeIcon, rgba: Vec<u8>) -> anyhow::Result<()> {
 }
 
 #[cfg(target_os = "windows")]
-fn set_tooltip(native: &NativeIcon, tooltip: &str) -> anyhow::Result<()> {
-    Ok(native.set_tooltip(Some(tooltip))?)
+fn set_tooltip(native: &NativeIcon, tooltip: &str) {
+    best_effort(native.set_tooltip(Some(tooltip)));
 }
 
 #[cfg(target_os = "macos")]
-fn set_tooltip(native: &NativeIcon, tooltip: &str) -> anyhow::Result<()> {
-    native.set_tooltip(tooltip)
+fn set_tooltip(native: &NativeIcon, tooltip: &str) {
+    native.set_tooltip(tooltip);
 }
 
 fn queue_commands(
