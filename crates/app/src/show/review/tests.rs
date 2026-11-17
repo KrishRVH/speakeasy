@@ -133,8 +133,8 @@ fn a_cropped_keyframe_says_so_and_offers_the_whole_screen() -> anyhow::Result<()
     Ok(())
 }
 
-#[tokio::test]
-async fn the_demo_is_isolated_and_damage_does_not_hide_the_current_summary() -> anyhow::Result<()> {
+#[test]
+fn the_demo_is_an_isolated_set_of_pinned_early_and_damaged_shows() -> anyhow::Result<()> {
     let root = Source::Demo.load()?;
     assert!(root.fixture.is_some());
     let (rows, _) = list(&root.directory)?;
@@ -142,13 +142,21 @@ async fn the_demo_is_isolated_and_damage_does_not_hide_the_current_summary() -> 
     assert_eq!(rows[0].pinned, Some(true));
     assert!(rows[1].early && rows[1].narration_lost.is_some());
     assert_eq!(rows[2].health, Health::Damaged);
-    let detail = Detail::open(&rows[2].directory, library::Mode::Keyframes)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_damaged_show_fails_only_the_preview_of_its_missing_frame() -> anyhow::Result<()> {
+    let root = Source::Demo.load()?;
+    let (rows, _) = list(&root.directory)?;
+    let damaged = &rows[2].directory;
+    let detail = Detail::open(damaged, library::Mode::Keyframes)?;
     assert_eq!(detail.frames.len(), 5);
     let mut reads = preview::Reads::default();
     for (index, valid) in [(2, false), (1, true)] {
         let frame = &detail.frames[index];
         let work = reads.submit(preview::Request {
-            directory: rows[2].directory.clone(),
+            directory: damaged.clone(),
             content: frame.file.clone(),
             at: frame.at(),
             annotated: false,
@@ -159,6 +167,13 @@ async fn the_demo_is_isolated_and_damage_does_not_hide_the_current_summary() -> 
         };
         assert_eq!(receipt.await.is_ok(), valid);
     }
+    Ok(())
+}
+
+#[test]
+fn a_mark_without_a_frame_warns_without_revealing_private_text() -> anyhow::Result<()> {
+    let root = Source::Demo.load()?;
+    let (rows, _) = list(&root.directory)?;
     let path = &rows[0].directory;
     let manifest_path = path.join("show.json");
     let mut manifest: serde_json::Value = serde_json::from_slice(&fs::read(&manifest_path)?)?;
@@ -174,40 +189,63 @@ async fn the_demo_is_isolated_and_damage_does_not_hide_the_current_summary() -> 
             .iter()
             .any(|warning| warning == "Mark 1 has no saved frame.")
     );
-    assert_eq!(detail.summary.as_ref().unwrap(), "SECRET_USER_EDIT");
+    assert_eq!(detail.summary.unwrap(), "SECRET_USER_EDIT");
     assert!(!format!("{:?} {:?}", list(&root.directory)?, detail.frames).contains("SECRET"));
-    fs::write(&manifest_path, br#"{"version":99}"#)?;
-    let detail = Detail::open(path, library::Mode::Keyframes)?;
-    assert!(detail.frames.is_empty());
+    Ok(())
+}
+
+#[test]
+fn an_unreadable_manifest_keeps_the_summary_and_warns_without_private_text() -> anyhow::Result<()> {
+    let root = Source::Demo.load()?;
     let (rows, _) = list(&root.directory)?;
-    assert_eq!(rows[0].pinned, Some(true));
-    assert_eq!(rows[0].retention(std::time::SystemTime::now()), "Kept");
+    let path = &rows[0].directory;
+    let summary_path = path.join("summary.md");
+    fs::write(&summary_path, "SECRET_USER_EDIT")?;
+    fs::write(path.join("show.json"), br#"{"version":99}"#)?;
+    let unsupported = Detail::open(path, library::Mode::Keyframes)?;
+    assert!(unsupported.frames.is_empty());
+    assert!(unsupported.warnings[0].contains("99"));
+    assert_eq!(unsupported.summary.unwrap(), "SECRET_USER_EDIT");
+    fs::write(path.join("show.json"), b"malformed SECRET_SPEECH")?;
+    let malformed = Detail::open(path, library::Mode::Keyframes)?;
+    assert!(!malformed.warnings.join(" ").contains("SECRET"));
+    assert_eq!(malformed.summary.unwrap(), "SECRET_USER_EDIT");
+    assert_eq!(fs::read_to_string(&summary_path)?, "SECRET_USER_EDIT");
+    Ok(())
+}
+
+#[test]
+fn an_unreadable_manifest_still_reports_the_shows_pin() -> anyhow::Result<()> {
+    let root = Source::Demo.load()?;
+    let (rows, _) = list(&root.directory)?;
+    let path = &rows[0].directory;
+    fs::write(path.join("show.json"), br#"{"version":99}"#)?;
+    let (unreadable, _) = list(&root.directory)?;
+    assert_eq!(unreadable[0].pinned, Some(true));
+    assert_eq!(unreadable[0].retention(SystemTime::now()), "Kept");
     fs::remove_file(path.join(".pinned"))?;
-    let (rows, _) = list(&root.directory)?;
-    assert_eq!(rows[0].pinned, Some(false));
+    let (unpinned, _) = list(&root.directory)?;
+    assert_eq!(unpinned[0].pinned, Some(false));
     assert!(
-        rows[0]
-            .retention(std::time::SystemTime::now())
+        unpinned[0]
+            .retention(SystemTime::now())
             .starts_with("Expires in")
     );
-    assert!(detail.warnings[0].contains("99"));
-    assert_eq!(detail.summary.unwrap(), "SECRET_USER_EDIT");
-    fs::write(&manifest_path, b"malformed SECRET_SPEECH")?;
-    let detail = Detail::open(path, library::Mode::Keyframes)?;
-    assert!(!detail.warnings.join(" ").contains("SECRET"));
-    assert_eq!(detail.summary.unwrap(), "SECRET_USER_EDIT");
-    assert_eq!(
-        fs::read_to_string(path.join("summary.md"))?,
-        "SECRET_USER_EDIT"
-    );
-    fs::write(path.join("summary.md"), b"")?;
+    Ok(())
+}
+
+#[test]
+fn an_emptied_summary_is_valid_and_an_undecodable_one_fails_privately() -> anyhow::Result<()> {
+    let show = tempfile::tempdir()?;
+    let summary_path = show.path().join("summary.md");
+    fs::write(&summary_path, b"")?;
     assert!(
-        recall::summary(path)?.is_empty(),
+        recall::summary(show.path())?.is_empty(),
         "An intentionally emptied summary is a valid edit"
     );
-    fs::write(path.join("summary.md"), b"PRIVATE\xff")?;
+    fs::write(&summary_path, b"PRIVATE\xff")?;
     assert!(
-        !recall::summary(path)
+        !recall::summary(show.path())
             .unwrap_err()
             .to_string()
             .contains("PRIVATE")
