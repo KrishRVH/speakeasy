@@ -123,6 +123,29 @@ fn continuous_cut_segments_expire_together() {
 }
 
 #[test]
+fn ink_with_unknown_or_incompatible_geometry_is_omitted() {
+    let mut recording = recording(vec![stroke(&[(0.2, 0.5, 100), (0.8, 0.5, 150)])]);
+    let shown = |recording: &Recording| {
+        painted(
+            &Annotations::new(recording, &[]).unwrap(),
+            Duration::from_millis(200),
+        )
+    };
+    assert_eq!(shown(&recording).1.drawn, 1);
+    let omitted = (
+        blank().into_bgra(),
+        AnnotationReport {
+            drawn: 0,
+            omitted: 1,
+        },
+    );
+    recording.spaces.strokes[0].as_mut().unwrap().part.right = 0.5;
+    assert_eq!(shown(&recording), omitted);
+    recording.spaces.strokes[0] = None;
+    assert_eq!(shown(&recording), omitted);
+}
+
+#[test]
 fn labels_wait_for_the_complete_mark() {
     let mut tracker = tracker();
     tracker.observe(ms(100), Point::new(0.2, 0.5), true, false);
