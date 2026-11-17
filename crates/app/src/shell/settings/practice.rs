@@ -45,6 +45,7 @@ impl Settings {
 
     pub(in crate::shell) fn end_practice(&mut self, cx: &mut Context<'_, Self>) {
         self.practice.stop();
+        self.vocabulary.forget_practice();
         cx.notify();
     }
 
@@ -108,7 +109,10 @@ impl Settings {
                     live.ready = true;
                 }
             },
-            PracticeEvent::Text(text) => self.practice.text = text,
+            PracticeEvent::Text(text) => {
+                self.practice.text = text;
+                self.vocabulary.forget_practice();
+            },
             PracticeEvent::Unavailable(message) => {
                 self.notice = Some(Notice::Problem(message.into()));
                 self.end_practice(cx);

@@ -248,6 +248,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     anyhow::Ok(())
                 })??;
                 navigate(settings, cx)?;
+                correct_from_practice(settings, cx)?;
                 other.update(cx, |_, window, _| window.remove_window())?;
 
                 cx.update(|cx| close(settings, cx))?;
@@ -372,6 +373,47 @@ fn navigate(settings: WindowHandle<Settings>, cx: &mut AsyncApp) -> anyhow::Resu
         })??;
     }
     settings.update(cx, |view, _, _| view.practice = practicing())?;
+    Ok(())
+}
+
+fn correct_from_practice(
+    settings: WindowHandle<Settings>,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<()> {
+    use super::navigation::Page;
+
+    draw(settings, cx)?;
+    settings.update(cx, |view, window, cx| {
+        view.act(
+            Action::Correction(vocabulary::Edit::FromPractice(1)),
+            window,
+            cx,
+        );
+        view.act(
+            Action::Correction(vocabulary::Edit::FromPractice(2)),
+            window,
+            cx,
+        );
+    })?;
+    draw(settings, cx)?;
+    settings.update(cx, |view, window, cx| {
+        ensure!(
+            view.navigation.page == Page::Dictation,
+            "Picking a practice word left the page and cleared practice"
+        );
+        ensure!(
+            !view.practice.text.is_empty(),
+            "Picking a practice word cleared practice"
+        );
+        let (heard, writing) = view.vocabulary.addition_draft(window, cx);
+        ensure!(
+            heard == "private practice",
+            "Adjacent practice words did not become one phrase"
+        );
+        ensure!(writing, "The correction did not wait for what to write");
+        anyhow::Ok(())
+    })??;
+    settings.update(cx, |view, _, cx| view.vocabulary.clear(cx))?;
     Ok(())
 }
 

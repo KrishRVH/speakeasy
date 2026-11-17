@@ -121,6 +121,25 @@ impl<'a> Kit<'a> {
             .child(label)
     }
 
+    pub(crate) fn word(
+        self,
+        id: impl Into<ElementId>,
+        word: impl Into<SharedString>,
+        picked: bool,
+        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Stateful<Div> {
+        let palette = self.palette;
+        let word = word.into();
+        self.pressable(id, word.clone(), gpui::Role::Button, false, Some(on_click))
+            .px(px(3.0))
+            .rounded(px(4.0))
+            .text_size(px(16.0))
+            .text_color(rgb(palette.ink))
+            .when(picked, |word| word.bg(alpha(palette.lamp, 0.28)))
+            .hover(move |style| style.bg(palette.hover()))
+            .child(word)
+    }
+
     pub(crate) fn icon_button(
         self,
         id: impl Into<ElementId>,

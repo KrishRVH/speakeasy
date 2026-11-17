@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use gpui::{
     App, AppContext as _, Context, Div, Entity, Focusable as _, Window, div, prelude::*, px, rgb,
 };
@@ -19,6 +21,7 @@ pub(super) struct Editor {
     addition: Pair,
     revision: Pair,
     editing: Option<usize>,
+    picked: Option<Range<usize>>,
 }
 
 struct Pair {
@@ -33,6 +36,21 @@ pub(super) enum Edit {
     Save,
     Cancel,
     Remove(usize),
+    FromPractice(usize),
+}
+
+pub(super) fn practice_words(text: &str) -> impl Iterator<Item = &str> {
+    text.split_whitespace()
+        .map(|token| token.trim_matches(|character: char| !character.is_alphanumeric()))
+        .filter(|word| !word.is_empty())
+}
+
+fn pick(picked: Option<Range<usize>>, word: usize) -> Range<usize> {
+    match picked {
+        Some(range) if range.end == word => range.start..word.saturating_add(1),
+        Some(range) if word.checked_add(1) == Some(range.start) => word..range.end,
+        Some(_) | None => word..word.saturating_add(1),
+    }
 }
 
 impl Editor {
@@ -41,6 +59,7 @@ impl Editor {
             addition: Pair::new(["speak easy", "Speakeasy"], Edit::Add, theme, window, cx),
             revision: Pair::new(["", ""], Edit::Save, theme, window, cx),
             editing: None,
+            picked: None,
         }
     }
 
@@ -52,9 +71,26 @@ impl Editor {
 
     pub(super) fn clear(&mut self, cx: &mut Context<'_, Settings>) {
         self.editing = None;
+        self.picked = None;
         for pair in [&self.addition, &self.revision] {
             pair.clear(cx);
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn addition_draft(&self, window: &Window, cx: &App) -> (String, bool) {
+        (
+            self.addition.heard.read(cx).text().to_owned(),
+            self.addition
+                .written
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window),
+        )
+    }
+
+    pub(super) fn forget_practice(&mut self) {
+        self.picked = None;
     }
 
     pub(super) const fn stop_revising(&mut self) {
@@ -144,6 +180,7 @@ impl Settings {
         match edit {
             Edit::Add => {
                 if self.store_correction(self.vocabulary.addition.draft(cx), None, cx) {
+                    self.vocabulary.picked = None;
                     self.vocabulary.addition.clear(cx);
                     self.vocabulary.addition.focus(window, cx);
                 }
@@ -163,6 +200,20 @@ impl Settings {
                 }
             },
             Edit::Cancel => self.vocabulary.editing = None,
+            Edit::FromPractice(word) => {
+                let words: Vec<&str> = practice_words(&self.practice.text).collect();
+                let range = pick(self.vocabulary.picked.take(), word);
+                if let Some(heard) = words.get(range.clone()) {
+                    let heard = heard.join(" ");
+                    self.vocabulary.picked = Some(range);
+                    self.vocabulary
+                        .addition
+                        .heard
+                        .update(cx, |field, cx| field.set_text(heard, cx));
+                    let written = &self.vocabulary.addition.written;
+                    written.read(cx).focus_handle(cx).focus(window, cx);
+                }
+            },
             Edit::Remove(index) => {
                 if index < self.config.vocabulary.len() {
                     self.config.vocabulary.remove(index);
@@ -201,7 +252,18 @@ impl Settings {
         true
     }
 
-    pub(super) fn vocabulary_section(&self, ui: &Ui<'_>) -> Div {
+    pub(super) const fn picked_from_practice(&self) -> bool {
+        self.vocabulary.picked.is_some()
+    }
+
+    pub(super) fn picked_word(&self, word: usize) -> bool {
+        self.vocabulary
+            .picked
+            .as_ref()
+            .is_some_and(|range| range.contains(&word))
+    }
+
+    pub(super) fn correction_row(&self, ui: &Ui<'_>) -> Div {
         let kit = ui.kit();
         let palette = ui.palette;
         let arrow = || icon(icons::ARROW_RIGHT, 14.0, palette.muted).flex_none();
@@ -215,11 +277,10 @@ impl Settings {
                 .child(kit.detail(label))
                 .child(field.clone())
         };
-        let add = div()
+        div()
             .flex()
             .items_end()
             .gap(px(10.0))
-            .p(px(16.0))
             .child(labeled("When I say", &self.vocabulary.addition.heard))
             .child(div().h(px(32.0)).flex().items_center().child(arrow()))
             .child(labeled("Write", &self.vocabulary.addition.written))
@@ -228,8 +289,14 @@ impl Settings {
                 Action::Correction(Edit::Add),
                 Weight::Primary,
                 self.vocabulary.addition.is_complete(ui.cx),
-            ));
-        let mut rows = vec![add.into_any_element()];
+            ))
+    }
+
+    pub(super) fn vocabulary_section(&self, ui: &Ui<'_>) -> Div {
+        let kit = ui.kit();
+        let palette = ui.palette;
+        let arrow = || icon(icons::ARROW_RIGHT, 14.0, palette.muted).flex_none();
+        let mut rows = vec![self.correction_row(ui).p(px(16.0)).into_any_element()];
         if self.config.vocabulary.is_empty() {
             rows.push(
                 kit.detail(
@@ -334,5 +401,22 @@ impl Settings {
                     .child(ui.text("Fix what Speakeasy mishears. Works with every speech model.")),
             )
             .child(kit.group(rows))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn practice_words_drop_punctuation_and_adjacent_picks_grow_one_phrase() {
+        let words: Vec<&str> = practice_words("Hello, speak easy! — it's 2 o'clock.").collect();
+        assert_eq!(words, ["Hello", "speak", "easy", "it's", "2", "o'clock"]);
+        let first = pick(None, 1);
+        assert_eq!(first, 1..2);
+        let grown = pick(Some(first), 2);
+        assert_eq!(grown, 1..3);
+        assert_eq!(pick(Some(grown.clone()), 0), 0..3);
+        assert_eq!(pick(Some(grown), 5), 5..6);
     }
 }

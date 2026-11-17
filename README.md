@@ -612,7 +612,9 @@ Settings opens on **Dictation**: your shortcut with a private practice area, the
 Windows and Mac, the speech model, language, microphone, writing options, and presets. **Words**
 holds phrase corrections and recognition hints. **General** holds the theme, motion and sounds,
 permissions, updates, the setup guide, and **Start over…**. Leaving Dictation ends private practice
-and clears its text.
+and clears its text. To fix a word Speakeasy keeps mishearing, practice saying it, then choose that
+word in the result; choose a neighbouring word to make it a phrase. A correction row opens right
+there with what you said filled in, so you only type what to write.
 
 **General → Privacy** shows microphone access, screen access for Shows on Windows and Mac, and
 Accessibility on Mac, without prompting or capturing anything. Permission status refreshes when

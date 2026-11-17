@@ -13,6 +13,7 @@ use crate::{
             Action, EngineFile, Setting, Settings, is_demo,
             menu::{self, Menu},
             speech::{self, Speech},
+            vocabulary,
         },
     },
     status::Indicator,
@@ -223,10 +224,19 @@ impl Settings {
         };
         let indicator = self.presentation.indicator;
         let result = if !self.practice.text.is_empty() {
-            div().text_size(px(16.0)).child(gpui::text!(
-                id = "practice-words",
-                self.practice.text.to_string()
-            ))
+            div().flex().flex_wrap().gap(px(3.0)).children(
+                vocabulary::practice_words(&self.practice.text)
+                    .enumerate()
+                    .map(|(index, word)| {
+                        let action = Action::Correction(vocabulary::Edit::FromPractice(index));
+                        ui.kit().word(
+                            action.element_id(),
+                            word.to_owned(),
+                            self.picked_word(index),
+                            ui.press(action),
+                        )
+                    }),
+            )
         } else if indicator == Indicator::Recording {
             div()
                 .flex()
@@ -277,12 +287,15 @@ impl Settings {
                     .gap(px(12.0))
                     .child(
                         kit.detail(
-                            "Nothing is pasted or saved. Practice clears when you leave this window.",
+                            "Choose a word Speakeasy got wrong to add a correction; choose its neighbour to make a phrase. Nothing is pasted or saved, and practice clears when you leave this window.",
                         )
                         .flex_1(),
                     )
                     .child(ui.button("End practice", Action::Practice, Weight::Quiet)),
             )
+            .when(self.picked_from_practice(), |panel| {
+                panel.child(self.correction_row(ui))
+            })
     }
 
     fn show_shortcuts(&self, ui: &Ui<'_>) -> Div {
