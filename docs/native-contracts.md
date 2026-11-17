@@ -94,6 +94,12 @@ the selection future does not cancel or join this modal dialog; its result is di
 receiver left. This intentional detached lifetime must remain explicit rather than being mistaken
 for the joined worker contract.
 
+`Awake` holds one power request from `PowerCreateRequest`, which copies its reason string, and sets
+`PowerRequestSystemRequired` on it. The live microphone stream owns it, so idle sleep waits exactly
+as long as the microphone is open; dropping it clears the request and closes the handle. A refused
+request records without it. On the Mac it is an `NSProcessInfo` activity that disables idle system
+sleep and ends on drop. Linux holds nothing.
+
 ## Child process containment
 
 Owner: `crates/platform/src/process.rs`.

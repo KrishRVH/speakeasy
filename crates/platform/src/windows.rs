@@ -1,3 +1,4 @@
+pub(crate) mod awake;
 mod dialog;
 #[cfg(test)]
 mod fixture;

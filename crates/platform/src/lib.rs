@@ -1,6 +1,7 @@
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 compile_error!("Speakeasy supports Windows, macOS, and Linux.");
 
+mod awake;
 mod clipboard;
 mod desktop;
 mod image;
@@ -41,6 +42,7 @@ pub use self::windows::installation::installed_directory;
 #[cfg(target_os = "windows")]
 pub use self::windows::login::{start_at_login, startup_approved};
 pub use self::{
+    awake::Awake,
     clipboard::{ClipboardContent, copy_content},
     desktop::{
         DesktopOptions, FileFilter, InputMonitor, LinuxPaste, MacShortcut, NativeWindow, Shortcut,

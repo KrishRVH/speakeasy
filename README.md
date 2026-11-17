@@ -114,7 +114,9 @@ the pill shows:
 </p>
 
 - **Time left.** Recordings stop at five minutes. The last 30 seconds count down in gold, and at
-  zero the recording finishes and its text is delivered as usual.
+  zero the recording finishes and its text is delivered as usual. On Windows and macOS the computer
+  stays awake while the microphone is open, so a long hands-free dictation is not cut off by idle
+  sleep.
 - **Working.** The lamp slides through the slot while your speech is transcribed on this machine.
 - **Typed.** A check, shown above, means the text was submitted to your app.
 - **No speech detected.** Nothing was sent. A microphone that sends only digital silence, for
