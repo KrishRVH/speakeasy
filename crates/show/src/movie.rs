@@ -162,9 +162,7 @@ impl MoviePrefix {
             require(frames <= SAMPLE_LIMIT, "Movie has too many samples")?;
             decoded = fragment.decoded;
             result.frames = frames;
-            if let Some(flag) = fragment.normalization {
-                result.normalization.headers.push(flag);
-            }
+            result.normalization.headers.extend(fragment.normalization);
             for at in fragment.times {
                 result.samples.push(MovieSample {
                     at: duration(at, track.timescale)?,
@@ -319,7 +317,7 @@ fn fragment(
     let boxes = children(bytes)?;
     let mut header = Fields::new(child(&boxes, *b"mfhd")?.bytes);
     require(
-        header.word()? == 0 && header.word()? == sequence && header.empty(),
+        header.word()? == 0 && header.word()? == sequence && header.is_empty(),
         "Movie fragment sequence is invalid",
     )?;
     require(
@@ -382,7 +380,7 @@ fn fragment(
             _ => return Err(MovieError::Invalid("Movie decode time is unsupported")),
         };
         require(
-            time.empty() && at == decoded,
+            time.is_empty() && at == decoded,
             "Movie fragments have a decode-time gap",
         )?;
     }
@@ -455,7 +453,7 @@ fn fragment(
                 .filter(|end| *end <= data.end)
                 .ok_or(MovieError::Invalid("Movie sample exceeds its data box"))?;
         }
-        require(run.empty(), "Movie sample table has trailing data")?;
+        require(run.is_empty(), "Movie sample table has trailing data")?;
         result.samples = result.samples.saturating_add(samples);
     }
     require(

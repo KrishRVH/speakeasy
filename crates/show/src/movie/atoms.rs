@@ -21,7 +21,7 @@ impl<'a> Fields<'a> {
         Self(bytes)
     }
 
-    pub(super) const fn empty(&self) -> bool {
+    pub(super) const fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 

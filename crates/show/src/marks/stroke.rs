@@ -193,12 +193,12 @@ type Slanted = [Point; SLANTS];
 struct Boxes([Rect; SLANTS]);
 
 impl Boxes {
-    fn at(point: &Slanted) -> Self {
-        Self(point.map(Rect::at))
+    fn at(slanted: &Slanted) -> Self {
+        Self(slanted.map(Rect::at))
     }
 
-    fn hold(&mut self, point: &Slanted) {
-        for (bounds, &point) in self.0.iter_mut().zip(point) {
+    fn hold(&mut self, slanted: &Slanted) {
+        for (bounds, &point) in self.0.iter_mut().zip(slanted) {
             *bounds = bounds.union(Rect::at(point));
         }
     }

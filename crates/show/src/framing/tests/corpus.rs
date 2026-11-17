@@ -1,7 +1,7 @@
 use serde::Deserialize;
 
 use super::*;
-use crate::{InkPoint, Layer, Reason, Stroke, Window, marks};
+use crate::{InkPoint, Layer, Reason, Span, Stroke, Window, marks};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -66,7 +66,7 @@ impl Case {
                 self.drags
                     .iter()
                     .map(|&(x0, y0, t0, x1, y1, t1)| Action::Drag {
-                        span: crate::Span::new(Moment::from_millis(t0), Moment::from_millis(t1)),
+                        span: Span::new(Moment::from_millis(t0), Moment::from_millis(t1)),
                         from: Point::new(x0, y0),
                         to: Point::new(x1, y1),
                     }),
@@ -83,9 +83,7 @@ impl Case {
                     Stroke::new(
                         points
                             .iter()
-                            .map(|&point| {
-                                InkPoint::from((point.0, point.1, Moment::from_millis(point.2)))
-                            })
+                            .map(|&(x, y, at)| InkPoint::from((x, y, Moment::from_millis(at))))
                             .collect(),
                     )
                     .unwrap()

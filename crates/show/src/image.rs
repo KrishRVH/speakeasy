@@ -124,7 +124,7 @@ impl Image {
         let mut bytes = if self.opaque() {
             self.pixmap.take()
         } else {
-            self.straight_rgba().into_owned()
+            self.demultiplied()
         };
         for [red, _, blue, _] in bytes.as_chunks_mut::<4>().0 {
             std::mem::swap(red, blue);
@@ -143,15 +143,19 @@ impl Image {
         if self.opaque() {
             Cow::Borrowed(self.pixmap.data())
         } else {
-            self.pixmap
-                .pixels()
-                .iter()
-                .flat_map(|pixel| {
-                    let color = pixel.demultiply();
-                    [color.red(), color.green(), color.blue(), color.alpha()]
-                })
-                .collect()
+            Cow::Owned(self.demultiplied())
         }
+    }
+
+    fn demultiplied(&self) -> Vec<u8> {
+        self.pixmap
+            .pixels()
+            .iter()
+            .flat_map(|pixel| {
+                let color = pixel.demultiply();
+                [color.red(), color.green(), color.blue(), color.alpha()]
+            })
+            .collect()
     }
 
     pub(crate) fn resized(&self, width: u32, height: u32) -> Option<Self> {

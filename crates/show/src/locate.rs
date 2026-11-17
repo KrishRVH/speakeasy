@@ -76,10 +76,7 @@ impl Manifest {
                 ));
             },
         };
-        if words
-            .array_windows::<2>()
-            .any(|[one, two]| one.span.start() > two.span.start())
-        {
+        if !words.is_sorted_by_key(|word| word.span.start()) {
             return Err(Unlocated(
                 "Narration word timings are not in recording order",
             ));
@@ -102,7 +99,7 @@ impl Manifest {
     }
 }
 
-fn tokens(text: &str) -> impl Iterator<Item = String> + '_ {
+fn tokens(text: &str) -> impl Iterator<Item = String> {
     text.split(|character: char| !character.is_alphanumeric())
         .filter(|token| !token.is_empty())
         .map(str::to_lowercase)

@@ -94,12 +94,15 @@ impl<'a> Shown<'a> {
     }
 
     pub(crate) fn points(&self) -> impl Iterator<Item = Point> {
-        let anchors = self.labels.iter().flat_map(|mark| match mark.shape {
-            Shape::Pin { point } => vec![point],
-            _ => vec![
-                Point::new(mark.bounds.left, mark.bounds.top),
-                Point::new(mark.bounds.right, mark.bounds.bottom),
-            ],
+        let anchors = self.labels.iter().flat_map(|mark| {
+            let extent = match mark.shape {
+                Shape::Pin { point } => Rect::at(point),
+                _ => mark.bounds,
+            };
+            [
+                Point::new(extent.left, extent.top),
+                Point::new(extent.right, extent.bottom),
+            ]
         });
         self.ink
             .iter()

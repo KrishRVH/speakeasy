@@ -27,7 +27,6 @@ impl Wsl {
         let drives = if settings.automount.as_deref().is_none_or(enabled) {
             settings
                 .root
-                .as_deref()
                 .map_or_else(|| Some(DEFAULT_ROOT.to_owned()), root)
         } else {
             None
@@ -64,7 +63,11 @@ impl Wsl {
 
     #[must_use]
     pub fn command(&self, windows: &Path) -> Option<String> {
-        self.path(windows).filter(|_| self.interop)
+        if self.interop {
+            self.path(windows)
+        } else {
+            None
+        }
     }
 }
 
@@ -166,8 +169,7 @@ fn enabled(value: &str) -> bool {
     !(value == "0" || value.eq_ignore_ascii_case("false"))
 }
 
-fn root(value: &str) -> Option<String> {
-    let mut root = value.to_owned();
+fn root(mut root: String) -> Option<String> {
     if !root.ends_with('/') {
         root.push('/');
     }

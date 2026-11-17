@@ -85,7 +85,7 @@ fn changed_between(samples: &[Sample], since: Moment, until: Moment) -> Changed 
     changed
 }
 
-pub(crate) fn plan(
+fn plan(
     recording: &Recording,
     keyframes: &[Keyframe],
     marks: &[Mark],
@@ -98,24 +98,18 @@ pub(crate) fn plan(
         .enumerate()
         .map(|(position, keyframe)| {
             let (start, end) = slice(keyframes, position, recording.duration);
-            let touched: Vec<Vec<(Point, Moment)>> = recording
+            let touched: Vec<Action> = recording
                 .actions
                 .iter()
+                .copied()
                 .filter(|action| action.span().end() >= start && action.span().start() <= end)
-                .map(|action| match *action {
-                    Action::Click { at, point } => vec![(point, at)],
-                    Action::Drag { span, from, to } => vec![(from, span.start()), (to, span.end())],
-                })
                 .collect();
+            let touch_points = || touched.iter().copied().flat_map(touches);
             let shown = Shown::on(keyframe, recording, marks);
             let votes: Vec<Vote> = shown
                 .gestures()
                 .flat_map(|gesture| Vote::shared(gesture.iter().map(|&point| (point, keyframe.at))))
-                .chain(
-                    touched
-                        .iter()
-                        .flat_map(|gesture| Vote::shared(gesture.iter().copied())),
-                )
+                .chain(touched.iter().copied().map(touches).flat_map(Vote::shared))
                 .collect();
             let regions = changes.get(position).map_or(&[][..], Vec::as_slice);
             let caused = regions
@@ -123,17 +117,14 @@ pub(crate) fn plan(
                 .copied()
                 .filter(|region| {
                     let reach = screen.pad(*region, CAUSE_REACH);
-                    touched
-                        .iter()
-                        .flatten()
-                        .any(|&(point, _)| reach.contains(point))
+                    touch_points().any(|(point, _)| reach.contains(point))
                 })
                 .reduce(Rect::union);
             let worked = Worked {
                 pointed: Rect::bounding(
                     shown
                         .points()
-                        .chain(touched.iter().flatten().map(|&(point, _)| point))
+                        .chain(touch_points().map(|(point, _)| point))
                         .filter(|point| point.is_finite()),
                 ),
                 caused,
@@ -185,6 +176,14 @@ impl Worked {
             (pointed, caused) => pointed.or(caused),
         }
     }
+}
+
+fn touches(action: Action) -> impl Iterator<Item = (Point, Moment)> + Clone {
+    let (first, last) = match action {
+        Action::Click { at, point } => ((point, at), None),
+        Action::Drag { span, from, to } => ((from, span.start()), Some((to, span.end()))),
+    };
+    iter::once(first).chain(last)
 }
 
 #[derive(Clone, Copy)]

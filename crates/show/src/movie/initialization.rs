@@ -67,13 +67,13 @@ pub(super) fn read(bytes: &[u8]) -> Result<Track, MovieError> {
     for kind in [b"stts", b"stsc", b"stco"] {
         let mut table = Fields::new(child(&samples, *kind)?.bytes);
         require(
-            table.word()? == 0 && table.word()? == 0 && table.empty(),
+            table.word()? == 0 && table.word()? == 0 && table.is_empty(),
             "Movie initialization contains samples",
         )?;
     }
     let mut sizes = Fields::new(child(&samples, *b"stsz")?.bytes);
     require(
-        sizes.word()? == 0 && sizes.word()? == 0 && sizes.word()? == 0 && sizes.empty(),
+        sizes.word()? == 0 && sizes.word()? == 0 && sizes.word()? == 0 && sizes.is_empty(),
         "Movie initialization contains sample sizes",
     )?;
     let mut descriptions = Fields::new(child(&samples, *b"stsd")?.bytes);
@@ -127,7 +127,7 @@ pub(super) fn read(bytes: &[u8]) -> Result<Track, MovieError> {
         flags: defaults.word()?,
     };
     require(
-        defaults.empty(),
+        defaults.is_empty(),
         "Movie fragment defaults have trailing data",
     )?;
     Ok(result)
@@ -163,7 +163,7 @@ fn configuration(bytes: &[u8]) -> Result<(), MovieError> {
     parameters(&mut fields, sequences & 0x1F)?;
     let pictures = fields.byte()?;
     parameters(&mut fields, pictures)?;
-    if !fields.empty() {
+    if !fields.is_empty() {
         require(
             [100, 110, 122, 144].contains(&profile),
             "Movie AVC extension is unsupported",
@@ -177,7 +177,10 @@ fn configuration(bytes: &[u8]) -> Result<(), MovieError> {
             parameter(&mut fields)?;
         }
     }
-    require(fields.empty(), "Movie AVC configuration has trailing bytes")
+    require(
+        fields.is_empty(),
+        "Movie AVC configuration has trailing bytes",
+    )
 }
 
 fn parameters(fields: &mut Fields<'_>, count: u8) -> Result<(), MovieError> {

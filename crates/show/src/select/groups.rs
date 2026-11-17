@@ -66,27 +66,27 @@ impl Grouping<'_> {
             return groups;
         }
         let mut costs: Vec<Option<Merge>> = (0..groups.len())
-            .map(|k| self.merge_cost(&groups, k))
+            .map(|seam| self.merge_cost(&groups, seam))
             .collect();
         while groups.len() > most {
             let cheapest = costs
                 .iter()
                 .enumerate()
-                .filter_map(|(k, cost)| cost.map(|cost| (k, cost)))
+                .filter_map(|(seam, cost)| cost.map(|cost| (seam, cost)))
                 .min_by(|(_, one), (_, other)| one.total_cmp(other))
-                .map(|(k, _)| k);
-            let Some(k) = cheapest else {
+                .map(|(seam, _)| seam);
+            let Some(seam) = cheapest else {
                 break;
             };
-            let later = groups.remove(k);
-            costs.remove(k);
-            if let Some(earlier) = k
+            let later = groups.remove(seam);
+            costs.remove(seam);
+            if let Some(earlier) = seam
                 .checked_sub(1)
                 .and_then(|previous| groups.get_mut(previous))
             {
                 earlier.end = later.end;
             }
-            for neighbor in [k.saturating_sub(1), k] {
+            for neighbor in [seam.saturating_sub(1), seam] {
                 if let Some(slot) = costs.get_mut(neighbor) {
                     *slot = self.merge_cost(&groups, neighbor);
                 }
@@ -95,8 +95,8 @@ impl Grouping<'_> {
         groups
     }
 
-    fn merge_cost(&self, groups: &[Range<usize>], k: usize) -> Option<Merge> {
-        let merged = groups.get(k.checked_sub(1)?)?.start..groups.get(k)?.end;
+    fn merge_cost(&self, groups: &[Range<usize>], seam: usize) -> Option<Merge> {
+        let merged = groups.get(seam.checked_sub(1)?)?.start..groups.get(seam)?.end;
         let spread = self.spread(merged.clone());
         Some(if spread < SAME_SCREEN {
             Merge::SameScreen {
