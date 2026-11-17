@@ -20,7 +20,9 @@ async fn recovery_uses_original_language_and_current_cleanup_without_capture_or_
         let (language, reply) = receive(&h.jobs).await?;
         assert_eq!(language, "fr");
         answer(reply, "synthetic um recovered narration")?;
-        let saved = receive(&receipt).await?.map_err(anyhow::Error::msg)?;
+        let saved = timeout(PATIENCE, receipt)
+            .await??
+            .map_err(anyhow::Error::msg)?;
         h.phase(Phase::Notice).await?;
         assert_eq!(
             saved,
@@ -108,7 +110,7 @@ async fn reopening_failure_reaches_the_library_receipt_with_its_remedy() -> anyh
         .runtime
         .recover(interrupted.clone())
         .map_err(anyhow::Error::msg)?;
-    let message = receive(&receipt).await?.unwrap_err();
+    let message = timeout(PATIENCE, receipt).await??.unwrap_err();
     assert!(message.starts_with("Cannot recover this Show:"));
     assert!(message.contains("No complete frame survived. Discard this interrupted Show."));
     h.phase(Phase::Error).await?;

@@ -89,7 +89,9 @@ async fn recovery_waits_for_dictation_then_saves_without_microphone_speech_or_co
     assert!(still_pending(h.phase(Phase::Cancelled)).await);
     assert!(authority.active());
     recovering.release().await?;
-    let saved = receive(&receipt).await?.map_err(anyhow::Error::msg)?;
+    let saved = timeout(PATIENCE, receipt)
+        .await??
+        .map_err(anyhow::Error::msg)?;
     h.phase(Phase::Notice).await?;
     assert_eq!(h.snapshot().last_show, Some(saved));
     assert!(h.captures.try_recv().is_err());
@@ -113,7 +115,7 @@ async fn quit_revokes_recovery_and_awaits_its_owned_cleanup() -> anyhow::Result<
     assert!(!authority.active());
     assert!(still_pending(h.exited()).await);
     recovering.release().await?;
-    assert!(receive(&receipt).await?.is_err());
+    assert!(timeout(PATIENCE, receipt).await??.is_err());
     h.close().await?;
     assert!(directory.exists());
     Ok(())

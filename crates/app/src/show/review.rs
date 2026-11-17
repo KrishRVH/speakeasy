@@ -703,7 +703,7 @@ impl Review {
         self.notice =
             Some("Recovery queued. It starts after the current recording finishes.".into());
         let task = cx.spawn(async move |view, cx| {
-            let result = receipt.recv().await.unwrap_or_else(|_closed| {
+            let result = receipt.await.unwrap_or_else(|_closed| {
                 Err("Recovery stopped. The interrupted Show remains available.".into())
             });
             view.update_if_alive(cx, |view, cx| {

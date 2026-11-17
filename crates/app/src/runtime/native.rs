@@ -7,7 +7,10 @@ use std::{
 use speakeasy_core::machine::{self, Payload, RecognitionMode, Settings};
 use speakeasy_platform::{InsertPermit, Inserted, Scope, Taps};
 use speakeasy_show::{Ending, Narration, NarrationLoss};
-use tokio::{sync::mpsc, task::JoinError};
+use tokio::{
+    sync::{mpsc, oneshot},
+    task::JoinError,
+};
 use zeroize::Zeroizing;
 
 use super::{
@@ -41,7 +44,7 @@ impl Payload for Native {
     type Permit = InsertPermit;
     type Practice = mpsc::Sender<PracticeEvent>;
     type Range = Range<usize>;
-    type Receipt = async_channel::Sender<Result<SavedShow, String>>;
+    type Receipt = oneshot::Sender<Result<SavedShow, String>>;
     type Recovered = Restored;
     type Saved = Copied;
     type Scope = Scope;

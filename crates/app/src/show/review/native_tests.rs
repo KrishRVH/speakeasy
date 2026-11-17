@@ -5,8 +5,10 @@ use std::{
 
 use anyhow::ensure;
 use gpui::{AsyncApp, Pixels, Render, RenderImage, Size, div, prelude::*};
+use tokio::sync::oneshot;
 
 use super::*;
+use crate::show::SavedShow;
 
 mod deletion;
 #[cfg(target_os = "windows")]
@@ -40,7 +42,7 @@ impl gpui::Global for TestReads {}
 struct TestEdits(crate::show::edits::Edits);
 impl gpui::Global for TestEdits {}
 
-struct Recoveries(crate::runtime::RecoveryReceipt);
+struct Recoveries(std::sync::mpsc::Sender<oneshot::Sender<Result<SavedShow, String>>>);
 impl gpui::Global for Recoveries {}
 
 struct CopyProbe {
@@ -66,7 +68,7 @@ impl Render for Keeper {
 async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     cx.update(|cx| cx.set_global(TestEdits(crate::show::edits::Edits::default())));
     cx.update(|cx| cx.set_global(TestReads(preview::Reads::default())));
-    let (recovered, recoveries) = async_channel::bounded(1);
+    let (recoveries, recovering) = std::sync::mpsc::channel();
     cx.update(|cx| cx.set_global(Recoveries(recoveries)));
     let keeper = cx.open_window(
         WindowOptions {
@@ -103,7 +105,14 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
                         preview: |request, cx| cx.global_mut::<TestReads>().0.submit(request),
                         can_copy: |_| false,
                         copy: |_, _| anyhow::bail!("Synthetic review does not use the clipboard"),
-                        recover: |_, cx| Ok(cx.global::<Recoveries>().0.clone()),
+                        recover: |_, cx| {
+                            let (completed, receipt) = oneshot::channel();
+                            cx.global::<Recoveries>()
+                                .0
+                                .send(completed)
+                                .map_err(|_closed| "Synthetic recovery lane closed")?;
+                            Ok(receipt)
+                        },
                     },
                     window,
                     cx,
@@ -574,9 +583,14 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         );
         anyhow::Ok(())
     })??;
-    recovered.try_send(Err(
-        "Synthetic recovery failed; the checkpoint remains.".into()
-    ))?;
+    let recovery = recovering
+        .try_recv()
+        .context("Recover did not request a recovery")?;
+    let failed = Err("Synthetic recovery failed; the checkpoint remains.".into());
+    ensure!(
+        recovery.send(failed).is_ok(),
+        "The review stopped waiting for its recovery"
+    );
     wait_for(window, |view| view.write.is_none(), cx).await?;
     ensure!(
         interrupted.directory().exists(),

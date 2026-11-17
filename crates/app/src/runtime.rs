@@ -19,7 +19,7 @@ use speakeasy_platform::{
 };
 use speakeasy_show::{Ending, NarrationLoss};
 use tokio::{
-    sync::{mpsc, watch},
+    sync::{mpsc, oneshot, watch},
     task::JoinError,
 };
 use zeroize::Zeroizing;
@@ -327,7 +327,7 @@ impl<Host> Runtime<Host> {
         &self,
         interrupted: Interrupted,
     ) -> Result<RecoveryReceipt, &'static str> {
-        let (completed, receipt) = async_channel::bounded(1);
+        let (completed, receipt) = oneshot::channel();
         self.recoveries
             .try_send(Recovery {
                 interrupted,
@@ -497,7 +497,7 @@ impl Ports for Desktop {
     }
 }
 
-pub(crate) type RecoveryReceipt = Receiver<Result<SavedShow, String>>;
+pub(crate) type RecoveryReceipt = oneshot::Receiver<Result<SavedShow, String>>;
 
 pub(crate) enum PracticeEvent {
     Ready,
@@ -507,7 +507,7 @@ pub(crate) enum PracticeEvent {
 
 struct Recovery {
     interrupted: Interrupted,
-    completed: Sender<Result<SavedShow, String>>,
+    completed: oneshot::Sender<Result<SavedShow, String>>,
 }
 
 struct Wiring<P> {

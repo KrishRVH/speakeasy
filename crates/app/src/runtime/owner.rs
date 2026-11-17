@@ -24,7 +24,7 @@ use speakeasy_core::{
 use speakeasy_platform::{Input, InputSender, InsertPermit, Scope, Taps};
 use speakeasy_show::Ending;
 use tokio::{
-    sync::{mpsc, watch},
+    sync::{mpsc, oneshot, watch},
     task::{JoinError, JoinHandle},
     time::sleep_until,
 };
@@ -521,7 +521,7 @@ impl<P: Ports> Env<Native> for World<P> {
         &mut self,
         publication: Publication<Native>,
         permit: &InsertPermit,
-        receipt: Option<Sender<Result<SavedShow, String>>>,
+        receipt: Option<oneshot::Sender<Result<SavedShow, String>>>,
     ) {
         let Publication {
             mut footage,
@@ -559,7 +559,7 @@ impl<P: Ports> Env<Native> for World<P> {
                     clippy::let_underscore_must_use,
                     reason = "Closing the library abandons its receipt, not the owner's recovery"
                 )]
-                let _ = receipt.try_send(completed);
+                let _ = receipt.send(completed);
             }
             Delivery::Published(result)
         }));
@@ -574,14 +574,14 @@ impl<P: Ports> Env<Native> for World<P> {
 
     fn refuse_recovery(
         &mut self,
-        receipt: Sender<Result<SavedShow, String>>,
+        receipt: oneshot::Sender<Result<SavedShow, String>>,
         failure: &Failure<Native>,
     ) {
         #[expect(
             clippy::let_underscore_must_use,
             reason = "A closed library no longer waits for its failure notice"
         )]
-        let _ = receipt.try_send(Err(format!(
+        let _ = receipt.send(Err(format!(
             "Cannot recover this Show: {}",
             outcome::failure(failure)
         )));
