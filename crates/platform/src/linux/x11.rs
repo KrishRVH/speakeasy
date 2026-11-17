@@ -87,10 +87,6 @@ impl Keyboard {
 
     fn modifier_mask(&self, modifier: Keysym) -> anyhow::Result<u16> {
         let code = self.keycode(modifier)?;
-        ensure!(
-            self.keys_per_modifier != 0,
-            "Keyboard has no modifier mapping"
-        );
         self.modifiers()
             .find_map(|(mask, codes)| codes.contains(&code).then_some(mask))
             .context("Shortcut modifier is not mapped")
@@ -251,13 +247,7 @@ pub(super) async fn run(
     requests: Receiver<Insertion>,
     stopping: &Receiver<Infallible>,
 ) -> anyhow::Result<()> {
-    let (connection, screen) = XCBConnection::connect(None)?;
-    let root = connection
-        .setup()
-        .roots
-        .get(screen)
-        .context("X11 display has no screen")?
-        .root;
+    let (connection, root) = connect_with_root()?;
     let keyboard = Keyboard::load(&connection)?;
     let shortcuts = if options.external_shortcut {
         None
@@ -298,6 +288,17 @@ pub(super) async fn run(
         }
     }
     Ok(())
+}
+
+fn connect_with_root() -> anyhow::Result<(XCBConnection, Window)> {
+    let (connection, screen) = XCBConnection::connect(None)?;
+    let root = connection
+        .setup()
+        .roots
+        .get(screen)
+        .context("X11 display has no screen")?
+        .root;
+    Ok((connection, root))
 }
 
 fn depends_on_mapping(options: &DesktopOptions) -> bool {

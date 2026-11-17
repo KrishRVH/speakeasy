@@ -19,7 +19,7 @@ use xkbcommon::xkb::Keysym;
 use super::{
     Keyboard,
     clipboard::{Clipboard, ClipboardAccess as _},
-    intern,
+    connect_with_root, intern,
 };
 use crate::{DesktopOptions, Input, InputSender};
 
@@ -107,13 +107,7 @@ async fn a_shortcut_another_app_holds_stops_input_naming_the_shortcut() -> anyho
     if !on_private_display("a_shortcut_another_app_holds_stops_input_naming_the_shortcut")? {
         return Ok(());
     }
-    let (connection, screen) = XCBConnection::connect(None)?;
-    let root = connection
-        .setup()
-        .roots
-        .get(screen)
-        .context("X11 display has no screen")?
-        .root;
+    let (connection, root) = connect_with_root()?;
     let options = DesktopOptions::default();
     let held = Keyboard::load(&connection)?.binding(&options.shortcut)?;
     connection
@@ -151,13 +145,7 @@ fn a_fresh_clipboard_owns_its_first_copy() -> anyhow::Result<()> {
     if !on_private_display("a_fresh_clipboard_owns_its_first_copy")? {
         return Ok(());
     }
-    let (connection, screen) = XCBConnection::connect(None)?;
-    let root = connection
-        .setup()
-        .roots
-        .get(screen)
-        .context("X11 display has no screen")?
-        .root;
+    let (connection, root) = connect_with_root()?;
     let other = connection.generate_id()?;
     connection
         .create_window(
