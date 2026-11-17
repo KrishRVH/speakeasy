@@ -91,8 +91,7 @@ struct FakePorts {
     publication: Option<Gate<()>>,
     show_recovery: Option<Gate<InsertPermit>>,
     checkpoint_root: Option<PathBuf>,
-    publish_error: Option<&'static str>,
-    publish_panics: bool,
+    publishing: Publishing,
     saved: Option<Gate<()>>,
     copy_error: Option<&'static str>,
     captures: Sender<OpenedCapture>,
@@ -145,8 +144,7 @@ impl FakePorts {
             publication: None,
             show_recovery: None,
             checkpoint_root: None,
-            publish_error: None,
-            publish_panics: false,
+            publishing: Publishing::Saves,
             saved: None,
             copy_error: None,
             captures,
@@ -273,8 +271,7 @@ impl Ports for FakePorts {
         let recovery = self.show_recovery.clone();
         let published = self.published.clone();
         let publication = self.publication.clone();
-        let publish_error = self.publish_error;
-        let publish_panics = self.publish_panics;
+        let publishing = self.publishing;
         let saved = self.saved.clone();
         let copy_error = self.copy_error;
         async move {
@@ -301,10 +298,11 @@ impl Ports for FakePorts {
             if let Some(gate) = publication {
                 gate.pass(()).await?;
             }
-            if let Some(error) = publish_error {
-                bail!(error);
+            match publishing {
+                Publishing::Saves => {},
+                Publishing::Fails(error) => bail!(error),
+                Publishing::Panics => panic!("The fake publication panicked"),
             }
-            assert!(!publish_panics, "The fake publication panicked");
             if !permit.commit() {
                 return Ok(Published::Cancelled);
             }
@@ -429,6 +427,13 @@ impl Listening for FakeMicrophone {
             .try_send(Sound::Expected(self.id))
             .expect("The sound lane is unbounded");
     }
+}
+
+#[derive(Clone, Copy)]
+enum Publishing {
+    Saves,
+    Fails(&'static str),
+    Panics,
 }
 
 #[derive(Clone, Copy)]
@@ -898,10 +903,8 @@ fn finish_show(h: &Harness) {
 }
 
 fn change_settings(h: &Harness) {
-    let config = Config {
-        remove_fillers: !h.runtime.configuration.borrow().remove_fillers,
-        ..h.runtime.configuration.borrow().clone()
-    };
+    let mut config = h.runtime.configuration.borrow().clone();
+    config.remove_fillers = !config.remove_fillers;
     h.runtime.configure(ValidConfig::assume(config));
 }
 

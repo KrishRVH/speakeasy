@@ -36,7 +36,7 @@ async fn a_show_saved_but_not_copied_is_remembered_and_says_how_to_copy_it() -> 
 #[tokio::test(start_paused = true)]
 async fn a_show_that_fails_before_it_is_saved_leaves_the_last_one() -> anyhow::Result<()> {
     let mut h = Harness::remembering(saved("first"), |ports| {
-        ports.publish_error = Some("Disk full");
+        ports.publishing = Publishing::Fails("Disk full");
     })?;
     let (id, _, events) = start_show(&mut h).await?;
     events

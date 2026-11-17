@@ -661,13 +661,13 @@ impl Model {
                         .is_some_and(|open| open.id == id && !open.retiring),
                     "Screen {id:?} took a pin while not recording a Show"
                 ),
-                Log::Inserted { text, latest } => ensure!(
-                    !text.is_empty()
-                        && text
-                            .split_whitespace()
-                            .all(|part| part == latest.to_string()),
-                    "Session {text}'s text was inserted after session {latest} began"
-                ),
+                Log::Inserted { text, latest } => {
+                    let session = latest.to_string();
+                    ensure!(
+                        !text.is_empty() && text.split_whitespace().all(|part| part == session),
+                        "Session {text}'s text was inserted after session {latest} began"
+                    );
+                },
                 Log::Loaded => {
                     ensure!(
                         !self.worker,
