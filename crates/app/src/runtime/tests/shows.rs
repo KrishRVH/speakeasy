@@ -272,7 +272,7 @@ async fn a_tray_show_leaves_a_session_under_way_alone() -> anyhow::Result<()> {
 #[tokio::test(start_paused = true)]
 async fn a_show_that_cannot_be_published_explains_why() -> anyhow::Result<()> {
     let mut h = Harness::with_ports(Config::default(), |ports| {
-        ports.publishing = Publishing::Fails("Disk full");
+        ports.publish_outcome = PublishOutcome::Fails("Disk full");
     })?;
     start_show(&mut h).await?;
     finish_show(&h);
@@ -285,7 +285,7 @@ async fn a_show_that_cannot_be_published_explains_why() -> anyhow::Result<()> {
 #[tokio::test(start_paused = true)]
 async fn a_publication_that_panics_reports_the_fixed_show_failure() -> anyhow::Result<()> {
     let mut h = Harness::with_ports(Config::default(), |ports| {
-        ports.publishing = Publishing::Panics;
+        ports.publish_outcome = PublishOutcome::Panics;
     })?;
     start_show(&mut h).await?;
     finish_show(&h);

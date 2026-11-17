@@ -91,7 +91,7 @@ struct FakePorts {
     publication: Option<Gate<()>>,
     show_recovery: Option<Gate<InsertPermit>>,
     checkpoint_root: Option<PathBuf>,
-    publishing: Publishing,
+    publish_outcome: PublishOutcome,
     saved: Option<Gate<()>>,
     copy_error: Option<&'static str>,
     captures: Sender<OpenedCapture>,
@@ -144,7 +144,7 @@ impl FakePorts {
             publication: None,
             show_recovery: None,
             checkpoint_root: None,
-            publishing: Publishing::Saves,
+            publish_outcome: PublishOutcome::Saves,
             saved: None,
             copy_error: None,
             captures,
@@ -271,7 +271,7 @@ impl Ports for FakePorts {
         let recovery = self.show_recovery.clone();
         let published = self.published.clone();
         let publication = self.publication.clone();
-        let publishing = self.publishing;
+        let outcome = self.publish_outcome;
         let saved = self.saved.clone();
         let copy_error = self.copy_error;
         async move {
@@ -298,10 +298,10 @@ impl Ports for FakePorts {
             if let Some(gate) = publication {
                 gate.pass(()).await?;
             }
-            match publishing {
-                Publishing::Saves => {},
-                Publishing::Fails(error) => bail!(error),
-                Publishing::Panics => panic!("The fake publication panicked"),
+            match outcome {
+                PublishOutcome::Saves => {},
+                PublishOutcome::Fails(error) => bail!(error),
+                PublishOutcome::Panics => panic!("The fake publication panicked"),
             }
             if !permit.commit() {
                 return Ok(Published::Cancelled);
@@ -430,7 +430,7 @@ impl Listening for FakeMicrophone {
 }
 
 #[derive(Clone, Copy)]
-enum Publishing {
+enum PublishOutcome {
     Saves,
     Fails(&'static str),
     Panics,
