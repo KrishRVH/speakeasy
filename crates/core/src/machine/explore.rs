@@ -3,14 +3,14 @@ mod canonical;
 mod invariants;
 mod oracle;
 
-use std::{collections::HashMap, env, mem, thread};
+use std::{collections::HashMap, env, mem, ops::ControlFlow, thread};
 
 use self::{
     alphabet::{CONFIGS, Step, steps},
     canonical::key,
     oracle::{Abstract, Effect, Oracle},
 };
-use super::{Event, Flow, Machine, Now, RecognitionMode, SessionId};
+use super::{Event, Halt, Machine, Now, RecognitionMode, SessionId};
 use crate::gesture::{Moment, Timing};
 
 const TIMING: Timing = Timing::new(1, 2, 3);
@@ -97,7 +97,7 @@ fn apply(
         instant: (),
     };
     let reached = match machine.step(now, event.clone(), &mut oracle) {
-        Flow::Running => {
+        ControlFlow::Continue(()) => {
             let explored = Explored {
                 machine,
                 clock: state.clock,
@@ -106,8 +106,8 @@ fn apply(
             let key = explored.key();
             Reached::State(Box::new(explored), key)
         },
-        Flow::Failed => Reached::Failed(Box::new(machine)),
-        Flow::Stopped => {
+        ControlFlow::Break(Halt::Failed) => Reached::Failed(Box::new(machine)),
+        ControlFlow::Break(Halt::Stopped) => {
             machine.shut_down(&mut oracle);
             Reached::Stopped
         },

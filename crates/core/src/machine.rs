@@ -293,8 +293,7 @@ pub struct Settings {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Flow {
-    Running,
+pub enum Halt {
     Failed,
     Stopped,
 }
@@ -607,15 +606,16 @@ impl<P: Payload> Machine<P> {
         }
     }
 
-    pub fn step(&mut self, now: Now<P>, event: Event<P>, env: &mut impl Env<P>) -> Flow {
-        match self.handle(now, event, env) {
-            ControlFlow::Continue(()) => {
-                self.advance(env);
-                self.hold_cues(env);
-                Flow::Running
-            },
-            ControlFlow::Break(flow) => flow,
-        }
+    pub fn step(
+        &mut self,
+        now: Now<P>,
+        event: Event<P>,
+        env: &mut impl Env<P>,
+    ) -> ControlFlow<Halt> {
+        self.handle(now, event, env)?;
+        self.advance(env);
+        self.hold_cues(env);
+        ControlFlow::Continue(())
     }
 
     pub fn shut_down(&mut self, env: &mut impl Env<P>) {
@@ -717,9 +717,9 @@ impl<P: Payload> Machine<P> {
         }
     }
 
-    fn handle(&mut self, now: Now<P>, event: Event<P>, env: &mut impl Env<P>) -> ControlFlow<Flow> {
+    fn handle(&mut self, now: Now<P>, event: Event<P>, env: &mut impl Env<P>) -> ControlFlow<Halt> {
         let action = match event {
-            Event::Stop => return ControlFlow::Break(Flow::Stopped),
+            Event::Stop => return ControlFlow::Break(Halt::Stopped),
             Event::InputLost => return self.stop_with_failure(Failure::InputLost, env),
             Event::Input(input) => self.handle_input(now, input, env)?,
             Event::Report(report) => {
@@ -788,7 +788,7 @@ impl<P: Payload> Machine<P> {
         now: Now<P>,
         input: Input<P>,
         env: &mut impl Env<P>,
-    ) -> ControlFlow<Flow, Option<Action>> {
+    ) -> ControlFlow<Halt, Option<Action>> {
         let ready = self.desktop_ready;
         let action = match input {
             Input::Press if ready => self.gesture.press(now.moment),
@@ -842,9 +842,9 @@ impl<P: Payload> Machine<P> {
         &mut self,
         failure: Failure<P>,
         env: &mut impl Env<P>,
-    ) -> ControlFlow<Flow, T> {
+    ) -> ControlFlow<Halt, T> {
         self.fail(failure, env);
-        ControlFlow::Break(Flow::Failed)
+        ControlFlow::Break(Halt::Failed)
     }
 
     fn report(&mut self, report: Report<P>, env: &mut impl Env<P>) {
@@ -1211,7 +1211,7 @@ impl<P: Payload> Machine<P> {
         now: Now<P>,
         action: Option<Action>,
         env: &mut impl Env<P>,
-    ) -> ControlFlow<Flow> {
+    ) -> ControlFlow<Halt> {
         match action {
             Some(Action::Start) => return self.start_session(now, env),
             Some(Action::Finish) => {
@@ -1231,7 +1231,7 @@ impl<P: Payload> Machine<P> {
         ControlFlow::Continue(())
     }
 
-    fn start_session(&mut self, now: Now<P>, env: &mut impl Env<P>) -> ControlFlow<Flow> {
+    fn start_session(&mut self, now: Now<P>, env: &mut impl Env<P>) -> ControlFlow<Halt> {
         let Some((id, permit)) = self.admit(env)? else {
             return ControlFlow::Continue(());
         };
@@ -1246,14 +1246,14 @@ impl<P: Payload> Machine<P> {
     fn admit(
         &mut self,
         env: &mut impl Env<P>,
-    ) -> ControlFlow<Flow, Option<(SessionId, P::Permit)>> {
+    ) -> ControlFlow<Halt, Option<(SessionId, P::Permit)>> {
         let Some(permit) = env.admit() else {
             self.gesture.abandon();
             return ControlFlow::Continue(None);
         };
         match self.latest.id.next() {
             Some(id) => ControlFlow::Continue(Some((id, permit))),
-            None => ControlFlow::Break(Flow::Stopped),
+            None => ControlFlow::Break(Halt::Stopped),
         }
     }
 
@@ -1269,7 +1269,7 @@ impl<P: Payload> Machine<P> {
         self.session = Some(session);
     }
 
-    fn paste_last(&mut self, now: Now<P>, env: &mut impl Env<P>) -> ControlFlow<Flow> {
+    fn paste_last(&mut self, now: Now<P>, env: &mut impl Env<P>) -> ControlFlow<Halt> {
         if self.practice.is_some() {
             return ControlFlow::Continue(());
         }
@@ -1323,7 +1323,7 @@ impl<P: Payload> Machine<P> {
         interrupted: P::Interrupted,
         receipt: P::Receipt,
         env: &mut impl Env<P>,
-    ) -> ControlFlow<Flow> {
+    ) -> ControlFlow<Halt> {
         if !self.gesture.save() {
             return ControlFlow::Continue(());
         }
@@ -1567,7 +1567,7 @@ impl<P: Payload> Machine<P> {
         call: P::Call,
         command: Command<P>,
         env: &mut impl Env<P>,
-    ) -> ControlFlow<Flow> {
+    ) -> ControlFlow<Halt> {
         let reply = match command {
             Command::Status => Ok(()),
             Command::Start(style) => {

@@ -5,6 +5,7 @@ use std::{
     convert::Infallible,
     future::{pending, poll_fn},
     mem,
+    ops::ControlFlow,
     pin::Pin,
     sync::Arc,
     task::Poll,
@@ -15,7 +16,7 @@ use async_channel::{Receiver, RecvError, Sender};
 use speakeasy_core::{
     gesture::{Moment, Timing},
     machine::{
-        self, Capture, Env, Event, Failure, Flow, Keeping, Kept, Machine, Now, Outcome,
+        self, Capture, Env, Event, Failure, Halt, Keeping, Kept, Machine, Now, Outcome,
         Publication, RecognitionMode, Recorder, Refusal, Release, Request, Screening, SessionId,
         Status, Stopped, Unheard,
     },
@@ -665,12 +666,12 @@ pub(super) async fn run<P: Ports>(wiring: Wiring<P>) {
         };
         let now = owner.now();
         match owner.machine.step(now, event, &mut owner.world) {
-            Flow::Running => owner.present(),
-            Flow::Failed => {
+            ControlFlow::Continue(()) => owner.present(),
+            ControlFlow::Break(Halt::Failed) => {
                 owner.present();
                 break;
             },
-            Flow::Stopped => break,
+            ControlFlow::Break(Halt::Stopped) => break,
         }
     }
     owner.shutdown().await;
