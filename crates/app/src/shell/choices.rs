@@ -85,7 +85,7 @@ impl Services {
                 call.respond(Reply::accepted());
             },
             Command::Preset { name } => self.choose_preset(name.clone(), call, cx),
-            Command::Status if self.runtime().is_none() => {
+            Command::Status if self.live_runtime().is_none() => {
                 call.respond(Reply::ok(self.control_status()));
             },
             _ => match self.runtime() {

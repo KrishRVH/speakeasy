@@ -259,7 +259,7 @@ impl Services {
         self.lifecycle.active().map(|owners| &owners.runtime)
     }
 
-    fn live_runtime(&self) -> Option<&Runtime> {
+    pub(super) fn live_runtime(&self) -> Option<&Runtime> {
         self.runtime().filter(|runtime| runtime.is_running())
     }
 

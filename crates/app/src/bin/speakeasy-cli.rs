@@ -52,8 +52,9 @@ fn help() -> ExitCode {
         io::stdout().lock(),
         "speakeasy-cli show [COMMAND]\n\
          speakeasy-cli status [--config PATH]\n\
-         speakeasy-cli dictation start [--style STYLE] [--config PATH]\n\
-         speakeasy-cli dictation stop|cancel TOKEN [--config PATH]\n\
+         speakeasy-cli dictation start [--print] [--style STYLE] [--config PATH]\n\
+         speakeasy-cli dictation stop TOKEN [--print] [--config PATH]\n\
+         speakeasy-cli dictation cancel TOKEN [--config PATH]\n\
          speakeasy-cli paste-last [--config PATH]\n\
          speakeasy-cli style STYLE [--config PATH]\n\
          speakeasy-cli preset NAME [--config PATH]\n\
