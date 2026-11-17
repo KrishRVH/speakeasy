@@ -3,7 +3,7 @@ use std::{
     fs,
     io::{ErrorKind, Read as _, Write as _},
     os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _},
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 
 use anyhow::ensure;
@@ -19,19 +19,17 @@ pub(super) struct TokenStore {
 
 impl TokenStore {
     pub(super) fn open() -> Option<Self> {
-        Self::at(&state_folder(std::env::var_os)?).ok()
+        Self::at(state_folder(std::env::var_os)?).ok()
     }
 
-    fn at(directory: &Path) -> anyhow::Result<Self> {
-        fs::create_dir_all(directory)?;
+    fn at(directory: PathBuf) -> anyhow::Result<Self> {
+        fs::create_dir_all(&directory)?;
         ensure!(
-            !fs::symlink_metadata(directory)?.file_type().is_symlink(),
+            !fs::symlink_metadata(&directory)?.file_type().is_symlink(),
             "Portal state must be a private directory"
         );
-        fs::set_permissions(directory, fs::Permissions::from_mode(0o700))?;
-        Ok(Self {
-            directory: directory.to_owned(),
-        })
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
+        Ok(Self { directory })
     }
 
     fn path(&self) -> PathBuf {
@@ -99,7 +97,7 @@ mod tests {
     #[test]
     fn tokens_are_private_rotated_and_consumed_once() -> anyhow::Result<()> {
         let directory = tempfile::tempdir()?;
-        let store = TokenStore::at(&directory.path().join("state"))?;
+        let store = TokenStore::at(directory.path().join("state"))?;
         store.save("fixture-one")?;
         assert_eq!(store.path().metadata()?.permissions().mode() & 0o777, 0o600);
         store.save("fixture-two")?;

@@ -51,7 +51,7 @@ const CLOSE_TIMEOUT: Duration = Duration::from_millis(500);
 const OWNERSHIP_SETTLE: Duration = Duration::from_millis(500);
 
 type Results = HashMap<String, OwnedValue>;
-type Options = HashMap<&'static str, Value<'static>>;
+type Options<'a> = HashMap<&'static str, Value<'a>>;
 type DesktopChanges = futures_util::stream::Select<MessageStream, MessageStream>;
 
 struct Portal {
@@ -110,7 +110,7 @@ impl Portal {
         format!("{}_{}", self.nonce, self.sequence)
     }
 
-    fn request_options(&mut self) -> (String, Options) {
+    fn request_options(&mut self) -> (String, Options<'static>) {
         let handle = self.next_token();
         let options = Options::from([("handle_token", Value::from(handle.clone()))]);
         (handle, options)
@@ -439,14 +439,14 @@ async fn bind_shortcuts(
             DICTATE_ID,
             Options::from([
                 ("description", Value::from("Hold to dictate")),
-                ("preferred_trigger", Value::from(options.shortcut.clone())),
+                ("preferred_trigger", Value::from(options.shortcut.as_str())),
             ]),
         ),
         (
             CANCEL_ID,
             Options::from([
                 ("description", Value::from("Cancel dictation")),
-                ("preferred_trigger", Value::from(options.cancel.clone())),
+                ("preferred_trigger", Value::from(options.cancel.as_str())),
             ]),
         ),
     ];

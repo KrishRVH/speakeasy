@@ -266,7 +266,7 @@ pub(super) async fn run(
     };
     let lock = keyboard.lock_modifiers();
 
-    let worker = InsertionWorker::start(input.clone(), options.clone(), requests)?;
+    let worker = InsertionWorker::start(input.clone(), options.paste, requests)?;
     tokio::select! {
         biased;
         () = stop_requested(stopping, input) => return Ok(()),

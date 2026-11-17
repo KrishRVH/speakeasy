@@ -20,7 +20,7 @@ use super::{
     clipboard::{Clipboard, ClipboardAccess as _},
 };
 use crate::{
-    Delivery, DesktopOptions, InputSender, Inserted, LinuxPaste, OwnedThread,
+    Delivery, InputSender, Inserted, LinuxPaste, OwnedThread,
     insertion::{
         Insertion, PASTE_AFTER_RELEASE, Reply, abandon_queued, wait_for_released_modifiers,
     },
@@ -39,15 +39,10 @@ pub(super) struct InsertionWorker {
 impl InsertionWorker {
     pub(super) fn start(
         input: InputSender,
-        options: DesktopOptions,
+        paste: LinuxPaste,
         requests: Receiver<Insertion>,
     ) -> anyhow::Result<Self> {
-        Self::spawn(
-            input,
-            requests,
-            move || Paster::open(options),
-            Paster::serve,
-        )
+        Self::spawn(input, requests, move || Paster::open(paste), Paster::serve)
     }
 
     fn spawn<S>(
@@ -103,17 +98,17 @@ impl Drop for InsertionWorker {
 struct Paster {
     clipboard: Clipboard,
     keyboard: Keyboard,
-    options: DesktopOptions,
+    paste: LinuxPaste,
 }
 
 impl Paster {
-    fn open(options: DesktopOptions) -> anyhow::Result<Self> {
+    fn open(paste: LinuxPaste) -> anyhow::Result<Self> {
         let clipboard = Clipboard::open()?;
         let keyboard = Keyboard::load(&clipboard.connection)?;
         Ok(Self {
             clipboard,
             keyboard,
-            options,
+            paste,
         })
     }
 
@@ -144,7 +139,7 @@ impl Paster {
         request: &Insertion,
     ) -> anyhow::Result<ControlFlow<Inserted, Window>> {
         let previous_owner = self.clipboard.owner()?;
-        let shortcut_held = self.options.paste != LinuxPaste::Manual
+        let shortcut_held = self.paste != LinuxPaste::Manual
             && wait_for_released_modifiers(&request.permit, || self.modifiers_held())?;
         let owner_changed = self.clipboard.owner()? != previous_owner;
 
@@ -163,7 +158,7 @@ impl Paster {
                 Inserted::Cancelled
             }));
         };
-        if self.options.paste == LinuxPaste::Manual {
+        if self.paste == LinuxPaste::Manual {
             return Ok(ControlFlow::Break(COPIED_FOR_MANUAL_PASTE));
         }
         if shortcut_held {
@@ -178,9 +173,9 @@ impl Paster {
     }
 
     fn paste_copied(&self, request: &Insertion, owner: Window) -> anyhow::Result<Inserted> {
-        let Some(chord) = PasteChord::resolve(self.options.paste, |symbol| {
-            self.keyboard.unshifted_keycode(symbol)
-        }) else {
+        let Some(chord) =
+            PasteChord::resolve(self.paste, |symbol| self.keyboard.unshifted_keycode(symbol))
+        else {
             return Ok(NO_PASTE_BINDING);
         };
         let connection = &self.clipboard.connection;
