@@ -909,10 +909,11 @@ impl Review {
             Action::Copy(kind) => self.copy(kind, cx),
             Action::Export(kind) => self.export(kind, cx),
             Action::CancelExport => {
-                if let Some(Export::Running { cancel, .. }) = &mut self.export {
-                    *cancel = None;
+                if let Some(Export::Running { cancel, .. }) = &mut self.export
+                    && cancel.take().is_some()
+                {
+                    self.notice = Some("Cancelling video export…".into());
                 }
-                self.notice = Some("Cancelling video export…".into());
             },
             Action::Keep => self.keep(cx),
             Action::Folder => {
