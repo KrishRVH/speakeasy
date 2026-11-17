@@ -177,6 +177,7 @@ fn reopen_pill(cx: &mut App) -> anyhow::Result<()> {
     let pill = crate::pill::open(
         services.output.subscribe(),
         services.meter.subscribe(),
+        services.mode.secure_input(),
         services.config.prefers_reduced_motion(),
         services.config.theme,
         crate::pill::Opening::Reopened,

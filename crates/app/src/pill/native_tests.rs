@@ -55,6 +55,7 @@ fn check_idle_pill(cx: &mut App) -> anyhow::Result<()> {
     let pill = open(
         updates,
         levels,
+        || false,
         true,
         Theme::default(),
         Opening::Startup,
@@ -137,7 +138,15 @@ async fn check_reopened_pill(cx: &AsyncApp) -> anyhow::Result<()> {
         let (_publisher, updates) = watch::channel(snapshot);
         let (_meter, levels) = watch::channel(Meter::default());
         let id = cx.update(|cx| {
-            let pill = open(updates, levels, true, Theme::default(), opening, cx)?;
+            let pill = open(
+                updates,
+                levels,
+                || false,
+                true,
+                Theme::default(),
+                opening,
+                cx,
+            )?;
             pill.update(cx, |_, window, _| x11_window(window))?
         })?;
         cx.background_executor()
@@ -207,6 +216,7 @@ async fn check_late_window(cx: &AsyncApp) -> anyhow::Result<()> {
         let _pill = open(
             updates,
             levels,
+            || false,
             true,
             Theme::default(),
             Opening::Startup,

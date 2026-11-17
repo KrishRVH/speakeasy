@@ -183,8 +183,9 @@ module unless a test file is named.
   preview. [pill/native_tests.rs](../crates/app/src/pill/native_tests.rs) is opt-in on a private
   display, and the [check_native_rendering](../crates/app/examples/check_native_rendering.rs)
   example checks owned-window rendering on each platform. The pill alone reads macOS secure keyboard
-  entry, through [desktop.rs](../crates/platform/src/desktop.rs)'s `secure_input`, as each recording
-  opens; [pill/tests.rs](../crates/app/src/pill/tests.rs) drives that notice with fake readings.
+  entry, through the probe it opens with: [desktop.rs](../crates/platform/src/desktop.rs)'s
+  `secure_input` in the app, and a constant false in `--demo`.
+  [pill/tests.rs](../crates/app/src/pill/tests.rs) drives its notice with fake readings.
 - **Settings and the settings file**: [shell/settings.rs](../crates/app/src/shell/settings.rs)
   applies each change as it is made: once the speech files are chosen, an edit enters the save
   queue, and a validated save updates the running services.

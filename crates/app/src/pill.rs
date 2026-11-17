@@ -90,6 +90,7 @@ pub(crate) struct Pill {
     phase_at: Instant,
     tray_hint_until: Option<Instant>,
     draw_hint_until: Option<Instant>,
+    secure_input: fn() -> bool,
     secure_input_until: Option<Instant>,
     frame_at: Instant,
     frame_due: Instant,
@@ -111,9 +112,14 @@ pub(crate) enum Opening {
 }
 
 impl Pill {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "open hands the new pill each feed, probe and preference it keeps beside GPUI's window and context; a parameter struct would only rename this list"
+    )]
     fn new(
         updates: watch::Receiver<Snapshot>,
         levels: watch::Receiver<Meter>,
+        secure_input: fn() -> bool,
         reduced_motion: bool,
         theme: Theme,
         opening: Opening,
@@ -134,6 +140,7 @@ impl Pill {
             phase_at,
             tray_hint_until: None,
             draw_hint_until: None,
+            secure_input,
             secure_input_until: None,
             frame_at: now,
             frame_due: now,
@@ -186,13 +193,19 @@ impl Pill {
             self.wake = None;
             self.tray_hint_until = None;
         }
-        self.draw_hint_until = draw_hint_until(previous, &snapshot, now, self.draw_hint_until);
         self.secure_input_until = secure_input_until(
             previous,
             &snapshot,
             now,
             self.secure_input_until,
-            speakeasy_platform::secure_input,
+            self.secure_input,
+        );
+        self.draw_hint_until = draw_hint_until(
+            previous,
+            &snapshot,
+            now,
+            self.draw_hint_until,
+            self.secure_input_until,
         );
         if new_session {
             self.history.fill(0.0);
@@ -592,6 +605,7 @@ impl fmt::Display for Clock {
 pub(crate) fn open(
     updates: watch::Receiver<Snapshot>,
     levels: watch::Receiver<Meter>,
+    secure_input: fn() -> bool,
     reduced_motion: bool,
     theme: Theme,
     opening: Opening,
@@ -619,7 +633,18 @@ pub(crate) fn open(
 
             window.on_window_should_close(cx, |_, _| false);
             configured = configure(window);
-            cx.new(|cx| Pill::new(updates, levels, reduced_motion, theme, opening, window, cx))
+            cx.new(|cx| {
+                Pill::new(
+                    updates,
+                    levels,
+                    secure_input,
+                    reduced_motion,
+                    theme,
+                    opening,
+                    window,
+                    cx,
+                )
+            })
         },
     )?;
     configured?;
@@ -722,10 +747,13 @@ fn draw_hint_until(
     snapshot: &Snapshot,
     now: Instant,
     until: Option<Instant>,
+    secure_input_until: Option<Instant>,
 ) -> Option<Instant> {
     let until = until.filter(|_| snapshot.session == previous.session);
     if until.is_none() && snapshot.show && snapshot.phase == Phase::Recording {
-        now.checked_add(DRAW_HINT_FOR)
+        secure_input_until
+            .map_or(now, |notice| notice.max(now))
+            .checked_add(DRAW_HINT_FOR)
     } else {
         until
     }

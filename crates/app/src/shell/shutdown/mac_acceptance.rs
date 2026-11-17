@@ -111,6 +111,7 @@ fn start(mode: Mode, main: MainThreadMarker, cx: &mut App) -> anyhow::Result<()>
     let pill = crate::pill::open(
         snapshots,
         levels,
+        || false,
         true,
         config.theme,
         crate::pill::Opening::Startup,

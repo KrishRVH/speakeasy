@@ -55,7 +55,8 @@ keyboard does not send.
 **Secure keyboard entry on Mac:** while a password field has focus, or a terminal's **Secure
 Keyboard Entry** is on, macOS hides key presses from other apps. Fn, Right Option, and Right Command
 still dictate, but F13 cannot start dictation, and Escape, Space, V, S, W, and A don't reach
-Speakeasy, so S, W, and A type into your app. The pill says so as a recording starts. Leave the
+Speakeasy. Space, V, S, W, and A go to your app with the key you hold instead, so with Right
+Command, W closes the window and V pastes. The pill says so as a recording starts. Leave the
 password field, or turn Secure Keyboard Entry off in the terminal's app menu.
 
 **Remove um and uh** removes standalone English hesitation words locally. With Nemotron or Whisper

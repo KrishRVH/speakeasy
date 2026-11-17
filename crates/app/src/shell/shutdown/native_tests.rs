@@ -30,6 +30,7 @@ fn handoff(force_native_quit: bool) -> anyhow::Result<()> {
         let pill = crate::pill::open(
             snapshots,
             levels,
+            || false,
             true,
             config.theme,
             crate::pill::Opening::Startup,

@@ -295,11 +295,14 @@ original seven-day schedule even when the saved bundle is kept.
 - On macOS, while another app holds secure keyboard entry, such as a focused password field or a
   terminal's Secure Keyboard Entry, the event tap sees modifier changes but no key presses. Fn,
   Right Option, and Right Command still start and finish dictation; a selected F13 does nothing, and
-  Escape, Space, V, S, W, and A never reach Speakeasy, so S, W, and A type into the focused app. As
-  each recording opens, from a shortcut, the tray, or a command, the pill asks once whether secure
+  Escape, Space, V, S, W, and A never reach Speakeasy. Escape reaches the focused app as always, and
+  Space, V, S, W, and A, which a hold normally withholds, reach it too with the held key: they type
+  or act as that key's shortcuts, so with Right Command, W closes the window and V pastes. As each
+  recording opens, from a shortcut, the tray, or a command, the pill asks once whether secure
   keyboard entry is on and, if so, replaces the slot with a notice that says which keys won't arrive
-  and that a password field or terminal usually holds it, without naming the holder. Nothing checks
-  while idle or later in a recording, and the countdown to the limit outranks the notice.
+  and that a password field or terminal usually holds it, without naming the holder. A Show's
+  drawing hint waits for the notice to end, and the countdown to the limit outranks it. Nothing
+  checks while idle or later in a recording.
 - Readiness follows the first captured buffer. Startup feedback does not imply that speech before
   that buffer can be recovered.
 - Insertion does not steal focus. OS submission is the observable result; success in every editor

@@ -43,6 +43,14 @@ impl LaunchMode {
     pub(crate) const fn is_resident(self) -> bool {
         matches!(self, Self::Live | Self::DemoTray)
     }
+
+    pub(crate) const fn secure_input(self) -> fn() -> bool {
+        if self.is_demo() {
+            || false
+        } else {
+            speakeasy_platform::secure_input
+        }
+    }
 }
 
 enum Restart {

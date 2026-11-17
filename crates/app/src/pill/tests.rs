@@ -334,7 +334,7 @@ fn clock_wakes_land_on_whole_seconds_of_the_recording() {
 }
 
 #[test]
-fn the_drawing_hint_starts_when_a_show_records_and_ends_with_its_session() {
+fn the_drawing_hint_starts_as_a_show_records_or_after_its_notice_and_ends_with_its_session() {
     let snapshot = |session, phase, show| Snapshot {
         session,
         phase,
@@ -348,7 +348,7 @@ fn the_drawing_hint_starts_when_a_show_records_and_ends_with_its_session() {
     let held = snapshot(1, Phase::Recording, false);
     let show = snapshot(1, Phase::Recording, true);
     assert_eq!(
-        draw_hint_until(&held, &show, now, None),
+        draw_hint_until(&held, &show, now, None, None),
         full,
         "S during a hold starts the hint"
     );
@@ -357,32 +357,55 @@ fn the_drawing_hint_starts_when_a_show_records_and_ends_with_its_session() {
         ..show.clone()
     };
     assert_eq!(
-        draw_hint_until(&show, &republished, later, full),
+        draw_hint_until(&show, &republished, later, full, None),
         full,
         "A republished Show keeps its deadline"
     );
     let opening = snapshot(1, Phase::Starting, true);
     assert_eq!(
-        draw_hint_until(&snapshot(1, Phase::Starting, false), &opening, now, None),
+        draw_hint_until(
+            &snapshot(1, Phase::Starting, false),
+            &opening,
+            now,
+            None,
+            None
+        ),
         None,
         "The hint waits for the microphone"
     );
     assert_eq!(
-        draw_hint_until(&opening, &show, later, None),
+        draw_hint_until(&opening, &show, later, None, None),
         later.checked_add(DRAW_HINT_FOR),
         "A Show that starts recording gets the full hint"
+    );
+    let notice = later.checked_add(SECURE_INPUT_FOR);
+    assert_eq!(
+        draw_hint_until(&opening, &show, later, None, notice),
+        notice.and_then(|notice| notice.checked_add(DRAW_HINT_FOR)),
+        "The full hint follows the secure input notice"
+    );
+    assert_eq!(
+        draw_hint_until(&held, &show, later, None, Some(now)),
+        later.checked_add(DRAW_HINT_FOR),
+        "A notice that has ended does not delay the hint"
     );
     let hands_free = Snapshot {
         hands_free: true,
         ..held.clone()
     };
     assert_eq!(
-        draw_hint_until(&held, &hands_free, now, None),
+        draw_hint_until(&held, &hands_free, now, None, None),
         None,
         "Hands-free dictation is not a Show"
     );
     assert_eq!(
-        draw_hint_until(&show, &snapshot(2, Phase::Starting, false), later, full),
+        draw_hint_until(
+            &show,
+            &snapshot(2, Phase::Starting, false),
+            later,
+            full,
+            None
+        ),
         None,
         "A new session drops the hint"
     );
