@@ -137,7 +137,7 @@ spanning fillers. This mode compares text policies, not recognizers.
 Optionally set `SPEAKEASY_FIXTURE_CANDIDATE` to the absolute path of a second settings file. It must
 match the current settings except for `vocabulary` and `remove_fillers`. Invalid modes, a candidate
 outside raw mode, and other settings differences fail before a worker starts. Default `production`
-replay retains its existing scores and latency measurements.
+replay reports the scores and latency described above.
 
 Raw reports carry `cleanup: "raw-replay"`, the raw score, and each policy's score and text hash.
 They compare word and formatting errors separately against raw text, and the candidate also compares

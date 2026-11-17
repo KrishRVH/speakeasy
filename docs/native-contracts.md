@@ -139,7 +139,7 @@ Writing the environment races any thread that reads it, so `disable_rtkit` write
 Processes Speakeasy starts inherit the variable. Its engine, encoder, and archive helpers play no
 audio, but an application Speakeasy opens through `xdg-open`, such as the player for a Show's movie,
 also streams through PipeWire without realtime scheduling unless it holds realtime privileges.
-PipeWire releases through 1.6 read the variable; its development branch no longer does, so a later
+PipeWire releases through 1.6 read the variable and its development branch ignores it, so a later
 PipeWire release needs another opt-out.
 
 ## Mac event tap and AppKit ownership

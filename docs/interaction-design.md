@@ -321,11 +321,12 @@ Both modes bypass engine/model configuration. Public-audio tests cover transcrip
 capture and insertion. None of these establish physical microphone onset, target-editor behavior,
 screen-reader usability, display removal, or mixed-DPI presentation.
 
-Shows in either preview uses a private temporary library: an intact kept Show, one that ended early
-without narration, and one missing a frame. Plain `--demo` opens it automatically. Previewing never
-reads or expires the real library, and Copy summary and Send to agent are disabled. Owned-window
-review acceptance checks actual rendering on Linux, navigation, missing frames, external summary
-edits, deletion, and image and fixture cleanup on close without OS input or clipboard access.
+In either preview, the Shows window uses a private temporary library: an intact kept Show, one that
+ended early without narration, and one missing a frame. Plain `--demo` opens it automatically.
+Previewing never reads or expires the real library, and Copy summary and Send to agent are disabled.
+Owned-window review acceptance checks actual rendering on Linux, navigation, missing frames,
+external summary edits, deletion, and image and fixture cleanup on close without OS input or
+clipboard access.
 
 For visual acceptance, inspect interrupted transitions, quick completion, long processing,
 hands-free silence, and cancellation over light and dark content, in every theme. Use reduced motion

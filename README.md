@@ -175,7 +175,7 @@ origin, surviving video coverage, timed content rectangles, and the separate hor
 narration. Changing the display size, position, or scale ends capture; start a new Show. Capture or
 disk failure can shorten video coverage. Recovery retains only complete fragments; if none were
 written, the stills save with a video-loss notice. A failed copy of surviving video keeps the
-checkpoint for recovery. Mac window Shows currently retain sampled frames only.
+checkpoint for recovery. Mac window Shows retain sampled frames only.
 
 <p align="center">
   <img src="docs/assets/show-sheet.png"
@@ -297,10 +297,11 @@ and confirmed deletion finish even if you close the window; Quit waits for accep
 **More actions → Export ZIP…** saves a portable copy to a new path you choose. It includes the saved
 summary, manifest with narration, contact sheets, keyframes, and, when available, retained source
 samples, `recording.mp4`, and `recording.json`. `README.md` inside the archive links to those files
-by relative path; summary edits remain unchanged, including any old machine-local paths. Unzip the
-archive before opening its files on another machine. Recovery audio, saved voice, retention markers,
-and unrelated files are excluded. Export does not upload anything, and exported copies do not expire
-automatically. Closing the window leaves an accepted ZIP export running; Quit waits for it.
+by relative path; the edited summary stays as it was, including paths on the recording machine.
+Unzip the archive before opening its files on another machine. Recovery audio, saved voice,
+retention markers, and unrelated files are excluded. Export does not upload anything, and exported
+copies do not expire automatically. Closing the window leaves an accepted ZIP export running; Quit
+waits for it.
 
 **More actions → Export video…** creates a new MP4 with timed ink, marks, original voice when
 available, and a selectable caption track when narration has word timings. Install FFmpeg 5.1 or
@@ -387,15 +388,15 @@ phrase. Times use the original recording's clock. The report distinguishes the r
 the actual decoded sample and includes video coverage and the separate annotation horizon. Recovered
 video can extend beyond the sampled-frame journal. Add `--crop` with `--mark` to focus on a mark
 with surrounding context. The crop uses the actual decoded frame’s content rectangle and requires a
-matching saved coordinate space for every point in the mark. Older, mixed, missing, or mismatched
-geometry refuses the crop; the uncropped video remains available. Add `--annotated` to draw saved
-ink progressively, label completed marks, and show completed pointer actions. The viewer's
-Annotations switch uses the same rendering, and copied evidence includes the setting in its
-retrieval command. Drawn pixels stay within the captured content; crops follow annotation rendering.
-Unknown or incompatible marks are omitted and counted in the report. Explicit annotated exports
-require video geometry and annotation coverage; the viewer explains when it shows original video
-instead. These saved annotations do not reproduce live overlay fades. Video contact sheets are not
-supported. Linux can open the movie in its system player.
+matching saved coordinate space for every point in the mark. Mixed, missing, or mismatched geometry
+refuses the crop; the uncropped video remains available. Add `--annotated` to draw saved ink
+progressively, label completed marks, and show completed pointer actions. The viewer's Annotations
+switch uses the same rendering, and copied evidence includes the setting in its retrieval command.
+Drawn pixels stay within the captured content; crops follow annotation rendering. Unknown or
+incompatible marks are omitted and counted in the report. Explicit annotated exports require video
+geometry and annotation coverage; the viewer explains when it shows original video instead. These
+saved annotations do not reproduce live overlay fades. Video contact sheets are not supported. Linux
+can open the movie in its system player.
 
 `keep` accepts an ID or an explicit path directly inside Speakeasy's Shows folder. `--off` allows
 expiry at the original date; it does not grant another seven days. These actions never recreate a
@@ -883,8 +884,9 @@ every ordering of events against both within the bounds
   `python3 scripts/sign_update.py artifacts/speakeasy-windows-x64-setup.exe <version> --private-key <local-key-file>`
   binds the version, target, filename, size, and SHA-256 in `update.json` and signs its exact bytes
   in `update.json.sig`. Release publication checks that the secret matches the embedded key and
-  fails before tagging if it is absent or wrong. Old builds cannot trust a replacement key: retain
-  the current key or distribute a new trusted build manually. Never commit a private key.
+  fails before tagging if it is absent or wrong. Installed builds trust only the key they embed:
+  retain the current key or distribute a build with a replacement key manually. Never commit a
+  private key.
 - `bash scripts/check-package.sh <package>` unpacks a package and checks, with no display or model,
   that it prints its version and help, answers a mistyped option on stderr with status 2, and that
   `show demo` writes a bundle with its summary and contact sheet. It inspects the bundle, prints the
