@@ -2,7 +2,7 @@ use std::{path::Path, sync::Arc, time::Duration};
 
 use anyhow::Context as _;
 use gpui::RenderImage;
-use image::RgbaImage;
+use image::{Rgba, RgbaImage};
 use speakeasy_show::{Annotations, Moment, Source, SourceFrame};
 
 use super::{AnnotationState, Content, Decoded, Request};
@@ -62,7 +62,7 @@ fn png(directory: &Path, name: &str, cancelled: &dyn Fn() -> bool) -> Result<Rgb
     let mut pixels = image::load_from_memory_with_format(&bytes, image::ImageFormat::Png)
         .map_err(|_private_error| "This frame could not be decoded as a PNG image.".to_owned())?
         .into_rgba8();
-    for [red, _, blue, _] in pixels.as_flat_samples_mut().samples.as_chunks_mut::<4>().0 {
+    for Rgba([red, _, blue, _]) in pixels.pixels_mut() {
         std::mem::swap(red, blue);
     }
     Ok(pixels)
@@ -118,16 +118,11 @@ fn render(pixels: RgbaImage) -> Arc<RenderImage> {
 
 fn check_header(bytes: &[u8]) -> Result<(), String> {
     let invalid = "This frame has an invalid or truncated PNG header.";
-    if bytes.get(..16) != Some(&b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR"[..]) || bytes.len() < 33 {
+    if !bytes.starts_with(b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR") || bytes.len() < 33 {
         return Err(invalid.into());
     }
-    let dimension = |range| {
-        bytes
-            .get(range)
-            .and_then(|bytes: &[u8]| bytes.try_into().ok())
-            .map(u32::from_be_bytes)
-    };
-    let (Some(width @ 1..), Some(height @ 1..)) = (dimension(16..20), dimension(20..24)) else {
+    let dimension = |at: usize| Some(u32::from_be_bytes(*bytes.get(at..)?.first_chunk()?));
+    let (Some(width @ 1..), Some(height @ 1..)) = (dimension(16), dimension(20)) else {
         return Err(invalid.into());
     };
     if width > LONGEST_EDGE || height > LONGEST_EDGE {
@@ -196,42 +191,55 @@ mod tests {
         Ok(())
     }
 
+    fn header([width, height]: [u32; 2]) -> Vec<u8> {
+        let signature = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
+        [
+            &signature[..],
+            &width.to_be_bytes(),
+            &height.to_be_bytes(),
+            &[0; 9],
+        ]
+        .concat()
+    }
+
     #[test]
     fn invalid_and_oversized_png_headers_fail_before_decoding() {
-        let mut header = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
-        header.extend_from_slice(&1_u32.to_be_bytes());
-        header.extend_from_slice(&1_u32.to_be_bytes());
-        header.resize(33, 0);
-        assert!(check_header(&header).is_ok());
-        for length in 0..33 {
-            assert!(check_header(&header[..length]).is_err());
+        let invalid = "This frame has an invalid or truncated PNG header.";
+        let too_large = "This frame is too large to display (maximum 4096 pixels per side).";
+        let valid = header([1, 1]);
+        assert_eq!(check_header(&valid), Ok(()));
+        for length in 0..valid.len() {
+            assert_eq!(check_header(&valid[..length]).unwrap_err(), invalid);
         }
-        for (width, height, expected) in [
-            (
-                0_u32,
-                1_u32,
-                "This frame has an invalid or truncated PNG header.",
-            ),
-            (1, 0, "This frame has an invalid or truncated PNG header."),
-            (
-                4_097,
-                1,
-                "This frame is too large to display (maximum 4096 pixels per side).",
-            ),
-            (
-                1,
-                4_097,
-                "This frame is too large to display (maximum 4096 pixels per side).",
-            ),
+        let mut forged = valid;
+        forged[1] = b'X';
+        assert_eq!(check_header(&forged).unwrap_err(), invalid);
+        for (size, expected) in [
+            ([0, 1], invalid),
+            ([1, 0], invalid),
+            ([4_097, 1], too_large),
+            ([1, 4_097], too_large),
         ] {
-            header[16..20].copy_from_slice(&width.to_be_bytes());
-            header[20..24].copy_from_slice(&height.to_be_bytes());
-            assert_eq!(check_header(&header).unwrap_err(), expected);
+            assert_eq!(check_header(&header(size)).unwrap_err(), expected);
         }
-        assert!(
-            check_header(b"PRIVATE_SCREEN_CONTENT")
-                .unwrap_err()
-                .contains("PNG header")
+    }
+
+    #[test]
+    fn an_undecodable_frame_fails_without_echoing_its_bytes() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let frame = [header([1, 1]), b"PRIVATE_SCREEN_CONTENT".to_vec()].concat();
+        std::fs::write(directory.path().join("frame.png"), frame)?;
+        let request = Request {
+            directory: directory.path().to_owned(),
+            content: Content::Png("frame.png".into()),
+            at: Moment::START,
+            annotated: false,
+            fixture: None,
+        };
+        assert_eq!(
+            read(request, &|| false).err().as_deref(),
+            Some("This frame could not be decoded as a PNG image.")
         );
+        Ok(())
     }
 }
