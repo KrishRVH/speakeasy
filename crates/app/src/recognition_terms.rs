@@ -3,6 +3,10 @@ use std::{collections::HashSet, fmt};
 use anyhow::ensure;
 use serde::{Deserialize, Serialize};
 
+const LIMIT: usize = 100;
+const PHRASE_LIMIT: usize = 64;
+const WORD_LIMIT: usize = 6;
+
 #[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub(crate) struct Terms(Vec<String>);
@@ -36,18 +40,18 @@ impl Terms {
 
     pub(crate) fn validate(&self) -> anyhow::Result<()> {
         ensure!(
-            self.0.len() <= 100,
-            "Keep recognition hints to 100 names or phrases."
+            self.0.len() <= LIMIT,
+            "Keep recognition hints to {LIMIT} names or phrases."
         );
         let mut seen = HashSet::new();
         for phrase in &self.0 {
             ensure!(
                 !phrase.is_empty()
                     && phrase == phrase.trim()
-                    && phrase.chars().count() <= 64
-                    && phrase.split_whitespace().count() <= 6
+                    && phrase.chars().count() <= PHRASE_LIMIT
+                    && phrase.split_whitespace().count() <= WORD_LIMIT
                     && !phrase.chars().any(char::is_control),
-                "Each recognition hint needs 1–64 characters and at most six words, without surrounding whitespace or control characters."
+                "Each recognition hint needs 1–{PHRASE_LIMIT} characters and at most {WORD_LIMIT} words, without surrounding whitespace or control characters."
             );
             ensure!(
                 seen.insert(phrase.to_lowercase()),

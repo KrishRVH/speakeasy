@@ -70,7 +70,7 @@ impl Capture {
     pub(crate) fn start(
         id: SessionId,
         microphone: Option<&str>,
-        recognition: RecognitionMode,
+        mode: RecognitionMode,
         events: Sender<CaptureEvent>,
     ) -> anyhow::Result<Self> {
         let microphone = microphone.map(str::to_owned);
@@ -79,7 +79,7 @@ impl Capture {
             events,
             move |events, control, requests| match Recorder::open(
                 microphone.as_deref(),
-                recognition,
+                mode,
                 events,
                 control,
             ) {
@@ -283,7 +283,7 @@ struct Recorder<D = LiveStream> {
 impl Recorder {
     fn open(
         microphone: Option<&str>,
-        recognition: RecognitionMode,
+        mode: RecognitionMode,
         events: &Sender<CaptureEvent>,
         control: &Arc<Control>,
     ) -> Result<Self, Startup> {
@@ -322,14 +322,7 @@ impl Recorder {
             _device: device,
             _host: host,
         };
-        Ok(Self::new(
-            device,
-            ring,
-            stream_errors,
-            started,
-            rate,
-            recognition,
-        ))
+        Ok(Self::new(device, ring, stream_errors, started, rate, mode))
     }
 }
 
