@@ -256,9 +256,14 @@ mod native {
                 "Native timestamps are not monotonic presentation times"
             );
             previous = Some(frame.at);
+            let area = usize::try_from(frame.width)?.checked_mul(usize::try_from(frame.height)?);
+            let pixels = match frame.bgra.as_chunks::<4>() {
+                (pixels, []) if Some(pixels.len()) == area => pixels,
+                _ => anyhow::bail!("Owned capture pixels do not match its dimensions"),
+            };
             let patterns = [[20, 30, 230], [30, 220, 20]];
             let matched = patterns.iter().position(|pattern| {
-                frame.bgra.as_chunks::<4>().0.iter().all(|pixel| {
+                pixels.iter().all(|pixel| {
                     pixel[..3]
                         .iter()
                         .zip(pattern)
