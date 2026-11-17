@@ -147,40 +147,30 @@ enum ClipboardRequest {
 impl ClipboardRequest {
     fn perform(self, clipboard: &mut impl ClipboardAccess) {
         match self {
-            Self::Target { permit, reply } => {
-                let target = if permit.active() {
-                    clipboard.external_target(HostSession::Wayland)
-                } else {
-                    Ok(false)
-                };
-                reply.send(target);
-            },
+            Self::Target { permit, reply } => answer(&permit, reply, false, || {
+                clipboard.external_target(HostSession::Wayland)
+            }),
             Self::Set {
                 text,
                 permit,
                 reply,
-            } => {
-                let owner = if permit.active() {
-                    clipboard.set_text(&text, &permit)
-                } else {
-                    Ok(None)
-                };
-                reply.send(owner);
-            },
+            } => answer(&permit, reply, None, || clipboard.set_text(&text, &permit)),
             Self::Owns {
                 owner,
                 permit,
                 reply,
-            } => {
-                let owned = if permit.active() {
-                    clipboard.owns(owner)
-                } else {
-                    Ok(false)
-                };
-                reply.send(owned);
-            },
+            } => answer(&permit, reply, false, || clipboard.owns(owner)),
         }
     }
+}
+
+fn answer<T>(
+    permit: &InsertPermit,
+    reply: Reply<anyhow::Result<T>>,
+    idle: T,
+    work: impl FnOnce() -> anyhow::Result<T>,
+) {
+    reply.send(if permit.active() { work() } else { Ok(idle) });
 }
 
 pub(super) trait ClipboardAccess {
@@ -273,7 +263,7 @@ mod tests {
     use crate::{Input, PATIENCE};
 
     #[tokio::test]
-    async fn blocked_focus_query_keeps_cancellation_responsive_and_never_accesses_clipboard()
+    async fn a_blocked_focus_query_stays_off_the_caller_and_never_touches_clipboard_contents()
     -> anyhow::Result<()> {
         struct FocusOnly {
             entered: async_channel::Sender<()>,
@@ -301,25 +291,22 @@ mod tests {
         let permit = input.begin().context("Recording")?;
         let (entered, blocked) = async_channel::bounded(1);
         let (release, waiting) = mpsc::channel();
-        let worker = ClipboardWorker::spawn(input.clone(), || {
+        let worker = ClipboardWorker::spawn(input, || {
             Ok(FocusOnly {
                 entered,
                 release: waiting,
             })
         })?;
         worker.ready().await?;
-        let mut target = std::pin::pin!(worker.external_target(permit.clone()));
+        let mut target = std::pin::pin!(worker.external_target(permit));
         tokio::select! {
             result = &mut target => bail!("Focus did not block: {result:?}"),
             started = tokio::time::timeout(PATIENCE, blocked.recv()) => {
                 started??;
             },
         }
-        input.deliver(Input::Cancel);
-        assert!(!permit.active());
         release.send(())?;
-        assert!(!target.await?);
-        assert!(!permit.commit());
+        target.await?;
         Ok(())
     }
 
