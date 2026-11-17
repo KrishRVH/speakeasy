@@ -524,7 +524,23 @@ mod tests {
         },
         *,
     };
-    use crate::{FocusReport, Input, InputSender};
+    use crate::{FocusReport, Input, InputSender, OwnFocus};
+
+    fn insertion(
+        text: &str,
+        permit: &InsertPermit,
+        delivery: Delivery,
+        own_focus: OwnFocus,
+    ) -> Insertion {
+        let (reply, _answer) = Reply::channel();
+        Insertion {
+            text: text.into(),
+            permit: permit.clone(),
+            delivery,
+            own_focus,
+            reply,
+        }
+    }
 
     fn paste_after_notices(
         notices: &Receiver<Notice>,
@@ -535,14 +551,12 @@ mod tests {
         while let Ok(notice) = notices.try_recv() {
             apply_notice(notice, None, &mut None, forfeited);
         }
-        let (reply, _answer) = Reply::channel();
-        let request = Insertion {
-            text: "fixture".into(),
-            permit: permit.clone(),
-            delivery: Delivery::Paste,
-            own_focus: FocusReport::default().subscribe(),
-            reply,
-        };
+        let request = insertion(
+            "fixture",
+            permit,
+            Delivery::Paste,
+            FocusReport::default().subscribe(),
+        );
         finish_paste(
             None,
             &request,
@@ -613,16 +627,7 @@ mod tests {
         let permit = input.begin().context("Recording")?;
         let report = FocusReport::default();
         report.settle(7, true);
-        let request = |delivery| {
-            let (reply, _answer) = Reply::channel();
-            Insertion {
-                text: "fixture".into(),
-                permit: permit.clone(),
-                delivery,
-                own_focus: report.subscribe(),
-                reply,
-            }
-        };
+        let request = |delivery| insertion("fixture", &permit, delivery, report.subscribe());
         assert_eq!(
             Some(insert_direct(None, &request(Delivery::Direct), true)),
             Delivery::Direct.check_focus(false),
@@ -652,14 +657,12 @@ mod tests {
         permit.revoke();
         for external in [false, true] {
             for text in ["fixture", "\0"] {
-                let (reply, _answer) = Reply::channel();
-                let request = Insertion {
-                    text: text.into(),
-                    permit: permit.clone(),
-                    delivery: Delivery::Direct,
-                    own_focus: FocusReport::default().subscribe(),
-                    reply,
-                };
+                let request = insertion(
+                    text,
+                    &permit,
+                    Delivery::Direct,
+                    FocusReport::default().subscribe(),
+                );
                 assert_eq!(
                     insert_direct(None, &request, external),
                     Inserted::Cancelled,

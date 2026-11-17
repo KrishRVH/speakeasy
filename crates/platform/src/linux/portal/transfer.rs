@@ -127,6 +127,23 @@ mod tests {
     use super::*;
     use crate::InputSender;
 
+    async fn reported_success(
+        write: impl Future<Output = anyhow::Result<OwnedFd>>,
+        payload: TransferPayload,
+    ) -> anyhow::Result<bool> {
+        let (sent, reported) = async_channel::bounded(1);
+        transfer(
+            write,
+            async move |success| {
+                sent.send(success).await?;
+                Ok(())
+            },
+            Some(payload),
+        )
+        .await;
+        Ok(reported.recv().await?)
+    }
+
     #[tokio::test]
     async fn stalled_transfers_allow_new_work_and_retire_without_detached_writes()
     -> anyhow::Result<()> {
@@ -174,18 +191,8 @@ mod tests {
         let selected = Selection::new("fixture", previous.clone());
         assert!(previous.commit());
         let (writer, mut reader) = UnixStream::pair()?;
-        let (sent, reported) = async_channel::bounded(1);
-        transfer(
-            async { Ok(OwnedFd::from(writer)) },
-            async move |success| {
-                sent.send(success).await?;
-                Ok(())
-            },
-            Some(selected.payload()),
-        )
-        .await;
         assert!(
-            reported.recv().await?,
+            reported_success(async { Ok(OwnedFd::from(writer)) }, selected.payload()).await?,
             "Paste commitment invalidated clipboard serving"
         );
         let mut bytes = Vec::new();
@@ -196,19 +203,9 @@ mod tests {
         let next = Selection::new("fixture", current.clone());
         let previous_payload = selected.payload();
         drop(selected);
-        let (sent, reported) = async_channel::bounded(1);
         let (writer, mut reader) = UnixStream::pair()?;
         reader.set_read_timeout(Some(Duration::from_millis(100)))?;
-        transfer(
-            async { Ok(OwnedFd::from(writer)) },
-            async move |success| {
-                sent.send(success).await?;
-                Ok(())
-            },
-            Some(previous_payload),
-        )
-        .await;
-        assert!(!reported.recv().await?);
+        assert!(!reported_success(async { Ok(OwnedFd::from(writer)) }, previous_payload).await?);
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes)?;
         assert!(
@@ -231,20 +228,12 @@ mod tests {
         let (events, _receiver) = async_channel::bounded(1);
         let input = InputSender::new(events);
         let selected = Selection::new("fixture", input.begin().context("Recording")?);
-        let (sent, reported) = async_channel::bounded(1);
-        tokio::time::timeout(
+        let reported = tokio::time::timeout(
             TRANSFER_TIMEOUT + Duration::from_millis(500),
-            transfer(
-                std::future::pending(),
-                async move |success| {
-                    sent.send(success).await?;
-                    Ok(())
-                },
-                Some(selected.payload()),
-            ),
+            reported_success(std::future::pending(), selected.payload()),
         )
-        .await?;
-        assert!(!reported.recv().await?);
+        .await??;
+        assert!(!reported);
         tokio::time::timeout(
             TRANSFER_TIMEOUT + Duration::from_millis(500),
             transfer(
