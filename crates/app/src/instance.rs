@@ -134,7 +134,7 @@ impl Instance {
             timeout: control::TIMEOUT.saturating_add(IO_TIMEOUT),
         };
         match read_frame(&mut caller) {
-            Ok(bytes) => Reply::decode(&bytes).unwrap_or_else(|_| Reply::unknown(UNCONFIRMED)),
+            Ok(bytes) => Reply::decode(&bytes).unwrap_or_else(|| Reply::unknown(UNCONFIRMED)),
             Err(error)
                 if matches!(
                     error.kind(),

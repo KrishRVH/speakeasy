@@ -164,7 +164,8 @@ fn replies_are_one_content_free_json_line_with_distinct_exit_dispositions() -> a
         session: "private fixture".into(),
     };
     assert!(!format!("{command:?}").contains("private fixture"));
-    assert!(Reply::decode(br#"{"v":2,"result":"ok"}"#).is_err());
+    assert!(Reply::decode(br#"{"v":1,"result":"ok"}"#).is_some());
+    assert!(Reply::decode(br#"{"v":2,"result":"ok"}"#).is_none());
     Ok(())
 }
 

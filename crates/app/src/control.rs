@@ -159,13 +159,10 @@ impl Reply {
         Ok(bytes)
     }
 
-    pub(crate) fn decode(bytes: &[u8]) -> Result<Self, &'static str> {
-        let reply: Self =
-            serde_json::from_slice(bytes).map_err(|_error| "Invalid control reply.")?;
-        if reply.v != VERSION {
-            return Err("Unsupported control reply version.");
-        }
-        Ok(reply)
+    pub(crate) fn decode(bytes: &[u8]) -> Option<Self> {
+        serde_json::from_slice(bytes)
+            .ok()
+            .filter(|reply: &Self| reply.v == VERSION)
     }
 }
 
