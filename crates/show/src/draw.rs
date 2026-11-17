@@ -559,17 +559,17 @@ mod tests {
 
     #[test]
     fn a_click_mark_leaves_what_was_clicked_legible() {
-        let mut painted = 0;
+        let mut painted = false;
         for ((offset, dark), (_, light)) in clicked([0; 3]).into_iter().zip(clicked([255; 3])) {
             let touched = dark[..3] != [0; 3] || light[..3] != [255; 3];
-            painted += usize::from(touched);
+            painted |= touched;
             assert_ne!(dark, light, "{offset:?} from the click hides the screen");
             assert!(
                 !(touched && (4.0..7.0).contains(&offset.length())),
                 "{offset:?} from the click, between the dot and the ring, is covered"
             );
         }
-        assert!(painted > 0, "The click is marked");
+        assert!(painted, "The click is marked");
     }
 
     #[test]
