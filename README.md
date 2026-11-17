@@ -115,8 +115,8 @@ the pill shows:
 
 - **Time left.** Recordings stop at five minutes. The last 30 seconds count down in gold, and at
   zero the recording finishes and its text is delivered as usual. On Windows and macOS the computer
-  stays awake while the microphone is open, so a long hands-free dictation is not cut off by idle
-  sleep.
+  stays awake from the start of a recording until its words are delivered, and a Show also keeps the
+  display on.
 - **Working.** The lamp slides through the slot while your speech is transcribed on this machine.
 - **Typed.** A check, shown above, means the text was submitted to your app.
 - **No speech detected.** Nothing was sent. A microphone that sends only digital silence, for
@@ -490,15 +490,17 @@ overrides only that recording.
 
 `dictation start --print` works only after you turn on **Scripts can read their dictations** in
 Settings, Dictation, Writing; until then it is refused. It records the same hands-free dictation,
-but its words never reach the focused app, and the pill says To script while it records.
-`dictation stop TOKEN --print` finishes it, waits up to two minutes for recognition, and returns the
-text as the reply's `text` field, cleaned up like any dictation in its style. A printed dictation
-pastes nothing; Paste last dictation can still paste it. Stopping it without `--print`, or finishing
-it with the shortcut, pastes nothing and says so. Printing a dictation started without `--print` is
-refused, as is printing one twice, and one that ends empty, cancelled, or failed refuses its caller.
-Keyboard dictations, Shows, practice, and earlier dictations can never be read back. Text over the
-64 KiB reply limit is refused; paste it instead. These explicit commands work on all three
-platforms; Linux's desktop-binding `--toggle` and `--cancel` still require Desktop bindings.
+but its words never reach the focused app, and the pill says To script while it records. The switch
+records your consent; it is not a security boundary, because any program running as you can also
+change your settings. `dictation stop TOKEN --print` finishes it, waits up to two minutes for
+recognition, and returns the text as the reply's `text` field, cleaned up like any dictation in its
+style. A printed dictation pastes nothing; Paste last dictation can still paste it. Stopping it
+without `--print`, or finishing it with the shortcut, pastes nothing and says so. Printing a
+dictation started without `--print` is refused, as is printing one twice, and one that ends empty,
+cancelled, or failed refuses its caller. Keyboard dictations, Shows, practice, and earlier
+dictations can never be read back. Text over the 64 KiB reply limit is refused; paste it instead.
+These explicit commands work on all three platforms; Linux's desktop-binding `--toggle` and
+`--cancel` still require Desktop bindings.
 
 `show skill` prints the [agent reading guide](skills/speakeasy-show/SKILL.md) embedded in the
 installed binary. `show skill --install DIR` writes it to `DIR/speakeasy-show/SKILL.md` for an agent

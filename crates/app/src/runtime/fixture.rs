@@ -36,12 +36,17 @@ struct Fixture {
 }
 
 impl Ports for Fixture {
+    type Awake = ();
     type Microphone = FixtureDevice;
     type Screen = FixtureDevice;
     type Speech = MeasuredSpeech;
 
     fn prepares_desktop(&self) -> bool {
         false
+    }
+
+    fn keep_awake(&self, _: speakeasy_platform::Keep) -> Option<Self::Awake> {
+        None
     }
 
     fn record_microphone(

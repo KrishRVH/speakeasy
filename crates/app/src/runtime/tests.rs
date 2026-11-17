@@ -103,6 +103,19 @@ struct FakePorts {
     published: Sender<(Footage, Narration)>,
     loads: Sender<()>,
     sounds: Sender<Sound>,
+    awake: Sender<Option<speakeasy_platform::Keep>>,
+}
+
+struct FakeAwake(Sender<Option<speakeasy_platform::Keep>>);
+
+impl Drop for FakeAwake {
+    fn drop(&mut self) {
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "A harness that already closed no longer watches the guard"
+        )]
+        let _ = self.0.try_send(None);
+    }
 }
 
 struct Reports {
@@ -115,6 +128,7 @@ struct Reports {
     published: Receiver<(Footage, Narration)>,
     loads: Receiver<()>,
     sounds: Receiver<Sound>,
+    awake: Receiver<Option<speakeasy_platform::Keep>>,
 }
 
 impl FakePorts {
@@ -128,6 +142,7 @@ impl FakePorts {
         let (published, written) = async_channel::bounded(8);
         let (loads, loaded) = async_channel::bounded(8);
         let (sounds, played) = async_channel::unbounded();
+        let (awake, kept) = async_channel::unbounded();
         let ports = Self {
             desktop_pending: false,
             microphone_error: None,
@@ -159,6 +174,7 @@ impl FakePorts {
             published,
             loads,
             sounds,
+            awake,
         };
         let reports = Reports {
             captures: opened,
@@ -170,6 +186,7 @@ impl FakePorts {
             published: written,
             loads: loaded,
             sounds: played,
+            awake: kept,
         };
         (ports, reports)
     }
@@ -194,12 +211,20 @@ impl FakePorts {
 }
 
 impl Ports for FakePorts {
+    type Awake = FakeAwake;
     type Microphone = FakeMicrophone;
     type Screen = FakeScreen;
     type Speech = FakeSpeech;
 
     fn prepares_desktop(&self) -> bool {
         self.desktop_pending
+    }
+
+    fn keep_awake(&self, keep: speakeasy_platform::Keep) -> Option<Self::Awake> {
+        self.awake
+            .try_send(Some(keep))
+            .expect("The awake report channel is unbounded");
+        Some(FakeAwake(self.awake.clone()))
     }
 
     fn record_microphone(
@@ -699,6 +724,7 @@ struct Harness<Host = OwnedTask> {
     published: Receiver<(Footage, Narration)>,
     loads: Receiver<()>,
     sounds: Receiver<Sound>,
+    awake: Receiver<Option<speakeasy_platform::Keep>>,
 }
 
 impl Harness {
@@ -793,6 +819,7 @@ impl<Host: Sync> Harness<Host> {
             published: reports.published,
             loads: reports.loads,
             sounds: reports.sounds,
+            awake: reports.awake,
         })
     }
 

@@ -197,14 +197,19 @@ impl Pill {
             self.secure_input_until,
             self.secure_input,
         );
-        self.default_microphone_until =
-            default_microphone_until(previous, &snapshot, now, self.default_microphone_until);
+        self.default_microphone_until = default_microphone_until(
+            previous,
+            &snapshot,
+            now,
+            self.default_microphone_until,
+            self.secure_input_until,
+        );
         self.draw_hint_until = draw_hint_until(
             previous,
             &snapshot,
             now,
             self.draw_hint_until,
-            self.secure_input_until,
+            self.secure_input_until.max(self.default_microphone_until),
         );
         if new_session {
             self.history.fill(0.0);
@@ -504,7 +509,7 @@ impl Scene {
     }
 
     fn shows_default_microphone(&self) -> bool {
-        self.default_microphone.is_some() && self.is_capturing() && !self.clock.near_limit
+        self.default_microphone.is_some() && self.phase.is_active() && !self.clock.near_limit
     }
 
     fn capsule_size(&self) -> Size<f32> {
@@ -762,10 +767,13 @@ fn default_microphone_until(
     snapshot: &Snapshot,
     now: Instant,
     until: Option<Instant>,
+    secure_input_until: Option<Instant>,
 ) -> Option<Instant> {
     let same_session = snapshot.session == previous.session;
     if snapshot.default_microphone && !(same_session && previous.default_microphone) {
-        now.checked_add(DEFAULT_MICROPHONE_FOR)
+        secure_input_until
+            .map_or(now, |notice| notice.max(now))
+            .checked_add(DEFAULT_MICROPHONE_FOR)
     } else {
         until.filter(|_| same_session)
     }

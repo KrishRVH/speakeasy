@@ -26,7 +26,7 @@ use speakeasy_core::{
     gesture::RECORDING_LIMIT,
     machine::{RecognitionMode, SessionId},
 };
-use speakeasy_platform::{Awake, OwnedThread};
+use speakeasy_platform::OwnedThread;
 
 #[cfg(test)]
 pub(crate) use self::pcm::wav_duration;
@@ -265,7 +265,6 @@ struct LiveStream {
     _stream: cpal::Stream,
     _device: cpal::Device,
     _host: cpal::Host,
-    _awake: Option<Awake>,
 }
 
 struct Recorder<D = LiveStream> {
@@ -325,7 +324,6 @@ impl Recorder {
             _stream: stream,
             _device: device,
             _host: host,
-            _awake: Awake::hold(),
         };
         Ok(Self {
             source,

@@ -86,8 +86,9 @@ module unless a test file is named.
   capture, meter, and seal a trimmed WAV before driver teardown;
   [microphones.rs](../crates/app/src/audio/microphones.rs) lists the input devices Settings offers.
   A chosen microphone that is missing at start falls back to the system default; `Ready` carries
-  that source, and the owner marks only that session's snapshot so the pill can name it. The live
-  stream also owns the platform `Awake` guard, so idle sleep waits while the microphone is open.
+  that source, and the owner marks only that session's snapshot so the pill can name it. The session
+  owner holds a `Ports::keep_awake` guard while the phase is active, through recognition and
+  delivery, and asks for the display too during a Show.
   [audio/tests.rs](../crates/app/src/audio/tests.rs) and
   [stream/tests.rs](../crates/app/src/audio/stream/tests.rs) use synthetic samples; microphones.rs
   checks that a scan the driver blocks serves the next request. The energy gate retains audio after
@@ -372,12 +373,14 @@ module unless a test file is named.
   callers and acknowledges actual owner decisions. Stop/cancel tokens combine the runtime
   incarnation with the session ID and exclude Shows and practice. Style is acknowledged by its
   Services owner without inventing a session-status observation; ordinary status is observed by the
-  session owner. A lost receipt is unknown, never proof of refusal. A capture (`start --print`)
-  marks its session's handoff; a print stores its call in that session, which answers it with the
-  text in place of insertion or refuses it when the session ends without text, so one session
-  answers one print at most. [tests/printing.rs](../crates/app/src/runtime/tests/printing.rs) covers
-  that handoff. [tests/control.rs](../crates/app/src/runtime/tests/control.rs) covers stale
-  authority, busy admission, per-session style, and preset adoption.
+  session owner. A lost receipt is unknown, never proof of refusal. Capture and print are refused
+  before the machine unless `print_to_scripts` is on; changing it is a session change, so turning it
+  off ends a running capture. A capture (`start --print`) marks its session's handoff; a print
+  stores its call in that session, which answers it with the text in place of insertion or refuses
+  it when the session ends without text, so one session answers one print at most.
+  [tests/printing.rs](../crates/app/src/runtime/tests/printing.rs) covers that handoff.
+  [tests/control.rs](../crates/app/src/runtime/tests/control.rs) covers stale authority, busy
+  admission, per-session style, and preset adoption.
 - **Command line**: [main.rs](../crates/app/src/main.rs) parses options and routes what they ask
   for, and [show/command.rs](../crates/app/src/show/command.rs) parses `show` commands. Its
   [output.rs](../crates/app/src/show/command/output.rs) projects metadata without private text,

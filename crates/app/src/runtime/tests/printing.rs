@@ -141,7 +141,7 @@ async fn a_second_print_is_refused_while_the_first_still_gets_the_words() -> any
 }
 
 #[tokio::test(start_paused = true)]
-async fn scripts_read_nothing_until_the_user_lets_them() -> anyhow::Result<()> {
+async fn print_is_refused_until_the_user_turns_it_on() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
     h.ready().await?;
     let refused = h.call(Command::Capture { style: None }).await?;
@@ -155,5 +155,22 @@ async fn scripts_read_nothing_until_the_user_lets_them() -> anyhow::Result<()> {
     let printed = receive(&h.print(token)).await?;
     assert_eq!(printed.result, Disposition::Refused);
     assert!(!h.snapshot().for_script);
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn turning_print_off_during_a_capture_ends_it_and_refuses_its_caller() -> anyhow::Result<()> {
+    let mut h = scripted()?;
+    h.ready().await?;
+    let token = captured(&mut h).await?;
+    let mut config = h.runtime.configuration.borrow().clone();
+    config.print_to_scripts = false;
+    h.runtime
+        .configure(crate::config::ValidConfig::assume(config));
+    h.observe(|snapshot| !snapshot.phase.is_active()).await?;
+    let printed = receive(&h.print(token)).await?;
+    assert_eq!(printed.result, Disposition::Refused);
+    assert!(printed.text.is_none());
+    assert!(h.pasted.try_recv().is_err());
     h.close().await
 }

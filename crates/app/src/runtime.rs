@@ -14,8 +14,8 @@ use std::{
 use async_channel::{Receiver, Sender, TrySendError};
 use speakeasy_core::machine::{Cue, ModelState, Phase, RecognitionMode, SessionId};
 use speakeasy_platform::{
-    Delivery, Enter, Input, InputMonitor, InputSender, InsertPermit, Inserted, Inserter, OwnFocus,
-    OwnedThread, Scope,
+    Delivery, Enter, Input, InputMonitor, InputSender, InsertPermit, Inserted, Inserter, Keep,
+    OwnFocus, OwnedThread, Scope,
 };
 use speakeasy_show::{Ending, NarrationLoss};
 use tokio::sync::{mpsc, oneshot, watch};
@@ -410,12 +410,17 @@ struct Desktop {
 }
 
 impl Ports for Desktop {
+    type Awake = speakeasy_platform::Awake;
     type Microphone = Capture;
     type Screen = ScreenRecorder;
     type Speech = LocalSpeech;
 
     fn prepares_desktop(&self) -> bool {
         true
+    }
+
+    fn keep_awake(&self, keep: Keep) -> Option<Self::Awake> {
+        speakeasy_platform::Awake::hold(keep)
     }
 
     fn record_microphone(

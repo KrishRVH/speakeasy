@@ -95,10 +95,12 @@ receiver left. This intentional detached lifetime must remain explicit rather th
 for the joined worker contract.
 
 `Awake` holds one power request from `PowerCreateRequest`, which copies its reason string, and sets
-`PowerRequestSystemRequired` on it. The live microphone stream owns it, so idle sleep waits exactly
-as long as the microphone is open; dropping it clears the request and closes the handle. A refused
-request records without it. On the Mac it is an `NSProcessInfo` activity that disables idle system
-sleep and ends on drop. Linux holds nothing.
+`PowerRequestSystemRequired` on it, plus `PowerRequestDisplayRequired` for a Show. The handle is a
+kernel object with no thread affinity, so the session owner may hold and drop it on any runtime
+thread; dropping it clears each type it set and closes the handle. A refused request records without
+it. On the Mac it is an `NSProcessInfo` activity that disables idle system sleep, and idle display
+sleep for a Show; `NSProcessInfo` is thread-safe, so its token moves with the owner and ends on
+drop. Linux holds nothing.
 
 ## Child process containment
 

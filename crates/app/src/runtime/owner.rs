@@ -21,7 +21,7 @@ use speakeasy_core::{
         Status, Stopped, Unheard,
     },
 };
-use speakeasy_platform::{Enter, Input, InputSender, InsertPermit, Inserted, Scope, Taps};
+use speakeasy_platform::{Enter, Input, InputSender, InsertPermit, Inserted, Keep, Scope, Taps};
 use speakeasy_show::Ending;
 use tokio::{
     sync::{mpsc, oneshot, watch},
@@ -106,6 +106,7 @@ struct World<P: Ports> {
     shortcut: Arc<str>,
     cancel_shortcut: Arc<str>,
     default_microphone: Option<SessionId>,
+    awake: Option<(Keep, Option<P::Awake>)>,
 }
 
 impl<P: Ports> Owner<P> {
@@ -165,6 +166,7 @@ impl<P: Ports> Owner<P> {
             shortcut: speakeasy_platform::SHORTCUT.into(),
             cancel_shortcut: speakeasy_platform::CANCEL_SHORTCUT.into(),
             default_microphone: None,
+            awake: None,
         };
         let machine = Machine::new(
             Timing::DICTATION,
@@ -266,7 +268,20 @@ impl<P: Ports> Owner<P> {
         }
     }
 
-    fn present(&self) {
+    fn present(&mut self) {
+        let wanted = self
+            .machine
+            .phase()
+            .is_active()
+            .then_some(if self.machine.shows() {
+                Keep::Display
+            } else {
+                Keep::System
+            });
+        if self.world.awake.as_ref().map(|(keep, _)| *keep) != wanted {
+            self.world.awake = None;
+            self.world.awake = wanted.map(|keep| (keep, self.world.ports.keep_awake(keep)));
+        }
         let machine = &self.machine;
         let world = &self.world;
         let (ending, narration_lost) = match machine.outcome() {

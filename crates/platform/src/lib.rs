@@ -42,7 +42,7 @@ pub use self::windows::installation::installed_directory;
 #[cfg(target_os = "windows")]
 pub use self::windows::login::{start_at_login, startup_approved};
 pub use self::{
-    awake::Awake,
+    awake::{Awake, Keep},
     clipboard::{ClipboardContent, copy_content},
     desktop::{
         DesktopOptions, FileFilter, InputMonitor, LinuxPaste, MacShortcut, NativeWindow, Shortcut,

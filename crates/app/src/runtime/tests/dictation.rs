@@ -1014,3 +1014,24 @@ async fn the_default_microphone_is_named_only_for_the_session_that_fell_back() -
     assert!(!h.snapshot().default_microphone);
     h.close().await
 }
+
+#[tokio::test(start_paused = true)]
+async fn the_computer_stays_awake_until_the_words_are_delivered() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    h.start().await?;
+    assert_eq!(
+        receive(&h.awake).await?,
+        Some(speakeasy_platform::Keep::System)
+    );
+    let reply = h.finish().await?;
+    h.phase(Phase::Processing).await?;
+    assert!(
+        h.awake.try_recv().is_err(),
+        "Recognition ran without the guard"
+    );
+    answer(reply, "Awake words.")?;
+    assert_eq!(receive(&h.pasted).await?, "Awake words.");
+    h.phase(Phase::Done).await?;
+    assert_eq!(receive(&h.awake).await?, None);
+    h.close().await
+}

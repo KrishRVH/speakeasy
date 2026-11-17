@@ -55,12 +55,17 @@ impl ModelPorts {
 }
 
 impl Ports for ModelPorts {
+    type Awake = ();
     type Microphone = ModelDevice;
     type Screen = ModelDevice;
     type Speech = ModelSpeech;
 
     fn prepares_desktop(&self) -> bool {
         false
+    }
+
+    fn keep_awake(&self, _: speakeasy_platform::Keep) -> Option<Self::Awake> {
+        None
     }
 
     fn record_microphone(

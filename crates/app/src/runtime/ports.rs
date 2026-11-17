@@ -5,7 +5,7 @@ use std::{
 
 use async_channel::Sender;
 use speakeasy_core::machine::{Cue, RecognitionMode, SessionId};
-use speakeasy_platform::{Delivery, Enter, InsertPermit, Inserted, Scope, Taps};
+use speakeasy_platform::{Delivery, Enter, InsertPermit, Inserted, Keep, Scope, Taps};
 use speakeasy_show::{Ending, Framing, Journal, Narration, NarrationLoss, Recording, Take};
 use tokio::sync::{mpsc, oneshot, watch};
 use zeroize::Zeroizing;
@@ -164,8 +164,11 @@ pub(crate) trait Ports: Send + 'static {
     type Microphone: Listening;
     type Screen: Pinning;
     type Speech: Speech;
+    type Awake: Send + 'static;
 
     fn prepares_desktop(&self) -> bool;
+
+    fn keep_awake(&self, keep: Keep) -> Option<Self::Awake>;
 
     fn record_microphone(
         &self,

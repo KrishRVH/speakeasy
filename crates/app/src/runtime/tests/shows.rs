@@ -915,3 +915,16 @@ async fn a_show_queued_behind_a_retiring_screen_still_records_it() -> anyhow::Re
     retiring.release().await?;
     h.close().await
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_show_keeps_the_display_on_while_it_records() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    start_show(&mut h).await?;
+    let held: Vec<_> = std::iter::from_fn(|| h.awake.try_recv().ok()).collect();
+    assert_eq!(
+        held.last(),
+        Some(&Some(speakeasy_platform::Keep::Display)),
+        "{held:?}"
+    );
+    h.close().await
+}

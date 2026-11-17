@@ -459,7 +459,12 @@ fn a_fallback_microphone_is_named_once_as_capture_opens_and_yields_to_secure_inp
         recording.wake_after(),
         Some(Duration::from_millis(1_000).min(left))
     );
-    assert_eq!(fallback(Phase::Processing).content(), Content::Slot);
+    assert_eq!(
+        fallback(Phase::Processing).content(),
+        Content::DefaultMicrophone,
+        "A quick hold still sees the notice while its words are recognized"
+    );
+    assert_eq!(fallback(Phase::Done).content(), Content::Slot);
     let both = Scene {
         secure_input: Some(left),
         ..fallback(Phase::Recording)
@@ -478,11 +483,11 @@ fn a_fallback_microphone_is_named_once_as_capture_opens_and_yields_to_secure_inp
         phase: Phase::Recording,
         ..Snapshot::default()
     };
-    let until = default_microphone_until(&before, &opened, now, None);
+    let until = default_microphone_until(&before, &opened, now, None, None);
     assert_eq!(until, now.checked_add(DEFAULT_MICROPHONE_FOR));
     let later = now + Duration::from_secs(1);
     assert_eq!(
-        default_microphone_until(&opened, &opened, later, until),
+        default_microphone_until(&opened, &opened, later, until, None),
         until,
         "Later snapshots of the same session keep the original deadline"
     );
@@ -490,5 +495,34 @@ fn a_fallback_microphone_is_named_once_as_capture_opens_and_yields_to_secure_inp
         session: 5,
         ..before
     };
-    assert_eq!(default_microphone_until(&opened, &next, later, until), None);
+    assert_eq!(
+        default_microphone_until(&opened, &next, later, until, None),
+        None
+    );
+}
+
+#[test]
+fn the_fallback_notice_waits_for_secure_input_and_the_draw_hint_waits_for_both() {
+    let now = Instant::now();
+    let before = Snapshot {
+        session: 4,
+        phase: Phase::Recording,
+        show: true,
+        ..Snapshot::default()
+    };
+    let opened = Snapshot {
+        default_microphone: true,
+        ..before.clone()
+    };
+    let secure = now.checked_add(SECURE_INPUT_FOR);
+    let microphone = default_microphone_until(&before, &opened, now, None, secure);
+    assert_eq!(
+        microphone,
+        secure.and_then(|end| end.checked_add(DEFAULT_MICROPHONE_FOR))
+    );
+    let hint = draw_hint_until(&before, &opened, now, None, secure.max(microphone));
+    assert_eq!(
+        hint,
+        microphone.and_then(|end| end.checked_add(DRAW_HINT_FOR))
+    );
 }
