@@ -68,7 +68,7 @@ async fn queued_save_applies_only_latest_successful_draft() -> anyhow::Result<()
     assert_eq!(Config::read(&path)?.threads, 16);
     assert_eq!(finished, epoch);
     assert!(queue.is_idle());
-    assert!(queue.saved.is_none());
+    assert!(queue.kept.is_none());
     Ok(())
 }
 
@@ -106,7 +106,7 @@ async fn queued_failure_retains_previous_durable_save_and_reports_latest_error()
         "A drained queue reports the epoch of its latest request"
     );
     assert!(queue.is_idle());
-    assert!(queue.saved.is_none());
+    assert!(queue.kept.is_none());
     Ok(())
 }
 

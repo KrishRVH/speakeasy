@@ -42,8 +42,8 @@ pub(super) enum SaveOutcome {
 pub(super) struct SaveQueue {
     path: PathBuf,
     writing: Option<Running>,
-    saved: Option<SavedConfig>,
-    durable: [Config; 2],
+    kept: Option<SavedConfig>,
+    held: [Config; 2],
     opened: Option<Config>,
     epoch: ConfigEpoch,
 }
@@ -54,8 +54,8 @@ impl SaveQueue {
         Self {
             path,
             writing: None,
-            saved: None,
-            durable: [held.clone(), held],
+            kept: None,
+            held: [held.clone(), held],
             opened: Some(draft),
             epoch: ConfigEpoch::default(),
         }
@@ -65,7 +65,7 @@ impl SaveQueue {
         match (&self.writing, &self.opened) {
             (Some(running), _) => running.queued.as_ref().unwrap_or(&running.draft) != draft,
             (None, Some(opened)) => opened != draft,
-            (None, None) => !self.durable.contains(draft),
+            (None, None) => !self.held.contains(draft),
         }
     }
 
@@ -81,16 +81,16 @@ impl SaveQueue {
     pub(super) fn finish(&mut self, result: anyhow::Result<SavedConfig>) -> SaveProgress {
         let queued = self.writing.take().and_then(|running| running.queued);
         if let Ok(saved) = &result {
-            self.durable = saved.held();
+            self.held = saved.held();
             self.opened = None;
         }
         if let Some(next) = queued {
             if let Ok(saved) = result {
-                self.saved = Some(saved);
+                self.kept = Some(saved);
             }
             return self.start(next);
         }
-        let kept = self.saved.take();
+        let kept = self.kept.take();
         let outcome = match result {
             Ok(saved) => SaveOutcome::Saved(Box::new(saved)),
             Err(error) => SaveOutcome::Failed {
@@ -105,7 +105,7 @@ impl SaveQueue {
     }
 
     fn start(&mut self, draft: Config) -> SaveProgress {
-        match SaveWork::start(self.durable.clone(), draft.clone(), self.path.clone()) {
+        match SaveWork::start(self.held.clone(), draft.clone(), self.path.clone()) {
             Ok(work) => {
                 let running = self.writing.insert(Running {
                     work,
@@ -134,14 +134,14 @@ impl SaveQueue {
         drop(thread);
 
         if let Ok(Ok(saved)) = result.try_recv() {
-            self.durable = saved.held();
+            self.held = saved.held();
         }
         if let Some(queued) = queued {
             #[expect(
                 clippy::let_underscore_must_use,
                 reason = "Dropping the work joins its thread; a closing view has no one to tell of a failed start"
             )]
-            let _ = SaveWork::start(self.durable.clone(), queued, self.path.clone());
+            let _ = SaveWork::start(self.held.clone(), queued, self.path.clone());
         }
     }
 }
