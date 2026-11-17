@@ -44,7 +44,7 @@ use self::{
     stream::{CallbackState, Pulse, build_stream, microphone_error, rate_and_channels},
 };
 use crate::{
-    runtime::ports::{CaptureEvent, Capturing, Listening, Lost, Sealed},
+    runtime::ports::{CaptureEvent, Capturing, Listening, Lost, Partition, Sealed},
     show::AudioLog,
 };
 
@@ -273,8 +273,7 @@ struct Recorder<D = LiveStream> {
     errors: Receiver<cpal::Error>,
     started: Instant,
     rate: u32,
-    cuts: Option<Cuts>,
-    live: live::Feed,
+    recognition: Recognition,
     sounded: bool,
     pulse: Pulse,
     #[cfg(test)]
@@ -341,13 +340,8 @@ impl<D> Recorder<D> {
         errors: Receiver<cpal::Error>,
         started: Instant,
         rate: u32,
-        recognition: RecognitionMode,
+        mode: RecognitionMode,
     ) -> Self {
-        let (cuts, live) = match recognition {
-            RecognitionMode::Whole => (None, live::Feed::Abandoned),
-            RecognitionMode::Segmented => (Some(Cuts::new(rate)), live::Feed::Abandoned),
-            RecognitionMode::Streaming => (None, live::Feed::Waiting),
-        };
         Self {
             pcm: Pcm16::with_reservation(
                 samples_in(INITIAL_RESERVATION, rate),
@@ -359,8 +353,7 @@ impl<D> Recorder<D> {
             errors,
             started,
             rate,
-            cuts,
-            live,
+            recognition: Recognition::new(mode, rate),
             sounded: false,
             pulse: Pulse::new(Instant::now()),
             #[cfg(test)]
@@ -388,8 +381,7 @@ impl<D> Recorder<D> {
             mut speech,
             device,
             rate,
-            cuts,
-            live,
+            recognition,
             sounded,
             ..
         } = self;
@@ -398,8 +390,7 @@ impl<D> Recorder<D> {
             Ok(lost) => {
                 let silent = !sounded && pcm.long_enough(rate);
                 speech.complete(pcm.audio());
-                live.finish(pcm.audio());
-                let partition = cuts.and_then(|cuts| cuts.finish(&speech, pcm.audio().len()));
+                let partition = recognition.finish(&speech, pcm.audio());
                 let mut sealed = pcm.seal(speech, rate);
                 if let Ok(Some(sealed)) = &mut sealed {
                     sealed.partition = partition;
@@ -435,8 +426,7 @@ impl<D> Recorder<D> {
                 return Ok(None);
             }
             if requests.whole.try_recv().is_ok() {
-                self.cuts = None;
-                self.live = live::Feed::Abandoned;
+                self.recognition = Recognition::Whole;
             }
             let lost = match self.errors.try_recv() {
                 Ok(error) => Some(Lost::from(error)),
@@ -476,18 +466,23 @@ impl<D> Recorder<D> {
                 )]
                 let _ = events.try_send(CaptureEvent::Level(id, level));
             }
-            self.live
-                .offer(id, events, self.pcm.audio(), &self.speech, self.rate);
+            if let Recognition::Streaming(feed) = &mut self.recognition
+                && feed
+                    .offer(id, events, self.pcm.audio(), &self.speech, self.rate)
+                    .is_err()
+            {
+                self.recognition = Recognition::Whole;
+            }
             if stopping {
                 return Ok(lost);
             }
             if !events.is_full()
-                && let Some(cuts) = &mut self.cuts
+                && let Recognition::Segmented(cuts) = &mut self.recognition
                 && let Some(range) = cuts.offer(&self.speech, self.pcm.audio().len())
             {
                 let end = range.end;
                 let Ok(piece) = self.pcm.excerpt(range, &self.speech, self.rate) else {
-                    self.cuts = None;
+                    self.recognition = Recognition::Whole;
                     continue;
                 };
                 if events
@@ -499,6 +494,33 @@ impl<D> Recorder<D> {
             }
 
             thread::park_timeout(DRAIN_INTERVAL);
+        }
+    }
+}
+
+enum Recognition {
+    Whole,
+    Segmented(Cuts),
+    Streaming(live::Feed),
+}
+
+impl Recognition {
+    fn new(mode: RecognitionMode, rate: u32) -> Self {
+        match mode {
+            RecognitionMode::Whole => Self::Whole,
+            RecognitionMode::Segmented => Self::Segmented(Cuts::new(rate)),
+            RecognitionMode::Streaming => Self::Streaming(live::Feed::Waiting),
+        }
+    }
+
+    fn finish(self, speech: &Audibility, audio: &[u8]) -> Option<Partition> {
+        match self {
+            Self::Whole => None,
+            Self::Segmented(cuts) => cuts.finish(speech, audio.len()),
+            Self::Streaming(feed) => {
+                feed.finish(audio);
+                None
+            },
         }
     }
 }

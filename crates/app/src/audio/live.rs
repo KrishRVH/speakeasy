@@ -20,8 +20,9 @@ pub(super) enum Feed {
         ending: oneshot::Sender<Zeroizing<Vec<u8>>>,
         cursor: usize,
     },
-    Abandoned,
 }
+
+pub(super) struct Abandoned;
 
 impl Feed {
     pub(super) fn offer(
@@ -31,26 +32,20 @@ impl Feed {
         audio: &[u8],
         speech: &Audibility,
         rate: u32,
-    ) {
+    ) -> Result<(), Abandoned> {
         if matches!(self, Self::Waiting) {
             let Some(range) = speech.retained(audio.len()) else {
-                return;
+                return Ok(());
             };
             let (frames, receiver) = mpsc::channel(QUEUED_FRAMES);
             let (ending, tail) = oneshot::channel();
-            if events
-                .try_send(CaptureEvent::Streaming(
-                    id,
-                    LiveAudio {
-                        rate,
-                        frames: receiver,
-                        tail,
-                    },
-                ))
-                .is_err()
-            {
-                *self = Self::Abandoned;
-                return;
+            let live = LiveAudio {
+                rate,
+                frames: receiver,
+                tail,
+            };
+            if events.try_send(CaptureEvent::Streaming(id, live)).is_err() {
+                return Err(Abandoned);
             }
             *self = Self::Sending {
                 frames,
@@ -61,8 +56,7 @@ impl Feed {
         let chunk = bytes_in(samples_in(FRAME, rate));
         while let Self::Sending { frames, cursor, .. } = self {
             if frames.is_closed() {
-                *self = Self::Abandoned;
-                break;
+                return Err(Abandoned);
             }
             if frames.capacity() == 0 {
                 break;
@@ -74,11 +68,11 @@ impl Feed {
                 break;
             };
             if frames.try_send(Zeroizing::new(part.to_vec())).is_err() {
-                *self = Self::Abandoned;
-                break;
+                return Err(Abandoned);
             }
             *cursor = cursor.saturating_add(chunk);
         }
+        Ok(())
     }
 
     pub(super) fn finish(self, audio: &[u8]) {
@@ -99,6 +93,16 @@ mod tests {
     use super::*;
     use crate::audio::fixture::square_wave;
 
+    fn spoken(rate: u32) -> (Vec<u8>, Audibility) {
+        let audio: Vec<u8> = square_wave(2000)
+            .take(48_000)
+            .flat_map(i16::to_le_bytes)
+            .collect();
+        let mut speech = Audibility::new(rate);
+        speech.extend(&audio);
+        (audio, speech)
+    }
+
     #[test]
     fn feed_starts_with_gated_padding_and_keeps_every_sample_through_finish() {
         let rate = 16_000;
@@ -107,12 +111,18 @@ mod tests {
         let mut feed = Feed::Waiting;
         let mut audio = vec![0; 48_000];
         speech.extend(&audio);
-        feed.offer(SessionId::FIRST, &events, &audio, &speech, rate);
+        assert!(
+            feed.offer(SessionId::FIRST, &events, &audio, &speech, rate)
+                .is_ok()
+        );
         assert!(reports.try_recv().is_err(), "Quiet opened a stream");
         audio.extend(square_wave(2000).take(1600).flat_map(i16::to_le_bytes));
         speech.extend(&audio);
         let start = speech.retained(audio.len()).unwrap().start;
-        feed.offer(SessionId::FIRST, &events, &audio, &speech, rate);
+        assert!(
+            feed.offer(SessionId::FIRST, &events, &audio, &speech, rate)
+                .is_ok()
+        );
         let CaptureEvent::Streaming(_, mut live) = reports.try_recv().unwrap() else {
             panic!("Missing stream")
         };
@@ -129,15 +139,13 @@ mod tests {
     #[test]
     fn backpressure_retries_the_cursor_and_completion_preserves_the_entire_tail() {
         for retry in [false, true] {
-            let audio: Vec<u8> = square_wave(2000)
-                .take(48_000)
-                .flat_map(i16::to_le_bytes)
-                .collect();
-            let mut speech = Audibility::new(16_000);
-            speech.extend(&audio);
+            let (audio, speech) = spoken(16_000);
             let (events, reports) = async_channel::bounded(1);
             let mut feed = Feed::Waiting;
-            feed.offer(SessionId::FIRST, &events, &audio, &speech, 16_000);
+            assert!(
+                feed.offer(SessionId::FIRST, &events, &audio, &speech, 16_000)
+                    .is_ok()
+            );
             let CaptureEvent::Streaming(_, mut live) = reports.try_recv().unwrap() else {
                 panic!("Missing stream")
             };
@@ -148,7 +156,10 @@ mod tests {
                     received.extend_from_slice(&bytes);
                 }
             }
-            feed.offer(SessionId::FIRST, &events, &audio, &speech, 16_000);
+            assert!(
+                feed.offer(SessionId::FIRST, &events, &audio, &speech, 16_000)
+                    .is_ok()
+            );
             let mut more = audio.clone();
             more.extend([3, 0, 4, 0]);
             feed.finish(&more);
@@ -158,5 +169,34 @@ mod tests {
             received.extend_from_slice(&live.tail.try_recv().unwrap());
             assert_eq!(received, more);
         }
+    }
+
+    #[test]
+    fn a_stream_nobody_can_hear_is_abandoned() {
+        let (audio, speech) = spoken(16_000);
+        let (closed, _receiver) = async_channel::bounded(1);
+        closed.close();
+        assert!(
+            Feed::Waiting
+                .offer(SessionId::FIRST, &closed, &audio, &speech, 16_000)
+                .is_err(),
+            "A stream opened on a closed event lane"
+        );
+
+        let (events, reports) = async_channel::bounded(1);
+        let mut feed = Feed::Waiting;
+        assert!(
+            feed.offer(SessionId::FIRST, &events, &audio, &speech, 16_000)
+                .is_ok()
+        );
+        let CaptureEvent::Streaming(_, live) = reports.try_recv().unwrap() else {
+            panic!("Missing stream")
+        };
+        drop(live);
+        assert!(
+            feed.offer(SessionId::FIRST, &events, &audio, &speech, 16_000)
+                .is_err(),
+            "A stream kept sending after its listener left"
+        );
     }
 }
