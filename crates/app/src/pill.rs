@@ -32,19 +32,15 @@ const METER_BARS: usize = 24;
 const FRAME_INTERVAL: Duration = Duration::from_millis(5);
 
 const SUBMITTED_FOR: Duration = Duration::from_millis(350);
-
 const COPIED_FOR: Duration = Duration::from_millis(1600);
-
 const NOTICE_FOR: Duration = Duration::from_secs(6);
 const EMPTY_FOR: Duration = Duration::from_millis(1200);
 const ERROR_FOR: Duration = Duration::from_secs(8);
 const LONGEST_FEEDBACK: Duration = ERROR_FOR;
-const TRAY_HINT_FOR: Duration = Duration::from_secs(3);
-
 const DETAILS: &str = "Details in Settings";
 
+const TRAY_HINT_FOR: Duration = Duration::from_secs(3);
 const DRAW_HINT_FOR: Duration = Duration::from_secs(3);
-
 const SECURE_INPUT_FOR: Duration = Duration::from_secs(5);
 
 pub(crate) const COUNTDOWN: Duration = Duration::from_secs(30);
@@ -53,14 +49,11 @@ const SWEEP_PERIOD: Duration = Duration::from_millis(1200);
 
 const RESTING_SIZE: Size<f32> = size(60.0, 30.0);
 const RECORDING_WIDTH: f32 = 152.0;
-
 const MESSAGE_WIDTH: f32 = 360.0;
-
 const MESSAGE_SIZE: Size<f32> = size(MESSAGE_WIDTH, 64.0);
 const HIDDEN_LIFT: f32 = 6.0;
 const SHADOW_OFFSET: f32 = 4.0;
 const SHADOW_BLUR: f32 = 16.0;
-
 const SHADOW_ROOM: f32 = SHADOW_OFFSET + SHADOW_BLUR + HIDDEN_LIFT;
 
 const _: () = assert!(
@@ -70,7 +63,6 @@ const _: () = assert!(
 );
 
 const WINDOW_SIZE: Size<Pixels> = size(px(PILL_WIDTH as f32), px(PILL_HEIGHT as f32));
-
 const BOTTOM_CLEARANCE: Pixels = px(50.0);
 
 const LID_OPEN: f32 = 0.0;
@@ -276,7 +268,6 @@ impl Pill {
                 Phase::Recording => level,
                 _ => 0.0,
             };
-
             let omega = meter_stiffness(scene.phase, spring.target > spring.value());
             moving |= advance(spring, omega);
         }
@@ -623,7 +614,6 @@ pub(crate) fn open(
         },
         |window, cx| {
             window.set_window_title("Speakeasy pill");
-
             window.on_window_should_close(cx, |_, _| false);
             configured = configure(window);
             cx.new(|cx| {

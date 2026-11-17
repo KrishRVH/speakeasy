@@ -14,15 +14,10 @@ use crate::{
 };
 
 const ROW_PADDING: f32 = 7.0;
-
 const SLOT_SIDE_INSET: f32 = 2.0 * (ROW_PADDING + 1.0);
-
 const SLOT_VERTICAL_INSET: f32 = 16.0;
-
 const TRAILING_INSET: f32 = 7.0;
-
 const LABEL_FADE_FROM: f32 = 0.6;
-
 const JEWEL: f32 = 14.0;
 
 const TRAY_HINT: &str = if cfg!(target_os = "macos") {
@@ -31,7 +26,6 @@ const TRAY_HINT: &str = if cfg!(target_os = "macos") {
     "In the tray · Use Speakeasy’s menu to quit"
 };
 const DRAW_HINT: &str = "Hold Shift to draw";
-
 const SECURE_INPUT: &str =
     "Secure keyboard entry is on, so Escape, Space, V, S, W, and A won’t reach Speakeasy.";
 const SECURE_INPUT_SOURCES: &str = "Often a password field or terminal";

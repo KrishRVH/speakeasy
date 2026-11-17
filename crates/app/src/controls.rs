@@ -11,23 +11,15 @@ use crate::{
 };
 
 pub(crate) const HEIGHT: Pixels = px(32.0);
-
 pub(crate) const CORNER: Pixels = px(6.0);
-
 pub(crate) const PANEL_CORNER: Pixels = px(10.0);
-
-pub(crate) const CONTROL_TEXT: Pixels = px(13.0);
-
-pub(crate) const TITLE_TEXT: Pixels = px(14.0);
-
-pub(crate) const DETAIL_TEXT: Pixels = px(12.0);
-
-pub(crate) const DETAIL_LINE: Pixels = px(17.0);
-
 pub(crate) const DISABLED: f32 = 0.42;
 
+pub(crate) const CONTROL_TEXT: Pixels = px(13.0);
+pub(crate) const TITLE_TEXT: Pixels = px(14.0);
+pub(crate) const DETAIL_TEXT: Pixels = px(12.0);
+pub(crate) const DETAIL_LINE: Pixels = px(17.0);
 const TRACKING: Pixels = px(1.5);
-
 const WORD_SPACE: Pixels = px(7.0);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

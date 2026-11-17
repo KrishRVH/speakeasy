@@ -11,9 +11,7 @@ use crate::{
 
 const OLDEST_AGE: usize = METER_BARS - 1;
 const BAR_WIDTH: f32 = 2.0;
-
 const BAR_PITCH: f32 = 4.0;
-
 const KEYSTONE_RADIUS: f32 = 2.5;
 
 #[derive(Clone, Copy)]
