@@ -2,7 +2,6 @@ mod labels;
 
 use std::{fmt, iter, time::Duration};
 
-use serde::Serialize;
 use tiny_skia::{PixmapPaint, Transform};
 
 use super::{RECENT_INK, RIPPLE_REACH, closed_curve, fill, label, ripple};
@@ -18,7 +17,7 @@ pub struct VideoViewport {
     pub source: Rect,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AnnotationReport {
     pub drawn: usize,
     pub omitted: usize,
@@ -26,7 +25,7 @@ pub struct AnnotationReport {
 
 pub struct Annotations {
     duration: Moment,
-    strokes: Vec<Located<Stroke>>,
+    strokes: Vec<Located<Trace>>,
     actions: Vec<Located<Action>>,
     labels: Vec<labels::Label>,
 }
@@ -36,18 +35,47 @@ struct Located<T> {
     part: Option<Rect>,
 }
 
-impl<T: Clone> Located<T> {
-    fn all(items: &[T], spaces: &[Option<Space>]) -> Vec<Self> {
+impl<T> Located<T> {
+    fn all(items: impl IntoIterator<Item = T>, spaces: &[Option<Space>]) -> Vec<Self> {
         let parts = spaces
             .iter()
             .map(|space| space.map(|space| space.part))
             .chain(iter::repeat(None));
         items
-            .iter()
-            .cloned()
+            .into_iter()
             .zip(parts)
             .map(|(item, part)| Self { item, part })
             .collect()
+    }
+}
+
+struct Trace {
+    stroke: Stroke,
+    appears: Option<Moment>,
+    lifted: Moment,
+}
+
+impl Trace {
+    fn all(strokes: &[Stroke]) -> impl Iterator<Item = Self> {
+        strokes
+            .chunk_by(|one, two| one.last() == two.first())
+            .flat_map(|movement| {
+                let lifted = movement
+                    .last()
+                    .map_or(Moment::START, |last| last.span().end());
+                movement
+                    .iter()
+                    .enumerate()
+                    .map(move |(index, stroke)| Self {
+                        stroke: stroke.clone(),
+                        appears: if index == 0 {
+                            Some(stroke.first().at)
+                        } else {
+                            stroke.points().get(1).map(|ink| ink.at)
+                        },
+                        lifted,
+                    })
+            })
     }
 }
 
@@ -71,8 +99,8 @@ impl Annotations {
         }
         Ok(Self {
             duration: recording.duration,
-            strokes: Located::all(&recording.strokes, &recording.spaces.strokes),
-            actions: Located::all(&recording.actions, &recording.spaces.actions),
+            strokes: Located::all(Trace::all(&recording.strokes), &recording.spaces.strokes),
+            actions: Located::all(recording.actions.iter().copied(), &recording.spaces.actions),
             labels: labels::resolve(recording, marks),
         })
     }
@@ -104,67 +132,46 @@ impl Annotations {
             return Err(Error::invalid("Video content is outside its canvas"));
         };
         let (w, h) = (width as f32, height as f32);
+        let now = Moment::from(at);
         let mut report = AnnotationReport::default();
         let mut shown = vec![false; self.strokes.len()];
         let mut canvas = content.as_mut();
-        let strokes = self
-            .strokes
-            .chunk_by(|one, two| one.item.last() == two.item.first())
-            .flat_map(|chain| {
-                let end = chain
-                    .last()
-                    .map_or(Moment::START, |last| last.item.span().end());
-                chain.iter().enumerate().map(move |(index, stroke)| {
-                    let start = if index == 0 {
-                        Some(stroke.item.first())
-                    } else {
-                        stroke.item.points().get(1).copied()
-                    };
-                    (stroke, end, start)
-                })
-            });
-        for (index, (stroke, end, start)) in strokes.enumerate() {
+        for (trace, drawn) in self.strokes.iter().zip(&mut shown) {
             if cancelled() {
                 return Ok(None);
             }
-            if start.is_none_or(|start| start.at.since(Moment::START) > at)
-                || at.saturating_sub(end.since(Moment::START)) > RECENT_INK
+            let Trace {
+                stroke,
+                appears,
+                lifted,
+            } = &trace.item;
+            if appears.is_none_or(|appears| appears > now)
+                || at.saturating_sub(lifted.since(Moment::START)) > RECENT_INK
             {
                 continue;
             }
-            if stroke.part != Some(viewport.source) {
+            if trace.part != Some(viewport.source) {
                 report.omitted = report.omitted.saturating_add(1);
                 continue;
             }
             let points: Vec<_> = stroke
-                .item
-                .points()
-                .iter()
-                .take_while(|ink| ink.at.since(Moment::START) <= at)
-                .map(|ink| ink.point.scaled(w, h))
+                .path_until(now)
+                .map(|point| point.scaled(w, h))
                 .collect();
             fill(
                 &mut canvas,
                 closed_curve(&ink::outline(&points, ink::pen(w, h))),
                 ink::COLOR,
             );
-            if let Some(drawn) = shown.get_mut(index) {
-                *drawn = true;
-            }
+            *drawn = true;
             report.drawn = report.drawn.saturating_add(1);
         }
-        let visible: Vec<_> = iter::once(0)
-            .chain(shown.iter().scan(0_usize, |count, shown| {
-                *count = count.saturating_add(usize::from(*shown));
-                Some(*count)
-            }))
-            .collect();
         let radius = ink::label_radius(w, h);
         for bound in &self.labels {
             if cancelled() {
                 return Ok(None);
             }
-            match bound.placement(at, &visible, viewport.source) {
+            match bound.placement(at, &shown, viewport.source) {
                 labels::Placement::Hidden => continue,
                 labels::Placement::Omitted => {
                     report.omitted = report.omitted.saturating_add(1);

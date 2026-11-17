@@ -40,7 +40,7 @@ pub(super) fn resolve(recording: &Recording, marks: &[Mark]) -> Vec<Label> {
 }
 
 impl Label {
-    pub(super) fn placement(&self, at: Duration, visible: &[usize], source: Rect) -> Placement {
+    pub(super) fn placement(&self, at: Duration, shown: &[bool], source: Rect) -> Placement {
         if self.mark.span.end().since(Moment::START) > at {
             return Placement::Hidden;
         }
@@ -57,11 +57,9 @@ impl Label {
                 Some(part)
             },
             Anchor::Ink(part) => {
-                let range = &self.mark.strokes;
-                if visible
-                    .get(range.start)
-                    .zip(visible.get(range.end))
-                    .is_none_or(|(start, end)| start >= end)
+                if shown
+                    .get(self.mark.strokes.clone())
+                    .is_none_or(|strokes| !strokes.contains(&true))
                 {
                     return Placement::Hidden;
                 }
