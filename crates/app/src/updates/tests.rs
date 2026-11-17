@@ -1,3 +1,5 @@
+use std::io::{self, ErrorKind};
+
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
@@ -35,56 +37,67 @@ fn release_links_are_built_only_from_a_newer_numeric_version() {
 #[tokio::test]
 async fn redirects_and_oversized_responses_are_not_followed_or_accepted() -> anyhow::Result<()> {
     let client = client(client_builder(Trust::Nobody)?.no_proxy())?;
-    let target = TcpListener::bind("127.0.0.1:0").await?;
-    let location = format!("http://{}/", target.local_addr()?);
-    let answer = async move {
-        let (mut stream, _) = target.accept().await?;
-        let mut request = [0; 2048];
-        assert!(stream.read(&mut request).await? > 0);
-        stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 21\r\nConnection: close\r\n\r\n{\"tag_name\":\"v9.9.9\"}").await
-    };
-    let redirects = tokio::spawn(answer);
-    for response in [
-        format!(
-            "HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    let (location, target) = serve(
+        "HTTP/1.1 200 OK\r\nContent-Length: 21\r\nConnection: close\r\n\r\n{\"tag_name\":\"v9.9.9\"}"
+            .into(),
+    )
+    .await?;
+    tokio::spawn(target);
+    let oversized = MAX_REPLY + 1;
+    for (fault, response) in [
+        (
+            "Followed an untrusted redirect",
+            format!(
+                "HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            ),
         ),
-        "HTTP/1.1 200 OK\r\nContent-Length: 2097153\r\nConnection: close\r\n\r\n".into(),
-        format!(
-            "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n200001\r\n{}\r\n0\r\n\r\n",
-            "x".repeat(MAX_REPLY + 1)
+        (
+            "Ignored a declared length over the limit",
+            format!("HTTP/1.1 200 OK\r\nContent-Length: {oversized}\r\nConnection: close\r\n\r\n"),
+        ),
+        (
+            "Accepted a chunked body over the limit",
+            format!(
+                "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{oversized:x}\r\n{}\r\n0\r\n\r\n",
+                "x".repeat(oversized)
+            ),
         ),
     ] {
-        let listener = TcpListener::bind("127.0.0.1:0").await?;
-        let url = format!("http://{}/", listener.local_addr()?);
-        let server = async move {
-            let (mut stream, _) = listener.accept().await?;
-            let mut request = [0; 2048];
-            assert!(stream.read(&mut request).await? > 0);
-
-            match stream.write_all(response.as_bytes()).await {
-                Ok(()) => Ok(()),
-                Err(error)
-                    if matches!(
-                        error.kind(),
-                        std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset
-                    ) =>
-                {
-                    Ok(())
-                },
-                Err(error) => Err(error),
-            }
-        };
-        let (result, response_sent) = timeout(Duration::from_secs(3), async {
-            tokio::join!(fetch(&client, &url, MAX_REPLY), server)
+        let (url, reply) = serve(response).await?;
+        let (result, served) = timeout(Duration::from_secs(3), async {
+            tokio::join!(fetch(&client, &url, MAX_REPLY), reply)
         })
-        .await?;
-        response_sent?;
-        assert!(result.is_err());
+        .await
+        .context(fault)?;
+        served?;
+        assert!(result.is_err(), "{fault}");
     }
-    redirects.abort();
-    assert!(
-        redirects.await.unwrap_err().is_cancelled(),
-        "Followed an untrusted redirect"
-    );
     Ok(())
+}
+
+async fn serve(response: String) -> io::Result<(String, impl Future<Output = io::Result<()>>)> {
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let url = format!("http://{}/", listener.local_addr()?);
+    let served = async move {
+        let (mut stream, _) = listener.accept().await?;
+        let mut request = [0; 2048];
+        assert!(stream.read(&mut request).await? > 0);
+        stream
+            .write_all(response.as_bytes())
+            .await
+            .or_else(tolerate_hang_up)?;
+        stream
+            .read_to_end(&mut Vec::new())
+            .await
+            .map(drop)
+            .or_else(tolerate_hang_up)
+    };
+    Ok((url, served))
+}
+
+fn tolerate_hang_up(error: io::Error) -> io::Result<()> {
+    match error.kind() {
+        ErrorKind::BrokenPipe | ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted => Ok(()),
+        _ => Err(error),
+    }
 }
