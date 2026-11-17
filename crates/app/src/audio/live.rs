@@ -22,6 +22,7 @@ pub(super) enum Feed {
     },
 }
 
+#[derive(Debug)]
 pub(super) struct Abandoned;
 
 impl Feed {
@@ -111,18 +112,14 @@ mod tests {
         let mut feed = Feed::Waiting;
         let mut audio = vec![0; 48_000];
         speech.extend(&audio);
-        assert!(
-            feed.offer(SessionId::FIRST, &events, &audio, &speech, rate)
-                .is_ok()
-        );
+        feed.offer(SessionId::FIRST, &events, &audio, &speech, rate)
+            .unwrap();
         assert!(reports.try_recv().is_err(), "Quiet opened a stream");
         audio.extend(square_wave(2000).take(1600).flat_map(i16::to_le_bytes));
         speech.extend(&audio);
         let start = speech.retained(audio.len()).unwrap().start;
-        assert!(
-            feed.offer(SessionId::FIRST, &events, &audio, &speech, rate)
-                .is_ok()
-        );
+        feed.offer(SessionId::FIRST, &events, &audio, &speech, rate)
+            .unwrap();
         let CaptureEvent::Streaming(_, mut live) = reports.try_recv().unwrap() else {
             panic!("Missing stream")
         };
@@ -142,10 +139,8 @@ mod tests {
             let (audio, speech) = spoken(16_000);
             let (events, reports) = async_channel::bounded(1);
             let mut feed = Feed::Waiting;
-            assert!(
-                feed.offer(SessionId::FIRST, &events, &audio, &speech, 16_000)
-                    .is_ok()
-            );
+            feed.offer(SessionId::FIRST, &events, &audio, &speech, 16_000)
+                .unwrap();
             let CaptureEvent::Streaming(_, mut live) = reports.try_recv().unwrap() else {
                 panic!("Missing stream")
             };
@@ -156,10 +151,8 @@ mod tests {
                     received.extend_from_slice(&bytes);
                 }
             }
-            assert!(
-                feed.offer(SessionId::FIRST, &events, &audio, &speech, 16_000)
-                    .is_ok()
-            );
+            feed.offer(SessionId::FIRST, &events, &audio, &speech, 16_000)
+                .unwrap();
             let mut more = audio.clone();
             more.extend([3, 0, 4, 0]);
             feed.finish(&more);
@@ -185,10 +178,8 @@ mod tests {
 
         let (events, reports) = async_channel::bounded(1);
         let mut feed = Feed::Waiting;
-        assert!(
-            feed.offer(SessionId::FIRST, &events, &audio, &speech, 16_000)
-                .is_ok()
-        );
+        feed.offer(SessionId::FIRST, &events, &audio, &speech, 16_000)
+            .unwrap();
         let CaptureEvent::Streaming(_, live) = reports.try_recv().unwrap() else {
             panic!("Missing stream")
         };
