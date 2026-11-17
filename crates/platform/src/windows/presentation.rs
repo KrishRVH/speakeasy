@@ -1,37 +1,43 @@
 use std::ptr::null_mut;
 
-use anyhow::bail;
+use anyhow::{bail, ensure};
 use async_channel::Sender;
-use windows_sys::Win32::{
-    Foundation::{FALSE, HWND, LPARAM, LRESULT, RECT, WPARAM},
-    Graphics::{
-        Dwm::{
-            DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE, DWMWA_WINDOW_CORNER_PREFERENCE,
-            DWMWCP_DONOTROUND, DwmSetWindowAttribute,
+use windows_sys::{
+    Win32::{
+        Foundation::{FALSE, HWND, LPARAM, LRESULT, RECT, WPARAM},
+        Graphics::{
+            Dwm::{
+                DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE, DWMWA_WINDOW_CORNER_PREFERENCE,
+                DWMWCP_DONOTROUND, DwmSetWindowAttribute,
+            },
+            Gdi::{
+                BeginPaint, EndPaint, GetMonitorInfoW, MONITOR_DEFAULTTOPRIMARY, MONITORINFO,
+                MonitorFromWindow, PAINTSTRUCT,
+            },
         },
-        Gdi::{
-            BeginPaint, EndPaint, GetMonitorInfoW, MONITOR_DEFAULTTOPRIMARY, MONITORINFO,
-            MonitorFromWindow, PAINTSTRUCT,
+        UI::{
+            HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI},
+            Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
+            WindowsAndMessaging::{
+                GWL_EXSTYLE, GWL_STYLE, GetForegroundWindow, GetPropW, HWND_TOPMOST,
+                IsWindowVisible, LWA_ALPHA, RemovePropW, SC_MINIMIZE, SIZE_MINIMIZED, SW_HIDE,
+                SW_RESTORE, SW_SHOWNOACTIVATE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
+                SWP_NOSIZE, SWP_NOZORDER, SetForegroundWindow, SetLayeredWindowAttributes,
+                SetPropW, SetWindowPos, ShowWindow, WM_NCDESTROY, WM_PAINT, WM_SIZE, WM_SYSCOMMAND,
+                WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TRANSPARENT, WS_OVERLAPPEDWINDOW, WS_POPUP,
+            },
         },
     },
-    UI::{
-        HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI},
-        Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
-        WindowsAndMessaging::{
-            GWL_EXSTYLE, GWL_STYLE, GetForegroundWindow, HWND_TOPMOST, IsWindowVisible, LWA_ALPHA,
-            SC_MINIMIZE, SIZE_MINIMIZED, SW_HIDE, SW_RESTORE, SW_SHOWNOACTIVATE, SWP_FRAMECHANGED,
-            SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetForegroundWindow,
-            SetLayeredWindowAttributes, SetWindowPos, ShowWindow, WM_NCDESTROY, WM_PAINT, WM_SIZE,
-            WM_SYSCOMMAND, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TRANSPARENT, WS_OVERLAPPEDWINDOW,
-            WS_POPUP,
-        },
-    },
+    core::PCWSTR,
+    w,
 };
 
 use super::{BASE_DPI, ok_or_last_error};
 use crate::{NativeWindow, PILL_HEIGHT, PILL_MARGIN, PILL_WIDTH};
 
 const DWM_VALUE_SIZE: u32 = 4;
+
+const HIDE_LANE: PCWSTR = w!("SpeakeasyHideLane");
 
 impl NativeWindow {
     pub fn configure_pill(&self) -> anyhow::Result<()> {
@@ -167,11 +173,18 @@ fn centered_left(area: RECT, width: i32) -> i32 {
 impl NativeWindow {
     pub fn minimize_to_tray(&self, hide: Sender<()>) -> anyhow::Result<()> {
         let hwnd = self.native.hwnd;
-        let context = Box::into_raw(Box::new(hide));
+        ensure!(
+            unsafe { GetPropW(hwnd, HIDE_LANE) }.is_null(),
+            "This window already minimizes to the tray"
+        );
+        let lane = Box::into_raw(Box::new(hide));
 
         unsafe {
-            if SetWindowSubclass(hwnd, Some(settings_window), 1, context as usize) == FALSE {
-                drop(Box::from_raw(context));
+            if SetPropW(hwnd, HIDE_LANE, lane.cast()) == FALSE
+                || SetWindowSubclass(hwnd, Some(settings_window), 1, 0) == FALSE
+            {
+                RemovePropW(hwnd, HIDE_LANE);
+                drop(Box::from_raw(lane));
                 bail!("Cannot enable minimize to tray. Restart Speakeasy.");
             }
         }
@@ -196,21 +209,24 @@ unsafe extern "system" fn settings_window(
     wparam: WPARAM,
     lparam: LPARAM,
     id: usize,
-    context: usize,
+    _: usize,
 ) -> LRESULT {
     unsafe {
         match message {
             WM_NCDESTROY => {
                 RemoveWindowSubclass(hwnd, Some(settings_window), id);
-                drop(Box::from_raw(context as *mut Sender<()>));
+                let lane = RemovePropW(hwnd, HIDE_LANE).cast::<Sender<()>>();
+                if !lane.is_null() {
+                    drop(Box::from_raw(lane));
+                }
                 DefSubclassProc(hwnd, message, wparam, lparam)
             },
             WM_SYSCOMMAND if wparam & 0xFFF0 == SC_MINIMIZE as usize => {
-                request_hide(context);
+                request_hide(hwnd);
                 0
             },
             WM_SIZE if wparam == SIZE_MINIMIZED as usize => {
-                request_hide(context);
+                request_hide(hwnd);
                 DefSubclassProc(hwnd, message, wparam, lparam)
             },
             _ => DefSubclassProc(hwnd, message, wparam, lparam),
@@ -218,8 +234,10 @@ unsafe extern "system" fn settings_window(
     }
 }
 
-unsafe fn request_hide(context: usize) {
-    let hide = unsafe { &*(context as *const Sender<()>) };
+unsafe fn request_hide(hwnd: HWND) {
+    let Some(hide) = (unsafe { GetPropW(hwnd, HIDE_LANE).cast::<Sender<()>>().as_ref() }) else {
+        return;
+    };
     #[expect(
         clippy::let_underscore_must_use,
         reason = "Minimize notifications coalesce in a one-slot lane; a closed lane belongs to a destroyed settings owner"
@@ -235,18 +253,13 @@ mod tests {
         ptr::{null, null_mut},
     };
 
-    use anyhow::ensure;
-    use windows_sys::{
-        Win32::{
-            Graphics::Gdi::{GetUpdateRect, InvalidateRect, ValidateRect},
-            System::LibraryLoader::GetModuleHandleW,
-            UI::WindowsAndMessaging::{
-                CreateWindowExW, DefWindowProcW, DestroyWindow, RegisterClassW, SendMessageW,
-                UnregisterClassW, WNDCLASSW,
-            },
+    use windows_sys::Win32::{
+        Graphics::Gdi::{GetUpdateRect, InvalidateRect, ValidateRect},
+        System::LibraryLoader::GetModuleHandleW,
+        UI::WindowsAndMessaging::{
+            CreateWindowExW, DefWindowProcW, DestroyWindow, RegisterClassW, SendMessageW,
+            UnregisterClassW, WNDCLASSW,
         },
-        core::PCWSTR,
-        w,
     };
 
     use super::{super::native_window, *};
@@ -346,6 +359,51 @@ mod tests {
         assert!(
             !paint_pending(),
             "A hidden pill must finish its paint cycle"
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "Creates an owned native window; no microphone, hook, clipboard, or injected input"]
+    fn a_window_minimizes_to_one_tray_lane_until_it_is_destroyed() -> anyhow::Result<()> {
+        let hwnd = unsafe {
+            CreateWindowExW(
+                0,
+                w!("STATIC"),
+                null(),
+                WS_POPUP,
+                0,
+                0,
+                0,
+                0,
+                null_mut(),
+                null_mut(),
+                GetModuleHandleW(null()),
+                null(),
+            )
+        };
+        ensure!(!hwnd.is_null(), "Cannot create the settings test window");
+        let (first, first_hides) = async_channel::bounded(1);
+        let (second, second_hides) = async_channel::bounded(1);
+        let again = {
+            let window = unsafe { native_window(hwnd) }?;
+            window.minimize_to_tray(first)?;
+            window.minimize_to_tray(second)
+        };
+
+        unsafe {
+            SendMessageW(hwnd, WM_SYSCOMMAND, SC_MINIMIZE as usize, 0);
+            DestroyWindow(hwnd);
+        }
+        assert!(again.is_err(), "A second tray lane was installed");
+        assert_eq!(
+            first_hides.try_recv(),
+            Ok(()),
+            "Minimize missed the installed lane"
+        );
+        assert!(
+            first_hides.is_closed() && second_hides.is_closed(),
+            "A tray lane outlived its window"
         );
         Ok(())
     }
