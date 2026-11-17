@@ -893,8 +893,8 @@ The session machine and the service lifecycle are pure, so test-only explorers t
 events against them and check each state and transition.
 
 [machine/explore.rs](../crates/core/src/machine/explore.rs) offers, in each state, every event the
-owner can deliver there: input, control commands, presets, settings, and the microphone, screen,
-worker, delivery, and cleanup results the state admits.
+owner can deliver there: input, timers, control commands, presets, settings, practice, recovery,
+reports, and the microphone, screen, worker, delivery, and cleanup results the state admits.
 [oracle.rs](../crates/core/src/machine/explore/oracle.rs) answers each query every way it admits.
 The search runs breadth-first and merges states by the key
 [canonical.rs](../crates/core/src/machine/explore/canonical.rs) builds. The key ranks session ids by
@@ -904,13 +904,13 @@ and marks a ticket for an ended session stale. At every state and transition,
 
 - the live session is the latest, and an event for an earlier session never moves it;
 - the microphone, screen, worker, and cleanups belong to sessions that exist;
-- other apps' cues are held exactly while a session runs with sounds on;
+- the cue output is held open exactly while a session runs with sounds on;
 - deliveries never overlap, and a Show or practice never inserts text;
 - an earlier Show never replaces a later remembered one.
 
 A failure prints the path of events that reached it. `mise run rust:test` explores five events deep,
 and `mise run rust:explore` explores to a fixed point: 1,430,956 states and 127,475,062 transitions
-in about a minute.
+in about a minute on 32 threads, with 1.3 GB of memory at its peak.
 
 The explored space has bounds. Timing scales to a one-tick tap, two-tick double tap, and three-tick
 limit. Three settings cover sounds on and off, each recognition mode, and GPU probing. A state with
