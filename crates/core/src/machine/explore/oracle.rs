@@ -53,21 +53,21 @@ impl Payload for Abstract {
 }
 
 #[derive(Debug)]
-#[expect(
-    dead_code,
-    reason = "A failure trace shows what each query asked about only through Debug"
-)]
 pub(super) enum Query {
     Admit,
     Shield,
     Closed,
     Keep,
     Microphone {
+        #[expect(dead_code, reason = "A failure trace prints it")]
         session: SessionId,
+        #[expect(dead_code, reason = "A failure trace prints it")]
         mode: RecognitionMode,
     },
     Screen {
+        #[expect(dead_code, reason = "A failure trace prints it")]
         session: SessionId,
+        #[expect(dead_code, reason = "A failure trace prints it")]
         frames: bool,
     },
     KeepAudio,
@@ -78,40 +78,48 @@ pub(super) enum Query {
 }
 
 #[derive(Debug)]
-#[expect(
-    dead_code,
-    reason = "A failure trace shows each effect's arguments only through Debug"
-)]
 pub(super) enum Effect {
-    Answered(Query, &'static str),
+    Answered(
+        Query,
+        #[expect(dead_code, reason = "A failure trace prints it")] &'static str,
+    ),
     Revoke,
-    Finish(Recorder),
-    Retire(Recorder),
+    Finish(#[expect(dead_code, reason = "A failure trace prints it")] Recorder),
+    Retire(#[expect(dead_code, reason = "A failure trace prints it")] Recorder),
     ListenWhole,
     ExpectCue,
     Pin,
-    Meter(SessionId),
+    Meter(#[expect(dead_code, reason = "A failure trace prints it")] SessionId),
     Load,
     Reload,
     Recover {
+        #[expect(dead_code, reason = "A failure trace prints it")]
         probe: bool,
     },
-    Transcribe(Request<Abstract>),
+    Transcribe(#[expect(dead_code, reason = "A failure trace prints it")] Request<Abstract>),
     Insert,
     RefusePractice,
     Publish {
+        #[expect(dead_code, reason = "A failure trace prints it")]
         publication: Publication<Abstract>,
+        #[expect(dead_code, reason = "A failure trace prints it")]
         receipt: bool,
     },
     Reopen,
-    RefuseRecovery(Failure<Abstract>),
-    RetireDelivery(SessionId),
-    Release(SessionId, Release<Abstract>),
+    RefuseRecovery(#[expect(dead_code, reason = "A failure trace prints it")] Failure<Abstract>),
+    RetireDelivery(#[expect(dead_code, reason = "A failure trace prints it")] SessionId),
+    Release(
+        #[expect(dead_code, reason = "A failure trace prints it")] SessionId,
+        #[expect(dead_code, reason = "A failure trace prints it")] Release<Abstract>,
+    ),
     Remember,
     Announce,
-    Cue(Cue),
-    HoldCues(bool),
-    Respond(Result<Status<Abstract>, Refusal>),
+    Cue(#[expect(dead_code, reason = "A failure trace prints it")] Cue),
+    HoldCues(#[expect(dead_code, reason = "A failure trace prints it")] bool),
+    Respond(
+        #[expect(dead_code, reason = "A failure trace prints it")]
+        Result<Status<Abstract>, Refusal>,
+    ),
     CloseInput,
 }
 
