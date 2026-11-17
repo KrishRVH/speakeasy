@@ -65,15 +65,9 @@ impl Retention {
         let Self::Expires(at) = self else {
             return None;
         };
-        let stamp = super::utc_stamp(at);
+        let [year, month, day, hour, minute, second] = super::utc_fields(at);
         Some(format!(
-            "{}-{}-{}T{}:{}:{}Z",
-            stamp.get(..4)?,
-            stamp.get(4..6)?,
-            stamp.get(6..8)?,
-            stamp.get(9..11)?,
-            stamp.get(11..13)?,
-            stamp.get(13..15)?,
+            "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z"
         ))
     }
 }

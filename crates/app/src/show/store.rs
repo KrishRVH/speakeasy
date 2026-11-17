@@ -368,18 +368,18 @@ fn stamp(name: &str) -> Option<&str> {
 }
 
 fn utc_stamp(now: SystemTime) -> String {
-    let seconds = now
+    let [year, month, day, hour, minute, second] = utc_fields(now);
+    format!("{year:04}{month:02}{day:02}T{hour:02}{minute:02}{second:02}Z")
+}
+
+fn utc_fields(at: SystemTime) -> [u64; 6] {
+    let seconds = at
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
     let (days, time) = (seconds / 86_400, seconds % 86_400);
     let (year, month, day) = civil_date(days);
-    format!(
-        "{year:04}{month:02}{day:02}T{:02}{:02}{:02}Z",
-        time / 3_600,
-        time / 60 % 60,
-        time % 60
-    )
+    [year, month, day, time / 3_600, time / 60 % 60, time % 60]
 }
 
 fn civil_date(days: u64) -> (u64, u64, u64) {
