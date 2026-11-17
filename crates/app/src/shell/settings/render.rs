@@ -7,7 +7,6 @@ use gpui::{
     Stateful, Window, div, prelude::*, px, rgb,
 };
 use speakeasy_core::machine::ModelState;
-use speakeasy_platform::Permission;
 
 use super::{
     Action, Notice, Reset, Settings, is_demo,
@@ -345,12 +344,8 @@ impl Settings {
     }
 
     fn microphone_blocked(&self) -> bool {
-        self.permissions.is_some_and(|permissions| {
-            matches!(
-                permissions.microphone,
-                Permission::NotGranted | Permission::Restricted
-            )
-        })
+        self.permissions
+            .is_some_and(|permissions| permissions::blocked(permissions.microphone))
     }
 
     pub(super) fn reset_controls(&self, ui: &Ui<'_>) -> Div {

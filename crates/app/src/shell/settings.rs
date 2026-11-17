@@ -244,20 +244,7 @@ impl Settings {
                 }
             },
             Action::Choose(file) => self.choose(file, window, cx),
-            Action::SelectMicrophone(index) => {
-                let chosen = match index {
-                    None => Some(None),
-                    Some(index) => self
-                        .microphones
-                        .get(index)
-                        .filter(|row| row.present)
-                        .map(|row| Some(row.device.id.clone())),
-                };
-                if let Some(microphone) = chosen {
-                    self.config.microphone = microphone;
-                    self.edited(cx);
-                }
-            },
+            Action::SelectMicrophone(index) => self.select_microphone(index, cx),
             Action::SelectLanguage(language) => {
                 self.config.language = if self.config.engine == Engine::Whisper {
                     crate::models::whisper_language(language)
@@ -475,6 +462,18 @@ impl Settings {
         }
         self.microphone_listing = None;
         cx.notify();
+    }
+
+    fn select_microphone(&mut self, index: Option<usize>, cx: &mut Context<'_, Self>) {
+        let microphone = match index {
+            None => None,
+            Some(index) => match self.microphones.get(index) {
+                Some(row) if row.present => Some(row.device.id.clone()),
+                _ => return,
+            },
+        };
+        self.config.microphone = microphone;
+        self.edited(cx);
     }
 
     fn choose(&mut self, file: EngineFile, window: &Window, cx: &Context<'_, Self>) {
@@ -762,12 +761,6 @@ enum Notice {
     Problem(SharedString),
 }
 
-enum Reset {
-    Idle,
-    Confirming,
-    Running { _work: Task<()> },
-}
-
 impl Notice {
     fn text(&self) -> SharedString {
         match self {
@@ -778,6 +771,12 @@ impl Notice {
     const fn is_problem(&self) -> bool {
         matches!(self, Self::Problem(_))
     }
+}
+
+enum Reset {
+    Idle,
+    Confirming,
+    Running { _work: Task<()> },
 }
 
 #[derive(PartialEq, Eq)]

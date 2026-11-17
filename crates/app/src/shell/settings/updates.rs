@@ -249,11 +249,9 @@ impl Settings {
             ));
             return;
         }
-        let previous = std::mem::take(&mut self.update);
-        if let Update::Ready(installer) = previous {
-            crate::shell::shutdown::request_install(installer, cx);
-        } else {
-            self.update = previous;
+        match std::mem::take(&mut self.update) {
+            Update::Ready(installer) => crate::shell::shutdown::request_install(installer, cx),
+            previous => self.update = previous,
         }
     }
 }

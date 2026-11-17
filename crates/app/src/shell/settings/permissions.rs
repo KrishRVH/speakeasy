@@ -31,6 +31,10 @@ pub(super) const fn description(permission: Permission) -> &'static str {
     }
 }
 
+pub(super) const fn blocked(permission: Permission) -> bool {
+    matches!(permission, Permission::NotGranted | Permission::Restricted)
+}
+
 pub(super) const OPEN: &str = if cfg!(target_os = "linux") {
     "Microphone help"
 } else {

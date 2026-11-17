@@ -97,45 +97,39 @@ impl Document {
         })
     }
 
-    fn runs(&self) -> Vec<Run<'_>> {
-        let mut chunks: Vec<&[usize]> = self.starts.chunks(RUN_LENGTH).collect();
-        if chunks.is_empty() {
-            chunks.push(&[]);
-        }
-        let ends: Vec<usize> = chunks
-            .iter()
-            .skip(1)
-            .filter_map(|chunk| chunk.first().copied())
-            .chain([self.len])
-            .collect();
-        chunks
-            .into_iter()
-            .zip(ends)
+    fn runs(&self) -> impl Iterator<Item = Run<'_>> {
+        let empty = self.starts.is_empty().then_some(&[][..]);
+        self.starts
+            .chunks(RUN_LENGTH)
+            .chain(empty)
             .enumerate()
-            .map(|(index, (starts, end))| {
+            .map(|(index, starts)| {
+                let first = index.saturating_mul(RUN_LENGTH);
                 let mut hasher = DefaultHasher::new();
                 ("speakeasy.text-run", self.field, self.revision, index).hash(&mut hasher);
                 Run {
                     id: NodeId(hasher.finish()),
-                    first: index.saturating_mul(RUN_LENGTH),
+                    first,
                     starts,
-                    end,
+                    end: self
+                        .starts
+                        .get(first.saturating_add(starts.len()))
+                        .copied()
+                        .unwrap_or(self.len),
                 }
             })
-            .collect()
     }
 
-    fn boundaries(&self) -> impl Iterator<Item = usize> + '_ {
+    fn boundaries(&self) -> impl Iterator<Item = usize> {
         self.starts.iter().copied().chain([self.len])
     }
 
     fn position(&self, offset: usize) -> Option<TextPosition> {
-        self.runs().iter().find_map(|run| run.position(offset))
+        self.runs().find_map(|run| run.position(offset))
     }
 
     fn offset(&self, position: TextPosition) -> Option<usize> {
         self.runs()
-            .iter()
             .find(|run| run.id == position.node)?
             .boundaries()
             .nth(position.character_index)
@@ -222,7 +216,7 @@ impl Painted {
     }
 
     pub(super) fn run_ids(&self) -> Vec<NodeId> {
-        self.document.runs().iter().map(|run| run.id).collect()
+        self.document.runs().map(|run| run.id).collect()
     }
 
     pub(super) fn publish(self, subtree: &mut A11ySubtreeBuilder<'_>) {
@@ -245,7 +239,7 @@ impl Painted {
             .filter(|(_, word)| !word.chars().all(char::is_whitespace))
             .map(|(at, _)| at)
             .collect();
-        let runs = self.document.runs();
+        let runs: Vec<_> = self.document.runs().collect();
         runs.iter()
             .enumerate()
             .map(|(index, run)| {

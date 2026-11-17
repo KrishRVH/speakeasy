@@ -3,7 +3,7 @@ use std::ops::ControlFlow;
 use gpui::{Context, Task, Window};
 use zeroize::Zeroizing;
 
-use super::{Notice, Settings};
+use super::{Notice, Settings, is_demo, onboarding::Step};
 use crate::{
     gpui_ext::{EntityUpdate as _, follow},
     runtime::PracticeEvent,
@@ -21,11 +21,7 @@ pub(super) struct Practice {
 
 impl Practice {
     pub(super) fn stop(&mut self) {
-        self.task = None;
-        self.ready = false;
-        self.levels = None;
-        self.level = 0.0;
-        self.text = Zeroizing::default();
+        *self = Self::default();
     }
 }
 
@@ -45,7 +41,7 @@ impl Settings {
     }
 
     pub(super) fn toggle_practice(&mut self, cx: &mut Context<'_, Self>) {
-        if super::is_demo(cx) && self.onboarding == Some(super::onboarding::Step::Practice) {
+        if is_demo(cx) && self.onboarding == Some(Step::Practice) {
             self.practice.text = Zeroizing::new("A little practice goes a long way.".into());
             return;
         }
@@ -53,8 +49,7 @@ impl Settings {
             self.end_practice(cx);
             return;
         }
-        let receipt = cx.global::<Services>().practice();
-        let mut receipt = match receipt {
+        let mut receipt = match cx.global::<Services>().practice() {
             Ok(receipt) => receipt,
             Err(message) => {
                 self.notice = Some(Notice::Problem(message.into()));

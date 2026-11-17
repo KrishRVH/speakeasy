@@ -1,4 +1,4 @@
-use gpui::{AnyElement, Div, FontWeight, SharedString, div, prelude::*, px, rgb};
+use gpui::{Div, FontWeight, SharedString, div, prelude::*, px, rgb};
 
 use super::{Action, Settings, Ui, dictation::level, fraction, progress_text};
 use crate::{
@@ -138,10 +138,10 @@ impl Settings {
             )
     }
 
-    fn onboarding_primary(&self, step: Step, ui: &Ui<'_>) -> (SharedString, Action, bool) {
+    fn onboarding_primary(&self, step: Step, ui: &Ui<'_>) -> (&'static str, Action, bool) {
         let running = is_demo(ui.cx) || ui.cx.global::<Services>().is_running();
         let next = Action::Onboarding(TourAction::Next);
-        let (label, action, enabled) = match step {
+        match step {
             Step::Prepare if self.unreadable || self.resetting() => ("Continue", next, false),
             Step::Prepare if self.download.installing().is_some() => ("Setting up…", next, false),
             Step::Prepare if self.download.is_pausing() => ("Pausing download…", next, false),
@@ -179,8 +179,7 @@ impl Settings {
                 next,
                 self.onboarding_next(step, ui.cx) != step,
             ),
-        };
-        (label.into(), action, enabled)
+        }
     }
 
     fn onboarding_prepare(&self, ui: &Ui<'_>) -> Div {
@@ -192,14 +191,13 @@ impl Settings {
             .map(|installing| installing.setup.progress());
         let needs_setup =
             !blocked && !is_demo(ui.cx) && (self.config.needs_engine() || installing.is_some());
-        let state: AnyElement = if blocked {
+        let state = if blocked {
             kit.banner(
                 Tone::Warn,
                 "Settings can't be read",
                 super::unreadable_text(ui.cx),
                 Some(self.reset_controls(ui)),
             )
-            .into_any_element()
         } else if needs_setup {
             kit.group(vec![
                 div()
@@ -214,7 +212,6 @@ impl Settings {
                     })
                     .into_any_element(),
             ])
-            .into_any_element()
         } else {
             kit.group(vec![
                 div()
@@ -226,7 +223,6 @@ impl Settings {
                     .child(kit.label("Local speech is ready", "Next, try your shortcut."))
                     .into_any_element(),
             ])
-            .into_any_element()
         };
         div()
             .flex()
@@ -311,7 +307,7 @@ impl Settings {
         let active = self.practice.task.is_some();
         let recognized = !self.practice.text.trim().is_empty();
         let recording = active && self.presentation.indicator == Indicator::Recording;
-        let external = cfg!(target_os = "linux") && self.config.linux.external_shortcut;
+        let external = self.uses_desktop_bindings();
         let status = if recording {
             "Listening…"
         } else if active && self.presentation.indicator == Indicator::Busy {
@@ -426,8 +422,7 @@ impl Settings {
 
     fn onboarding_ready(&self, ui: &Ui<'_>) -> Div {
         let kit = ui.kit();
-        let external = cfg!(target_os = "linux") && self.config.linux.external_shortcut;
-        let cancel = self.presentation.cancel_shortcut.replace("Escape", "Esc");
+        let external = self.uses_desktop_bindings();
         let line = |keys: Div, meaning: &'static str| {
             div()
                 .flex()
@@ -462,7 +457,7 @@ impl Settings {
             if external {
                 div().child("Your desktop's cancel binding")
             } else {
-                kit.keys(&cancel, false)
+                kit.keys(&self.cancel_shortcut(), false)
             },
             "Cancel without typing",
         ));

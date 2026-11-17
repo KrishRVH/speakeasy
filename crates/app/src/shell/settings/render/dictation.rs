@@ -39,10 +39,18 @@ impl Settings {
         }
     }
 
+    pub(super) fn cancel_shortcut(&self) -> String {
+        self.presentation.cancel_shortcut.replace("Escape", "Esc")
+    }
+
+    pub(super) fn uses_desktop_bindings(&self) -> bool {
+        cfg!(target_os = "linux") && self.config.linux.external_shortcut
+    }
+
     fn shortcut_card(&self, ui: &Ui<'_>) -> Div {
         let kit = ui.kit();
         let palette = ui.palette;
-        let bindings = cfg!(target_os = "linux") && self.config.linux.external_shortcut;
+        let bindings = self.uses_desktop_bindings();
         let (title, detail) = if bindings {
             (
                 "Your desktop shortcut",
@@ -81,7 +89,6 @@ impl Settings {
             );
         #[cfg(target_os = "macos")]
         let heading = heading.child(self.mac_shortcut(ui));
-        let cancel = self.presentation.cancel_shortcut.replace("Escape", "Esc");
         let legend = div()
             .flex()
             .flex_wrap()
@@ -118,7 +125,7 @@ impl Settings {
                         .flex()
                         .items_center()
                         .gap(px(6.0))
-                        .child(kit.keys(&cancel, false))
+                        .child(kit.keys(&self.cancel_shortcut(), false))
                         .child(div().text_color(rgb(palette.muted)).child("while talking"))
                 },
             ));

@@ -1,4 +1,7 @@
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use gpui::{Context, Task, Window, point, px};
 use speakeasy_platform::OwnedThread;
@@ -73,14 +76,18 @@ pub(super) struct Completion {
 }
 
 pub(crate) fn pending(settings: &Path) -> bool {
-    !settings.with_added_extension("onboarded").is_file()
+    !marker(settings).is_file()
 }
 
 fn complete(settings: &Path) -> std::io::Result<()> {
     if let Some(parent) = settings.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(settings.with_added_extension("onboarded"), [])
+    fs::write(marker(settings), [])
+}
+
+fn marker(settings: &Path) -> PathBuf {
+    settings.with_added_extension("onboarded")
 }
 
 impl Settings {
@@ -137,14 +144,13 @@ impl Settings {
         }
         let settings = cx.global::<Services>().path.clone();
         let (sender, receiver) = async_channel::bounded(1);
-        let thread = OwnedThread::spawn("onboarding-save", move || {
+        let Ok(thread) = OwnedThread::spawn("onboarding-save", move || {
             #[expect(
                 clippy::let_underscore_must_use,
                 reason = "The completion marker still writes when its settings window has closed"
             )]
             let _ = sender.try_send(complete(&settings));
-        });
-        let Ok(thread) = thread else {
+        }) else {
             self.notice = Some(Notice::Problem(
                 "Cannot remember setup completion. Try again.".into(),
             ));

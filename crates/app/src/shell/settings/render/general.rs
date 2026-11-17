@@ -317,7 +317,7 @@ fn permission_row(
     help: permissions::Help,
 ) -> Div {
     let palette = ui.palette;
-    let blocked = matches!(state, Permission::NotGranted | Permission::Restricted);
+    let blocked = permissions::blocked(state);
     let status = div()
         .flex()
         .items_center()
