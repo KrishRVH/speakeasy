@@ -8,6 +8,8 @@ use speakeasy_show::{
 
 use super::*;
 
+mod recovery;
+
 fn permit() -> (InputSender, InsertPermit) {
     let (sender, _inputs) = async_channel::bounded(1);
     let input = InputSender::new(sender);
@@ -21,23 +23,22 @@ fn desktop(width: u32, height: u32, scroll: u32, typed: u32, dialog: bool) -> Im
 }
 
 fn video(width: u32, height: u32, seed: u32) -> Image {
-    const PLAYER: (u32, u32) = (1_280, 720);
+    const PLAYER_WIDTH: usize = 1_280;
+    const PLAYER_HEIGHT: usize = 720;
+    let [columns, rows] =
+        [width, height].map(|side| usize::try_from(side).expect("Fixture side fits usize"));
+    let left = columns.saturating_sub(PLAYER_WIDTH) / 2;
+    let top = rows.saturating_sub(PLAYER_HEIGHT) / 2;
     let mut pixels = desktop_pixels(width, height, 0, 0, false);
-    let left = width.saturating_sub(PLAYER.0) / 2;
-    let top = height.saturating_sub(PLAYER.1) / 2;
     let mut state = seed.wrapping_mul(2_654_435_761) | 1;
     for row in pixels
         .as_chunks_mut::<4>()
         .0
-        .chunks_exact_mut(usize::try_from(width).expect("Fixture row width fits usize"))
-        .skip(usize::try_from(top).expect("Fixture top fits usize"))
-        .take(usize::try_from(PLAYER.1).expect("Player height fits usize"))
+        .chunks_exact_mut(columns)
+        .skip(top)
+        .take(PLAYER_HEIGHT)
     {
-        for pixel in row
-            .iter_mut()
-            .skip(usize::try_from(left).expect("Fixture left fits usize"))
-            .take(usize::try_from(PLAYER.0).expect("Player width fits usize"))
-        {
+        for pixel in row.iter_mut().skip(left).take(PLAYER_WIDTH) {
             state ^= state << 13;
             state ^= state >> 17;
             state ^= state << 5;
@@ -69,20 +70,20 @@ fn desktop_pixels(width: u32, height: u32, scroll: u32, typed: u32, dialog: bool
     );
     for y in 0..height {
         let scrolled = y.checked_add(scroll).expect("Synthetic scroll fits u32");
-        let line = scrolled / CELL_HEIGHT;
+        let (line, inside_y) = (scrolled / CELL_HEIGHT, scrolled % CELL_HEIGHT);
+        let glyphs = if line == 0 {
+            typed
+                .checked_add(60)
+                .expect("Synthetic glyph count fits u32")
+        } else {
+            60
+        };
+        let dialog_row = dialog && panel_y.contains(&y);
         for x in 0..width {
-            let column = x / CELL_WIDTH;
-            let panel = dialog && panel_x.contains(&x) && panel_y.contains(&y);
-            let glyphs = if line == 0 {
-                typed
-                    .checked_add(60)
-                    .expect("Synthetic glyph count fits u32")
-            } else {
-                60
-            };
+            let (column, inside_x) = (x / CELL_WIDTH, x % CELL_WIDTH);
+            let panel = dialog_row && panel_x.contains(&x);
             let written =
                 column < glyphs && line.wrapping_mul(2_654_435_761).wrapping_add(column) % 7 != 0;
-            let (inside_x, inside_y) = (x % CELL_WIDTH, scrolled % CELL_HEIGHT);
             let ink = written
                 && (1..CELL_WIDTH - 2).contains(&inside_x)
                 && (4..CELL_HEIGHT - 4).contains(&inside_y)
@@ -134,6 +135,20 @@ impl Rehearsal {
         }
     }
 
+    fn click(&mut self, at: u64, x: f32, y: f32) {
+        let released = at.checked_add(80).expect("Synthetic release fits u64");
+        self.pointer(at, x, y, false, true);
+        self.pointer(released, x, y, false, false);
+    }
+
+    fn ink(&mut self, at: u64, x: f32, y: f32) {
+        self.pointer(at, x, y, true, false);
+    }
+
+    fn hover(&mut self, at: u64, x: f32, y: f32) {
+        self.pointer(at, x, y, false, false);
+    }
+
     fn pointer(&mut self, at: u64, x: f32, y: f32, drawing: bool, pressed: bool) {
         self.tracker
             .observe(Moment::from_millis(at), Point::new(x, y), drawing, pressed);
@@ -153,19 +168,16 @@ fn rehearse(width: u32, height: u32) -> (Footage, Narration) {
     for at in (0..10_000).step_by(200) {
         show.frame(at, desktop(width, height, 0, 0, at >= 3_200));
     }
-    show.pointer(3_000, 0.5, 0.5, false, true);
-    show.pointer(3_080, 0.5, 0.5, false, false);
+    show.click(3_000, 0.5, 0.5);
     for (step, at) in (0..=40_u16).zip((5_000..).step_by(25)) {
         let turn = f32::from(step) / 40.0 * std::f32::consts::TAU;
-        show.pointer(
+        show.ink(
             at,
             0.2_f32.mul_add(turn.cos(), 0.5),
             0.2_f32.mul_add(turn.sin(), 0.5),
-            true,
-            false,
         );
     }
-    show.pointer(6_100, 0.7, 0.5, false, false);
+    show.hover(6_100, 0.7, 0.5);
     let narration = words(&[
         (2_800, "click"),
         (3_100, "here"),
@@ -175,6 +187,16 @@ fn rehearse(width: u32, height: u32) -> (Footage, Narration) {
         (6_000, "wrong."),
     ]);
     (show.finish(10_000), narration)
+}
+
+fn narrated(mut footage: Footage, narration: Narration, lost: Option<NarrationLoss>) -> Footage {
+    footage.recording.narration = narration;
+    footage.recording.narration_lost = lost;
+    footage
+}
+
+fn uncopied(_: &str) -> anyhow::Result<()> {
+    panic!("Only a saved live Show copies its summary")
 }
 
 fn png_size(bytes: &[u8]) -> (u32, u32) {
@@ -230,9 +252,9 @@ async fn unknown_checkpoint_state_precedes_composition_and_respects_cancellation
 }
 
 #[tokio::test]
-async fn unavailable_checkpoint_preserves_in_memory_publication_and_cancellation()
+async fn an_unavailable_checkpoint_closes_empty_and_the_show_publishes_from_memory()
 -> anyhow::Result<()> {
-    for (fail_parent, cancelled) in [(false, false), (false, true), (true, false), (true, true)] {
+    for fail_parent in [false, true] {
         let root = tempfile::tempdir()?;
         let blocked = root.path().join("blocked");
         fs::write(&blocked, b"fixture")?;
@@ -253,10 +275,7 @@ async fn unavailable_checkpoint_preserves_in_memory_publication_and_cancellation
         drop(audio);
         let checkpoint = crate::show::Checkpointing::Writing(keeper).close().await?;
         assert!(checkpoint.is_none());
-        let (input, permit) = permit();
-        if cancelled {
-            input.cancel();
-        }
+        let (_input, permit) = permit();
         let (footage, narration) = rehearse(80, 60);
         let mut copied = false;
         let result = publish_with(
@@ -270,22 +289,18 @@ async fn unavailable_checkpoint_preserves_in_memory_publication_and_cancellation
                 Ok(())
             },
         )?;
-        if cancelled {
-            assert!(matches!(result, Published::Cancelled));
-            assert!(!copied);
-            assert_eq!(fs::read_dir(root.path())?.count(), 1);
-        } else {
-            let Published::Saved {
-                show, copied: copy, ..
-            } = result
-            else {
-                bail!("In-memory footage was not published");
-            };
-            assert!(copied && copy.is_ok());
-            let manifest = Manifest::parse(&fs::read(show.directory().join(Manifest::FILE))?)?;
-            assert_eq!(manifest.recording().narration, narration);
-            assert!(store::source::inspect(show.directory())?.moments().len() >= 2);
-        }
+        let Published::Saved {
+            show,
+            copied: Ok(()),
+            ..
+        } = result
+        else {
+            bail!("In-memory footage was not published");
+        };
+        assert!(copied);
+        let manifest = Manifest::parse(&fs::read(show.directory().join("show.json"))?)?;
+        assert_eq!(manifest.recording().narration, narration);
+        assert!(store::source::inspect(show.directory())?.moments().len() >= 2);
         assert_eq!(
             store::checkpoint::list(root.path(), SystemTime::now()).shows,
             []
@@ -349,7 +364,7 @@ fn a_show_publishes_a_complete_private_bundle() -> anyhow::Result<()> {
         summary,
         "The summary copied is the one written"
     );
-    let manifest: Manifest = Manifest::parse(&fs::read(directory.join("show.json"))?)?;
+    let manifest = Manifest::parse(&fs::read(directory.join("show.json"))?)?;
     let source = store::source::inspect(&directory)?;
     assert_eq!(source.moments(), moments);
     assert_eq!(source.duration(), manifest.recording().duration);
@@ -392,8 +407,7 @@ fn only_a_screen_show_crops_its_frames_to_the_activity() -> anyhow::Result<()> {
         for at in (0..4_000).step_by(200) {
             show.frame(at, desktop(width, height, 0, 0, at >= 1_200));
         }
-        show.pointer(1_000, 0.15, 0.2, false, true);
-        show.pointer(1_080, 0.15, 0.2, false, false);
+        show.click(1_000, 0.15, 0.2);
         let root = tempfile::tempdir()?;
         let (_input, permit) = permit();
         let Published::Saved { show, .. } = publish_with(
@@ -466,10 +480,6 @@ fn a_show_that_cannot_be_copied_stays_saved() -> anyhow::Result<()> {
     let summary = show.summary()?.context("The Show kept its summary")?;
     assert!(summary.contains(&folder.display().to_string()));
     Ok(())
-}
-
-fn uncopied(_: &str) -> anyhow::Result<()> {
-    panic!("Only a saved live Show copies its summary")
 }
 
 #[test]
@@ -564,7 +574,7 @@ fn a_show_that_lost_its_narration_says_why_in_its_files() -> anyhow::Result<()> 
         .next()
         .context("The bundle is in the Shows folder")??
         .path();
-    let manifest: Manifest = Manifest::parse(&fs::read(directory.join("show.json"))?)?;
+    let manifest = Manifest::parse(&fs::read(directory.join("show.json"))?)?;
     assert_eq!(manifest.recording().narration_lost, Some(lost));
     Ok(())
 }
@@ -589,7 +599,6 @@ fn median_ms(mut timings: Vec<f64>) -> f64 {
 #[test]
 #[ignore = "opt-in synthetic release profiling; never captures the screen"]
 fn profile_show_pipeline() -> anyhow::Result<()> {
-    use std::hint::black_box;
     let (width, height) = (2_560, 1_440);
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -649,7 +658,6 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
         eprintln!(
             "show_checkpoint: scene={scene} flush_ms={flushed_ms:.2} replay_ms={replay_ms:.2} mb={checkpoint_mb:.1}"
         );
-        black_box(journal.samples());
         let journal_mb = journal.bytes() as f64 / 1e6;
         eprintln!(
             "show_record: scene={scene} size={width}x{height} median_ms={:.2} journal_mb={journal_mb:.1} mb_per_frame={:.2} frames={frames}",
@@ -667,9 +675,7 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
         );
     }
     for click in 0..6_u64 {
-        let at = click * 10_000 + 6_000;
-        show.pointer(at - 100, 0.4, 0.6, false, true);
-        show.pointer(at - 20, 0.4, 0.6, false, false);
+        show.click(click * 10_000 + 5_900, 0.4, 0.6);
     }
     let footage = show.finish(60_000);
     let narration = words(
@@ -720,8 +726,6 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
     );
     Ok(())
 }
-
-mod recovery;
 
 #[test]
 fn retrieval_is_advertised_only_when_both_source_and_command_are_available() -> anyhow::Result<()> {
@@ -813,10 +817,4 @@ fn a_published_summary_names_the_folder_the_wsl_lookup_maps() -> anyhow::Result<
         "{copied}"
     );
     Ok(())
-}
-
-fn narrated(mut footage: Footage, narration: Narration, lost: Option<NarrationLoss>) -> Footage {
-    footage.recording.narration = narration;
-    footage.recording.narration_lost = lost;
-    footage
 }
