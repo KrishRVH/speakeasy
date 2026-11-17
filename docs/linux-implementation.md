@@ -241,7 +241,9 @@ does not establish inference compatibility. Preserve the
 | Baseline distro and CPU          | Public-fixture inference, host driver requirements, engine instruction set                                                                                           | Pending |
 
 Also verify mixed-DPI placement, display removal, idle pill unmapping on KDE, cancellation cleanup,
-native Wayland and X11 editors, terminals, and memory/resource return after Pause and Quit. Measure
-startup, idle, capture, inference, and displayed frame pacing under competing load.
+native Wayland and X11 editors, terminals, and memory/resource return after Pause and Quit. Hold the
+microphone open through PipeWire's ALSA plugin under a Realtime portal that grants no budget to
+confirm the [realtime opt-out](native-contracts.md#linux-realtime-opt-out). Measure startup, idle,
+capture, inference, and displayed frame pacing under competing load.
 
 WSL checks do not establish desktop routing or native audio quality.

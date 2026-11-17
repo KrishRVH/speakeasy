@@ -1,6 +1,7 @@
 mod display_server;
 mod ei;
 mod portal;
+mod realtime;
 mod token;
 mod tray;
 mod x11;
@@ -22,6 +23,7 @@ use zbus::MatchRule;
 
 pub use self::{
     display_server::{DisplayServer, display_server},
+    realtime::disable_rtkit,
     tray::{NativeTray, TrayAction, TrayPresentation},
 };
 use super::{

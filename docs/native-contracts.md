@@ -106,6 +106,26 @@ bytes afterward. Writes and reporting have deadlines. X11 clipboard serving and 
 separate owners; selection ownership is rechecked after blocking focus/modifier queries and before
 committing paste. That query and XTEST submission are not one atomic server transaction.
 
+## Linux realtime opt-out
+
+Owners: `crates/platform/src/linux/realtime.rs`, called first in `crates/app/src/main.rs`.
+
+cpal's ALSA host opens the default device through PipeWire's ALSA plugin, which loads PipeWire's
+[realtime module](https://docs.pipewire.org/page_module_rt.html) into Speakeasy's process. Without
+realtime privileges, that module asks the desktop's Realtime portal or RTKit for a budget and lowers
+`RLIMIT_RTTIME` to it, so a portal that cached a zero budget gets Speakeasy killed by the kernel
+seconds after the microphone opens. Capture is buffered and needs no realtime scheduling, so
+`disable_rtkit` sets
+[`DISABLE_RTKIT`](https://docs.pipewire.org/page_man_pipewire_1.html#pipewire-env__disable_rtkit)
+before any other thread starts. The module then never asks the portal or RTKit and fails to load,
+which PipeWire's client configuration tolerates, and the stream opens without it. A user with
+realtime privileges still gets them under the module's own limits.
+
+Writing the environment races any thread that reads it, so `disable_rtkit` writes only while
+`/proc/self/task` lists the calling thread alone, and otherwise leaves the environment unchanged.
+Processes Speakeasy starts inherit the variable. PipeWire releases through 1.6 read it; its
+development branch no longer does, so a later PipeWire release needs another opt-out.
+
 ## Mac event tap and AppKit ownership
 
 Owners: `crates/platform/src/macos.rs`, `macos/clipboard.rs`, `macos/status_item.rs`, `monitor.rs`,

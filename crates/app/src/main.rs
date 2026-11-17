@@ -118,6 +118,8 @@ impl Invocation {
 }
 
 fn main() -> ExitCode {
+    #[cfg(target_os = "linux")]
+    speakeasy_platform::disable_rtkit();
     #[cfg(all(feature = "native-acceptance", target_os = "macos"))]
     if std::env::args_os()
         .nth(1)
