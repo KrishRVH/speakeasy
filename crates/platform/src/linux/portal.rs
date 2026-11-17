@@ -198,34 +198,9 @@ struct Bound {
     labels: ShortcutLabels,
 }
 
-impl Bound {
-    fn sender(&self) -> Option<&ei::Sender> {
-        self.remote.as_ref().map(|remote| &remote.sender)
-    }
-
-    fn sender_mut(&mut self) -> Option<&mut ei::Sender> {
-        self.remote.as_mut().map(|remote| &mut remote.sender)
-    }
-
-    fn clipboard_session(&self) -> Option<&OwnedObjectPath> {
-        self.remote
-            .as_ref()
-            .filter(|remote| remote.shares_clipboard)
-            .map(|remote| &remote.session)
-    }
-
-    fn dispatch(&mut self) -> anyhow::Result<()> {
-        if let Some(sender) = self.sender_mut() {
-            sender.dispatch()?;
-        }
-        Ok(())
-    }
-}
-
 struct Remote {
-    session: OwnedObjectPath,
     sender: ei::Sender,
-    shares_clipboard: bool,
+    clipboard_session: Option<OwnedObjectPath>,
 }
 
 enum Notice {
@@ -554,7 +529,7 @@ async fn start_remote_desktop(
         )]
         let _ = store.save(&token);
     }
-    let shares_clipboard = clipboard_requested
+    let clipboard_shared = clipboard_requested
         && result
             .remove("clipboard_enabled")
             .and_then(|value| bool::try_from(value).ok())
@@ -565,9 +540,8 @@ async fn start_remote_desktop(
         .call("ConnectToEIS", &(&session, Options::new()))
         .await?;
     Ok(Remote {
-        session,
         sender: ei::Sender::connect(libei, descriptor.into(), paste)?,
-        shares_clipboard,
+        clipboard_session: clipboard_shared.then_some(session),
     })
 }
 
@@ -589,13 +563,18 @@ async fn request_clipboard(portal: &Portal, session: &OwnedObjectPath) -> anyhow
 )]
 async fn serve(
     portal: &Portal,
-    mut bound: Bound,
+    bound: Bound,
     changes: DesktopChanges,
     input: &InputSender,
     options: &DesktopOptions,
     requests: Receiver<Insertion>,
     stopping: &Receiver<Infallible>,
 ) -> anyhow::Result<()> {
+    let Bound {
+        shortcut_session,
+        remote,
+        labels,
+    } = bound;
     let shortcuts = shortcut_signals(&portal.connection).await?;
     let clipboard = portal.proxy(CLIPBOARD).await?;
     let transfer_requests = clipboard.receive_signal("SelectionTransfer").await?;
@@ -607,7 +586,7 @@ async fn serve(
     pump.spawn_local(
         Pump {
             input: input.clone(),
-            shortcut_session: bound.shortcut_session.clone(),
+            shortcut_session,
             session_root: portal.session_root(),
             shortcuts,
             changes,
@@ -615,7 +594,9 @@ async fn serve(
             selections,
             notify,
             ownership: SelectionOwnership {
-                session: bound.clipboard_session().cloned(),
+                session: remote
+                    .as_ref()
+                    .and_then(|remote| remote.clipboard_session.clone()),
                 monitored: None,
                 owned: false,
             },
@@ -631,9 +612,14 @@ async fn serve(
         () = stop_requested(stopping, input) => return Ok(()),
         ready = worker.ready() => ready?,
     }
-    input.deliver(bound.labels.clone().into_desktop_ready());
+    input.deliver(labels.into_desktop_ready());
     Insertions::new(
-        &mut bound, &notices, &selecting, &worker, &clipboard, options,
+        remote,
+        &notices,
+        &selecting,
+        &worker,
+        &clipboard,
+        options.paste,
     )
     .serve(transfer_requests, requests, input, stopping)
     .await

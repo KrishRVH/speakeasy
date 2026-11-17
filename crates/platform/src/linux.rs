@@ -118,7 +118,6 @@ impl HostSession {
     }
 }
 
-#[derive(Clone)]
 struct ShortcutLabels {
     shortcut: String,
     cancel: String,

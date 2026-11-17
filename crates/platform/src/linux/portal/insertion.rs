@@ -15,11 +15,11 @@ use zbus::{
 };
 
 use super::{
-    Bound, CLIPBOARD_DISCONNECTED, Notice, Options, SelectionHandoff, deadline, or_pending,
+    CLIPBOARD_DISCONNECTED, Notice, Options, Remote, SelectionHandoff, deadline, or_pending,
     transfer::{Selection, Transfers, transfer},
 };
 use crate::{
-    Delivery, DesktopOptions, InputSender, InsertPermit, Inserted, LinuxPaste,
+    Delivery, InputSender, InsertPermit, Inserted, LinuxPaste,
     insertion::{Insertion, MODIFIER_WAIT, Reply},
     linux::{
         CLIPBOARD_CHANGED, COPIED_FOR_MANUAL_PASTE, NO_PASTE_BINDING,
@@ -35,7 +35,7 @@ const SELECTION_TIMEOUT: Duration = Duration::from_secs(2);
 pub(super) struct Insertions<'a> {
     transfers: Transfers<'a>,
     preparing: Option<Preparing<'a>>,
-    bound: &'a mut Bound,
+    remote: Option<Remote>,
     pending: Option<(Insertion, Instant)>,
     selection: Option<Selection>,
     forfeited: Option<InsertPermit>,
@@ -43,22 +43,22 @@ pub(super) struct Insertions<'a> {
     selecting: &'a Sender<SelectionHandoff>,
     worker: &'a x11::ClipboardWorker,
     clipboard: &'a Proxy<'static>,
-    options: &'a DesktopOptions,
+    paste: LinuxPaste,
 }
 
 impl<'a> Insertions<'a> {
     pub(super) fn new(
-        bound: &'a mut Bound,
+        remote: Option<Remote>,
         notices: &'a Receiver<Notice>,
         selecting: &'a Sender<SelectionHandoff>,
         worker: &'a x11::ClipboardWorker,
         clipboard: &'a Proxy<'static>,
-        options: &'a DesktopOptions,
+        paste: LinuxPaste,
     ) -> Self {
         Self {
             transfers: Transfers::new(),
             preparing: None,
-            bound,
+            remote,
             pending: None,
             selection: None,
             forfeited: None,
@@ -66,7 +66,7 @@ impl<'a> Insertions<'a> {
             selecting,
             worker,
             clipboard,
-            options,
+            paste,
         }
     }
 
@@ -88,9 +88,9 @@ impl<'a> Insertions<'a> {
             let modifier_wait = or_pending(self.modifier_wait());
             let prepared = or_pending(self.preparing.as_mut().map(|work| work.task.as_mut()));
             let readable = or_pending(
-                self.bound
-                    .sender()
-                    .map(|sender| sender.readiness().readable()),
+                self.remote
+                    .as_ref()
+                    .map(|remote| remote.sender.readiness().readable()),
             );
             tokio::select! {
                 biased;
@@ -119,8 +119,19 @@ impl<'a> Insertions<'a> {
         self.pending.is_none() && self.preparing.is_none()
     }
 
+    fn clipboard_session(&self) -> Option<&OwnedObjectPath> {
+        self.remote.as_ref()?.clipboard_session.as_ref()
+    }
+
+    fn dispatch(&mut self) -> anyhow::Result<()> {
+        match &mut self.remote {
+            Some(remote) => remote.sender.dispatch(),
+            None => Ok(()),
+        }
+    }
+
     fn accepts_transfers(&self) -> bool {
-        self.bound.clipboard_session().is_some()
+        self.clipboard_session().is_some()
             && self.transfers.len() < MAX_TRANSFERS
             && self
                 .preparing
@@ -137,7 +148,7 @@ impl<'a> Insertions<'a> {
     fn apply(&mut self, notice: Notice) {
         apply_notice(
             notice,
-            self.bound.sender_mut(),
+            self.remote.as_mut().map(|remote| &mut remote.sender),
             &mut self.selection,
             &mut self.forfeited,
         );
@@ -151,12 +162,15 @@ impl<'a> Insertions<'a> {
 
     fn advance_pending(&mut self) -> anyhow::Result<()> {
         self.apply_queued_notices();
-        self.bound.dispatch()?;
+        self.dispatch()?;
         let Some((request, _)) = self.pending.take_if(|(request, started)| {
             !request.permit.active()
-                || self.options.paste == LinuxPaste::Manual
+                || self.paste == LinuxPaste::Manual
                 || request.delivery == Delivery::Direct
-                || self.bound.sender().is_some_and(ei::Sender::can_paste)
+                || self
+                    .remote
+                    .as_ref()
+                    .is_some_and(|remote| remote.sender.can_paste())
                 || started.elapsed() >= MODIFIER_WAIT
         }) else {
             return Ok(());
@@ -166,7 +180,7 @@ impl<'a> Insertions<'a> {
             return Ok(());
         }
         let permit = request.permit.clone();
-        let (task, setting_selection) = match (request.delivery, self.bound.clipboard_session()) {
+        let (task, setting_selection) = match (request.delivery, self.clipboard_session()) {
             (Delivery::Direct, _) => (
                 query_focus(self.worker, permit, Route::Direct).boxed_local(),
                 false,
@@ -233,13 +247,14 @@ impl<'a> Insertions<'a> {
 
     fn finish(&mut self, request: Insertion, external: bool, route: Route) -> anyhow::Result<()> {
         self.apply_queued_notices();
-        self.bound.dispatch()?;
+        self.dispatch()?;
+        let sender = self.remote.as_mut().map(|remote| &mut remote.sender);
         let outcome = match route {
-            Route::Direct => insert_direct(self.bound, &request, external),
+            Route::Direct => insert_direct(sender, &request, external),
             Route::Paste { owned } => finish_paste(
-                self.bound,
+                sender,
                 &request,
-                self.options,
+                self.paste,
                 owned,
                 external,
                 self.forfeited.as_ref(),
@@ -251,7 +266,7 @@ impl<'a> Insertions<'a> {
 
     fn serve_transfer(&self, event: &Message) -> anyhow::Result<()> {
         let (path, mime, serial): (OwnedObjectPath, String, u32) = event.body().deserialize()?;
-        if self.bound.clipboard_session() != Some(&path) {
+        if self.clipboard_session() != Some(&path) {
             return Ok(());
         }
         let payload = self
@@ -366,17 +381,17 @@ async fn query_focus(
     Ok(Prepared::Target { external, route })
 }
 
-fn insert_direct(bound: &mut Bound, request: &Insertion, external: bool) -> Inserted {
+fn insert_direct(sender: Option<&mut ei::Sender>, request: &Insertion, external: bool) -> Inserted {
     if !request.permit.active() {
         return Inserted::Cancelled;
     }
     if let Some(outcome) = Delivery::Direct.check_focus(external && !request.own_focus.held()) {
         return outcome;
     }
-    let Some(sender) = bound.sender_mut() else {
-        return text_remedy(TextBlocked::Unsupported);
-    };
-    let ready = match sender.ready_text(&request.text) {
+    let ready = match sender
+        .ok_or(TextBlocked::Unsupported)
+        .and_then(|sender| sender.ready_text(&request.text))
+    {
         Ok(ready) => ready,
         Err(blocked) => return text_remedy(blocked),
     };
@@ -406,9 +421,9 @@ const SELECTION_LOST: Inserted = Inserted::Unavailable(
 );
 
 fn finish_paste(
-    bound: &mut Bound,
+    sender: Option<&mut ei::Sender>,
     request: &Insertion,
-    options: &DesktopOptions,
+    paste: LinuxPaste,
     owned: bool,
     external: bool,
     forfeited: Option<&InsertPermit>,
@@ -426,13 +441,13 @@ fn finish_paste(
     if let Some(outcome) = Delivery::Paste.check_focus(external && !request.own_focus.held()) {
         return outcome;
     }
-    if options.paste == LinuxPaste::Manual {
+    if paste == LinuxPaste::Manual {
         return COPIED_FOR_MANUAL_PASTE;
     }
-    let Some(sender) = bound.sender_mut() else {
-        return paste_remedy(PasteBlocked::NoKeyboard);
-    };
-    let ready = match sender.ready_paste() {
+    let ready = match sender
+        .ok_or(PasteBlocked::NoKeyboard)
+        .and_then(ei::Sender::ready_paste)
+    {
         Ok(ready) => ready,
         Err(blocked) => return paste_remedy(blocked),
     };
@@ -493,15 +508,7 @@ mod tests {
         },
         *,
     };
-    use crate::{FocusReport, Input, InputSender, linux::ShortcutLabels};
-
-    fn unbound() -> Bound {
-        Bound {
-            shortcut_session: None,
-            remote: None,
-            labels: ShortcutLabels::new(&DesktopOptions::default()),
-        }
-    }
+    use crate::{FocusReport, Input, InputSender};
 
     fn paste_after_notices(
         notices: &Receiver<Notice>,
@@ -521,9 +528,9 @@ mod tests {
             reply,
         };
         finish_paste(
-            &mut unbound(),
+            None,
             &request,
-            &DesktopOptions::default(),
+            LinuxPaste::Standard,
             owned,
             true,
             forfeited.as_ref(),
@@ -601,19 +608,15 @@ mod tests {
             }
         };
         assert_eq!(
-            Some(insert_direct(
-                &mut unbound(),
-                &request(Delivery::Direct),
-                true
-            )),
+            Some(insert_direct(None, &request(Delivery::Direct), true)),
             Delivery::Direct.check_focus(false),
             "Direct input ignored Speakeasy's own focus"
         );
         assert_eq!(
             Some(finish_paste(
-                &mut unbound(),
+                None,
                 &request(Delivery::Paste),
-                &DesktopOptions::default(),
+                LinuxPaste::Standard,
                 true,
                 true,
                 None,
@@ -631,7 +634,6 @@ mod tests {
         let input = InputSender::new(events);
         let permit = input.begin().context("Recording")?;
         permit.revoke();
-        let mut bound = unbound();
         for external in [false, true] {
             for text in ["fixture", "\0"] {
                 let (reply, _answer) = Reply::channel();
@@ -643,7 +645,7 @@ mod tests {
                     reply,
                 };
                 assert_eq!(
-                    insert_direct(&mut bound, &request, external),
+                    insert_direct(None, &request, external),
                     Inserted::Cancelled,
                     "external={external}, text={text:?}"
                 );
