@@ -38,7 +38,6 @@ pub(super) struct SaveQueue {
     saved: Option<SavedConfig>,
     durable: [Config; 2],
     opened: Option<Config>,
-    requested: Option<Config>,
     epoch: ConfigEpoch,
 }
 
@@ -51,14 +50,13 @@ impl SaveQueue {
             saved: None,
             durable: [held.clone(), held],
             opened: Some(draft),
-            requested: None,
             epoch: ConfigEpoch::default(),
         }
     }
 
     pub(super) fn needs_save(&self, draft: &Config) -> bool {
-        match (&self.requested, &self.opened) {
-            (Some(requested), _) => requested != draft,
+        match (&self.writing, &self.opened) {
+            (Some(running), _) => running.queued.as_ref().unwrap_or(&running.draft) != draft,
             (None, Some(opened)) => opened != draft,
             (None, None) => !self.durable.contains(draft),
         }
@@ -66,7 +64,6 @@ impl SaveQueue {
 
     pub(super) fn submit(&mut self, draft: Config, epoch: ConfigEpoch) -> Option<SaveProgress> {
         self.epoch = epoch;
-        self.requested = Some(draft.clone());
         if let Some(running) = &mut self.writing {
             running.queued = Some(draft);
             return None;
@@ -88,7 +85,6 @@ impl SaveQueue {
         if let Some(next) = queued {
             return self.start(next);
         }
-        self.requested = None;
         SaveProgress::Finished {
             saved: self.saved.take().map(Box::new),
             error,
@@ -97,9 +93,13 @@ impl SaveQueue {
     }
 
     fn start(&mut self, draft: Config) -> SaveProgress {
-        match SaveWork::start(self.durable.clone(), draft, self.path.clone()) {
+        match SaveWork::start(self.durable.clone(), draft.clone(), self.path.clone()) {
             Ok(work) => {
-                let running = self.writing.insert(Running { work, queued: None });
+                let running = self.writing.insert(Running {
+                    work,
+                    draft,
+                    queued: None,
+                });
                 SaveProgress::Writing(running.work.result.clone())
             },
             Err(error) => self.finish(Err(error)),
@@ -114,6 +114,7 @@ impl SaveQueue {
         let Some(Running {
             work: SaveWork { thread, result },
             queued,
+            ..
         }) = self.writing.take()
         else {
             return;
@@ -135,6 +136,7 @@ impl SaveQueue {
 
 struct Running {
     work: SaveWork,
+    draft: Config,
     queued: Option<Config>,
 }
 

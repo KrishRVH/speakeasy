@@ -112,20 +112,25 @@ async fn a_revert_queued_behind_a_write_reaches_the_file() -> anyhow::Result<()>
         &ValidConfig::assume(original.clone()),
         &path,
     )?;
-    let draft = |theme| Config {
-        theme,
+    let iris = Config {
+        theme: Theme::Iris,
         ..original.clone()
     };
     let epoch = ConfigEpoch::default();
     let mut queue = SaveQueue::new(path.clone(), original.clone());
     let first = queue
-        .submit(draft(Theme::Iris), epoch)
+        .submit(iris.clone(), epoch)
         .context("The first save was queued")?;
     assert!(
         queue.needs_save(&original),
         "A revert made while the first write ran had nothing to save"
     );
     assert!(queue.submit(original.clone(), epoch).is_none());
+    assert!(!queue.needs_save(&original), "The queued revert had edits");
+    assert!(
+        queue.needs_save(&iris),
+        "Redoing the running write behind a queued revert had nothing to save"
+    );
     let revert = queue.finish(write_result(first).await?);
     let SaveProgress::Finished { error, .. } = queue.finish(write_result(revert).await?) else {
         bail!("The revert did not finish");
@@ -307,22 +312,23 @@ fn flush_finishes_the_running_write_before_a_revert_queued_behind_it() -> anyhow
     };
     let (entered, started) = mpsc::channel();
     let (release, released) = mpsc::channel();
-    let (base, first_path) = (original.clone(), path.clone());
+    let (base, written, first_path) = (original.clone(), first.clone(), path.clone());
     let running = SaveWork::spawn(move || {
         entered.send(())?;
         released.recv()?;
         Config::save_changes(
             &[&base],
-            &first,
-            &ValidConfig::assume(first.clone()),
+            &written,
+            &ValidConfig::assume(written.clone()),
             &first_path,
         )?;
-        Ok(durable(first))
+        Ok(durable(written))
     })?;
     started.recv_timeout(PATIENCE)?;
     let mut queue = SaveQueue {
         writing: Some(Running {
             work: running,
+            draft: first,
             queued: Some(original.clone()),
         }),
         ..SaveQueue::new(path.clone(), original.clone())
