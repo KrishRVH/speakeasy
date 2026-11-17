@@ -14,6 +14,7 @@ use objc2::{
 };
 use objc2_av_foundation::{
     AVAssetReferenceRestrictions, AVAssetResourceLoader, AVAssetResourceLoaderDelegate,
+    AVAssetResourceLoadingContentInformationRequest, AVAssetResourceLoadingDataRequest,
     AVAssetResourceLoadingRequest, AVFileTypeMPEG4, AVURLAsset, AVURLAssetReferenceRestrictionsKey,
 };
 use objc2_foundation::{
@@ -100,58 +101,74 @@ impl Reader {
     }
 
     fn respond(&self, request: &AVAssetResourceLoadingRequest) -> anyhow::Result<()> {
-        let input = self.ivars();
+        let url = unsafe { request.request() }
+            .URL()
+            .and_then(|url| url.absoluteString());
+        ensure!(
+            url.is_some_and(|url| *url == *ns_string!(RESOURCE)),
+            "Video requested an unsupported resource"
+        );
+        if let Some(info) = unsafe { request.contentInformationRequest() } {
+            self.describe(&info)?;
+        }
+        if let Some(data) = unsafe { request.dataRequest() } {
+            self.serve(&data, request)?;
+        }
+        if !unsafe { request.isCancelled() } {
+            unsafe { request.finishLoading() };
+        }
+        Ok(())
+    }
 
+    fn describe(
+        &self,
+        info: &AVAssetResourceLoadingContentInformationRequest,
+    ) -> anyhow::Result<()> {
+        let kind = unsafe { AVFileTypeMPEG4 }.context("The native MP4 type is unavailable")?;
+        ensure!(
+            unsafe { info.allowedContentTypes() }.is_none_or(
+                |types| types.is_empty() || types.iter().any(|allowed| *allowed == *kind)
+            ),
+            "Video requested an unsupported content type"
+        );
+        let length = i64::try_from(self.ivars().bytes)?;
         unsafe {
-            ensure!(
-                request
-                    .request()
-                    .URL()
-                    .and_then(|url| url.absoluteString())
-                    .is_some_and(|url| *url == *ns_string!(RESOURCE)),
-                "Video requested an unsupported resource"
-            );
-            if let Some(info) = request.contentInformationRequest() {
-                let kind = AVFileTypeMPEG4.context("The native MP4 type is unavailable")?;
-                ensure!(
-                    info.allowedContentTypes()
-                        .is_none_or(|types| types.is_empty()
-                            || types.iter().any(|allowed| *allowed == *kind)),
-                    "Video requested an unsupported content type"
-                );
-                info.setContentType(Some(kind));
-                info.setContentLength(i64::try_from(input.bytes)?);
-                info.setByteRangeAccessSupported(true);
-                info.setEntireLengthAvailableOnDemand(true);
-            }
-            if let Some(data) = request.dataRequest() {
-                let start = u64::try_from(data.requestedOffset())?;
-                let mut position = u64::try_from(data.currentOffset())?;
-                let end = if data.requestsAllDataToEndOfResource() {
-                    input.bytes
-                } else {
-                    start
-                        .checked_add(u64::try_from(data.requestedLength())?)
-                        .context("Video byte range overflowed")?
-                        .min(input.bytes)
-                };
-                ensure!(position >= start, "Video byte range moved backwards");
-                let mut buffer = vec![0; READ_CHUNK];
-                while position < end && !request.isCancelled() {
-                    let count = usize::try_from(end.saturating_sub(position))?.min(READ_CHUNK);
-                    let bytes = buffer
-                        .get_mut(..count)
-                        .context("Video read exceeded its buffer")?;
-                    input.read(bytes, position)?;
-                    data.respondWithData(&NSData::with_bytes(bytes));
-                    position = position
-                        .checked_add(u64::try_from(count)?)
-                        .context("Video byte position overflowed")?;
-                }
-            }
-            if !request.isCancelled() {
-                request.finishLoading();
-            }
+            info.setContentType(Some(kind));
+            info.setContentLength(length);
+            info.setByteRangeAccessSupported(true);
+            info.setEntireLengthAvailableOnDemand(true);
+        }
+        Ok(())
+    }
+
+    fn serve(
+        &self,
+        data: &AVAssetResourceLoadingDataRequest,
+        request: &AVAssetResourceLoadingRequest,
+    ) -> anyhow::Result<()> {
+        let input = self.ivars();
+        let start = u64::try_from(unsafe { data.requestedOffset() })?;
+        let mut position = u64::try_from(unsafe { data.currentOffset() })?;
+        let end = if unsafe { data.requestsAllDataToEndOfResource() } {
+            input.bytes
+        } else {
+            start
+                .checked_add(u64::try_from(unsafe { data.requestedLength() })?)
+                .context("Video byte range overflowed")?
+                .min(input.bytes)
+        };
+        ensure!(position >= start, "Video byte range moved backwards");
+        let mut buffer = vec![0; READ_CHUNK];
+        while position < end && !unsafe { request.isCancelled() } {
+            let count = usize::try_from(end.saturating_sub(position))?.min(READ_CHUNK);
+            let bytes = buffer
+                .get_mut(..count)
+                .context("Video read exceeded its buffer")?;
+            input.read(bytes, position)?;
+            unsafe { data.respondWithData(&NSData::with_bytes(bytes)) };
+            position = position
+                .checked_add(u64::try_from(count)?)
+                .context("Video byte position overflowed")?;
         }
         Ok(())
     }
