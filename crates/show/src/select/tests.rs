@@ -779,15 +779,13 @@ proptest! {
         let covered: Vec<usize> =
             keyframes.iter().flat_map(|keyframe| keyframe.marks.clone()).collect();
         prop_assert_eq!(covered, (0..shown.marks.len()).collect::<Vec<_>>());
-        let mut said: Vec<&str> = keyframes
+        let said: Vec<&str> = keyframes
             .iter()
             .filter_map(|keyframe| keyframe.said.as_deref())
             .flat_map(str::split_whitespace)
             .collect();
-        let mut expected: Vec<&str> = narration.iter().map(|(_, word)| *word).collect();
-        said.sort_unstable();
-        expected.sort_unstable();
-        prop_assert_eq!(said, expected);
+        let spoken: Vec<&str> = narration.iter().map(|&(_, word)| word).collect();
+        prop_assert_eq!(said, spoken);
     }
 }
 

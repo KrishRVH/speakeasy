@@ -76,11 +76,12 @@ fn scribble(samples: u16) -> Vec<[f32; 2]> {
         .collect()
 }
 
-fn real(triples: &[u16], at: u64) -> Stroke {
+fn real(recorded: &[u16], at: u64) -> Stroke {
+    let (triples, []) = recorded.as_chunks::<3>() else {
+        panic!("Every recorded point has an x, a y, and a time");
+    };
     Stroke::new(
         triples
-            .as_chunks()
-            .0
             .iter()
             .map(|&[x, y, ms]| InkPoint {
                 point: scrawl(x, y),
