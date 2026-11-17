@@ -158,7 +158,7 @@ impl Image {
             .collect()
     }
 
-    pub(crate) fn resized(&self, width: u32, height: u32) -> Option<Self> {
+    pub(crate) fn resized(&self, width: u32, height: u32) -> Result<Self, Error> {
         let (columns, rows) = (
             footprints(self.width(), width),
             footprints(self.height(), height),
@@ -189,7 +189,7 @@ impl Image {
                     .map(|&channel| convert::quantize(channel)),
             );
         }
-        Self::from_premultiplied(width, height, data).ok()
+        Self::from_premultiplied(width, height, data)
     }
 
     pub(crate) fn rows(&self) -> impl Iterator<Item = &[u8]> {

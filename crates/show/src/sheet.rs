@@ -119,7 +119,7 @@ pub(crate) fn render(tiles: &[Tile<'_>], typeface: &Typeface) -> Result<Image, E
     });
     let mut canvas = sheet.as_mut();
     for ((tile, cell), scaled) in tiles.iter().zip(&cells).zip(scaled) {
-        let scaled = scaled.ok_or_else(|| Error::invalid("Cannot scale a contact sheet frame"))?;
+        let scaled = scaled?;
         let (left, top) = cell.centered_origin(scaled.width(), scaled.height());
         canvas.draw_pixmap(
             left,

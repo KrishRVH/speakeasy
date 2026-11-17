@@ -106,12 +106,10 @@ impl Evidence {
                 image
             } else {
                 let scale = THUMBNAIL_EDGE as f32 / longest as f32;
-                image
-                    .resized(
-                        convert::pixels(image.width() as f32 * scale).max(1),
-                        convert::pixels(image.height() as f32 * scale).max(1),
-                    )
-                    .ok_or_else(|| Error::invalid("Cannot scale the source image"))?
+                image.resized(
+                    convert::pixels(image.width() as f32 * scale).max(1),
+                    convert::pixels(image.height() as f32 * scale).max(1),
+                )?
             };
             thumbnails.push(thumbnail);
             cells.push(Cell {
