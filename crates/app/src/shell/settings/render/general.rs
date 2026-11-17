@@ -8,7 +8,8 @@ use crate::{
     shell::{
         Services,
         settings::{
-            Action, Reset, Setting, Settings, is_demo, onboarding, permissions, updates::Update,
+            Action, Reset, Setting, Settings, is_demo, onboarding, permissions,
+            updates::{self, Update},
         },
     },
     theme::Theme,
@@ -184,7 +185,7 @@ impl Settings {
         let kit = ui.kit();
         let detail: SharedString = match &self.update {
             Update::Idle => "Checks GitHub only when you ask. Installing stays your choice.".into(),
-            Update::Checking { .. } => "Checking the latest GitHub release…".into(),
+            Update::Checking { .. } => updates::CHECKING.into(),
             Update::Available(version) => format!("Speakeasy {version} is available.").into(),
             #[cfg(target_os = "windows")]
             Update::Downloading {
@@ -193,7 +194,7 @@ impl Settings {
             #[cfg(target_os = "windows")]
             Update::Downloading { .. } => "Cancelling the download…".into(),
             #[cfg(target_os = "windows")]
-            Update::Ready(_) => "Update verified. Installing restarts Speakeasy.".into(),
+            Update::Ready(_) => updates::VERIFIED.into(),
         };
         let controls = div().flex().flex_none().items_center().gap(px(8.0));
         let controls = match &self.update {

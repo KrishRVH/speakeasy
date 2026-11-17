@@ -7,6 +7,14 @@ use crate::{
     updates::{Check, Version},
 };
 
+pub(super) const CHECKING: &str = "Checking the latest GitHub release…";
+
+#[cfg(target_os = "windows")]
+pub(super) const VERIFIED: &str = "Update verified. Installing restarts Speakeasy.";
+
+#[cfg(target_os = "windows")]
+const CANCELLED: &str = "Update download cancelled.";
+
 #[derive(Default)]
 pub(super) enum Update {
     #[default]
@@ -98,7 +106,7 @@ impl Settings {
             return;
         };
         let outcome = operation.outcome();
-        self.notice = Some(Notice::Note("Checking the latest GitHub release…".into()));
+        self.notice = Some(Notice::Note(CHECKING.into()));
         let follow = cx.spawn(async move |this, cx| {
             let result = outcome.await;
             this.update_if_alive(cx, |view, cx| {
@@ -178,17 +186,13 @@ impl Settings {
                 if cx.global::<Services>().is_quitting() {
                     return;
                 }
-                if cancelled {
-                    view.notice = Some(Notice::Note("Update download cancelled.".into()));
-                    cx.notify();
-                    return;
-                }
                 view.notice = Some(match result {
+                    _ if cancelled => Notice::Note(CANCELLED.into()),
                     Ok(Some(installer)) => {
                         view.update = Update::Ready(installer);
-                        Notice::Note("Update verified. Installing restarts Speakeasy.".into())
+                        Notice::Note(VERIFIED.into())
                     },
-                    Ok(None) => Notice::Note("Update download cancelled.".into()),
+                    Ok(None) => Notice::Note(CANCELLED.into()),
                     Err(error) => Notice::Problem(error.to_string().into()),
                 });
                 cx.notify();
@@ -226,7 +230,7 @@ impl Settings {
             },
             Update::Ready(installer) => {
                 self.update = Update::Available(installer.version());
-                self.notice = Some(Notice::Note("Update download cancelled.".into()));
+                self.notice = Some(Notice::Note(CANCELLED.into()));
             },
             Update::Idle | Update::Checking { .. } | Update::Available(_) => {},
         }
