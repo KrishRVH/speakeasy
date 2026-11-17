@@ -474,7 +474,8 @@ impl<P: Payload> Session<P> {
 
     pub(super) fn request(&mut self, env: &mut impl Env<P>) -> Option<Request<P>> {
         if self.is_capturing() || self.is_recognizing() {
-            self.recognition.request(env)
+            self.recognition
+                .request(|audio, range| env.cut(audio, range))
         } else {
             None
         }

@@ -185,14 +185,8 @@ fn captures(events: &mut Events, session: &Session<Abstract>, mode: Option<Recog
         RecognitionMode::Segmented => {
             captures.extend([Capture::Piece(0, ()), Capture::Piece(1, ())]);
             for pieces in 0..=2 {
-                for empty in [false, true] {
-                    let partition = || {
-                        Some(Partition {
-                            pieces,
-                            tail: (),
-                            empty,
-                        })
-                    };
+                for tail in [Some(()), None] {
+                    let partition = || Some(Partition { pieces, tail });
                     captures.extend([finished(partition()), lost(partition())]);
                 }
             }

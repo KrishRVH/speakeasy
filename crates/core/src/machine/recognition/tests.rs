@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use super::*;
-use crate::machine::fixture::{Log, Sample};
+use crate::machine::fixture::Sample;
 
 const FIRST: SessionId = SessionId::FIRST;
 
@@ -12,9 +12,12 @@ fn recording() -> Vec<u8> {
 const fn partition() -> Partition<Sample> {
     Partition {
         pieces: 1,
-        tail: 32..64,
-        empty: false,
+        tail: Some(32..64),
     }
+}
+
+fn request(recognition: &mut Recognition<Sample>) -> Option<Request<Sample>> {
+    recognition.request(|audio, range| audio.get(range.clone()).map(<[u8]>::to_vec))
 }
 
 fn audio(request: &Request<Sample>) -> &[u8] {
@@ -26,10 +29,9 @@ fn audio(request: &Request<Sample>) -> &[u8] {
 
 #[test]
 fn stale_tickets_cannot_complete_or_fail_an_active_piece() {
-    let mut log = Log::default();
     let mut recognition = Recognition::<Sample>::new(FIRST.next().unwrap());
     recognition.piece(0, Vec::new());
-    let current = recognition.request(&mut log).unwrap().ticket;
+    let current = request(&mut recognition).unwrap().ticket;
     let stale = Ticket {
         session: FIRST,
         part: current.part,
@@ -51,10 +53,9 @@ fn stale_tickets_cannot_complete_or_fail_an_active_piece() {
 
 #[test]
 fn a_failed_tail_retries_the_whole_recording_once() {
-    let mut log = Log::default();
     let mut recognition = Recognition::<Sample>::new(FIRST);
     recognition.piece(0, Vec::new());
-    let piece = recognition.request(&mut log).unwrap();
+    let piece = request(&mut recognition).unwrap();
     assert!(
         recognition
             .heard(piece.ticket, Transcript::Text("prefix".into()))
@@ -66,21 +67,20 @@ fn a_failed_tail_retries_the_whole_recording_once() {
         Duration::from_secs(3),
         Detail::Text,
     );
-    let tail = recognition.request(&mut log).unwrap();
+    let tail = request(&mut recognition).unwrap();
     assert_eq!(audio(&tail), &recording()[32..]);
     assert!(recognition.failed(tail.ticket));
-    let retry = recognition.request(&mut log).unwrap();
+    let retry = request(&mut recognition).unwrap();
     assert_eq!(audio(&retry), recording());
     assert!(!recognition.failed(retry.ticket));
-    assert!(recognition.request(&mut log).is_none());
+    assert!(request(&mut recognition).is_none());
 }
 
 #[test]
 fn a_tail_that_cannot_be_cut_falls_back_to_the_whole_recording() {
-    let mut log = Log::default();
     let mut recognition = Recognition::<Sample>::new(FIRST);
     recognition.piece(0, Vec::new());
-    let piece = recognition.request(&mut log).unwrap();
+    let piece = request(&mut recognition).unwrap();
     assert!(
         recognition
             .heard(piece.ticket, Transcript::Text("prefix".into()))
@@ -90,13 +90,12 @@ fn a_tail_that_cannot_be_cut_falls_back_to_the_whole_recording() {
         recording(),
         Some(Partition {
             pieces: 1,
-            tail: 32..99,
-            empty: false,
+            tail: Some(32..99),
         }),
         Duration::ZERO,
         Detail::Text,
     );
-    let whole = recognition.request(&mut log).unwrap();
+    let whole = request(&mut recognition).unwrap();
     assert_eq!(audio(&whole), recording());
     assert!(
         matches!(
@@ -110,25 +109,23 @@ fn a_tail_that_cannot_be_cut_falls_back_to_the_whole_recording() {
 #[test]
 fn missing_pieces_and_backpressure_fall_back_to_the_exact_whole_recording() {
     for overload in [false, true] {
-        let mut log = Log::default();
         let mut recognition = Recognition::<Sample>::new(FIRST);
         if overload {
             recognition.piece(0, Vec::new());
         }
         recognition.piece(1, Vec::new());
         recognition.seal(recording(), Some(partition()), Duration::ZERO, Detail::Text);
-        let request = recognition.request(&mut log).unwrap();
-        assert_eq!(request.ticket.part, Part::Final);
-        assert_eq!(audio(&request), recording());
+        let whole = request(&mut recognition).unwrap();
+        assert_eq!(whole.ticket.part, Part::Final);
+        assert_eq!(audio(&whole), recording());
     }
 }
 
 #[test]
 fn promotion_invalidates_an_inflight_piece_and_keeps_full_audio_and_timeline() {
-    let mut log = Log::default();
     let mut recognition = Recognition::<Sample>::new(FIRST);
     recognition.piece(0, Vec::new());
-    let piece = recognition.request(&mut log).unwrap();
+    let piece = request(&mut recognition).unwrap();
     recognition.whole();
     assert!(!recognition.accepts(piece.ticket));
     assert!(
@@ -142,25 +139,24 @@ fn promotion_invalidates_an_inflight_piece_and_keeps_full_audio_and_timeline() {
         Duration::from_millis(1700),
         Detail::Words,
     );
-    let request = recognition.request(&mut log).unwrap();
-    assert_eq!(request.detail, Detail::Words);
-    assert_eq!(audio(&request), recording());
+    let words = request(&mut recognition).unwrap();
+    assert_eq!(words.detail, Detail::Words);
+    assert_eq!(audio(&words), recording());
     assert_eq!(recognition.start(), Some(Duration::from_millis(1700)));
 }
 
 #[test]
 fn a_streaming_final_waits_for_capture_and_is_delivered_only_once() {
     for sealed_first in [false, true] {
-        let mut log = Log::default();
         let mut recognition = Recognition::<Sample>::new(FIRST);
         recognition.stream(());
-        let request = recognition.request(&mut log).unwrap();
-        assert!(matches!(request.source, Source::Live(())));
-        assert!(recognition.request(&mut log).is_none());
+        let stream = request(&mut recognition).unwrap();
+        assert!(matches!(stream.source, Source::Live(())));
+        assert!(request(&mut recognition).is_none());
         if sealed_first {
             recognition.seal(recording(), None, Duration::ZERO, Detail::Text);
         }
-        let result = recognition.heard(request.ticket, Transcript::Text("complete".into()));
+        let result = recognition.heard(stream.ticket, Transcript::Text("complete".into()));
         if sealed_first {
             assert!(matches!(result, Some(Transcript::Text(text)) if text == "complete"));
         } else {
@@ -169,18 +165,17 @@ fn a_streaming_final_waits_for_capture_and_is_delivered_only_once() {
             assert_eq!(recognition.complete().as_deref(), Some("complete"));
         }
         assert!(recognition.complete().is_none());
-        assert!(recognition.request(&mut log).is_none());
-        assert!(!recognition.accepts(request.ticket));
+        assert!(request(&mut recognition).is_none());
+        assert!(!recognition.accepts(stream.ticket));
     }
 }
 
 #[test]
 fn streaming_failure_and_show_promotion_keep_the_full_recording() {
     for promotion in [false, true] {
-        let mut log = Log::default();
         let mut recognition = Recognition::<Sample>::new(FIRST);
         recognition.stream(());
-        let streaming = recognition.request(&mut log).unwrap();
+        let streaming = request(&mut recognition).unwrap();
         if promotion {
             recognition.whole();
         } else {
@@ -198,7 +193,7 @@ fn streaming_failure_and_show_promotion_keep_the_full_recording() {
             Detail::Text
         };
         recognition.seal(recording(), None, Duration::from_secs(2), detail);
-        let fallback = recognition.request(&mut log).unwrap();
+        let fallback = request(&mut recognition).unwrap();
         assert_eq!(audio(&fallback), recording());
         assert_eq!(fallback.detail, detail);
         assert_eq!(recognition.start(), Some(Duration::from_secs(2)));
@@ -207,23 +202,21 @@ fn streaming_failure_and_show_promotion_keep_the_full_recording() {
 
 #[test]
 fn pieces_and_an_empty_tail_join_without_another_transcription() {
-    let mut log = Log::default();
     let mut recognition = Recognition::<Sample>::new(FIRST);
     recognition.piece(0, Vec::new());
-    let first = recognition.request(&mut log).unwrap();
+    let first = request(&mut recognition).unwrap();
     assert!(
         recognition
             .heard(first.ticket, Transcript::Text(" hello ".into()))
             .is_none()
     );
     recognition.piece(1, Vec::new());
-    let second = recognition.request(&mut log).unwrap();
+    let second = request(&mut recognition).unwrap();
     recognition.seal(
         recording(),
         Some(Partition {
             pieces: 2,
-            tail: 64..64,
-            empty: true,
+            tail: None,
         }),
         Duration::ZERO,
         Detail::Text,
@@ -232,5 +225,5 @@ fn pieces_and_an_empty_tail_join_without_another_transcription() {
         recognition.heard(second.ticket, Transcript::Text("world".into())),
         Some(Transcript::Text(text)) if text == "hello world"
     ));
-    assert!(recognition.request(&mut log).is_none());
+    assert!(request(&mut recognition).is_none());
 }

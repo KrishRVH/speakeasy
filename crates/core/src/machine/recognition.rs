@@ -1,6 +1,6 @@
 use std::mem;
 
-use super::{Env, Payload, SessionId};
+use super::{Payload, SessionId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Ticket {
@@ -43,35 +43,39 @@ pub enum Source<P: Payload> {
 #[cfg_attr(test, derive(Clone, Debug))]
 pub struct Partition<P: Payload> {
     pub pieces: u32,
-    pub tail: P::Range,
-    pub empty: bool,
+    pub tail: Option<P::Range>,
 }
 
 #[cfg_attr(test, derive(Clone, Debug))]
-enum Stream<P: Payload> {
-    Queued(P::Live),
+enum Job<A, T> {
+    Queued(A),
     Sent,
-    Heard(P::Heard),
+    Heard(T),
 }
 
-#[cfg_attr(test, derive(Clone, Debug))]
-enum Piece<P: Payload> {
-    Queued(P::Audio),
-    Sent,
-    Heard(P::Heard),
+impl<A, T> Job<A, T> {
+    fn send(&mut self) -> Option<A> {
+        match mem::replace(self, Self::Sent) {
+            Self::Queued(audio) => Some(audio),
+            other => {
+                *self = other;
+                None
+            },
+        }
+    }
 }
 
 #[cfg_attr(test, derive(Clone, Debug))]
 enum Early<P: Payload> {
-    Segmented(Vec<Piece<P>>),
-    Streaming(Stream<P>),
+    Segmented(Vec<Job<P::Audio, P::Heard>>),
+    Streaming(Job<P::Live, P::Heard>),
     Whole,
 }
 
 #[cfg_attr(test, derive(Clone, Debug))]
 enum Audio<P: Payload> {
     Whole,
-    Tail { range: P::Range, empty: bool },
+    Tail(Option<P::Range>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -109,7 +113,7 @@ impl<P: Payload> Recognition<P> {
 
     pub(super) fn stream(&mut self, audio: P::Live) {
         if matches!(self.early, Early::Segmented(_)) && self.final_part.is_none() {
-            self.early = Early::Streaming(Stream::Queued(audio));
+            self.early = Early::Streaming(Job::Queued(audio));
         }
     }
 
@@ -121,12 +125,12 @@ impl<P: Payload> Recognition<P> {
             return;
         }
         if usize::try_from(number).ok() != Some(pieces.len())
-            || pieces.iter().any(|part| matches!(part, Piece::Queued(_)))
+            || pieces.iter().any(|piece| matches!(piece, Job::Queued(_)))
         {
             self.whole();
             return;
         }
-        pieces.push(Piece::Queued(audio));
+        pieces.push(Job::Queued(audio));
     }
 
     pub(super) fn whole(&mut self) {
@@ -149,10 +153,7 @@ impl<P: Payload> Recognition<P> {
                 if usize::try_from(partition.pieces).ok() == Some(pieces.len())
                     && partition.pieces > 0 =>
             {
-                Audio::Tail {
-                    range: partition.tail,
-                    empty: partition.empty,
-                }
+                Audio::Tail(partition.tail)
             },
             _ => {
                 self.whole();
@@ -169,53 +170,40 @@ impl<P: Payload> Recognition<P> {
         });
     }
 
-    pub(super) fn request(&mut self, env: &mut impl Env<P>) -> Option<Request<P>> {
+    pub(super) fn request(
+        &mut self,
+        cut: impl FnOnce(&P::Audio, &P::Range) -> Option<P::Audio>,
+    ) -> Option<Request<P>> {
+        let session = self.id;
+        let early = |part, source| Request {
+            ticket: Ticket { session, part },
+            source,
+            detail: Detail::Text,
+        };
         if let Early::Streaming(stream) = &mut self.early {
-            if !matches!(stream, Stream::Queued(_)) {
-                return None;
-            }
-            let Stream::Queued(audio) = mem::replace(stream, Stream::Sent) else {
-                return None;
-            };
-            return Some(Request {
-                ticket: Ticket {
-                    session: self.id,
-                    part: Part::Stream,
-                },
-                source: Source::Live(audio),
-                detail: Detail::Text,
-            });
+            return stream
+                .send()
+                .map(|audio| early(Part::Stream, Source::Live(audio)));
         }
         if let Early::Segmented(pieces) = &mut self.early
             && let Some((index, piece)) = pieces
                 .iter_mut()
                 .enumerate()
-                .find(|(_, piece)| !matches!(piece, Piece::Heard(_)))
+                .find(|(_, piece)| !matches!(piece, Job::Heard(_)))
         {
-            if matches!(piece, Piece::Sent) {
-                return None;
-            }
             let number = u32::try_from(index).ok()?;
-            let Piece::Queued(audio) = mem::replace(piece, Piece::Sent) else {
-                return None;
-            };
-            return Some(Request {
-                ticket: Ticket {
-                    session: self.id,
-                    part: Part::Piece(number),
-                },
-                source: Source::Audio(audio),
-                detail: Detail::Text,
-            });
+            return piece
+                .send()
+                .map(|audio| early(Part::Piece(number), Source::Audio(audio)));
         }
         let final_part = self
             .final_part
             .as_mut()
             .filter(|part| part.progress == Progress::Waiting)?;
         let audio = match &final_part.mode {
-            Audio::Tail { empty: true, .. } => return None,
-            Audio::Tail { range, .. } => {
-                if let Some(tail) = env.cut(&final_part.audio, range) {
+            Audio::Tail(None) => return None,
+            Audio::Tail(Some(range)) => {
+                if let Some(tail) = cut(&final_part.audio, range) {
                     tail
                 } else {
                     final_part.mode = Audio::Whole;
@@ -228,7 +216,7 @@ impl<P: Payload> Recognition<P> {
         final_part.progress = Progress::Sent;
         Some(Request {
             ticket: Ticket {
-                session: self.id,
+                session,
                 part: Part::Final,
             },
             source: Source::Audio(audio),
@@ -239,12 +227,12 @@ impl<P: Payload> Recognition<P> {
     pub(super) fn accepts(&self, ticket: Ticket) -> bool {
         ticket.session == self.id
             && match ticket.part {
-                Part::Stream => matches!(self.early, Early::Streaming(Stream::Sent)),
+                Part::Stream => matches!(self.early, Early::Streaming(Job::Sent)),
                 Part::Piece(number) => match &self.early {
                     Early::Segmented(pieces) => usize::try_from(number)
                         .ok()
                         .and_then(|index| pieces.get(index))
-                        .is_some_and(|part| matches!(part, Piece::Sent)),
+                        .is_some_and(|piece| matches!(piece, Job::Sent)),
                     Early::Streaming(_) | Early::Whole => false,
                 },
                 Part::Final => self.in_flight(),
@@ -259,38 +247,34 @@ impl<P: Payload> Recognition<P> {
         if !self.accepts(ticket) {
             return None;
         }
-        match ticket.part {
-            Part::Stream => {
-                let Transcript::Text(text) = transcript else {
-                    self.whole();
-                    return None;
-                };
-                self.early = Early::Streaming(Stream::Heard(text));
-                self.complete().map(Transcript::Text)
-            },
-            Part::Piece(number) => {
-                let Transcript::Text(text) = transcript else {
-                    self.whole();
-                    return None;
-                };
-                let Early::Segmented(pieces) = &mut self.early else {
-                    return None;
-                };
-                let part = usize::try_from(number)
-                    .ok()
-                    .and_then(|index| pieces.get_mut(index))?;
-                *part = Piece::Heard(text);
-                self.complete().map(Transcript::Text)
-            },
-            Part::Final => {
+        match (ticket.part, transcript) {
+            (Part::Final, transcript) => {
                 let final_part = self.final_part.as_mut()?;
                 final_part.progress = Progress::Done;
                 Some(match transcript {
-                    Transcript::Text(tail) if matches!(final_part.mode, Audio::Tail { .. }) => {
+                    Transcript::Text(tail) if matches!(final_part.mode, Audio::Tail(_)) => {
                         Transcript::Text(self.join(tail))
                     },
                     transcript => transcript,
                 })
+            },
+            (Part::Stream | Part::Piece(_), Transcript::Words(_)) => {
+                self.whole();
+                None
+            },
+            (Part::Stream, Transcript::Text(text)) => {
+                self.early = Early::Streaming(Job::Heard(text));
+                self.complete().map(Transcript::Text)
+            },
+            (Part::Piece(number), Transcript::Text(text)) => {
+                let Early::Segmented(pieces) = &mut self.early else {
+                    return None;
+                };
+                let piece = usize::try_from(number)
+                    .ok()
+                    .and_then(|index| pieces.get_mut(index))?;
+                *piece = Job::Heard(text);
+                self.complete().map(Transcript::Text)
             },
         }
     }
@@ -300,15 +284,15 @@ impl<P: Payload> Recognition<P> {
             .final_part
             .as_mut()
             .filter(|part| part.progress == Progress::Waiting)?;
-        if let Early::Streaming(Stream::Heard(text)) = &mut self.early {
+        if let Early::Streaming(Job::Heard(text)) = &mut self.early {
             final_part.progress = Progress::Done;
             return Some(mem::take(text));
         }
         let Early::Segmented(pieces) = &self.early else {
             return None;
         };
-        if !matches!(final_part.mode, Audio::Tail { empty: true, .. })
-            || pieces.iter().any(|part| !matches!(part, Piece::Heard(_)))
+        if !matches!(final_part.mode, Audio::Tail(None))
+            || pieces.iter().any(|piece| !matches!(piece, Job::Heard(_)))
         {
             return None;
         }
@@ -319,9 +303,9 @@ impl<P: Payload> Recognition<P> {
     fn join(&mut self, tail: P::Heard) -> P::Heard {
         let mut text = P::Heard::default();
         if let Early::Segmented(pieces) = &mut self.early {
-            for part in mem::take(pieces) {
-                if let Piece::Heard(raw) = part {
-                    P::append(&mut text, raw);
+            for piece in mem::take(pieces) {
+                if let Job::Heard(heard) = piece {
+                    P::append(&mut text, heard);
                 }
             }
         }

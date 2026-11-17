@@ -238,8 +238,7 @@ pub(super) fn sealed(mut sealed: Sealed) -> machine::Sealed<Native> {
         .take()
         .map(|Partition { pieces, tail }| machine::Partition {
             pieces,
-            empty: tail.is_empty(),
-            tail,
+            tail: (!tail.is_empty()).then_some(tail),
         });
     machine::Sealed {
         audio: Clip::heard(sealed, None),
