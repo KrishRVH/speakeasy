@@ -222,6 +222,25 @@ fn a_checkpoint_keeps_who_frames_the_recording() {
 }
 
 #[test]
+fn a_checkpoint_keeps_why_the_recording_ended() {
+    for ending in [
+        Ending::Finished,
+        Ending::ScreenStopped,
+        Ending::WindowClosed,
+        Ending::WindowOffScreen,
+    ] {
+        let end = TakeEvent::End {
+            at: Moment::START,
+            ending,
+        };
+        let mut take = Take::new(0, surface(), Framing::Automatic);
+        take.apply(&decode(&encode(&end).unwrap()).unwrap())
+            .unwrap();
+        assert_eq!(take.finish().0.ending, ending);
+    }
+}
+
+#[test]
 fn a_changed_tile_frame_needs_the_frame_it_changes() {
     let mut live = Take::new(0, surface(), Framing::Automatic);
     arrival(&mut live, 0, gray(0));
