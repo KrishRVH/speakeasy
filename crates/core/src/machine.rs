@@ -182,8 +182,11 @@ impl SessionId {
     }
 
     #[must_use]
-    pub fn next(self) -> Option<Self> {
-        self.0.checked_add(1).map(Self)
+    pub const fn next(self) -> Option<Self> {
+        match self.0.checked_add(1) {
+            Some(raw) => Some(Self(raw)),
+            None => None,
+        }
     }
 }
 
