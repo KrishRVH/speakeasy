@@ -13,11 +13,15 @@ use tokio::{
     process::{Child, ChildStdin, ChildStdout},
 };
 
-use super::{seconds, timeline::Timing};
+use super::{CANCELLED, timeline::Timing};
 use crate::{
     child::{hidden_command, kill_and_reap},
     show::store::movie::{self, Inspected},
 };
+
+pub(super) const SOURCE: &str = "source.mp4";
+pub(super) const VOICE: &str = "voice.pcm";
+pub(super) const CAPTIONS: &str = "captions.srt";
 
 pub(super) struct Stats {
     pub unpainted: u64,
@@ -74,7 +78,7 @@ pub(super) async fn run(
     let mut decode = hidden_command(&program);
     decode
         .args(["-v", "error", "-nostdin", "-threads", "1", "-i"])
-        .arg(work.join("source.mp4"))
+        .arg(work.join(SOURCE))
         .args([
             "-map",
             "0:v:0",
@@ -110,12 +114,12 @@ pub(super) async fn run(
             .args(["-f", "s16le", "-ar"])
             .arg(rate.to_string())
             .args(["-ac", "1", "-i"])
-            .arg(work.join("voice.pcm"));
+            .arg(work.join(VOICE));
     }
     if captions {
         command
             .args(["-c:s", "text", "-keep_ass_markup", "1", "-i"])
-            .arg(work.join("captions.srt"));
+            .arg(work.join(CAPTIONS));
     }
     command.args(["-map", "0:v:0"]);
     if rate.is_some() {
@@ -145,12 +149,16 @@ pub(super) async fn run(
     };
     let result = tokio::select! {
         result = process(&mut decoder, &mut encoder, movie, scene, timing, cancelled) => result,
-        () = cancellation(cancelled) => Err(anyhow::anyhow!("Video export cancelled")),
+        () = cancellation(cancelled) => Err(anyhow::anyhow!(CANCELLED)),
         () = tokio::time::sleep(Duration::from_mins(30)) => Err(anyhow::anyhow!("Video export exceeded 30 minutes; try a shorter interval or free system resources")),
     };
     kill_and_reap(&mut decoder).await;
     kill_and_reap(&mut encoder).await;
     result
+}
+
+fn seconds(duration: Duration) -> String {
+    format!("{}.{:09}", duration.as_secs(), duration.subsec_nanos())
 }
 
 async fn cancellation(cancelled: &(dyn Fn() -> bool + Sync)) {
@@ -219,7 +227,7 @@ async fn frames(
         omitted: 0,
     };
     for index in 0..timing.frames {
-        anyhow::ensure!(!cancelled(), "Video export cancelled");
+        anyhow::ensure!(!cancelled(), CANCELLED);
         let at = timing.tick(index);
         let source_at = at.saturating_sub(origin);
         while let Some(sample) =
@@ -237,7 +245,7 @@ async fn frames(
             let mut image = Image::from_bgra(width, height, pixels.clone())?;
             let painted = scene
                 .paint(&mut image, at, viewport, &typeface, cancelled)?
-                .context("Video export cancelled")?;
+                .context(CANCELLED)?;
             stats.omitted = stats.omitted.max(painted.omitted);
             Cow::Owned(image.into_bgra())
         } else {

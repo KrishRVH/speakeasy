@@ -2,7 +2,7 @@ use std::{
     fs,
     num::NonZeroU32,
     process::{Command, Stdio},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use serde_json::json;

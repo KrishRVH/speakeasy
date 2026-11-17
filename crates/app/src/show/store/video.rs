@@ -4,7 +4,7 @@ mod timeline;
 use std::{
     fs::File,
     path::{Path, PathBuf},
-    time::{Duration, SystemTime},
+    time::SystemTime,
 };
 
 use anyhow::Context as _;
@@ -12,6 +12,8 @@ use serde::Serialize;
 use speakeasy_show::{Annotations, Manifest, Span};
 
 use super::{export, movie, recall, voice};
+
+const CANCELLED: &str = "Video export cancelled";
 
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Options {
@@ -78,7 +80,7 @@ fn write_with(
     scratch: impl FnOnce() -> anyhow::Result<PathBuf>,
 ) -> anyhow::Result<Exported> {
     let target = export::Target::new(directory, destination, "MP4")?;
-    anyhow::ensure!(!cancelled(), "Video export cancelled");
+    anyhow::ensure!(!cancelled(), CANCELLED);
     let directory = target.show.as_path();
     let manifest = Manifest::parse(&recall::read_file(
         directory,
@@ -93,15 +95,15 @@ fn write_with(
     let work = super::staging(&scratch()?).context(
         "Cannot create private video scratch space; check the Shows folder's space and permissions",
     )?;
-    let mut source = File::create_new(work.path().join("source.mp4"))?;
+    let mut source = File::create_new(work.path().join(encode::SOURCE))?;
     reading.copy_to(&mut source, speakeasy_show::MoviePrefix::FILE_LIMIT)?;
-    anyhow::ensure!(!cancelled(), "Video export cancelled");
+    anyhow::ensure!(!cancelled(), CANCELLED);
     let rate = audio.map(|audio| audio.rate);
     if let Some(audio) = audio {
         timeline::audio(
             audio,
             &timing,
-            &mut File::create_new(work.path().join("voice.pcm"))?,
+            &mut File::create_new(work.path().join(encode::VOICE))?,
         )?;
     }
     let voice_status = voice.status();
@@ -110,7 +112,7 @@ fn write_with(
         timeline::captions(
             manifest.recording(),
             &timing,
-            &mut File::create_new(work.path().join("captions.srt"))?,
+            &mut File::create_new(work.path().join(encode::CAPTIONS))?,
         )?
     } else {
         0
@@ -131,7 +133,7 @@ fn write_with(
             },
             &cancelled,
         ))?;
-        anyhow::ensure!(!cancelled(), "Video export cancelled");
+        anyhow::ensure!(!cancelled(), CANCELLED);
         Ok(stats)
     })?;
     Ok(Exported {
@@ -145,10 +147,6 @@ fn write_with(
         frames_without_annotations: stats.unpainted,
         omitted_annotations: stats.omitted,
     })
-}
-
-fn seconds(duration: Duration) -> String {
-    format!("{}.{:09}", duration.as_secs(), duration.subsec_nanos())
 }
 
 #[cfg(test)]
