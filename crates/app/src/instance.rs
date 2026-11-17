@@ -134,12 +134,12 @@ impl Instance {
         {
             return Reply::unknown(CONTROL_DISCONNECTED);
         }
-        let mut caller = Caller {
+        let mut reply = ReplyDeadline {
             stream: &mut stream,
             sent: Instant::now(),
             timeout: control::TIMEOUT.saturating_add(IO_TIMEOUT),
         };
-        match read_frame(&mut caller) {
+        match read_frame(&mut reply) {
             Ok(bytes) => Reply::decode(&bytes).unwrap_or_else(|| Reply::unknown(UNCONFIRMED)),
             Err(error)
                 if matches!(
@@ -361,13 +361,13 @@ async fn handshake(stream: &mut AsyncStream, nonce: u128) -> io::Result<Option<I
         .map_err(|_elapsed| io::ErrorKind::TimedOut)?
 }
 
-struct Caller<'stream> {
+struct ReplyDeadline<'stream> {
     stream: &'stream mut TcpStream,
     sent: Instant,
     timeout: Duration,
 }
 
-impl Read for Caller<'_> {
+impl Read for ReplyDeadline<'_> {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         let remaining = self
             .timeout
