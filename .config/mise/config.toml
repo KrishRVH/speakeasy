@@ -71,7 +71,7 @@ run = [
 ]
 
 [tasks."rust:explore"]
-description = "Explore every reachable session machine state (opt-in; about a minute and 1 GB on 32 threads)"
+description = "Explore every reachable session machine state (opt-in; under a minute and 1 GB on 32 threads)"
 run = "cargo test --locked --release -p speakeasy-core --lib machine::explore"
 env = { SPEAKEASY_EXPLORE_DEPTH = "all" }
 

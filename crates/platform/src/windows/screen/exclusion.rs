@@ -27,9 +27,14 @@ pub(super) struct Exclusions {
 impl Exclusions {
     pub(super) fn refresh(&mut self) -> Result<bool, Failure> {
         let before = self.left_out.len();
-        let capturable = top_level_windows()?.into_iter().filter(|&window| {
-            is_own_window(window) && matches!(affinity(window), None | Some(WDA_NONE))
-        });
+        let capturable: Vec<HWND> = top_level_windows()?
+            .into_iter()
+            .filter(|&window| {
+                is_own_window(window)
+                    && matches!(affinity(window), None | Some(WDA_NONE))
+                    && !self.left_out.contains(&window)
+            })
+            .collect();
         for window in capturable {
             let (excluded, visible) = unsafe {
                 (
