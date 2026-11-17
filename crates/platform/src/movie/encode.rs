@@ -19,7 +19,7 @@ pub(crate) trait Codec: Sized {
         pixels: &[u8],
         index: u32,
         cancelled: &mut dyn FnMut() -> bool,
-    ) -> anyhow::Result<bool>;
+    ) -> anyhow::Result<ControlFlow<()>>;
 
     fn checkpoint(&mut self, at: Duration) -> anyhow::Result<()>;
 
@@ -142,9 +142,10 @@ impl<C: Codec> Encoder<C> {
                 }
                 self.geometry = Some((content, part));
             }
-            if !self
+            if self
                 .codec
                 .write(self.canvas.pixels(), index, &mut || observer.cancelled())?
+                .is_break()
             {
                 return Ok(ControlFlow::Break(()));
             }

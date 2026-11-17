@@ -1,4 +1,4 @@
-use std::{path::Path, time::Duration};
+use std::{ops::ControlFlow, path::Path, time::Duration};
 
 use anyhow::{Context as _, ensure};
 use windows::{
@@ -113,7 +113,7 @@ impl encode::Codec for Codec {
         pixels: &[u8],
         index: u32,
         _cancelled: &mut dyn FnMut() -> bool,
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<ControlFlow<()>> {
         let mut statistics = MF_SINK_WRITER_STATISTICS {
             cb: u32::try_from(size_of::<MF_SINK_WRITER_STATISTICS>())?,
             ..MF_SINK_WRITER_STATISTICS::default()
@@ -132,7 +132,7 @@ impl encode::Codec for Codec {
             .frame(&sample(pixels, at, through.saturating_sub(at))?)?;
 
         unsafe { self.writer.WriteSample(0, &sample)? };
-        Ok(true)
+        Ok(ControlFlow::Continue(()))
     }
 
     fn checkpoint(&mut self, at: Duration) -> anyhow::Result<()> {

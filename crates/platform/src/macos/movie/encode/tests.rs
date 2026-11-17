@@ -32,11 +32,15 @@ fn native_mac_movie_encoding() -> anyhow::Result<()> {
                 let due = Duration::from_nanos(u64::try_from(index)? * 1_000_000_000 / 30);
                 std::thread::sleep(due.saturating_sub(started.elapsed()));
             }
-            assert!(encoder.write(
-                patterns[picture.pattern(index)].image.pixels(),
-                u32::try_from(index)?,
-                &mut || false
-            )?);
+            assert!(
+                encoder
+                    .write(
+                        patterns[picture.pattern(index)].image.pixels(),
+                        u32::try_from(index)?,
+                        &mut || false
+                    )?
+                    .is_continue()
+            );
         }
         encoder.finish()?;
         assert_released(descriptor, &opened);
@@ -63,7 +67,11 @@ fn native_mac_movie_encoding() -> anyhow::Result<()> {
     let (descriptor, opened) = encoder.output.file_identity();
     let image = crate::movie::tests::color_frame(0, [320, 240]).image;
     for index in 0..90 {
-        assert!(encoder.write(image.pixels(), index, &mut || false)?);
+        assert!(
+            encoder
+                .write(image.pixels(), index, &mut || false)?
+                .is_continue()
+        );
     }
     let waiting = Instant::now();
     loop {
@@ -78,7 +86,11 @@ fn native_mac_movie_encoding() -> anyhow::Result<()> {
         std::thread::sleep(Duration::from_millis(2));
     }
     let submitted = encoder.frames;
-    assert!(!encoder.write(image.pixels(), submitted, &mut || true)?);
+    assert!(
+        encoder
+            .write(image.pixels(), submitted, &mut || true)?
+            .is_break()
+    );
     assert_eq!(encoder.frames, submitted);
     drop(encoder);
     assert_released(descriptor, &opened);

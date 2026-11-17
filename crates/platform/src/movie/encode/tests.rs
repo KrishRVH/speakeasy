@@ -24,9 +24,9 @@ impl Codec for Tape {
         pixels: &[u8],
         _: u32,
         _: &mut dyn FnMut() -> bool,
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<ControlFlow<()>> {
         self.shades.extend(pixels.first());
-        Ok(true)
+        Ok(ControlFlow::Continue(()))
     }
 
     fn checkpoint(&mut self, at: Duration) -> anyhow::Result<()> {

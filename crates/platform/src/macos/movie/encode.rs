@@ -5,6 +5,7 @@ mod settings;
 mod tests;
 
 use std::{
+    ops::ControlFlow,
     path::Path,
     sync::mpsc,
     time::{Duration, Instant},
@@ -84,7 +85,7 @@ impl encode::Codec for Codec {
         bgra: &[u8],
         index: u32,
         cancelled: &mut dyn FnMut() -> bool,
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<ControlFlow<()>> {
         ensure!(
             index == self.frames && index < FRAME_LIMIT,
             "The movie reached its recording limit"
@@ -92,7 +93,7 @@ impl encode::Codec for Codec {
         let began = Instant::now();
         loop {
             if cancelled() {
-                return Ok(false);
+                return Ok(ControlFlow::Break(()));
             }
             self.output.check()?;
 
@@ -113,7 +114,7 @@ impl encode::Codec for Codec {
         }
         let sample = self.buffers.sample(bgra, self.frames)?;
         if cancelled() {
-            return Ok(false);
+            return Ok(ControlFlow::Break(()));
         }
 
         let appended = unsafe { self.input.appendSampleBuffer(&sample) };
@@ -122,7 +123,7 @@ impl encode::Codec for Codec {
             .frames
             .checked_add(1)
             .context("Movie sample count overflowed")?;
-        Ok(true)
+        Ok(ControlFlow::Continue(()))
     }
 
     fn checkpoint(&mut self, _: Duration) -> anyhow::Result<()> {
