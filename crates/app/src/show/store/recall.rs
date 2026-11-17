@@ -22,7 +22,7 @@ pub(crate) struct ReadShow {
     pub manifest: Manifest,
     pub pinned: bool,
     pub problems: Vec<FileProblem>,
-    pub movie: Option<super::movie::Metadata>,
+    pub movie: Option<super::movie::Inspected>,
 }
 
 #[derive(Debug)]

@@ -141,7 +141,7 @@ fn crops_use_the_decoded_sample_and_expand_inside_content_instead_of_letterboxin
     let mdhd = bytes.windows(4).position(|bytes| bytes == b"mdhd").unwrap();
     bytes[mdhd + 16..mdhd + 20].copy_from_slice(&30_000_u32.to_be_bytes());
     fs::write(path, bytes)?;
-    let mut movie = super::super::inspect(directory.path())?.unwrap();
+    let mut movie = super::super::open(directory.path())?.unwrap().movie;
     movie.metadata.geometry = Some(Geometry {
         through: 2,
         changes: vec![

@@ -15,7 +15,7 @@ async fn movie_recovery_retains_playable_prefix_beyond_the_annotation_journal() 
     };
     let entry = store::recall::Entry::open(show.directory())?;
     assert_eq!(entry.health(), store::recall::Health::Ok);
-    let movie = entry.show.unwrap().movie.unwrap();
+    let movie = entry.show.unwrap().movie.unwrap().metadata;
     let coverage = movie.coverage.unwrap();
     assert_eq!(coverage.end_ms, 1_250);
     assert_eq!(coverage.annotations_through_ms, 500);

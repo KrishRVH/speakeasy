@@ -162,9 +162,9 @@ impl Detail {
         let manifest = &show.manifest;
         Self {
             ending: manifest.recording().ending,
-            movie: show.movie.clone().map(|timing| Movie {
+            movie: show.movie.as_ref().map(|inspected| Movie {
                 path: entry.file(movie::FILE),
-                timing,
+                timing: inspected.metadata.clone(),
             }),
             narration_lost: manifest.recording().narration_lost,
             summary: entry.file(Bundle::SUMMARY),

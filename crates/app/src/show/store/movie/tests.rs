@@ -38,7 +38,9 @@ fn publication_keeps_only_complete_video_and_separate_annotation_coverage() -> a
     let inspected = open(source.path())?.unwrap();
     assert!(inspected.movie.prefix.truncated());
     retain(destination.path(), inspected, Moment::from_millis(500))?;
-    let kept = saved(destination.path(), Moment::from_millis(500))?.unwrap();
+    let kept = saved(destination.path(), Moment::from_millis(500))?
+        .unwrap()
+        .metadata;
     for path in ["/tmp/a``b/recording.mp4", "/tmp/Show video.mp4"] {
         let note = kept.note(Path::new(path))?;
         let fence = if path.contains('`') { "```" } else { "`" };
@@ -74,7 +76,7 @@ fn lost_video_or_edited_coverage_never_passes_inspection_as_an_ordinary_show() -
     metadata.replace(destination.path())?;
     assert!(saved(destination.path(), Moment::from_millis(500)).is_err());
     fs::remove_file(destination.path().join(FILE))?;
-    assert!(inspect(destination.path()).is_err());
+    assert!(open(destination.path()).is_err());
     Ok(())
 }
 
@@ -117,7 +119,7 @@ fn finalized_fragments_cannot_claim_time_beyond_the_native_capture_receipt() -> 
         finalized: true,
     });
     metadata.replace(directory.path())?;
-    assert!(inspect(directory.path()).is_err());
+    assert!(open(directory.path()).is_err());
     Ok(())
 }
 

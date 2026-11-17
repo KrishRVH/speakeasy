@@ -168,6 +168,7 @@ impl Metadata {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct Inspected {
     pub metadata: Metadata,
     pub prefix: MoviePrefix,
@@ -279,10 +280,6 @@ fn read_metadata(directory: &Path) -> anyhow::Result<Metadata> {
     Ok(metadata)
 }
 
-pub(crate) fn inspect(directory: &Path) -> anyhow::Result<Option<Inspected>> {
-    Ok(open(directory)?.map(|reading| reading.movie))
-}
-
 pub(super) fn open(directory: &Path) -> anyhow::Result<Option<Reading>> {
     if !entry_exists(&directory.join(FILE))? {
         anyhow::ensure!(
@@ -383,8 +380,8 @@ pub(super) fn open(directory: &Path) -> anyhow::Result<Option<Reading>> {
     }))
 }
 
-pub(crate) fn saved(directory: &Path, annotations: Moment) -> anyhow::Result<Option<Metadata>> {
-    Ok(Reading::optional(directory, annotations)?.map(|reading| reading.movie.metadata))
+pub(crate) fn saved(directory: &Path, annotations: Moment) -> anyhow::Result<Option<Inspected>> {
+    Ok(Reading::optional(directory, annotations)?.map(|reading| reading.movie))
 }
 
 pub(in crate::show::store) fn retain(

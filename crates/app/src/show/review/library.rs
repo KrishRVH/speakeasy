@@ -198,7 +198,7 @@ impl Detail {
         let mut frames = Vec::new();
         let mut marks = Vec::new();
         let mut narration = Narration::Unavailable;
-        let mut metadata = None;
+        let mut inspected = None;
         let mut scene = None;
         let mut duration = None;
         match entry.show {
@@ -209,7 +209,7 @@ impl Detail {
                 "Cannot read this Show's frame list: {error}. Its summary may still be readable."
             )),
             Ok(show) => {
-                metadata = show.movie;
+                inspected = show.movie;
                 let manifest = show.manifest;
                 let recording = manifest.recording();
                 duration = Some(recording.duration);
@@ -270,32 +270,25 @@ impl Detail {
             },
         }
         if mode == Mode::Video
-            && let Some(metadata) = &metadata
+            && let Some(movie::Inspected { metadata, prefix }) = &inspected
         {
-            match movie::inspect(directory) {
-                Ok(Some(inspected)) => {
-                    let annotations = Moment::from_millis(
-                        metadata
-                            .coverage
-                            .as_ref()
-                            .map_or(0, |coverage| coverage.annotations_through_ms),
-                    );
-                    frames = sampled(
-                        Duration::from_millis(metadata.origin_ms),
-                        &inspected.prefix,
-                        annotations,
-                        scene,
-                    );
-                    coverage = format!(
-                        "{} video samples · annotation record through {}",
-                        frames.len(),
-                        Stamp(annotations)
-                    );
-                },
-                Ok(None) => warnings
-                    .push("Retained video is no longer available. Refresh this Show.".into()),
-                Err(error) => warnings.push(format!("Video frames are unavailable: {error:#}")),
-            }
+            let annotations = Moment::from_millis(
+                metadata
+                    .coverage
+                    .as_ref()
+                    .map_or(0, |coverage| coverage.annotations_through_ms),
+            );
+            frames = sampled(
+                Duration::from_millis(metadata.origin_ms),
+                prefix,
+                annotations,
+                scene,
+            );
+            coverage = format!(
+                "{} video samples · annotation record through {}",
+                frames.len(),
+                Stamp(annotations)
+            );
         }
         Ok(Self {
             frames,
@@ -305,7 +298,7 @@ impl Detail {
             narration,
             source_available,
             coverage,
-            movie: metadata,
+            movie: inspected.map(|inspected| inspected.metadata),
         })
     }
 }
