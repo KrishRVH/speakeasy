@@ -106,7 +106,11 @@ fn a_layout_is_acknowledged_before_the_first_sample_that_shows_it() -> anyhow::R
     );
     assert_eq!(layouts.acknowledged, [(0, [0, 0, 4, 4]), (3, [0, 1, 4, 2])]);
     assert_eq!(encoder.codec.shades.len(), 4);
+    encoder.finish()
+}
 
+#[test]
+fn a_refused_layout_is_never_presented() -> anyhow::Result<()> {
     let mut encoder = open(4)?;
     let mut refused = Layouts {
         acknowledged: Vec::new(),
