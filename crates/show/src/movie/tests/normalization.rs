@@ -23,7 +23,12 @@ fn normalization_preserves_samples_and_all_bytes_except_the_declared_header_flag
     assert_eq!(normalized.duration(), prefix.duration());
     assert_eq!(normalized.bytes(), prefix.bytes());
     assert_eq!(normalized.normalization().headers, [0_u64; 0]);
-    let mut changed = original;
+}
+
+#[test]
+fn normalization_refuses_a_changed_header_and_an_overflowing_range() {
+    let (mut changed, flag) = padded(fixture::movie().bytes, 0, &[0; 4], None);
+    let prefix = inspect(&changed).unwrap();
     changed[flag] = 33;
     assert!(prefix.normalization().apply(0, &mut changed).is_err());
     assert!(prefix.normalization().apply(u64::MAX, &mut [0]).is_err());
