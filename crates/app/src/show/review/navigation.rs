@@ -74,7 +74,7 @@ impl Request {
         } else {
             ""
         };
-        let sample = match frame.file {
+        let sample = match frame.content {
             Content::Png(_) => format!("{first}keyframe #{}", frame.number),
             Content::Source { .. } => format!("{first}retained sample #{}", frame.number),
             Content::Video { .. } => "video sample".into(),
@@ -95,7 +95,7 @@ pub(super) fn pointer(
     annotations: AnnotationState,
 ) -> String {
     let at = Stamp(frame.at());
-    let sample = match &frame.file {
+    let sample = match &frame.content {
         Content::Png(name) => format!(
             "Keyframe #{} at {at}: {}",
             frame.number,

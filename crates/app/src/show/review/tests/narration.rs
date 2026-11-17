@@ -151,7 +151,7 @@ fn navigation_reports_exact_earlier_and_first_later_samples_and_never_infers_tex
         assert!(!text.contains("PRIVATE"));
         assert!(text.contains("0:20.000") && text.contains("0:01.500"));
         assert!(text.contains("18500 ms earlier"));
-        if matches!(third.file, preview::Content::Source { .. }) {
+        if matches!(third.content, preview::Content::Source { .. }) {
             assert!(text.contains("--at 0:01.500"));
         }
     }
@@ -241,7 +241,7 @@ fn a_video_reference_requests_inside_the_displayed_sample_instead_of_rounding_in
     assert!(text.contains("sample at 0:00.283"));
     assert!(text.contains("--video --at 0:00.284"));
     assert!(!reference(&sample, Duration::from_millis(300)).contains("--at"));
-    sample.file = video(Duration::from_nanos(33_333_333)..Duration::from_micros(33_500));
+    sample.content = video(Duration::from_nanos(33_333_333)..Duration::from_micros(33_500));
     assert!(!reference(&sample, at).contains("--at"));
     let sample = video_frame(
         2,
@@ -313,13 +313,13 @@ fn detail(frames: Vec<library::Frame>) -> Detail {
     }
 }
 
-fn frame(number: usize, at: u64, file: preview::Content) -> library::Frame {
+fn frame(number: usize, at: u64, content: preview::Content) -> library::Frame {
     library::Frame {
         number,
         presentation: Duration::from_millis(at),
         marker: String::new(),
         cropped: false,
-        file,
+        content,
     }
 }
 

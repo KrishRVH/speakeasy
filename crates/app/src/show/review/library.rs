@@ -137,7 +137,7 @@ pub(super) struct Frame {
     pub presentation: Duration,
     pub marker: String,
     pub cropped: bool,
-    pub file: Content,
+    pub content: Content,
 }
 
 impl Frame {
@@ -345,7 +345,7 @@ fn keyframes(manifest: &Manifest) -> Vec<Frame> {
             presentation: frame.at.since(Moment::START),
             marker: frame.marker(manifest.marks()),
             cropped: frame.crop.is_some(),
-            file: Content::Png(frame.file()),
+            content: Content::Png(frame.file()),
         })
         .collect()
 }
@@ -361,7 +361,7 @@ fn retained(source: Source) -> Vec<Frame> {
             presentation: at.since(Moment::START),
             marker: String::new(),
             cropped: false,
-            file: Content::Source {
+            content: Content::Source {
                 index: Arc::clone(&source),
             },
         })
@@ -389,7 +389,7 @@ fn sampled(
             presentation: origin.saturating_add(sample.at),
             marker: String::new(),
             cropped: false,
-            file: Content::Video {
+            content: Content::Video {
                 span: sample.at..end,
                 annotations,
                 scene: scene.clone(),

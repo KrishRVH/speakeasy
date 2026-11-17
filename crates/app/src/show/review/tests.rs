@@ -118,7 +118,7 @@ fn a_cropped_keyframe_says_so_and_offers_the_whole_screen() -> anyhow::Result<()
         presentation: Duration::ZERO,
         marker: String::new(),
         cropped: false,
-        file: preview::Content::Png("frames/frame-01.png".to_owned()),
+        content: preview::Content::Png("frames/frame-01.png".to_owned()),
     };
     for frame in detail.frames.iter().chain([&uncropped]) {
         let caption = frame.caption(detail.frames.len());
@@ -157,7 +157,7 @@ async fn a_damaged_show_fails_only_the_preview_of_its_missing_frame() -> anyhow:
         let frame = &detail.frames[index];
         let work = reads.submit(preview::Request {
             directory: damaged.clone(),
-            content: frame.file.clone(),
+            content: frame.content.clone(),
             at: frame.at(),
             annotated: false,
             fixture: root.fixture.clone(),

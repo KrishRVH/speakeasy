@@ -402,7 +402,7 @@ impl Review {
         };
         let request = preview::Request {
             directory: key.directory.clone(),
-            content: frame.file.clone(),
+            content: frame.content.clone(),
             at: frame.at(),
             annotated: self.annotated,
             fixture: self.fixture(),
