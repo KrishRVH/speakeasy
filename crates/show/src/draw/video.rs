@@ -1,6 +1,6 @@
 mod labels;
 
-use std::{fmt, time::Duration};
+use std::{fmt, iter, time::Duration};
 
 use serde::Serialize;
 use tiny_skia::{PixmapPaint, Transform};
@@ -9,10 +9,7 @@ use super::{RECENT_INK, RIPPLE_REACH, closed_curve, fill, label, ripple};
 use crate::{
     Action, Error, Image, Mark, Moment, Point, Recording, Rect, Shape, Stroke, Typeface, ink,
     locate::PixelRect,
-    recording::{
-        Spaces,
-        spaces::{self, Space},
-    },
+    recording::spaces::{self, Space},
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -29,10 +26,29 @@ pub struct AnnotationReport {
 
 pub struct Annotations {
     duration: Moment,
-    strokes: Vec<Stroke>,
-    actions: Vec<Action>,
-    spaces: Spaces,
+    strokes: Vec<Located<Stroke>>,
+    actions: Vec<Located<Action>>,
     labels: Vec<labels::Label>,
+}
+
+struct Located<T> {
+    item: T,
+    part: Option<Rect>,
+}
+
+impl<T: Clone> Located<T> {
+    fn all(items: &[T], spaces: &[Option<Space>]) -> Vec<Self> {
+        let parts = spaces
+            .iter()
+            .map(|space| space.map(|space| space.part))
+            .chain(iter::repeat(None));
+        items
+            .iter()
+            .cloned()
+            .zip(parts)
+            .map(|(item, part)| Self { item, part })
+            .collect()
+    }
 }
 
 impl fmt::Debug for Annotations {
@@ -55,9 +71,8 @@ impl Annotations {
         }
         Ok(Self {
             duration: recording.duration,
-            strokes: recording.strokes.clone(),
-            actions: recording.actions.clone(),
-            spaces: recording.spaces.clone(),
+            strokes: Located::all(&recording.strokes, &recording.spaces.strokes),
+            actions: Located::all(&recording.actions, &recording.spaces.actions),
             labels: labels::resolve(recording, marks),
         })
     }
@@ -89,26 +104,21 @@ impl Annotations {
             return Err(Error::invalid("Video content is outside its canvas"));
         };
         let (w, h) = (width as f32, height as f32);
-        let located = |spaces: &[Option<Space>], index: usize| {
-            spaces
-                .get(index)
-                .copied()
-                .flatten()
-                .is_some_and(|space| space.part == viewport.source)
-        };
         let mut report = AnnotationReport::default();
         let mut shown = vec![false; self.strokes.len()];
         let mut canvas = content.as_mut();
         let strokes = self
             .strokes
-            .chunk_by(|one, two| one.last() == two.first())
+            .chunk_by(|one, two| one.item.last() == two.item.first())
             .flat_map(|chain| {
-                let end = chain.last().map_or(Moment::START, |last| last.span().end());
+                let end = chain
+                    .last()
+                    .map_or(Moment::START, |last| last.item.span().end());
                 chain.iter().enumerate().map(move |(index, stroke)| {
                     let start = if index == 0 {
-                        Some(stroke.first())
+                        Some(stroke.item.first())
                     } else {
-                        stroke.points().get(1).copied()
+                        stroke.item.points().get(1).copied()
                     };
                     (stroke, end, start)
                 })
@@ -122,11 +132,12 @@ impl Annotations {
             {
                 continue;
             }
-            if !located(&self.spaces.strokes, index) {
+            if stroke.part != Some(viewport.source) {
                 report.omitted = report.omitted.saturating_add(1);
                 continue;
             }
             let points: Vec<_> = stroke
+                .item
                 .points()
                 .iter()
                 .take_while(|ink| ink.at.since(Moment::START) <= at)
@@ -142,7 +153,7 @@ impl Annotations {
             }
             report.drawn = report.drawn.saturating_add(1);
         }
-        let visible: Vec<_> = std::iter::once(0)
+        let visible: Vec<_> = iter::once(0)
             .chain(shown.iter().scan(0_usize, |count, shown| {
                 *count = count.saturating_add(usize::from(*shown));
                 Some(*count)
@@ -171,16 +182,16 @@ impl Annotations {
             );
             report.drawn = report.drawn.saturating_add(1);
         }
-        for (index, action) in self.actions.iter().enumerate() {
+        for action in &self.actions {
             if cancelled() {
                 return Ok(None);
             }
-            let completed = action.span().end().since(Moment::START);
+            let completed = action.item.span().end().since(Moment::START);
             if completed > at || at.saturating_sub(completed) > RIPPLE_REACH {
                 continue;
             }
-            let endpoint = action.point();
-            if !Rect::UNIT.contains(endpoint) || !located(&self.spaces.actions, index) {
+            let endpoint = action.item.point();
+            if !Rect::UNIT.contains(endpoint) || action.part != Some(viewport.source) {
                 report.omitted = report.omitted.saturating_add(1);
                 continue;
             }
