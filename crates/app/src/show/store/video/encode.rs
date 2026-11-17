@@ -222,11 +222,9 @@ async fn frames(
         anyhow::ensure!(!cancelled(), "Video export cancelled");
         let at = timing.tick(index);
         let source_at = at.saturating_sub(origin);
-        while samples
-            .peek()
-            .is_some_and(|sample| current.is_none() || sample.at <= source_at)
+        while let Some(sample) =
+            samples.next_if(|sample| current.is_none() || sample.at <= source_at)
         {
-            let sample = samples.next().context("Video sample index changed")?;
             input.read_exact(&mut pixels).await.context(
                 "FFmpeg decoded fewer frames than the saved video; check that FFmpeg is version 5.1 or newer. The original Show is unchanged",
             )?;
