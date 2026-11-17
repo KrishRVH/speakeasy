@@ -60,6 +60,7 @@ mise.*.local.lock
 
 # A run with `--config settings.json` keeps these beside its settings file
 /settings.json
+/settings.json.onboarded
 /instance.lock
 /instance.port
 /tray-hint-seen
