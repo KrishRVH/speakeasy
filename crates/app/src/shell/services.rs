@@ -640,9 +640,16 @@ impl Services {
         let _ = done.try_send(result);
     }
 
-    pub(super) fn begin_quit(&mut self) -> Option<impl Future<Output = ()> + use<>> {
+    pub(super) fn begin_quit(
+        &mut self,
+        #[cfg(target_os = "windows")] installer: Option<crate::updates::Installer>,
+    ) -> Option<impl Future<Output = ()> + use<>> {
         if !self.lifecycle.quit() {
             return None;
+        }
+        #[cfg(target_os = "windows")]
+        {
+            self.installation = installer.map(Installation::Waiting);
         }
         self.show_copies.cancel();
         self.choices.cancel();
@@ -681,6 +688,10 @@ impl Services {
     pub(super) fn finish_quit(&mut self) {
         self.lifecycle.retired();
         self.retirement = None;
+        #[cfg(target_os = "windows")]
+        if let Some(Installation::Waiting(installer)) = self.installation.take() {
+            self.installation = Some(Installation::Ready(installer));
+        }
     }
 }
 

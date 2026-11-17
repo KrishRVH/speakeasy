@@ -8,7 +8,7 @@ use crate::{
     config::Config,
     instance::Instance,
     runtime::{Meter, Snapshot},
-    shell::LaunchMode,
+    shell::{LaunchMode, services::Installation},
     updates::Installer,
 };
 

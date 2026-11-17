@@ -2,8 +2,6 @@ use std::time::Duration;
 
 use gpui::{App, AsyncApp, WindowHandle};
 
-#[cfg(target_os = "windows")]
-use super::services::Installation;
 use super::{Services, settings::Settings};
 use crate::gpui_ext::WindowUpdate;
 
@@ -38,13 +36,12 @@ fn begin_quit(
         return;
     }
     let services = cx.global_mut::<Services>();
-    let Some(stopped) = services.begin_quit() else {
+    let Some(stopped) = services.begin_quit(
+        #[cfg(target_os = "windows")]
+        installer,
+    ) else {
         return;
     };
-    #[cfg(target_os = "windows")]
-    {
-        services.installation = installer.map(Installation::Waiting);
-    }
     let settings = services.settings;
     let shows = services.shows;
     let task = cx.spawn(async move |cx| {
@@ -60,12 +57,7 @@ fn begin_quit(
             cx.background_executor().timer(DRAIN_POLL).await;
         }
         cx.update(|cx| {
-            let services = cx.global_mut::<Services>();
-            services.finish_quit();
-            #[cfg(target_os = "windows")]
-            if let Some(Installation::Waiting(installer)) = services.installation.take() {
-                services.installation = Some(Installation::Ready(installer));
-            }
+            cx.global_mut::<Services>().finish_quit();
             cx.quit();
         });
     });
