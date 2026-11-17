@@ -35,6 +35,7 @@ impl Settings {
     pub(super) fn shortcut(&self) -> SharedString {
         cfg_select! {
             target_os = "macos" => self.config.mac_shortcut.label().into(),
+            target_os = "windows" => self.config.windows_shortcut.label().into(),
             _ => SharedString::from(&self.presentation.shortcut),
         }
     }
@@ -87,8 +88,8 @@ impl Settings {
                     )
                     .child(kit.detail(detail)),
             );
-        #[cfg(target_os = "macos")]
-        let heading = heading.child(self.mac_shortcut(ui));
+        #[cfg(not(target_os = "linux"))]
+        let heading = heading.child(self.shortcut_choice(ui));
         let legend = div()
             .flex()
             .flex_wrap()
@@ -138,18 +139,26 @@ impl Settings {
             .bg(rgb(palette.panel))
             .child(heading)
             .child(legend)
-            .when(cfg!(target_os = "macos"), |card| {
-                card.child(
-                    kit.detail(self.mac_shortcut_help())
-                        .px(px(20.0))
-                        .pb(px(12.0)),
-                )
+            .when(!cfg!(target_os = "linux"), |card| {
+                card.child(kit.detail(self.shortcut_help()).px(px(20.0)).pb(px(12.0)))
             })
             .child(self.practice_panel(ui))
     }
 
-    pub(super) const fn mac_shortcut_help(&self) -> &'static str {
-        use speakeasy_platform::MacShortcut;
+    pub(super) const fn shortcut_help(&self) -> &'static str {
+        use speakeasy_platform::{MacShortcut, WindowsShortcut};
+        const QUICK: &str = "Hold briefly before adding Space, Return, S, W, A, or V. Quick combinations keep their usual action.";
+        if cfg!(target_os = "windows") {
+            return match self.config.windows_shortcut {
+                WindowsShortcut::ControlWindows => {
+                    "Hold Ctrl and Win together. Choose Right Ctrl or F13 if another app already uses Ctrl+Win."
+                },
+                WindowsShortcut::RightControl => QUICK,
+                WindowsShortcut::F13 => {
+                    "Map a spare key, such as Caps Lock, to F13 in PowerToys Keyboard Manager or your keyboard's software. Speakeasy reserves F13 while dictation is enabled."
+                },
+            };
+        }
         match self.config.mac_shortcut {
             MacShortcut::Function => {
                 "External keyboard? Its Fn key may stay inside the keyboard. Choose F13, Right Option, or Right Command if Fn does nothing."
@@ -157,22 +166,17 @@ impl Settings {
             MacShortcut::F13 => {
                 "Use your keyboard's F13 key, or map a key to F13 in its keyboard software. Speakeasy reserves F13 while dictation is enabled."
             },
-            MacShortcut::RightOption | MacShortcut::RightCommand => {
-                "Hold briefly before adding Space, S, W, A, or V. Quick combinations keep their usual action."
-            },
+            MacShortcut::RightOption | MacShortcut::RightCommand => QUICK,
         }
     }
 
-    #[cfg(target_os = "macos")]
-    pub(super) fn mac_shortcut(&self, ui: &Ui<'_>) -> Div {
+    #[cfg(not(target_os = "linux"))]
+    pub(super) fn shortcut_choice(&self, ui: &Ui<'_>) -> Div {
         let menu = Menu::Shortcut;
         let action = Action::Menu(menu);
         let trigger = ui
             .button("Change", action, Weight::Secondary)
-            .aria_label(format!(
-                "Shortcut key: {}",
-                self.config.mac_shortcut.label()
-            ))
+            .aria_label(format!("Shortcut key: {}", self.shortcut()))
             .child(crate::controls::icon(
                 crate::icons::CHEVRON_DOWN,
                 14.0,

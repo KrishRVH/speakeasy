@@ -4,6 +4,7 @@
   "model": "",
   "nemo_model": null,
   "mac_shortcut": "function",
+  "windows_shortcut": "control_windows",
   "language": "auto",
   "remove_fillers": true,
   "spoken_symbols": true,

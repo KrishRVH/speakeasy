@@ -248,7 +248,7 @@ impl PointerMonitor {
     pub fn start(
         target: Target,
         samples: Sender<PointerSample>,
-        shortcut: crate::MacShortcut,
+        shortcut: crate::Shortcut,
     ) -> anyhow::Result<Self> {
         anyhow::ensure!(
             samples.capacity().is_some_and(|capacity| capacity >= 2),
@@ -458,7 +458,7 @@ mod unsupported {
     ) {
     }
 
-    pub(super) const fn pointer(_: Target, _: crate::MacShortcut) -> Option<PointerSample> {
+    pub(super) const fn pointer(_: Target, _: crate::Shortcut) -> Option<PointerSample> {
         None
     }
 

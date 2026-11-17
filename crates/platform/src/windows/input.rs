@@ -45,7 +45,7 @@ use windows_sys::{
 
 use super::{OWN_INPUT, insertion::Insert, is_key_down, press, release, send_input, take_handle};
 use crate::{
-    CANCEL_SHORTCUT, DesktopOptions, Input, InputSender, Inserter, OwnFocus, OwnedThread, SHORTCUT,
+    CANCEL_SHORTCUT, DesktopOptions, Input, InputSender, Inserter, OwnFocus, OwnedThread,
     insertion, keyboard,
 };
 
@@ -79,16 +79,18 @@ impl Monitor {
 
 pub(crate) fn start(
     input: InputSender,
-    _: DesktopOptions,
+    options: DesktopOptions,
     own_focus: OwnFocus,
 ) -> anyhow::Result<(OwnedThread, Monitor, Inserter)> {
-    let (insertion, inserter) = insertion::Worker::start(input.clone(), own_focus, |request| {
-        insertion::settle(Insert, request)
-    })?;
+    let shortcut = options.shortcut_key.windows;
+    let (insertion, inserter) =
+        insertion::Worker::start(input.clone(), own_focus, move |request| {
+            insertion::settle(Insert { shortcut }, request)
+        })?;
     let stop = Arc::new(StopEvent::new()?);
     let thread = OwnedThread::spawn("input-monitor", {
         let stop = Arc::clone(&stop);
-        move || monitor(&input, &stop)
+        move || monitor(&input, &stop, shortcut)
     })?;
     Ok((thread, Monitor { stop, insertion }, inserter))
 }
@@ -111,15 +113,16 @@ impl StopEvent {
 
 struct HookState {
     input: InputSender,
+    shortcut: crate::WindowsShortcut,
     policy: keyboard::Windows,
 }
 
 impl HookState {
     fn observe(&mut self, key: u32, down: bool) -> bool {
-        let physical = keyboard::Physical::read(is_key_down);
+        let physical = keyboard::Physical::read(self.shortcut, is_key_down);
         let decision = self.policy.observe(key, down, physical, Instant::now());
         decision.deliver(&self.input);
-        if decision.starts() {
+        if decision.starts() && self.shortcut.masks_start() {
             unsafe {
                 PostThreadMessageW(GetCurrentThreadId(), MASK_START, 0, 0);
             }
@@ -286,12 +289,13 @@ impl Registration {
     }
 }
 
-fn monitor(input: &InputSender, stop: &StopEvent) {
+fn monitor(input: &InputSender, stop: &StopEvent, shortcut: crate::WindowsShortcut) {
     HOOK.set(Some(HookState {
         input: input.clone(),
-        policy: keyboard::Windows::default(),
+        shortcut,
+        policy: keyboard::Windows::new(shortcut),
     }));
-    let watched = panic::catch_unwind(AssertUnwindSafe(|| run_event_loop(input, stop)))
+    let watched = panic::catch_unwind(AssertUnwindSafe(|| run_event_loop(input, stop, shortcut)))
         .unwrap_or_else(|_| Err(io::Error::other("it stopped unexpectedly")));
     if let Err(error) = watched
         && !stop.is_set()
@@ -305,7 +309,11 @@ fn monitor(input: &InputSender, stop: &StopEvent) {
     input.close();
 }
 
-fn run_event_loop(input: &InputSender, stop: &StopEvent) -> io::Result<()> {
+fn run_event_loop(
+    input: &InputSender,
+    stop: &StopEvent,
+    shortcut: crate::WindowsShortcut,
+) -> io::Result<()> {
     if stop.is_set() {
         return Ok(());
     }
@@ -322,7 +330,7 @@ fn run_event_loop(input: &InputSender, stop: &StopEvent) -> io::Result<()> {
         return Ok(());
     }
     input.deliver(Input::DesktopReady {
-        shortcut: SHORTCUT.into(),
+        shortcut: shortcut.label().into(),
         cancel: CANCEL_SHORTCUT.into(),
     });
     pump_messages(stop, &mut notifications)

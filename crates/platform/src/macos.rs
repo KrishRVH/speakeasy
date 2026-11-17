@@ -81,7 +81,7 @@ pub(super) fn start(
     options: DesktopOptions,
     own_focus: OwnFocus,
 ) -> anyhow::Result<(OwnedThread, Monitor, Inserter)> {
-    let shortcut = options.mac_shortcut;
+    let shortcut = options.shortcut_key.mac;
     let (insertion, inserter) =
         insertion::Worker::start(input.clone(), own_focus, move |request| {
             objc2::rc::autoreleasepool(|_| insertion::settle(Insert { shortcut }, request))

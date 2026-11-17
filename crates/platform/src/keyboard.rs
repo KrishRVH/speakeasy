@@ -9,7 +9,7 @@ const SHIFT_TAP: Duration = Duration::from_millis(300);
 
 const SHIFT_TAP_GAP: Duration = Duration::from_millis(400);
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
 const APPLICATION_SHORTCUT: Duration = Duration::from_millis(250);
 
 #[derive(Default)]
@@ -275,25 +275,84 @@ impl Modifiers {
 #[cfg(any(target_os = "windows", test))]
 #[derive(Clone, Copy)]
 pub(super) struct Physical {
-    chord_keys: [bool; 4],
+    chord_keys: [bool; 5],
     other_shortcut: bool,
 }
 
 #[cfg(any(target_os = "windows", test))]
 impl Physical {
-    pub(super) fn read(down: impl Fn(u16) -> bool) -> Self {
+    pub(super) fn read(shortcut: crate::WindowsShortcut, down: impl Fn(u16) -> bool) -> Self {
         Self {
             chord_keys: Windows::CHORD_KEYS.map(&down),
-            other_shortcut: Windows::modifiers(down).other_shortcut,
+            other_shortcut: shortcut.modifiers(down).other_shortcut,
         }
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+impl crate::WindowsShortcut {
+    pub(super) fn modifiers(self, down: impl Fn(u16) -> bool) -> Modifiers {
+        let alt = down(Windows::ALT);
+        let control = down(Windows::CONTROL);
+        let windows = down(Windows::LEFT_WINDOWS) || down(Windows::RIGHT_WINDOWS);
+        let (talk, other_shortcut) = match self {
+            Self::ControlWindows => (control && windows, alt || control != windows),
+            Self::RightControl => {
+                let right = down(Windows::RIGHT_CONTROL);
+                (right, alt || windows || down(Windows::LEFT_CONTROL))
+            },
+            Self::F13 => (down(Windows::F13), alt || control || windows),
+        };
+        Modifiers {
+            shift: down(Windows::SHIFT),
+            other_shortcut,
+            talk,
+        }
+    }
+
+    const fn holds(self, key: u16) -> bool {
+        match self {
+            Self::ControlWindows => matches!(
+                key,
+                Windows::LEFT_CONTROL
+                    | Windows::RIGHT_CONTROL
+                    | Windows::LEFT_WINDOWS
+                    | Windows::RIGHT_WINDOWS
+            ),
+            Self::RightControl => key == Windows::RIGHT_CONTROL,
+            Self::F13 => key == Windows::F13,
+        }
+    }
+
+    const fn held(self, keys: [bool; 5]) -> bool {
+        let [
+            left_control,
+            right_control,
+            left_windows,
+            right_windows,
+            f13,
+        ] = keys;
+        match self {
+            Self::ControlWindows => {
+                (left_control || right_control) && (left_windows || right_windows)
+            },
+            Self::RightControl => right_control,
+            Self::F13 => f13,
+        }
+    }
+
+    pub(super) const fn masks_start(self) -> bool {
+        matches!(self, Self::ControlWindows)
     }
 }
 
 #[cfg(any(target_os = "windows", test))]
 #[derive(Default)]
 pub(super) struct Windows {
+    shortcut: crate::WindowsShortcut,
+    pressed: Option<Instant>,
     chord: Chord,
-    chord_keys_down: [bool; 4],
+    chord_keys_down: [bool; 5],
     taps: ShiftTaps,
 }
 
@@ -301,14 +360,16 @@ pub(super) struct Windows {
 impl Windows {
     const ALT: u16 = 0x12;
     const AREA: u16 = 0x41;
-    const CHORD_KEYS: [u16; 4] = [
+    const CHORD_KEYS: [u16; 5] = [
         Self::LEFT_CONTROL,
         Self::RIGHT_CONTROL,
         Self::LEFT_WINDOWS,
         Self::RIGHT_WINDOWS,
+        Self::F13,
     ];
     const CONTROL: u16 = 0x11;
     const ESCAPE: u16 = 0x1B;
+    const F13: u16 = 0x7C;
     const LEFT_CONTROL: u16 = 0xA2;
     const LEFT_SHIFT: u16 = 0xA0;
     const LEFT_WINDOWS: u16 = 0x5B;
@@ -323,13 +384,10 @@ impl Windows {
     const SPACE: u16 = 0x20;
     const WINDOW: u16 = 0x57;
 
-    pub(super) fn modifiers(down: impl Fn(u16) -> bool) -> Modifiers {
-        let control = down(Self::CONTROL);
-        let windows = down(Self::LEFT_WINDOWS) || down(Self::RIGHT_WINDOWS);
-        Modifiers {
-            shift: down(Self::SHIFT),
-            other_shortcut: down(Self::ALT) || control != windows,
-            talk: control && windows,
+    pub(super) fn new(shortcut: crate::WindowsShortcut) -> Self {
+        Self {
+            shortcut,
+            ..Self::default()
         }
     }
 
@@ -349,7 +407,7 @@ impl Windows {
             .after_missed_release(missed_release)
     }
 
-    fn reconcile(&mut self, chord_keys: [bool; 4]) -> bool {
+    fn reconcile(&mut self, chord_keys: [bool; 5]) -> bool {
         for (tracked, physically_down) in self.chord_keys_down.iter_mut().zip(chord_keys) {
             *tracked &= physically_down;
         }
@@ -357,8 +415,7 @@ impl Windows {
     }
 
     const fn chord_held(&self) -> bool {
-        let [left_control, right_control, left_windows, right_windows] = self.chord_keys_down;
-        (left_control || right_control) && (left_windows || right_windows)
+        self.shortcut.held(self.chord_keys_down)
     }
 
     fn decide(&mut self, key: u32, down: bool, physical: Physical, at: Instant) -> Decision {
@@ -367,23 +424,36 @@ impl Windows {
             let pinned = self.taps.shift(down, physical.other_shortcut, at);
             return Decision::pass(pinned.map(Action::Pin));
         }
-        if let Some(decision) = self.chord_key(key, down) {
+        if let Some(decision) = self.chord_key(key, down, physical.other_shortcut, at) {
             return decision;
         }
         self.taps.interrupt();
-        match key {
-            Self::ESCAPE => Decision::pass(down.then_some(Action::Escape)),
-            Self::SPACE => self.chord.hold_key(HoldKey::Space, down),
-            Self::PASTE_LAST => self.chord.hold_key(HoldKey::PasteLast, down),
-            Self::RETURN => self.chord.hold_key(HoldKey::Submit, down),
-            Self::SCREEN => self.chord.hold_key(HoldKey::Show(Scope::Screen), down),
-            Self::WINDOW => self.chord.hold_key(HoldKey::Show(Scope::Window), down),
-            Self::AREA => self.chord.hold_key(HoldKey::Show(Scope::Area), down),
-            _ => self.chord.other_key(down),
+        let hold_key = match key {
+            Self::ESCAPE => return Decision::pass(down.then_some(Action::Escape)),
+            Self::SPACE => HoldKey::Space,
+            Self::PASTE_LAST => HoldKey::PasteLast,
+            Self::RETURN => HoldKey::Submit,
+            Self::SCREEN => HoldKey::Show(Scope::Screen),
+            Self::WINDOW => HoldKey::Show(Scope::Window),
+            Self::AREA => HoldKey::Show(Scope::Area),
+            _ => return self.chord.other_key(down),
+        };
+        if down && self.defers_to_applications(at) {
+            return self.chord.other_key(true);
         }
+        self.chord.hold_key(hold_key, down)
     }
 
-    fn chord_key(&mut self, key: u16, down: bool) -> Option<Decision> {
+    fn chord_key(
+        &mut self,
+        key: u16,
+        down: bool,
+        other_shortcut: bool,
+        at: Instant,
+    ) -> Option<Decision> {
+        if !self.shortcut.holds(key) {
+            return None;
+        }
         let tracked = Self::CHORD_KEYS
             .into_iter()
             .zip(&mut self.chord_keys_down)
@@ -392,12 +462,29 @@ impl Windows {
         if was_down != down {
             self.taps.interrupt();
         }
-        let action = match (self.chord_held(), down && !was_down) {
+        let pressed = down && !was_down;
+        if pressed {
+            self.pressed = Some(at);
+        }
+        let solo = self.shortcut != crate::WindowsShortcut::ControlWindows;
+        let action = match (self.chord_held(), pressed) {
             (false, _) => self.chord.release(),
+            (true, true) if solo && other_shortcut => None,
             (true, true) => self.chord.press(),
             (true, false) => None,
         };
-        Some(Decision::pass(action))
+        Some(if self.shortcut == crate::WindowsShortcut::F13 {
+            Decision::swallow(action)
+        } else {
+            Decision::pass(action)
+        })
+    }
+
+    fn defers_to_applications(&self, at: Instant) -> bool {
+        self.shortcut == crate::WindowsShortcut::RightControl
+            && self
+                .pressed
+                .is_none_or(|pressed| at.saturating_duration_since(pressed) < APPLICATION_SHORTCUT)
     }
 }
 

@@ -349,8 +349,8 @@ impl Settings {
                     })
                     .child(status),
             );
-        #[cfg(target_os = "macos")]
-        let heading = heading.child(self.mac_shortcut(ui));
+        #[cfg(not(target_os = "linux"))]
+        let heading = heading.child(self.shortcut_choice(ui));
         let card = div()
             .flex()
             .flex_col()
@@ -365,8 +365,8 @@ impl Settings {
             })
             .bg(rgb(palette.panel))
             .child(heading)
-            .when(cfg!(target_os = "macos"), |card| {
-                card.child(kit.detail(self.mac_shortcut_help()))
+            .when(!cfg!(target_os = "linux"), |card| {
+                card.child(kit.detail(self.shortcut_help()))
             })
             .child(
                 div()

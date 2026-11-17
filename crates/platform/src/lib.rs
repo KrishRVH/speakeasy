@@ -43,8 +43,9 @@ pub use self::windows::login::{start_at_login, startup_approved};
 pub use self::{
     clipboard::{ClipboardContent, copy_content},
     desktop::{
-        DesktopOptions, FileFilter, InputMonitor, LinuxPaste, MacShortcut, NativeWindow,
-        attach_stdio, copy_text, prepare, reduced_motion, secure_input, show_startup_error,
+        DesktopOptions, FileFilter, InputMonitor, LinuxPaste, MacShortcut, NativeWindow, Shortcut,
+        WindowsShortcut, attach_stdio, copy_text, prepare, reduced_motion, secure_input,
+        show_startup_error,
     },
     image::BgraImage,
     input::{IdleInput, Input, InputSender, InsertPermit, Taps},

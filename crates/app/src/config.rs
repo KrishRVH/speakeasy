@@ -11,7 +11,9 @@ use anyhow::{Context as _, anyhow, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use serde_path_to_error::Segment;
-use speakeasy_platform::{Delivery, DesktopOptions, LinuxPaste, MacShortcut};
+use speakeasy_platform::{
+    Delivery, DesktopOptions, LinuxPaste, MacShortcut, Shortcut, WindowsShortcut,
+};
 
 use crate::{
     models::{self, Model},
@@ -52,6 +54,7 @@ pub(crate) struct Config {
     #[serde(skip_serializing_if = "LinuxSettings::is_default")]
     pub linux: LinuxSettings,
     pub mac_shortcut: MacShortcut,
+    pub windows_shortcut: WindowsShortcut,
     pub engine: Engine,
     pub microphone: Option<String>,
     pub engine_executable: PathBuf,
@@ -77,6 +80,7 @@ impl Default for Config {
         Self {
             linux: LinuxSettings::default(),
             mac_shortcut: MacShortcut::default(),
+            windows_shortcut: WindowsShortcut::default(),
             engine: Engine::Nemo,
             microphone: None,
             engine_executable: PathBuf::new(),
@@ -193,9 +197,16 @@ impl Config {
         self.reduced_motion || speakeasy_platform::reduced_motion()
     }
 
+    pub(crate) const fn shortcut(&self) -> Shortcut {
+        Shortcut {
+            mac: self.mac_shortcut,
+            windows: self.windows_shortcut,
+        }
+    }
+
     pub(crate) fn desktop_options(&self) -> DesktopOptions {
         DesktopOptions {
-            mac_shortcut: self.mac_shortcut,
+            shortcut_key: self.shortcut(),
             shortcut: self.linux.shortcut.clone(),
             cancel: self.linux.cancel.clone(),
             paste: self.text_delivery.linux_paste(),
@@ -256,6 +267,7 @@ impl Config {
         let Self {
             linux,
             mac_shortcut,
+            windows_shortcut,
             engine,
             microphone,
             engine_executable,
@@ -280,7 +292,8 @@ impl Config {
                 (cfg!(target_os = "linux")
                     && (self.linux != *linux
                         || self.text_delivery.linux_paste() != text_delivery.linux_paste()))
-                    || (cfg!(target_os = "macos") && self.mac_shortcut != *mac_shortcut),
+                    || (cfg!(target_os = "macos") && self.mac_shortcut != *mac_shortcut)
+                    || (cfg!(target_os = "windows") && self.windows_shortcut != *windows_shortcut),
                 Change::Desktop,
             ),
             (

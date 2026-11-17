@@ -37,9 +37,12 @@ slot on screen while you speak, and recognizes every word on your machine.
 | Show the screen, a window, or an area; see below | <kbd>S</kbd>, <kbd>W</kbd>, or <kbd>A</kbd> during the hold | <kbd>S</kbd>, <kbd>W</kbd>, or <kbd>A</kbd> during the hold |
 
 The shortcuts match Wispr Flow's defaults, and double-tapping the shortcut also starts hands-free.
-On Mac, Settings and the setup guide offer Fn, F13, Right Option, or Right Command. With either
-right modifier, hold it for a quarter-second before adding Space, Return, S, W, A, or V; quick
-combinations keep their usual action. Left Option and Left Command remain ordinary modifiers.
+Settings and the setup guide offer Ctrl + Win, Right Ctrl, or F13 on Windows, and Fn, F13, Right
+Option, or Right Command on Mac. With a right modifier, hold it for a quarter-second before adding
+Space, Return, S, W, A, or V; quick combinations keep their usual action, so Right Ctrl + C still
+copies. Left Ctrl, Left Option, and Left Command remain ordinary modifiers. On Windows, PowerToys
+Keyboard Manager can turn a spare key, such as Caps Lock, into F13; Speakeasy withholds F13 from
+other apps while dictation is enabled.
 
 For Fn, set **System Settings › Keyboard › Press 🌐 key to** to **Do Nothing** so Fn only dictates.
 
@@ -754,12 +757,13 @@ settings file.
 
 ### Settings
 
-Settings shows your shortcuts and the speech model in use, and lets you choose the microphone,
-language, recognition hints, GPU use, filler removal, spoken symbols, how text is delivered, reduced
-motion, sounds, theme, phrase corrections, and on Windows whether Speakeasy starts at login. Changes
-apply as you make them. **Pause** or **Resume**, **Shows**, **Quit**, and the status line stay at
-the bottom while the rest scrolls. The status says whether dictation is ready, confirms **Saved**,
-or shows the latest error or notice; problems show in the attention color.
+Settings shows your shortcuts and the speech model in use, and lets you choose the shortcut key on
+Windows and Mac, the microphone, language, recognition hints, GPU use, filler removal, spoken
+symbols, how text is delivered, reduced motion, sounds, theme, phrase corrections, and on Windows
+whether Speakeasy starts at login. Changes apply as you make them. **Pause** or **Resume**,
+**Shows**, **Quit**, and the status line stay at the bottom while the rest scrolls. The status says
+whether dictation is ready, confirms **Saved**, or shows the latest error or notice; problems show
+in the attention color.
 
 On Windows, assistive tools can read and operate the main Settings buttons, page tabs, switches, and
 phrase-correction and recognition-hint fields. Native acceptance checks their values, focus,
@@ -793,10 +797,11 @@ intact.
 
 Preset-library, theme, reduced-motion, and Start at login changes keep a recording running;
 microphone, language, filler removal, recognition hints, phrase correction, delivery, and sound
-changes end it but keep the model loaded. Changing the Mac shortcut, Linux Shortcuts, or most Linux
-**Insert text by** choices restarts dictation, which reloads the model. Saving stays responsive and
-preserves edits made while the save is running. Changes made while dictation is paused are saved
-without resuming it, and pausing during a save keeps it paused; Quit finishes requested saves.
+changes end it but keep the model loaded. Changing the Windows or Mac shortcut, Linux Shortcuts, or
+most Linux **Insert text by** choices restarts dictation, which reloads the model. Saving stays
+responsive and preserves edits made while the save is running. Changes made while dictation is
+paused are saved without resuming it, and pausing during a save keeps it paused; Quit finishes
+requested saves.
 
 <p align="center">
   <img src="docs/assets/themes.png"

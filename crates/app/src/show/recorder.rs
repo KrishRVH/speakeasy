@@ -7,8 +7,8 @@ use anyhow::anyhow;
 use async_channel::{Receiver, Sender};
 use speakeasy_core::machine::SessionId;
 use speakeasy_platform::{
-    Display, Frame, MacShortcut, OwnedThread, Part, PointerMonitor, PointerSample, Scope,
-    ScreenCapture, ScreenEvent, Taps, Target, WindowGone, WindowLayer, WindowLayout, WindowWatch,
+    Display, Frame, OwnedThread, Part, PointerMonitor, PointerSample, Scope, ScreenCapture,
+    ScreenEvent, Shortcut, Taps, Target, WindowGone, WindowLayer, WindowLayout, WindowWatch,
 };
 use speakeasy_show::{
     Ending, Framing, Image, Layer, Layout, MAX_FRAME_EDGE, MOST_WINDOWS, Mark, Moment, Point, Rect,
@@ -63,7 +63,7 @@ impl ScreenRecorder {
         log: Option<FrameLog>,
         events: Sender<ShowEvent>,
         canvas: watch::Sender<Canvas>,
-        shortcut: MacShortcut,
+        shortcut: Shortcut,
     ) -> anyhow::Result<Self> {
         let (finish, finishing) = async_channel::bounded(1);
         let (pins, pinned) = async_channel::bounded(PIN_LANE);
@@ -186,7 +186,7 @@ fn record(
     id: SessionId,
     events: Sender<ShowEvent>,
     mut log: Option<FrameLog>,
-    shortcut: MacShortcut,
+    shortcut: Shortcut,
 ) -> anyhow::Result<Ended> {
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
@@ -674,7 +674,7 @@ mod native_tests {
             None,
             events,
             canvas,
-            MacShortcut::default(),
+            Shortcut::default(),
         )?;
         tokio::time::sleep(Duration::from_millis(1_300)).await;
         let display = ink
@@ -745,7 +745,7 @@ mod native_tests {
             None,
             events,
             canvas,
-            MacShortcut::default(),
+            Shortcut::default(),
         )?;
         tokio::time::sleep(Duration::from_secs(10)).await;
         recorder.finish();

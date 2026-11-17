@@ -207,7 +207,7 @@ impl Runtime {
             canvas,
             wsl,
             sounds: Sounds::start()?,
-            mac_shortcut: config.mac_shortcut,
+            shortcut: config.shortcut(),
         };
         let runtime = Self::host(
             Configuration {
@@ -402,7 +402,7 @@ struct Desktop {
     canvas: watch::Sender<Canvas>,
     wsl: show::wsl::Lookup,
     sounds: Sounds,
-    mac_shortcut: speakeasy_platform::MacShortcut,
+    shortcut: speakeasy_platform::Shortcut,
 }
 
 impl Ports for Desktop {
@@ -444,7 +444,7 @@ impl Ports for Desktop {
             log,
             events,
             self.canvas.clone(),
-            self.mac_shortcut,
+            self.shortcut,
         )
     }
 

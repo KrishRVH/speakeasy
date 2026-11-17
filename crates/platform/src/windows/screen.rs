@@ -279,7 +279,7 @@ fn is_current(display: screen::Display) -> bool {
     describe(display.native.handle().0).is_ok_and(|current| current == display)
 }
 
-pub(crate) fn pointer(target: Target, _: crate::MacShortcut) -> Option<PointerSample> {
+pub(crate) fn pointer(target: Target, shortcut: crate::Shortcut) -> Option<PointerSample> {
     let display = target.display.native;
     let part = pointer_part(target)?;
     let at = Instant::now();
@@ -288,7 +288,7 @@ pub(crate) fn pointer(target: Target, _: crate::MacShortcut) -> Option<PointerSa
         at,
         position: display.bounds().normalize([x, y].map(f64::from))?,
         part,
-        drawing: modifiers().draws(),
+        drawing: modifiers(shortcut.windows).draws(),
         pressed: primary_button_down(),
     })
 }

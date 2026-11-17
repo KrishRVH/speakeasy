@@ -251,11 +251,14 @@ original seven-day schedule even when the saved bundle is kept.
 
 ## Interaction contracts
 
-- Hold Ctrl+Win on Windows or the selected Mac shortcut to dictate; release to finish. Mac defaults
-  to Fn and also offers F13, Right Option, and Right Command, including during setup practice. The
-  shortcut card explains firmware-only Fn keys and the F13 alternative. Adding Space during the
-  hold, or double-tapping, switches to hands-free; press the shortcut again to finish. A short
-  single tap finishes after its tap window.
+- Hold the selected Windows or Mac shortcut to dictate; release to finish. Windows defaults to
+  Ctrl+Win and also offers Right Ctrl and F13; Mac defaults to Fn and also offers F13, Right Option,
+  and Right Command, both including during setup practice. The shortcut card explains firmware-only
+  Fn keys, mapping a spare key to F13, and the quick-combination rule. With a right modifier, a hold
+  key pressed within 250 ms of it interrupts and reaches the app, so Right Ctrl+C still copies;
+  pressed when another modifier is already down, the right modifier does not dictate. Adding Space
+  during the hold, or double-tapping, switches to hands-free; press the shortcut again to finish. A
+  short single tap finishes after its tap window.
 - Linux holds Ctrl+Super+Space or double-taps it for hands-free; its accepted binding is shown in
   Settings. Desktop command bindings start/finish hands-free.
 - On Windows/macOS, the shortcut's modifiers are observed, never swallowed. A selected F13 is
@@ -264,7 +267,7 @@ original seven-day schedule even when the saved bundle is kept.
   dictation, and S, W, or A that starts a Show are withheld from the focused app. Shift stays
   passive so a Show can draw and pin with it, and another app's double Shift still works; any other
   key during a hold belongs to a different shortcut, so it interrupts the recording, and the
-  shortcut waits for release. On Windows, an unassigned mask key keeps the released Win key from
+  shortcut waits for release. With Ctrl+Win, an unassigned mask key keeps the released Win key from
   opening Start.
 - Return (or keypad Enter on macOS) during a Windows/macOS hold finishes that dictation as a release
   would and marks it to send: after its text is pasted or typed, Speakeasy waits 100 ms for the app

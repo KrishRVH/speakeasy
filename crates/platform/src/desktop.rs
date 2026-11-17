@@ -53,7 +53,7 @@ pub fn prepare(
 
 #[derive(Clone, Debug)]
 pub struct DesktopOptions {
-    pub mac_shortcut: MacShortcut,
+    pub shortcut_key: Shortcut,
     pub shortcut: String,
     pub cancel: String,
     pub paste: LinuxPaste,
@@ -82,6 +82,32 @@ impl MacShortcut {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Shortcut {
+    pub mac: MacShortcut,
+    pub windows: WindowsShortcut,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowsShortcut {
+    #[default]
+    ControlWindows,
+    RightControl,
+    F13,
+}
+
+impl WindowsShortcut {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::ControlWindows => "Ctrl + Win",
+            Self::RightControl => "Right Ctrl",
+            Self::F13 => "F13",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LinuxPaste {
     Standard,
@@ -92,7 +118,7 @@ pub enum LinuxPaste {
 impl Default for DesktopOptions {
     fn default() -> Self {
         Self {
-            mac_shortcut: MacShortcut::default(),
+            shortcut_key: Shortcut::default(),
             shortcut: "CTRL+LOGO+space".into(),
             cancel: "CTRL+LOGO+Escape".into(),
             paste: LinuxPaste::Standard,

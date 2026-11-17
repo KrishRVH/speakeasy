@@ -14,7 +14,7 @@ use crate::{
 pub(super) enum Menu {
     Language,
     Microphone,
-    #[cfg(target_os = "macos")]
+    #[cfg(not(target_os = "linux"))]
     Shortcut,
     #[cfg(target_os = "linux")]
     Delivery,
@@ -28,7 +28,7 @@ impl Menu {
         match self {
             Self::Language => 0,
             Self::Microphone => 1,
-            #[cfg(target_os = "macos")]
+            #[cfg(not(target_os = "linux"))]
             Self::Shortcut => 2,
             #[cfg(target_os = "linux")]
             Self::Delivery => 2,
@@ -213,6 +213,23 @@ impl Settings {
                         shortcut.label(),
                         Action::SelectShortcut(shortcut),
                         self.config.mac_shortcut == shortcut,
+                    )
+                })
+                .into()
+            },
+            #[cfg(target_os = "windows")]
+            Menu::Shortcut => {
+                use speakeasy_platform::WindowsShortcut;
+                [
+                    WindowsShortcut::ControlWindows,
+                    WindowsShortcut::RightControl,
+                    WindowsShortcut::F13,
+                ]
+                .map(|shortcut| {
+                    Item::choice(
+                        shortcut.label(),
+                        Action::SelectShortcut(shortcut),
+                        self.config.windows_shortcut == shortcut,
                     )
                 })
                 .into()

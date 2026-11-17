@@ -3,9 +3,10 @@ use std::time::{Duration, Instant};
 use anyhow::Context as _;
 
 use super::*;
-use crate::MacShortcut;
+use crate::{MacShortcut, WindowsShortcut};
 
 mod f13;
+mod windows_shortcuts;
 
 const LEFT_CONTROL: u32 = 0xA2;
 const RIGHT_CONTROL: u32 = 0xA3;
@@ -43,7 +44,7 @@ const MAC_KEYPAD_ENTER: i64 = 76;
 const RETURN: u32 = 0x0D;
 const MAC_F13: i64 = 105;
 const NONE_HELD: Physical = Physical {
-    chord_keys: [false; 4],
+    chord_keys: [false; 5],
     other_shortcut: false,
 };
 
@@ -64,8 +65,12 @@ const COMMAND_HELD: Modifiers = Modifiers {
 };
 
 fn held(keys: &[u32]) -> Physical {
+    held_for(WindowsShortcut::ControlWindows, keys)
+}
+
+fn held_for(shortcut: WindowsShortcut, keys: &[u32]) -> Physical {
     let control = keys.contains(&LEFT_CONTROL) || keys.contains(&RIGHT_CONTROL);
-    Physical::read(|key| {
+    Physical::read(shortcut, |key| {
         let key = u32::from(key);
         keys.contains(&key) || (key == CONTROL && control)
     })
@@ -336,7 +341,9 @@ fn shift_draws_beside_fn_but_any_modifier_holds_paste() {
 
 #[test]
 fn shift_draws_beside_ctrl_win_but_not_in_another_windows_shortcut() {
-    let modifiers = |keys: &[u32]| Windows::modifiers(|key| keys.contains(&u32::from(key)));
+    let modifiers = |keys: &[u32]| {
+        WindowsShortcut::ControlWindows.modifiers(|key| keys.contains(&u32::from(key)))
+    };
     assert!(
         modifiers(&[SHIFT, CONTROL, RIGHT_WINDOWS]).draws(),
         "Shift must draw while Ctrl+Win is still held after S"

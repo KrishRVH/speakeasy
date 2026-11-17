@@ -270,6 +270,11 @@ impl Settings {
                 self.config.mac_shortcut = shortcut;
                 self.edited(cx);
             },
+            #[cfg(target_os = "windows")]
+            Action::SelectShortcut(shortcut) => {
+                self.config.windows_shortcut = shortcut;
+                self.edited(cx);
+            },
             #[cfg(target_os = "linux")]
             Action::SelectBindings(external) => {
                 self.config.linux.external_shortcut = external;
@@ -840,6 +845,8 @@ enum Action {
     SelectDelivery(TextDelivery),
     #[cfg(target_os = "macos")]
     SelectShortcut(speakeasy_platform::MacShortcut),
+    #[cfg(target_os = "windows")]
+    SelectShortcut(speakeasy_platform::WindowsShortcut),
     #[cfg(target_os = "linux")]
     SelectBindings(bool),
     Toggle(Setting),

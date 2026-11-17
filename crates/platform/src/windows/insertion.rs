@@ -124,7 +124,9 @@ fn write_clipboard(
     })
 }
 
-pub(super) struct Insert;
+pub(super) struct Insert {
+    pub(super) shortcut: crate::WindowsShortcut,
+}
 
 pub(super) enum Keys {
     Paste,
@@ -198,7 +200,7 @@ impl NativeInsert for Insert {
     }
 
     fn shortcut_released(&mut self) -> bool {
-        !modifiers().any()
+        !modifiers(self.shortcut).any()
     }
 
     fn send(&mut self, keys: Keys) -> anyhow::Result<Inserted> {
@@ -326,7 +328,9 @@ mod tests {
         enter_private_station()?;
         copy_text(TEXT)?;
         assert_private_text("the copied text")?;
-        let mut insert = Insert;
+        let mut insert = Insert {
+            shortcut: crate::WindowsShortcut::default(),
+        };
         let lease = insert.acquire()?;
         insert.write(lease, TEXT)?;
         let mark = insert.mark();
