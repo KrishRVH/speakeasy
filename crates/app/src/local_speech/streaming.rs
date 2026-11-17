@@ -14,6 +14,7 @@ use zeroize::Zeroizing;
 
 use super::{
     CONNECT_TIMEOUT, INFERENCE_TIMEOUT, LOOPBACK, LocalSpeech, MAX_RESPONSE_BYTES, PARAKEET_RATES,
+    Protocol,
 };
 use crate::{recognition_terms::Terms, runtime::ports::LiveAudio};
 
@@ -29,7 +30,7 @@ pub(super) async fn transcribe(
     terms: &Terms,
 ) -> anyhow::Result<Option<String>> {
     ensure!(
-        speech.nemotron && PARAKEET_RATES.contains(&audio.rate),
+        speech.protocol == Protocol::Nemotron && PARAKEET_RATES.contains(&audio.rate),
         FAILED
     );
     speech.verify_listener().await?;
@@ -57,7 +58,7 @@ pub(super) async fn transcribe(
     )
     .await?;
     within(CONNECT_TIMEOUT, async {
-        expect(&mut socket, "session.created").await?;
+        expect(&mut socket, Event::Created).await?;
         let session = serde_json::json!({
             "type": "session.update",
             "session": {
@@ -67,7 +68,7 @@ pub(super) async fn transcribe(
             }
         });
         send(&mut socket, Message::Text(session.to_string().into())).await?;
-        expect(&mut socket, "session.updated").await
+        expect(&mut socket, Event::Updated).await
     })
     .await?;
     within(INFERENCE_TIMEOUT, recognize(&mut socket, audio)).await
@@ -96,7 +97,7 @@ async fn recognize(socket: &mut Socket, mut audio: LiveAudio) -> anyhow::Result<
                     }
                     send(
                         socket,
-                        Message::Text("{\"type\":\"input_audio_buffer.commit\"}".into()),
+                        Message::Text(r#"{"type":"input_audio_buffer.commit"}"#.into()),
                     ).await?;
                     committed = true;
                     let end = tokio::time::Instant::now()
@@ -110,29 +111,26 @@ async fn recognize(socket: &mut Socket, mut audio: LiveAudio) -> anyhow::Result<
                     bail!(FAILED);
                 };
                 match message {
-                    Message::Text(bytes) => {
-                        let event = parse(&bytes)?;
-                        match event.kind.as_str() {
-                            "conversation.item.input_audio_transcription.completed" => {
-                                let words = event.transcript.as_deref().context(FAILED)?.trim();
-                                ensure!(
-                                    words.len().saturating_add(1)
-                                        <= MAX_RESPONSE_BYTES.saturating_sub(text.len()),
-                                    FAILED
-                                );
-                                if !text.is_empty() && !words.is_empty() {
-                                    text.push(' ');
-                                }
-                                text.push_str(words);
-                                final_seen = true;
-                            },
-                            "input_audio_buffer.committed" => {
-                                ensure!(committed && final_seen, FAILED);
-                                return Ok(Some(mem::take(&mut *text)));
-                            },
-                            "error" => bail!(FAILED),
-                            _ => {},
-                        }
+                    Message::Text(bytes) => match parse(&bytes)? {
+                        Event::Completed { transcript } => {
+                            let words = transcript.trim();
+                            ensure!(
+                                words.len().saturating_add(1)
+                                    <= MAX_RESPONSE_BYTES.saturating_sub(text.len()),
+                                FAILED
+                            );
+                            if !text.is_empty() && !words.is_empty() {
+                                text.push(' ');
+                            }
+                            text.push_str(words);
+                            final_seen = true;
+                        },
+                        Event::Committed => {
+                            ensure!(committed && final_seen, FAILED);
+                            return Ok(Some(mem::take(&mut *text)));
+                        },
+                        Event::Error => bail!(FAILED),
+                        Event::Created | Event::Updated | Event::Ignored => {},
                     },
                     Message::Ping(_) => within(CONNECT_TIMEOUT, socket.flush()).await?,
                     Message::Pong(_) => {},
@@ -143,11 +141,21 @@ async fn recognize(socket: &mut Socket, mut audio: LiveAudio) -> anyhow::Result<
     }
 }
 
-#[derive(Deserialize)]
-struct Event {
-    #[serde(rename = "type")]
-    kind: String,
-    transcript: Option<String>,
+#[derive(Deserialize, PartialEq, Eq)]
+#[serde(tag = "type")]
+enum Event {
+    #[serde(rename = "session.created")]
+    Created,
+    #[serde(rename = "session.updated")]
+    Updated,
+    #[serde(rename = "conversation.item.input_audio_transcription.completed")]
+    Completed { transcript: String },
+    #[serde(rename = "input_audio_buffer.committed")]
+    Committed,
+    #[serde(rename = "error")]
+    Error,
+    #[serde(other)]
+    Ignored,
 }
 
 fn parse(text: &str) -> anyhow::Result<Event> {
@@ -155,11 +163,11 @@ fn parse(text: &str) -> anyhow::Result<Event> {
     serde_json::from_str(text).ok().context(FAILED)
 }
 
-async fn expect(socket: &mut Socket, kind: &str) -> anyhow::Result<()> {
+async fn expect(socket: &mut Socket, expected: Event) -> anyhow::Result<()> {
     let Some(Ok(Message::Text(text))) = socket.next().await else {
         bail!(FAILED);
     };
-    ensure!(parse(&text)?.kind == kind, FAILED);
+    ensure!(parse(&text)? == expected, FAILED);
     Ok(())
 }
 

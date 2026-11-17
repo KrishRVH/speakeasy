@@ -48,8 +48,7 @@ const STATUS_ENTRYPOINT_NOT_FOUND: u32 = 0xC000_0139;
 const STATUS_INVALID_IMAGE_FORMAT: u32 = 0xC000_007B;
 
 pub(crate) struct LocalSpeech {
-    engine: Engine,
-    nemotron: bool,
+    protocol: Protocol,
     group: ProcessGroup,
     child: Child,
     port: u16,
@@ -76,9 +75,13 @@ impl LocalSpeech {
             "Cannot start the speech engine. Check the selected engine executable and its native dependencies.",
         )?;
         let group = contain(&mut child).await?;
+        let protocol = match config.engine {
+            Engine::Whisper => Protocol::Whisper,
+            Engine::Nemo if config.uses_nemotron() => Protocol::Nemotron,
+            Engine::Nemo => Protocol::Nemo,
+        };
         let mut speech = Self {
-            engine: config.engine,
-            nemotron: config.uses_nemotron(),
+            protocol,
             group,
             child,
             port,
@@ -120,9 +123,9 @@ impl LocalSpeech {
     }
 
     async fn wait_until_serving(&mut self) -> anyhow::Result<()> {
-        let health = self.url(match self.engine {
-            Engine::Nemo => "ready",
-            Engine::Whisper => "health",
+        let health = self.url(match self.protocol {
+            Protocol::Whisper => "health",
+            Protocol::Nemo | Protocol::Nemotron => "ready",
         });
         loop {
             if let Some(status) = self.child.try_wait()? {
@@ -151,14 +154,14 @@ impl LocalSpeech {
 
     fn url(&self, path: &str) -> String {
         let Self {
-            engine,
+            protocol,
             port,
             secret,
             ..
         } = self;
-        match engine {
-            Engine::Nemo => format!("http://{LOOPBACK}:{port}/{path}"),
-            Engine::Whisper => format!("http://{LOOPBACK}:{port}/{secret}/{path}"),
+        match protocol {
+            Protocol::Whisper => format!("http://{LOOPBACK}:{port}/{secret}/{path}"),
+            Protocol::Nemo | Protocol::Nemotron => format!("http://{LOOPBACK}:{port}/{path}"),
         }
     }
 
@@ -183,15 +186,24 @@ impl LocalSpeech {
         terms: &Terms,
     ) -> anyhow::Result<R> {
         self.verify_listener().await?;
-        let request = match self.engine {
-            Engine::Nemo => {
+        let request = match self.protocol {
+            Protocol::Whisper => {
+                let form = recording_form(wav, R::FORMAT)?
+                    .text(
+                        "language",
+                        crate::models::whisper_language(language).to_owned(),
+                    )
+                    .text("temperature", "0.0");
+                self.client.post(self.url("inference")).multipart(form)
+            },
+            Protocol::Nemo | Protocol::Nemotron => {
                 let rate = audio::wav_sample_rate(&wav)?;
                 ensure!(
                     PARAKEET_RATES.contains(&rate),
                     "Parakeet needs 8–96 kHz audio. Set your microphone to 48 kHz in your system's sound settings, or choose Whisper."
                 );
                 let mut form = recording_form(wav, R::FORMAT)?;
-                if self.nemotron {
+                if self.protocol == Protocol::Nemotron {
                     form = form.text(
                         "language",
                         crate::models::nemotron_language(language).to_owned(),
@@ -204,15 +216,6 @@ impl LocalSpeech {
                     .post(self.url("v1/audio/transcriptions"))
                     .bearer_auth(&self.secret)
                     .multipart(form)
-            },
-            Engine::Whisper => {
-                let form = recording_form(wav, R::FORMAT)?
-                    .text(
-                        "language",
-                        crate::models::whisper_language(language).to_owned(),
-                    )
-                    .text("temperature", "0.0");
-                self.client.post(self.url("inference")).multipart(form)
             },
         };
         match exchange(request).await {
@@ -284,6 +287,13 @@ impl Speech for LocalSpeech {
         self.group.terminate();
         kill_and_reap(&mut self.child).await;
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Protocol {
+    Whisper,
+    Nemo,
+    Nemotron,
 }
 
 struct Warmup {

@@ -529,13 +529,12 @@ async fn streaming_verifies_the_listener_before_sending_credentials_or_audio() -
 {
     let listener = tokio::net::TcpListener::bind((LOOPBACK, 0)).await?;
     let mut speech = sleeping_engine(listener.local_addr()?.port()).await?;
-    speech.engine = Engine::Nemo;
-    speech.nemotron = true;
+    speech.protocol = Protocol::Nemotron;
     let (_frames, received) = tokio::sync::mpsc::channel(1);
     let result = timeout(
         crate::testing::PATIENCE,
         speech.transcribe_stream(
-            crate::runtime::ports::LiveAudio {
+            LiveAudio {
                 rate: 16_000,
                 frames: received,
                 tail: tokio::sync::oneshot::channel().1,
@@ -568,11 +567,8 @@ async fn streaming_authenticates_and_sends_per_request_language_and_hints() -> a
         },
     };
 
-    use crate::runtime::ports::LiveAudio;
-
     let (_directory, mut speech, listener) = shell_engine("read -r _").await?;
-    speech.engine = Engine::Nemo;
-    speech.nemotron = true;
+    speech.protocol = Protocol::Nemotron;
     let authorization = format!("Bearer {}", speech.secret);
     let mut terms = Terms::default();
     terms.add("Example Name")?;
@@ -647,8 +643,7 @@ async fn streaming_authenticates_and_sends_per_request_language_and_hints() -> a
 async fn engine_from(mut command: Command, port: u16) -> anyhow::Result<LocalSpeech> {
     let mut child = command.process_group(0).spawn()?;
     Ok(LocalSpeech {
-        nemotron: false,
-        engine: Engine::Whisper,
+        protocol: Protocol::Whisper,
         group: contain(&mut child).await?,
         child,
         port,
@@ -761,12 +756,9 @@ async fn abandoned_and_failed_streams_probe_the_owned_engine_before_reuse() -> a
     use futures_util::{SinkExt as _, StreamExt as _};
     use tokio_tungstenite::{accept_async, tungstenite::Message};
 
-    use crate::runtime::ports::LiveAudio;
-
     for failed in [false, true] {
         let (_directory, mut speech, listener) = shell_engine("read -r _").await?;
-        speech.engine = Engine::Nemo;
-        speech.nemotron = true;
+        speech.protocol = Protocol::Nemotron;
         let (frames, received) = tokio::sync::mpsc::channel(1);
         let _frames = failed.then_some(frames);
         let (ending, tail) = tokio::sync::oneshot::channel();
