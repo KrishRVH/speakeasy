@@ -18,7 +18,7 @@ fn loading_a_domain_restores_its_words_and_model_without_changing_global_prefere
         play_sounds: false,
         ..Config::default()
     };
-    let prose = Preset::capture("Writing".into(), &writing)?;
+    let prose = Preset::capture("Writing", &writing)?;
     let mut coding = writing.clone();
     coding.engine = Engine::Nemo;
     coding.engine_executable = "nemo-speech.exe".into();
@@ -37,7 +37,7 @@ fn loading_a_domain_restores_its_words_and_model_without_changing_global_prefere
     coding.text_delivery = TextDelivery::Paste;
     coding.theme = Theme::default();
     coding.play_sounds = true;
-    let technical = Preset::capture("Coding".into(), &coding)?;
+    let technical = Preset::capture("Coding", &coding)?;
     technical.load(&mut writing);
     assert_eq!(
         Vocabulary::new(&writing.vocabulary).text("Use rust.".into()),
@@ -75,7 +75,7 @@ fn inactive_paths_survive_save_and_only_a_loaded_missing_model_prevents_applicat
     let mut draft = held.clone();
     draft
         .presets
-        .push(Preset::capture("Earlier model".into(), &missing)?);
+        .push(Preset::capture("Earlier model", &missing)?);
     assert_eq!(held.change_to(&draft), Change::Presentation);
     let mut file: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
     file["play_sounds"] = false.into();
@@ -99,7 +99,7 @@ fn sparse_settings_need_no_presets_and_invalid_libraries_are_rejected_even_witho
     let path = directory.path().join("settings.json");
     std::fs::write(&path, "{}")?;
     assert_eq!(Config::read(&path)?.presets, Vec::<Preset>::new());
-    let preset = serde_json::to_value(Preset::capture("PRIVATE_NAME".into(), &Config::default())?)?;
+    let preset = serde_json::to_value(Preset::capture("PRIVATE_NAME", &Config::default())?)?;
     for invalid in [
         serde_json::json!({"presets": vec![preset.clone(); LIMIT + 1]}),
         serde_json::json!({"presets": [preset, preset]}),
@@ -155,7 +155,7 @@ fn a_description_names_the_model_a_preset_runs_even_under_a_stale_marker() -> an
         (parakeet_file, Model::Parakeet.file_name()),
         (whisper_file, "ggml-base.bin · German"),
     ] {
-        let preset = Preset::capture("Fixture".into(), &config)?;
+        let preset = Preset::capture("Fixture", &config)?;
         assert_eq!(preset.description(), description);
     }
     Ok(())
@@ -164,10 +164,10 @@ fn a_description_names_the_model_a_preset_runs_even_under_a_stale_marker() -> an
 proptest! {
     #[test]
     fn names_cannot_hide_case_duplicates_or_controls(name in "[a-z]{1,48}", control in 0u8..32) {
-        let first = Preset::capture(name.clone(), &Config::default()).unwrap();
-        let upper = Preset::capture(name.to_uppercase(), &Config::default()).unwrap();
+        let first = Preset::capture(&name, &Config::default()).unwrap();
+        let upper = Preset::capture(&name.to_uppercase(), &Config::default()).unwrap();
         prop_assert!(validate(&[first, upper]).is_err());
         let corrupted = format!("{name}{}suffix", char::from(control));
-        prop_assert!(Preset::capture(corrupted, &Config::default()).is_err());
+        prop_assert!(Preset::capture(&corrupted, &Config::default()).is_err());
     }
 }

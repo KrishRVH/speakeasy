@@ -484,7 +484,11 @@ impl<'a> Kit<'a> {
             .child(text)
     }
 
-    pub(crate) fn section(self, title: &'static str, rows: Vec<AnyElement>) -> Div {
+    pub(crate) fn section(
+        self,
+        title: &'static str,
+        rows: impl IntoIterator<Item = AnyElement>,
+    ) -> Div {
         div()
             .flex()
             .flex_col()
@@ -493,7 +497,7 @@ impl<'a> Kit<'a> {
             .child(self.group(rows))
     }
 
-    pub(crate) fn group(self, rows: Vec<AnyElement>) -> Div {
+    pub(crate) fn group(self, rows: impl IntoIterator<Item = AnyElement>) -> Div {
         let line = self.palette.line();
         div()
             .flex()

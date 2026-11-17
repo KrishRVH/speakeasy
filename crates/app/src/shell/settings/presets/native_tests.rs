@@ -94,7 +94,7 @@ pub(in crate::shell::settings) fn exercise(
         };
         view.config
             .presets
-            .push(Preset::capture("Other".into(), &english)?);
+            .push(Preset::capture("Other", &english)?);
         view.edit_preset(Edit::Delete(0), window, cx);
         let after_removal = view.config.clone();
         ensure!(

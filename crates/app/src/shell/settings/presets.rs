@@ -126,7 +126,7 @@ impl Settings {
         replacing: Option<usize>,
         cx: &mut Context<'_, Self>,
     ) -> bool {
-        let stored = Preset::capture(name, &self.config).and_then(|preset| {
+        let stored = Preset::capture(&name, &self.config).and_then(|preset| {
             let mut presets = self.config.presets.clone();
             match replacing.and_then(|index| presets.get_mut(index)) {
                 Some(current) => *current = preset,

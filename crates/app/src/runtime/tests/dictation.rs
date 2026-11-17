@@ -972,9 +972,7 @@ async fn preset_library_edits_keep_recording_but_loading_words_cancels_old_infer
         }],
         ..Config::default()
     };
-    library
-        .presets
-        .push(Preset::capture("Coding".into(), &choices)?);
+    library.presets.push(Preset::capture("Coding", &choices)?);
     h.start().await?;
     h.runtime.configure(ValidConfig::assume(library.clone()));
     h.finish_as("Original words.").await?;

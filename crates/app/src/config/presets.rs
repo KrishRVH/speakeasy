@@ -36,12 +36,12 @@ impl fmt::Debug for Preset {
 }
 
 impl Preset {
-    pub(crate) fn capture(name: String, config: &Config) -> anyhow::Result<Self> {
-        let name = name.trim().to_owned();
-        validate_name(&name)?;
+    pub(crate) fn capture(name: &str, config: &Config) -> anyhow::Result<Self> {
+        let name = name.trim();
+        validate_name(name)?;
         config.validate_choices()?;
         Ok(Self {
-            name,
+            name: name.to_owned(),
             engine: config.engine,
             engine_executable: config.engine_executable.clone(),
             model: config.model.clone(),
