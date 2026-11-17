@@ -35,6 +35,12 @@ const LARGE_AREA: f32 = 2.3;
 
 const NARROW_SHARE: f32 = 0.16;
 
+pub(crate) struct Tile<'a> {
+    pub image: &'a Image,
+    pub badge: Badge,
+    pub corner: Corner,
+}
+
 #[derive(Clone, Copy)]
 struct Cell {
     left: u32,
@@ -86,19 +92,12 @@ pub(crate) fn pages<T>(keyframes: &[T]) -> impl Iterator<Item = &[T]> {
     })
 }
 
-pub(crate) fn render(
-    badges: &[Badge],
-    frames: &[(Image, Corner)],
-    typeface: &Typeface,
-) -> Result<Image, Error> {
-    let aspects: Vec<f32> = frames
+pub(crate) fn render(tiles: &[Tile<'_>], typeface: &Typeface) -> Result<Image, Error> {
+    let aspects: Vec<f32> = tiles
         .iter()
-        .map(|(image, _)| image.aspect().clamp(NARROWEST, WIDEST))
+        .map(|tile| tile.image.aspect().clamp(NARROWEST, WIDEST))
         .collect();
-    let widths: Vec<f32> = frames
-        .iter()
-        .map(|(image, _)| image.width() as f32)
-        .collect();
+    let widths: Vec<f32> = tiles.iter().map(|tile| tile.image.width() as f32).collect();
     let Layout {
         width,
         height,
@@ -110,17 +109,16 @@ pub(crate) fn render(
         .map(|cell| (cell.width as f32 / 120.0).min(cell.height as f32 / 72.0))
         .fold(0.9_f32, f32::min)
         .max(0.5);
-    let fits: Vec<(&Image, (u32, u32))> = frames
+    let fits: Vec<(&Image, (u32, u32))> = tiles
         .iter()
         .zip(&cells)
-        .map(|((image, _), cell)| (image, fitted(image, *cell)))
+        .map(|(tile, cell)| (tile.image, fitted(tile.image, *cell)))
         .collect();
     let scaled = parallel::map(&fits, |(image, (width, height))| {
         image.resized(*width, *height)
     });
     let mut canvas = sheet.as_mut();
-    for (((badge, (_, corner)), cell), scaled) in badges.iter().zip(frames).zip(&cells).zip(scaled)
-    {
+    for ((tile, cell), scaled) in tiles.iter().zip(&cells).zip(scaled) {
         let scaled = scaled.ok_or_else(|| Error::invalid("Cannot scale a contact sheet frame"))?;
         let (left, top) = cell.centered_origin(scaled.width(), scaled.height());
         canvas.draw_pixmap(
@@ -134,9 +132,9 @@ pub(crate) fn render(
         draw::badge(
             &mut canvas,
             cell.bounds(),
-            badge,
+            &tile.badge,
             badge_scale,
-            *corner,
+            tile.corner,
             typeface,
         );
     }

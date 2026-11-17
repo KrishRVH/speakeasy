@@ -15,7 +15,8 @@ use crate::{
     draw::{self, Badge, Corner},
     framing::{self, Plan},
     locate::PixelRect,
-    parallel, sheet,
+    parallel,
+    sheet::{self, Tile},
 };
 
 const CONTACT_SHEET: &str = "contact-sheet.png";
@@ -159,12 +160,16 @@ pub fn compose<E: From<Error> + Send>(
             contents: sheet::render(
                 &page
                     .iter()
-                    .map(|(frame, _)| Badge {
-                        number: frame.index,
-                        time: frame.at.to_string(),
+                    .zip(&annotated)
+                    .map(|(&(keyframe, _), (image, corner))| Tile {
+                        image,
+                        badge: Badge {
+                            number: keyframe.index,
+                            time: keyframe.at.to_string(),
+                        },
+                        corner: *corner,
                     })
                     .collect::<Vec<_>>(),
-                &annotated,
                 typeface,
             )?
             .encode_png()?,

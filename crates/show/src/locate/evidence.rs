@@ -3,7 +3,7 @@ use serde::Serialize;
 use crate::{
     Error, Image, Moment, Point, Rect, SourceFrame, Typeface, convert,
     draw::{Badge, Corner},
-    sheet,
+    sheet::{self, Tile},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -80,7 +80,7 @@ impl Evidence {
                 Error::invalid("Choose between 1 and 12 distinct ordered source frames").into(),
             );
         }
-        let mut frames = Vec::with_capacity(moments.len());
+        let mut thumbnails = Vec::with_capacity(moments.len());
         let mut cells = Vec::with_capacity(moments.len());
         let mut dimensions = None;
         for &at in moments {
@@ -106,22 +106,27 @@ impl Evidence {
                     convert::pixels(image.height() as f32 * scale).max(1),
                 )
                 .ok_or_else(|| Error::invalid("Cannot scale the source image"))?;
-            frames.push((thumbnail, Corner::Left));
+            thumbnails.push(thumbnail);
             cells.push(Cell {
                 sampled_ms: sampled.as_millis(),
                 crop_px,
             });
         }
-        let badges = moments
+        let tiles: Vec<Tile<'_>> = thumbnails
             .iter()
-            .enumerate()
-            .map(|(index, at)| Badge {
-                number: index.saturating_add(1),
-                time: format!("{at}.{:03}", at.as_millis() % 1_000),
+            .zip(moments)
+            .zip(1..)
+            .map(|((image, at), number)| Tile {
+                image,
+                badge: Badge {
+                    number,
+                    time: format!("{at}.{:03}", at.as_millis() % 1_000),
+                },
+                corner: Corner::Left,
             })
-            .collect::<Vec<_>>();
+            .collect();
         Ok(Self {
-            image: sheet::render(&badges, &frames, typeface)?,
+            image: sheet::render(&tiles, typeface)?,
             cells,
         })
     }
