@@ -55,6 +55,7 @@ click-through.
 | Recording        | Open slot, live rim, and measured grille.                                                                          |
 | Hands-free       | Grille, lock symbol, and elapsed timer beside the slot.                                                            |
 | Show recording   | Hands-free layout with a red screen mark for the lock; “Hold Shift to draw” replaces the timer for three seconds.  |
+| Secure input     | A live jewel and a note that Escape, Space, V, S, W, and A won’t reach Speakeasy, for five seconds.                |
 | Final 30 seconds | Remaining time in the attention color; the recording limit stays in the session owner.                             |
 | Stopping         | The lid stays open until capture stops; the grille settles.                                                        |
 | Processing       | The lid partly closes; a lamp highlight sweeps the opening after 250 ms.                                           |
@@ -291,6 +292,14 @@ original seven-day schedule even when the saved bundle is kept.
   finished Show's checkpoint for recovery. A committed Show stays saved. Linux uses a reserved
   Ctrl+Super+Escape chord or an explicit command binding; bare Escape is not globally captured.
   Animation never delays cancellation or owns the microphone lifetime.
+- On macOS, while another app holds secure keyboard entry, such as a focused password field or a
+  terminal's Secure Keyboard Entry, the event tap sees modifier changes but no key presses. Fn,
+  Right Option, and Right Command still start and finish dictation; a selected F13 does nothing, and
+  Escape, Space, V, S, W, and A never reach Speakeasy, so S, W, and A type into the focused app. As
+  each recording opens, from a shortcut, the tray, or a command, the pill asks once whether secure
+  keyboard entry is on and, if so, replaces the slot with a notice that says which keys won't arrive
+  and that a password field or terminal usually holds it, without naming the holder. Nothing checks
+  while idle or later in a recording, and the countdown to the limit outranks the notice.
 - Readiness follows the first captured buffer. Startup feedback does not imply that speech before
   that buffer can be recovered.
 - Insertion does not steal focus. OS submission is the observable result; success in every editor

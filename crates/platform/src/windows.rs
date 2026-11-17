@@ -70,6 +70,10 @@ pub(crate) fn reduced_motion() -> bool {
     animates == FALSE
 }
 
+pub(crate) fn secure_input() -> bool {
+    false
+}
+
 pub(crate) fn attach_stdio() -> bool {
     let missing = |stream| {
         let handle = unsafe { GetStdHandle(stream) };

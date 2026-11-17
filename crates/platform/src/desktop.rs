@@ -136,6 +136,11 @@ pub fn reduced_motion() -> bool {
     native::reduced_motion()
 }
 
+#[must_use]
+pub fn secure_input() -> bool {
+    native::secure_input()
+}
+
 pub fn copy_text(text: &str) -> anyhow::Result<()> {
     native::copy_text(text)
 }

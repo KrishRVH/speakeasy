@@ -99,6 +99,7 @@ fn recording(elapsed: Duration) -> Scene {
         since_phase: Duration::ZERO,
         tray_hint: None,
         draw_hint: None,
+        secure_input: None,
         hands_free: true,
         show: false,
         style: Style::Prose,
@@ -221,6 +222,101 @@ fn a_new_show_says_how_to_draw_in_place_of_its_clock_until_the_hint_ends() {
     assert!(
         !stopping.shows_draw_hint(),
         "A Show that stops drops the hint with its clock"
+    );
+}
+
+#[test]
+fn secure_input_replaces_the_slot_while_capture_is_open_until_the_notice_or_the_time_runs_out() {
+    let left = Duration::from_millis(400);
+    let held = |seconds, phase| Scene {
+        phase,
+        hands_free: false,
+        style: Style::Verbatim,
+        secure_input: Some(left),
+        ..recording(Duration::from_secs(seconds))
+    };
+    let recording = held(2, Phase::Recording);
+    assert!(recording.content() == Content::SecureInput);
+    assert_eq!(
+        recording.capsule_size(),
+        MESSAGE_SIZE,
+        "The style label cannot widen the notice past the window"
+    );
+    assert_eq!(
+        recording.wake_after(),
+        Some(left),
+        "The slot returns as the notice ends"
+    );
+    assert!(
+        held(2, Phase::Stopping).content() == Content::SecureInput,
+        "The notice stays while capture closes"
+    );
+    assert!(
+        held(2, Phase::Processing).content() == Content::Slot,
+        "Processing shows its sweep once capture ends"
+    );
+    assert!(
+        held(280, Phase::Recording).content() == Content::Slot,
+        "The countdown to the limit outranks the notice"
+    );
+}
+
+#[test]
+fn secure_input_is_read_once_as_each_recording_opens() {
+    let snapshot = |session, phase| Snapshot {
+        session,
+        phase,
+        ..Snapshot::default()
+    };
+    let unread = || -> bool { panic!("Secure input was read after its recording opened") };
+    let now = Instant::now();
+    let later = now + Duration::from_secs(1);
+    let full = now.checked_add(SECURE_INPUT_FOR);
+    let starting = snapshot(1, Phase::Starting);
+    let recording = snapshot(1, Phase::Recording);
+    assert_eq!(
+        secure_input_until(&snapshot(0, Phase::Idle), &starting, now, None, unread),
+        None,
+        "The notice waits for the microphone"
+    );
+    assert_eq!(
+        secure_input_until(&starting, &recording, now, None, || true),
+        full,
+        "Secure input at the opening shows the notice"
+    );
+    assert_eq!(
+        secure_input_until(&starting, &recording, now, None, || false),
+        None,
+        "Without secure input the slot opens as usual"
+    );
+    for next in [recording.clone(), snapshot(1, Phase::Stopping)] {
+        assert_eq!(
+            secure_input_until(&recording, &next, later, full, unread),
+            full,
+            "The rest of the recording keeps its deadline"
+        );
+    }
+    assert_eq!(
+        secure_input_until(
+            &recording,
+            &snapshot(2, Phase::Starting),
+            later,
+            full,
+            unread
+        ),
+        None,
+        "A new session drops the notice"
+    );
+    assert_eq!(
+        secure_input_until(
+            &recording,
+            &snapshot(2, Phase::Recording),
+            later,
+            full,
+            || true
+        ),
+        later.checked_add(SECURE_INPUT_FOR),
+        "A session that opens at once is read too"
     );
 }
 

@@ -42,7 +42,7 @@ pub use self::{
     clipboard::{ClipboardContent, copy_content},
     desktop::{
         DesktopOptions, FileFilter, InputMonitor, LinuxPaste, MacShortcut, NativeWindow,
-        attach_stdio, copy_text, prepare, reduced_motion, show_startup_error,
+        attach_stdio, copy_text, prepare, reduced_motion, secure_input, show_startup_error,
     },
     input::{IdleInput, Input, InputSender, InsertPermit, Taps},
     insertion::{Delivery, FocusReport, Inserted, Inserter, OwnFocus},

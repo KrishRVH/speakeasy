@@ -45,6 +45,8 @@ const DETAILS: &str = "Details in Settings";
 
 const DRAW_HINT_FOR: Duration = Duration::from_secs(3);
 
+const SECURE_INPUT_FOR: Duration = Duration::from_secs(5);
+
 pub(crate) const COUNTDOWN: Duration = Duration::from_secs(30);
 const SWEEP_DELAY: Duration = Duration::from_millis(250);
 const SWEEP_PERIOD: Duration = Duration::from_millis(1200);
@@ -88,6 +90,7 @@ pub(crate) struct Pill {
     phase_at: Instant,
     tray_hint_until: Option<Instant>,
     draw_hint_until: Option<Instant>,
+    secure_input_until: Option<Instant>,
     frame_at: Instant,
     frame_due: Instant,
     reduced_motion: bool,
@@ -131,6 +134,7 @@ impl Pill {
             phase_at,
             tray_hint_until: None,
             draw_hint_until: None,
+            secure_input_until: None,
             frame_at: now,
             frame_due: now,
             reduced_motion,
@@ -183,6 +187,13 @@ impl Pill {
             self.tray_hint_until = None;
         }
         self.draw_hint_until = draw_hint_until(previous, &snapshot, now, self.draw_hint_until);
+        self.secure_input_until = secure_input_until(
+            previous,
+            &snapshot,
+            now,
+            self.secure_input_until,
+            speakeasy_platform::secure_input,
+        );
         if new_session {
             self.history.fill(0.0);
         }
@@ -224,6 +235,9 @@ impl Pill {
                 .and_then(|until| until.checked_duration_since(now)),
             draw_hint: self
                 .draw_hint_until
+                .and_then(|until| until.checked_duration_since(now)),
+            secure_input: self
+                .secure_input_until
                 .and_then(|until| until.checked_duration_since(now)),
             hands_free: self.snapshot.hands_free,
             show: self.snapshot.show,
@@ -400,6 +414,7 @@ struct Scene {
     since_phase: Duration,
     tray_hint: Option<Duration>,
     draw_hint: Option<Duration>,
+    secure_input: Option<Duration>,
     hands_free: bool,
     show: bool,
     style: Style,
@@ -433,6 +448,9 @@ impl Scene {
         if self.tray_hint.is_some() {
             return Content::TrayHint;
         }
+        if self.shows_secure_input() {
+            return Content::SecureInput;
+        }
         match self.phase {
             Phase::Error => Content::Error,
             Phase::Notice | Phase::Unchosen => Content::Notice,
@@ -460,12 +478,19 @@ impl Scene {
         self.draw_hint.is_some() && self.shows_clock() && !self.clock.near_limit
     }
 
+    fn shows_secure_input(&self) -> bool {
+        self.secure_input.is_some() && self.is_capturing() && !self.clock.near_limit
+    }
+
     fn capsule_size(&self) -> Size<f32> {
         if !self.is_shown() {
             return RESTING_SIZE;
         }
         if self.tray_hint.is_some() {
             return size(MESSAGE_WIDTH, 36.0);
+        }
+        if self.shows_secure_input() {
+            return MESSAGE_SIZE;
         }
         let mut bounds = match self.phase {
             Phase::Starting => size(172.0, 38.0),
@@ -489,8 +514,12 @@ impl Scene {
     fn wake_after(&self) -> Option<Duration> {
         self.feedback().or(self.tray_hint).or_else(|| {
             if self.is_capturing() {
-                let tick = self.clock.next_tick;
-                Some(self.draw_hint.map_or(tick, |left| left.min(tick)))
+                Some(
+                    [self.draw_hint, self.secure_input]
+                        .into_iter()
+                        .flatten()
+                        .fold(self.clock.next_tick, Duration::min),
+                )
             } else if self.phase == Phase::Processing {
                 SWEEP_DELAY
                     .checked_sub(self.since_phase)
@@ -516,6 +545,7 @@ impl Scene {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Content {
     TrayHint,
+    SecureInput,
     Error,
     Notice,
     Slot,
@@ -524,7 +554,10 @@ enum Content {
 
 impl Content {
     const fn is_inlaid(self) -> bool {
-        matches!(self, Self::Error | Self::Notice | Self::Slot)
+        matches!(
+            self,
+            Self::SecureInput | Self::Error | Self::Notice | Self::Slot
+        )
     }
 }
 
@@ -666,6 +699,22 @@ fn begins_feedback(previous: &Snapshot, snapshot: &Snapshot) -> bool {
         || snapshot.reported != previous.reported
         || snapshot.phase != previous.phase
         || (snapshot.phase == Phase::Error && snapshot.message != previous.message)
+}
+
+fn secure_input_until(
+    previous: &Snapshot,
+    snapshot: &Snapshot,
+    now: Instant,
+    until: Option<Instant>,
+    secure_input: impl FnOnce() -> bool,
+) -> Option<Instant> {
+    let same_session = snapshot.session == previous.session;
+    let was_recording = same_session && previous.phase == Phase::Recording;
+    if snapshot.phase == Phase::Recording && !was_recording {
+        now.checked_add(SECURE_INPUT_FOR).filter(|_| secure_input())
+    } else {
+        until.filter(|_| same_session)
+    }
 }
 
 fn draw_hint_until(

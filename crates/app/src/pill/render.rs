@@ -32,6 +32,10 @@ const TRAY_HINT: &str = if cfg!(target_os = "macos") {
 };
 const DRAW_HINT: &str = "Hold Shift to draw";
 
+const SECURE_INPUT: &str =
+    "Secure keyboard entry is on, so Escape, Space, V, S, W, and A won’t reach Speakeasy.";
+const SECURE_INPUT_SOURCES: &str = "Often a password field or terminal";
+
 impl Pill {
     pub(super) fn render_capsule(&self, scene: Scene) -> Div {
         let palette = self.theme.palette();
@@ -83,54 +87,30 @@ impl Pill {
                 .text_size(px(12.0))
                 .child(TRAY_HINT)
                 .into_any_element(),
-            Content::Error => self
-                .render_message(facet(palette.warn, JEWEL), scene.footer(), palette)
-                .into_any_element(),
-            Content::Notice => self
-                .render_message(hollow(palette.lamp, JEWEL), scene.footer(), palette)
-                .into_any_element(),
+            Content::SecureInput => message_row(
+                facet(palette.live, JEWEL),
+                SECURE_INPUT.into(),
+                Some(SECURE_INPUT_SOURCES),
+                palette,
+            )
+            .into_any_element(),
+            Content::Error => message_row(
+                facet(palette.warn, JEWEL),
+                self.snapshot.message.clone().into(),
+                scene.footer(),
+                palette,
+            )
+            .into_any_element(),
+            Content::Notice => message_row(
+                hollow(palette.lamp, JEWEL),
+                self.snapshot.message.clone().into(),
+                scene.footer(),
+                palette,
+            )
+            .into_any_element(),
             Content::Slot => self.render_slot(scene, palette).into_any_element(),
             Content::Idle => idle_mark(palette).into_any_element(),
         }
-    }
-
-    fn render_message(
-        &self,
-        jewel: gpui::Svg,
-        footer: Option<&'static str>,
-        palette: &Palette,
-    ) -> Div {
-        div()
-            .w_full()
-            .pl(px(19.0))
-            .pr(px(14.0))
-            .flex()
-            .items_center()
-            .gap(px(13.0))
-            .child(jewel)
-            .child(
-                div()
-                    .flex_1()
-                    .overflow_hidden()
-                    .text_size(px(12.0))
-                    .line_height(px(16.0))
-                    .child(
-                        div()
-                            .line_clamp(2)
-                            .text_ellipsis()
-                            .pr(px(6.0))
-                            .child(self.snapshot.message.clone()),
-                    )
-                    .when_some(footer, |message, footer| {
-                        message.child(
-                            caps(footer)
-                                .mt(px(3.0))
-                                .text_size(px(9.5))
-                                .line_height(px(12.5))
-                                .text_color(rgb(palette.muted)),
-                        )
-                    }),
-            )
     }
 
     fn render_slot(&self, scene: Scene, palette: &'static Palette) -> Div {
@@ -234,6 +214,39 @@ impl Pill {
                 )
             })
     }
+}
+
+fn message_row(
+    jewel: gpui::Svg,
+    text: SharedString,
+    footer: Option<&'static str>,
+    palette: &Palette,
+) -> Div {
+    div()
+        .w_full()
+        .pl(px(19.0))
+        .pr(px(14.0))
+        .flex()
+        .items_center()
+        .gap(px(13.0))
+        .child(jewel)
+        .child(
+            div()
+                .flex_1()
+                .overflow_hidden()
+                .text_size(px(12.0))
+                .line_height(px(16.0))
+                .child(div().line_clamp(2).text_ellipsis().pr(px(6.0)).child(text))
+                .when_some(footer, |message, footer| {
+                    message.child(
+                        caps(footer)
+                            .mt(px(3.0))
+                            .text_size(px(9.5))
+                            .line_height(px(12.5))
+                            .text_color(rgb(palette.muted)),
+                    )
+                }),
+        )
 }
 
 fn slot_label(scene: &Scene, palette: &Palette) -> Option<AnyElement> {

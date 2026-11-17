@@ -247,6 +247,10 @@ pub(crate) fn reduced_motion() -> bool {
     false
 }
 
+pub(crate) fn secure_input() -> bool {
+    false
+}
+
 pub(crate) fn copy_text(_: &str) -> anyhow::Result<()> {
     bail!(SHOWS_UNSUPPORTED)
 }

@@ -52,6 +52,12 @@ right-modifier delay, and Speakeasy withholds it from other apps while dictation
 Option and Right Command also work without remapping. Speakeasy cannot observe a key that the
 keyboard does not send.
 
+**Secure keyboard entry on Mac:** while a password field has focus, or a terminal's **Secure
+Keyboard Entry** is on, macOS hides key presses from other apps. Fn, Right Option, and Right Command
+still dictate, but F13 cannot start dictation, and Escape, Space, V, S, W, and A don't reach
+Speakeasy, so S, W, and A type into your app. The pill says so as a recording starts. Leave the
+password field, or turn Secure Keyboard Entry off in the terminal's app menu.
+
 **Remove um and uh** removes standalone English hesitation words locally. With Nemotron or Whisper
 it applies, and starts on, once English is the chosen language; other languages keep every word.
 Parakeet detects the language as you speak, so the switch starts off and turning it on tells it to
