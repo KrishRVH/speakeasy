@@ -15,7 +15,7 @@ async fn durable_voiced_publication_retires_checkpoint_after_a_crash_before_disc
         Handoff::default(),
         captured,
         Some(&checkpoint),
-        checkpoint::Publication::Narrated,
+        Completion::Narrated,
         &active,
         || Ok(root.path().to_owned()),
     )?

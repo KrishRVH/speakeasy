@@ -1,6 +1,6 @@
 use std::{
     path::{Path, PathBuf},
-    time::SystemTime,
+    time::{Duration, SystemTime},
 };
 
 use anyhow::{Context as _, anyhow};
@@ -9,9 +9,9 @@ use speakeasy_show::{Framing, NarrationLoss, Typeface, compose, select};
 
 use super::{
     Checkpoint, Checkpointing, Interrupted, SavedShow, recorder::NOTHING_RECORDED, store,
-    store::checkpoint, wsl::Lookup,
+    store::checkpoint::Publication as Completion, wsl::Lookup,
 };
-use crate::runtime::ports::{Footage, PUBLISH_STOPPED, Preservation, Published};
+use crate::runtime::ports::{Footage, PUBLISH_STOPPED, Preservation, Published, Sealed};
 
 pub(crate) struct Publication {
     pub footage: Footage,
@@ -69,8 +69,8 @@ pub(crate) struct Reopened {
 }
 
 pub(crate) struct RecoveredSpeech {
-    pub sealed: crate::runtime::ports::Sealed,
-    pub start: std::time::Duration,
+    pub sealed: Sealed,
+    pub start: Duration,
     pub language: Box<str>,
     pub incomplete: bool,
 }
@@ -119,15 +119,11 @@ fn publish_with(
     let ending = footage.recording.ending;
     let lost = footage.recording.narration_lost;
     let completion = match lost {
-        Some(NarrationLoss::AudioStopped | NarrationLoss::NotTranscribed) => {
-            checkpoint::Publication::Pending
-        },
-        Some(NarrationLoss::Incomplete | NarrationLoss::AudioSilent) | None => {
-            checkpoint::Publication::Narrated
-        },
+        Some(NarrationLoss::AudioStopped | NarrationLoss::NotTranscribed) => Completion::Pending,
+        Some(NarrationLoss::Incomplete | NarrationLoss::AudioSilent) | None => Completion::Narrated,
     };
     let checkpoint = origin.checkpoint();
-    if completion == checkpoint::Publication::Narrated
+    if completion == Completion::Narrated
         && let Some(checkpoint) = checkpoint
     {
         #[expect(
@@ -143,13 +139,13 @@ fn publish_with(
         return Ok(Published::Cancelled);
     }
     if matches!(origin, Origin::Recovered { pending: true, .. })
-        && completion == checkpoint::Publication::Pending
+        && completion == Completion::Pending
     {
         anyhow::bail!(
             "Narration could not be transcribed. The saved Show is unchanged; its audio remains available in Shows until its original expiry."
         );
     }
-    let audio_kept = completion == checkpoint::Publication::Pending
+    let audio_kept = completion == Completion::Pending
         && checkpoint.is_some_and(|checkpoint| checkpoint.has_audio().unwrap_or(true));
     let result = persist(handoff, footage, checkpoint, completion, permit, parent);
     match result {
@@ -266,7 +262,7 @@ fn persist(
     handoff: Handoff<'_>,
     footage: Footage,
     checkpoint: Option<&Checkpoint>,
-    completion: checkpoint::Publication,
+    completion: Completion,
     permit: &InsertPermit,
     parent: impl FnOnce() -> anyhow::Result<PathBuf>,
 ) -> anyhow::Result<Option<Persisted>> {
@@ -322,7 +318,7 @@ fn persist(
         Some(checkpoint) => checkpoint.retain_movie(&mut staged, duration)?,
         None => false,
     };
-    if completion == checkpoint::Publication::Narrated
+    if completion == Completion::Narrated
         && voiced
         && let Some(checkpoint) = checkpoint
     {
