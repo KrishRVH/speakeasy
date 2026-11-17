@@ -2,10 +2,7 @@ use std::{fs::File, io::Write as _, path::Path};
 
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
-use speakeasy_show::{
-    Image, Rect, VideoViewport,
-    locate::{self, PixelRect},
-};
+use speakeasy_show::{Image, PixelRect, Rect, VideoViewport, locate};
 
 use super::super::{found, recall};
 

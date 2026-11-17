@@ -2,7 +2,7 @@ use std::{borrow::Cow, fmt};
 
 use tiny_skia::{IntRect, IntSize, Pixmap, PixmapMut, PixmapRef, PremultipliedColorU8};
 
-use crate::{Error, convert};
+use crate::{Error, PixelRect, convert};
 
 #[derive(Clone, PartialEq)]
 pub struct Image {
@@ -93,6 +93,20 @@ impl Image {
             .and_then(|rectangle| self.pixmap.clone_rect(rectangle))
             .map(|pixmap| Self { pixmap })
             .ok_or_else(|| Error::dimensions(width, height))
+    }
+
+    pub(crate) fn cut(self, region: PixelRect) -> Result<Self, Error> {
+        let whole = PixelRect {
+            left: 0,
+            top: 0,
+            width: self.width(),
+            height: self.height(),
+        };
+        if region == whole {
+            Ok(self)
+        } else {
+            self.cropped(region.left, region.top, region.width, region.height)
+        }
     }
 
     #[cfg(test)]
@@ -292,6 +306,24 @@ mod tests {
         );
         assert_eq!(image.cropped(0, 1, 2, 1).unwrap(), red(2, 1, &[40, 50]));
         assert!(image.cropped(2, 0, 2, 2).is_err());
+    }
+
+    #[test]
+    fn only_a_region_at_the_origin_can_be_the_whole_image() {
+        let image = Image::filled(4, 3, [1, 2, 3]).unwrap();
+        let whole = PixelRect {
+            left: 0,
+            top: 0,
+            width: 4,
+            height: 3,
+        };
+        assert_eq!(image.clone().cut(whole).unwrap(), image);
+        for offset in [
+            PixelRect { left: 1, ..whole },
+            PixelRect { top: 1, ..whole },
+        ] {
+            assert!(image.clone().cut(offset).is_err(), "{offset:?}");
+        }
     }
 
     #[test]

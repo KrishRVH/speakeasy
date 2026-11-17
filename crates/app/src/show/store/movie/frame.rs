@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use serde::Serialize;
 use speakeasy_platform::BgraImage;
 use speakeasy_show::{
-    AnnotationReport, Annotations, Image, Moment, Rect, Typeface, VideoViewport, locate::PixelRect,
+    AnnotationReport, Annotations, Image, Moment, PixelRect, Rect, Typeface, VideoViewport,
 };
 
 use super::{Reading, geometry};

@@ -6,8 +6,7 @@ use tiny_skia::{PixmapPaint, Transform};
 
 use super::{RECENT_INK, RIPPLE_REACH, closed_curve, fill, label, ripple};
 use crate::{
-    Action, Error, Image, Mark, Moment, Recording, Rect, Shape, Stroke, Typeface, ink,
-    locate::PixelRect,
+    Action, Error, Image, Mark, Moment, PixelRect, Recording, Rect, Shape, Stroke, Typeface, ink,
     recording::spaces::{self, Space},
 };
 

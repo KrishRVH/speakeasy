@@ -2,6 +2,8 @@ use std::ops::{Add, Mul, Sub};
 
 use serde::{Deserialize, Serialize};
 
+use crate::convert;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(from = "[f32; 2]", into = "[f32; 2]")]
 pub struct Point {
@@ -241,6 +243,41 @@ impl From<[f32; 4]> for Rect {
 impl From<Rect> for [f32; 4] {
     fn from(rect: Rect) -> Self {
         [rect.left, rect.top, rect.right, rect.bottom]
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct PixelRect {
+    pub left: u32,
+    pub top: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl PixelRect {
+    pub(crate) fn covering(part: Rect, width: u32, height: u32) -> Self {
+        let edge = |fraction: f32, extent: u32, round: fn(f32) -> f32| {
+            convert::pixels(round(fraction * extent as f32)).min(extent)
+        };
+        let left = edge(part.left, width, f32::floor).min(width.saturating_sub(1));
+        let top = edge(part.top, height, f32::floor).min(height.saturating_sub(1));
+        let right = edge(part.right, width, f32::ceil);
+        let bottom = edge(part.bottom, height, f32::ceil);
+        Self {
+            left,
+            top,
+            width: right.saturating_sub(left).max(1),
+            height: bottom.saturating_sub(top).max(1),
+        }
+    }
+
+    pub(crate) fn part(self, width: u32, height: u32) -> Rect {
+        let (across, down) = (width.max(1) as f32, height.max(1) as f32);
+        Rect::from_origin(
+            Point::new(self.left as f32 / across, self.top as f32 / down),
+            self.width as f32 / across,
+            self.height as f32 / down,
+        )
     }
 }
 

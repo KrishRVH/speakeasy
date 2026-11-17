@@ -1,61 +1,12 @@
 use serde::Serialize;
 
 use crate::{
-    Error, Image, Moment, Point, Rect, SourceFrame, Typeface, convert,
+    Error, Image, Moment, PixelRect, Point, Rect, SourceFrame, Typeface, convert,
     draw::{Badge, Corner},
     sheet::{self, Tile},
 };
 
 const THUMBNAIL_EDGE: u32 = 800;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-pub struct PixelRect {
-    pub left: u32,
-    pub top: u32,
-    pub width: u32,
-    pub height: u32,
-}
-
-impl PixelRect {
-    pub(crate) fn covering(part: Rect, width: u32, height: u32) -> Self {
-        let edge = |fraction: f32, extent: u32, round: fn(f32) -> f32| {
-            convert::pixels(round(fraction * extent as f32)).min(extent)
-        };
-        let left = edge(part.left, width, f32::floor).min(width.saturating_sub(1));
-        let top = edge(part.top, height, f32::floor).min(height.saturating_sub(1));
-        let right = edge(part.right, width, f32::ceil);
-        let bottom = edge(part.bottom, height, f32::ceil);
-        Self {
-            left,
-            top,
-            width: right.saturating_sub(left).max(1),
-            height: bottom.saturating_sub(top).max(1),
-        }
-    }
-
-    pub(crate) fn part(self, width: u32, height: u32) -> Rect {
-        let (across, down) = (width.max(1) as f32, height.max(1) as f32);
-        Rect::from_origin(
-            Point::new(self.left as f32 / across, self.top as f32 / down),
-            self.width as f32 / across,
-            self.height as f32 / down,
-        )
-    }
-
-    pub(crate) fn cut(self, image: Image) -> Result<Image, Error> {
-        let whole = Self {
-            left: 0,
-            top: 0,
-            width: image.width(),
-            height: image.height(),
-        };
-        if self == whole {
-            Ok(image)
-        } else {
-            image.cropped(self.left, self.top, self.width, self.height)
-        }
-    }
-}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -152,5 +103,5 @@ pub fn crop_image(image: Image, crop: Option<Rect>) -> Result<(Image, Option<Pix
     let top = (rect.center().y - height / 2.0).clamp(0.0, 1.0 - height);
     let part = Rect::from_origin(Point::new(left, top), width, height);
     let pixels = PixelRect::covering(part, image.width(), image.height());
-    Ok((pixels.cut(image)?, Some(pixels)))
+    Ok((image.cut(pixels)?, Some(pixels)))
 }

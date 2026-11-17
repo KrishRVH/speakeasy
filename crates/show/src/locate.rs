@@ -2,7 +2,7 @@ mod evidence;
 
 use std::{fmt, time::Duration};
 
-pub use evidence::{Cell, Evidence, PixelRect, crop_image};
+pub use evidence::{Cell, Evidence, crop_image};
 
 use crate::{Manifest, Moment, Narration, Span};
 

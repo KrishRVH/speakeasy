@@ -34,7 +34,7 @@ pub use crate::{
     draw::video::{AnnotationReport, Annotations, VideoViewport},
     error::Error,
     framing::Framing,
-    geometry::{Point, Rect},
+    geometry::{PixelRect, Point, Rect},
     image::Image,
     journal::{
         Admission, Entry, Journal, MAX_FRAME_EDGE, Source, SourceError, SourceFrame, Take,

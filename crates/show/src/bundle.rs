@@ -9,13 +9,11 @@ mod read;
 pub use read::Unreadable;
 
 use crate::{
-    Ending, Error, Image, Keyframe, Mark, Moment, Narration, NarrationLoss, Recording, Rect,
-    Selection, Typeface, Wsl,
+    Ending, Error, Image, Keyframe, Mark, Moment, Narration, NarrationLoss, PixelRect, Recording,
+    Rect, Selection, Typeface, Wsl,
     describe::{Count, Marker},
     draw::{self, Corner},
-    framing,
-    locate::PixelRect,
-    parallel,
+    framing, parallel,
     select::Shot,
     sheet::{self, Tile},
 };
@@ -140,7 +138,7 @@ pub fn compose<E: From<Error> + Send>(
                 Ok(match crop {
                     Some(pixels) => {
                         let part = pixels.part(image.width(), image.height());
-                        ((pixels.cut(image)?, drawn.corner(part)), Some(part))
+                        ((image.cut(pixels)?, drawn.corner(part)), Some(part))
                     },
                     None => ((image, drawn.corner(Rect::UNIT)), None),
                 })
