@@ -123,22 +123,20 @@ pub(super) struct Restored {
     pub narrated_copy: bool,
 }
 
-type Delivered = machine::Delivered<Native>;
-
-pub(super) enum Delivery {
+pub(super) enum Delivered {
     Inserted(anyhow::Result<Inserted>),
     Published(anyhow::Result<Published>),
     Abandoned(anyhow::Result<()>),
     Reopened(anyhow::Result<Box<Reopened>>),
 }
 
-impl Delivery {
-    pub(super) fn settled(result: Result<Self, JoinError>) -> Delivered {
-        let Ok(delivery) = result else {
-            return Delivered::Panicked;
+impl Delivered {
+    pub(super) fn settled(result: Result<Self, JoinError>) -> machine::Delivered<Native> {
+        let Ok(delivered) = result else {
+            return machine::Delivered::Panicked;
         };
-        match delivery {
-            Self::Inserted(inserted) => Delivered::Inserted(match inserted {
+        match delivered {
+            Self::Inserted(inserted) => machine::Delivered::Inserted(match inserted {
                 Ok(Inserted::Sent) => machine::Inserted::Sent,
                 Ok(Inserted::Copied(message)) => machine::Inserted::Copied(message.into()),
                 Ok(Inserted::Unavailable(message)) => {
@@ -147,7 +145,7 @@ impl Delivery {
                 Ok(Inserted::Cancelled) => machine::Inserted::Cancelled,
                 Err(_) => machine::Inserted::Failed,
             }),
-            Self::Published(published) => Delivered::Published(match published {
+            Self::Published(published) => machine::Delivered::Published(match published {
                 Ok(Published::Saved {
                     show,
                     ending,
@@ -176,9 +174,9 @@ impl Delivery {
                 Err(error) => machine::Published::Failed(format!("{error:#}")),
             }),
             Self::Abandoned(result) => {
-                Delivered::Abandoned(result.map_err(|error| format!("{error:#}")))
+                machine::Delivered::Abandoned(result.map_err(|error| format!("{error:#}")))
             },
-            Self::Reopened(result) => Delivered::Reopened(
+            Self::Reopened(result) => machine::Delivered::Reopened(
                 result
                     .map(|reopened| reopen(*reopened))
                     .map_err(|error| format!("{error:#}")),

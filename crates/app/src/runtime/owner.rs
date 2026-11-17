@@ -33,7 +33,7 @@ use zeroize::Zeroizing;
 use super::{
     Directive, Meter, PracticeEvent, Recovery, Report, Snapshot, SnapshotEpoch, Wiring,
     device::Device,
-    native::{self, Clip, Delivery, Native},
+    native::{self, Clip, Delivered, Native},
     now,
     ports::{CaptureEvent, Ports, Published, ShowEvent},
     worker::Worker,
@@ -55,8 +55,8 @@ enum Wake {
     Capture(CaptureEvent),
     Show(ShowEvent),
     Worker(Completion<Native>),
-    Delivered(Result<Delivery, JoinError>),
-    Abandoned(SessionId, Result<Delivery, JoinError>),
+    Delivered(Result<Delivered, JoinError>),
+    Abandoned(SessionId, Result<Delivered, JoinError>),
     Retired(Recorder),
     Recover(Recovery),
     Practice(mpsc::Sender<PracticeEvent>),
@@ -91,8 +91,8 @@ struct World<P: Ports> {
     worker: Worker<P::Speech>,
     microphone: Device<P::Microphone>,
     screen: Device<P::Screen>,
-    delivery: Option<JoinHandle<Delivery>>,
-    retiring: Vec<(SessionId, JoinHandle<Delivery>)>,
+    delivery: Option<JoinHandle<Delivered>>,
+    retiring: Vec<(SessionId, JoinHandle<Delivered>)>,
     snapshots: watch::Sender<Snapshot>,
     meter: watch::Sender<Meter>,
     epoch: SnapshotEpoch,
@@ -222,10 +222,10 @@ impl<P: Ports> Owner<P> {
             Wake::Worker(completion) => Event::Worker(completion),
             Wake::Delivered(result) => {
                 world.delivery = None;
-                Event::Delivered(Delivery::settled(result))
+                Event::Delivered(Delivered::settled(result))
             },
             Wake::Abandoned(session, result) => {
-                Event::Abandoned(session, Delivery::settled(result))
+                Event::Abandoned(session, Delivered::settled(result))
             },
             Wake::Retired(recorder) => Event::Retired(recorder),
             Wake::Recover(Recovery {
@@ -305,7 +305,7 @@ impl<P: Ports> Owner<P> {
         let ((), (), (), finished) =
             tokio::join!(worker.stop(), microphone.stop(), screen.stop(), retired);
         for (session, result) in finished {
-            if let Some(show) = self.machine.drained(session, Delivery::settled(result)) {
+            if let Some(show) = self.machine.drained(session, Delivered::settled(result)) {
                 keep_presented(&snapshots, &show);
             }
         }
@@ -488,7 +488,7 @@ impl<P: Ports> Env<Native> for World<P> {
             .ports
             .insert(mem::take(&mut *text), permit.clone(), config.delivery());
         self.delivery = Some(tokio::spawn(
-            async move { Delivery::Inserted(insertion.await) },
+            async move { Delivered::Inserted(insertion.await) },
         ));
     }
 
@@ -565,14 +565,14 @@ impl<P: Ports> Env<Native> for World<P> {
                 )]
                 let _ = receipt.send(completed);
             }
-            Delivery::Published(result)
+            Delivered::Published(result)
         }));
     }
 
     fn reopen(&mut self, interrupted: show::Interrupted) {
         let work = self.ports.reopen(interrupted);
         self.delivery = Some(tokio::spawn(async move {
-            Delivery::Reopened(work.await.map(Box::new))
+            Delivered::Reopened(work.await.map(Box::new))
         }));
     }
 
@@ -604,7 +604,7 @@ impl<P: Ports> Env<Native> for World<P> {
         };
         self.retiring.push((
             session,
-            tokio::spawn(async move { Delivery::Abandoned(checkpoint.release(release).await) }),
+            tokio::spawn(async move { Delivered::Abandoned(checkpoint.release(release).await) }),
         ));
     }
 
