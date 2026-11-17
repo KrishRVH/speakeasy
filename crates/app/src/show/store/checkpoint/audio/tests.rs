@@ -41,6 +41,7 @@ proptest! {
         let audio = decode(bytes.as_slice(), bytes.len()).unwrap();
         prop_assert_eq!(&*audio.pcm, &pcm);
         prop_assert_eq!(audio.cues, vec![(0, 0)]);
+        prop_assert_eq!(audio.rate.get(), 8_000);
         prop_assert_eq!(audio.start, Duration::from_millis(125));
         prop_assert_eq!(audio.language.as_ref(), "en");
         prop_assert!(audio.complete);
