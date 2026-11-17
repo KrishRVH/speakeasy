@@ -884,6 +884,7 @@ enum Setting {
     PreferGpu,
     ReduceMotion,
     RemoveFillers,
+    SpokenSymbols,
     PlaySounds,
     StartAtLogin,
 }
@@ -894,6 +895,7 @@ impl Setting {
             Self::PreferGpu => &mut config.use_gpu,
             Self::ReduceMotion => &mut config.reduced_motion,
             Self::RemoveFillers => &mut config.remove_fillers,
+            Self::SpokenSymbols => &mut config.spoken_symbols,
             Self::PlaySounds => &mut config.play_sounds,
             Self::StartAtLogin => &mut config.start_at_login,
         }
@@ -906,6 +908,7 @@ impl Setting {
             Self::RemoveFillers => {
                 config.fillers(&config.language) == crate::transcript::Fillers::Remove
             },
+            Self::SpokenSymbols => config.spoken_symbols,
             Self::PlaySounds => config.play_sounds,
             Self::StartAtLogin => config.start_at_login,
         }

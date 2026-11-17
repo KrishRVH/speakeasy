@@ -18,7 +18,8 @@ use crate::{
     recognition_terms::Terms,
     theme::Theme,
     transcript::{
-        Fillers,
+        Fillers, Writing,
+        symbols::Symbols,
         vocabulary::{self, Correction},
     },
 };
@@ -59,6 +60,7 @@ pub(crate) struct Config {
     pub language: String,
     pub recognition_terms: Terms,
     pub remove_fillers: bool,
+    pub spoken_symbols: bool,
     pub vocabulary: Vec<Correction>,
     pub presets: Vec<presets::Preset>,
     pub threads: u16,
@@ -83,6 +85,7 @@ impl Default for Config {
             language: "auto".into(),
             recognition_terms: Terms::default(),
             remove_fillers: true,
+            spoken_symbols: true,
             vocabulary: Vec::new(),
             presets: Vec::new(),
             threads: 4,
@@ -151,6 +154,17 @@ impl Config {
             Fillers::Remove
         } else {
             Fillers::Preserve
+        }
+    }
+
+    pub(crate) fn writing(&self, language: &str) -> Writing {
+        Writing {
+            fillers: self.fillers(language),
+            symbols: if self.spoken_symbols {
+                Symbols::Write
+            } else {
+                Symbols::Keep
+            },
         }
     }
 
@@ -250,6 +264,7 @@ impl Config {
             language,
             recognition_terms,
             remove_fillers,
+            spoken_symbols,
             vocabulary,
             presets,
             threads,
@@ -282,6 +297,7 @@ impl Config {
                     || self.microphone != *microphone
                     || self.recognition_terms != *recognition_terms
                     || self.remove_fillers != *remove_fillers
+                    || self.spoken_symbols != *spoken_symbols
                     || self.vocabulary != *vocabulary
                     || self.text_delivery != *text_delivery
                     || self.play_sounds != *play_sounds,

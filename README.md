@@ -65,6 +65,14 @@ Parakeet detects the language as you speak, so the switch starts off and turning
 clean up English; leave it off if you also dictate in a language where "um" is a word. Speech
 containing only removed fillers sends nothing.
 
+**Spoken symbols** write what you name in Prose. Say "new line" or "new paragraph" on its own,
+between pauses, for a line break; "underscore", "forward slash", or "backslash" to join the words
+around it; "open paren"/"close paren", "open bracket"/"close bracket", "open brace"/"close brace",
+or "open quote"/"close quote" to enclose words; and "backtick" before and after a span to quote it
+as code. "A new line of products" keeps its words. Verbatim and the case styles keep every word, and
+turning off **Spoken symbols** under Writing keeps them in Prose too. Pasting keeps line breaks as
+text; with Keep clipboard, an app may treat a typed line break as Return.
+
 **Paste last dictation** in the tray, or V during the shortcut hold on Windows and Mac, inserts
 exactly the last completed text again; V abandons the hold's own recording. It can recover text when
 insertion failed or when the microphone was lost partway through a dictation, whose words Speakeasy
@@ -740,11 +748,11 @@ settings file.
 ### Settings
 
 Settings shows your shortcuts and the speech model in use, and lets you choose the microphone,
-language, recognition hints, GPU use, filler removal, how text is delivered, reduced motion, sounds,
-theme, phrase corrections, and on Windows whether Speakeasy starts at login. Changes apply as you
-make them. **Pause** or **Resume**, **Shows**, **Quit**, and the status line stay at the bottom
-while the rest scrolls. The status says whether dictation is ready, confirms **Saved**, or shows the
-latest error or notice; problems show in the attention color.
+language, recognition hints, GPU use, filler removal, spoken symbols, how text is delivered, reduced
+motion, sounds, theme, phrase corrections, and on Windows whether Speakeasy starts at login. Changes
+apply as you make them. **Pause** or **Resume**, **Shows**, **Quit**, and the status line stay at
+the bottom while the rest scrolls. The status says whether dictation is ready, confirms **Saved**,
+or shows the latest error or notice; problems show in the attention color.
 
 On Windows, assistive tools can read and operate the main Settings buttons, page tabs, switches, and
 phrase-correction and recognition-hint fields. Native acceptance checks their values, focus,

@@ -127,7 +127,7 @@ impl Policy {
         let text = transcript::for_dictation(
             raw,
             Style::Prose,
-            config.fillers(&config.language),
+            config.writing(&config.language),
             &config.vocabulary,
         );
         let score = Score::new(reference, &text);

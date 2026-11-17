@@ -662,6 +662,15 @@ impl Settings {
                 enabled,
             ),
         );
+        let symbols = kit.setting(
+            "Spoken symbols",
+            "In Prose, “new line”, “new paragraph”, “underscore”, “open paren” and similar phrases write their symbol. Verbatim keeps the words.",
+            ui.switch(
+                "Spoken symbols",
+                Setting::SpokenSymbols.is_on(&self.config),
+                Action::Toggle(Setting::SpokenSymbols),
+            ),
+        );
         #[cfg(not(target_os = "linux"))]
         let delivery = {
             use crate::config::TextDelivery;
@@ -694,7 +703,11 @@ impl Settings {
         );
         kit.section(
             "Writing",
-            vec![fillers.into_any_element(), delivery.into_any_element()],
+            vec![
+                fillers.into_any_element(),
+                symbols.into_any_element(),
+                delivery.into_any_element(),
+            ],
         )
     }
 }

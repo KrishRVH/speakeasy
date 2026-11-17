@@ -3,7 +3,7 @@ use serde::{
     de::{Error as _, Unexpected},
 };
 
-use super::Fillers;
+use super::{Fillers, symbols::Symbols};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Style {
@@ -65,6 +65,13 @@ impl Style {
         match self {
             Self::Verbatim => Fillers::Preserve,
             Self::Prose | Self::Identifier(_) => configured,
+        }
+    }
+
+    pub(crate) const fn symbols(self, configured: Symbols) -> Symbols {
+        match self {
+            Self::Prose => configured,
+            Self::Verbatim | Self::Identifier(_) => Symbols::Keep,
         }
     }
 

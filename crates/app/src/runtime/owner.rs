@@ -480,7 +480,7 @@ impl<P: Ports> Env<Native> for World<P> {
         let text = transcript::for_dictation(
             &heard,
             style,
-            config.fillers(&config.language),
+            config.writing(&config.language),
             &config.vocabulary,
         );
         (!text.is_empty()).then(|| Zeroizing::new(text))

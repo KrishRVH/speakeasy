@@ -1,9 +1,11 @@
 pub(crate) mod credits;
 pub(crate) mod style;
+pub(crate) mod symbols;
 pub(crate) mod vocabulary;
 
 use speakeasy_show::{Narration, Word};
 use style::Style;
+use symbols::Symbols;
 use vocabulary::{Correction, Vocabulary};
 
 const PAUSES: [char; 4] = [',', ';', ':', '…'];
@@ -15,13 +17,24 @@ pub(crate) enum Fillers {
     Remove,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Writing {
+    pub fillers: Fillers,
+    pub symbols: Symbols,
+}
+
 pub(crate) fn for_dictation(
     heard: &str,
     style: Style,
-    configured: Fillers,
+    configured: Writing,
     corrections: &[Correction],
 ) -> String {
-    style.apply(Vocabulary::new(corrections).text(for_insertion(heard, style.fillers(configured))))
+    let corrected =
+        Vocabulary::new(corrections).text(for_insertion(heard, style.fillers(configured.fillers)));
+    style.apply(match style.symbols(configured.symbols) {
+        Symbols::Write => symbols::written(&corrected),
+        Symbols::Keep => corrected,
+    })
 }
 
 fn for_insertion(text: &str, fillers: Fillers) -> String {
@@ -96,6 +109,7 @@ mod tests {
             separator in prop::sample::select(vec![" ", "\t", "\r\n", "\u{a0}", "\u{2003}"]),
             style in prop::sample::select(Style::ALL.to_vec()),
             remove in any::<bool>(),
+            write in any::<bool>(),
         ) {
             let heard = tokens.join(separator);
             let corrections = [
@@ -103,11 +117,56 @@ mod tests {
                 Correction { heard: "cube um control".into(), written: "literal phrase".into() },
             ];
             let fillers = if remove { Fillers::Remove } else { Fillers::Preserve };
+            let symbols = if write { Symbols::Write } else { Symbols::Keep };
+            let writing = Writing { fillers, symbols };
             prop_assert_eq!(
-                for_dictation(&for_insertion(&heard, Fillers::Preserve), style, fillers, &corrections),
-                for_dictation(&heard, style, fillers, &corrections)
+                for_dictation(&for_insertion(&heard, Fillers::Preserve), style, writing, &corrections),
+                for_dictation(&heard, style, writing, &corrections)
             );
         }
+    }
+
+    #[test]
+    fn only_prose_writes_spoken_symbols_and_after_the_corrections() {
+        let corrections = [Correction {
+            heard: "new line".into(),
+            written: "newline".into(),
+        }];
+        let heard = "Fix bug. New line. Then test.";
+        let written = Writing {
+            fillers: Fillers::Preserve,
+            symbols: Symbols::Write,
+        };
+        assert_eq!(
+            for_dictation(heard, Style::Prose, written, &[]),
+            "Fix bug.\nThen test."
+        );
+        assert_eq!(
+            for_dictation(heard, Style::Prose, written, &corrections),
+            "Fix bug.\nThen test."
+        );
+        assert_eq!(
+            for_dictation(
+                heard,
+                Style::Prose,
+                Writing {
+                    symbols: Symbols::Keep,
+                    ..written
+                },
+                &[]
+            ),
+            heard
+        );
+        assert_eq!(for_dictation(heard, Style::Verbatim, written, &[]), heard);
+        assert_eq!(
+            for_dictation(
+                "user underscore id",
+                Style::Identifier(style::Case::Camel),
+                written,
+                &[]
+            ),
+            "userUnderscoreId"
+        );
     }
 
     #[test]

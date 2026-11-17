@@ -135,7 +135,9 @@ module unless a test file is named.
   keeps the worker.
 - **Transcript cleanup**: [transcript.rs](../crates/app/src/transcript.rs), with the filler policy
   in `Config::fillers` ([config.rs](../crates/app/src/config.rs)). `for_dictation` composes filler
-  removal, phrase corrections, and the session's output style for insertion and paired replay.
+  removal, phrase corrections, spoken symbols, and the session's output style for insertion and
+  paired replay. [symbols.rs](../crates/app/src/transcript/symbols.rs) writes symbols only in Prose,
+  after corrections, and a spoken line break must stand between punctuation or the text's ends.
   [vocabulary.rs](../crates/app/src/transcript/vocabulary.rs) validates and compiles per-request
   phrase corrections after filler removal, preserving timed-word spans. Its tests cover word
   boundaries, non-chaining replacements, duplicate validation, and timing. Whisper invents subtitle
