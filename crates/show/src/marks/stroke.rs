@@ -351,30 +351,59 @@ fn arrival(shaft: &[Point]) -> Option<Point> {
     (along >= 1.0).then(|| (tip - back) * along.recip())
 }
 
+#[derive(Clone, Copy)]
+enum Travel {
+    Outward {
+        from: usize,
+        to: usize,
+        farthest: f32,
+    },
+    Inward {
+        from: usize,
+        nearest: f32,
+    },
+}
+
 fn barbs(head: &[Point], slack: f32) -> Vec<RangeInclusive<usize>> {
     let Some(&tip) = head.first() else {
         return Vec::new();
     };
     let mut barbs = Vec::new();
-    let (mut from, mut nearest) = (0, 0.0);
-    let (mut to, mut farthest) = (0, 0.0);
-    let mut outward = true;
+    let mut travel = Travel::Outward {
+        from: 0,
+        to: 0,
+        farthest: 0.0,
+    };
     for (index, &point) in head.iter().enumerate() {
         let reach = tip.distance(point);
-        if outward {
-            if reach >= farthest {
-                (to, farthest) = (index, reach);
-            } else if reach < farthest - slack {
+        travel = match travel {
+            Travel::Outward { from, farthest, .. } if reach >= farthest => Travel::Outward {
+                from,
+                to: index,
+                farthest: reach,
+            },
+            Travel::Outward { from, to, farthest } if reach < farthest - slack => {
                 barbs.push(from..=to);
-                (from, nearest, outward) = (index, reach, false);
-            }
-        } else if reach <= nearest {
-            (from, nearest) = (index, reach);
-        } else if reach > nearest + slack {
-            (to, farthest, outward) = (index, reach, true);
-        }
+                Travel::Inward {
+                    from: index,
+                    nearest: reach,
+                }
+            },
+            Travel::Inward { nearest, .. } if reach <= nearest => Travel::Inward {
+                from: index,
+                nearest: reach,
+            },
+            Travel::Inward { from, nearest } if reach > nearest + slack => Travel::Outward {
+                from,
+                to: index,
+                farthest: reach,
+            },
+            unchanged => unchanged,
+        };
     }
-    if outward && farthest >= slack {
+    if let Travel::Outward { from, to, farthest } = travel
+        && farthest >= slack
+    {
         barbs.push(from..=to);
     }
     barbs
