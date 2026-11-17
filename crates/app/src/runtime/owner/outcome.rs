@@ -21,7 +21,7 @@ const REPLAY_HINT: &str = if cfg!(target_os = "macos") {
 const WITHHELD_HINT: &str = if cfg!(any(target_os = "macos", target_os = "windows")) {
     " Hold the dictation shortcut and press V to paste your words."
 } else {
-    " Choose Paste last dictation in the tray to paste your words."
+    " Choose Paste last dictation in the tray, or run speakeasy paste-last."
 };
 
 pub(super) fn message(outcome: &Outcome<Native>, notice: Option<&Notice<Native>>) -> String {

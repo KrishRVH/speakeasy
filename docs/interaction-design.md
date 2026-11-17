@@ -190,11 +190,12 @@ expires: its commands and status line stay in view below the scrolling controls.
 
 Paste last dictation is available between sessions when one result remains in memory. A dictation
 whose microphone is lost after speech keeps its words there instead of inserting them, and its
-notice names the failure and how to paste them: V during a hold on Windows/macOS, the tray on Linux.
-V during an ordinary Windows/macOS hold abandons that pending recording and pastes the previous
-result; repeated keydown events do not repeat insertion. Windows/macOS also offer Dictation style
-and saved Preset submenus. Style selects the next recording and appears in the pill when non-Prose.
-Preset choices require idle dictation and last for the session without changing saved settings.
+notice names the failure and how to paste them: V during a hold on Windows/macOS, and on Linux the
+tray or `speakeasy paste-last`. V during an ordinary Windows/macOS hold abandons that pending
+recording and pastes the previous result; repeated keydown events do not repeat insertion.
+Windows/macOS also offer Dictation style and saved Preset submenus. Style selects the next recording
+and appears in the pill when non-Prose. Preset choices require idle dictation and last for the
+session without changing saved settings.
 
 ## Reviewing Shows
 

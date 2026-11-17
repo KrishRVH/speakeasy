@@ -165,11 +165,16 @@ async fn a_dictation_that_loses_its_microphone_waits_for_paste_last() -> anyhow:
     h.phase(Phase::Notice).await?;
     let notice = h.snapshot();
     assert!(notice.last_dictation);
+    let route = if cfg!(target_os = "linux") {
+        "or run speakeasy paste-last."
+    } else {
+        "press V to paste your words."
+    };
     assert!(
         notice
             .message
             .starts_with("The microphone was disconnected.")
-            && notice.message.ends_with("to paste your words."),
+            && notice.message.ends_with(route),
         "{}",
         notice.message
     );
