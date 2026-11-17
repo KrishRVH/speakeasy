@@ -145,38 +145,32 @@ pub fn pick(moments: &[Moment], window: Span, anchor: Moment, most: usize) -> Sa
         })
         .max()
         .unwrap_or_default();
-    let limit = most.min(available.len());
-    if limit == available.len() {
+    if available.len() <= most {
         return Samples {
             times: available.to_vec(),
             carried_in,
             longest_gap,
         };
     }
-    let mut chosen = Vec::with_capacity(limit);
-    if limit > 0 {
-        chosen.push(
-            available
-                .partition_point(|at| *at <= anchor)
-                .saturating_sub(1),
-        );
-        for index in [0, available.len().saturating_sub(1)] {
-            if chosen.len() < limit && !chosen.contains(&index) {
-                chosen.push(index);
-            }
+    let anchored = available
+        .partition_point(|at| *at <= anchor)
+        .saturating_sub(1);
+    let mut chosen = Vec::with_capacity(most);
+    for index in [anchored, 0, available.len().saturating_sub(1)] {
+        if chosen.len() < most && !chosen.contains(&index) {
+            chosen.push(index);
         }
-
-        while chosen.len() < limit {
-            chosen.sort_unstable();
-            let next = chosen
-                .array_windows::<2>()
-                .max_by_key(|[one, two]| two.saturating_sub(*one))
-                .map(|[one, two]| one.midpoint(*two));
-            let Some(next) = next.filter(|next| !chosen.contains(next)) else {
-                break;
-            };
-            chosen.push(next);
-        }
+    }
+    while chosen.len() < most {
+        chosen.sort_unstable();
+        let next = chosen
+            .array_windows::<2>()
+            .max_by_key(|[one, two]| two.saturating_sub(*one))
+            .map(|[one, two]| one.midpoint(*two));
+        let Some(next) = next.filter(|next| !chosen.contains(next)) else {
+            break;
+        };
+        chosen.push(next);
     }
     chosen.sort_unstable();
     Samples {
