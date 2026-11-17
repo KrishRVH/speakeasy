@@ -387,11 +387,6 @@ impl Checkpoint {
     }
 }
 
-pub(crate) struct Listing {
-    pub shows: Vec<Interrupted>,
-    pub problems: Vec<Problem>,
-}
-
 pub(super) fn discard_published(
     parent: &Path,
     directory: &Path,
@@ -422,6 +417,11 @@ pub(super) fn discard_published(
     }
     checkpoint.discard()?;
     Ok(Some(path))
+}
+
+pub(crate) struct Listing {
+    pub shows: Vec<Interrupted>,
+    pub problems: Vec<Problem>,
 }
 
 pub(crate) struct Problem {
