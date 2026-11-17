@@ -122,8 +122,11 @@ impl<C: Codec> Encoder<C> {
             return Ok(ControlFlow::Continue(()));
         };
         let first = self.coverage.map_or(0, |coverage| coverage.frames);
-        let mut index = first;
-        while index < FRAME_LIMIT && end.admits(C::CLOCK, C::CLOCK.time(index)) {
+        for index in first..FRAME_LIMIT {
+            let at = C::CLOCK.time(index);
+            if !end.admits(C::CLOCK, at) {
+                break;
+            }
             if observer.cancelled() {
                 return Ok(ControlFlow::Break(()));
             }
@@ -131,7 +134,6 @@ impl<C: Codec> Encoder<C> {
                 index.saturating_sub(first) < CATCH_UP_LIMIT,
                 "Video encoding fell behind; retained frames remain available"
             );
-            let at = C::CLOCK.time(index);
             let content = self.canvas.content();
             let part = self.canvas.part();
             if self.geometry != Some((content, part)) {
@@ -142,15 +144,14 @@ impl<C: Codec> Encoder<C> {
             }
             if !self
                 .codec
-                .write(self.canvas.held(), index, &mut || observer.cancelled())?
+                .write(self.canvas.pixels(), index, &mut || observer.cancelled())?
             {
                 return Ok(ControlFlow::Break(()));
             }
-            index = index.saturating_add(1);
             self.coverage = Some(Coverage {
                 last: capture,
                 at,
-                frames: index,
+                frames: index.saturating_add(1),
             });
             self.codec.checkpoint(at)?;
         }

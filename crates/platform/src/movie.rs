@@ -217,7 +217,7 @@ impl MovieTarget {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_time()
             .build()?;
-        let accepted = runtime.block_on(async {
+        let Some(accepted) = runtime.block_on(async {
             tokio::select! {
                 biased;
                 _cancelled = self.cancelled.recv() => None,
@@ -225,14 +225,13 @@ impl MovieTarget {
                 () = tokio::time::sleep_until(tokio::time::Instant::from_std(self.deadline)) => None,
                 accepted = answer.recv() => Some(accepted.unwrap_or(false)),
             }
-        });
-        if self.cancelled() || stopping.is_closed() || accepted.is_none() {
+        }) else {
+            return Ok(false);
+        };
+        if self.cancelled() || stopping.is_closed() {
             return Ok(false);
         }
-        anyhow::ensure!(
-            accepted == Some(true),
-            "Video crop geometry could not be saved"
-        );
+        anyhow::ensure!(accepted, "Video crop geometry could not be saved");
         Ok(true)
     }
 
@@ -337,6 +336,15 @@ pub(crate) mod tests {
         assert_eq!(remainder, b"");
         assert_eq!(pixels.len(), width.checked_mul(height).unwrap());
         assert!(pixels.iter().all(|pixel| pixel[3] == 255));
+        let near = |x: usize, y: usize, expected: [u8; 3]| {
+            let row = height.checked_mul(y).unwrap() / 240;
+            let column = width.checked_mul(x).unwrap() / 320;
+            let offset = row.checked_mul(width).unwrap().checked_add(column).unwrap();
+            pixels[offset][..3]
+                .iter()
+                .zip(expected)
+                .all(|(actual, expected)| actual.abs_diff(expected) < 12)
+        };
         for (x, y, expected) in [
             (20, 20, [20, 30, 230]),
             (300, 20, [30, 220, 20]),
@@ -348,35 +356,22 @@ pub(crate) mod tests {
                 [if index.is_multiple_of(2) { 20 } else { 230 }, 80, 150],
             ),
         ] {
-            let row = height.checked_mul(y).unwrap() / 240;
-            let column = width.checked_mul(x).unwrap() / 320;
-            let offset = row.checked_mul(width).unwrap().checked_add(column).unwrap();
             assert!(
-                pixels[offset][..3]
-                    .iter()
-                    .zip(expected)
-                    .all(|(actual, expected)| actual.abs_diff(expected) < 12),
+                near(x, y, expected),
                 "Synthetic pixel at ({x}, {y}) changed color, orientation, or sample"
             );
         }
         if frame.size == [1280, 720] {
-            for (x, shade) in [(200, 64_u8), (250, 128)] {
-                let row = height.checked_mul(200).unwrap() / 240;
-                let column = width.checked_mul(x).unwrap() / 320;
-                let offset = row.checked_mul(width).unwrap().checked_add(column).unwrap();
+            for (x, shade) in [(200, 64), (250, 128)] {
                 assert!(
-                    pixels[offset][..3]
-                        .iter()
-                        .all(|value| value.abs_diff(shade) < 12),
+                    near(x, 200, [shade; 3]),
                     "HD neutral midtone changed its transfer or range"
                 );
             }
         }
     }
 
-    #[tokio::test]
-    async fn the_session_deadline_cancels_an_unused_target_without_releasing_its_lease() {
-        let (control, target) = MovieControl::new(PathBuf::from("synthetic.mp4"), Instant::now());
+    async fn acknowledges_only_once_the_lease_drops(control: MovieControl, target: MovieTarget) {
         assert!(target.cancelled());
         let mut waiting = std::pin::pin!(control.next());
         assert!(
@@ -387,6 +382,12 @@ pub(crate) mod tests {
         );
         drop(target);
         assert!(waiting.await.is_none());
+    }
+
+    #[tokio::test]
+    async fn the_session_deadline_cancels_an_unused_target_without_releasing_its_lease() {
+        let (control, target) = MovieControl::new(PathBuf::from("synthetic.mp4"), Instant::now());
+        acknowledges_only_once_the_lease_drops(control, target).await;
     }
 
     #[tokio::test]
@@ -396,16 +397,7 @@ pub(crate) mod tests {
             Instant::now().checked_add(crate::PATIENCE).unwrap(),
         );
         control.request_stop();
-        assert!(target.cancelled());
-        let mut waiting = std::pin::pin!(control.next());
-        assert!(
-            waiting
-                .as_mut()
-                .poll(&mut Context::from_waker(Waker::noop()))
-                .is_pending()
-        );
-        drop(target);
-        assert!(waiting.await.is_none());
+        acknowledges_only_once_the_lease_drops(control, target).await;
     }
 
     #[cfg(target_os = "windows")]

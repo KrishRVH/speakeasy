@@ -6,12 +6,12 @@ fn resized_frames_clear_old_pixels_and_keep_aspect_ratio() -> anyhow::Result<()>
     let mut canvas = Canvas::new([4, 4])?;
     canvas.paint(&frame(4, 4, 200))?;
     canvas.paint(&frame(4, 2, 100))?;
-    let pixels = canvas.held();
+    let pixels = canvas.pixels();
     assert_eq!(&pixels[..16], &[0; 16]);
     assert_eq!(&pixels[16..48], &[100, 100, 100, 255].repeat(8));
     assert_eq!(&pixels[48..], &[0; 16]);
     canvas.paint(&frame(2, 4, 75))?;
-    let pixels = canvas.held();
+    let pixels = canvas.pixels();
     for row in pixels.as_chunks::<16>().0 {
         assert_eq!(&row[..4], &[0; 4]);
         assert_eq!(&row[4..12], &[75, 75, 75, 255].repeat(2));
@@ -29,7 +29,7 @@ fn resized_frames_clear_old_pixels_and_keep_aspect_ratio() -> anyhow::Result<()>
     canvas.paint(&grid)?;
     assert!(
         canvas
-            .held()
+            .pixels()
             .as_chunks::<4>()
             .0
             .iter()
@@ -51,7 +51,7 @@ fn content_rectangles_equal_painted_pixels_after_odd_and_tiny_resizes() -> anyho
         let columns = usize::try_from(columns)?;
         let [left, top, width, height] = canvas.content();
         assert!(width > 0 && height > 0);
-        for (index, pixel) in canvas.held().as_chunks::<4>().0.iter().enumerate() {
+        for (index, pixel) in canvas.pixels().as_chunks::<4>().0.iter().enumerate() {
             let x = u32::try_from(index % columns)?;
             let y = u32::try_from(index / columns)?;
             let inside = (left..left + width).contains(&x) && (top..top + height).contains(&y);

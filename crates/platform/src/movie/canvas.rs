@@ -14,11 +14,7 @@ pub(crate) struct Canvas {
 
 impl Canvas {
     pub(crate) fn new(size: [u32; 2]) -> anyhow::Result<Self> {
-        ensure!(
-            size.into_iter()
-                .all(|edge| (1..=MAX_FRAME_EDGE).contains(&edge)),
-            "Invalid movie canvas"
-        );
+        ensure!(within_limits(size), "Invalid movie canvas");
         let size = size.map(|edge| edge.saturating_add(1) & !1);
         let bytes = length(size)?;
         Ok(Self {
@@ -33,7 +29,7 @@ impl Canvas {
         self.size
     }
 
-    pub(crate) fn held(&self) -> &[u8] {
+    pub(crate) fn pixels(&self) -> &[u8] {
         &self.pixels
     }
 
@@ -48,10 +44,7 @@ impl Canvas {
     pub(crate) fn paint(&mut self, frame: &Frame) -> anyhow::Result<()> {
         let source = [frame.width, frame.height];
         ensure!(
-            source
-                .into_iter()
-                .all(|edge| (1..=MAX_FRAME_EDGE).contains(&edge))
-                && length(source)? == frame.bgra.len(),
+            within_limits(source) && length(source)? == frame.bgra.len(),
             "Invalid movie frame"
         );
         if source == self.size {
@@ -64,6 +57,11 @@ impl Canvas {
         self.part = frame.part;
         Ok(())
     }
+}
+
+fn within_limits(size: [u32; 2]) -> bool {
+    size.into_iter()
+        .all(|edge| (1..=MAX_FRAME_EDGE).contains(&edge))
 }
 
 fn length([width, height]: [u32; 2]) -> anyhow::Result<usize> {

@@ -10,8 +10,9 @@ use std::{
 use async_channel::Receiver;
 
 use super::{
-    RECORDING_LIMIT, canvas,
-    encode::{Encoder as Timeline, End, Observer},
+    RECORDING_LIMIT,
+    canvas::Canvas,
+    encode::{self, End, Observer},
 };
 #[cfg(target_os = "macos")]
 use crate::macos::movie::encode::Codec;
@@ -19,7 +20,7 @@ use crate::macos::movie::encode::Codec;
 use crate::windows::movie::encoder::Codec;
 use crate::{Frame, MovieTarget, Part};
 
-type Encoder = Timeline<Codec>;
+type Encoder = encode::Encoder<Codec>;
 
 pub(crate) const INTERVAL: Duration = Duration::from_nanos(33_333_334);
 
@@ -134,7 +135,7 @@ impl Recording {
         frame: &Frame,
         stopping: &Receiver<Infallible>,
     ) -> anyhow::Result<Option<Self>> {
-        let canvas = canvas::Canvas::new([frame.width, frame.height])?;
+        let canvas = Canvas::new([frame.width, frame.height])?;
         if target.cancelled() || !target.begin(frame.at, canvas.size(), stopping) {
             return Ok(None);
         }
@@ -181,19 +182,16 @@ impl Recording {
     }
 
     fn advance(&mut self, now: Instant, stopping: &Receiver<Infallible>) -> anyhow::Result<bool> {
+        let Some(encoder) = &mut self.encoder else {
+            return Ok(true);
+        };
         let target = &self.target;
-        if let Some(encoder) = &mut self.encoder {
-            return Ok(encoder
-                .advance(
-                    End::Through(
-                        now.min(target.deadline())
-                            .saturating_duration_since(self.first),
-                    ),
-                    &mut Publication { target, stopping },
-                )?
-                .is_continue());
-        }
-        Ok(true)
+        let through = now
+            .min(target.deadline())
+            .saturating_duration_since(self.first);
+        Ok(encoder
+            .advance(End::Through(through), &mut Publication { target, stopping })?
+            .is_continue())
     }
 }
 
