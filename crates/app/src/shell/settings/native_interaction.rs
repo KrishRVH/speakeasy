@@ -67,8 +67,10 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     view.config.language = "de".into();
                     view.own_engine = true;
                     view.finish_save(
-                        None,
-                        Some("Synthetic save failure".into()),
+                        SaveOutcome::Failed {
+                            error: "Synthetic save failure".into(),
+                            kept: None,
+                        },
                         ConfigEpoch::default(),
                         cx,
                     );

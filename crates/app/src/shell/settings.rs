@@ -22,7 +22,7 @@ use updates::Update;
 
 use super::{
     Services, demo, request_quit,
-    save::{SaveProgress, SaveQueue, SavedConfig},
+    save::{SaveOutcome, SaveProgress, SaveQueue, SavedConfig},
     window::choose_file,
 };
 use crate::{
@@ -677,13 +677,9 @@ impl Settings {
     fn advance_save(&mut self, progress: SaveProgress, cx: &mut Context<'_, Self>) {
         match progress {
             SaveProgress::Writing(result) => self.saving = Some(Self::follow_write(result, cx)),
-            SaveProgress::Finished {
-                saved,
-                error,
-                epoch,
-            } => {
+            SaveProgress::Finished { outcome, epoch } => {
                 self.saving = None;
-                self.finish_save(saved, error, epoch, cx);
+                self.finish_save(outcome, epoch, cx);
             },
         }
     }
@@ -708,11 +704,14 @@ impl Settings {
 
     fn finish_save(
         &mut self,
-        saved: Option<Box<SavedConfig>>,
-        error: Option<String>,
+        outcome: SaveOutcome,
         epoch: ConfigEpoch,
         cx: &mut Context<'_, Self>,
     ) {
+        let (saved, error) = match outcome {
+            SaveOutcome::Saved(saved) => (Some(saved), None),
+            SaveOutcome::Failed { error, kept } => (kept, Some(error)),
+        };
         let applied = saved.map(|saved| {
             saved.update_draft(&mut self.config);
             cx.update_global::<Services, _>(|services, cx| {

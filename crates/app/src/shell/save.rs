@@ -26,9 +26,16 @@ impl SavedConfig {
 pub(super) enum SaveProgress {
     Writing(Receiver<anyhow::Result<SavedConfig>>),
     Finished {
-        saved: Option<Box<SavedConfig>>,
-        error: Option<String>,
+        outcome: SaveOutcome,
         epoch: ConfigEpoch,
+    },
+}
+
+pub(super) enum SaveOutcome {
+    Saved(Box<SavedConfig>),
+    Failed {
+        error: String,
+        kept: Option<Box<SavedConfig>>,
     },
 }
 
@@ -73,21 +80,26 @@ impl SaveQueue {
 
     pub(super) fn finish(&mut self, result: anyhow::Result<SavedConfig>) -> SaveProgress {
         let queued = self.writing.take().and_then(|running| running.queued);
-        let error = match result {
-            Ok(saved) => {
-                self.durable = saved.held();
-                self.opened = None;
-                self.saved = Some(saved);
-                None
-            },
-            Err(error) => Some(format!("{error:#}")),
-        };
+        if let Ok(saved) = &result {
+            self.durable = saved.held();
+            self.opened = None;
+        }
         if let Some(next) = queued {
+            if let Ok(saved) = result {
+                self.saved = Some(saved);
+            }
             return self.start(next);
         }
+        let kept = self.saved.take();
+        let outcome = match result {
+            Ok(saved) => SaveOutcome::Saved(Box::new(saved)),
+            Err(error) => SaveOutcome::Failed {
+                error: format!("{error:#}"),
+                kept: kept.map(Box::new),
+            },
+        };
         SaveProgress::Finished {
-            saved: self.saved.take().map(Box::new),
-            error,
+            outcome,
             epoch: self.epoch,
         }
     }
