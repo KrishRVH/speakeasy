@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use speakeasy_core::gesture::RECORDING_LIMIT;
 use speakeasy_show::{Moment, MovieError, MoviePrefix};
 
-use super::{recall, sync_directory};
+use super::{entry_exists, found, recall, sync_directory};
 
 pub(crate) const FILE: &str = "recording.mp4";
 pub(crate) const HEADER: &str = "recording.json";
@@ -239,22 +239,16 @@ pub(super) enum CheckpointMovie {
 }
 
 pub(super) fn checkpoint(directory: &Path) -> anyhow::Result<CheckpointMovie> {
-    let absent = match fs::symlink_metadata(directory.join(FILE)) {
-        Ok(metadata) => metadata.is_file() && metadata.len() == 0,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
-        Err(error) => return Err(error.into()),
-    };
+    let absent = found(fs::symlink_metadata(directory.join(FILE)))?
+        .is_none_or(|metadata| metadata.is_file() && metadata.len() == 0);
     if absent {
-        match fs::symlink_metadata(directory.join(HEADER)) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(CheckpointMovie::Absent);
-            },
-            Err(error) => return Err(error.into()),
-            Ok(metadata) => anyhow::ensure!(
-                metadata.is_file() && metadata.len() <= HEADER_LIMIT,
-                "Movie timing must be a regular bounded file"
-            ),
-        }
+        let Some(header) = found(fs::symlink_metadata(directory.join(HEADER)))? else {
+            return Ok(CheckpointMovie::Absent);
+        };
+        anyhow::ensure!(
+            header.is_file() && header.len() <= HEADER_LIMIT,
+            "Movie timing must be a regular bounded file"
+        );
         return Ok(CheckpointMovie::Unavailable);
     }
     match open(directory) {
@@ -290,16 +284,12 @@ pub(crate) fn inspect(directory: &Path) -> anyhow::Result<Option<Inspected>> {
 }
 
 pub(super) fn open(directory: &Path) -> anyhow::Result<Option<Reading>> {
-    match fs::symlink_metadata(directory.join(FILE)) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return match fs::symlink_metadata(directory.join(HEADER)) {
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-                Err(error) => Err(error.into()),
-                Ok(_) => Err(anyhow::anyhow!("Movie timing exists without its video")),
-            };
-        },
-        Err(error) => return Err(error.into()),
-        Ok(_) => {},
+    if !entry_exists(&directory.join(FILE))? {
+        anyhow::ensure!(
+            !entry_exists(&directory.join(HEADER))?,
+            "Movie timing exists without its video"
+        );
+        return Ok(None);
     }
     recall::regular_file(directory, FILE, MoviePrefix::FILE_LIMIT)?;
     let mut metadata = read_metadata(directory)?;

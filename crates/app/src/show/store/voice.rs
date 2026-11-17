@@ -11,7 +11,7 @@ use serde::Serialize;
 use super::{
     KEPT_FOR, Staged,
     checkpoint::audio::{self, KeptAudio},
-    recall, remove_if_present, sync_directory,
+    found, recall, remove_if_present, sync_directory,
 };
 
 const FILE: &str = "voice.log";
@@ -87,10 +87,8 @@ pub(super) fn retain(
 }
 
 fn deadline(directory: &Path) -> io::Result<Option<SystemTime>> {
-    let bytes = match recall::read_file(directory, EXPIRY, 8) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error),
+    let Some(bytes) = found(recall::read_file(directory, EXPIRY, 8))? else {
+        return Ok(None);
     };
     let bytes: [u8; 8] = bytes
         .try_into()

@@ -243,9 +243,10 @@ pub(crate) fn attend(report: impl Fn(&anyhow::Error, &mut App) + 'static, cx: &A
 }
 
 pub(super) fn sweep(parent: &Path, now: SystemTime) -> anyhow::Result<()> {
-    let entries = match fs::read_dir(parent) {
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
-        entries => entries.with_context(|| format!("Cannot read {}", parent.display()))?,
+    let Some(entries) =
+        found(fs::read_dir(parent)).with_context(|| format!("Cannot read {}", parent.display()))?
+    else {
+        return Ok(());
     };
     let checkpoints = checkpoint::sweep(parent, now);
     let cutoff = utc_stamp(now.checked_sub(KEPT_FOR).unwrap_or(SystemTime::UNIX_EPOCH));
@@ -254,9 +255,7 @@ pub(super) fn sweep(parent: &Path, now: SystemTime) -> anyhow::Result<()> {
     for entry in entries {
         match entry.and_then(|entry| retire_expired(parent, &entry, &cutoff, now)) {
             Ok(Cleanup::Remove(show)) => {
-                if let Err(error) = fs::remove_dir_all(show)
-                    && error.kind() != ErrorKind::NotFound
-                {
+                if found(fs::remove_dir_all(show)).is_err() {
                     stuck = true;
                 }
             },
@@ -356,19 +355,21 @@ pub(super) fn pinned(path: &Path) -> io::Result<bool> {
     entry_exists(&path.join(PIN))
 }
 
-fn entry_exists(path: &Path) -> io::Result<bool> {
-    match fs::symlink_metadata(path) {
-        Ok(_) => Ok(true),
-        Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
+fn found<T>(result: io::Result<T>) -> io::Result<Option<T>> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
     }
 }
 
+fn entry_exists(path: &Path) -> io::Result<bool> {
+    Ok(found(fs::symlink_metadata(path))?.is_some())
+}
+
 fn remove_if_present(path: &Path) -> io::Result<()> {
-    match fs::remove_file(path) {
-        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
-        removed => removed,
-    }
+    found(fs::remove_file(path))?;
+    Ok(())
 }
 
 fn stamp(name: &str) -> Option<&str> {

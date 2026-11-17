@@ -42,10 +42,8 @@ pub(crate) fn managed_id(parent: &Path, directory: &Path) -> io::Result<Option<S
     let Some(container) = directory.parent() else {
         return Ok(None);
     };
-    let managed = match parent.canonicalize() {
-        Ok(managed) => managed,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error),
+    let Some(managed) = super::found(parent.canonicalize())? else {
+        return Ok(None);
     };
 
     Ok((container.canonicalize()? == managed

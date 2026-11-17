@@ -1,6 +1,6 @@
 use std::{
     fmt, fs,
-    io::{self, ErrorKind, Read as _},
+    io::{self, Read as _},
     path::{Path, PathBuf},
 };
 
@@ -9,7 +9,7 @@ use speakeasy_show::{Bundle, Manifest, Unreadable};
 
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
 use super::SavedShow;
-use super::{PIN, pinned, stamp};
+use super::{PIN, found, pinned, stamp};
 
 pub(super) const SUMMARY_LIMIT: u64 = 1 << 20;
 
@@ -88,23 +88,19 @@ impl Entry {
 pub(crate) fn list(parent: &Path) -> io::Result<impl Iterator<Item = io::Result<Entry>>> {
     let paths = discover(parent)?;
     Ok(paths.into_iter().filter_map(|path| {
-        let inspected = Entry::open(&path).and_then(|entry| {
+        found(Entry::open(&path).and_then(|entry| {
             fs::metadata(&entry.directory)?;
             Ok(entry)
-        });
-        match inspected {
-            Err(error) if error.kind() == ErrorKind::NotFound => None,
-            result => Some(result),
-        }
+        }))
+        .transpose()
     }))
 }
 
 fn discover(parent: &Path) -> io::Result<Vec<PathBuf>> {
-    let entries = match fs::read_dir(parent) {
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
-        entries => entries?,
+    let Some(entries) = found(fs::read_dir(parent))? else {
+        return Ok(Vec::new());
     };
-    let mut found = Vec::new();
+    let mut shows = Vec::new();
     for entry in entries {
         let entry = entry?;
         let name = entry.file_name();
@@ -114,20 +110,16 @@ fn discover(parent: &Path) -> io::Result<Vec<PathBuf>> {
         else {
             continue;
         };
-        let kind = match entry.file_type() {
-            Err(error) if error.kind() == ErrorKind::NotFound => continue,
-            kind => kind?,
-        };
-        if !kind.is_dir() {
+        if !found(entry.file_type())?.is_some_and(|kind| kind.is_dir()) {
             continue;
         }
         let suffix = name
             .split_once('-')
             .map_or(1, |(_, number)| number.parse::<u64>().unwrap_or(u64::MAX));
-        found.push((stamp.to_owned(), suffix, entry.path()));
+        shows.push((stamp.to_owned(), suffix, entry.path()));
     }
-    found.sort_by(|a, b| b.cmp(a));
-    Ok(found.into_iter().map(|(_, _, entry)| entry).collect())
+    shows.sort_by(|a, b| b.cmp(a));
+    Ok(shows.into_iter().map(|(_, _, entry)| entry).collect())
 }
 
 fn read(directory: &Path) -> Result<ReadShow, ReadError> {
@@ -226,18 +218,16 @@ pub(crate) fn summary(directory: &Path) -> io::Result<String> {
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
 impl SavedShow {
     pub(crate) fn folder(&self) -> anyhow::Result<Option<&Path>> {
-        match fs::metadata(&self.0) {
-            Ok(metadata) => Ok(metadata.is_dir().then_some(&*self.0)),
-            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(cannot_read(&self.0)(error)),
-        }
+        let metadata = found(fs::metadata(&self.0)).map_err(cannot_read(&self.0))?;
+        Ok(metadata
+            .is_some_and(|metadata| metadata.is_dir())
+            .then_some(self.directory()))
     }
 
     pub(crate) fn summary(&self) -> anyhow::Result<Option<String>> {
         let path = self.0.join(Bundle::SUMMARY);
-        let file = match fs::File::open(&path) {
-            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-            file => file.map_err(cannot_read(&path))?,
+        let Some(file) = found(fs::File::open(&path)).map_err(cannot_read(&path))? else {
+            return Ok(None);
         };
         let mut summary = String::new();
         file.take(SUMMARY_LIMIT.saturating_add(1))

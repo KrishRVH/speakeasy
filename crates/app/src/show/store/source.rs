@@ -8,7 +8,7 @@ use std::{
 use anyhow::Context as _;
 use speakeasy_show::{Journal, Moment, Source, SourceFrame};
 
-use super::recall;
+use super::{found, recall};
 
 pub(crate) const FILE: &str = "source.frames";
 
@@ -28,11 +28,10 @@ pub(crate) fn longest_gap(source: &Source) -> u64 {
 }
 
 pub(crate) fn size(directory: &Path) -> io::Result<Option<u64>> {
-    match recall::regular_file(directory, FILE, Source::FILE_LIMIT) {
-        Ok(()) => fs::metadata(directory.join(FILE)).map(|metadata| Some(metadata.len())),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
+    if found(recall::regular_file(directory, FILE, Source::FILE_LIMIT))?.is_none() {
+        return Ok(None);
     }
+    Ok(Some(fs::metadata(directory.join(FILE))?.len()))
 }
 
 pub(crate) fn inspect(directory: &Path) -> anyhow::Result<Source> {

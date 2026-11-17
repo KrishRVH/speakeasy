@@ -13,7 +13,7 @@ pub(crate) use audio::{KeptAudio, MAX_CUES};
 pub(crate) use keeper::{AudioLog, FrameLog, Keeper, Kept};
 use speakeasy_show::{Log, Narration, Take};
 
-use super::{Staged, age, entry_exists, recall, remove_if_present, sync_directory};
+use super::{Staged, age, entry_exists, found, recall, remove_if_present, sync_directory};
 
 const ROOT: &str = ".checkpoints";
 const LOG: &str = "take.log";
@@ -86,13 +86,7 @@ impl Interrupted {
     }
 
     pub(crate) fn lock(&self) -> anyhow::Result<Checkpoint> {
-        let held = lock(&self.directory).map_err(|error| {
-            if error.kind() == io::ErrorKind::NotFound {
-                anyhow::anyhow!(GONE)
-            } else {
-                error.into()
-            }
-        })?;
+        let held = found(lock(&self.directory))?.context(GONE)?;
         let checkpoint = held.context(
             "This Show is already recording, recovering, or being discarded. Refresh Shows.",
         )?;
@@ -220,10 +214,10 @@ impl Checkpoint {
     }
 
     pub(crate) fn narration(&self) -> anyhow::Result<Option<(Narration, bool)>> {
-        let bytes = match recall::read_file(&self.directory, NARRATION, NARRATION_LIMIT) {
-            Ok(bytes) => zeroize::Zeroizing::new(bytes),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error.into()),
+        let read = recall::read_file(&self.directory, NARRATION, NARRATION_LIMIT)
+            .map(zeroize::Zeroizing::new);
+        let Some(bytes) = found(read)? else {
+            return Ok(None);
         };
         let saved: StoredNarration<Narration> =
             serde_json::from_slice(&bytes).map_err(|_private_content| {
@@ -264,10 +258,9 @@ impl Checkpoint {
     }
 
     fn publication(&self) -> anyhow::Result<Option<Publication>> {
-        let marker = match recall::read_file(&self.directory, PUBLISHED, MARKER_LIMIT) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error.into()),
+        let Some(marker) = found(recall::read_file(&self.directory, PUBLISHED, MARKER_LIMIT))?
+        else {
+            return Ok(None);
         };
         let marker = std::str::from_utf8(&marker)
             .ok()
@@ -287,31 +280,19 @@ impl Checkpoint {
             .and_then(Path::parent)
             .context("Checkpoint has no Shows folder")?
             .join(target);
-        let metadata = match fs::symlink_metadata(&target) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error.into()),
-        };
-        if !metadata.is_dir() {
+        if !found(fs::symlink_metadata(&target))?.is_some_and(|metadata| metadata.is_dir()) {
             return Ok(None);
         }
-        match recall::read_file(&target, PROVENANCE, MARKER_LIMIT) {
-            Ok(bytes) => Ok((bytes == self.id()?.as_bytes()).then_some(publication)),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(error.into()),
-        }
+        let Some(provenance) = found(recall::read_file(&target, PROVENANCE, MARKER_LIMIT))? else {
+            return Ok(None);
+        };
+        Ok((provenance == self.id()?.as_bytes()).then_some(publication))
     }
 
     pub(crate) fn replay(&self) -> anyhow::Result<Take> {
-        let mut log = recall::regular_file(&self.directory, LOG, FILE_LIMIT)
-            .and_then(|()| File::open(self.directory.join(LOG)))
-            .map_err(|error| {
-                if error.kind() == io::ErrorKind::NotFound {
-                    anyhow::anyhow!(NO_FRAMES)
-                } else {
-                    error.into()
-                }
-            })?;
+        let opened = recall::regular_file(&self.directory, LOG, FILE_LIMIT)
+            .and_then(|()| File::open(self.directory.join(LOG)));
+        let mut log = found(opened)?.context(NO_FRAMES)?;
         let mut header = [0; Log::HEADER_BYTES];
         log.read_exact(&mut header)
             .context("The Show checkpoint header is incomplete")?;
@@ -395,10 +376,10 @@ pub(super) fn discard_published(
     directory: &Path,
 ) -> anyhow::Result<Option<PathBuf>> {
     const DAMAGED: &str = "Cannot verify this Show's recovery link. Check its .checkpoint and recovery files before deleting it.";
-    let bytes = match recall::read_file(directory, PROVENANCE, MARKER_LIMIT) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error).context(DAMAGED),
+    let Some(bytes) =
+        found(recall::read_file(directory, PROVENANCE, MARKER_LIMIT)).context(DAMAGED)?
+    else {
+        return Ok(None);
     };
     let id = std::str::from_utf8(&bytes)
         .ok()
@@ -501,11 +482,10 @@ fn visit(
 }
 
 fn entries(root: &Path) -> anyhow::Result<Option<fs::ReadDir>> {
-    match fs::symlink_metadata(root) {
-        Ok(metadata) => anyhow::ensure!(metadata.is_dir(), ROOT_LINKED),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.into()),
-    }
+    let Some(metadata) = found(fs::symlink_metadata(root))? else {
+        return Ok(None);
+    };
+    anyhow::ensure!(metadata.is_dir(), ROOT_LINKED);
     Ok(Some(fs::read_dir(root)?))
 }
 
@@ -523,11 +503,8 @@ fn visit_entry(
     {
         return Ok(());
     }
-    let checkpoint = match lock(&entry.path()) {
-        Ok(Some(checkpoint)) => checkpoint,
-        Ok(None) => return Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error.into()),
+    let Some(checkpoint) = found(lock(&entry.path()))?.flatten() else {
+        return Ok(());
     };
     let retired = checkpoint.retired(now)?;
     each(checkpoint, retired)

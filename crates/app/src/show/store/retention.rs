@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::Context as _;
 
-use super::{PIN, age, pinned, remove_if_present};
+use super::{PIN, age, found, pinned, remove_if_present};
 
 pub(crate) struct Deleted {
     pub checkpoint: Option<PathBuf>,
@@ -25,11 +25,8 @@ pub(crate) fn delete(parent: &Path, directory: &Path) -> anyhow::Result<Deleted>
         (retired, checkpoint)
     };
     let cleanup = super::sync_directory(parent)
-        .and_then(|()| match fs::remove_dir_all(&retired) {
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-            result => result,
-        })
-        .and_then(|()| super::sync_directory(parent))
+        .and_then(|()| found(fs::remove_dir_all(&retired)))
+        .and_then(|_removed| super::sync_directory(parent))
         .err();
     Ok(Deleted {
         checkpoint,
@@ -105,15 +102,11 @@ pub(crate) fn interval(duration: Duration) -> String {
 
 pub(super) fn lock(parent: &Path) -> io::Result<File> {
     let path = parent.join(".retention.lock");
-    match fs::symlink_metadata(&path) {
-        Ok(metadata) if !metadata.is_file() => {
-            return Err(io::Error::other(format!(
-                "{} must be a regular file",
-                path.display()
-            )));
-        },
-        Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
-        _ => {},
+    if found(fs::symlink_metadata(&path))?.is_some_and(|metadata| !metadata.is_file()) {
+        return Err(io::Error::other(format!(
+            "{} must be a regular file",
+            path.display()
+        )));
     }
     let mut options = OpenOptions::new();
     options.read(true).write(true).create(true).truncate(false);

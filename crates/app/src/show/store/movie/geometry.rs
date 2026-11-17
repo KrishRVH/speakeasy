@@ -7,7 +7,7 @@ use speakeasy_show::{
     locate::{self, PixelRect},
 };
 
-use super::super::recall;
+use super::super::{found, recall};
 
 pub(in crate::show::store) const FILE: &str = "recording.geometry";
 const MAGIC: &[u8; 8] = b"SPKGEO01";
@@ -182,12 +182,8 @@ pub(super) fn recover(
     {
         return Ok(Geometry::default());
     }
-    let bytes = match recall::read_file(directory, FILE, FILE_LIMIT) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(Geometry::default());
-        },
-        Err(error) => return Err(error.into()),
+    let Some(bytes) = found(recall::read_file(directory, FILE, FILE_LIMIT))? else {
+        return Ok(Geometry::default());
     };
     let expected = header(id, size);
     let Some(records) = bytes.strip_prefix(expected.as_slice()) else {
