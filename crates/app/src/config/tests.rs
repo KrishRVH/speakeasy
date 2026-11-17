@@ -466,21 +466,36 @@ fn validation_requires_an_executable_engine() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[test]
-fn startup_classifies_saved_settings() -> anyhow::Result<()> {
+fn start_from(contents: Option<&str>) -> anyhow::Result<(tempfile::TempDir, Config, Startup)> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
+    valid_config(directory.path())?;
+    if let Some(contents) = contents {
+        fs::write(&path, contents)?;
+    }
     let (config, startup) = Config::load(&path);
+    Ok((directory, config, startup))
+}
+
+#[test]
+fn a_new_install_starts_unconfigured_from_the_defaults() -> anyhow::Result<()> {
+    let (_directory, config, startup) = start_from(None)?;
     assert!(matches!(startup, Startup::Unconfigured));
     assert_eq!(config, Config::default());
+    Ok(())
+}
 
-    fs::write(&path, "{")?;
-    let (config, startup) = Config::load(&path);
+#[test]
+fn settings_that_do_not_parse_start_invalid_from_the_defaults() -> anyhow::Result<()> {
+    let (_directory, config, startup) = start_from(Some("{"))?;
     assert!(matches!(startup, Startup::Invalid(_)));
     assert_eq!(config, Config::default());
+    Ok(())
+}
 
-    fs::write(&path, r#"{"theme":"iris"}"#)?;
-    let (config, startup) = Config::load(&path);
+#[test]
+fn settings_without_an_engine_start_unconfigured_with_their_other_choices() -> anyhow::Result<()> {
+    let (_directory, config, startup) = start_from(Some(r#"{"theme":"iris"}"#))?;
     assert!(matches!(startup, Startup::Unconfigured));
     assert_eq!(
         config.theme,
@@ -492,25 +507,28 @@ fn startup_classifies_saved_settings() -> anyhow::Result<()> {
         Engine::Nemo,
         "An omitted engine key did not use the current default"
     );
+    Ok(())
+}
 
-    valid_config(directory.path())?;
-    fs::write(
-        &path,
+#[test]
+fn settings_naming_a_missing_file_start_invalid_as_written() -> anyhow::Result<()> {
+    let (_directory, config, startup) = start_from(Some(
         r#"{"engine_executable":"engine","model":"missing.gguf"}"#,
-    )?;
-    let (config, startup) = Config::load(&path);
+    ))?;
     assert!(matches!(startup, Startup::Invalid(_)));
     assert_eq!(
         config.engine_executable,
         Path::new("engine"),
         "A failed validation rewrote the draft"
     );
+    Ok(())
+}
 
-    fs::write(
-        &path,
+#[test]
+fn valid_settings_configure_dictation_with_resolved_paths() -> anyhow::Result<()> {
+    let (directory, config, startup) = start_from(Some(
         r#"{"engine_executable":"engine","model":"model.gguf"}"#,
-    )?;
-    let (config, startup) = Config::load(&path);
+    ))?;
     let Startup::Configured(valid) = startup else {
         bail!("Valid settings did not configure dictation");
     };

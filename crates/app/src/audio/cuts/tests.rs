@@ -86,14 +86,22 @@ proptest! {
 }
 
 #[test]
-fn short_recordings_do_not_cut_and_small_audible_tails_remain_in_the_tail() {
+fn speech_shorter_than_a_piece_is_never_cut() {
     let short = audio(&[(19_000, 1100)]);
     let (_, pieces, partition, _) = replay(&short, 20, 0, false);
     assert_eq!(pieces, Vec::<u8>::new());
     assert_eq!(partition, None);
     let long = audio(&[(21_000, 1100)]);
     let (_, _, partition, _) = replay(&long, 20, 0, false);
-    assert_eq!(partition.map(|part| part.pieces), Some(1));
+    assert_eq!(
+        partition.map(|part| part.pieces),
+        Some(1),
+        "Speech a piece long was not cut, so the short case proves nothing"
+    );
+}
+
+#[test]
+fn a_short_word_after_the_last_cut_stays_in_the_tail() {
     let resumed = audio(&[(21_000, 1100), (20, 1100)]);
     let (wav, pieces, partition, _) = replay(&resumed, 20, 0, false);
     let tail = partition.unwrap().tail;

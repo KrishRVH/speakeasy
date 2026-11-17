@@ -109,9 +109,13 @@ async fn closed_feed_and_premature_or_malformed_final_never_return_text() -> any
             assert_eq!(result.unwrap_err().to_string(), FAILED);
         }
     }
+    Ok(())
+}
+
+#[test]
+fn an_event_over_the_reply_limit_is_refused_unread() {
     let oversized = serde_json::json!({"type":"conversation.item.input_audio_transcription.delta", "delta": "x".repeat(MAX_RESPONSE_BYTES)}).to_string();
     assert!(parse(&oversized).is_err());
-    Ok(())
 }
 
 #[tokio::test]

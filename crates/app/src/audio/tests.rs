@@ -97,20 +97,20 @@ fn recorder(samples: &[f32], error: Option<cpal::ErrorKind>) -> anyhow::Result<R
     ))
 }
 
+fn no_requests() -> Requests {
+    Requests {
+        cues: async_channel::unbounded().1,
+        keep: async_channel::bounded(1).1,
+        whole: async_channel::bounded(1).1,
+    }
+}
+
 fn record_released(recorder: Recorder<()>) -> Outcome {
     let (events, _reports) = async_channel::bounded(64);
-    let (_cues, cues) = async_channel::unbounded();
-    let (_keep, keep) = async_channel::bounded(1);
-    let (_whole, whole) = async_channel::bounded(1);
     let control = Control::default();
     control.finish();
     recorder
-        .record(
-            SessionId::FIRST,
-            &events,
-            &control,
-            &Requests { cues, keep, whole },
-        )
+        .record(SessionId::FIRST, &events, &control, &no_requests())
         .outcome
 }
 
@@ -215,7 +215,11 @@ fn a_microphone_that_stops_sending_after_speech_keeps_what_arrived() -> anyhow::
     };
     assert_eq!(wav_duration(&sealed.wav)?, Duration::from_secs(1));
     assert_eq!(lost.notice, "The microphone stopped sending audio.");
+    Ok(())
+}
 
+#[test]
+fn samples_waiting_for_a_late_drain_are_not_a_stalled_microphone() -> anyhow::Result<()> {
     let mut late = recorder(&spoken(), None)?;
     late.pulse = stalled_since(true)?;
     assert!(
@@ -230,10 +234,7 @@ fn samples_that_arrive_late_restart_the_stall_clock() -> anyhow::Result<()> {
     let mut late = recorder(&spoken(), None)?;
     late.pulse = stalled_since(false)?;
     let (events, reports) = async_channel::bounded(64);
-    let (_cues, cues) = async_channel::unbounded();
-    let (_keep, keep) = async_channel::bounded(1);
-    let (_whole, whole) = async_channel::bounded(1);
-    let requests = Requests { cues, keep, whole };
+    let requests = no_requests();
     let control = &Control::default();
     let (ready, recorded) = thread::scope(|scope| {
         let recording = scope.spawn(move || {

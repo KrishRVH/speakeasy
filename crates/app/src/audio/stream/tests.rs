@@ -71,7 +71,7 @@ fn glitches_and_rerouting_never_stop_a_recording_before_or_after_its_first_sampl
 }
 
 #[test]
-fn ring_overflow_becomes_silence_of_its_exact_length_within_the_limit() {
+fn ring_overflow_becomes_silence_of_its_exact_length() {
     let (state, mut ring, _errors, _control) = callback_fixture(1, 2, 10);
     let (mut data, _) = capture_callbacks::<f32>(state);
     data(&[0.25, 0.5, 0.75]);
@@ -82,7 +82,10 @@ fn ring_overflow_becomes_silence_of_its_exact_length_within_the_limit() {
         [0.0, 1.0],
         "The overflowed frame must hold its place as silence"
     );
+}
 
+#[test]
+fn overflow_silence_stops_at_the_recording_limit() {
     let (state, mut ring, _errors, _control) = callback_fixture(1, 2, 4);
     let (mut data, _) = capture_callbacks::<f32>(state);
     data(&[0.25, 0.5, 0.75, 0.875, 0.9]);
@@ -91,7 +94,10 @@ fn ring_overflow_becomes_silence_of_its_exact_length_within_the_limit() {
     assert_eq!(drain(&mut ring), [0.0, 0.0]);
     data(&[1.0]);
     assert!(ring.is_empty(), "Silence filled past the recording limit");
+}
 
+#[test]
+fn a_cancelled_recording_owes_no_overflow_silence() {
     let (state, mut ring, _errors, control) = callback_fixture(1, 2, 10);
     let (mut data, _) = capture_callbacks::<f32>(state);
     data(&[0.25, 0.5, 0.75]);
