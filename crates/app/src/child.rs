@@ -25,7 +25,7 @@ pub(crate) async fn kill_and_reap(child: &mut Child) {
     let _ = child.start_kill();
     #[expect(
         clippy::let_underscore_must_use,
-        reason = "Cleanup has no one to tell; Tokio reaps a child whose wait failed once its handle drops"
+        reason = "The kill is sent and no caller can act on a failed wait; Tokio reaps the dropped child on a best-effort basis"
     )]
     let _ = child.wait().await;
 }
