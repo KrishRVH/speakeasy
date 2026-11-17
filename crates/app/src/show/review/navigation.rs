@@ -94,7 +94,7 @@ pub(super) fn pointer(
     sampled: Duration,
     annotations: AnnotationState,
 ) -> String {
-    let at = Stamp(frame.at);
+    let at = Stamp(frame.at());
     let sample = match &frame.file {
         Content::Png(name) => format!(
             "Keyframe #{} at {at}: {}",
@@ -138,7 +138,7 @@ pub(super) fn pointer(
 }
 
 fn video_query(frame: &Frame, span: &Range<Duration>, sampled: Duration) -> Option<Moment> {
-    let start = frame.presentation();
+    let start = frame.presentation;
     if decoder_time(start) != decoder_time(sampled) {
         return None;
     }

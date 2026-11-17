@@ -683,7 +683,7 @@ impl Review {
                                     kit,
                                     palette,
                                     Action::Frame(position),
-                                    format!("#{} {}", frame.number, frame.at),
+                                    format!("#{} {}", frame.number, frame.at()),
                                     index == position,
                                     cx,
                                 )

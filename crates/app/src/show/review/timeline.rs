@@ -3,7 +3,7 @@ use std::time::Duration;
 use gpui::{Bounds, Context, MouseButton, Pixels, canvas, div, prelude::*, px, relative, rgb};
 use speakeasy_show::{Moment, Span};
 
-use super::{Action, ImageState, Modality, Mode, Review, navigation::Stamp};
+use super::{Action, ImageState, Modality, Mode, Review, library::Frame, navigation::Stamp};
 use crate::{
     controls::CORNER,
     gpui_ext::EntityUpdate as _,
@@ -24,7 +24,7 @@ impl Review {
             .library
             .selected()
             .and_then(|key| self.detail.as_ref()?.frames.get(key.frame))
-            .map_or(start, |frame| frame.at);
+            .map_or(start, Frame::at);
         let progress = fraction(selected, covered);
         let view = cx.entity().downgrade();
         div()

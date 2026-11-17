@@ -126,7 +126,7 @@ fn navigation_reports_exact_earlier_and_first_later_samples_and_never_infers_tex
         ("first retained sample", [source.clone(), source]),
     ] {
         let first = frame(1, 100, first);
-        let caption = early.caption(&first, first.presentation());
+        let caption = early.caption(&first, first.presentation);
         assert!(caption.contains(kind) && caption.contains("100 ms later"));
         assert!(!caption.contains("first available"));
         assert!(
@@ -134,7 +134,7 @@ fn navigation_reports_exact_earlier_and_first_later_samples_and_never_infers_tex
                 directory,
                 &first,
                 Some(early),
-                first.presentation(),
+                first.presentation,
                 movie::AnnotationState::Off,
             )
             .contains("first available")
@@ -145,7 +145,7 @@ fn navigation_reports_exact_earlier_and_first_later_samples_and_never_infers_tex
             directory,
             &third,
             Some(request),
-            third.presentation(),
+            third.presentation,
             movie::AnnotationState::Off,
         );
         assert!(!text.contains("PRIVATE"));
@@ -227,10 +227,10 @@ fn a_video_reference_requests_inside_the_displayed_sample_instead_of_rounding_in
     let reference = |frame: &library::Frame, sampled| {
         pointer(directory, frame, None, sampled, movie::AnnotationState::Off)
     };
-    let mut sample = frame(
+    let mut sample = video_frame(
         2,
-        283,
-        video(Duration::from_nanos(33_333_333)..Duration::from_nanos(66_666_666)),
+        250,
+        Duration::from_nanos(33_333_333)..Duration::from_nanos(66_666_666),
     );
     let at = Duration::from_nanos(if cfg!(target_os = "macos") {
         283_333_333
@@ -243,10 +243,10 @@ fn a_video_reference_requests_inside_the_displayed_sample_instead_of_rounding_in
     assert!(!reference(&sample, Duration::from_millis(300)).contains("--at"));
     sample.file = video(Duration::from_nanos(33_333_333)..Duration::from_micros(33_500));
     assert!(!reference(&sample, at).contains("--at"));
-    let sample = frame(
+    let sample = video_frame(
         2,
-        99,
-        video(Duration::from_micros(99_500)..Duration::from_nanos(100_000_033)),
+        0,
+        Duration::from_micros(99_500)..Duration::from_nanos(100_000_033),
     );
     let boundary = reference(&sample, Duration::from_micros(99_500));
     assert_eq!(
@@ -264,14 +264,11 @@ fn video_seeking_and_request_captions_preserve_submillisecond_order() {
             .zip(1..)
             .map(|(nanos, number)| {
                 let at = Duration::from_nanos(nanos);
-                library::Frame {
-                    at: Moment::from_millis(250).saturating_add(at),
-                    ..frame(
-                        number,
-                        0,
-                        video(at..at.saturating_add(Duration::from_nanos(33_333_300))),
-                    )
-                }
+                video_frame(
+                    number,
+                    250,
+                    at..at.saturating_add(Duration::from_nanos(33_333_300)),
+                )
             })
             .collect(),
     );
@@ -284,13 +281,13 @@ fn video_seeking_and_request_captions_preserve_submillisecond_order() {
         at: Moment::from_millis(283),
         origin: Origin::Mark(1),
     };
-    let caption = request.caption(&detail.frames[1], detail.frames[1].presentation());
+    let caption = request.caption(&detail.frames[1], detail.frames[1].presentation);
     assert!(caption.contains("0.333 ms later"));
     assert!(!caption.contains("same timestamp"));
-    detail.frames[1] = frame(
+    detail.frames[1] = video_frame(
         2,
-        284,
-        video(Duration::from_nanos(34_000_033)..Duration::from_millis(50)),
+        250,
+        Duration::from_nanos(34_000_033)..Duration::from_millis(50),
     );
     assert_eq!(
         detail.locate(Moment::from_millis(284)),
@@ -319,10 +316,17 @@ fn detail(frames: Vec<library::Frame>) -> Detail {
 fn frame(number: usize, at: u64, file: preview::Content) -> library::Frame {
     library::Frame {
         number,
-        at: Moment::from_millis(at),
+        presentation: Duration::from_millis(at),
         marker: String::new(),
         cropped: false,
         file,
+    }
+}
+
+fn video_frame(number: usize, origin: u64, span: Range<Duration>) -> library::Frame {
+    library::Frame {
+        presentation: Duration::from_millis(origin).saturating_add(span.start),
+        ..frame(number, 0, video(span))
     }
 }
 

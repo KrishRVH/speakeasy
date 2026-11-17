@@ -237,7 +237,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         assert_eq!(
             detail
                 .and_then(|detail| detail.frames.first())
-                .map(|frame| frame.at.as_millis()),
+                .map(|frame| frame.at().as_millis()),
             Some(100)
         );
         assert!(detail.is_some_and(|detail| detail.coverage.contains("17500 ms")));
@@ -266,7 +266,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
             .context("Narration selected a missing frame")?;
         assert!(
             request
-                .caption(frame, frame.presentation())
+                .caption(frame, frame.presentation)
                 .contains("retained sample")
         );
         view.copy(CopyKind::Evidence, cx);

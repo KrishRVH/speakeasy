@@ -2,7 +2,7 @@ use std::{
     io,
     path::{Path, PathBuf},
     sync::Arc,
-    time::SystemTime,
+    time::{Duration, SystemTime},
 };
 
 use speakeasy_show::{
@@ -134,41 +134,34 @@ pub(super) fn list(directory: &Path) -> io::Result<(Vec<Row>, Option<String>)> {
 #[derive(Debug)]
 pub(super) struct Frame {
     pub number: usize,
-    pub at: Moment,
+    pub presentation: Duration,
     pub marker: String,
     pub cropped: bool,
     pub file: Content,
 }
 
 impl Frame {
+    pub(super) fn at(&self) -> Moment {
+        Moment::from(self.presentation)
+    }
+
     pub(super) fn caption(&self, count: usize) -> String {
         let crop = if self.cropped {
             " · Cropped to where you worked"
         } else {
             ""
         };
+        let at = self.at();
         format!(
-            "#{} of {count} · {} · {} ms{}{crop}",
+            "#{} of {count} · {at} · {} ms{}{crop}",
             self.number,
-            self.at,
-            self.at.as_millis(),
+            at.as_millis(),
             self.marker
         )
     }
 
     pub(super) const fn offers_whole_screen(&self, source_available: bool) -> bool {
         self.cropped && source_available
-    }
-
-    pub(super) fn presentation(&self) -> std::time::Duration {
-        let start = self.at.since(Moment::START);
-        match &self.file {
-            Content::Video { span, .. } => start.saturating_add(
-                span.start
-                    .saturating_sub(Moment::from(span.start).since(Moment::START)),
-            ),
-            _ => start,
-        }
     }
 }
 
@@ -188,12 +181,12 @@ impl Detail {
         let index = self
             .frames
             .partition_point(|frame| {
-                movie::decoder_time(frame.presentation()) <= at.since(Moment::START)
+                movie::decoder_time(frame.presentation) <= at.since(Moment::START)
             })
             .saturating_sub(1);
         Some((
             index,
-            Relation::between(at, self.frames.get(index)?.presentation()),
+            Relation::between(at, self.frames.get(index)?.presentation),
         ))
     }
 
@@ -288,7 +281,7 @@ impl Detail {
                             .map_or(0, |coverage| coverage.annotations_through_ms),
                     );
                     frames = sampled(
-                        Moment::from_millis(metadata.origin_ms),
+                        Duration::from_millis(metadata.origin_ms),
                         &inspected.prefix,
                         annotations,
                         scene,
@@ -353,7 +346,7 @@ fn keyframes(manifest: &Manifest) -> Vec<Frame> {
         .iter()
         .map(|frame| Frame {
             number: frame.index,
-            at: frame.at,
+            presentation: frame.at.since(Moment::START),
             marker: frame.marker(manifest.marks()),
             cropped: frame.crop.is_some(),
             file: Content::Png(frame.file()),
@@ -369,7 +362,7 @@ fn retained(source: Source) -> Vec<Frame> {
         .enumerate()
         .map(|(index, &at)| Frame {
             number: index.saturating_add(1),
-            at,
+            presentation: at.since(Moment::START),
             marker: String::new(),
             cropped: false,
             file: Content::Source {
@@ -380,7 +373,7 @@ fn retained(source: Source) -> Vec<Frame> {
 }
 
 fn sampled(
-    origin: Moment,
+    origin: Duration,
     prefix: &MoviePrefix,
     annotations: Moment,
     scene: Option<Arc<Annotations>>,
@@ -397,7 +390,7 @@ fn sampled(
         .enumerate()
         .map(|(index, (sample, end))| Frame {
             number: index.saturating_add(1),
-            at: origin.saturating_add(sample.at),
+            presentation: origin.saturating_add(sample.at),
             marker: String::new(),
             cropped: false,
             file: Content::Video {

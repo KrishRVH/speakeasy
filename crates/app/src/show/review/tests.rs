@@ -115,7 +115,7 @@ fn a_cropped_keyframe_says_so_and_offers_the_whole_screen() -> anyhow::Result<()
     assert!(detail.frames.iter().any(|frame| frame.cropped));
     let uncropped = library::Frame {
         number: 1,
-        at: Moment::START,
+        presentation: Duration::ZERO,
         marker: String::new(),
         cropped: false,
         file: preview::Content::Png("frames/frame-01.png".to_owned()),
@@ -150,7 +150,7 @@ async fn the_demo_is_isolated_and_damage_does_not_hide_the_current_summary() -> 
         let work = reads.submit(preview::Request {
             directory: rows[2].directory.clone(),
             content: frame.file.clone(),
-            at: frame.at,
+            at: frame.at(),
             annotated: false,
             fixture: root.fixture.clone(),
         })?;

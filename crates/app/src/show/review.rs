@@ -403,7 +403,7 @@ impl Review {
         let request = preview::Request {
             directory: key.directory.clone(),
             content: frame.file.clone(),
-            at: frame.at,
+            at: frame.at(),
             annotated: self.annotated,
             fixture: self.fixture(),
         };
@@ -854,7 +854,7 @@ impl Review {
                         self.detail
                             .as_ref()
                             .and_then(|detail| detail.frames.get(current.frame))
-                            .map(|frame| frame.at)
+                            .map(library::Frame::at)
                     });
                     self.mode = mode;
                     let key = self.library.select(current.directory, 0);
@@ -902,8 +902,8 @@ impl Review {
                     && let Some(frame) = detail.frames.get(current.frame)
                 {
                     let at = match direction {
-                        Direction::Forward => frame.at.saturating_add(JUMP),
-                        Direction::Back => frame.at.saturating_sub(JUMP),
+                        Direction::Forward => frame.at().saturating_add(JUMP),
+                        Direction::Back => frame.at().saturating_sub(JUMP),
                     };
                     let target = detail.locate(at).map_or(current.frame, |(index, _)| index);
                     let index = match direction {
