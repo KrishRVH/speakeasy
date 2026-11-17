@@ -25,9 +25,8 @@ use crate::show::{
     },
 };
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Mode {
-    #[default]
     Keyframes,
     Source,
     Video,
@@ -444,7 +443,7 @@ impl Library {
                 (key.directory.clone(), key.frame)
             },
             Selection::Selected(_) => {
-                self.forget();
+                self.selection = Selection::Gone;
                 return None;
             },
             Selection::Unvisited => (self.rows.first()?.directory.clone(), 0),

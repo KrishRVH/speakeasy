@@ -28,12 +28,12 @@ impl Collection {
                 directory: store::directory()?,
                 fixture: None,
             }),
-            Self::Demo => fixture(),
+            Self::Demo => demo(),
         }
     }
 }
 
-fn fixture() -> anyhow::Result<Root> {
+fn demo() -> anyhow::Result<Root> {
     let fixture = tempfile::tempdir()?;
     let directory = fixture.path().to_owned();
     let now = SystemTime::now();
