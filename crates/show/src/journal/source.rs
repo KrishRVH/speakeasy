@@ -3,7 +3,7 @@ use std::{fmt, ops::Range};
 use super::{
     DURATION_LIMIT, EDGE, Journal, MAX_FRAME_EDGE, PIXEL, Tile,
     record::{Cursor, RECORD_OVERHEAD, emit_record, payload, require},
-    restore_tile, tiles,
+    restore_tile, tiles, with_ends,
 };
 use crate::{Image, Moment, Span, convert};
 
@@ -73,7 +73,8 @@ impl Source {
             read(0..MAGIC.len() as u64)?.as_slice() == MAGIC,
             "unsupported source format",
         )?;
-        let footer = read(length.saturating_sub(FOOTER_BYTES)..length)?;
+        let end = length.saturating_sub(FOOTER_BYTES);
+        let footer = read(end..length)?;
         let mut footer = Cursor(&footer);
         let size = footer.wide()?;
         require(footer.0 == FOOTER, "source index footer is invalid")?;
@@ -81,7 +82,6 @@ impl Source {
             size <= (INDEX_LIMIT + RECORD_OVERHEAD) as u64,
             "source index is too large",
         )?;
-        let end = length.saturating_sub(FOOTER_BYTES);
         let start = end
             .checked_sub(size)
             .filter(|start| *start >= MAGIC.len() as u64)
@@ -154,13 +154,8 @@ impl Source {
             index.0.is_empty() && expected == start,
             "source index does not cover its data",
         )?;
-        let ends = segments
-            .iter()
-            .skip(1)
-            .map(|next| next.first)
-            .chain([moments.len()]);
         require(
-            segments.iter().zip(ends).all(|(segment, end)| {
+            with_ends(&segments, |segment| segment.first, moments.len()).all(|(segment, end)| {
                 segment
                     .tiles
                     .iter()

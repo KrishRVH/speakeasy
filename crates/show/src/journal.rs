@@ -412,7 +412,7 @@ fn restore_tile(data: &[u8], tile: Tile, stride: usize, rgba: &mut [u8]) -> Opti
 }
 
 fn with_ends<T>(
-    runs: Vec<T>,
+    runs: impl IntoIterator<Item = T>,
     start: impl Fn(&T) -> usize,
     end: usize,
 ) -> impl Iterator<Item = (T, usize)> {
