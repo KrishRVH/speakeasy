@@ -6,6 +6,8 @@ use crate::{
     sheet::{self, Tile},
 };
 
+const THUMBNAIL_EDGE: u32 = 800;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct PixelRect {
     pub left: u32,
@@ -99,13 +101,18 @@ impl Evidence {
             }
             dimensions = Some(size);
             let (image, crop_px) = crop_image(image, crop)?;
-            let scale = (800.0 / image.width().max(image.height()) as f32).min(1.0);
-            let thumbnail = image
-                .resized(
-                    convert::pixels(image.width() as f32 * scale).max(1),
-                    convert::pixels(image.height() as f32 * scale).max(1),
-                )
-                .ok_or_else(|| Error::invalid("Cannot scale the source image"))?;
+            let longest = image.width().max(image.height());
+            let thumbnail = if longest <= THUMBNAIL_EDGE {
+                image
+            } else {
+                let scale = THUMBNAIL_EDGE as f32 / longest as f32;
+                image
+                    .resized(
+                        convert::pixels(image.width() as f32 * scale).max(1),
+                        convert::pixels(image.height() as f32 * scale).max(1),
+                    )
+                    .ok_or_else(|| Error::invalid("Cannot scale the source image"))?
+            };
             thumbnails.push(thumbnail);
             cells.push(Cell {
                 sampled_ms: sampled.as_millis(),
