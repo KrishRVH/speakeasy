@@ -25,30 +25,27 @@ impl Timing {
         span: Option<Span>,
         audio: Option<&KeptAudio>,
     ) -> anyhow::Result<Self> {
-        let limit = u64::try_from(RECORDING_LIMIT.as_millis())?;
-        let origin = audio.map_or(movie.metadata.origin_ms, |audio| {
-            movie
-                .metadata
-                .origin_ms
-                .min(u64::try_from(audio.start.as_millis()).unwrap_or(u64::MAX))
-        });
         let coverage = movie
             .metadata
             .coverage
             .as_ref()
             .context("Movie has no saved coverage")?;
+        let (origin, end) = match audio {
+            None => (movie.metadata.origin_ms, coverage.end_ms),
+            Some(audio) => {
+                let limit = u64::try_from(RECORDING_LIMIT.as_millis())?;
+                let start = u64::try_from(audio.start.as_millis()).unwrap_or(u64::MAX);
+                let length = u64::try_from(audio.pcm.len() / 2)
+                    .unwrap_or(u64::MAX)
+                    .saturating_mul(1000)
+                    .div_ceil(u64::from(audio.rate.get()));
+                (
+                    movie.metadata.origin_ms.min(start),
+                    coverage.end_ms.max(start.saturating_add(length)).min(limit),
+                )
+            },
+        };
         let start_ms = span.map_or(origin, |span| span.start().as_millis().max(origin));
-        let end = audio.map_or(coverage.end_ms, |audio| {
-            let audio_end = u64::try_from(audio.start.as_millis())
-                .unwrap_or(u64::MAX)
-                .saturating_add(
-                    u64::try_from(audio.pcm.len() / 2)
-                        .unwrap_or(u64::MAX)
-                        .saturating_mul(1000)
-                        .div_ceil(u64::from(audio.rate.get())),
-                );
-            coverage.end_ms.max(audio_end).min(limit)
-        });
         let end_ms = span.map_or(end, |span| span.end().as_millis().min(end));
         anyhow::ensure!(
             start_ms < end_ms,
