@@ -48,7 +48,8 @@ pub(super) fn text(
     } else {
         ""
     };
-    let mut text = format!("{context}\n## Edited summary\n\n");
+    let mut text = context;
+    text.push_str("\n## Edited summary\n\n");
     let suffix = format!("\n\n## Recorded narration\n\n{recorded}{incomplete}{truncated}\n");
     let available = ClipboardContent::MAX_TEXT_BYTES
         .checked_sub(text.len())
