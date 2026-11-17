@@ -51,12 +51,12 @@ pub(super) fn list(
 }
 
 pub(super) fn inspect(
-    entry: Entry,
+    entry: &Entry,
     parent: Option<&Path>,
     as_json: bool,
     out: &mut impl io::Write,
 ) -> io::Result<()> {
-    let report = Inspection::of(&entry, parent);
+    let report = Inspection::of(entry, parent);
     if as_json {
         return json(&report, out);
     }

@@ -16,7 +16,7 @@ pub(super) struct Coverage {
 pub(super) fn frame(
     directory: &Path,
     focus: &Query,
-    destination: PathBuf,
+    destination: &Path,
     crop: Option<usize>,
     annotated: bool,
 ) -> anyhow::Result<Report> {

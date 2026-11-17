@@ -124,7 +124,7 @@ fn metadata_reports_exact_managed_identity_and_expiry_without_claiming_moved_bun
     .write(&mut io::sink())?;
     let mut printed = Vec::new();
     output::inspect(
-        recall::Entry::open(&managed)?,
+        &recall::Entry::open(&managed)?,
         Some(root.path()),
         true,
         &mut printed,
@@ -136,7 +136,7 @@ fn metadata_reports_exact_managed_identity_and_expiry_without_claiming_moved_bun
     let elsewhere = tempfile::tempdir()?;
     printed.clear();
     output::inspect(
-        recall::Entry::open(&managed)?,
+        &recall::Entry::open(&managed)?,
         Some(elsewhere.path()),
         true,
         &mut printed,
@@ -146,7 +146,7 @@ fn metadata_reports_exact_managed_identity_and_expiry_without_claiming_moved_bun
     retention::set_kept(root.path(), &managed, true)?;
     printed.clear();
     output::inspect(
-        recall::Entry::open(&managed)?,
+        &recall::Entry::open(&managed)?,
         Some(root.path()),
         true,
         &mut printed,

@@ -127,8 +127,8 @@ impl Command {
         let verb = verb.to_str().unwrap_or_default();
         match verb {
             "--help" | "-h" => return Ok(Self::Help),
-            "frames" => return source::parse(false, args),
-            "frame" => return source::parse(true, args),
+            "frames" => return source::parse(source::Verb::Frames, args),
+            "frame" => return source::parse(source::Verb::Frame, args),
             "video" => return video::parse(args),
             "mcp" => return super::mcp::Command::parse(args).map(Self::Mcp),
             _ => {},
@@ -246,13 +246,9 @@ impl Command {
                 let directory = locate(&directory)?;
                 let entry = recall::Entry::open(&directory)
                     .with_context(|| format!("Cannot open Show {}", directory.display()))?;
-                let healthy = entry
-                    .show
-                    .as_ref()
-                    .is_ok_and(|show| show.problems.is_empty());
-                output::inspect(entry, store::directory().ok().as_deref(), json, out)?;
+                output::inspect(&entry, store::directory().ok().as_deref(), json, out)?;
                 anyhow::ensure!(
-                    healthy,
+                    entry.health() == recall::Health::Ok,
                     "The Show is damaged or unsupported; inspection lists the problems."
                 );
             },

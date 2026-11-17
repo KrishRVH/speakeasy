@@ -35,8 +35,9 @@ impl std::fmt::Debug for Request {
 
 #[derive(PartialEq, Eq)]
 enum Read {
+    Coverage,
     Source {
-        focus: Option<Query>,
+        focus: Query,
         around: Duration,
         output: Output,
     },
@@ -62,8 +63,14 @@ enum Output {
     },
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Verb {
+    Frames,
+    Frame,
+}
+
 pub(super) fn parse(
-    single: bool,
+    verb: Verb,
     mut args: impl Iterator<Item = OsString>,
 ) -> anyhow::Result<super::Command> {
     let (mut directory, mut destination, mut focus, mut occurrence) = (None, None, None, None);
@@ -82,10 +89,10 @@ pub(super) fn parse(
             Some("--match") if occurrence.is_none() => {
                 occurrence = Some(super::count("--match", &mut args)?);
             },
-            Some("--around") if !single && around.is_none() => {
+            Some("--around") if verb == Verb::Frames && around.is_none() => {
                 around = Some(super::around(&mut args)?);
             },
-            Some("--most") if !single && most.is_none() => {
+            Some("--most") if verb == Verb::Frames && most.is_none() => {
                 let frames = super::count("--most", &mut args)?;
                 anyhow::ensure!(frames <= 12, "--most accepts at most 12 frames");
                 most = Some(frames);
@@ -101,7 +108,7 @@ pub(super) fn parse(
             ),
         }
     }
-    anyhow::ensure!(!video || single, "--video supports show frame");
+    anyhow::ensure!(!video || verb == Verb::Frame, "--video supports show frame");
     anyhow::ensure!(!annotated || video, "--annotated requires --video");
     let focus = super::matching(focus, occurrence)?;
     let crop = match (crop, &focus) {
@@ -110,39 +117,49 @@ pub(super) fn parse(
         (false, _) => None,
     };
     anyhow::ensure!(
-        focus.is_some() || (!single && destination.is_none() && around.is_none() && most.is_none()),
+        focus.is_some()
+            || (verb == Verb::Frames
+                && destination.is_none()
+                && around.is_none()
+                && most.is_none()),
         "Choose exactly one focus: --at, --mark, or --phrase"
     );
     anyhow::ensure!(
         destination.is_some() || (most.is_none() && crop.is_none()),
         "--most and --crop require --out NEW.png"
     );
-    let read = if video {
-        let (Some(focus), Some(destination)) = (focus, destination) else {
-            anyhow::bail!("show frame needs a focus and --out NEW.png");
-        };
-        Read::Video {
-            focus,
-            destination,
-            crop,
-            annotated,
-        }
-    } else {
-        let output = match (single, destination) {
-            (true, Some(destination)) => Output::Frame { destination, crop },
-            (false, Some(destination)) => Output::Sheet {
+    let read = match focus {
+        None => Read::Coverage,
+        Some(focus) if video => {
+            let Some(destination) = destination else {
+                anyhow::bail!("show frame needs a focus and --out NEW.png");
+            };
+            Read::Video {
+                focus,
                 destination,
                 crop,
-                most: most.unwrap_or(6),
-            },
-            (false, None) => Output::List,
-            (true, None) => anyhow::bail!("show frame needs a focus and --out NEW.png"),
-        };
-        Read::Source {
-            focus,
-            around: around.unwrap_or(AROUND),
-            output,
-        }
+                annotated,
+            }
+        },
+        Some(focus) => {
+            let output = match (verb, destination) {
+                (Verb::Frame, Some(destination)) => Output::Frame { destination, crop },
+                (Verb::Frames, Some(destination)) => Output::Sheet {
+                    destination,
+                    crop,
+                    most: most.unwrap_or(6),
+                },
+                (Verb::Frames, None) => Output::List,
+                (Verb::Frame, None) => {
+                    anyhow::bail!("show frame needs a focus and --out NEW.png")
+                },
+            };
+            Read::Source {
+                focus,
+                around: around.unwrap_or(AROUND),
+                output,
+            }
+        },
     };
     Ok(super::Command::Source(Request {
         directory: directory.context("Source inspection needs an exact Show ID or path")?,
@@ -155,30 +172,29 @@ impl Request {
     pub(super) fn write(self, out: &mut impl io::Write) -> anyhow::Result<()> {
         let directory = super::locate(&self.directory)?;
         let report = match self.read {
+            Read::Coverage => return coverage(&directory, &index(&directory)?, self.json, out),
+            Read::Source {
+                focus,
+                around,
+                output,
+            } => retained(&directory, &index(&directory)?, &focus, around, output)?,
             Read::Video {
                 focus,
                 destination,
                 crop,
                 annotated,
-            } => video::frame(&directory, &focus, destination, crop, annotated)?,
-            Read::Source {
-                focus,
-                around,
-                output,
-            } => {
-                anyhow::ensure!(
-                    source::size(&directory)?.is_some(),
-                    "This Show has no retained source frames. Its selected keyframes may still be available through show inspect."
-                );
-                let index = source::inspect(&directory)?;
-                let Some(focus) = focus else {
-                    return coverage(&directory, &index, self.json, out);
-                };
-                retained(&directory, &index, &focus, around, output)?
-            },
+            } => video::frame(&directory, &focus, &destination, crop, annotated)?,
         };
         report.write(self.json, out)
     }
+}
+
+fn index(directory: &Path) -> anyhow::Result<speakeasy_show::Source> {
+    anyhow::ensure!(
+        source::size(directory)?.is_some(),
+        "This Show has no retained source frames. Its selected keyframes may still be available through show inspect."
+    );
+    source::inspect(directory)
 }
 
 fn retained(
@@ -249,7 +265,7 @@ fn retained(
                 sampled_ms: served.at.as_millis(),
                 crop_px,
             });
-            report.path = Some(export(destination, &image)?);
+            report.path = Some(export(&destination, &image)?);
         },
         Output::Sheet {
             destination, crop, ..
@@ -261,7 +277,7 @@ fn retained(
                 &Typeface::parse(crate::BRAND_FONT_FILE)?,
             )?;
             report.cells = evidence.cells;
-            report.path = Some(export(destination, &evidence.image)?);
+            report.path = Some(export(&destination, &evidence.image)?);
         },
     }
     Ok(report)
@@ -279,7 +295,7 @@ fn crop_mark(manifest: &Manifest, number: Option<usize>) -> anyhow::Result<Optio
         .transpose()
 }
 
-fn export(destination: PathBuf, image: &speakeasy_show::Image) -> anyhow::Result<PathBuf> {
+fn export(destination: &Path, image: &speakeasy_show::Image) -> anyhow::Result<PathBuf> {
     let destination = std::path::absolute(destination)?;
     source::export(&destination, &image.encode_png()?)
         .context("Cannot create the export; choose a new writable PNG path")?;

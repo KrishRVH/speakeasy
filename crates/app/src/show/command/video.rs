@@ -1,4 +1,9 @@
-use std::{ffi::OsString, io, path::PathBuf, time::Duration};
+use std::{
+    ffi::OsString,
+    io,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use anyhow::Context as _;
 use speakeasy_show::Span;
@@ -65,19 +70,10 @@ pub(super) fn parse(mut args: impl Iterator<Item = OsString>) -> anyhow::Result<
 impl Request {
     pub(super) fn write(self, out: &mut impl io::Write) -> anyhow::Result<()> {
         let directory = super::locate(&self.directory)?;
-        let span =
-            self.focus
-                .map(|focus| {
-                    let manifest = recall::Entry::open(&directory)?.show?.manifest;
-                    let span = focus.resolve(&manifest)?.selected.context(
-                        "Several phrases match; select one with --match K before exporting",
-                    )?;
-                    Ok::<_, anyhow::Error>(Span::new(
-                        span.start().saturating_sub(self.around),
-                        span.end().saturating_add(self.around),
-                    ))
-                })
-                .transpose()?;
+        let span = self
+            .focus
+            .map(|focus| widened(&directory, &focus, self.around))
+            .transpose()?;
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
@@ -96,6 +92,18 @@ impl Request {
         }
         Ok(())
     }
+}
+
+fn widened(directory: &Path, focus: &Query, around: Duration) -> anyhow::Result<Span> {
+    let manifest = recall::Entry::open(directory)?.show?.manifest;
+    let span = focus
+        .resolve(&manifest)?
+        .selected
+        .context("Several phrases match; select one with --match K before exporting")?;
+    Ok(Span::new(
+        span.start().saturating_sub(around),
+        span.end().saturating_add(around),
+    ))
 }
 
 async fn export(

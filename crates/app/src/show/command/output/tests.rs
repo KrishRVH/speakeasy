@@ -30,7 +30,7 @@ fn inspection_json_keeps_its_published_shape_and_field_order() -> anyhow::Result
         "markFrames": [], "movie": null
     });
     let mut actual = Vec::new();
-    inspect(Entry::open(&directory)?, None, true, &mut actual)?;
+    inspect(&Entry::open(&directory)?, None, true, &mut actual)?;
     let mut expected = serde_json::to_vec_pretty(&expected)?;
     expected.push(b'\n');
     assert_eq!(actual, expected);

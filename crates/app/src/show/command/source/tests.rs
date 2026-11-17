@@ -4,6 +4,19 @@ use speakeasy_show::{Image, Journal};
 
 use super::*;
 
+fn retain(directory: &Path, journal: &Journal, duration: u64) -> anyhow::Result<()> {
+    let mut encoded = Vec::new();
+    journal.write_source::<speakeasy_show::SourceError>(
+        Moment::from_millis(duration),
+        |bytes| {
+            encoded.extend_from_slice(bytes);
+            Ok(())
+        },
+    )?;
+    fs::write(directory.join(source::FILE), encoded)?;
+    Ok(())
+}
+
 #[test]
 fn source_arguments_reject_ambiguous_times_and_missing_destinations() -> anyhow::Result<()> {
     for (text, ms) in [("0", 0), ("12.5", 12_500), ("1:02.005", 62_005)] {
@@ -41,12 +54,18 @@ fn source_arguments_reject_ambiguous_times_and_missing_destinations() -> anyhow:
             "--annotated",
         ],
     ] {
-        assert!(parse(true, args.into_iter().map(OsString::from)).is_err());
+        assert!(parse(Verb::Frame, args.into_iter().map(OsString::from)).is_err());
     }
-    assert!(parse(false, ["show", "--at", "1"].into_iter().map(OsString::from)).is_ok());
+    assert!(
+        parse(
+            Verb::Frames,
+            ["show", "--at", "1"].into_iter().map(OsString::from)
+        )
+        .is_ok()
+    );
     let args = ["show", "--at", "1", "--out", "x", "--annotated", "--video"];
-    assert!(parse(true, args.into_iter().map(OsString::from)).is_ok());
-    assert!(parse(false, args.into_iter().map(OsString::from)).is_err());
+    assert!(parse(Verb::Frame, args.into_iter().map(OsString::from)).is_ok());
+    assert!(parse(Verb::Frames, args.into_iter().map(OsString::from)).is_err());
     Ok(())
 }
 
@@ -68,24 +87,21 @@ fn source_commands_report_samples_preserve_files_and_handle_closed_pipes() -> an
         Moment::from_millis(100),
         Image::from_bgra(2, 2, [123, 123, 123, 255].repeat(4))?,
     );
-
-    let mut encoded = Vec::new();
-    journal.write_source::<speakeasy_show::SourceError>(Moment::from_millis(1_000), |bytes| {
-        encoded.extend_from_slice(bytes);
-        Ok(())
-    })?;
-    fs::write(directory.join(source::FILE), encoded)?;
-    let read = |focus, output| Request {
+    retain(&directory, &journal, 1_000)?;
+    let request = |read| Request {
         directory: directory.clone(),
-        read: Read::Source {
-            focus,
-            around: AROUND,
-            output,
-        },
+        read,
         json: true,
     };
-    for focus in [None, Some(Query::At(Moment::from_millis(750)))] {
-        let error = read(focus, Output::List)
+    for read in [
+        Read::Coverage,
+        Read::Source {
+            focus: Query::At(Moment::from_millis(750)),
+            around: AROUND,
+            output: Output::List,
+        },
+    ] {
+        let error = request(read)
             .write(&mut super::super::tests::Closed)
             .unwrap_err();
         assert_eq!(
@@ -95,13 +111,14 @@ fn source_commands_report_samples_preserve_files_and_handle_closed_pipes() -> an
     }
     let destination = root.path().join("export.png");
     let frame = || {
-        read(
-            Some(Query::At(Moment::from_millis(750))),
-            Output::Frame {
+        request(Read::Source {
+            focus: Query::At(Moment::from_millis(750)),
+            around: AROUND,
+            output: Output::Frame {
                 destination: destination.clone(),
                 crop: None,
             },
-        )
+        })
     };
     let mut output = Vec::new();
     frame().write(&mut output)?;
@@ -113,7 +130,7 @@ fn source_commands_report_samples_preserve_files_and_handle_closed_pipes() -> an
     assert!(frame().write(&mut io::sink()).is_err());
     assert_eq!(fs::read(destination)?, png);
     output.clear();
-    read(None, Output::List).write(&mut output)?;
+    request(Read::Coverage).write(&mut output)?;
     let value: serde_json::Value = serde_json::from_slice(&output)?;
     assert_eq!(value["retained"], 1);
     assert_eq!(value["longestGapMs"], 900);
@@ -142,23 +159,18 @@ fn phrase_windows_require_an_explicit_match_and_export_honest_samples() -> anyho
             Image::from_bgra(100, 100, [1, 2, 3, 255].repeat(10_000))?,
         );
     }
-    let mut encoded = Vec::new();
-    journal.write_source::<speakeasy_show::SourceError>(Moment::from_millis(4000), |bytes| {
-        encoded.extend_from_slice(bytes);
-        Ok(())
-    })?;
-    fs::write(directory.join(source::FILE), encoded)?;
-    let run = |options: &[&str], single| -> anyhow::Result<serde_json::Value> {
+    retain(&directory, &journal, 4_000)?;
+    let run = |options: &[&str], verb| -> anyhow::Result<serde_json::Value> {
         let args = std::iter::once(directory.as_os_str().to_owned())
             .chain(options.iter().map(OsString::from));
-        let command = parse(single, args)?;
+        let command = parse(verb, args)?;
         assert!(!format!("{command:?}").contains("PRIVATE"));
         let mut out = Vec::new();
         command.write(&mut out)?;
         assert!(!String::from_utf8_lossy(&out).contains("PRIVATE"));
         Ok(serde_json::from_slice(&out)?)
     };
-    let found = run(&["--phrase", "PRIVATE_PHRASE", "--json"], false)?;
+    let found = run(&["--phrase", "PRIVATE_PHRASE", "--json"], Verb::Frames)?;
     assert_eq!(
         found["focus"]["matches"],
         serde_json::json!([[400, 800], [2500, 2700]])
@@ -168,7 +180,7 @@ fn phrase_windows_require_an_explicit_match_and_export_honest_samples() -> anyho
     let path = destination.to_str().unwrap();
     let error = run(
         &["--phrase", "PRIVATE_PHRASE", "--out", path, "--json"],
-        false,
+        Verb::Frames,
     )
     .unwrap_err();
     assert!(error.to_string().contains("several matches"));
@@ -186,7 +198,7 @@ fn phrase_windows_require_an_explicit_match_and_export_honest_samples() -> anyho
             "2",
             "--json",
         ],
-        false,
+        Verb::Frames,
     )?;
     assert_eq!(exported["windowMs"], serde_json::json!([1500, 3700]));
     assert_eq!(exported["carriedInMs"], 1200);
@@ -194,7 +206,7 @@ fn phrase_windows_require_an_explicit_match_and_export_honest_samples() -> anyho
     assert_eq!(exported["cells"].as_array().unwrap().len(), 2);
     assert_eq!(exported["longestGapMs"], 1200);
     let png = fs::read(&destination)?;
-    assert!(run(&["--at", "2", "--out", path, "--json"], true).is_err());
+    assert!(run(&["--at", "2", "--out", path, "--json"], Verb::Frame).is_err());
     assert_eq!(fs::read(&destination)?, png);
     let crop = root.path().join("crop.png");
     let cropped = run(
@@ -206,7 +218,7 @@ fn phrase_windows_require_an_explicit_match_and_export_honest_samples() -> anyho
             crop.to_str().unwrap(),
             "--json",
         ],
-        true,
+        Verb::Frame,
     )?;
     assert_eq!(cropped["requestedMs"], 2500);
     assert_eq!(cropped["sampledMs"], 2000);
@@ -226,12 +238,7 @@ fn phrase_windows_require_an_explicit_match_and_export_honest_samples() -> anyho
             )?,
         );
     }
-    let mut encoded = Vec::new();
-    resized.write_source::<speakeasy_show::SourceError>(Moment::from_millis(4000), |bytes| {
-        encoded.extend_from_slice(bytes);
-        Ok(())
-    })?;
-    fs::write(directory.join(source::FILE), encoded)?;
+    retain(&directory, &resized, 4_000)?;
     let destination = root.path().join("resized.png");
     let error = run(
         &[
@@ -242,7 +249,7 @@ fn phrase_windows_require_an_explicit_match_and_export_honest_samples() -> anyho
             destination.to_str().unwrap(),
             "--json",
         ],
-        true,
+        Verb::Frame,
     )
     .unwrap_err();
     assert!(error.to_string().contains("resized"));
@@ -265,14 +272,14 @@ fn focus_options_reject_conflicts_and_unbounded_work() {
         vec!["--video", "--at", "1", "--out", "x.png"],
     ] {
         let args = std::iter::once("show").chain(options).map(OsString::from);
-        let error = parse(false, args).unwrap_err();
+        let error = parse(Verb::Frames, args).unwrap_err();
         assert!(!format!("{error:#}").contains("PRIVATE"));
     }
     let repeated = ["show", "--video", "--video", "--at", "1", "--out", "x.png"];
-    assert!(parse(true, repeated.into_iter().map(OsString::from)).is_err());
+    assert!(parse(Verb::Frame, repeated.into_iter().map(OsString::from)).is_err());
     assert!(
         parse(
-            true,
+            Verb::Frame,
             ["show", "--video", "--mark", "1", "--crop", "--out", "x.png"]
                 .into_iter()
                 .map(OsString::from)
