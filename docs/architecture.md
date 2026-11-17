@@ -575,9 +575,10 @@ module unless a test file is named.
   original expiry, refuses expired reads, and erases expired voice under the retention lock even
   when the Show is kept. Moving the folder does not reset its voice deadline.
   [store/tests.rs](../crates/app/src/show/store/tests.rs) checks publication, expiry, and edited or
-  linked summaries; [recall/tests.rs](../crates/app/src/show/store/recall/tests.rs) checks discovery, read
-  limits, damage, links, and moved bundles. [age.rs](../crates/app/src/show/store/age.rs) parses the
-  folder timestamp for review and property-checks it against naming and expiry boundaries.
+  linked summaries; [recall/tests.rs](../crates/app/src/show/store/recall/tests.rs) checks
+  discovery, read limits, damage, links, and moved bundles.
+  [age.rs](../crates/app/src/show/store/age.rs) parses the folder timestamp for review and
+  property-checks it against naming and expiry boundaries.
   [address.rs](../crates/app/src/show/store/address.rs) resolves exact IDs independently from paths;
   moved or linked bundles never advertise a managed ID.
   [retention.rs](../crates/app/src/show/store/retention.rs) owns Keep changes and an OS file lock
