@@ -126,6 +126,35 @@ fn paste_checks_once_after_all_releases_and_preserves_error_cleanup() {
     }
 }
 
+#[test]
+fn focus_moving_to_speakeasy_during_the_last_clipboard_check_refuses_the_paste()
+-> anyhow::Result<()> {
+    let (events, _received) = async_channel::bounded(1);
+    let input = InputSender::new(events);
+    let permit = input.begin().context("Recording")?;
+    let report = crate::FocusReport::default();
+    let (reply, _answer) = Reply::channel();
+    let request = Insertion {
+        text: "fixture".into(),
+        permit: permit.clone(),
+        delivery: Delivery::Paste,
+        own_focus: report.subscribe(),
+        reply,
+    };
+    let refused = authorize_paste(
+        &request,
+        || true,
+        || Ok(false),
+        || {
+            report.settle(7, true);
+            Ok(true)
+        },
+    )?;
+    assert_eq!(refused.break_value(), Delivery::Paste.check_focus(false));
+    assert!(permit.commit(), "A refused paste spent its authority");
+    Ok(())
+}
+
 #[tokio::test]
 async fn readiness_waits_for_insertion_setup_and_follows_its_failure_report() -> anyhow::Result<()>
 {

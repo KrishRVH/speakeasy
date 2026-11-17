@@ -187,21 +187,17 @@ impl Paster {
         if !self.clipboard.owns(owner)? {
             return Ok(CLIPBOARD_CHANGED);
         }
-        let external = !request.own_focus.held()
-            && self
-                .clipboard
-                .external_target(HostSession::X11)
-                .unwrap_or(false);
-
-        let released = !self.modifiers_held()?;
-        if let Some(outcome) = Delivery::Paste.preflight(external, released) {
+        if let ControlFlow::Break(outcome) = authorize_paste(
+            request,
+            || {
+                self.clipboard
+                    .external_target(HostSession::X11)
+                    .unwrap_or(false)
+            },
+            || self.modifiers_held(),
+            || self.clipboard.owns(owner),
+        )? {
             return Ok(outcome);
-        }
-        if !self.clipboard.owns(owner)? {
-            return Ok(CLIPBOARD_CHANGED);
-        }
-        if !request.permit.commit() {
-            return Ok(Inserted::Cancelled);
         }
 
         let submitted = submit_paste(
@@ -231,6 +227,30 @@ fn uses_first_layout(connection: &XCBConnection) -> anyhow::Result<bool> {
         .xkb_get_state(xkb::ID::USE_CORE_KBD.into())?
         .reply()?;
     Ok(state.group == xkb::Group::M1)
+}
+
+fn authorize_paste(
+    request: &Insertion,
+    external_target: impl FnOnce() -> bool,
+    modifiers_held: impl FnOnce() -> anyhow::Result<bool>,
+    owns_clipboard: impl FnOnce() -> anyhow::Result<bool>,
+) -> anyhow::Result<ControlFlow<Inserted>> {
+    let external = external_target();
+    let released = !modifiers_held()?;
+    let owned = owns_clipboard();
+    if let Some(outcome) =
+        Delivery::Paste.preflight(external && !request.own_focus.held(), released)
+    {
+        return Ok(ControlFlow::Break(outcome));
+    }
+    if !owned? {
+        return Ok(ControlFlow::Break(CLIPBOARD_CHANGED));
+    }
+    Ok(if request.permit.commit() {
+        ControlFlow::Continue(())
+    } else {
+        ControlFlow::Break(Inserted::Cancelled)
+    })
 }
 
 fn submit_paste<C>(
