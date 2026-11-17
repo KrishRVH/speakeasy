@@ -61,6 +61,19 @@ async fn relaunch_requests_settings_and_shutdown_releases_the_lock() -> anyhow::
     Ok(())
 }
 
+#[tokio::test]
+async fn acquiring_in_a_runtime_reports_a_blocked_endpoint_and_releases_the_lock()
+-> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("settings.json");
+    let occupied = directory.path().join(PORT_FILE);
+    fs::create_dir(&occupied)?;
+    assert!(Instance::acquire(&path).is_err());
+    fs::remove_dir(&occupied)?;
+    assert!(Instance::acquire(&path)?.is_some());
+    Ok(())
+}
+
 #[test]
 fn requests_without_the_secret_are_never_delivered() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;

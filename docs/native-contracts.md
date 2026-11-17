@@ -45,7 +45,9 @@ and the lookup has returned; process exit ends one still blocked.
 
 The instance listener owns its current-thread Tokio executor and bounded set of control tasks for
 receipt/disconnect waits. Shutdown aborts and drains those tasks before the server thread joins;
-application state changes remain on the Services or session owner.
+application state changes remain on the Services or session owner. The server thread builds its
+executor and reports startup before `Instance::acquire` returns, so no executor is created or
+dropped on the acquiring thread.
 
 ## Windows handles, hooks, windows and dialogs
 

@@ -3,6 +3,7 @@ use std::{
     io::{self, Read, Write as _},
     net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
+    sync::mpsc::{self, SyncSender},
     thread,
     time::{Duration, Instant},
 };
@@ -88,20 +89,19 @@ impl Instance {
                 return Err(error).with_context(|| format!("Cannot lock {}", lock_file.display()));
             },
         }
-        let (runtime, listener) = listen()?;
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+        listener.set_nonblocking(true)?;
         let (Endpoint { nonce, .. }, port_file) =
             Endpoint::publish(listener.local_addr()?.port(), directory)?;
         let (requests, received) = async_channel::bounded(1);
+        let (started, startup) = mpsc::sync_channel(1);
         let server = OwnedThread::spawn("instance-server", {
             let requests = requests.clone();
-            move || {
-                runtime.block_on(accept_connections(
-                    || async { listener.accept().await.map(|(stream, _)| stream) },
-                    nonce,
-                    &requests,
-                ));
-            }
+            move || serve(listener, nonce, &requests, &started)
         })?;
+        startup
+            .recv()?
+            .context("Cannot start Speakeasy's shortcut listener")?;
         let instance = Self {
             requests,
             server,
@@ -231,9 +231,33 @@ fn reveal_running(path: &Path) -> anyhow::Result<()> {
     bail!("Speakeasy is already running. Open Settings from its {icon} icon.");
 }
 
-fn listen() -> io::Result<(Runtime, tokio::net::TcpListener)> {
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
-    listener.set_nonblocking(true)?;
+fn serve(
+    listener: TcpListener,
+    nonce: u128,
+    requests: &Sender<Event>,
+    started: &SyncSender<io::Result<()>>,
+) {
+    match listen(listener) {
+        Ok((runtime, listener)) => {
+            if started.send(Ok(())).is_ok() {
+                runtime.block_on(accept_connections(
+                    || async { listener.accept().await.map(|(stream, _)| stream) },
+                    nonce,
+                    requests,
+                ));
+            }
+        },
+        Err(error) => {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "Acquisition waits for this outcome unless it has already unwound"
+            )]
+            let _ = started.send(Err(error));
+        },
+    }
+}
+
+fn listen(listener: TcpListener) -> io::Result<(Runtime, tokio::net::TcpListener)> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
