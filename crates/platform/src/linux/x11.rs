@@ -362,24 +362,31 @@ fn parse_binding(expression: &str) -> anyhow::Result<(Vec<Keysym>, &str)> {
 }
 
 fn has_external_target(connection: &XCBConnection, host: HostSession) -> anyhow::Result<bool> {
-    let pid = intern(connection, b"_NET_WM_PID")?;
+    let net_wm_pid = intern(connection, b"_NET_WM_PID")?;
     let focused = connection.get_input_focus()?.reply()?.focus;
     focus_is_external(host, focused, std::process::id(), |window| {
-        let owner = connection
-            .get_property(false, window, pid, xproto::AtomEnum::CARDINAL, 0, 1)?
+        let published = connection
+            .get_property(false, window, net_wm_pid, xproto::AtomEnum::CARDINAL, 0, 1)?
             .reply()?
             .value32()
             .and_then(|mut values| values.next());
-        let parent = connection.query_tree(window)?.reply()?.parent;
-        Ok((owner, parent))
+        Ok(match published {
+            Some(pid) => FocusNode::Process(pid),
+            None => FocusNode::Parent(connection.query_tree(window)?.reply()?.parent),
+        })
     })
+}
+
+enum FocusNode {
+    Process(u32),
+    Parent(Window),
 }
 
 fn focus_is_external(
     host: HostSession,
     mut window: Window,
     own_pid: u32,
-    mut inspect: impl FnMut(Window) -> anyhow::Result<(Option<u32>, Window)>,
+    mut inspect: impl FnMut(Window) -> anyhow::Result<FocusNode>,
 ) -> anyhow::Result<bool> {
     if window == x11rb::NONE {
         return Ok(host == HostSession::Wayland);
@@ -388,17 +395,12 @@ fn focus_is_external(
         return Ok(false);
     }
     for _ in 0..MAX_FOCUS_ANCESTRY {
-        let (pid, next) = inspect(window)?;
-        if let Some(pid) = pid {
-            return Ok(pid != own_pid);
+        match inspect(window)? {
+            FocusNode::Process(pid) => return Ok(pid != own_pid),
+            FocusNode::Parent(x11rb::NONE) => return Ok(true),
+            FocusNode::Parent(parent) if parent == window => return Ok(false),
+            FocusNode::Parent(parent) => window = parent,
         }
-        if next == x11rb::NONE {
-            return Ok(true);
-        }
-        if next == window {
-            return Ok(false);
-        }
-        window = next;
     }
     Ok(false)
 }
@@ -411,7 +413,7 @@ fn intern(connection: &XCBConnection, name: &[u8]) -> anyhow::Result<Atom> {
 mod tests {
     use super::*;
 
-    fn unqueried(_: Window) -> anyhow::Result<(Option<u32>, Window)> {
+    fn unqueried(_: Window) -> anyhow::Result<FocusNode> {
         bail!("Queried a focus that names no window")
     }
 
@@ -419,13 +421,13 @@ mod tests {
     fn focus_guard_rejects_own_child_windows_and_unknown_focus() -> anyhow::Result<()> {
         let own_child_field = |window| {
             Ok(if window == 20 {
-                (None, 10)
+                FocusNode::Parent(10)
             } else {
-                (Some(7), 0)
+                FocusNode::Process(7)
             })
         };
-        let other_process = |_| Ok((Some(8), 0));
-        let cyclic_tree = |_| Ok((None, 20));
+        let other_process = |_| Ok(FocusNode::Process(8));
+        let cyclic_tree = |_| Ok(FocusNode::Parent(20));
         let disconnected = |_| bail!("Disconnected");
         let pointer_root = u32::from(xproto::InputFocus::POINTER_ROOT);
         assert!(!focus_is_external(
