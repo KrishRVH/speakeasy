@@ -3,20 +3,24 @@ mod control;
 use super::*;
 use crate::testing::PATIENCE;
 
-fn next_request(requests: &Receiver<Event>) -> anyhow::Result<Request> {
+fn next_event(requests: &Receiver<Event>) -> anyhow::Result<Event> {
     let started = Instant::now();
     loop {
         if let Ok(event) = requests.try_recv() {
-            return match event {
-                Event::Shortcut(request) => Ok(request),
-                Event::Control(_) => bail!("Unexpected control call"),
-            };
+            return Ok(event);
         }
         ensure!(
             started.elapsed() < PATIENCE,
             "Instance request was not delivered"
         );
         thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn next_request(requests: &Receiver<Event>) -> anyhow::Result<Request> {
+    match next_event(requests)? {
+        Event::Shortcut(request) => Ok(request),
+        Event::Control(_) => bail!("Unexpected control call"),
     }
 }
 

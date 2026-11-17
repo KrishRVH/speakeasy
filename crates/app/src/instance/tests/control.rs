@@ -19,7 +19,7 @@ fn status() -> Status {
 }
 
 fn next_call(requests: &Receiver<Event>) -> anyhow::Result<Call> {
-    match requests.recv_blocking()? {
+    match next_event(requests)? {
         Event::Control(call) => Ok(call),
         Event::Shortcut(_) => bail!("Control request became a shortcut action"),
     }
