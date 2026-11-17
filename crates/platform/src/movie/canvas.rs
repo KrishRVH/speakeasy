@@ -75,7 +75,7 @@ fn length([width, height]: [u32; 2]) -> anyhow::Result<usize> {
 
 #[expect(
     clippy::arithmetic_side_effects,
-    reason = "Both nonzero image dimensions are validated at most 2560; byte offsets fit usize on supported 64-bit hosts and interpolation totals fit u32"
+    reason = "Both nonzero image dimensions are validated at most 2560; byte offsets and interpolation totals fit usize on supported 64-bit hosts"
 )]
 fn fit(
     source: &[u8],
@@ -89,35 +89,32 @@ fn fit(
     } else {
         width = (sw * height / sh).max(1);
     }
-    let x = (dw - width) / 2;
-    let y = (dh - height) / 2;
-    let left = usize::try_from(x)? * 4;
-    let top = usize::try_from(y)?;
-    let source_stride = usize::try_from(sw)? * 4;
-    let stride = usize::try_from(dw)? * 4;
-    let columns: Vec<_> = (0..width).map(|x| axis(x, width, sw)).collect();
-    for (y, row) in destination
-        .chunks_exact_mut(stride)
+    let content = [(dw - width) / 2, (dh - height) / 2, width, height];
+    let [left, top, width, height] = content.map(|value| value as usize);
+    let [sw, sh, dw] = [sw, sh, dw].map(|edge| edge as usize);
+    let source_row = |index: usize| {
+        source
+            .get(index * sw * 4..(index + 1) * sw * 4)
+            .context("Missing movie row")
+    };
+    let columns: Vec<_> = (0..width).map(|column| axis(column, width, sw)).collect();
+    for (row, line) in destination
+        .chunks_exact_mut(dw * 4)
         .skip(top)
-        .take(usize::try_from(height)?)
+        .take(height)
         .enumerate()
     {
-        let (y0, y1, fy) = axis(u32::try_from(y)?, height, sh);
-        let upper = source
-            .get(y0 * source_stride..(y0 + 1) * source_stride)
-            .context("Missing movie row")?;
-        let lower = source
-            .get(y1 * source_stride..(y1 + 1) * source_stride)
-            .context("Missing movie row")?;
-        let output = row
-            .get_mut(left..left + usize::try_from(width)? * 4)
+        let (y0, y1, fy) = axis(row, height, sh);
+        let (upper, lower) = (source_row(y0)?, source_row(y1)?);
+        let output = line
+            .get_mut(left * 4..(left + width) * 4)
             .context("Movie fit exceeds its canvas")?;
         for (pixel, &(x0, x1, fx)) in output.as_chunks_mut::<4>().0.iter_mut().zip(&columns) {
             for (channel, byte) in pixel.iter_mut().enumerate() {
                 let get = |row: &[u8], x: usize| {
                     row.get(x * 4 + channel)
                         .copied()
-                        .map(u32::from)
+                        .map(usize::from)
                         .context("Missing movie pixel")
                 };
                 let a = get(upper, x0)? * (256 - fx) + get(upper, x1)? * fx;
@@ -126,23 +123,17 @@ fn fit(
             }
         }
     }
-    Ok([x, y, width, height])
+    Ok(content)
 }
 
 #[expect(
     clippy::arithmetic_side_effects,
-    reason = "Nonzero input/output dimensions and indices are at most 2560, so fixed-point center coordinates and interpolation weights fit u64"
+    reason = "Nonzero input/output dimensions and indices are at most 2560, so fixed-point center coordinates and interpolation weights fit usize"
 )]
-fn axis(at: u32, output: u32, input: u32) -> (usize, usize, u32) {
-    let position =
-        ((2 * u64::from(at) + 1) * u64::from(input) * 128 / u64::from(output)).saturating_sub(128);
-    let first = (position / 256).min(u64::from(input - 1));
-    let next = (first + 1).min(u64::from(input - 1));
-    (
-        usize::try_from(first).unwrap_or_default(),
-        usize::try_from(next).unwrap_or_default(),
-        u32::try_from(position % 256).unwrap_or_default(),
-    )
+fn axis(at: usize, output: usize, input: usize) -> (usize, usize, usize) {
+    let position = ((2 * at + 1) * input * 128 / output).saturating_sub(128);
+    let first = (position / 256).min(input - 1);
+    (first, (first + 1).min(input - 1), position % 256)
 }
 
 #[cfg(test)]
