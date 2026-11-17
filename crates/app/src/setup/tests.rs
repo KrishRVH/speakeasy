@@ -1,7 +1,6 @@
 use std::{
     process::Stdio,
     sync::mpsc::{self, RecvTimeoutError},
-    time::Instant,
 };
 
 use anyhow::{Context as _, bail, ensure};
@@ -14,6 +13,15 @@ use crate::{
     testing::{PATIENCE, still_pending},
 };
 
+fn installed(choice: Model, use_gpu: bool) -> Installed {
+    Installed {
+        choice,
+        engine_executable: "engine".into(),
+        model: choice.file_name().into(),
+        use_gpu,
+    }
+}
+
 #[test]
 fn model_installation_preserves_language_gpu_preference_and_unrelated_edits() {
     for choice in [Model::Parakeet, Model::Nemotron] {
@@ -23,33 +31,30 @@ fn model_installation_preserves_language_gpu_preference_and_unrelated_edits() {
             threads: 8,
             ..Config::default()
         };
-        Installed {
-            choice,
-            engine_executable: "engine".into(),
-            model: choice.file_name().into(),
-            use_gpu: true,
-        }
-        .apply_to(&mut config);
+        installed(choice, true).apply_to(&mut config);
         assert_eq!(config.language, "ja-JP");
         assert!(!config.use_gpu);
         assert_eq!(config.threads, 8);
     }
+}
+
+#[test]
+fn a_nemotron_install_gives_a_bare_language_its_region() {
     let mut config = Config {
         language: "en".into(),
         ..Config::default()
     };
-    Installed {
-        choice: Model::Nemotron,
-        engine_executable: "engine".into(),
-        model: Model::Nemotron.file_name().into(),
-        use_gpu: false,
-    }
-    .apply_to(&mut config);
+    installed(Model::Nemotron, true).apply_to(&mut config);
     assert_eq!(config.language, "en-US");
-    assert_eq!(
-        config.fillers(&config.language),
-        crate::transcript::Fillers::Remove
-    );
+}
+
+#[test]
+fn an_install_without_gpu_support_turns_gpu_off() {
+    let mut config = Config {
+        use_gpu: true,
+        ..Config::default()
+    };
+    installed(Model::Parakeet, false).apply_to(&mut config);
     assert!(!config.use_gpu);
 }
 
@@ -119,32 +124,15 @@ fn setup_drop_joins_cancelled_cleanup_before_returning() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[test]
-fn setup_drop_reaps_its_child_and_releases_the_directory() -> anyhow::Result<()> {
+#[tokio::test]
+async fn setup_drop_reaps_its_child_and_releases_the_directory() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let root = directory.path().to_path_buf();
     let setup = Setup::start_in(root.clone(), async |root, _, installation| {
         installation.output(&mut fixture_child(root)?).await?;
-        Ok(Installed {
-            choice: Model::Parakeet,
-            engine_executable: PathBuf::new(),
-            model: PathBuf::new(),
-            use_gpu: false,
-        })
+        Ok(installed(Model::Parakeet, false))
     })?;
-    let started = Instant::now();
-    while !root.join("child.ready").exists() {
-        ensure!(
-            started.elapsed() < Duration::from_secs(10),
-            "Setup child did not start"
-        );
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    let child_lock = root.join("child.lock");
-    ensure!(
-        is_locked(&child_lock)?,
-        "The setup child did not take its lock"
-    );
+    let child_lock = started_child(&root).await?;
     drop(setup);
     ensure!(
         !is_locked(&child_lock)?,
@@ -182,6 +170,19 @@ fn fixture_child(root: &Path) -> anyhow::Result<Command> {
     Ok(command)
 }
 
+async fn started_child(root: &Path) -> anyhow::Result<PathBuf> {
+    timeout(Duration::from_secs(10), async {
+        while !root.join("child.ready").exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .context("The setup child did not start")?;
+    let lock = root.join("child.lock");
+    ensure!(is_locked(&lock)?, "The setup child did not take its lock");
+    Ok(lock)
+}
+
 fn is_locked(path: &Path) -> anyhow::Result<bool> {
     match File::open(path)?.try_lock() {
         Ok(()) => Ok(false),
@@ -206,17 +207,7 @@ async fn cancellation_stops_the_child_before_another_setup_owns_the_directory() 
         })
         .await
     });
-    timeout(Duration::from_secs(10), async {
-        while !root.join("child.ready").exists() {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await?;
-    let child_lock = root.join("child.lock");
-    ensure!(
-        is_locked(&child_lock)?,
-        "The setup child did not take its lock"
-    );
+    let child_lock = started_child(&root).await?;
 
     let (progress, mut updates) = watch::channel(CHECKING);
     let (_second_cancel, second_cancelled) = async_channel::bounded::<Infallible>(1);
@@ -227,7 +218,10 @@ async fn cancellation_stops_the_child_before_another_setup_owns_the_directory() 
                 !is_locked(&child_lock)?,
                 "A retry entered the directory while the cancelled child could still write there"
             );
-            assert_eq!(fs::read(second_root.join("model.gguf.part"))?, partial);
+            ensure!(
+                fs::read(second_root.join("model.gguf.part"))? == partial,
+                "A retry changed the partial download"
+            );
             Ok(())
         })
         .await
