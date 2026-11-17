@@ -22,7 +22,7 @@ use speakeasy_show::{Ending, NarrationLoss};
 use tokio::sync::watch;
 
 use crate::{
-    gpui_ext::{EntityUpdate, Presence, defer_presence, follow},
+    gpui_ext::{EntityUpdate, Presence, WindowUpdate, defer_presence, follow},
     runtime::{Meter, Snapshot},
     theme::Theme,
     transcript::style::Style,
@@ -647,7 +647,10 @@ pub(crate) fn open(
             })
         },
     )?;
-    configured?;
+    if let Err(error) = configured {
+        pill.update_if_open(cx, |_, window, _| window.remove_window());
+        return Err(error);
+    }
     Ok(pill)
 }
 
