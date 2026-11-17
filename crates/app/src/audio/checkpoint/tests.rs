@@ -2,7 +2,6 @@ use std::{iter, time::SystemTime};
 
 use anyhow::Context as _;
 use speakeasy_core::machine::Cue;
-use zeroize::Zeroizing;
 
 use super::*;
 use crate::{
@@ -48,10 +47,10 @@ async fn promote(before_cue: Vec<u8>) -> anyhow::Result<(Option<Sealed>, Option<
     let audio = checkpoint.audio()?.unwrap();
     assert!(*audio.pcm == pcm, "Checkpoint changed synthetic PCM");
     assert!(audio.complete);
-    let live = Pcm16::from_kept(Zeroizing::new(pcm)).seal(speech, RATE)?;
-    let (recovered, start, language) = seal_kept(audio)?;
-    assert_eq!(start, Duration::from_millis(125));
-    assert_eq!(&*language, "fr");
+    assert_eq!(audio.start, Duration::from_millis(125));
+    assert_eq!(&*audio.language, "fr");
+    let live = Pcm16::from_kept(&pcm).seal(speech, RATE)?;
+    let recovered = seal_kept(&audio)?;
     checkpoint.discard()?;
     Ok((live, recovered))
 }

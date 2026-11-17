@@ -22,13 +22,13 @@ pub(super) struct Pcm16 {
 }
 
 impl Pcm16 {
-    pub(super) fn from_kept(audio: Zeroizing<Vec<u8>>) -> Self {
+    pub(super) fn from_kept(audio: &[u8]) -> Self {
         let samples = audio.len() / SAMPLE_BYTES;
         let mut bytes = Zeroizing::new(Vec::with_capacity(
             audio.len().saturating_add(WAV_HEADER_BYTES),
         ));
         bytes.resize(WAV_HEADER_BYTES, 0);
-        bytes.extend_from_slice(&audio);
+        bytes.extend_from_slice(audio);
         Self {
             bytes,
             limit: samples,

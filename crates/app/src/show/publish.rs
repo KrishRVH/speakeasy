@@ -225,12 +225,11 @@ fn reopen_with(interrupted: Interrupted) -> anyhow::Result<Reopened> {
         Ok(None) | Err(_) => match checkpoint.audio() {
             Ok(Some(audio)) => {
                 let incomplete = !audio.complete;
-                let (sealed, start, language) = crate::audio::seal_kept(audio)?;
-                if let Some(sealed) = sealed {
+                if let Some(sealed) = crate::audio::seal_kept(&audio)? {
                     speech = Some(RecoveredSpeech {
-                        start: start.saturating_add(sealed.trimmed),
+                        start: audio.start.saturating_add(sealed.trimmed),
                         sealed,
-                        language,
+                        language: audio.language,
                         incomplete,
                     });
                 } else if incomplete {
