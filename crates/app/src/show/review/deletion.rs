@@ -1,14 +1,17 @@
+use std::path::Path;
+
 use gpui::Context;
 
-use super::{Confirm, Kind, Review, Write, library::Offered};
-use crate::{
-    gpui_ext::EntityUpdate as _,
-    show::edits::{Edit, Written},
+use super::{
+    Confirm, Edit, Kind, Review, Write,
+    library::{Offered, Row},
+    retention,
 };
+use crate::gpui_ext::EntityUpdate as _;
 
 impl Review {
     pub(super) fn can_delete(&self) -> bool {
-        self.directory.is_some()
+        self.root.is_some()
             && self.listing.is_none()
             && self.opening.is_none()
             && self.loading.is_none()
@@ -17,43 +20,34 @@ impl Review {
             && self.copying.is_none()
     }
 
+    fn deletable(&self, offer: Offered) -> Option<&Row> {
+        self.library.offered(offer).filter(|row| {
+            self.can_delete()
+                && matches!(row.kind, Kind::Saved)
+                && self.library.is_selected(&row.directory)
+        })
+    }
+
     pub(super) fn ask_delete(&mut self, offer: Offered) {
-        if self.can_delete()
-            && let Some(row) = self.library.offered(offer)
-            && matches!(row.kind, Kind::Saved)
-            && self.library.is_selected(&row.directory)
-        {
+        if self.deletable(offer).is_some() {
             self.confirm = Some(Confirm::Delete(offer));
         }
     }
 
     pub(super) fn delete(&mut self, offer: Offered, cx: &mut Context<'_, Self>) {
-        if !self.can_delete() || self.confirm != Some(Confirm::Delete(offer)) {
+        if self.confirm != Some(Confirm::Delete(offer)) {
             return;
         }
-        let Some(row) = self.library.offered(offer).filter(|row| {
-            matches!(row.kind, Kind::Saved) && self.library.is_selected(&row.directory)
-        }) else {
-            return;
-        };
-        let Some(parent) = self.directory.clone() else {
+        let Some((parent, row)) = self.parent().zip(self.deletable(offer)) else {
             return;
         };
         let directory = row.directory.clone();
-        let receipt = match (self.actions.edit)(
-            Edit::Delete {
-                parent,
-                directory: directory.clone(),
-            },
-            self.fixture.clone(),
-            cx,
-        ) {
-            Ok(receipt) => receipt,
-            Err(error) => {
-                self.notice = Some(format!("Cannot delete this Show: {error:#}"));
-                return;
-            },
-        };
+        let target = directory.clone();
+        let (edit, receipt) = Edit::new(move || retention::delete(&parent, &target));
+        if let Err(error) = (self.actions.edit)(edit, self.fixture(), cx) {
+            self.notice = Some(format!("Cannot delete this Show: {error:#}"));
+            return;
+        }
         self.clear_selection(cx);
         self.notice = Some("Deleting Show…".into());
         self.write = Some(Write::Deleting {
@@ -71,15 +65,11 @@ impl Review {
 
     fn delete_finished(
         &mut self,
-        directory: &std::path::Path,
-        result: anyhow::Result<Written>,
+        directory: &Path,
+        result: anyhow::Result<retention::Deleted>,
         cx: &mut Context<'_, Self>,
     ) {
         self.write = None;
-        let result = result.and_then(|written| match written {
-            Written::Deleted(deleted) => Ok(deleted),
-            _ => anyhow::bail!("Show deletion returned an unexpected result. Refresh Shows."),
-        });
         match result {
             Ok(deleted) => {
                 let selected = self.library.remove(directory);
@@ -96,7 +86,7 @@ impl Review {
                 }
             },
             Err(error) if self.library.is_selected(directory) => {
-                if let Some(key) = self.library.selected.clone() {
+                if let Some(key) = self.library.selected().cloned() {
                     self.open_selected(key, None, cx);
                 }
                 self.notice = Some(format!("Cannot delete this Show: {error:#}"));

@@ -51,10 +51,10 @@ fn refresh_preserves_the_explicit_path_but_never_substitutes_for_a_deleted_show(
     assert_eq!(selected.directory, PathBuf::from("second"));
     assert_eq!(selected.frame, 1);
     assert!(library.replace(vec![row("newer"), row("first")]).is_none());
-    assert!(library.gone);
-    assert!(library.selected.is_none());
+    assert!(library.is_gone());
+    assert!(library.selected().is_none());
     assert!(library.replace(vec![row("newest"), row("newer")]).is_none());
-    assert!(library.selected.is_none());
+    assert!(library.selected().is_none());
 }
 
 #[test]
@@ -75,14 +75,15 @@ fn the_more_menu_opens_once_per_press_and_keyboard_skips_unavailable_actions() {
     );
     let keyed = Menu::Dismissed.pressed(true, &enabled);
     assert_eq!(keyed, Menu::Open(Some(1)));
-    assert_eq!(keyed.step(&enabled, true), Menu::Open(Some(3)));
+    let (down, up) = (Direction::Forward, Direction::Back);
+    assert_eq!(keyed.step(&enabled, down), Menu::Open(Some(3)));
     assert_eq!(
-        keyed.step(&enabled, true).step(&enabled, true),
+        keyed.step(&enabled, down).step(&enabled, down),
         Menu::Open(Some(1))
     );
-    assert_eq!(keyed.step(&enabled, false), Menu::Open(Some(3)));
-    assert_eq!(Menu::Open(None).step(&[false], true), Menu::Open(None));
-    assert_eq!(Menu::Closed.step(&enabled, true), Menu::Closed);
+    assert_eq!(keyed.step(&enabled, up), Menu::Open(Some(3)));
+    assert_eq!(Menu::Open(None).step(&[false], down), Menu::Open(None));
+    assert_eq!(Menu::Closed.step(&enabled, down), Menu::Closed);
 }
 
 #[test]
@@ -96,7 +97,7 @@ fn a_cropped_keyframe_says_so_and_offers_the_whole_screen() -> anyhow::Result<()
         at: speakeasy_show::Moment::START,
         marker: String::new(),
         cropped: false,
-        file: crate::show::preview::Content::Png("frames/frame-01.png".to_owned()),
+        file: preview::Content::Png("frames/frame-01.png".to_owned()),
     };
     for frame in detail.frames.iter().chain([&uncropped]) {
         let caption = frame.caption(detail.frames.len());
@@ -126,17 +127,17 @@ async fn the_demo_is_isolated_and_damage_does_not_hide_the_current_summary() -> 
     assert_eq!(rows[2].health, Health::Damaged);
     let detail = Detail::open(&rows[2].directory, library::Mode::Keyframes)?;
     assert_eq!(detail.frames.len(), 5);
-    let mut reads = crate::show::preview::Reads::default();
+    let mut reads = preview::Reads::default();
     for (index, valid) in [(2, false), (1, true)] {
         let frame = &detail.frames[index];
-        let work = reads.submit(crate::show::preview::Request {
+        let work = reads.submit(preview::Request {
             directory: rows[2].directory.clone(),
             content: frame.file.clone(),
             at: frame.at,
             annotated: false,
             fixture: root.fixture.clone(),
         })?;
-        let crate::show::preview::Work::Reading(receipt) = work else {
+        let preview::Work::Reading(receipt) = work else {
             anyhow::bail!("Synthetic frame read was not drained");
         };
         assert_eq!(receipt.await.is_ok(), valid);

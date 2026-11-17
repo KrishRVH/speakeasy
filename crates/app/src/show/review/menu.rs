@@ -3,7 +3,7 @@ use gpui::{
     px,
 };
 
-use super::{Action, CopyKind, ExportKind, ImageState, Review, render::id};
+use super::{Action, CopyKind, Direction, ExportKind, ImageState, Review, render::id};
 use crate::{
     controls::{CORNER, DISABLED, HEIGHT, Kit, popover},
     gpui_ext::AriaDisabled as _,
@@ -22,7 +22,9 @@ impl Menu {
     pub(super) fn pressed(self, keyboard: bool, enabled: &[bool]) -> Self {
         match (self, keyboard) {
             (Self::Open(_), _) | (Self::Dismissed, false) => Self::Closed,
-            (Self::Closed | Self::Dismissed, true) => Self::Open(None).step(enabled, true),
+            (Self::Closed | Self::Dismissed, true) => {
+                Self::Open(None).step(enabled, Direction::Forward)
+            },
             (Self::Closed, false) => Self::Open(None),
         }
     }
@@ -41,7 +43,7 @@ impl Menu {
         }
     }
 
-    pub(super) fn step(self, enabled: &[bool], forward: bool) -> Self {
+    pub(super) fn step(self, enabled: &[bool], direction: Direction) -> Self {
         let Self::Open(current) = self else {
             return self;
         };
@@ -49,14 +51,13 @@ impl Menu {
             .iter()
             .enumerate()
             .filter_map(|(index, &on)| on.then_some(index));
-        let next = if forward {
-            current
+        let next = match direction {
+            Direction::Forward => current
                 .and_then(|current| choices.clone().find(|&index| index > current))
-                .or_else(|| choices.next())
-        } else {
-            current
+                .or_else(|| choices.next()),
+            Direction::Back => current
                 .and_then(|current| choices.clone().rev().find(|&index| index < current))
-                .or_else(|| choices.next_back())
+                .or_else(|| choices.next_back()),
         };
         Self::Open(next.or(current))
     }
@@ -180,10 +181,8 @@ impl Review {
     pub(super) fn menu_key(&mut self, key: &str, cx: &mut Context<'_, Self>) -> bool {
         match key {
             "escape" => self.menu = Menu::Closed,
-            "up" | "down" => {
-                let enabled = self.enabled_items(cx);
-                self.menu = self.menu.step(&enabled, key == "down");
-            },
+            "up" => self.menu = self.menu.step(&self.enabled_items(cx), Direction::Back),
+            "down" => self.menu = self.menu.step(&self.enabled_items(cx), Direction::Forward),
             "tab" => {
                 self.menu = Menu::Closed;
                 cx.notify();

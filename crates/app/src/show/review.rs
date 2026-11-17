@@ -28,37 +28,42 @@ use source::Root;
 pub(crate) use source::Source;
 use tokio::sync::watch;
 
-use super::store::{recall, retention};
+use super::{
+    Interrupted, copy,
+    edits::Edit,
+    preview,
+    store::{self, movie, recall, retention},
+};
 use crate::{
     gpui_ext::{EntityUpdate, Presence, defer_presence, follow},
-    runtime::Snapshot,
+    runtime::{RecoveryReceipt, Snapshot},
     theme::Theme,
 };
 
 const JUMP: Duration = Duration::from_secs(10);
 
-const DISCARD_AUDIO: &str = "This permanently removes the kept audio and its recovery checkpoint. \
-                            Your saved Show stays.";
-const DISCARD_SHOW: &str = "This permanently removes the interrupted Show's recovery data, \
-                           including kept audio. Any saved copies stay.";
+fn discard_warning(show: &Interrupted) -> &'static str {
+    if show.narration_pending() {
+        "This permanently removes the kept audio and its recovery checkpoint. Your saved Show \
+         stays."
+    } else {
+        "This permanently removes the interrupted Show's recovery data, including kept audio. Any \
+         saved copies stay."
+    }
+}
 
 pub(crate) struct Actions {
-    pub edit: fn(
-        super::edits::Edit,
-        Option<Arc<tempfile::TempDir>>,
-        &mut App,
-    ) -> anyhow::Result<super::edits::Receipt>,
-    pub preview: fn(super::preview::Request, &mut App) -> anyhow::Result<super::preview::Work>,
+    pub edit: fn(Edit, Option<Arc<tempfile::TempDir>>, &mut App) -> anyhow::Result<()>,
+    pub preview: fn(preview::Request, &mut App) -> anyhow::Result<preview::Work>,
     pub can_copy: fn(&App) -> bool,
-    pub copy: fn(super::copy::Request, &mut App) -> anyhow::Result<super::copy::Receipt>,
-    pub recover:
-        fn(crate::show::Interrupted, &App) -> Result<crate::runtime::RecoveryReceipt, &'static str>,
+    pub copy: fn(copy::Request, &mut App) -> anyhow::Result<copy::Receipt>,
+    pub recover: fn(Interrupted, &App) -> Result<RecoveryReceipt, &'static str>,
 }
 
 enum ImageState {
     Empty,
     Loading,
-    Ready(super::preview::Decoded),
+    Ready(preview::Decoded),
     Failed(String),
 }
 
@@ -141,7 +146,7 @@ pub(crate) struct Review {
     library: Library,
     library_scroll: ScrollHandle,
     frame_scroll: ScrollHandle,
-    directory: Option<PathBuf>,
+    root: Option<Root>,
     detail: Option<Detail>,
     mode: Mode,
     annotated: bool,
@@ -163,7 +168,6 @@ pub(crate) struct Review {
     visibility: Option<Task<()>>,
     _updates: Task<()>,
     _activation: Subscription,
-    fixture: Option<Arc<tempfile::TempDir>>,
 }
 
 pub(crate) fn open(
@@ -222,7 +226,7 @@ impl Review {
             library: Library::default(),
             library_scroll: ScrollHandle::new(),
             frame_scroll: ScrollHandle::new(),
-            directory: None,
+            root: None,
             detail: None,
             mode: Mode::Keyframes,
             annotated: true,
@@ -253,7 +257,6 @@ impl Review {
                     view.check_selected(cx);
                 }
             }),
-            fixture: None,
         }
     }
 
@@ -271,6 +274,14 @@ impl Review {
         self.write.as_ref().is_some_and(Write::holds_listing)
     }
 
+    fn parent(&self) -> Option<PathBuf> {
+        self.root.as_ref().map(|root| root.directory.clone())
+    }
+
+    fn fixture(&self) -> Option<Arc<tempfile::TempDir>> {
+        self.root.as_ref().and_then(|root| root.fixture.clone())
+    }
+
     fn can_refresh(&self) -> bool {
         self.listing.is_none() && !self.holds_listing()
     }
@@ -283,13 +294,10 @@ impl Review {
         self.notice = None;
         self.request = None;
         let source = self.source;
-        let existing = self.directory.clone();
+        let existing = self.root.clone();
         let work = cx.background_executor().spawn(async move {
             let root = match existing {
-                Some(directory) => Root {
-                    directory,
-                    fixture: None,
-                },
+                Some(root) => root,
                 None => source.load()?,
             };
             let rows = library::list(&root.directory)
@@ -302,8 +310,7 @@ impl Review {
                 view.listing = None;
                 match result {
                     Ok((root, (rows, notice))) => {
-                        view.directory = Some(root.directory);
-                        view.fixture = root.fixture.or_else(|| view.fixture.take());
+                        view.root = Some(root);
                         match view.library.replace(rows) {
                             Some(key) => view.open_selected(key, None, cx),
                             None => view.clear_selection(cx),
@@ -393,12 +400,12 @@ impl Review {
             self.replace_image(ImageState::Empty, cx);
             return;
         };
-        let request = super::preview::Request {
+        let request = preview::Request {
             directory: key.directory.clone(),
             content: frame.file.clone(),
             at: frame.at,
             annotated: self.annotated,
-            fixture: self.fixture.clone(),
+            fixture: self.fixture(),
         };
         let work = match (self.actions.preview)(request, cx) {
             Ok(work) => work,
@@ -413,8 +420,8 @@ impl Review {
         };
         self.loading = Some(cx.spawn(async move |view, cx| {
             let result = match work {
-                super::preview::Work::Reading(receipt) => Some(receipt.await),
-                super::preview::Work::Waiting(wait) => {
+                preview::Work::Reading(receipt) => Some(receipt.await),
+                preview::Work::Waiting(wait) => {
                     wait.await;
                     None
                 },
@@ -479,8 +486,8 @@ impl Review {
         }
         let Some(key) = self
             .library
-            .selected
-            .clone()
+            .selected()
+            .cloned()
             .filter(|_| self.detail.is_some())
         else {
             return;
@@ -488,10 +495,7 @@ impl Review {
         let directory = key.directory.clone();
         let work = cx.background_executor().spawn(async move {
             std::fs::metadata(&directory)?;
-            Ok((
-                recall::summary(&directory),
-                super::store::pinned(&directory).ok(),
-            ))
+            Ok((recall::summary(&directory), store::pinned(&directory).ok()))
         });
         self.checking = Some(cx.spawn(async move |view, cx| {
             let result = work.await;
@@ -520,7 +524,7 @@ impl Review {
         if !self.can_keep() {
             return;
         }
-        let Some((parent, key)) = self.directory.clone().zip(self.library.selected.clone()) else {
+        let Some((parent, key)) = self.parent().zip(self.library.selected().cloned()) else {
             return;
         };
         let Some(kept) = self.library.selected_row().and_then(|row| row.pinned) else {
@@ -529,39 +533,19 @@ impl Review {
 
         self.checking = None;
         let directory = key.directory.clone();
-        let work = match (self.actions.edit)(
-            super::edits::Edit::Keep {
-                parent,
-                directory,
-                kept: !kept,
-            },
-            self.fixture.clone(),
-            cx,
-        ) {
-            Ok(work) => work,
-            Err(error) => {
-                self.notice = Some(format!("Cannot change retention: {error:#}"));
-                return;
-            },
-        };
+        let (edit, receipt) = Edit::new(move || retention::set_kept(&parent, &directory, !kept));
+        if let Err(error) = (self.actions.edit)(edit, self.fixture(), cx) {
+            self.notice = Some(format!("Cannot change retention: {error:#}"));
+            return;
+        }
         self.write = Some(Write::Keeping {
             directory: key.directory.clone(),
             _task: cx.spawn(async move |view, cx| {
-                let result = work
+                let result = receipt
                     .recv()
                     .await
                     .map_err(io::Error::other)
-                    .and_then(|result| {
-                        result.map_err(|error| {
-                            error
-                                .downcast::<io::Error>()
-                                .unwrap_or_else(io::Error::other)
-                        })
-                    })
-                    .and_then(|written| match written {
-                        super::edits::Written::Retention(retention) => Ok(retention),
-                        _ => Err(io::Error::other("Retention write returned no result")),
-                    });
+                    .and_then(|result| result);
                 view.update_if_alive(cx, |view, cx| {
                     view.write = None;
                     view.kept(&key.directory, result, cx);
@@ -612,12 +596,17 @@ impl Review {
     }
 
     fn copy(&mut self, kind: CopyKind, cx: &mut Context<'_, Self>) {
-        let Some(key) = self.library.selected.clone().filter(|_| self.can_copy(cx)) else {
+        let Some(key) = self
+            .library
+            .selected()
+            .cloned()
+            .filter(|_| self.can_copy(cx))
+        else {
             return;
         };
         let request = match kind {
-            CopyKind::Agent => Ok(super::copy::Request::Agent(key.directory.clone())),
-            CopyKind::Summary => Ok(super::copy::Request::Summary(key.directory.clone())),
+            CopyKind::Agent => Ok(copy::Request::Agent(key.directory.clone())),
+            CopyKind::Summary => Ok(copy::Request::Summary(key.directory.clone())),
             CopyKind::Evidence => match self.moment(&key) {
                 Some(request) => request,
                 None => return,
@@ -635,8 +624,8 @@ impl Review {
         self.copying = Some(cx.spawn(async move |view, cx| {
             let result = receipt.await;
             let notice = match result {
-                Ok(super::copy::Outcome::Copied) => kind.copied(),
-                Ok(super::copy::Outcome::Missing) => {
+                Ok(copy::Outcome::Copied) => kind.copied(),
+                Ok(copy::Outcome::Missing) => {
                     "This Show is no longer available. Refresh the library.".into()
                 },
                 Err(error) => error,
@@ -652,7 +641,7 @@ impl Review {
         cx.notify();
     }
 
-    fn moment(&self, key: &Key) -> Option<anyhow::Result<super::copy::Request>> {
+    fn moment(&self, key: &Key) -> Option<anyhow::Result<copy::Request>> {
         let detail = self.detail.as_ref()?;
         let frame = detail.frames.get(key.frame)?;
         let ImageState::Ready(decoded) = &self.image else {
@@ -671,7 +660,7 @@ impl Review {
         );
         Some(
             handoff::text(pointer, detail.summary.as_deref().ok(), &detail.narration).map(|text| {
-                super::copy::Request::Moment {
+                copy::Request::Moment {
                     text,
                     image: Arc::clone(&decoded.image),
                 }
@@ -685,7 +674,7 @@ impl Review {
         }
     }
 
-    fn interrupted(&self) -> Option<&crate::show::Interrupted> {
+    fn interrupted(&self) -> Option<&Interrupted> {
         match &self.library.selected_row()?.kind {
             Kind::Interrupted(show) => Some(show),
             Kind::Saved => None,
@@ -703,9 +692,9 @@ impl Review {
         let Some(interrupted) = self.interrupted().cloned() else {
             return;
         };
-        let key = self.library.selected.clone();
-        let result = match (self.actions.recover)(interrupted, cx) {
-            Ok(result) => result,
+        let key = self.library.selected().cloned();
+        let receipt = match (self.actions.recover)(interrupted, cx) {
+            Ok(receipt) => receipt,
             Err(error) => {
                 self.notice = Some(error.into());
                 return;
@@ -715,19 +704,19 @@ impl Review {
         self.notice =
             Some("Recovery queued. It starts after the current recording finishes.".into());
         let task = cx.spawn(async move |view, cx| {
-            let result = result.recv().await.unwrap_or_else(|_closed| {
+            let result = receipt.recv().await.unwrap_or_else(|_closed| {
                 Err("Recovery stopped. The interrupted Show remains available.".into())
             });
             view.update_if_alive(cx, |view, cx| {
                 view.write = None;
                 match result {
-                    Ok(show) if view.library.selected == key => {
+                    Ok(show) if view.library.selected() == key.as_ref() => {
                         view.library.select(show.directory().to_owned(), 0);
                         view.mode = Mode::Keyframes;
                         view.refresh(cx);
                     },
                     Ok(_) => view.refresh(cx),
-                    Err(error) if view.library.selected == key => {
+                    Err(error) if view.library.selected() == key.as_ref() => {
                         view.notice = Some(error);
                         cx.notify();
                     },
@@ -745,20 +734,14 @@ impl Review {
         let Some(interrupted) = self.interrupted().cloned() else {
             return;
         };
-        let key = self.library.selected.clone();
-        let work = match (self.actions.edit)(
-            super::edits::Edit::Discard(interrupted),
-            self.fixture.clone(),
-            cx,
-        ) {
-            Ok(work) => work,
-            Err(error) => {
-                self.notice = Some(format!("Cannot discard this Show: {error:#}"));
-                return;
-            },
-        };
+        let key = self.library.selected().cloned();
+        let (edit, receipt) = Edit::new(move || interrupted.lock()?.discard());
+        if let Err(error) = (self.actions.edit)(edit, self.fixture(), cx) {
+            self.notice = Some(format!("Cannot discard this Show: {error:#}"));
+            return;
+        }
         let task = cx.spawn(async move |view, cx| {
-            let result = work
+            let result = receipt
                 .recv()
                 .await
                 .map_err(anyhow::Error::from)
@@ -769,8 +752,8 @@ impl Review {
                     view.confirm = None;
                 }
                 match result {
-                    Ok(_) => view.refresh(cx),
-                    Err(error) if view.library.selected == key => {
+                    Ok(()) => view.refresh(cx),
+                    Err(error) if view.library.selected() == key.as_ref() => {
                         view.notice = Some(format!("Cannot discard this Show: {error:#}"));
                         cx.notify();
                     },
@@ -814,7 +797,7 @@ impl Review {
         match action {
             Action::Annotations => {
                 if self.mode == Mode::Video
-                    && let Some(current) = self.library.selected.clone()
+                    && let Some(current) = self.library.selected().cloned()
                 {
                     self.annotated = !self.annotated;
                     let key = self.library.select(current.directory, current.frame);
@@ -853,12 +836,11 @@ impl Review {
                     );
                 }
             },
-            Action::Previous | Action::Next => {
-                if let Some(key) = &self.library.selected {
-                    let frame = if matches!(action, Action::Previous) {
-                        key.frame.saturating_sub(1)
-                    } else {
-                        key.frame.saturating_add(1)
+            Action::Step(direction) => {
+                if let Some(key) = self.library.selected() {
+                    let frame = match direction {
+                        Direction::Back => key.frame.saturating_sub(1),
+                        Direction::Forward => key.frame.saturating_add(1),
                     };
                     self.act(Action::Frame(frame), cx);
                 }
@@ -866,7 +848,7 @@ impl Review {
             Action::Refresh => self.refresh(cx),
             Action::Mode(mode) => {
                 if self.mode != mode
-                    && let Some(current) = self.library.selected.clone()
+                    && let Some(current) = self.library.selected().cloned()
                 {
                     let request = self.request;
                     let at = request.map(|request| request.at).or_else(|| {
@@ -896,7 +878,7 @@ impl Review {
                     .detail
                     .as_ref()
                     .is_some_and(|detail| index < detail.frames.len())
-                    && let Some(current) = self.library.selected.clone()
+                    && let Some(current) = self.library.selected().cloned()
                     && current.frame != index
                 {
                     let key = self.library.select(current.directory, index);
@@ -910,20 +892,14 @@ impl Review {
                 if let Some(interrupted) =
                     self.interrupted().filter(|_| self.can_change_interrupted())
                 {
-                    let message = if interrupted.narration_pending() {
-                        DISCARD_AUDIO
-                    } else {
-                        DISCARD_SHOW
-                    };
+                    self.notice = Some(discard_warning(interrupted).into());
                     self.confirm = Some(Confirm::Discard);
-                    self.notice = Some(message.into());
                 }
             },
             Action::ConfirmDiscard => self.discard(cx),
             Action::CancelDelete | Action::CancelDiscard => self.dismiss(),
             Action::Jump(direction) => {
-                if let Some((detail, current)) =
-                    self.detail.as_ref().zip(self.library.selected.as_ref())
+                if let Some((detail, current)) = self.detail.as_ref().zip(self.library.selected())
                     && let Some(frame) = detail.frames.get(current.frame)
                 {
                     let at = match direction {
@@ -949,7 +925,7 @@ impl Review {
             },
             Action::Keep => self.keep(cx),
             Action::Folder => {
-                if let Some(key) = &self.library.selected {
+                if let Some(key) = self.library.selected() {
                     cx.open_with_system(&key.directory);
                 }
             },
@@ -958,9 +934,9 @@ impl Review {
                     .detail
                     .as_ref()
                     .is_some_and(|detail| detail.movie.is_some())
-                    && let Some(key) = &self.library.selected
+                    && let Some(key) = self.library.selected()
                 {
-                    cx.open_with_system(&key.directory.join(super::store::movie::FILE));
+                    cx.open_with_system(&key.directory.join(movie::FILE));
                 }
             },
         }
@@ -1020,9 +996,8 @@ enum Action {
     ConfirmDelete(library::Offered),
     CancelDelete,
     Jump(Direction),
+    Step(Direction),
     Mode(Mode),
-    Previous,
-    Next,
     Refresh,
     Show(library::Offered),
     Frame(usize),

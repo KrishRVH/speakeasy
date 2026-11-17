@@ -1,48 +1,25 @@
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
 use async_channel::Receiver;
 use speakeasy_platform::OwnedThread;
 
-use super::{
-    Interrupted,
-    store::{
-        export,
-        retention::{self, Retention},
-        video,
-    },
-};
+pub(crate) struct Edit(Box<dyn FnOnce() + Send>);
 
-pub(crate) enum Edit {
-    Keep {
-        parent: PathBuf,
-        directory: PathBuf,
-        kept: bool,
-    },
-    Discard(Interrupted),
-    Delete {
-        parent: PathBuf,
-        directory: PathBuf,
-    },
-    Export {
-        directory: PathBuf,
-        destination: PathBuf,
-    },
-    Video {
-        directory: PathBuf,
-        destination: PathBuf,
-        cancel: Receiver<()>,
-    },
+impl Edit {
+    pub(crate) fn new<T: Send + 'static>(
+        write: impl FnOnce() -> T + Send + 'static,
+    ) -> (Self, Receiver<T>) {
+        let (done, receipt) = async_channel::bounded(1);
+        let edit = Self(Box::new(move || {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "Closing the view drops its receipt, but the accepted write still runs"
+            )]
+            let _ = done.try_send(write());
+        }));
+        (edit, receipt)
+    }
 }
-
-pub(crate) enum Written {
-    Retention(Retention),
-    Discarded,
-    Deleted(retention::Deleted),
-    Exported(export::Exported),
-    Video(video::Exported),
-}
-
-pub(crate) type Receipt = Receiver<anyhow::Result<Written>>;
 
 #[derive(Default)]
 pub(crate) struct Edits {
@@ -54,73 +31,29 @@ impl Edits {
         all(test, target_os = "windows"),
         all(feature = "native-acceptance", target_os = "macos")
     ))]
-    pub(crate) fn held_until(&mut self, release: Receiver<()>) -> anyhow::Result<Receipt> {
-        self.start(move || {
-            release.recv_blocking()?;
-            Ok(Written::Discarded)
-        })
+    pub(crate) fn held_until(
+        &mut self,
+        release: Receiver<()>,
+    ) -> anyhow::Result<Receiver<Result<(), async_channel::RecvError>>> {
+        let (edit, receipt) = Edit::new(move || release.recv_blocking());
+        self.submit(edit, None)?;
+        Ok(receipt)
     }
 
     pub(crate) fn submit(
         &mut self,
-        edit: Edit,
+        Edit(write): Edit,
         fixture: Option<Arc<tempfile::TempDir>>,
-    ) -> anyhow::Result<Receipt> {
-        self.start(move || {
-            let _fixture = fixture;
-            match edit {
-                Edit::Keep {
-                    parent,
-                    directory,
-                    kept,
-                } => retention::set_kept(&parent, &directory, kept)
-                    .map(Written::Retention)
-                    .map_err(Into::into),
-                Edit::Discard(interrupted) => {
-                    interrupted.lock()?.discard().map(|()| Written::Discarded)
-                },
-                Edit::Delete { parent, directory } => {
-                    retention::delete(&parent, &directory).map(Written::Deleted)
-                },
-                Edit::Export {
-                    directory,
-                    destination,
-                } => export::write(&directory, &destination).map(Written::Exported),
-                Edit::Video {
-                    directory,
-                    destination,
-                    cancel,
-                } => video::write(
-                    &directory,
-                    &destination,
-                    video::Options {
-                        captions: true,
-                        ..video::Options::default()
-                    },
-                    || cancel.is_closed(),
-                )
-                .map(Written::Video),
-            }
-        })
-    }
-
-    fn start(
-        &mut self,
-        write: impl FnOnce() -> anyhow::Result<Written> + Send + 'static,
-    ) -> anyhow::Result<Receipt> {
+    ) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.writing.as_ref().is_none_or(OwnedThread::is_finished),
             "A Show change is still being saved. Try again when it finishes."
         );
-        let (done, result) = async_channel::bounded(1);
         self.writing = Some(OwnedThread::spawn("show-edit", move || {
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "Closing the view drops its receipt, but the accepted write still runs"
-            )]
-            let _ = done.try_send(write());
+            let _fixture = fixture;
+            write();
         })?);
-        Ok(result)
+        Ok(())
     }
 
     pub(crate) fn drained(&self) -> impl Future<Output = ()> + use<> {
@@ -135,6 +68,8 @@ impl Edits {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
 
     #[tokio::test]
@@ -143,22 +78,25 @@ mod tests {
         let mut edits = Edits::default();
         let (release, wait) = std::sync::mpsc::channel();
         let (wrote, written) = async_channel::bounded(1);
-        let result = edits.start(move || {
+        let (edit, receipt) = Edit::new(move || {
             wait.recv()?;
             wrote.try_send(())?;
-            Ok(Written::Discarded)
-        })?;
-        drop(result);
-        assert!(edits.start(|| Ok(Written::Discarded)).is_err());
+            anyhow::Ok(())
+        });
+        edits.submit(edit, None)?;
+        drop(receipt);
+        let (busy, _) = Edit::new(|| ());
+        assert!(edits.submit(busy, None).is_err());
         assert!(
-            tokio::time::timeout(std::time::Duration::from_millis(10), edits.drained())
+            tokio::time::timeout(Duration::from_millis(10), edits.drained())
                 .await
                 .is_err()
         );
         release.send(())?;
         edits.drained().await;
         written.try_recv()?;
-        assert!(edits.start(|| Ok(Written::Discarded)).is_ok());
+        let (idle, _) = Edit::new(|| ());
+        assert!(edits.submit(idle, None).is_ok());
         Ok(())
     }
 }

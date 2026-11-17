@@ -34,10 +34,10 @@ fn native_show_review_navigates_damage_and_releases_private_images() -> anyhow::
         .context("Review acceptance did not complete")?
 }
 
-struct TestReads(super::super::preview::Reads);
+struct TestReads(preview::Reads);
 impl gpui::Global for TestReads {}
 
-struct TestEdits(super::super::edits::Edits);
+struct TestEdits(crate::show::edits::Edits);
 impl gpui::Global for TestEdits {}
 
 struct Recoveries(crate::runtime::RecoveryReceipt);
@@ -64,8 +64,8 @@ impl Render for Keeper {
     reason = "Native review acceptance uses GPUI's UI-thread context"
 )]
 async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
-    cx.update(|cx| cx.set_global(TestEdits(super::super::edits::Edits::default())));
-    cx.update(|cx| cx.set_global(TestReads(super::super::preview::Reads::default())));
+    cx.update(|cx| cx.set_global(TestEdits(crate::show::edits::Edits::default())));
+    cx.update(|cx| cx.set_global(TestReads(preview::Reads::default())));
     let (recovered, recoveries) = async_channel::bounded(1);
     cx.update(|cx| cx.set_global(Recoveries(recoveries)));
     let keeper = cx.open_window(
@@ -173,17 +173,13 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
             anyhow::Ok(())
         })??;
         key(window, stroke, cx)?;
-        let frame = window.read_with(cx, |view, _| {
-            view.library.selected.as_ref().map(|key| key.frame)
-        })?;
+        let frame = window.read_with(cx, |view, _| view.library.selected().map(|key| key.frame))?;
         ensure!(
             frame == Some(before),
             "Key-down activated Next before key-up"
         );
         release(window, stroke, cx)?;
-        let frame = window.read_with(cx, |view, _| {
-            view.library.selected.as_ref().map(|key| key.frame)
-        })?;
+        let frame = window.read_with(cx, |view, _| view.library.selected().map(|key| key.frame))?;
         ensure!(
             frame == Some(after),
             "Next did not activate exactly once on key-up"
@@ -201,10 +197,10 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     )
     .await?;
     let root = window
-        .read_with(cx, |view, _| view.directory.clone())?
+        .read_with(cx, |view, _| view.parent())?
         .context("The loaded preview has a directory")?;
     let first = window
-        .read_with(cx, |view, _| view.library.selected.clone())?
+        .read_with(cx, |view, _| view.library.selected().cloned())?
         .context("The loaded preview selected a Show")?
         .directory;
     let mut journal = speakeasy_show::Journal::new();
@@ -256,8 +252,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
             .context("Narration detail was dropped")?;
         let index = view
             .library
-            .selected
-            .as_ref()
+            .selected()
             .context("Narration selection was dropped")?
             .frame;
         assert_eq!(request.origin, Origin::Clause(0));
@@ -298,7 +293,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     window.update(cx, |view, _, cx| {
         assert_eq!(view.request, Some(request));
         assert_eq!(
-            view.library.selected.as_ref().map(|key| key.frame),
+            view.library.selected().map(|key| key.frame),
             view.detail
                 .as_ref()
                 .and_then(|detail| detail.locate(request.at))
@@ -314,7 +309,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     .await?;
     window.update(cx, |view, _, cx| {
         assert_eq!(view.request, Some(request));
-        view.act(Action::Next, cx);
+        view.act(Action::Step(Direction::Forward), cx);
         assert!(
             view.request.is_none(),
             "Frame navigation kept a stale narration request"
@@ -344,19 +339,16 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
             .context("The preview contains a mark")?;
         let expected = detail.locate(at).context("Mark has no frame")?.0;
         view.act(Action::Mark(number), cx);
-        assert_eq!(
-            view.library.selected.as_ref().map(|key| key.frame),
-            Some(expected)
-        );
+        assert_eq!(view.library.selected().map(|key| key.frame), Some(expected));
         assert_eq!(
             view.request.map(|request| request.origin),
             Some(Origin::Mark(number))
         );
         view.act(Action::Frame(2), cx);
         view.act(Action::Jump(Direction::Forward), cx);
-        assert_eq!(view.library.selected.as_ref().map(|key| key.frame), Some(3));
+        assert_eq!(view.library.selected().map(|key| key.frame), Some(3));
         view.act(Action::Jump(Direction::Back), cx);
-        assert_eq!(view.library.selected.as_ref().map(|key| key.frame), Some(2));
+        assert_eq!(view.library.selected().map(|key| key.frame), Some(2));
         view.act(Action::Mode(Mode::Keyframes), cx);
         anyhow::Ok(())
     })??;
@@ -372,7 +364,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
             Some(5)
         );
         assert_eq!(
-            view.library.selected.as_ref().map(|key| key.frame),
+            view.library.selected().map(|key| key.frame),
             view.detail
                 .as_ref()
                 .and_then(|detail| detail.locate(speakeasy_show::Moment::from_millis(1_500)))
@@ -414,16 +406,13 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     )
     .await?;
     window.update(cx, |view, _, cx| {
-        view.act(Action::Next, cx);
+        view.act(Action::Step(Direction::Forward), cx);
         view.act(Action::Frame(3), cx);
     })?;
     wait_for(
         window,
         |view| {
-            view.library
-                .selected
-                .as_ref()
-                .is_some_and(|key| key.frame == 3)
+            view.library.selected().is_some_and(|key| key.frame == 3)
                 && matches!(view.image, ImageState::Ready(_))
         },
         cx,
@@ -448,7 +437,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     )
     .await?;
     let selected = window
-        .read_with(cx, |view, _| view.library.selected.clone())?
+        .read_with(cx, |view, _| view.library.selected().cloned())?
         .context("The missing frame must remain selected")?;
     ensure!(selected.frame == 2, "A missing frame selected a substitute");
     let directory = selected.directory;
@@ -507,7 +496,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     window.update(cx, |view, _, cx| view.refresh(cx))?;
     wait_for(window, |view| view.listing.is_none(), cx).await?;
     window.read_with(cx, |view, _| {
-        assert!(view.library.gone && view.library.selected.is_none());
+        assert!(view.library.is_gone() && view.library.selected().is_none());
         assert!(view.detail.is_none() && matches!(view.image, ImageState::Empty));
     })?;
     window.update(cx, |view, _, cx| {
@@ -521,17 +510,14 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     .await?;
     let vanished = window
         .read_with(cx, |view, _| {
-            view.library
-                .selected
-                .as_ref()
-                .map(|key| key.directory.clone())
+            view.library.selected().map(|key| key.directory.clone())
         })?
         .context("The loaded preview selected a Show")?;
     fs::remove_dir_all(&vanished)?;
     window.update(cx, |view, _, cx| view.act(Action::Keep, cx))?;
     wait_for(window, |view| view.write.is_none(), cx).await?;
     window.read_with(cx, |view, _| {
-        assert!(view.library.gone && view.library.selected.is_none());
+        assert!(view.library.is_gone() && view.library.selected().is_none());
         assert!(view.detail.is_none() && matches!(view.image, ImageState::Empty));
         assert!(
             view.library
@@ -549,7 +535,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         cx,
     )
     .await?;
-    let (checkpoint, writer) = super::super::Keeper::fixture(
+    let (checkpoint, writer) = crate::show::Keeper::fixture(
         &root,
         SystemTime::now(),
         1_000,
@@ -671,12 +657,8 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         })?
         .context("The wait established a decoded frame")?;
     let (fixture, kept_directory) = window.update(cx, |view, window, cx| {
-        let fixture = view.fixture.take();
-        let directory = view
-            .library
-            .selected
-            .as_ref()
-            .map(|key| key.directory.clone());
+        let fixture = view.root.as_mut().and_then(|root| root.fixture.take());
+        let directory = view.library.selected().map(|key| key.directory.clone());
         view.keep(cx);
         window.remove_window();
         (fixture, directory)
@@ -747,7 +729,7 @@ fn more_actions(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyhow::Resu
         for _ in 0..stops {
             window.focus_next(cx);
         }
-        anyhow::Ok(view.library.selected.clone())
+        anyhow::Ok(view.library.selected().cloned())
     })??;
     cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))?;
     key(window, "enter", cx)?;
@@ -760,7 +742,7 @@ fn more_actions(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyhow::Resu
     cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))?;
     key(window, "down", cx)?;
     let (moved, selected) =
-        window.read_with(cx, |view, _| (view.menu, view.library.selected.clone()))?;
+        window.read_with(cx, |view, _| (view.menu, view.library.selected().cloned()))?;
     ensure!(
         moved != opened && moved.is_open(),
         "Down did not move within the open menu"
@@ -880,10 +862,7 @@ async fn export_selected(window: WindowHandle<Review>, cx: &mut AsyncApp) -> any
     let destination = root.path().join("show.zip");
     let directory = window
         .read_with(cx, |view, _| {
-            view.library
-                .selected
-                .as_ref()
-                .map(|key| key.directory.clone())
+            view.library.selected().map(|key| key.directory.clone())
         })?
         .context("The export fixture has a selected Show")?;
     window.update(cx, |view, _, cx| {
@@ -947,7 +926,7 @@ async fn copy_selected(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyho
         view.source = Source::Saved;
         view.actions.can_copy = |_| true;
         view.actions.copy = |request, cx| {
-            let super::super::copy::Request::Moment { text, image } = request else {
+            let copy::Request::Moment { text, image } = request else {
                 anyhow::bail!("Copy moment omitted its image");
             };
             let probe = cx.global_mut::<CopyProbe>();
@@ -968,7 +947,7 @@ async fn copy_selected(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyho
                 "Evidence copy omitted the displayed summary or recorded narration"
             );
             probe.received = true;
-            Ok(Box::pin(async { Ok(super::super::copy::Outcome::Copied) }))
+            Ok(Box::pin(async { Ok(copy::Outcome::Copied) }))
         };
         view.copy(CopyKind::Evidence, cx);
         view.source = Source::Demo;
@@ -993,20 +972,17 @@ async fn copy_selected(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyho
         view.source = Source::Saved;
         view.actions.can_copy = |_| true;
         view.actions.copy = |request, cx| {
-            let super::super::copy::Request::Agent(directory) = request else {
+            let copy::Request::Agent(directory) = request else {
                 anyhow::bail!("Send to agent copied something other than its prompt");
             };
             cx.global_mut::<CopyProbe>().agent = Some(directory);
-            Ok(Box::pin(async { Ok(super::super::copy::Outcome::Copied) }))
+            Ok(Box::pin(async { Ok(copy::Outcome::Copied) }))
         };
         view.act(Action::Copy(CopyKind::Agent), cx);
         view.source = Source::Demo;
         view.actions.can_copy = |_| false;
         view.actions.copy = |_, _| anyhow::bail!("Synthetic review does not use the clipboard");
-        view.library
-            .selected
-            .as_ref()
-            .map(|key| key.directory.clone())
+        view.library.selected().map(|key| key.directory.clone())
     })?;
     wait_for(window, |view| view.copying.is_none(), cx).await?;
     let agent = cx.read_global::<CopyProbe, _>(|probe, _| probe.agent.clone());

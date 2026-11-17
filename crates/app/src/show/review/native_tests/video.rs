@@ -36,7 +36,7 @@ async fn exercise_video(cx: &mut AsyncApp) -> anyhow::Result<()> {
     let directory = fixture.path().join("20261020T143205Z");
     fs::create_dir(&directory)?;
     movie::tests::native_fixture(&directory)?;
-    cx.update(|cx| cx.set_global(TestReads(crate::show::preview::Reads::default())));
+    cx.update(|cx| cx.set_global(TestReads(preview::Reads::default())));
     let keeper = cx.open_window(
         WindowOptions {
             show: false,
@@ -75,8 +75,10 @@ async fn exercise_video(cx: &mut AsyncApp) -> anyhow::Result<()> {
                     window,
                     cx,
                 );
-                review.directory = Some(fixture.path().to_owned());
-                review.fixture = Some(Arc::clone(&fixture));
+                review.root = Some(Root {
+                    directory: fixture.path().to_owned(),
+                    fixture: Some(Arc::clone(&fixture)),
+                });
                 review
             })
         },
@@ -161,10 +163,7 @@ async fn exercise_video(cx: &mut AsyncApp) -> anyhow::Result<()> {
         let ImageState::Ready(decoded) = &view.image else {
             anyhow::bail!("Missing final seek");
         };
-        assert_eq!(
-            view.library.selected.as_ref().map(|key| key.frame),
-            Some(119)
-        );
+        assert_eq!(view.library.selected().map(|key| key.frame), Some(119));
         assert_eq!(decoded.at, Duration::from_nanos(4_216_666_600));
         assert!(!view.video_caption().contains("Seeking"));
         Ok(())
@@ -246,7 +245,7 @@ async fn exercise_video(cx: &mut AsyncApp) -> anyhow::Result<()> {
         );
     })?;
     wait_for(window, ready, cx).await?;
-    let dragged = window.read_with(cx, |view, _| view.library.selected.clone())?;
+    let dragged = window.read_with(cx, |view, _| view.library.selected().cloned())?;
     assert!(
         dragged.as_ref().is_some_and(|key| key.frame >= 89),
         "Dragging did not reach the final quarter: selected {:?}",
@@ -266,7 +265,8 @@ async fn exercise_video(cx: &mut AsyncApp) -> anyhow::Result<()> {
     })?;
     window.read_with(cx, |view, _| {
         assert_eq!(
-            view.library.selected, dragged,
+            view.library.selected(),
+            dragged.as_ref(),
             "Hovering after a lost mouse-up kept seeking"
         );
     })?;
@@ -276,10 +276,7 @@ async fn exercise_video(cx: &mut AsyncApp) -> anyhow::Result<()> {
         let ImageState::Ready(decoded) = &view.image else {
             anyhow::bail!("Missing end frame");
         };
-        assert_eq!(
-            view.library.selected.as_ref().map(|key| key.frame),
-            Some(119)
-        );
+        assert_eq!(view.library.selected().map(|key| key.frame), Some(119));
         Ok(Arc::downgrade(&decoded.image))
     })??;
     annotations::exercise(window, &directory, cx).await?;

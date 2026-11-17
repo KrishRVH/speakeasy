@@ -8,7 +8,7 @@ use speakeasy_show::NarrationLoss;
 
 use super::{
     Action, Confirm, CopyKind, Direction, Export, ExportKind, ImageState, Kind, Mode, Pane, Review,
-    Source, Write,
+    Source, Write, discard_warning,
     library::{Detail, Key, Row},
     narration::{self, Narration},
     navigation::{Origin, Stamp},
@@ -50,7 +50,7 @@ impl Render for Review {
         let palette = self.theme.palette();
         let kit = Kit::new(palette).keyboard(self.keyboard);
         let now = SystemTime::now();
-        let content = match self.library.selected.as_ref() {
+        let content = match self.library.selected() {
             Some(key) => self.detail_pane(key, kit, palette, now, cx),
             None => self.placeholder(kit, palette).into_any_element(),
         };
@@ -250,7 +250,7 @@ impl Review {
     }
 
     fn placeholder(&self, kit: Kit<'_>, palette: &Palette) -> Div {
-        let (title, text, keys) = if self.library.gone {
+        let (title, text, keys) = if self.library.is_gone() {
             (
                 Some("Show gone"),
                 "This Show was deleted or has expired. Choose another Show to continue.",
@@ -652,16 +652,20 @@ impl Review {
                         ))
                     })
                     .child(kit.icon_button(
-                        id(Action::Previous),
+                        id(Action::Step(Direction::Back)),
                         icons::CHEVRON_LEFT,
                         "Previous frame",
-                        press(Action::Previous, index > 0 && count > 0, cx),
+                        press(Action::Step(Direction::Back), index > 0 && count > 0, cx),
                     ))
                     .child(kit.icon_button(
-                        id(Action::Next),
+                        id(Action::Step(Direction::Forward)),
                         icons::CHEVRON_RIGHT,
                         "Next frame",
-                        press(Action::Next, index.saturating_add(1) < count, cx),
+                        press(
+                            Action::Step(Direction::Forward),
+                            index.saturating_add(1) < count,
+                            cx,
+                        ),
                     )),
             )
             .child(
@@ -946,12 +950,7 @@ impl Review {
                     .when(confirming, |pane| {
                         pane.child(confirm(
                             Confirmation {
-                                message: if pending {
-                                    super::DISCARD_AUDIO
-                                } else {
-                                    super::DISCARD_SHOW
-                                }
-                                .into(),
+                                message: discard_warning(interrupted).into(),
                                 cancel: Action::CancelDiscard,
                                 confirm: Action::ConfirmDiscard,
                                 label: "Discard permanently",
@@ -994,15 +993,10 @@ fn status(row: &Row) -> impl Iterator<Item = (&'static str, Tone)> {
 }
 
 fn keep_label(row: Option<&Row>, now: SystemTime) -> &'static str {
-    if row.and_then(|row| row.pinned) != Some(true) {
+    let Some(kept) = row.filter(|row| row.pinned == Some(true)) else {
         return "Keep Show";
-    }
-    let overdue = row
-        .and_then(|row| row.directory.file_name())
-        .and_then(|name| name.to_str())
-        .is_some_and(
-            |name| matches!(Retention::of(name, false), Retention::Expires(at) if at <= now),
-        );
+    };
+    let overdue = matches!(Retention::of(kept.name(), false), Retention::Expires(at) if at <= now);
     if overdue {
         "Allow cleanup"
     } else {
@@ -1185,8 +1179,8 @@ pub(super) fn id(action: Action) -> ElementId {
         Action::Mode(Mode::Video) => "show-video-frames".into(),
         Action::Annotations => "show-video-annotations".into(),
         Action::Keep => "keep-show".into(),
-        Action::Previous => "previous-frame".into(),
-        Action::Next => "next-frame".into(),
+        Action::Step(Direction::Back) => "previous-frame".into(),
+        Action::Step(Direction::Forward) => "next-frame".into(),
         Action::Refresh => "shows-refresh".into(),
         Action::Copy(CopyKind::Agent) => "shows-send-agent".into(),
         Action::Copy(CopyKind::Summary) => "shows-copy".into(),
@@ -1276,7 +1270,7 @@ impl Review {
             return;
         }
         let row = self.library.position();
-        let frame = self.library.selected.as_ref().map_or(0, |key| key.frame);
+        let frame = self.library.selected().map_or(0, |key| key.frame);
         let last = self
             .detail
             .as_ref()

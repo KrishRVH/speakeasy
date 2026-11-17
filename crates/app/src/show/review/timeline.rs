@@ -22,8 +22,7 @@ impl Review {
         let (start, end) = (covered.start(), covered.end());
         let selected = self
             .library
-            .selected
-            .as_ref()
+            .selected()
             .and_then(|key| self.detail.as_ref()?.frames.get(key.frame))
             .map_or(start, |frame| frame.at);
         let progress = fraction(selected, covered);

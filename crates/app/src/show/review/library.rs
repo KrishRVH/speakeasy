@@ -7,14 +7,18 @@ use std::{
 
 use speakeasy_show::{
     Annotations, Ending, Manifest, Moment, MoviePrefix, NarrationLoss, Recording, Source,
-    Unreadable,
+    Unreadable, locate::Focus,
 };
 
-use super::{narration::Narration, navigation::Relation};
+use super::{
+    narration::Narration,
+    navigation::{Relation, Stamp},
+};
 use crate::show::{
+    Interrupted,
     preview::Content,
     store::{
-        age, checkpoint, pinned,
+        age, checkpoint, movie, pinned,
         recall::{self, Entry, Health, ReadError},
         retention::{Retention, interval},
         source,
@@ -32,7 +36,7 @@ pub(super) enum Mode {
 #[derive(Debug)]
 pub(super) enum Kind {
     Saved,
-    Interrupted(crate::show::Interrupted),
+    Interrupted(Interrupted),
 }
 
 #[derive(Debug)]
@@ -66,7 +70,7 @@ impl Row {
         }
     }
 
-    fn name(&self) -> &str {
+    pub(super) fn name(&self) -> &str {
         self.directory
             .file_name()
             .and_then(|name| name.to_str())
@@ -78,21 +82,14 @@ impl Row {
             Kind::Interrupted(show) => Some(show.recorded()),
             Kind::Saved => age::recorded_at(self.name()),
         };
-        recorded.map_or_else(
-            || self.name().to_owned(),
-            |recorded| {
-                now.duration_since(recorded).map_or_else(
-                    |_| "Recorded later than this clock".into(),
-                    |age| {
-                        if age.as_secs() < 60 {
-                            "Just now".into()
-                        } else {
-                            format!("{} ago", interval(age))
-                        }
-                    },
-                )
-            },
-        )
+        let Some(recorded) = recorded else {
+            return self.name().to_owned();
+        };
+        match now.duration_since(recorded) {
+            Err(_) => "Recorded later than this clock".into(),
+            Ok(age) if age.as_secs() < 60 => "Just now".into(),
+            Ok(age) => format!("{} ago", interval(age)),
+        }
     }
 
     pub(super) fn retention(&self, now: SystemTime) -> String {
@@ -183,7 +180,7 @@ pub(super) struct Detail {
     pub narration: Narration,
     pub source_available: bool,
     pub coverage: String,
-    pub movie: Option<super::super::store::movie::Metadata>,
+    pub movie: Option<movie::Metadata>,
 }
 
 impl Detail {
@@ -191,8 +188,7 @@ impl Detail {
         let index = self
             .frames
             .partition_point(|frame| {
-                crate::show::store::movie::decoder_time(frame.presentation())
-                    <= at.since(Moment::START)
+                movie::decoder_time(frame.presentation()) <= at.since(Moment::START)
             })
             .saturating_sub(1);
         Some((
@@ -209,7 +205,7 @@ impl Detail {
         let mut frames = Vec::new();
         let mut marks = Vec::new();
         let mut narration = Narration::Unavailable;
-        let mut movie = None;
+        let mut metadata = None;
         let mut scene = None;
         let mut duration = None;
         match entry.show {
@@ -220,7 +216,7 @@ impl Detail {
                 "Cannot read this Show's frame list: {error}. Its summary may still be readable."
             )),
             Ok(show) => {
-                movie = show.movie;
+                metadata = show.movie;
                 let manifest = show.manifest;
                 let recording = manifest.recording();
                 duration = Some(recording.duration);
@@ -239,7 +235,7 @@ impl Detail {
                         .map(|problem| format!("{}: {}", problem.name, problem.reason)),
                 );
                 for (index, mark) in manifest.marks().iter().enumerate() {
-                    if let Ok(spans) = manifest.locate(speakeasy_show::locate::Focus::Mark(mark.number))
+                    if let Ok(spans) = manifest.locate(Focus::Mark(mark.number))
                         && let Some(span) = spans.first()
                     {
                         marks.push((mark.number, span.start()));
@@ -281,9 +277,9 @@ impl Detail {
             },
         }
         if mode == Mode::Video
-            && let Some(metadata) = &movie
+            && let Some(metadata) = &metadata
         {
-            match crate::show::store::movie::inspect(directory) {
+            match movie::inspect(directory) {
                 Ok(Some(inspected)) => {
                     let annotations = Moment::from_millis(
                         metadata
@@ -300,7 +296,7 @@ impl Detail {
                     coverage = format!(
                         "{} video samples · annotation record through {}",
                         frames.len(),
-                        super::navigation::Stamp(annotations)
+                        Stamp(annotations)
                     );
                 },
                 Ok(None) => warnings
@@ -316,7 +312,7 @@ impl Detail {
             narration,
             source_available,
             coverage,
-            movie,
+            movie: metadata,
         })
     }
 }
@@ -427,11 +423,17 @@ pub(super) struct Offered {
 }
 
 #[derive(Default)]
+enum Selection {
+    #[default]
+    Unvisited,
+    Selected(Key),
+    Gone,
+}
+
+#[derive(Default)]
 pub(super) struct Library {
     pub rows: Vec<Row>,
-    pub selected: Option<Key>,
-    pub gone: bool,
-    visited: bool,
+    selection: Selection,
     revision: u64,
     listing_revision: u64,
 }
@@ -446,19 +448,20 @@ impl Library {
     pub(super) fn replace(&mut self, rows: Vec<Row>) -> Option<Key> {
         self.listing_revision = self.listing_revision.wrapping_add(1);
         self.rows = rows;
-        let path = match &self.selected {
-            Some(key) if self.rows.iter().any(|row| row.directory == key.directory) => {
-                Some(key.directory.clone())
+        let (directory, frame) = match &self.selection {
+            Selection::Selected(key)
+                if self.rows.iter().any(|row| row.directory == key.directory) =>
+            {
+                (key.directory.clone(), key.frame)
             },
-            Some(_) => {
+            Selection::Selected(_) => {
                 self.forget();
-                None
+                return None;
             },
-            None if !self.visited => self.rows.first().map(|row| row.directory.clone()),
-            None => None,
+            Selection::Unvisited => (self.rows.first()?.directory.clone(), 0),
+            Selection::Gone => return None,
         };
-        let frame = self.selected.as_ref().map_or(0, |key| key.frame);
-        path.map(|path| self.select(path, frame))
+        Some(self.select(directory, frame))
     }
 
     pub(super) const fn offer(&self, index: usize) -> Offered {
@@ -481,18 +484,27 @@ impl Library {
             directory,
             frame,
         };
-        self.selected = Some(key.clone());
-        self.visited = true;
-        self.gone = false;
+        self.selection = Selection::Selected(key.clone());
         key
     }
 
+    pub(super) const fn selected(&self) -> Option<&Key> {
+        match &self.selection {
+            Selection::Selected(key) => Some(key),
+            Selection::Unvisited | Selection::Gone => None,
+        }
+    }
+
+    pub(super) const fn is_gone(&self) -> bool {
+        matches!(self.selection, Selection::Gone)
+    }
+
     pub(super) fn accepts(&self, key: &Key) -> bool {
-        self.selected.as_ref() == Some(key)
+        self.selected() == Some(key)
     }
 
     pub(super) fn position(&self) -> Option<usize> {
-        let key = self.selected.as_ref()?;
+        let key = self.selected()?;
         self.rows
             .iter()
             .position(|row| row.directory == key.directory)
@@ -503,17 +515,14 @@ impl Library {
     }
 
     pub(super) fn is_selected(&self, directory: &Path) -> bool {
-        self.selected
-            .as_ref()
+        self.selected()
             .is_some_and(|key| key.directory == directory)
     }
 
     pub(super) fn forget(&mut self) {
-        if let Some(key) = self.selected.clone() {
+        if let Selection::Selected(key) = std::mem::replace(&mut self.selection, Selection::Gone) {
             self.remove(&key.directory);
         }
-        self.gone = true;
-        self.visited = true;
     }
 
     pub(super) fn remove(&mut self, directory: &Path) -> bool {
@@ -521,9 +530,7 @@ impl Library {
         self.rows.retain(|row| row.directory != directory);
         let selected = self.is_selected(directory);
         if selected {
-            self.selected = None;
-            self.gone = true;
-            self.visited = true;
+            self.selection = Selection::Gone;
         }
         selected
     }

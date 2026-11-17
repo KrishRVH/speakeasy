@@ -153,7 +153,7 @@ pub(super) async fn exercise(
     wait_for(window, |view| view.write.is_none(), cx).await?;
     assert!(!second.exists());
     window.read_with(cx, |view, _| {
-        assert!(view.library.selected.is_none() && view.library.gone);
+        assert!(view.library.selected().is_none() && view.library.is_gone());
         assert!(view.detail.is_none() && matches!(view.image, ImageState::Empty));
     })?;
     select(window, previous, cx).await?;

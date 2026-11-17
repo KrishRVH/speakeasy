@@ -1,7 +1,7 @@
 use super::*;
 
 #[derive(Default)]
-struct Copies(Vec<crate::show::copy::Request>);
+struct Copies(Vec<copy::Request>);
 impl gpui::Global for Copies {}
 
 #[expect(
@@ -31,7 +31,7 @@ pub(super) async fn exercise(
         view.actions.can_copy = |_| true;
         view.actions.copy = |request, cx| {
             cx.global_mut::<Copies>().0.push(request);
-            Ok(Box::pin(async { Ok(crate::show::copy::Outcome::Copied) }))
+            Ok(Box::pin(async { Ok(copy::Outcome::Copied) }))
         };
         let key = view.library.select(directory.clone(), 1);
         view.open_selected(key, None, cx);
@@ -57,7 +57,7 @@ pub(super) async fn exercise(
     let copied = cx
         .update(|cx| cx.global_mut::<Copies>().0.pop())
         .context("Missing copy payload")?;
-    let crate::show::copy::Request::Moment { text, image } = copied else {
+    let copy::Request::Moment { text, image } = copied else {
         anyhow::bail!("Wrong copy payload")
     };
     assert!(Arc::ptr_eq(&image, &annotated));
@@ -95,9 +95,9 @@ pub(super) async fn exercise(
     }
     assert_eq!(annotated.as_bytes(0), Some(png.as_slice()));
     window.update(cx, |view, _, cx| {
-        let selected = view.library.selected.clone();
+        let selected = view.library.selected().cloned();
         view.act(Action::Annotations, cx);
-        assert_ne!(view.library.selected, selected);
+        assert_ne!(view.library.selected(), selected.as_ref());
         assert!(view.loading.is_some());
         assert!(view.video_caption().contains("Annotations on"));
         view.copy(CopyKind::Evidence, cx);

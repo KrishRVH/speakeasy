@@ -2,10 +2,10 @@ use std::path::PathBuf;
 
 use gpui::Context;
 
-use super::{Export, Review, Write};
+use super::{Edit, Export, Review, Write};
 use crate::{
     gpui_ext::EntityUpdate as _,
-    show::edits::{Edit, Written},
+    show::store::{export, video},
 };
 
 #[derive(Clone, Copy)]
@@ -23,7 +23,7 @@ impl Review {
         if !self.can_export() || self.detail.is_none() {
             return;
         }
-        let Some(key) = &self.library.selected else {
+        let Some(key) = self.library.selected() else {
             return;
         };
         let directory = key.directory.clone();
@@ -71,31 +71,36 @@ impl Review {
         if !self.library.is_selected(&directory) || !self.can_export() {
             return;
         }
-        let (edit, cancel) = match kind {
+        let show = directory.clone();
+        let (edit, receipt, cancel) = match kind {
             Kind::Video => {
-                let (cancel, receiver) = async_channel::bounded(1);
-                let edit = Edit::Video {
-                    directory: directory.clone(),
-                    destination,
-                    cancel: receiver,
+                let (cancel, cancelled) = async_channel::bounded(1);
+                let options = video::Options {
+                    captions: true,
+                    ..video::Options::default()
                 };
-                (edit, Some(cancel))
+                let (edit, receipt) = Edit::new(move || {
+                    video::write(&show, &destination, options, || cancelled.is_closed())
+                        .map(|exported| exported.note())
+                });
+                (edit, receipt, Some(cancel))
             },
             Kind::Archive => {
-                let edit = Edit::Export {
-                    directory: directory.clone(),
-                    destination,
-                };
-                (edit, None)
+                let (edit, receipt) = Edit::new(move || {
+                    export::write(&show, &destination).map(|exported| {
+                        format!(
+                            "Exported to {}. This copy does not expire automatically.",
+                            exported.path.display()
+                        )
+                    })
+                });
+                (edit, receipt, None)
             },
         };
-        let work = match (self.actions.edit)(edit, self.fixture.clone(), cx) {
-            Ok(work) => work,
-            Err(error) => {
-                self.notice = Some(format!("Cannot export this Show: {error:#}"));
-                return;
-            },
-        };
+        if let Err(error) = (self.actions.edit)(edit, self.fixture(), cx) {
+            self.notice = Some(format!("Cannot export this Show: {error:#}"));
+            return;
+        }
         self.notice = Some(
             match kind {
                 Kind::Video => {
@@ -106,7 +111,7 @@ impl Review {
             .into(),
         );
         let task = cx.spawn(async move |view, cx| {
-            let result = work
+            let result = receipt
                 .recv()
                 .await
                 .map_err(anyhow::Error::from)
@@ -114,15 +119,10 @@ impl Review {
             view.update_if_alive(cx, |view, cx| {
                 view.export = None;
                 if view.library.is_selected(&directory) {
-                    view.notice = Some(match result {
-                        Ok(Written::Exported(exported)) => format!(
-                            "Exported to {}. This copy does not expire automatically.",
-                            exported.path.display()
-                        ),
-                        Ok(Written::Video(exported)) => exported.note(),
-                        Ok(_) => "The export returned no archive. Try again.".into(),
-                        Err(error) => format!("Cannot export this Show: {error:#}"),
-                    });
+                    view.notice = Some(
+                        result
+                            .unwrap_or_else(|error| format!("Cannot export this Show: {error:#}")),
+                    );
                 }
                 cx.notify();
             });

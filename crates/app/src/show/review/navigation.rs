@@ -1,4 +1,4 @@
-use std::{fmt, path::Path, time::Duration};
+use std::{cmp::Ordering, fmt, path::Path, time::Duration};
 
 use speakeasy_show::Moment;
 
@@ -29,28 +29,25 @@ impl Relation {
         let requested = requested.since(Moment::START);
         let sampled = decoder_time(sampled);
         match sampled.cmp(&requested) {
-            std::cmp::Ordering::Equal => Self::At,
-            std::cmp::Ordering::Less => Self::Earlier(requested.saturating_sub(sampled)),
-            std::cmp::Ordering::Greater => Self::Later(sampled.saturating_sub(requested)),
+            Ordering::Equal => Self::At,
+            Ordering::Less => Self::Earlier(requested.saturating_sub(sampled)),
+            Ordering::Greater => Self::Later(sampled.saturating_sub(requested)),
         }
     }
 }
 
 impl fmt::Display for Relation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::At => f.write_str("same timestamp"),
-            Self::Earlier(gap) => write!(f, "{} ms earlier", milliseconds(*gap)),
-            Self::Later(gap) => write!(f, "{} ms later", milliseconds(*gap)),
+        let (gap, side) = match self {
+            Self::At => return f.write_str("same timestamp"),
+            Self::Earlier(gap) => (gap, "earlier"),
+            Self::Later(gap) => (gap, "later"),
+        };
+        if gap.subsec_nanos().is_multiple_of(1_000_000) {
+            write!(f, "{} ms {side}", gap.as_millis())
+        } else {
+            write!(f, "{:.3} ms {side}", gap.as_secs_f64() * 1000.0)
         }
-    }
-}
-
-fn milliseconds(gap: Duration) -> String {
-    if gap.subsec_nanos().is_multiple_of(1_000_000) {
-        gap.as_millis().to_string()
-    } else {
-        format!("{:.3}", gap.as_secs_f64() * 1000.0)
     }
 }
 
