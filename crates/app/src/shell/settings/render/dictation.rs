@@ -2,7 +2,7 @@ use std::path::Path;
 
 use gpui::{AnyElement, Div, FontWeight, SharedString, div, prelude::*, px, rgb};
 
-use super::{Ui, fraction, progress_text};
+use super::{Ui, fraction, progress_text, setup_progress};
 use crate::{
     config::Engine,
     controls::{Tone, Weight},
@@ -539,28 +539,11 @@ impl Settings {
                     )),
             )
             .when_some(installing, |chooser, (model, progress)| {
-                chooser.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(8.0))
-                        .child(kit.progress(fraction(progress)))
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(12.0))
-                                .child(
-                                    kit.detail(format!(
-                                        "{} · {}",
-                                        model.label(),
-                                        progress_text(progress)
-                                    ))
-                                    .flex_1(),
-                                )
-                                .child(ui.button("Cancel", Action::Setup, Weight::Quiet)),
-                        ),
-                )
+                chooser.child(setup_progress(
+                    ui,
+                    progress,
+                    format!("{} · {}", model.label(), progress_text(progress)),
+                ))
             })
             .when(own, |chooser| chooser.child(self.own_engine_panel(ui)))
             .child(

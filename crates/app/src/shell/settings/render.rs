@@ -261,19 +261,7 @@ impl Settings {
                 .installing()
                 .map(|installing| installing.setup.progress());
             let controls = match progress {
-                Some(progress) => div()
-                    .flex_col()
-                    .w_full()
-                    .gap(px(8.0))
-                    .child(kit.progress(fraction(progress)))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(12.0))
-                            .child(kit.detail(progress_text(progress)).flex_1())
-                            .child(ui.button("Cancel", Action::Setup, Weight::Quiet)),
-                    ),
+                Some(progress) => setup_progress(ui, progress, progress_text(progress)).w_full(),
                 None => div().child(ui.button_if(
                     "Set up automatically",
                     Action::Setup,
@@ -468,6 +456,27 @@ const fn microphone_remedy() -> &'static str {
     } else {
         "Your desktop blocked the microphone. Allow it in your privacy settings, then come back here."
     }
+}
+
+pub(super) fn setup_progress(
+    ui: &Ui<'_>,
+    progress: Progress,
+    detail: impl Into<SharedString>,
+) -> Div {
+    let kit = ui.kit();
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(8.0))
+        .child(kit.progress(fraction(progress)))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(12.0))
+                .child(kit.detail(detail).flex_1())
+                .child(ui.button("Cancel", Action::Setup, Weight::Quiet)),
+        )
 }
 
 pub(super) fn fraction(progress: Progress) -> f32 {
