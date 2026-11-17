@@ -108,7 +108,7 @@ pub(crate) trait NativeInsert {
     fn send(&mut self, keys: Self::Keys) -> anyhow::Result<Inserted>;
 }
 
-pub(crate) fn insert<N: NativeInsert>(
+fn insert<N: NativeInsert>(
     native: &mut N,
     text: &str,
     permit: &InsertPermit,
