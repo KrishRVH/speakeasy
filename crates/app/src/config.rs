@@ -164,8 +164,7 @@ impl Config {
     }
 
     pub(crate) fn model_choice(&self) -> Option<Model> {
-        self.nemo_model
-            .filter(|choice| self.engine == Engine::Nemo && Model::at(&self.model) == Some(*choice))
+        managed_model(self.engine, &self.model, self.nemo_model)
     }
 
     pub(crate) fn delivery(&self) -> Delivery {
@@ -466,6 +465,10 @@ fn from_json<'de, T: Deserialize<'de>>(contents: &'de [u8]) -> anyhow::Result<T>
     })?;
     json.end()?;
     Ok(value)
+}
+
+fn managed_model(engine: Engine, model: &Path, marker: Option<Model>) -> Option<Model> {
+    marker.filter(|&choice| engine == Engine::Nemo && Model::at(model) == Some(choice))
 }
 
 fn absent(path: &Path) -> bool {

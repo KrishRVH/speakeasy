@@ -131,6 +131,36 @@ fn sparse_settings_need_no_presets_and_invalid_libraries_are_rejected_even_witho
     Ok(())
 }
 
+#[test]
+fn a_description_names_the_model_a_preset_runs_even_under_a_stale_marker() -> anyhow::Result<()> {
+    let managed = Config {
+        engine: Engine::Nemo,
+        model: Model::Nemotron.file_name().into(),
+        nemo_model: Some(Model::Nemotron),
+        language: "de-DE".into(),
+        ..Config::default()
+    };
+    let parakeet_file = Config {
+        model: Model::Parakeet.file_name().into(),
+        ..managed.clone()
+    };
+    let whisper_file = Config {
+        engine: Engine::Whisper,
+        model: "ggml-base.bin".into(),
+        language: "de".into(),
+        ..managed.clone()
+    };
+    for (config, description) in [
+        (managed, "Nemotron 3.5 · German"),
+        (parakeet_file, Model::Parakeet.file_name()),
+        (whisper_file, "ggml-base.bin · German"),
+    ] {
+        let preset = Preset::capture("Fixture".into(), &config)?;
+        assert_eq!(preset.description(), description);
+    }
+    Ok(())
+}
+
 proptest! {
     #[test]
     fn names_cannot_hide_case_duplicates_or_controls(name in "[a-z]{1,48}", control in 0u8..32) {

@@ -3,7 +3,7 @@ use std::{collections::HashSet, fmt, path::PathBuf};
 use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
 
-use super::{Config, Engine};
+use super::{Config, Engine, managed_model};
 use crate::{
     models::{self, Model},
     recognition_terms::Terms,
@@ -99,7 +99,8 @@ impl Preset {
     }
 
     pub(crate) fn description(&self) -> String {
-        let model = match self.nemo_model {
+        let managed = managed_model(self.engine, &self.model, self.nemo_model);
+        let model = match managed {
             Some(model) => model.label(),
             None => self
                 .model
@@ -113,7 +114,7 @@ impl Preset {
             models::LANGUAGES
         };
         let language = (self.language != "auto"
-            && (self.engine == Engine::Whisper || self.nemo_model == Some(Model::Nemotron)))
+            && (self.engine == Engine::Whisper || managed == Some(Model::Nemotron)))
         .then(|| {
             languages
                 .iter()
