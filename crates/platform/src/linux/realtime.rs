@@ -1,8 +1,12 @@
 use std::{env, fs};
 
 pub fn disable_rtkit() {
+    set_while_alone("DISABLE_RTKIT", "1");
+}
+
+fn set_while_alone(key: &str, value: &str) {
     if alone() {
-        unsafe { env::set_var("DISABLE_RTKIT", "1") };
+        unsafe { env::set_var(key, value) };
     }
 }
 
@@ -18,13 +22,13 @@ mod tests {
 
     #[test]
     fn another_running_thread_leaves_the_environment_untouched() {
-        let before = env::var_os("DISABLE_RTKIT");
+        let key = "SPEAKEASY_TEST_UNWRITTEN_WHILE_THREADS_RUN";
         let (release, released) = mpsc::channel::<()>();
         thread::scope(|scope| {
             scope.spawn(move || released.recv());
-            disable_rtkit();
+            set_while_alone(key, "1");
             drop(release);
         });
-        assert_eq!(env::var_os("DISABLE_RTKIT"), before);
+        assert_eq!(env::var_os(key), None);
     }
 }
