@@ -288,13 +288,7 @@ async fn shutdown_revokes_and_owns_pending_insertion_cleanup() -> anyhow::Result
 
 #[tokio::test(start_paused = true)]
 async fn silence_and_empty_recognition_never_report_submission() -> anyhow::Result<()> {
-    let mut h = Harness::with_ports(
-        Config {
-            language: "en".into(),
-            ..Config::default()
-        },
-        |_| {},
-    )?;
+    let mut h = Harness::with_ports(english(), |_| {})?;
     let (id, events) = h.start().await?;
     events.send(CaptureEvent::Finished(id, Ok(None))).await?;
     h.phase(Phase::Empty).await?;
@@ -356,22 +350,15 @@ async fn nemo_preserves_non_english_words_in_dictation_and_shows() -> anyhow::Re
 
 #[tokio::test(start_paused = true)]
 async fn saved_cleanup_opt_out_keeps_words_and_worker() -> anyhow::Result<()> {
-    let mut h = Harness::with_ports(
-        Config {
-            language: "en".into(),
-            ..Config::default()
-        },
-        |_| {},
-    )?;
+    let mut h = Harness::with_ports(english(), |_| {})?;
     receive(&h.loads).await?;
     h.start().await?;
     h.finish_as("Um, speak uh clearly.").await?;
     assert_eq!(receive(&h.pasted).await?, "speak clearly.");
     h.phase(Phase::Done).await?;
     let opted_out = Config {
-        language: "en".into(),
         remove_fillers: false,
-        ..Config::default()
+        ..english()
     };
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
@@ -561,10 +548,10 @@ async fn a_lane_closed_behind_a_queued_press_still_reports_monitoring_stopped() 
 #[tokio::test(start_paused = true)]
 async fn failed_recovery_stops_worker_before_loading_replacement() -> anyhow::Result<()> {
     let (stop, stopping) = gate(2);
-    let (recover, recovery) = async_channel::bounded(1);
+    let (probe, probes) = async_channel::bounded(1);
     let mut h = Harness::with_ports(Config::default(), |ports| {
         ports.stop = Some(stop);
-        ports.recovery = Some(recovery);
+        ports.probes = Some(probes);
     })?;
     receive(&h.loads).await?;
     h.start().await?;
@@ -573,7 +560,7 @@ async fn failed_recovery_stops_worker_before_loading_replacement() -> anyhow::Re
     h.phase(Phase::Cancelled).await?;
     timeout(PATIENCE, old_reply.closed()).await?;
     assert!(answer(old_reply, "discard this").is_err());
-    recover.send(Err(anyhow!("Recovery failed"))).await?;
+    probe.send(Err(anyhow!("Recovery failed"))).await?;
     stopping.reached().await?;
     assert!(
         still_pending(h.loads.recv()).await,
@@ -921,25 +908,18 @@ async fn profile_ready_text_latency() -> anyhow::Result<()> {
 #[tokio::test(start_paused = true)]
 async fn phrase_corrections_follow_filler_cleanup_for_dictation_and_shows_without_reloading()
 -> anyhow::Result<()> {
-    let mut h = Harness::with_ports(
-        Config {
-            language: "en".into(),
-            ..Config::default()
-        },
-        |_| {},
-    )?;
+    let mut h = Harness::with_ports(english(), |_| {})?;
     receive(&h.loads).await?;
     h.start().await?;
     h.finish_as("Ready.").await?;
     assert_eq!(receive(&h.pasted).await?, "Ready.");
     h.phase(Phase::Done).await?;
     let config = Config {
-        language: "en".into(),
         vocabulary: vec![Correction {
             heard: "cube control".into(),
             written: "kubectl".into(),
         }],
-        ..Config::default()
+        ..english()
     };
     h.runtime.configure(ValidConfig::assume(config));
     h.phase(Phase::Idle).await?;

@@ -104,10 +104,10 @@ async fn stream_output_waits_for_seal_and_keeps_practice_private() -> anyhow::Re
 #[tokio::test(start_paused = true)]
 async fn recording_while_worker_recovers_skips_stream_and_preserves_whole_audio()
 -> anyhow::Result<()> {
-    let (recovered, probe) = async_channel::bounded(1);
+    let (probe, probes) = async_channel::bounded(1);
     let (recorded, requests) = async_channel::bounded(1);
     let mut h = Harness::with_ports(config(), |ports| {
-        ports.recovery = Some(probe);
+        ports.probes = Some(probes);
         ports.recorded_requests = Some(recorded);
     })?;
     let (id, events) = h.start().await?;
@@ -122,7 +122,7 @@ async fn recording_while_worker_recovers_skips_stream_and_preserves_whole_audio(
     let (new, audio) = live();
     events.send(CaptureEvent::Streaming(id, audio)).await?;
     timeout(PATIENCE, new.frames.closed()).await?;
-    recovered.send(Ok(())).await?;
+    probe.send(Ok(())).await?;
     h.finish_as("Complete recording").await?;
     assert_eq!(receive(&requests).await?, *sealed().wav);
     assert_eq!(receive(&h.pasted).await?, "Complete recording");

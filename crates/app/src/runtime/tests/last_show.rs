@@ -163,9 +163,7 @@ async fn a_show_saved_as_a_pause_stops_its_owner_outlives_that_owner() -> anyhow
 #[tokio::test(start_paused = true)]
 async fn a_new_owner_starts_from_the_last_show_presented() -> anyhow::Result<()> {
     let mut h = Harness::remembering(saved("before a pause"), |_| {})?;
-    receive(&h.loads).await?;
-    h.observe(|snapshot| snapshot.model == ModelState::Ready)
-        .await?;
+    h.ready().await?;
     assert_eq!(h.snapshot().last_show, Some(saved("before a pause")));
     h.close().await
 }

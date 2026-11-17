@@ -77,7 +77,7 @@ struct FakePorts {
     microphone_error: Option<&'static str>,
     delayed_finish: bool,
     load_results: Option<Receiver<anyhow::Result<()>>>,
-    recovery: Option<Receiver<anyhow::Result<()>>>,
+    probes: Option<Receiver<anyhow::Result<()>>>,
     recorded_requests: Option<Sender<Vec<u8>>>,
     word_timing: Timing,
     segmentation: Option<Sender<bool>>,
@@ -130,7 +130,7 @@ impl FakePorts {
             microphone_error: None,
             delayed_finish: false,
             load_results: None,
-            recovery: None,
+            probes: None,
             recorded_requests: None,
             word_timing: Timing::Untimed,
             segmentation: None,
@@ -333,7 +333,7 @@ impl Ports for FakePorts {
         let speech = FakeSpeech {
             jobs: self.jobs.clone(),
             stop: self.stop.clone(),
-            recovery: self.recovery.clone(),
+            probes: self.probes.clone(),
             recorded_requests: self.recorded_requests.clone(),
             word_timing: self.word_timing,
         };
@@ -537,7 +537,7 @@ enum Timing {
 struct FakeSpeech {
     jobs: Sender<TranscriptionJob>,
     stop: Option<Gate<()>>,
-    recovery: Option<Receiver<anyhow::Result<()>>>,
+    probes: Option<Receiver<anyhow::Result<()>>>,
     recorded_requests: Option<Sender<Vec<u8>>>,
     word_timing: Timing,
 }
@@ -591,7 +591,7 @@ impl Speech for FakeSpeech {
     }
 
     async fn probe_with_silence(&mut self) -> anyhow::Result<()> {
-        match &self.recovery {
+        match &self.probes {
             Some(result) => result.recv().await?,
             None => Ok(()),
         }
@@ -819,6 +819,12 @@ impl<Host: Sync> Harness<Host> {
         self.observe(|snapshot| snapshot.phase == wanted).await
     }
 
+    async fn ready(&mut self) -> anyhow::Result<()> {
+        receive(&self.loads).await?;
+        self.observe(|snapshot| snapshot.model == ModelState::Ready)
+            .await
+    }
+
     fn snapshot(&self) -> Snapshot {
         self.updates.borrow().clone()
     }
@@ -847,6 +853,13 @@ impl<Host: Sync> Harness<Host> {
     async fn transcribe_next_as(&self, text: &str) -> anyhow::Result<()> {
         let (_, reply) = receive(&self.jobs).await?;
         answer(reply, text)
+    }
+}
+
+fn english() -> Config {
+    Config {
+        language: "en".into(),
+        ..Config::default()
     }
 }
 
@@ -904,12 +917,7 @@ fn answer(reply: TranscriptReply, text: &str) -> anyhow::Result<()> {
 }
 
 async fn start_show(h: &mut Harness) -> anyhow::Result<OpenedShow> {
-    h.input(Input::Press);
-    h.phase(Phase::Recording).await?;
-    receive(&h.captures).await?;
-    h.input(Input::Show(Scope::Screen));
-    h.observe(|snapshot| snapshot.show && snapshot.hands_free)
-        .await?;
+    start_show_listening(h).await?;
     receive(&h.shows).await
 }
 
@@ -918,7 +926,8 @@ async fn start_show_listening(h: &mut Harness) -> anyhow::Result<OpenedCapture> 
     h.phase(Phase::Recording).await?;
     let microphone = receive(&h.captures).await?;
     h.input(Input::Show(Scope::Screen));
-    h.observe(|snapshot| snapshot.show).await?;
+    h.observe(|snapshot| snapshot.show && snapshot.hands_free)
+        .await?;
     Ok(microphone)
 }
 

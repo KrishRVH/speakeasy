@@ -151,9 +151,7 @@ async fn a_failed_detached_piece_replaces_its_worker_while_idle() -> anyhow::Res
     h.phase(Phase::Cancelled).await?;
     assert!(h.loads.try_recv().is_err());
     assert!(reply.send(Err(anyhow!("Detached piece failed"))).is_ok());
-    receive(&h.loads).await?;
-    h.observe(|snapshot| snapshot.model == ModelState::Ready)
-        .await?;
+    h.ready().await?;
     assert_eq!(h.snapshot().phase, Phase::Cancelled);
     assert!(h.pasted.try_recv().is_err());
     h.close().await

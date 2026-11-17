@@ -12,16 +12,10 @@ async fn control(h: &Harness, command: Command) -> anyhow::Result<Reply> {
     receive(&receipt).await
 }
 
-async fn ready(h: &mut Harness) -> anyhow::Result<()> {
-    receive(&h.loads).await?;
-    h.observe(|snapshot| snapshot.model == ModelState::Ready)
-        .await
-}
-
 #[tokio::test(start_paused = true)]
 async fn start_admits_once_with_its_own_style_and_stop_is_session_bound() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
-    ready(&mut h).await?;
+    h.ready().await?;
     let started = control(
         &h,
         Command::Start {
@@ -80,7 +74,7 @@ async fn stale_cancel_cannot_revoke_a_newer_insertion_and_current_cancel_replies
 -> anyhow::Result<()> {
     let (insertion, preparing) = gate(2);
     let mut h = Harness::with_ports(Config::default(), |ports| ports.insertion = Some(insertion))?;
-    ready(&mut h).await?;
+    h.ready().await?;
     h.start().await?;
     let first = control(&h, Command::Status)
         .await?
@@ -122,14 +116,14 @@ async fn stale_cancel_cannot_revoke_a_newer_insertion_and_current_cancel_replies
 async fn disconnected_callers_cannot_start_and_tokens_do_not_survive_a_new_owner()
 -> anyhow::Result<()> {
     let mut first = Harness::new()?;
-    ready(&mut first).await?;
+    first.ready().await?;
     let old = control(&first, Command::Start { style: None })
         .await?
         .session
         .context("No old token")?;
     first.close().await?;
     let mut h = Harness::new()?;
-    ready(&mut h).await?;
+    h.ready().await?;
     let (call, receipt) = Call::new(Command::Start { style: None });
     drop(receipt);
     h.runtime.control(call);
@@ -151,7 +145,7 @@ async fn disconnected_callers_cannot_start_and_tokens_do_not_survive_a_new_owner
 #[tokio::test(start_paused = true)]
 async fn ordinary_control_cannot_finish_a_show_or_start_over_practice() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
-    ready(&mut h).await?;
+    h.ready().await?;
     h.start().await?;
     let token = control(&h, Command::Status)
         .await?
@@ -186,7 +180,7 @@ mod presets;
 async fn replay_does_not_advertise_capture_control_authority() -> anyhow::Result<()> {
     let (insertion, preparing) = gate(2);
     let mut h = Harness::with_ports(Config::default(), |ports| ports.insertion = Some(insertion))?;
-    ready(&mut h).await?;
+    h.ready().await?;
     let old = control(&h, Command::Start { style: None })
         .await?
         .session

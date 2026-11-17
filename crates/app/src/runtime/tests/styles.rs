@@ -3,13 +3,7 @@ use crate::transcript::style::Case;
 
 #[tokio::test(start_paused = true)]
 async fn style_is_fixed_when_recording_starts_and_replay_never_reformats() -> anyhow::Result<()> {
-    let mut h = Harness::with_ports(
-        Config {
-            language: "en".into(),
-            ..Config::default()
-        },
-        |_| {},
-    )?;
+    let mut h = Harness::with_ports(english(), |_| {})?;
     h.styles.send_replace(Style::Identifier(Case::Snake));
     h.start().await?;
     h.styles.send_replace(Style::Identifier(Case::Camel));
@@ -29,13 +23,7 @@ async fn style_is_fixed_when_recording_starts_and_replay_never_reformats() -> an
 
 #[tokio::test(start_paused = true)]
 async fn verbatim_preserves_fillers_and_practice_uses_the_selected_style() -> anyhow::Result<()> {
-    let mut h = Harness::with_ports(
-        Config {
-            language: "en".into(),
-            ..Config::default()
-        },
-        |_| {},
-    )?;
+    let mut h = Harness::with_ports(english(), |_| {})?;
     h.styles.send_replace(Style::Verbatim);
     let mut practice = arm_practice(&h).await?;
     h.start().await?;

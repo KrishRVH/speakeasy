@@ -34,7 +34,7 @@ async fn finish_in(h: &mut Harness, language: &str) -> anyhow::Result<()> {
 async fn a_preset_applies_only_while_idle_and_reloads_only_for_engine_choices() -> anyhow::Result<()>
 {
     let mut h = Harness::new()?;
-    ready(&mut h).await?;
+    h.ready().await?;
     let baseline = h.runtime.configuration.borrow().clone();
     let french = Config {
         language: "fr".into(),
@@ -53,7 +53,7 @@ async fn a_preset_applies_only_while_idle_and_reloads_only_for_engine_choices() 
     };
     let adopted = choose(&h, "Faster", &faster, &baseline, h.snapshot().session).await?;
     assert_eq!(adopted.result, Disposition::Ok);
-    ready(&mut h).await?;
+    h.ready().await?;
     assert!(h.loads.try_recv().is_err());
     assert_eq!(h.snapshot().preset.as_deref(), Some("Faster"));
     h.close().await
@@ -62,7 +62,7 @@ async fn a_preset_applies_only_while_idle_and_reloads_only_for_engine_choices() 
 #[tokio::test(start_paused = true)]
 async fn preset_validation_cannot_cross_a_recording_or_settings_change() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
-    ready(&mut h).await?;
+    h.ready().await?;
     let baseline = h.runtime.configuration.borrow().clone();
     let validated = h.snapshot().session;
     h.start().await?;
@@ -97,7 +97,7 @@ async fn resumed_preset_keeps_saved_settings_separate_from_effective_choices() -
         ..saved.clone()
     };
     let mut h = Harness::resuming(effective, saved.clone())?;
-    ready(&mut h).await?;
+    h.ready().await?;
     h.start().await?;
     h.runtime.configure(ValidConfig::assume(saved.clone()));
     finish_in(&mut h, "fr").await?;
