@@ -11,7 +11,7 @@ use serde::Serialize;
 use super::{
     KEPT_FOR, Staged,
     checkpoint::audio::{self, KeptAudio},
-    found, recall, remove_if_present, sync_directory,
+    entry_exists, found, recall, remove_if_present, sync_directory,
 };
 
 const FILE: &str = "voice.log";
@@ -105,7 +105,7 @@ fn deadline(directory: &Path) -> io::Result<Option<SystemTime>> {
 pub(crate) fn read(directory: &Path, now: SystemTime) -> anyhow::Result<Voice> {
     let Some(expires) = deadline(directory)? else {
         anyhow::ensure!(
-            !directory.join(FILE).try_exists()?,
+            !entry_exists(&directory.join(FILE))?,
             "Show voice has no expiry; recover the original Show before exporting voice"
         );
         return Ok(Voice::Absent);
@@ -144,6 +144,22 @@ mod tests {
         expire(directory.path(), now)?;
         assert!(!directory.path().join(FILE).exists());
         assert!(directory.path().join(super::super::PIN).exists());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn voice_without_its_expiry_is_refused_even_as_a_dangling_link() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        std::os::unix::fs::symlink(
+            directory.path().join("missing"),
+            directory.path().join(FILE),
+        )?;
+        let message = read(directory.path(), SystemTime::now())
+            .err()
+            .context("A dangling voice link was read as absent voice")?
+            .to_string();
+        assert!(message.contains("no expiry"), "{message}");
         Ok(())
     }
 }
