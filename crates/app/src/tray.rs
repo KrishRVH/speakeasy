@@ -19,7 +19,7 @@ pub(crate) use self::windows_macos::{Tray, install};
 use crate::transcript::style::Style;
 use crate::{
     runtime::Snapshot,
-    shell::{self, Services},
+    shell::{self, LaunchMode, Services},
     status::{ServiceState, Status},
     theme::Theme,
 };
@@ -46,13 +46,7 @@ impl TrayState {
         Self {
             status: services.status(snapshot),
             theme: services.config.theme,
-            menu: dictation_menu(
-                services.service_state(),
-                activity(snapshot),
-                snapshot.desktop_ready,
-                !services.mode.is_demo(),
-                snapshot.last_dictation,
-            ),
+            menu: dictation_menu(services.service_state(), snapshot, services.mode),
             #[cfg(any(target_os = "windows", target_os = "macos"))]
             style: services.style(),
             #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -72,16 +66,12 @@ impl TrayState {
     }
 }
 
-fn dictation_menu(
-    service: ServiceState,
-    activity: Activity,
-    desktop_ready: bool,
-    interactive: bool,
-    last_dictation: bool,
-) -> TrayMenu {
+fn dictation_menu(service: ServiceState, snapshot: &Snapshot, mode: LaunchMode) -> TrayMenu {
+    let activity = activity(snapshot);
+    let interactive = !mode.is_demo();
     let running = service == ServiceState::Running;
 
-    let startable = interactive && running && desktop_ready;
+    let startable = interactive && running && snapshot.desktop_ready;
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     let show = |label| TrayItem {
         label,
@@ -123,7 +113,7 @@ fn dictation_menu(
         },
         paste_last: TrayItem {
             label: "Paste last dictation",
-            enabled: startable && activity == Activity::Idle && last_dictation,
+            enabled: startable && activity == Activity::Idle && snapshot.last_dictation,
         },
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         show_screen: show("Show screen"),
@@ -268,14 +258,21 @@ fn activity(snapshot: &Snapshot) -> Activity {
 mod tests {
     use super::*;
 
+    fn session(phase: Phase, show: bool, hands_free: bool) -> Snapshot {
+        Snapshot {
+            phase,
+            hands_free,
+            show,
+            ..Snapshot::default()
+        }
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn a_services_change_reaches_the_tray_without_a_snapshot_change() -> anyhow::Result<()> {
         use gpui::{Application, WindowHandle, WindowId, WindowingModes};
 
-        use crate::{
-            config::Config, runtime::Meter, shell::LaunchMode, show::Canvas, testing::PATIENCE,
-        };
+        use crate::{config::Config, runtime::Meter, show::Canvas, testing::PATIENCE};
 
         let (completed, outcome) = std::sync::mpsc::channel();
         Application::with_platform(gpui_linux::linux_platform(WindowingModes::HEADLESS)).run(
@@ -316,34 +313,46 @@ mod tests {
 
     #[test]
     fn dictation_entries_are_enabled_only_while_their_command_can_act() {
-        use Activity::{Dictating, Finishing, Idle, Saving, Showing};
+        use LaunchMode::{Demo, Live};
+        use Phase::{Processing, Recording};
         use ServiceState::{NotSetUp, Paused, Pausing, Quitting, Running};
 
+        let idle = Snapshot::default();
+        let unready = Snapshot {
+            desktop_ready: false,
+            ..Snapshot::default()
+        };
+        let dictating = session(Recording, false, false);
+        let finishing = session(Processing, false, false);
+        let showing = session(Recording, true, true);
+        let saving = session(Processing, true, false);
         let table = [
-            (Running, Idle, true, true, [true, true, false]),
-            (Running, Idle, false, true, [true, false, false]),
-            (Running, Dictating, true, true, [true, true, true]),
-            (Running, Finishing, true, true, [true, false, true]),
-            (Running, Showing, true, true, [true, true, true]),
-            (Running, Saving, true, true, [true, false, false]),
-            (Pausing, Dictating, true, true, [false, false, false]),
-            (Quitting, Idle, true, true, [false, false, false]),
-            (Paused, Idle, true, true, [true, false, false]),
-            (NotSetUp, Idle, true, true, [false, false, false]),
-            (Running, Dictating, true, false, [false, false, false]),
-            (Paused, Idle, true, false, [false, false, false]),
+            (Running, &idle, Live, [true, true, false]),
+            (Running, &unready, Live, [true, false, false]),
+            (Running, &dictating, Live, [true, true, true]),
+            (Running, &finishing, Live, [true, false, true]),
+            (Running, &showing, Live, [true, true, true]),
+            (Running, &saving, Live, [true, false, false]),
+            (Pausing, &dictating, Live, [false, false, false]),
+            (Quitting, &idle, Live, [false, false, false]),
+            (Paused, &idle, Live, [true, false, false]),
+            (NotSetUp, &idle, Live, [false, false, false]),
+            (Running, &dictating, Demo, [false, false, false]),
+            (Paused, &idle, Demo, [false, false, false]),
         ];
-        for (service, activity, desktop_ready, interactive, expected) in table {
+        for (service, snapshot, mode, expected) in table {
             let TrayMenu {
                 pause,
                 toggle,
                 cancel,
                 ..
-            } = dictation_menu(service, activity, desktop_ready, interactive, false);
+            } = dictation_menu(service, snapshot, mode);
             assert_eq!(
                 [pause.enabled, toggle.enabled, cancel.enabled],
                 expected,
-                "{service:?}, {activity:?}, desktop ready {desktop_ready}, interactive {interactive}"
+                "{service:?}, {:?}, desktop ready {}, {mode:?}",
+                activity(snapshot),
+                snapshot.desktop_ready
             );
         }
     }
@@ -351,20 +360,32 @@ mod tests {
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     #[test]
     fn show_entries_act_exactly_when_start_dictation_would() {
-        use Activity::{Dictating, Finishing, Idle, Saving, Showing};
+        use LaunchMode::{Demo, Live};
+        use Phase::{Idle, Processing, Recording};
         use ServiceState::{NotSetUp, Paused, Pausing, Quitting, Running};
+        let sessions = [
+            session(Idle, false, false),
+            session(Recording, false, false),
+            session(Recording, true, true),
+            session(Processing, false, false),
+            session(Processing, true, false),
+        ];
         for service in [Running, Pausing, Quitting, Paused, NotSetUp] {
-            for activity in [Idle, Dictating, Showing, Finishing, Saving] {
-                for (desktop_ready, interactive) in
-                    [(true, true), (false, true), (true, false), (false, false)]
+            for base in &sessions {
+                for (desktop_ready, mode) in
+                    [(true, Live), (false, Live), (true, Demo), (false, Demo)]
                 {
-                    let menu = dictation_menu(service, activity, desktop_ready, interactive, false);
+                    let snapshot = Snapshot {
+                        desktop_ready,
+                        ..base.clone()
+                    };
+                    let menu = dictation_menu(service, &snapshot, mode);
                     let starts = menu.toggle.enabled && menu.toggle.label == "Start dictation";
                     assert_eq!(
                         [menu.show_screen.enabled, menu.show_area.enabled],
                         [starts; 2],
-                        "{service:?}, {activity:?}, desktop ready {desktop_ready}, interactive \
-                         {interactive}"
+                        "{service:?}, {:?}, desktop ready {desktop_ready}, {mode:?}",
+                        activity(&snapshot)
                     );
                 }
             }
@@ -374,12 +395,6 @@ mod tests {
     #[test]
     fn finish_and_cancel_name_a_recording_show_and_disable_once_it_finishes() {
         use Phase::{Copied, Processing, Recording, Starting, Stopping};
-        let snapshot = |phase, show, hands_free| Snapshot {
-            phase,
-            hands_free,
-            show,
-            ..Snapshot::default()
-        };
         let dictating = [("Finish dictation", true), ("Cancel dictation", true)];
         let finishing = [("Start dictation", false), ("Cancel dictation", true)];
         let showing = [("Finish Show", true), ("Cancel Show", true)];
@@ -400,10 +415,8 @@ mod tests {
         for (phase, show, hands_free, expected) in table {
             let TrayMenu { toggle, cancel, .. } = dictation_menu(
                 ServiceState::Running,
-                activity(&snapshot(phase, show, hands_free)),
-                true,
-                true,
-                false,
+                &session(phase, show, hands_free),
+                LaunchMode::Live,
             );
             assert_eq!(
                 [
