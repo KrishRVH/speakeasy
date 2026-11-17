@@ -179,6 +179,7 @@ fn mac_presets_keep_hands_free_shows_and_escape_without_claiming_left_modifiers(
             (MAC_A, Action::Show(Scope::Area)),
         ] {
             let mut policy = Mac::new(shortcut);
+            let pressed = now();
             assert!(
                 policy
                     .observe(
@@ -187,18 +188,15 @@ fn mac_presets_keep_hands_free_shows_and_escape_without_claiming_left_modifiers(
                             held
                         },
                         || false,
-                        now()
+                        pressed
                     )
                     .starts()
             );
-            let decision = policy.observe(
-                key(code, true, held),
-                || true,
-                now() + Duration::from_millis(250),
-            );
+            let later = pressed + Duration::from_millis(250);
+            let decision = policy.observe(key(code, true, held), || true, later);
             assert_eq!(decision.action, Some(expected));
             assert!(decision.swallows());
-            let escape = policy.observe(key(MAC_ESCAPE, true, held), || true, now());
+            let escape = policy.observe(key(MAC_ESCAPE, true, held), || true, later);
             assert_eq!(escape.action, Some(Action::Escape));
             assert!(!escape.swallows());
             let other = policy.observe(
@@ -207,7 +205,7 @@ fn mac_presets_keep_hands_free_shows_and_escape_without_claiming_left_modifiers(
                     held: shortcut.modifiers(flags | left_flag),
                 },
                 || true,
-                now(),
+                later,
             );
             assert_eq!(other.action, Some(Action::Interrupt));
         }
@@ -824,12 +822,14 @@ fn a_tap_outage_ends_a_hold_but_not_a_released_dictation() -> anyhow::Result<()>
     );
     assert!(events.try_recv().is_err());
 
-    mac.observe(shift(true, NO_MODIFIERS), keyboard_fn_up, now());
-    mac.observe(shift(false, NO_MODIFIERS), keyboard_fn_up, now());
+    let start = now();
+    let at = |millis: u64| start + Duration::from_millis(millis);
+    mac.observe(shift(true, NO_MODIFIERS), keyboard_fn_up, at(0));
+    mac.observe(shift(false, NO_MODIFIERS), keyboard_fn_up, at(80));
     mac.missed_events(&input);
-    mac.observe(shift(true, NO_MODIFIERS), keyboard_fn_up, now());
+    mac.observe(shift(true, NO_MODIFIERS), keyboard_fn_up, at(200));
     assert_eq!(
-        delivered(&mac.observe(shift(false, NO_MODIFIERS), keyboard_fn_up, now())),
+        delivered(&mac.observe(shift(false, NO_MODIFIERS), keyboard_fn_up, at(280))),
         [],
         "Shift taps across the outage pinned"
     );
