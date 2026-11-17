@@ -19,24 +19,24 @@ fn loading_a_domain_restores_its_words_and_model_without_changing_global_prefere
         ..Config::default()
     };
     let prose = Preset::capture("Writing", &writing)?;
-    let mut coding = writing.clone();
-    coding.engine = Engine::Nemo;
-    coding.engine_executable = "nemo-speech.exe".into();
-    coding.model = Model::Nemotron.file_name().into();
-    coding.nemo_model = Some(Model::Nemotron);
-    coding.language = "en-US".into();
-    coding.recognition_terms.add("Kubernetes")?;
-    coding.vocabulary = vec![Correction {
-        heard: "rust".into(),
-        written: "Rust".into(),
-    }];
-    coding.threads = 8;
-    coding.use_gpu = false;
-    coding.remove_fillers = false;
-    coding.microphone = None;
-    coding.text_delivery = TextDelivery::Paste;
-    coding.theme = Theme::default();
-    coding.play_sounds = true;
+    let mut recognition_terms = Terms::default();
+    recognition_terms.add("Kubernetes")?;
+    let coding = Config {
+        engine: Engine::Nemo,
+        engine_executable: "nemo-speech.exe".into(),
+        model: Model::Nemotron.file_name().into(),
+        nemo_model: Some(Model::Nemotron),
+        language: "en-US".into(),
+        recognition_terms,
+        vocabulary: vec![Correction {
+            heard: "rust".into(),
+            written: "Rust".into(),
+        }],
+        threads: 8,
+        use_gpu: false,
+        remove_fillers: false,
+        ..Config::default()
+    };
     let technical = Preset::capture("Coding", &coding)?;
     technical.load(&mut writing);
     assert_eq!(

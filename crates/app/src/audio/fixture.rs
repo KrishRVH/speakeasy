@@ -3,7 +3,10 @@ use std::num::NonZeroUsize;
 use serde::Serialize;
 use speakeasy_core::machine::Cue;
 
-use super::{pcm::SAMPLE_BYTES, *};
+use super::{
+    pcm::{SAMPLE_BYTES, WAV_HEADER_BYTES},
+    *,
+};
 use crate::sounds;
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -69,9 +72,9 @@ pub(crate) fn replay(
         "The fixture needs a canonical mono PCM16 WAV"
     );
     let samples = wav
-        .get(44..)
+        .get(WAV_HEADER_BYTES..)
         .context("Fixture WAV has no payload")?
-        .as_chunks::<2>()
+        .as_chunks::<SAMPLE_BYTES>()
         .0
         .iter()
         .map(|bytes| i16::from_le_bytes(*bytes))

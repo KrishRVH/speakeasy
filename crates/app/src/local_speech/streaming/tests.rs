@@ -25,15 +25,24 @@ async fn sockets() -> anyhow::Result<(Socket, Socket)> {
     timeout(PATIENCE, async { tokio::try_join!(client, server) }).await?
 }
 
+fn ended(frames: &[&[u8]]) -> LiveAudio {
+    let (sender, received) = mpsc::channel(frames.len().max(1));
+    for frame in frames {
+        assert!(sender.try_send(Zeroizing::new(frame.to_vec())).is_ok());
+    }
+    let (ending, tail) = oneshot::channel();
+    assert!(ending.send(Zeroizing::new(Vec::new())).is_ok());
+    LiveAudio {
+        rate: 16_000,
+        frames: received,
+        tail,
+    }
+}
+
 #[tokio::test]
 async fn partials_never_replace_finals_and_multiple_utterances_join_after_commit()
 -> anyhow::Result<()> {
     let (mut client, mut server) = sockets().await?;
-    let (frames, received) = mpsc::channel(2);
-    frames.send(Zeroizing::new(vec![0, 0])).await?;
-    drop(frames);
-    let (ending, tail) = oneshot::channel();
-    assert!(ending.send(Zeroizing::new(Vec::new())).is_ok());
     let exchange = async {
         assert!(matches!(server.next().await.unwrap()?, Message::Binary(_)));
         for event in [
@@ -55,17 +64,7 @@ async fn partials_never_replace_finals_and_multiple_utterances_join_after_commit
         .await
     };
     let (text, ()) = timeout(PATIENCE, async {
-        tokio::try_join!(
-            recognize(
-                &mut client,
-                LiveAudio {
-                    rate: 16_000,
-                    frames: received,
-                    tail,
-                }
-            ),
-            exchange
-        )
+        tokio::try_join!(recognize(&mut client, ended(&[&[0, 0]])), exchange)
     })
     .await??;
     assert_eq!(text.as_deref(), Some("First. Second."));
@@ -137,10 +136,6 @@ async fn a_transcript_that_is_not_text_fails_even_on_events_recognition_ignores(
         ),
     ] {
         let (mut client, mut server) = sockets().await?;
-        let (frames, received) = mpsc::channel(1);
-        drop(frames);
-        let (ending, tail) = oneshot::channel();
-        assert!(ending.send(Zeroizing::new(Vec::new())).is_ok());
         let exchange = async {
             for &event in events {
                 send(&mut server, Message::Text(event.into())).await?;
@@ -151,17 +146,7 @@ async fn a_transcript_that_is_not_text_fails_even_on_events_recognition_ignores(
             send(&mut server, Message::Text(acknowledgement.into())).await
         };
         let result = timeout(PATIENCE, async {
-            tokio::try_join!(
-                recognize(
-                    &mut client,
-                    LiveAudio {
-                        rate: 16_000,
-                        frames: received,
-                        tail,
-                    }
-                ),
-                exchange
-            )
+            tokio::try_join!(recognize(&mut client, ended(&[])), exchange)
         })
         .await?;
         assert_eq!(result.unwrap_err().to_string(), FAILED);
@@ -172,18 +157,7 @@ async fn a_transcript_that_is_not_text_fails_even_on_events_recognition_ignores(
 #[tokio::test]
 async fn a_committed_stream_cannot_wait_forever_for_its_final() -> anyhow::Result<()> {
     let (mut client, mut server) = sockets().await?;
-    let (frames, received) = mpsc::channel(1);
-    drop(frames);
-    let (ending, tail) = oneshot::channel();
-    assert!(ending.send(Zeroizing::new(Vec::new())).is_ok());
-    let recognizer = recognize(
-        &mut client,
-        LiveAudio {
-            rate: 16_000,
-            frames: received,
-            tail,
-        },
-    );
+    let recognizer = recognize(&mut client, ended(&[]));
     tokio::pin!(recognizer);
     tokio::select! {
         result = &mut recognizer => panic!("Returned before committing: {}", result.is_ok()),

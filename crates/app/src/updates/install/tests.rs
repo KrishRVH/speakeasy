@@ -3,7 +3,7 @@ use std::{fmt::Write as _, fs};
 use ring::signature::{Ed25519KeyPair, KeyPair as _};
 use tokio::{
     io::{AsyncReadExt as _, AsyncWriteExt as _},
-    net::TcpListener,
+    net::{TcpListener, TcpStream},
     time::timeout,
 };
 
@@ -137,14 +137,37 @@ fn release_redirects_cannot_change_scheme_credentials_port_or_host() {
     );
 }
 
-async fn serve(response: Vec<u8>) -> (String, tokio::task::JoinHandle<()>) {
+async fn listen() -> (TcpListener, String) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/file", listener.local_addr().unwrap());
+    (listener, url)
+}
+
+async fn answer(listener: &TcpListener, response: &[u8]) -> TcpStream {
+    let (mut stream, _) = listener.accept().await.unwrap();
+    let mut request = [0; 2048];
+    assert!(stream.read(&mut request).await.unwrap() > 0);
+    stream.write_all(response).await.unwrap();
+    stream
+}
+
+async fn hung_up(mut stream: TcpStream) {
+    match stream.read(&mut [0; 2048]).await {
+        Ok(count) => assert_eq!(count, 0, "The client kept reading the download"),
+        Err(error) => assert!(
+            matches!(
+                error.kind(),
+                std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted
+            ),
+            "{error}"
+        ),
+    }
+}
+
+async fn serve(response: Vec<u8>) -> (String, tokio::task::JoinHandle<()>) {
+    let (listener, url) = listen().await;
     let task = tokio::spawn(async move {
-        let (mut stream, _) = listener.accept().await.unwrap();
-        let mut request = [0; 2048];
-        assert!(stream.read(&mut request).await.unwrap() > 0);
-        stream.write_all(&response).await.unwrap();
+        answer(&listener, &response).await;
     });
     (url, task)
 }
@@ -213,23 +236,11 @@ async fn interrupted_oversized_and_corrupt_downloads_leave_no_installer() {
 #[tokio::test]
 async fn an_oversized_chunk_is_rejected_before_the_server_finishes() {
     let root = tempfile::tempdir().unwrap();
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}/file", listener.local_addr().unwrap());
+    let (listener, url) = listen().await;
     let server = tokio::spawn(async move {
-        let (mut stream, _) = listener.accept().await.unwrap();
-        let mut request = [0; 2048];
-        assert!(stream.read(&mut request).await.unwrap() > 0);
-        stream
-            .write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\na\r\ninstallerX\r\n")
-            .await
-            .unwrap();
-        match stream.read(&mut request).await {
-            Ok(count) => assert_eq!(count, 0),
-            Err(error) => assert!(matches!(
-                error.kind(),
-                std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted
-            )),
-        }
+        let unfinished =
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\na\r\ninstallerX\r\n";
+        hung_up(answer(&listener, unfinished).await).await;
     });
     let artifact = authenticate(&metadata(b"installer")).unwrap();
     let client = client(client_builder(Trust::Nobody).unwrap().no_proxy()).unwrap();
@@ -252,25 +263,12 @@ async fn an_oversized_chunk_is_rejected_before_the_server_finishes() {
 async fn cancellation_closes_the_download_before_reporting_completion() {
     let root = tempfile::tempdir().unwrap();
     let directory = root.path().to_path_buf();
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}/file", listener.local_addr().unwrap());
+    let (listener, url) = listen().await;
     let (sent, received) = async_channel::bounded(1);
     let server = tokio::spawn(async move {
-        let (mut stream, _) = listener.accept().await.unwrap();
-        let mut request = [0; 2048];
-        assert!(stream.read(&mut request).await.unwrap() > 0);
-        stream
-            .write_all(format!("{INSTALLER_HEAD}inst").as_bytes())
-            .await
-            .unwrap();
+        let stream = answer(&listener, format!("{INSTALLER_HEAD}inst").as_bytes()).await;
         sent.send(()).await.unwrap();
-        match stream.read(&mut request).await {
-            Ok(count) => assert_eq!(count, 0),
-            Err(error) => assert!(matches!(
-                error.kind(),
-                std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted
-            )),
-        }
+        hung_up(stream).await;
     });
     let artifact = authenticate(&metadata(b"installer")).unwrap();
     let operation = Job::spawn("cancel-update-test", move || async move {
