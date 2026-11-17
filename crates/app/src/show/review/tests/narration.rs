@@ -339,19 +339,7 @@ fn video(span: Range<Duration>) -> preview::Content {
 }
 
 fn retained() -> anyhow::Result<preview::Content> {
-    let mut journal = speakeasy_show::Journal::new();
-    journal
-        .admit()
-        .context("Synthetic frame was not admitted")?
-        .record(
-            Moment::START,
-            speakeasy_show::Image::from_bgra(2, 2, [40, 50, 60, 255].repeat(4))?,
-        );
-    let mut bytes = Vec::new();
-    journal.write_source::<speakeasy_show::SourceError>(Moment::from_millis(1_000), |chunk| {
-        bytes.extend_from_slice(chunk);
-        Ok(())
-    })?;
+    let bytes = super::source_bytes(Moment::from_millis(1_000))?;
     let index = speakeasy_show::Source::read(u64::try_from(bytes.len())?, |range| {
         let range = usize::try_from(range.start)?..usize::try_from(range.end)?;
         bytes

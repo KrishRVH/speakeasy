@@ -1,5 +1,7 @@
 use std::fs;
 
+use speakeasy_show::{Image, Journal, Moment, SourceError};
+
 use super::{
     library::{Row, list},
     *,
@@ -9,6 +11,23 @@ use crate::show::store::recall::Health;
 mod narration;
 mod offers;
 mod source;
+
+fn source_bytes(duration: Moment) -> anyhow::Result<Vec<u8>> {
+    let mut journal = Journal::new();
+    journal
+        .admit()
+        .context("Synthetic frame was not admitted")?
+        .record(
+            Moment::START,
+            Image::from_bgra(2, 2, [40, 50, 60, 255].repeat(4))?,
+        );
+    let mut bytes = Vec::new();
+    journal.write_source::<SourceError>(duration, |chunk| {
+        bytes.extend_from_slice(chunk);
+        Ok(())
+    })?;
+    Ok(bytes)
+}
 
 fn row(name: &str) -> Row {
     Row {
@@ -96,7 +115,7 @@ fn a_cropped_keyframe_says_so_and_offers_the_whole_screen() -> anyhow::Result<()
     assert!(detail.frames.iter().any(|frame| frame.cropped));
     let uncropped = library::Frame {
         number: 1,
-        at: speakeasy_show::Moment::START,
+        at: Moment::START,
         marker: String::new(),
         cropped: false,
         file: preview::Content::Png("frames/frame-01.png".to_owned()),
