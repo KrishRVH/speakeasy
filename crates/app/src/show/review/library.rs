@@ -49,18 +49,20 @@ pub(super) struct Row {
 }
 
 impl Row {
-    fn from_entry(entry: &Entry) -> Self {
+    fn from_entry(entry: Entry) -> Self {
+        let health = entry.health();
         let show = entry.show.as_ref().ok();
+        let recording = show.map(|show| show.manifest.recording());
         Self {
             kind: Kind::Saved,
-            directory: entry.directory.clone(),
-            health: entry.health(),
-            duration: show.map(|show| show.manifest.recording().duration),
+            health,
+            duration: recording.map(|recording| recording.duration),
             frames: show.map_or(0, |show| show.manifest.keyframes().len()),
             marks: show.map_or(0, |show| show.manifest.marks().len()),
-            pinned: pinned(&entry.directory).ok(),
-            early: show.is_some_and(|show| show.manifest.recording().ending != Ending::Finished),
-            narration_lost: show.and_then(|show| show.manifest.recording().narration_lost),
+            pinned: show.map_or_else(|| pinned(&entry.directory).ok(), |show| Some(show.pinned)),
+            early: recording.is_some_and(|recording| recording.ending != Ending::Finished),
+            narration_lost: recording.and_then(|recording| recording.narration_lost),
+            directory: entry.directory,
         }
     }
 
@@ -105,37 +107,30 @@ impl Row {
 
 pub(super) fn list(directory: &Path) -> io::Result<(Vec<Row>, Option<String>)> {
     let found = checkpoint::list(directory, SystemTime::now());
-    let notice = (!found.problems.is_empty()).then(|| {
+    let notice = found.problems.first().map(|first| {
         format!(
             "Cannot read {} interrupted Show entries. Check folder access and refresh. Damaged \
-entries expire after seven days. {}",
+             entries expire after seven days. {}",
             found.problems.len(),
-            found
-                .problems
-                .first()
-                .map_or("", |problem| problem.message.as_str())
+            first.message
         )
     });
-    let mut rows: Vec<_> = found
-        .shows
-        .into_iter()
-        .map(|interrupted| Row {
-            directory: interrupted.directory().to_owned(),
-            kind: Kind::Interrupted(interrupted),
-            health: Health::Ok,
-            duration: None,
-            frames: 0,
-            marks: 0,
-            pinned: None,
-            early: true,
-            narration_lost: None,
-        })
-        .collect();
-    rows.extend(
-        recall::list(directory)?
-            .map(|entry| entry.map(|entry| Row::from_entry(&entry)))
-            .collect::<io::Result<Vec<_>>>()?,
-    );
+    let interrupted = found.shows.into_iter().map(|interrupted| Row {
+        directory: interrupted.directory().to_owned(),
+        kind: Kind::Interrupted(interrupted),
+        health: Health::Ok,
+        duration: None,
+        frames: 0,
+        marks: 0,
+        pinned: None,
+        early: true,
+        narration_lost: None,
+    });
+    let saved = recall::list(directory)?.map(|entry| entry.map(Row::from_entry));
+    let rows = interrupted
+        .map(Ok)
+        .chain(saved)
+        .collect::<io::Result<_>>()?;
     Ok((rows, notice))
 }
 
