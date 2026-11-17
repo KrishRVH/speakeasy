@@ -199,6 +199,9 @@ Full-size keyframes: `…\speakeasy\shows\20261020T143205Z\frames\frame-01.png` 
 Every keyframe is cropped to the area the user worked in; the timeline gives each crop as a fraction of the screen.
 ```
 
+Each keyframe quotes what you said around it. When the speech engine returns no word times, no
+keyframe quotes you: the summary lists the narration once, in its own labeled untimed section.
+
 A Show records only what you name. With no window to record under the pointer, or if you finish
 before dragging out an area, it is cancelled, narration and all: nothing is pasted or saved, and the
 pill says why. If screen capture stops before you finish, or the window closes or goes off screen,

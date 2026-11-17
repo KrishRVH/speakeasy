@@ -88,7 +88,10 @@ impl Demo {
     }
 
     pub fn bundle(&self, keyframe_size: (u32, u32)) -> Result<Bundle, Error> {
-        let recording = recording();
+        self.compose(recording(), keyframe_size)
+    }
+
+    fn compose(&self, recording: Recording, keyframe_size: (u32, u32)) -> Result<Bundle, Error> {
         let samples = std::iter::successors(Some(Moment::START), |at| {
             Some(at.saturating_add(SAMPLE_INTERVAL)).filter(|next| *next <= recording.duration)
         })
@@ -524,5 +527,36 @@ Every keyframe is cropped to the area the user worked in; the timeline gives eac
         assert!(sheet.width().max(sheet.height()) <= 1_600);
         let manifest = Manifest::parse(&files[7].contents).unwrap();
         assert_eq!(manifest, expected);
+    }
+
+    #[test]
+    fn untimed_demo_narration_reads_apart_from_its_keyframes() {
+        let mut untimed = recording();
+        untimed.narration = Narration::Text(NARRATION.map(|(_, phrase)| phrase).join(" "));
+        let bundle = Demo::new(typeface()).compose(untimed, (720, 450)).unwrap();
+        let directory = Path::new("shows").join("demo");
+        let (summary, _) = bundle.into_files(&directory, None).unwrap();
+        assert_eq!(
+            summary,
+            format!(
+                "Screen recording (0:20, 4 keyframes): `{}`
+Before acting, open the contact sheet, then the full-size frames that matter: they show what the words leave out. Speech recognition can mishear a name; where the screen spells it differently, trust the screen. Cite frames as #N and marks by their circled numbers.
+Contact sheet: `{}`
+- #1 (0:02) clicked (x 0.19, y 0.32)
+- #2 (0:09) ① circled region x 0.64–0.88, y 0.25–0.34; ② drew an arrow from x 0.62, y 0.71 pointing to x 0.77, y 0.83
+- #3 (0:12) ③ pinned x 0.84, y 0.39; clicked (x 0.84, y 0.39)
+- #4 (0:17) dragged right (x 0.71, y 0.47 → x 0.79, y 0.47)
+Untimed narration (the speech engine gave no word times, so no keyframe owns it):
+“Here's the settings window. When I open Appearance, the theme picker is here, but look, this label runs under the save button. Now I click reduce motion and nothing happens. Dragging the text size slider works, though.”
+Full-size keyframes: `{}` to `{}`. Timeline: `{}`.
+Every keyframe is cropped to the area the user worked in; the timeline gives each crop as a fraction of the screen.
+",
+                directory.display(),
+                directory.join("contact-sheet.png").display(),
+                directory.join("frames").join("frame-01.png").display(),
+                directory.join("frames").join("frame-04.png").display(),
+                directory.join("show.json").display()
+            )
+        );
     }
 }

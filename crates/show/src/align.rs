@@ -70,32 +70,23 @@ fn ordered(words: &[Word]) -> Vec<&Word> {
     words
 }
 
-pub(crate) fn align(anchors: &[Moment], narration: &Narration) -> Vec<Option<String>> {
+pub(crate) fn align(anchors: &[Moment], words: &[Word]) -> Vec<Option<String>> {
     let mut said = vec![String::new(); anchors.len()];
-    match narration {
-        Narration::Text(text) => {
-            if let Some(first) = said.first_mut() {
-                text.trim().clone_into(first);
-            }
-        },
-        Narration::Words(words) => {
-            let words = ordered(words);
-            let starts = text_starts(anchors, &clauses(&words));
-            let mut owner = 0;
-            for word in words {
-                let text = word.text.trim();
-                if !attaches(text) {
-                    let onset = word.span.start().saturating_add(ONSET_TOLERANCE);
-                    owner = starts
-                        .iter()
-                        .rposition(|start| *start <= onset)
-                        .unwrap_or(0);
-                }
-                if let Some(keyframe) = said.get_mut(owner) {
-                    append(keyframe, text);
-                }
-            }
-        },
+    let words = ordered(words);
+    let starts = text_starts(anchors, &clauses(&words));
+    let mut owner = 0;
+    for word in words {
+        let text = word.text.trim();
+        if !attaches(text) {
+            let onset = word.span.start().saturating_add(ONSET_TOLERANCE);
+            owner = starts
+                .iter()
+                .rposition(|start| *start <= onset)
+                .unwrap_or(0);
+        }
+        if let Some(keyframe) = said.get_mut(owner) {
+            append(keyframe, text);
+        }
     }
     said.into_iter()
         .map(|text| Some(text).filter(|text| !text.is_empty()))

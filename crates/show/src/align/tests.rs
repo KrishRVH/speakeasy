@@ -10,7 +10,7 @@ fn at(anchors: &[u64]) -> Vec<Moment> {
 }
 
 fn texts(anchors: &[u64], narration: &Narration) -> Vec<String> {
-    align(&at(anchors), narration)
+    align(&at(anchors), narration.words())
         .into_iter()
         .map(Option::unwrap_or_default)
         .collect()
@@ -291,13 +291,11 @@ fn a_sentence_left_hanging_is_over_once_the_silence_runs_long() {
 }
 
 #[test]
-fn untimed_text_belongs_to_the_first_keyframe_and_silence_to_none() {
-    let text = Narration::Text(" All of it. ".into());
+fn silence_and_blank_words_belong_to_no_keyframe() {
+    assert_eq!(align(&at(&[0, 900]), &[]), [None, None]);
+    assert_eq!(align(&at(&[0]), words(&[(0, "  ")]).words()), [None]);
     assert_eq!(
-        align(&at(&[0, 900]), &text),
-        [Some("All of it.".to_owned()), None]
+        align(&[], words(&[(0, "Spoken.")]).words()),
+        Vec::<Option<String>>::new()
     );
-    assert_eq!(align(&at(&[0]), &Narration::default()), [None]);
-    assert_eq!(align(&at(&[0]), &words(&[(0, "  ")])), [None]);
-    assert_eq!(align(&[], &text), Vec::<Option<String>>::new());
 }

@@ -472,15 +472,16 @@ module unless a test file is named.
   narration rows reuse alignment's clause boundaries with ten-second display splits; they expose the
   first word's reported onset, never alignment's inferred silence intervals. Keyframes show actual
   sample times; narration anchors describe when their action or drawing began. Alignment partitions
-  timed words once, in order. Clause pauses use word onsets because recognizers can extend word ends
-  through silence. Finished clauses reach at most 700 ms past the last word's onset; unfinished
-  thoughts can resume within four seconds. An anchor in silence can take a clause beginning within a
-  second unless the next anchor is nearer. Resumed clauses carry the unfinished thought; text starts
-  remain increasing and punctuation stays attached. Marks take selection priority; ordinary frames
-  add coverage or a changed screen. An opening frame is added only when it differs and narration
-  precedes the first chosen anchor. Selection caps at 36 keyframes, merges crowded mark groups, and
-  spreads remaining frames across the recording. Float-to-pixel conversions saturate outside their
-  integer range and map NaN to zero.
+  timed words once, in order; untimed narration belongs to no keyframe, and the summary lists it in
+  its own labeled section without times. Clause pauses use word onsets because recognizers can
+  extend word ends through silence. Finished clauses reach at most 700 ms past the last word's
+  onset; unfinished thoughts can resume within four seconds. An anchor in silence can take a clause
+  beginning within a second unless the next anchor is nearer. Resumed clauses carry the unfinished
+  thought; text starts remain increasing and punctuation stays attached. Marks take selection
+  priority; ordinary frames add coverage or a changed screen. An opening frame is added only when it
+  differs and narration precedes the first chosen anchor. Selection caps at 36 keyframes, merges
+  crowded mark groups, and spreads remaining frames across the recording. Float-to-pixel conversions
+  saturate outside their integer range and map NaN to zero.
 - **Show framing**: [framing.rs](../crates/show/src/framing.rs) crops screen-Show keyframes; window
   and area Shows record `Framing::Chosen` in the checkpoint header and keep their frames whole. A
   screen Show's platform window watch records window layouts, front to back: bounds as fractions of

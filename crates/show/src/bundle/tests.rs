@@ -371,6 +371,35 @@ fn a_show_whose_narration_was_lost_says_why_in_both_files() {
 }
 
 #[test]
+fn untimed_narration_gets_its_own_section_and_no_keyframe_claims_it() {
+    let said = "All of it, said with no word times.";
+    let (summary, manifest) = summary_and_manifest(Recording {
+        narration: Narration::Text(format!("  {said} ")),
+        ..ended(Ending::Finished)
+    });
+    assert!(
+        summary.contains(&format!(
+            "\nUntimed narration (the speech engine gave no word times, so no keyframe owns \
+             it):\n“{said}”\n"
+        )),
+        "{summary}"
+    );
+    assert_eq!(summary.matches(said).count(), 1, "{summary}");
+    let keyframes = manifest["keyframes"].as_array().unwrap();
+    assert!(
+        keyframes
+            .iter()
+            .all(|keyframe| keyframe.get("said").is_none()),
+        "A keyframe claimed untimed narration: {keyframes:?}"
+    );
+    let (silent, _) = summary_and_manifest(Recording {
+        narration: Narration::Text(" ".into()),
+        ..ended(Ending::Finished)
+    });
+    assert!(!silent.contains("Untimed narration"), "{silent}");
+}
+
+#[test]
 fn debugging_a_file_never_prints_its_contents() {
     let file = File {
         name: "frames/frame-01.png".to_owned(),

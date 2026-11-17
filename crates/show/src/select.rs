@@ -162,7 +162,7 @@ fn select_within(recording: &Recording, samples: &[Sample], most: usize) -> Opti
         .collect();
     let keyframes: Vec<Keyframe> = chosen
         .into_iter()
-        .zip(align::align(&anchors, &recording.narration))
+        .zip(align::align(&anchors, recording.narration.words()))
         .enumerate()
         .map(|(position, (candidate, said))| Keyframe {
             index: position.saturating_add(1),

@@ -9,8 +9,8 @@ mod read;
 pub use read::Unreadable;
 
 use crate::{
-    Ending, Error, Image, Keyframe, Mark, Moment, NarrationLoss, Recording, Rect, Selection,
-    Typeface,
+    Ending, Error, Image, Keyframe, Mark, Moment, Narration, NarrationLoss, Recording, Rect,
+    Selection, Typeface,
     describe::{Count, Marker},
     draw::{self, Badge, Corner},
     framing::{self, Plan},
@@ -273,6 +273,16 @@ impl fmt::Display for Summary<'_> {
                 ),
                 None => writeln!(f, "- #{index} ({at}) {event}"),
             }?;
+        }
+        if let Narration::Text(untimed) = &recording.narration
+            && !untimed.trim().is_empty()
+        {
+            writeln!(
+                f,
+                "Untimed narration (the speech engine gave no word times, so no keyframe owns \
+                 it):\n“{}”",
+                untimed.trim()
+            )?;
         }
         let timeline = file(Manifest::FILE);
         match keyframes.as_slice() {
