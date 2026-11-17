@@ -244,11 +244,13 @@ fn with_foreign_window<O: Send, T>(
             unsafe { DestroyWindow(hwnd) };
             Ok(())
         });
-        let (hwnd, from_owner) = window.recv()?;
-        let from_here = elsewhere(hwnd as HWND);
-        drop(release);
+        let shared = window.recv().map(|(hwnd, from_owner)| {
+            let from_here = elsewhere(hwnd as HWND);
+            drop(release);
+            (from_owner, from_here)
+        });
         owner.join().expect("The window's owner thread panicked")?;
-        Ok((from_owner, from_here))
+        Ok(shared?)
     })
 }
 
