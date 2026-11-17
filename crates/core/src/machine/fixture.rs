@@ -73,19 +73,16 @@ pub(super) fn cut(audio: &[u8], range: &Range<usize>) -> Option<Vec<u8>> {
     audio.get(range.clone()).map(<[u8]>::to_vec)
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub(super) enum Effect {
-    Revoke,
-    Insert(String),
-    Publish { producers_closed: bool },
-    Remember(&'static str),
+#[derive(Debug)]
+pub(super) struct Handover {
+    pub publication: Publication<Sample>,
+    pub producers_closed: bool,
 }
 
 #[derive(Debug, Default)]
 pub(super) struct Log {
-    pub effects: Vec<Effect>,
-    pub producers: Vec<mpsc::Receiver<()>>,
-    pub published: Option<Publication<Sample>>,
+    producers: Vec<mpsc::Receiver<()>>,
+    pub handover: Option<Handover>,
 }
 
 impl Log {
@@ -107,9 +104,7 @@ impl Env<Sample> for Log {
         true
     }
 
-    fn revoke(&mut self, _: &u64) {
-        self.effects.push(Effect::Revoke);
-    }
+    fn revoke(&mut self, _: &u64) {}
 
     fn closed(&mut self) -> bool {
         false
@@ -170,9 +165,7 @@ impl Env<Sample> for Log {
         (!heard.is_empty()).then_some(heard)
     }
 
-    fn insert(&mut self, text: String, _: &u64, _: &Settings) {
-        self.effects.push(Effect::Insert(text));
-    }
+    fn insert(&mut self, _: String, _: &u64, _: &Settings) {}
 
     fn ready(&mut self, (): &()) -> bool {
         true
@@ -189,8 +182,10 @@ impl Env<Sample> for Log {
             .producers
             .iter()
             .all(|producer| producer.try_recv() == Err(mpsc::TryRecvError::Disconnected));
-        self.effects.push(Effect::Publish { producers_closed });
-        self.published = Some(publication);
+        self.handover = Some(Handover {
+            publication,
+            producers_closed,
+        });
     }
 
     fn reopen(&mut self, (): ()) {}
@@ -201,9 +196,7 @@ impl Env<Sample> for Log {
 
     fn release(&mut self, _: SessionId, _: &'static str, _: Release<Sample>) {}
 
-    fn remember(&mut self, shown: &'static str) {
-        self.effects.push(Effect::Remember(shown));
-    }
+    fn remember(&mut self, _: &'static str) {}
 
     fn announce(&mut self) {}
 
