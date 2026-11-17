@@ -22,11 +22,10 @@ impl Terms {
     }
 
     pub(crate) fn add(&mut self, phrase: &str) -> anyhow::Result<()> {
-        let mut next = self.clone();
-        next.0.push(phrase.trim().to_owned());
-        next.validate()?;
-        *self = next;
-        Ok(())
+        self.0.push(phrase.trim().to_owned());
+        self.validate().inspect_err(|_| {
+            self.0.pop();
+        })
     }
 
     pub(crate) fn remove(&mut self, index: usize) {

@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -15,11 +17,11 @@ impl Model {
         }
     }
 
-    pub(crate) fn at(path: &std::path::Path) -> Option<Self> {
-        [Self::Parakeet, Self::Nemotron].into_iter().find(|choice| {
-            path.file_name()
-                .is_some_and(|name| name == choice.file_name())
-        })
+    pub(crate) fn at(path: &Path) -> Option<Self> {
+        let name = path.file_name()?;
+        [Self::Parakeet, Self::Nemotron]
+            .into_iter()
+            .find(|choice| name == choice.file_name())
     }
 
     pub(crate) const fn label(self) -> &'static str {
@@ -40,11 +42,10 @@ pub(crate) fn nemotron_language(language: &str) -> &str {
     };
     LANGUAGES
         .iter()
-        .find_map(|&(code, _)| {
-            (code
-                .split_once('-')
-                .is_some_and(|(prefix, _)| prefix == primary))
-            .then_some(code)
+        .map(|&(code, _)| code)
+        .find(|code| {
+            code.split_once('-')
+                .is_some_and(|(prefix, _)| prefix == primary)
         })
         .unwrap_or("auto")
 }

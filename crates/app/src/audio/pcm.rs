@@ -1,6 +1,6 @@
 use std::{mem, ops::Range, time::Duration};
 
-use anyhow::{anyhow, bail};
+use anyhow::{Context as _, bail};
 use zeroize::{Zeroize, Zeroizing};
 
 use super::speech::Audibility;
@@ -105,10 +105,7 @@ impl Pcm16 {
         speech: &Audibility,
         rate: u32,
     ) -> anyhow::Result<Sealed> {
-        let audio = self
-            .audio()
-            .get(range.clone())
-            .ok_or_else(|| anyhow!(INCOMPLETE_HEADER))?;
+        let audio = self.audio().get(range.clone()).context(INCOMPLETE_HEADER)?;
         Ok(Sealed {
             wav: encode(audio, rate)?,
             trimmed: duration_of(range.start, rate),
@@ -166,7 +163,7 @@ impl Drop for Pcm16 {
 }
 
 fn encode(audio: &[u8], rate: u32) -> anyhow::Result<Vec<u8>> {
-    let header = wav_header(audio.len(), rate).ok_or_else(|| anyhow!(INCOMPLETE_HEADER))?;
+    let header = wav_header(audio.len(), rate).context(INCOMPLETE_HEADER)?;
     let mut wav = Vec::with_capacity(WAV_HEADER_BYTES.saturating_add(audio.len()));
     wav.extend_from_slice(&header);
     wav.extend_from_slice(audio);
@@ -178,7 +175,7 @@ pub(crate) fn wav_tail(wav: &[u8], range: Range<usize>) -> anyhow::Result<Vec<u8
         .get(WAV_HEADER_BYTES..)
         .filter(|audio| range.end == audio.len())
         .and_then(|audio| audio.get(range))
-        .ok_or_else(|| anyhow!(INCOMPLETE_HEADER))?;
+        .context(INCOMPLETE_HEADER)?;
     encode(audio, wav_sample_rate(wav)?)
 }
 
@@ -226,9 +223,7 @@ pub(crate) fn wav_sample_rate(wav: &[u8]) -> anyhow::Result<u32> {
 #[cfg(test)]
 pub(crate) fn wav_duration(wav: &[u8]) -> anyhow::Result<Duration> {
     let rate = wav_sample_rate(wav)?;
-    let audio = wav
-        .get(WAV_HEADER_BYTES..)
-        .ok_or_else(|| anyhow!(INCOMPLETE_HEADER))?;
+    let audio = wav.get(WAV_HEADER_BYTES..).context(INCOMPLETE_HEADER)?;
     anyhow::ensure!(
         rate > 0 && audio.len().is_multiple_of(SAMPLE_BYTES),
         "The fixture needs a positive rate and complete PCM16 samples"
@@ -256,8 +251,6 @@ fn duration_of(bytes: usize, rate: u32) -> Duration {
 
 #[cfg(test)]
 mod tests {
-    use anyhow::Context as _;
-
     use super::*;
     use crate::audio::{fixture::square_wave, stream::MAX_SAMPLE_RATE};
 
