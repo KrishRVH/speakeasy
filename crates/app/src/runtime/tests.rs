@@ -5,7 +5,9 @@ use std::{
 
 use anyhow::{anyhow, bail, ensure};
 use speakeasy_platform::{Delivery, InsertPermit, Inserted, Scope, Taps};
-use speakeasy_show::{Image, Journal, Moment, Narration, NarrationLoss, Recording, Size};
+use speakeasy_show::{
+    Image, Journal, Moment, Narration, NarrationLoss, Recording, Size, Span, Word,
+};
 use tokio::{sync::oneshot, task::JoinHandle, time::timeout};
 
 use super::{
@@ -77,6 +79,7 @@ struct FakePorts {
     load_results: Option<Receiver<anyhow::Result<()>>>,
     recovery: Option<Receiver<anyhow::Result<()>>>,
     recorded_requests: Option<Sender<Vec<u8>>>,
+    word_timing: Timing,
     segmentation: Option<Sender<bool>>,
     retirement: Option<Gate<()>>,
     stop: Option<Gate<()>>,
@@ -130,6 +133,7 @@ impl FakePorts {
             load_results: None,
             recovery: None,
             recorded_requests: None,
+            word_timing: Timing::Untimed,
             segmentation: None,
             retirement: None,
             stop: None,
@@ -333,6 +337,7 @@ impl Ports for FakePorts {
             stop: self.stop.clone(),
             recovery: self.recovery.clone(),
             recorded_requests: self.recorded_requests.clone(),
+            word_timing: self.word_timing,
         };
         let loads = self.loads.clone();
         async move {
@@ -518,11 +523,18 @@ fn saved_show(narration: &Narration) -> SavedShow {
     })
 }
 
+#[derive(Clone, Copy)]
+enum Timing {
+    Untimed,
+    Timed,
+}
+
 struct FakeSpeech {
     jobs: Sender<TranscriptionJob>,
     stop: Option<Gate<()>>,
     recovery: Option<Receiver<anyhow::Result<()>>>,
     recorded_requests: Option<Sender<Vec<u8>>>,
+    word_timing: Timing,
 }
 
 impl Speech for FakeSpeech {
@@ -559,9 +571,18 @@ impl Speech for FakeSpeech {
         language: &str,
         terms: &Terms,
     ) -> anyhow::Result<Narration> {
-        self.transcribe(wav, language, terms)
-            .await
-            .map(Narration::Text)
+        let text = self.transcribe(wav, language, terms).await?;
+        Ok(match self.word_timing {
+            Timing::Untimed => Narration::Text(text),
+            Timing::Timed => Narration::Words(
+                text.split_whitespace()
+                    .map(|word| Word {
+                        span: Span::default(),
+                        text: word.to_owned(),
+                    })
+                    .collect(),
+            ),
+        })
     }
 
     async fn probe_with_silence(&mut self) -> anyhow::Result<()> {

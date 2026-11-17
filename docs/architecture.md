@@ -148,7 +148,7 @@ module unless a test file is named.
   a second is dropped too, and where room noise passes the gate every window counts, so in a noisy
   room only a recording shorter than about a second qualifies.
   [runtime/tests/recognition.rs](../crates/app/src/runtime/tests/recognition.rs) checks dictation
-  and Show narration.
+  and Show narration, with and without word times.
 - **Insertion**: [platform/src/insertion.rs](../crates/platform/src/insertion.rs) with the Windows
   and macOS commit protocol in [insertion/commit.rs](../crates/platform/src/insertion/commit.rs),
   [input.rs](../crates/platform/src/input.rs),

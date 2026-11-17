@@ -307,15 +307,29 @@ async fn whisper_drops_a_lone_credit_only_from_a_recording_under_a_second_of_sou
 
 #[tokio::test(start_paused = true)]
 async fn whisper_drops_a_lone_credit_from_a_brief_shows_narration() -> anyhow::Result<()> {
-    for (audible, narration) in [
-        (BRIEF, Narration::default()),
-        (Duration::from_secs(1), Narration::Text("Thank you.".into())),
+    let words = ["Thank", "you."].map(|text| Word {
+        span: Span::default(),
+        text: text.to_owned(),
+    });
+    let second = Duration::from_secs(1);
+    for (timing, audible, narration) in [
+        (Timing::Untimed, BRIEF, Narration::default()),
+        (
+            Timing::Untimed,
+            second,
+            Narration::Text("Thank you.".into()),
+        ),
+        (Timing::Timed, BRIEF, Narration::default()),
+        (Timing::Timed, second, Narration::Words(words.to_vec())),
     ] {
         let config = Config {
             engine: Engine::Whisper,
             ..config()
         };
-        let mut h = Harness::with_ports(config, |ports| ports.delayed_finish = true)?;
+        let mut h = Harness::with_ports(config, |ports| {
+            ports.delayed_finish = true;
+            ports.word_timing = timing;
+        })?;
         h.input(Input::Press);
         h.phase(Phase::Recording).await?;
         let (id, events) = receive(&h.captures).await?;
