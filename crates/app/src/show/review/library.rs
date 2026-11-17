@@ -18,7 +18,7 @@ use crate::show::{
     Interrupted,
     preview::Content,
     store::{
-        age, checkpoint, movie, pinned,
+        age, checkpoint, movie,
         recall::{self, Entry, Health, ReadError},
         retention::{Retention, interval},
         source,
@@ -63,7 +63,7 @@ impl Row {
             duration: recording.map(|recording| recording.duration),
             frames: show.map_or(0, |show| show.manifest.keyframes().len()),
             marks: show.map_or(0, |show| show.manifest.marks().len()),
-            pinned: show.map_or_else(|| pinned(&entry.directory).ok(), |show| Some(show.pinned)),
+            pinned: entry.pinned(),
             early: recording.is_some_and(|recording| recording.ending != Ending::Finished),
             narration_lost: recording.and_then(|recording| recording.narration_lost),
             directory: entry.directory,

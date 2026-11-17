@@ -84,10 +84,9 @@ impl Overview {
         let show = entry.show.as_ref().ok();
         let id =
             parent.and_then(|parent| address::managed_id(parent, &entry.directory).ok().flatten());
-        let retention = id.as_ref().and_then(|id| match show {
-            Some(show) => Some(Retention::of(id.as_str(), show.pinned)),
-            None => Retention::read(&entry.directory).ok(),
-        });
+        let retention = id
+            .as_ref()
+            .and_then(|id| entry.pinned().map(|kept| Retention::of(id.as_str(), kept)));
         Self {
             id: id.map(|id| id.as_str().to_owned()),
             directory: entry.directory.clone(),

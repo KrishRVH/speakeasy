@@ -71,6 +71,13 @@ impl Entry {
         }
     }
 
+    pub(crate) fn pinned(&self) -> Option<bool> {
+        match &self.show {
+            Ok(show) => Some(show.pinned),
+            Err(_) => pinned(&self.directory).ok(),
+        }
+    }
+
     pub(crate) fn open(directory: &Path) -> io::Result<Self> {
         let directory = std::path::absolute(directory)?;
         if !fs::metadata(&directory)?.is_dir() {

@@ -42,7 +42,7 @@ pub(crate) enum Retention {
 }
 
 impl Retention {
-    pub(crate) fn read(directory: &Path) -> io::Result<Self> {
+    fn read(directory: &Path) -> io::Result<Self> {
         Ok(Self::of(
             directory
                 .file_name()
