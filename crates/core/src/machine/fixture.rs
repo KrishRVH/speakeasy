@@ -69,9 +69,17 @@ impl Payload for Sample {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Effect {
+    Revoke,
+    Insert(String),
+    Publish { producers_closed: bool },
+    Remember(&'static str),
+}
+
 #[derive(Debug, Default)]
 pub(super) struct Log {
-    pub effects: Vec<String>,
+    pub effects: Vec<Effect>,
     pub producers: Vec<mpsc::Receiver<()>>,
     pub published: Option<Publication<Sample>>,
 }
@@ -96,7 +104,7 @@ impl Env<Sample> for Log {
     }
 
     fn revoke(&mut self, _: &u64) {
-        self.effects.push("revoke".into());
+        self.effects.push(Effect::Revoke);
     }
 
     fn closed(&mut self) -> bool {
@@ -159,7 +167,7 @@ impl Env<Sample> for Log {
     }
 
     fn insert(&mut self, text: String, _: &u64, _: &Settings) {
-        self.effects.push(format!("insert {text}"));
+        self.effects.push(Effect::Insert(text));
     }
 
     fn ready(&mut self, (): &()) -> bool {
@@ -173,12 +181,11 @@ impl Env<Sample> for Log {
     }
 
     fn publish(&mut self, publication: Publication<Sample>, _: &u64, _: Option<()>) {
-        let closed = self
+        let producers_closed = self
             .producers
             .iter()
             .all(|producer| producer.try_recv() == Err(mpsc::TryRecvError::Disconnected));
-        self.effects
-            .push(format!("publish with producers closed: {closed}"));
+        self.effects.push(Effect::Publish { producers_closed });
         self.published = Some(publication);
     }
 
@@ -191,7 +198,7 @@ impl Env<Sample> for Log {
     fn release(&mut self, _: SessionId, _: &'static str, _: Release<Sample>) {}
 
     fn remember(&mut self, shown: &'static str) {
-        self.effects.push(format!("remember {shown}"));
+        self.effects.push(Effect::Remember(shown));
     }
 
     fn announce(&mut self) {}

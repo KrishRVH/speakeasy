@@ -3,7 +3,7 @@ mod canonical;
 mod invariants;
 mod oracle;
 
-use std::{collections::HashMap, env, mem, ops::ControlFlow, thread};
+use std::{collections::HashSet, env, mem, ops::ControlFlow, thread};
 
 use self::{
     alphabet::{CONFIGS, Step, steps},
@@ -58,7 +58,7 @@ struct Broken {
 }
 
 struct Search {
-    index: HashMap<u128, usize>,
+    seen: HashSet<u128>,
     parents: Vec<Option<(usize, Step)>>,
     next: Vec<(usize, Explored)>,
     transitions: u64,
@@ -71,17 +71,12 @@ impl Search {
         let Reached::State(explored, found) = successor.reached else {
             return;
         };
-        if self.index.contains_key(&found) {
-            return;
-        }
         if explored.machine.retiring.len() > RETIRING {
             self.bounded = self.bounded.saturating_add(1);
-            return;
+        } else if self.seen.insert(found) {
+            self.next.push((self.parents.len(), *explored));
+            self.parents.push(Some((source, successor.step)));
         }
-        let state = self.parents.len();
-        self.index.insert(found, state);
-        self.parents.push(Some((source, successor.step)));
-        self.next.push((state, *explored));
     }
 }
 
@@ -219,7 +214,7 @@ fn explore(depth_limit: Option<usize>) {
         recorder: None,
     };
     let mut search = Search {
-        index: HashMap::from([(initial.key(), 0)]),
+        seen: HashSet::from([initial.key()]),
         parents: vec![None],
         next: Vec::new(),
         transitions: 0,

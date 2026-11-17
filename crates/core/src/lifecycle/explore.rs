@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::HashSet;
 
 use super::{ConfigEpoch, Lifecycle, State};
 
@@ -154,15 +154,14 @@ fn check(before: &Tokens, operation: Operation, after: &Tokens, acted: bool) {
 #[test]
 fn every_ordering_of_lifecycle_events_keeps_owners_until_they_retire() {
     let mut states = vec![Tokens::default()];
-    let mut index = HashMap::from([(key(&states[0]), 0_usize)]);
+    let mut seen = HashSet::from([key(&states[0])]);
     let mut expanded = 0;
     while let Some(lifecycle) = states.get(expanded).cloned() {
         for operation in OPERATIONS {
             let mut after = lifecycle.clone();
             let acted = operation.apply(&mut after);
             check(&lifecycle, operation, &after, acted);
-            let next = states.len();
-            if *index.entry(key(&after)).or_insert(next) == next {
+            if seen.insert(key(&after)) {
                 states.push(after);
             }
         }

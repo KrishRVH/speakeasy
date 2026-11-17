@@ -45,9 +45,7 @@ pub(super) fn state(machine: &Machine<Abstract>, settled: bool) -> Result<(), St
     if machine.microphone == Device::Open && !session.is_some_and(Session::is_capturing) {
         return Err("The microphone is open without a capturing session".into());
     }
-    if machine.screen == Device::Open
-        && !session.is_some_and(|session| session.is_show() && session.records_screen())
-    {
+    if machine.screen == Device::Open && !session.is_some_and(Session::records_screen) {
         return Err("The screen is open without a Show recording it".into());
     }
     if let Worker::Transcribing(ticket) = machine.worker

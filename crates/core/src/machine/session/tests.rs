@@ -3,7 +3,7 @@ use std::time::Duration;
 use super::*;
 use crate::machine::{
     Part,
-    fixture::{Log, Sample},
+    fixture::{Effect, Log, Sample},
 };
 
 fn opened(log: &mut Log, show: bool) -> Session<Sample> {
@@ -44,7 +44,12 @@ fn publication_closes_producers_before_it_hands_over_the_checkpoint() {
     session.screen_recorded("footage");
     assert!(session.captured(None));
     session.publish(&mut log);
-    assert_eq!(log.effects, ["publish with producers closed: true"]);
+    assert_eq!(
+        log.effects,
+        [Effect::Publish {
+            producers_closed: true
+        }]
+    );
     let publication = log.published.unwrap();
     assert_eq!(publication.checkpoint, Some("checkpoint"));
     assert_eq!(publication.footage, "footage");

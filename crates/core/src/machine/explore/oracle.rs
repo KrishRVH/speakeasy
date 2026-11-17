@@ -145,23 +145,27 @@ impl Oracle {
         Some(script)
     }
 
-    fn choose(&mut self, query: Query, answers: &[&'static str]) -> usize {
+    fn choose<T, const N: usize>(&mut self, query: Query, answers: [(&'static str, T); N]) -> T {
         let choice = self.script.get(self.chosen.len()).copied().unwrap_or(0);
-        self.chosen.push((choice, answers.len()));
-        self.effects.push(Effect::Answered(query, answers[choice]));
-        choice
+        self.chosen.push((choice, N));
+        let (label, answer) = answers
+            .into_iter()
+            .nth(choice)
+            .expect("A script chooses among the answers offered");
+        self.effects.push(Effect::Answered(query, label));
+        answer
     }
 }
 
 impl Env<Abstract> for Oracle {
     fn admit(&mut self) -> Option<()> {
-        (self.choose(Query::Admit, &["permit", "refused"]) == 0).then_some(())
+        self.choose(Query::Admit, [("permit", Some(())), ("refused", None)])
     }
 
     fn style(&mut self) {}
 
     fn shield(&mut self, (): &()) -> bool {
-        self.choose(Query::Shield, &["shielded", "exposed"]) == 0
+        self.choose(Query::Shield, [("shielded", true), ("exposed", false)])
     }
 
     fn revoke(&mut self, (): &()) {
@@ -169,19 +173,23 @@ impl Env<Abstract> for Oracle {
     }
 
     fn closed(&mut self) -> bool {
-        self.choose(Query::Closed, &["open", "closed"]) == 1
+        self.choose(Query::Closed, [("open", false), ("closed", true)])
     }
 
     fn keep(&mut self, (): ()) -> Keeping<Abstract> {
-        match self.choose(Query::Keep, &["kept", "unneeded", "lost"]) {
-            0 => Keeping::Kept(Kept {
-                checkpoint: (),
-                audio: (),
-                frames: (),
-            }),
-            1 => Keeping::Unneeded,
-            _ => Keeping::Lost,
-        }
+        let kept = Kept {
+            checkpoint: (),
+            audio: (),
+            frames: (),
+        };
+        self.choose(
+            Query::Keep,
+            [
+                ("kept", Keeping::Kept(kept)),
+                ("unneeded", Keeping::Unneeded),
+                ("lost", Keeping::Lost),
+            ],
+        )
     }
 
     fn record_microphone(
@@ -191,12 +199,11 @@ impl Env<Abstract> for Oracle {
         mode: RecognitionMode,
     ) -> Result<(), ()> {
         let query = Query::Microphone { session, mode };
-        if self.choose(query, &["recording", "failed"]) == 0 {
+        let recording = self.choose(query, [("recording", Ok(())), ("failed", Err(()))]);
+        if recording.is_ok() {
             self.opened = Some((session, mode));
-            Ok(())
-        } else {
-            Err(())
         }
+        recording
     }
 
     fn record_screen(
@@ -210,9 +217,7 @@ impl Env<Abstract> for Oracle {
             session,
             frames: frames.is_some(),
         };
-        (self.choose(query, &["recording", "failed"]) == 0)
-            .then_some(())
-            .ok_or(())
+        self.choose(query, [("recording", Ok(())), ("failed", Err(()))])
     }
 
     fn finish(&mut self, recorder: Recorder) {
@@ -232,7 +237,7 @@ impl Env<Abstract> for Oracle {
     }
 
     fn keep_audio(&mut self, (): (), (): (), _: &Settings) -> bool {
-        self.choose(Query::KeepAudio, &["kept", "lost"]) == 0
+        self.choose(Query::KeepAudio, [("kept", true), ("lost", false)])
     }
 
     fn pin(&mut self, (): ()) {
@@ -256,7 +261,7 @@ impl Env<Abstract> for Oracle {
     }
 
     fn cut(&mut self, (): &(), (): &()) -> Option<()> {
-        (self.choose(Query::Cut, &["cut", "uncut"]) == 0).then_some(())
+        self.choose(Query::Cut, [("cut", Some(())), ("uncut", None)])
     }
 
     fn transcribe(&mut self, request: Request<Abstract>, _: &Settings) {
@@ -264,7 +269,7 @@ impl Env<Abstract> for Oracle {
     }
 
     fn compose(&mut self, (): (), (): (), _: &Settings) -> Option<()> {
-        (self.choose(Query::Compose, &["text", "empty"]) == 0).then_some(())
+        self.choose(Query::Compose, [("text", Some(())), ("empty", None)])
     }
 
     fn insert(&mut self, (): (), (): &(), _: &Settings) {
@@ -272,7 +277,7 @@ impl Env<Abstract> for Oracle {
     }
 
     fn ready(&mut self, (): &()) -> bool {
-        self.choose(Query::Ready, &["ready", "closed"]) == 0
+        self.choose(Query::Ready, [("ready", true), ("closed", false)])
     }
 
     fn refuse_practice(&mut self, (): ()) {
@@ -280,7 +285,7 @@ impl Env<Abstract> for Oracle {
     }
 
     fn practise(&mut self, (): &(), (): &(), (): ()) -> bool {
-        self.choose(Query::Practise, &["delivered", "closed"]) == 0
+        self.choose(Query::Practise, [("delivered", true), ("closed", false)])
     }
 
     fn publish(&mut self, publication: Publication<Abstract>, (): &(), receipt: Option<()>) {
