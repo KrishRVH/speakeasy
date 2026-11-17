@@ -70,14 +70,11 @@ impl Root {
 
 impl Roots {
     pub(super) fn open(roots: &[PathBuf]) -> Result<Self, &'static str> {
-        let roots = roots
+        roots
             .iter()
             .map(|root| Root::open(root))
-            .collect::<Result<Vec<_>, _>>()?;
-        if roots.is_empty() {
-            return Err("MCP needs at least one explicit root");
-        }
-        Ok(Self(roots))
+            .collect::<Result<_, _>>()
+            .map(Self)
     }
 
     pub(super) fn resolve(&self, show: &str) -> Result<PathBuf, &'static str> {
