@@ -158,6 +158,26 @@ fn refusal_and_cancellation_never_replace_an_existing_file() -> anyhow::Result<(
     Ok(())
 }
 
+#[test]
+fn a_full_export_starts_with_voice_recorded_before_the_video() -> anyhow::Result<()> {
+    let checkpoint = tempfile::tempdir()?;
+    let show = tempfile::tempdir()?;
+    let annotations = Moment::from_millis(1000);
+    movie::tests::checkpoint(checkpoint.path(), true)?;
+    movie::retain(
+        show.path(),
+        movie::open(checkpoint.path())?.context("The fixture movie was not kept")?,
+        annotations,
+    )?;
+    let reading = movie::Reading::open(show.path(), annotations)?;
+    let timing = timeline::Timing::new(&reading.movie, None, Some(&audio(0)))?;
+    assert_eq!(
+        (timing.start_ms, timing.end_ms, timing.frames),
+        (0, 2000, 60)
+    );
+    Ok(())
+}
+
 fn ffmpeg(args: &[&str], path: &Path) -> anyhow::Result<Vec<u8>> {
     let result = Command::new("ffmpeg")
         .args(["-v", "error", "-nostdin"])
@@ -368,12 +388,6 @@ fn synthetic_ffmpeg_export_preserves_voice_ink_captions_and_clip_timing() -> any
         (1000, 2000, 30, 1)
     );
     assert_eq!(fs::read(directory.join(movie::FILE))?, original);
-    let movie = movie::Reading::open(&directory, Moment::from_millis(2250))?;
-    let prelude = timeline::Timing::new(&movie.movie, None, Some(&audio(0)))?;
-    assert_eq!(
-        (prelude.start_ms, prelude.end_ms, prelude.frames),
-        (0, 2250, 68)
-    );
     let header = fs::read(directory.join(movie::HEADER))?;
     let mut metadata: movie::Metadata = serde_json::from_slice(&header)?;
     metadata.geometry = Some(movie::geometry::Geometry::default());

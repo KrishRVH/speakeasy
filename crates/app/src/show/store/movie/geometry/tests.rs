@@ -90,7 +90,12 @@ fn corrupt_receipts_stop_at_their_last_known_sample_and_future_receipts_bound_th
 
 proptest! {
     #[test]
-    fn rectangles_cannot_escape_even_with_overflowing_edges(content in any::<[u32; 4]>()) {
+    fn rectangles_cannot_escape_even_with_overflowing_edges(
+        content in prop_oneof![
+            (0..=321_u32, 0..=241_u32, 0..=321_u32, 0..=241_u32).prop_map(<[u32; 4]>::from),
+            any::<[u32; 4]>(),
+        ]
+    ) {
         let [left, top, width, height] = content;
         let inside = width > 0 && height > 0
             && u64::from(left).saturating_add(u64::from(width)) <= u64::from(SIZE[0])
