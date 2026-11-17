@@ -4,6 +4,7 @@ mod tests;
 use std::{
     convert::Infallible,
     mem,
+    ops::ControlFlow,
     time::{Duration, Instant},
 };
 
@@ -111,10 +112,10 @@ impl Movie {
         self.settle(written, Instant::now())
     }
 
-    fn settle(&mut self, outcome: anyhow::Result<bool>, now: Instant) -> bool {
+    fn settle(&mut self, outcome: anyhow::Result<ControlFlow<()>>, now: Instant) -> bool {
         match outcome {
-            Ok(true) => true,
-            Ok(false) => {
+            Ok(ControlFlow::Continue(())) => true,
+            Ok(ControlFlow::Break(())) => {
                 self.stop(now);
                 true
             },
@@ -150,7 +151,11 @@ impl Recording {
         }))
     }
 
-    fn frame(&mut self, frame: &Frame, stopping: &Receiver<Infallible>) -> anyhow::Result<bool> {
+    fn frame(
+        &mut self,
+        frame: &Frame,
+        stopping: &Receiver<Infallible>,
+    ) -> anyhow::Result<ControlFlow<()>> {
         let at = frame.at.saturating_duration_since(self.first);
         anyhow::ensure!(
             frame.at < self.target.deadline() && at <= RECORDING_LIMIT,
@@ -160,38 +165,32 @@ impl Recording {
             .received_at
             .is_some_and(|previous| frame.at <= previous)
         {
-            return Ok(true);
+            return Ok(ControlFlow::Continue(()));
         }
-        if let Some(encoder) = &mut self.encoder {
-            if encoder
-                .write(
-                    frame,
-                    at,
-                    &mut Publication {
-                        target: &self.target,
-                        stopping,
-                    },
-                )?
-                .is_break()
-            {
-                return Ok(false);
-            }
+        let Some(encoder) = &mut self.encoder else {
+            return Ok(ControlFlow::Continue(()));
+        };
+        let target = &self.target;
+        let written = encoder.write(frame, at, &mut Publication { target, stopping })?;
+        if written.is_continue() {
             self.received_at = Some(frame.at);
         }
-        Ok(true)
+        Ok(written)
     }
 
-    fn advance(&mut self, now: Instant, stopping: &Receiver<Infallible>) -> anyhow::Result<bool> {
+    fn advance(
+        &mut self,
+        now: Instant,
+        stopping: &Receiver<Infallible>,
+    ) -> anyhow::Result<ControlFlow<()>> {
         let Some(encoder) = &mut self.encoder else {
-            return Ok(true);
+            return Ok(ControlFlow::Continue(()));
         };
         let target = &self.target;
         let through = now
             .min(target.deadline())
             .saturating_duration_since(self.first);
-        Ok(encoder
-            .advance(End::Through(through), &mut Publication { target, stopping })?
-            .is_continue())
+        encoder.advance(End::Through(through), &mut Publication { target, stopping })
     }
 }
 
