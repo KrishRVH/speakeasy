@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use super::*;
-use crate::machine::fixture::Sample;
+use crate::machine::fixture::{Sample, cut};
 
 const FIRST: SessionId = SessionId::FIRST;
 
@@ -17,7 +17,7 @@ const fn partition() -> Partition<Sample> {
 }
 
 fn request(recognition: &mut Recognition<Sample>) -> Option<Request<Sample>> {
-    recognition.request(|audio, range| audio.get(range.clone()).map(<[u8]>::to_vec))
+    recognition.request(|audio, range| cut(audio, range))
 }
 
 fn audio(request: &Request<Sample>) -> &[u8] {

@@ -69,6 +69,10 @@ impl Payload for Sample {
     }
 }
 
+pub(super) fn cut(audio: &[u8], range: &Range<usize>) -> Option<Vec<u8>> {
+    audio.get(range.clone()).map(<[u8]>::to_vec)
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum Effect {
     Revoke,
@@ -157,7 +161,7 @@ impl Env<Sample> for Log {
     fn recover(&mut self, _: &Settings, _: bool) {}
 
     fn cut(&mut self, audio: &Vec<u8>, range: &Range<usize>) -> Option<Vec<u8>> {
-        Some(audio.get(range.clone())?.to_vec())
+        cut(audio, range)
     }
 
     fn transcribe(&mut self, _: Request<Sample>, _: &Settings) {}
