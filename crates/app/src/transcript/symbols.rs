@@ -5,9 +5,10 @@ const PAUSES: [char; 2] = [',', ';'];
 const QUOTES: [char; 4] = ['"', '\'', '“', '‘'];
 
 const NAMING: &[&str] = &[
-    "a", "an", "the", "this", "that", "each", "every", "any", "no", "one", "another", "its", "my",
-    "your", "our", "their", "his", "her", "leading", "trailing", "double", "single", "extra",
+    "a", "an", "the", "another", "leading", "trailing", "double", "single", "extra",
 ];
+
+const STOPS: [char; 3] = ['.', '!', '?'];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Symbols {
@@ -48,7 +49,7 @@ pub(crate) fn written(text: &str) -> String {
     let mut rest = tokens.as_slice();
     let mut previous = None;
     while let Some(token) = rest.first() {
-        let spoken = if let Some((mark, spoken)) = command(previous, rest) {
+        let spoken = if let Some((mark, spoken)) = command(previous, rest, &output) {
             output.mark(mark, spoken.last().map_or("", |last| trailing(last)));
             spoken
         } else {
@@ -61,7 +62,11 @@ pub(crate) fn written(text: &str) -> String {
     output.text
 }
 
-fn command<'a>(previous: Option<&str>, tokens: &'a [&'a str]) -> Option<(Mark, &'a [&'a str])> {
+fn command<'a>(
+    previous: Option<&str>,
+    tokens: &'a [&'a str],
+    written: &Writer,
+) -> Option<(Mark, &'a [&'a str])> {
     COMMANDS.iter().find_map(|(words, mark)| {
         let spoken = tokens.get(..words.len())?;
         let said = spoken
@@ -88,14 +93,50 @@ fn command<'a>(previous: Option<&str>, tokens: &'a [&'a str]) -> Option<(Mark, &
                             .any(|word| bare(token).eq_ignore_ascii_case(word))
                 })
         };
-        let between = || previous.is_some() && !ends;
-        let fits = match mark {
+        let stops = || {
+            spoken
+                .last()
+                .is_some_and(|token| trailing(token).contains(STOPS))
+        };
+        let opens = |symbol| {
+            !named()
+                && tokens
+                    .get(spoken.len()..)
+                    .is_some_and(|after| closed_later(symbol, after))
+        };
+        let fits = match *mark {
             Mark::Break(_) => alone(),
-            Mark::Join(_) => between() && !named(),
-            Mark::Open(_) => !ends && !named(),
-            Mark::Close(_) | Mark::Pair(_) => !named(),
+            Mark::Join(_) => previous.is_some() && !ends && !named() && !stops(),
+            Mark::Open(symbol) => opens(symbol),
+            Mark::Close(symbol) => written.pending(symbol),
+            Mark::Pair(symbol) => written.pending(symbol) || opens(symbol),
         };
         (said && fits).then_some((*mark, spoken))
+    })
+}
+
+const fn opener(close: char) -> char {
+    match close {
+        ')' => '(',
+        ']' => '[',
+        '}' => '{',
+        other => other,
+    }
+}
+
+fn closed_later(open: char, after: &[&str]) -> bool {
+    COMMANDS.iter().any(|(words, mark)| {
+        let closes = match *mark {
+            Mark::Close(symbol) | Mark::Pair(symbol) => opener(symbol) == open,
+            Mark::Break(_) | Mark::Join(_) | Mark::Open(_) => false,
+        };
+        closes
+            && after.windows(words.len()).any(|window| {
+                window
+                    .iter()
+                    .zip(words.iter())
+                    .all(|(token, word)| bare(token).eq_ignore_ascii_case(word))
+            })
     })
 }
 
@@ -161,6 +202,16 @@ impl Writer {
         self.attached = false;
     }
 
+    fn pending(&self, close: char) -> bool {
+        let open = opener(close);
+        let opened = self.text.matches(open).count();
+        if open == close {
+            opened % 2 == 1
+        } else {
+            opened > self.text.matches(close).count()
+        }
+    }
+
     fn drop_pause(&mut self) {
         let kept = self.text.trim_end_matches(PAUSES).len();
         self.text.truncate(kept);
@@ -199,6 +250,8 @@ mod tests {
             ("user, underscore, id", "user_id"),
             ("src forward slash main.rs", "src/main.rs"),
             ("C: backslash Users", "C:\\Users"),
+            ("my underscore var", "my_var"),
+            ("one forward slash two", "one/two"),
         ] {
             assert_eq!(written(heard), expected, "{heard}");
         }
@@ -214,6 +267,12 @@ mod tests {
                 "Run backtick cargo test backtick, then push.",
                 "Run `cargo test`, then push.",
             ),
+            (
+                "arr open bracket one close bracket equals two",
+                "arr [one] equals two",
+            ),
+            ("f open paren a close paren", "f (a)"),
+            ("open quote yes or no close quote", "\"yes or no\""),
         ] {
             assert_eq!(written(heard), expected, "{heard}");
         }
@@ -236,6 +295,12 @@ mod tests {
             "Add a backtick before the name.",
             "Escape it with a forward slash, then retry.",
             "End with an underscore",
+            "Please close quote 12 today.",
+            "Then type close paren.",
+            "I typed backslash. It failed.",
+            "Run the backtick cargo test backtick target.",
+            "Say open quote and stop.",
+            "I prefer backtick over quote.",
         ] {
             assert_eq!(written(heard), heard);
         }

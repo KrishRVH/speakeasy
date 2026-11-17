@@ -64,7 +64,7 @@ fn windows_f13_is_reserved_and_its_repeats_never_restart() {
     let press = policy.observe(F13, true, NONE_HELD, now());
     assert!(press.starts());
     assert!(press.swallows(), "F13 must not reach the focused app");
-    let down = held_for(WindowsShortcut::F13, &[F13]);
+    let down = held_for(WindowsShortcut::F13, &[]);
     let repeat = policy.observe(F13, true, down, now());
     assert_eq!(repeat.action, None);
     assert!(repeat.swallows());
@@ -100,7 +100,7 @@ fn the_chosen_windows_key_holds_the_paste_and_shift_still_draws_beside_it() {
     assert!(read(WindowsShortcut::RightControl, &[RIGHT_CONTROL]).any());
     assert!(read(WindowsShortcut::RightControl, &[SHIFT, RIGHT_CONTROL]).draws());
     assert!(!read(WindowsShortcut::RightControl, &[SHIFT, LEFT_CONTROL]).draws());
-    assert!(read(WindowsShortcut::F13, &[F13]).any());
+    assert!(!read(WindowsShortcut::F13, &[F13]).any());
     assert!(read(WindowsShortcut::F13, &[SHIFT, F13]).draws());
     assert!(!read(WindowsShortcut::F13, &[SHIFT, CONTROL]).draws());
 }

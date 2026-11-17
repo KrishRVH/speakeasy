@@ -301,7 +301,7 @@ impl crate::WindowsShortcut {
                 let right = down(Windows::RIGHT_CONTROL);
                 (right, alt || windows || down(Windows::LEFT_CONTROL))
             },
-            Self::F13 => (down(Windows::F13), alt || control || windows),
+            Self::F13 => (false, alt || control || windows),
         };
         Modifiers {
             shift: down(Windows::SHIFT),
@@ -408,8 +408,12 @@ impl Windows {
     }
 
     fn reconcile(&mut self, chord_keys: [bool; 5]) -> bool {
-        for (tracked, physically_down) in self.chord_keys_down.iter_mut().zip(chord_keys) {
-            *tracked &= physically_down;
+        for ((key, tracked), physically_down) in Self::CHORD_KEYS
+            .into_iter()
+            .zip(self.chord_keys_down.iter_mut())
+            .zip(chord_keys)
+        {
+            *tracked &= physically_down || key == Self::F13;
         }
         self.chord.reconcile(self.chord_held())
     }

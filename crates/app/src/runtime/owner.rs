@@ -47,6 +47,9 @@ use crate::{
     transcript::{self, style::Style},
 };
 
+const ORPHANED: &str =
+    "The script that asked for this dictation stopped waiting, so nothing was pasted.";
+const TOO_LONG: &str = "This dictation is too long for a script to read, so nothing was pasted.";
 const UNCLAIMED: &str =
     "A script started this dictation to read it but stopped without asking, so nothing was pasted.";
 
@@ -501,10 +504,24 @@ impl<P: Ports> Env<Native> for World<P> {
             machine::Handoff::Insert(machine::Enter::Withheld) => Enter::Withheld,
             machine::Handoff::Insert(machine::Enter::Pressed) => Enter::Pressed,
             machine::Handoff::Print(call) => {
-                call.respond(Reply::printed(mem::take(&mut *text)));
-                self.delivery = Some(tokio::spawn(async {
-                    Delivered::Inserted(Ok(Inserted::Sent))
-                }));
+                let inserted = if !permit.commit() {
+                    call.respond(Reply::refused(commands::refusal(Refusal::Unheard)));
+                    Inserted::Cancelled
+                } else if !call.is_live() {
+                    Inserted::Unavailable(ORPHANED)
+                } else {
+                    let reply = Reply::printed(mem::take(&mut *text));
+                    let printed = reply.text.is_some();
+                    call.respond(reply);
+                    if printed {
+                        Inserted::Sent
+                    } else {
+                        Inserted::Unavailable(TOO_LONG)
+                    }
+                };
+                self.delivery = Some(tokio::spawn(
+                    async move { Delivered::Inserted(Ok(inserted)) },
+                ));
                 return;
             },
             machine::Handoff::Capture => {

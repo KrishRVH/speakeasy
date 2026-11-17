@@ -179,6 +179,12 @@ secondary Fn flag can accompany function keys, so it does not make F13 another m
 insertion worker retains the configured shortcut and polls physical F13 state for both its release
 wait and its final preflight. Its per-request autorelease pool encloses native delivery.
 
+Windows F13 is VK 0x7C, and the hook swallows its every event. Windows updates async key state only
+after the hooks pass an event, so a swallowed F13 never reads as down: its own press and release
+events alone establish the hold, and reconciliation never clears it. Lifecycle interrupts release it
+as they release every chord. F13 modifies no other key, so the insertion worker's release wait and
+preflight do not wait for it.
+
 `StatusItem` is created, updated and removed on the main thread. It takes the item's button at
 creation, removing the item again if AppKit offers none, and holds that main-thread-only button, so
 it is not Send. It owns the muda menu and retains muda's borrowed NSMenu pointer once, while that

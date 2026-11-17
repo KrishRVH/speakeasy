@@ -91,3 +91,40 @@ async fn a_capture_stopped_without_print_keeps_its_words_off_the_screen() -> any
     assert!(h.snapshot().last_dictation);
     h.close().await
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_cancelled_capture_refuses_its_waiting_caller() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    h.ready().await?;
+    let token = captured(&h).await?;
+    let printed = h.print(token.clone());
+    let (_, job) = receive(&h.jobs).await?;
+    assert_eq!(
+        h.call(Command::Cancel { session: token }).await?.result,
+        Disposition::Ok
+    );
+    let reply = receive(&printed).await?;
+    assert_eq!(reply.result, Disposition::Refused);
+    assert!(reply.text.is_none());
+    drop(job);
+    assert!(h.pasted.try_recv().is_err());
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_second_print_is_refused_while_the_first_still_gets_the_words() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    h.ready().await?;
+    let token = captured(&h).await?;
+    let first = h.print(token.clone());
+    let (_, job) = receive(&h.jobs).await?;
+    let second = receive(&h.print(token)).await?;
+    assert_eq!(second.result, Disposition::Refused);
+    assert!(second.text.is_none());
+    answer(job, "Fixture words.")?;
+    assert_eq!(
+        receive(&first).await?.text.as_deref(),
+        Some("Fixture words.")
+    );
+    h.close().await
+}
