@@ -271,10 +271,11 @@ module unless a test file is named.
   transient rendered text. The session fixes its destination at admission; practice commits the same
   cancellation permit before sending text through a private channel and never calls native
   insertion. Closing the receipt cancels its recording, and hiding or deactivating Settings clears
-  the receipt and text. [runtime/tests/practice.rs](../crates/app/src/runtime/tests/practice.rs)
-  covers private delivery, cancellation, configuration, and Show exclusion.
-  [status.rs](../crates/app/src/status.rs) derives status from observed resources without probing
-  devices or claiming external delivery.
+  the receipt and text. Picked practice words are a range into that text, so every stop drops them;
+  adding the picked phrase as a correction is a settings edit, which ends practice.
+  [runtime/tests/practice.rs](../crates/app/src/runtime/tests/practice.rs) covers private delivery,
+  cancellation, configuration, and Show exclusion. [status.rs](../crates/app/src/status.rs) derives
+  status from observed resources without probing devices or claiming external delivery.
   [platform/src/permissions.rs](../crates/platform/src/permissions.rs) reads macOS consent without
   prompting; [settings/permissions.rs](../crates/app/src/shell/settings/permissions.rs) refreshes
   that separate observation on window activation. The native interaction test uses fake observations
@@ -386,13 +387,14 @@ module unless a test file is named.
   [output.rs](../crates/app/src/show/command/output.rs) projects metadata without private text,
   including exact managed IDs and expiry dates. `show keep` changes retention for one explicit
   managed Show and `show discard` permanently removes one interrupted checkpoint; inspection stays
-  read-only. [command/tests.rs](../crates/app/src/show/command/tests.rs) inspects simulated Shows,
-  checks failure output, and exercises the embedded
-  [agent skill](../skills/speakeasy-show/SKILL.md). The Windows package's
-  [console entry](../crates/app/src/bin/speakeasy-cli.rs) relays Show and control commands and
-  version requests to the sibling app, with inherited handles, arguments, and working directory, and
-  waits for its exit. [cli.rs](../crates/app/tests/cli.rs) checks the process boundary without
-  opening devices or the app. Help and refused launch options never spawn a child.
+  read-only. `show wait` polls the Shows folder and inspects the first folder that appears after it
+  starts; atomic publication means it never sees a partial Show.
+  [command/tests.rs](../crates/app/src/show/command/tests.rs) inspects simulated Shows, checks
+  failure output, and exercises the embedded [agent skill](../skills/speakeasy-show/SKILL.md). The
+  Windows package's [console entry](../crates/app/src/bin/speakeasy-cli.rs) relays Show and control
+  commands and version requests to the sibling app, with inherited handles, arguments, and working
+  directory, and waits for its exit. [cli.rs](../crates/app/tests/cli.rs) checks the process
+  boundary without opening devices or the app. Help and refused launch options never spawn a child.
   [check-package.sh](../scripts/check-package.sh) launches every release package before upload.
 - **Agent evidence**: [show/evidence.rs](../crates/app/src/show/evidence.rs) shares inspection and
   temporal queries between CLI and [show/mcp.rs](../crates/app/src/show/mcp.rs). MCP exposes three

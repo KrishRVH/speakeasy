@@ -1,4 +1,4 @@
-use std::ops::ControlFlow;
+use std::ops::{ControlFlow, Range};
 
 use gpui::{Context, Task, Window};
 use zeroize::Zeroizing;
@@ -14,6 +14,7 @@ use crate::{
 pub(super) struct Practice {
     pub(super) text: Zeroizing<String>,
     pub(super) live: Option<Live>,
+    pub(super) picked: Option<Range<usize>>,
 }
 
 pub(super) struct Live {
@@ -45,7 +46,6 @@ impl Settings {
 
     pub(in crate::shell) fn end_practice(&mut self, cx: &mut Context<'_, Self>) {
         self.practice.stop();
-        self.vocabulary.forget_practice();
         cx.notify();
     }
 
@@ -111,7 +111,7 @@ impl Settings {
             },
             PracticeEvent::Text(text) => {
                 self.practice.text = text;
-                self.vocabulary.forget_practice();
+                self.practice.picked = None;
             },
             PracticeEvent::Unavailable(message) => {
                 self.notice = Some(Notice::Problem(message.into()));

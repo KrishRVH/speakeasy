@@ -1,5 +1,3 @@
-use std::ops::Range;
-
 use gpui::{
     App, AppContext as _, Context, Div, Entity, Focusable as _, Window, div, prelude::*, px, rgb,
 };
@@ -21,7 +19,7 @@ pub(super) struct Editor {
     addition: Pair,
     revision: Pair,
     editing: Option<usize>,
-    picked: Option<Range<usize>>,
+    practiced: Entity<TextField>,
 }
 
 struct Pair {
@@ -37,6 +35,7 @@ pub(super) enum Edit {
     Cancel,
     Remove(usize),
     FromPractice(usize),
+    AddFromPractice,
 }
 
 pub(super) fn practice_words(text: &str) -> impl Iterator<Item = &str> {
@@ -45,7 +44,7 @@ pub(super) fn practice_words(text: &str) -> impl Iterator<Item = &str> {
         .filter(|word| !word.is_empty())
 }
 
-fn pick(picked: Option<Range<usize>>, word: usize) -> Range<usize> {
+fn pick(picked: Option<std::ops::Range<usize>>, word: usize) -> std::ops::Range<usize> {
     match picked {
         Some(range) if range.end == word => range.start..word.saturating_add(1),
         Some(range) if word.checked_add(1) == Some(range.start) => word..range.end,
@@ -59,38 +58,46 @@ impl Editor {
             addition: Pair::new(["speak easy", "Speakeasy"], Edit::Add, theme, window, cx),
             revision: Pair::new(["", ""], Edit::Save, theme, window, cx),
             editing: None,
-            picked: None,
+            practiced: field(
+                "Write",
+                "What it should say",
+                Edit::AddFromPractice,
+                theme,
+                window,
+                cx,
+            ),
         }
     }
 
     pub(super) fn set_theme(&self, theme: Theme, cx: &mut Context<'_, Settings>) {
-        for pair in [&self.addition, &self.revision] {
-            pair.set_theme(theme, cx);
+        for field in [&self.addition, &self.revision]
+            .into_iter()
+            .flat_map(Pair::fields)
+            .chain([&self.practiced])
+        {
+            field.update(cx, |field, _| field.set_theme(theme));
         }
     }
 
     pub(super) fn clear(&mut self, cx: &mut Context<'_, Settings>) {
         self.editing = None;
-        self.picked = None;
-        for pair in [&self.addition, &self.revision] {
-            pair.clear(cx);
+        for field in [&self.addition, &self.revision]
+            .into_iter()
+            .flat_map(Pair::fields)
+            .chain([&self.practiced])
+        {
+            field.update(cx, |field, cx| field.set_text(String::new(), cx));
         }
     }
 
     #[cfg(test)]
-    pub(super) fn addition_draft(&self, window: &Window, cx: &App) -> (String, bool) {
-        (
-            self.addition.heard.read(cx).text().to_owned(),
-            self.addition
-                .written
-                .read(cx)
-                .focus_handle(cx)
-                .is_focused(window),
-        )
+    pub(super) fn practiced(&self) -> &Entity<TextField> {
+        &self.practiced
     }
 
-    pub(super) fn forget_practice(&mut self) {
-        self.picked = None;
+    #[cfg(test)]
+    pub(super) fn addition_heard(&self, cx: &App) -> String {
+        self.addition.heard.read(cx).text().to_owned()
     }
 
     pub(super) const fn stop_revising(&mut self) {
@@ -107,33 +114,14 @@ impl Pair {
         cx: &mut Context<'_, Settings>,
     ) -> Self {
         let [heard, written] = placeholders;
-        let mut field = |label: &'static str, placeholder: &'static str| {
-            let field = cx.new(|cx| TextField::new(label, theme, cx).placeholder(placeholder));
-            cx.observe(&field, |_, _, cx| cx.notify()).detach();
-            cx.subscribe_in(
-                &field,
-                window,
-                move |settings, _, _: &Submit, window, cx| {
-                    settings.edit_correction(submit, window, cx);
-                },
-            )
-            .detach();
-            field
-        };
         Self {
-            heard: field("When I say", heard),
-            written: field("Write", written),
+            heard: field("When I say", heard, submit, theme, window, cx),
+            written: field("Write", written, submit, theme, window, cx),
         }
     }
 
     const fn fields(&self) -> [&Entity<TextField>; 2] {
         [&self.heard, &self.written]
-    }
-
-    fn set_theme(&self, theme: Theme, cx: &mut Context<'_, Settings>) {
-        for field in self.fields() {
-            field.update(cx, |field, _| field.set_theme(theme));
-        }
     }
 
     fn fill(&self, Correction { heard, written }: Correction, cx: &mut Context<'_, Settings>) {
@@ -167,6 +155,27 @@ impl Pair {
     }
 }
 
+fn field(
+    label: &'static str,
+    placeholder: &'static str,
+    submit: Edit,
+    theme: Theme,
+    window: &Window,
+    cx: &mut Context<'_, Settings>,
+) -> Entity<TextField> {
+    let field = cx.new(|cx| TextField::new(label, theme, cx).placeholder(placeholder));
+    cx.observe(&field, |_, _, cx| cx.notify()).detach();
+    cx.subscribe_in(
+        &field,
+        window,
+        move |settings, _, _: &Submit, window, cx| {
+            settings.edit_correction(submit, window, cx);
+        },
+    )
+    .detach();
+    field
+}
+
 impl Settings {
     pub(super) fn edit_correction(
         &mut self,
@@ -180,7 +189,6 @@ impl Settings {
         match edit {
             Edit::Add => {
                 if self.store_correction(self.vocabulary.addition.draft(cx), None, cx) {
-                    self.vocabulary.picked = None;
                     self.vocabulary.addition.clear(cx);
                     self.vocabulary.addition.focus(window, cx);
                 }
@@ -201,17 +209,33 @@ impl Settings {
             },
             Edit::Cancel => self.vocabulary.editing = None,
             Edit::FromPractice(word) => {
-                let words: Vec<&str> = practice_words(&self.practice.text).collect();
-                let range = pick(self.vocabulary.picked.take(), word);
-                if let Some(heard) = words.get(range.clone()) {
-                    let heard = heard.join(" ");
-                    self.vocabulary.picked = Some(range);
+                let range = pick(self.practice.picked.clone(), word);
+                if range.end <= practice_words(&self.practice.text).count() {
+                    if self.practice.picked.is_none() {
+                        self.vocabulary
+                            .practiced
+                            .update(cx, |field, cx| field.set_text(String::new(), cx));
+                    }
+                    self.practice.picked = Some(range);
+                    let practiced = &self.vocabulary.practiced;
+                    practiced.read(cx).focus_handle(cx).focus(window, cx);
+                }
+            },
+            Edit::AddFromPractice => {
+                let written = self.vocabulary.practiced.read(cx).text().trim().to_owned();
+                if let Some(heard) = self.practiced_phrase()
+                    && !written.is_empty()
+                    && self.store_correction(Correction { heard, written }, None, cx)
+                {
                     self.vocabulary
-                        .addition
-                        .heard
-                        .update(cx, |field, cx| field.set_text(heard, cx));
-                    let written = &self.vocabulary.addition.written;
-                    written.read(cx).focus_handle(cx).focus(window, cx);
+                        .practiced
+                        .update(cx, |field, cx| field.set_text(String::new(), cx));
+                    self.notice = Some(Notice::Note(
+                        "Correction added. Practice again to hear it.".into(),
+                    ));
+                    self.navigation
+                        .tab(super::navigation::Page::Dictation)
+                        .focus(window, cx);
                 }
             },
             Edit::Remove(index) => {
@@ -252,18 +276,73 @@ impl Settings {
         true
     }
 
-    pub(super) const fn picked_from_practice(&self) -> bool {
-        self.vocabulary.picked.is_some()
+    pub(super) fn practiced_phrase(&self) -> Option<String> {
+        let range = self.practice.picked.clone()?;
+        let words: Vec<&str> = practice_words(&self.practice.text).collect();
+        words.get(range).map(|words| words.join(" "))
     }
 
     pub(super) fn picked_word(&self, word: usize) -> bool {
-        self.vocabulary
+        self.practice
             .picked
             .as_ref()
             .is_some_and(|range| range.contains(&word))
     }
 
-    pub(super) fn correction_row(&self, ui: &Ui<'_>) -> Div {
+    pub(super) fn practice_correction(&self, ui: &Ui<'_>) -> Option<Div> {
+        let heard = self.practiced_phrase()?;
+        let kit = ui.kit();
+        let palette = ui.palette;
+        let written = &self.vocabulary.practiced;
+        Some(
+            div()
+                .flex()
+                .items_end()
+                .gap(px(10.0))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .flex()
+                        .flex_col()
+                        .gap(px(6.0))
+                        .child(kit.detail("When I say"))
+                        .child(
+                            div()
+                                .h(px(32.0))
+                                .flex()
+                                .items_center()
+                                .text_color(rgb(palette.ink))
+                                .child(heard),
+                        ),
+                )
+                .child(
+                    div()
+                        .h(px(32.0))
+                        .flex()
+                        .items_center()
+                        .child(icon(icons::ARROW_RIGHT, 14.0, palette.muted).flex_none()),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .flex()
+                        .flex_col()
+                        .gap(px(6.0))
+                        .child(kit.detail("Write"))
+                        .child(written.clone()),
+                )
+                .child(ui.button_if(
+                    "Add",
+                    Action::Correction(Edit::AddFromPractice),
+                    Weight::Primary,
+                    !written.read(ui.cx).text().trim().is_empty(),
+                )),
+        )
+    }
+
+    fn correction_row(&self, ui: &Ui<'_>) -> Div {
         let kit = ui.kit();
         let palette = ui.palette;
         let arrow = || icon(icons::ARROW_RIGHT, 14.0, palette.muted).flex_none();

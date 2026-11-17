@@ -131,12 +131,17 @@ impl<'a> Kit<'a> {
         let palette = self.palette;
         let word = word.into();
         self.pressable(id, word.clone(), gpui::Role::Button, false, Some(on_click))
+            .aria_toggled(picked.into())
             .px(px(3.0))
             .rounded(px(4.0))
+            .border_1()
+            .border_color(alpha(palette.ink, 0.0))
             .text_size(px(16.0))
             .text_color(rgb(palette.ink))
             .when(picked, |word| word.bg(alpha(palette.lamp, 0.28)))
-            .hover(move |style| style.bg(palette.hover()))
+            .when(!picked, |word| {
+                word.hover(move |style| style.bg(palette.hover()))
+            })
             .child(word)
     }
 

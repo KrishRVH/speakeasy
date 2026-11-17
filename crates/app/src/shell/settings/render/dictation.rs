@@ -287,15 +287,13 @@ impl Settings {
                     .gap(px(12.0))
                     .child(
                         kit.detail(
-                            "Choose a word Speakeasy got wrong to add a correction; choose its neighbour to make a phrase. Nothing is pasted or saved, and practice clears when you leave this window.",
+                            "Choose a word Speakeasy got wrong to correct it; choose its neighbor to make a phrase. Practice is never pasted, and it clears when you leave this window.",
                         )
                         .flex_1(),
                     )
                     .child(ui.button("End practice", Action::Practice, Weight::Quiet)),
             )
-            .when(self.picked_from_practice(), |panel| {
-                panel.child(self.correction_row(ui))
-            })
+            .children(self.practice_correction(ui))
     }
 
     fn show_shortcuts(&self, ui: &Ui<'_>) -> Div {

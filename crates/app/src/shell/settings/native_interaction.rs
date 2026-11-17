@@ -405,21 +405,55 @@ fn correct_from_practice(
             !view.practice.text.is_empty(),
             "Picking a practice word cleared practice"
         );
-        let (heard, writing) = view.vocabulary.addition_draft(window, cx);
         ensure!(
-            heard == "private practice",
+            view.practiced_phrase().as_deref() == Some("private practice"),
             "Adjacent practice words did not become one phrase"
         );
-        ensure!(writing, "The correction did not wait for what to write");
+        ensure!(
+            view.vocabulary.addition_heard(cx).is_empty(),
+            "Picking a practice word overwrote the Words draft"
+        );
+        let practiced = view.vocabulary.practiced().clone();
+        ensure!(
+            gpui::Focusable::focus_handle(practiced.read(cx), cx).is_focused(window),
+            "The correction did not wait for what to write"
+        );
+        practiced.update(cx, |field, cx| field.set_text("Speakeasy".into(), cx));
+        let before = view.config.vocabulary.len();
+        view.act(
+            Action::Correction(vocabulary::Edit::AddFromPractice),
+            window,
+            cx,
+        );
+        ensure!(
+            view.config.vocabulary.len() == before.saturating_add(1)
+                && view.config.vocabulary.last().is_some_and(|rule| {
+                    rule.heard == "private practice" && rule.written == "Speakeasy"
+                }),
+            "Adding from practice did not save the picked phrase"
+        );
+        ensure!(
+            view.practice.text.is_empty()
+                && view.practice.picked.is_none()
+                && view.practiced_phrase().is_none(),
+            "Adding a correction kept the practice it was made from"
+        );
+        view.act(
+            Action::Correction(vocabulary::Edit::Remove(before)),
+            window,
+            cx,
+        );
+        view.notice = None;
+        view.practice = practicing();
         anyhow::Ok(())
     })??;
-    settings.update(cx, |view, _, cx| view.vocabulary.clear(cx))?;
-    Ok(())
+    draw(settings, cx)
 }
 
 fn practicing() -> practice::Practice {
     practice::Practice {
         text: zeroize::Zeroizing::new("Synthetic private practice".into()),
+        picked: None,
         live: Some(practice::Live {
             _events: Task::ready(()),
             _levels: Task::ready(()),
