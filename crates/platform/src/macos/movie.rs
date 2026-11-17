@@ -11,19 +11,17 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context as _, ensure};
+use anyhow::{Context as _, anyhow, bail, ensure};
 use block2::RcBlock;
 use objc2::rc::{Retained, autoreleasepool};
-use objc2_av_foundation::{
-    AVAsset, AVAssetImageGenerator, AVAssetImageGeneratorApertureModeEncodedPixels,
-};
+use objc2_av_foundation::{AVAssetImageGenerator, AVAssetImageGeneratorApertureModeEncodedPixels};
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{
     CGBitmapContextCreate, CGColorSpace, CGContext, CGImage, CGImageAlphaInfo,
     CGImageByteOrderInfo, kCGColorSpaceSRGB,
 };
 use objc2_core_media::{CMTime, CMTimeFlags};
-use objc2_foundation::NSError;
+use objc2_foundation::{NSError, NSUnderlyingErrorKey};
 use speakeasy_show::MoviePrefix;
 
 use crate::MovieFrame;
@@ -40,32 +38,7 @@ pub(crate) fn frame(
         if cancelled() {
             return Ok(None);
         }
-        let mut request = Request::start(&asset.native, prefix.size, sample)?;
-        let mut stopping = false;
-        loop {
-            if !stopping && cancelled() {
-                stopping = true;
-
-                unsafe {
-                    request.native.cancelAllCGImageGeneration();
-                }
-            }
-            match request.reply.recv_timeout(Duration::from_millis(20)) {
-                Ok(result) => {
-                    request.pending = false;
-                    return if stopping || cancelled() {
-                        Ok(None)
-                    } else {
-                        result.map(Some)
-                    };
-                },
-                Err(RecvTimeoutError::Timeout) => {},
-                Err(RecvTimeoutError::Disconnected) => {
-                    request.pending = false;
-                    anyhow::bail!("Video decoder ended without a frame");
-                },
-            }
-        }
+        Request::start(asset, prefix.size, sample)?.wait(cancelled)
     })
 }
 
@@ -124,10 +97,11 @@ struct Request {
     native: Retained<AVAssetImageGenerator>,
     reply: Receiver<anyhow::Result<MovieFrame>>,
     pending: bool,
+    _asset: file::Asset,
 }
 
 impl Request {
-    fn start(asset: &AVAsset, size: [u32; 2], sample: Sample) -> anyhow::Result<Self> {
+    fn start(asset: file::Asset, size: [u32; 2], sample: Sample) -> anyhow::Result<Self> {
         let ticks = i64::try_from(sample.ticks)?;
         let timescale = i32::try_from(sample.timescale)?;
         let time = unsafe { CMTime::new(ticks, timescale) };
@@ -138,7 +112,7 @@ impl Request {
                 let result = catch_unwind(AssertUnwindSafe(|| {
                     autoreleasepool(|_| decoded(image, at, error, size, sample))
                 }))
-                .unwrap_or_else(|_| Err(anyhow::anyhow!("Video frame conversion failed")));
+                .unwrap_or_else(|_| Err(anyhow!("Video frame conversion failed")));
                 #[expect(
                     clippy::let_underscore_must_use,
                     reason = "The owning request drains this completion on cancellation and unwind; a departed receiver needs no second notification"
@@ -148,7 +122,7 @@ impl Request {
         );
 
         let native = unsafe {
-            let native = AVAssetImageGenerator::assetImageGeneratorWithAsset(asset);
+            let native = AVAssetImageGenerator::assetImageGeneratorWithAsset(&asset.native);
             native.setAppliesPreferredTrackTransform(false);
             native.setApertureMode(Some(AVAssetImageGeneratorApertureModeEncodedPixels));
             native.setMaximumSize(CGSize::new(f64::from(size[0]), f64::from(size[1])));
@@ -161,16 +135,41 @@ impl Request {
             native,
             reply,
             pending: true,
+            _asset: asset,
         })
+    }
+
+    fn wait(mut self, cancelled: &dyn Fn() -> bool) -> anyhow::Result<Option<MovieFrame>> {
+        let mut stopping = false;
+        let decoded = loop {
+            if !stopping && cancelled() {
+                stopping = true;
+                self.cancel();
+            }
+            let reply = self.reply.recv_timeout(Duration::from_millis(20));
+            self.pending = matches!(reply, Err(RecvTimeoutError::Timeout));
+            match reply {
+                Ok(decoded) => break decoded,
+                Err(RecvTimeoutError::Timeout) => {},
+                Err(RecvTimeoutError::Disconnected) => bail!("Video decoder ended without a frame"),
+            }
+        };
+        if stopping || cancelled() {
+            Ok(None)
+        } else {
+            decoded.map(Some)
+        }
+    }
+
+    fn cancel(&self) {
+        unsafe { self.native.cancelAllCGImageGeneration() }
     }
 }
 
 impl Drop for Request {
     fn drop(&mut self) {
         if self.pending {
-            unsafe {
-                self.native.cancelAllCGImageGeneration();
-            }
+            self.cancel();
             #[expect(
                 clippy::let_underscore_must_use,
                 reason = "Unwinding retires native work by waiting for its completion; no image result can be delivered to the departed caller"
@@ -187,30 +186,29 @@ fn decoded(
     size: [u32; 2],
     sample: Sample,
 ) -> anyhow::Result<MovieFrame> {
-    let image = image.ok_or_else(|| {
-        let code = error.map(NSError::code);
-
-        let key = unsafe { objc2_foundation::NSUnderlyingErrorKey };
-        let underlying = error.and_then(|error| error.userInfo().objectForKey(key));
-        let detail = underlying
-            .as_ref()
-            .and_then(|object| object.downcast_ref::<NSError>())
-            .map(NSError::code);
-        match (code, detail) {
-            (Some(code), Some(detail)) => {
-                anyhow::anyhow!("macOS could not decode this video ({code}, {detail})")
-            },
-            (Some(code), None) | (None, Some(code)) => {
-                anyhow::anyhow!("macOS could not decode this video ({code})")
-            },
-            (None, None) => anyhow::anyhow!("macOS could not decode this video"),
-        }
-    })?;
+    let image = image.ok_or_else(|| undecodable(error))?;
     Ok(MovieFrame {
         at: sample.timestamp(at)?,
         size,
         bgra: pixels(image, size)?,
     })
+}
+
+fn undecodable(error: Option<&NSError>) -> anyhow::Error {
+    let Some(error) = error else {
+        return anyhow!("macOS could not decode this video");
+    };
+    let code = error.code();
+    let key = unsafe { NSUnderlyingErrorKey };
+    let underlying = error.userInfo().objectForKey(key);
+    match underlying
+        .as_deref()
+        .and_then(|object| object.downcast_ref::<NSError>())
+        .map(NSError::code)
+    {
+        Some(detail) => anyhow!("macOS could not decode this video ({code}, {detail})"),
+        None => anyhow!("macOS could not decode this video ({code})"),
+    }
 }
 
 fn pixels(image: &CGImage, size: [u32; 2]) -> anyhow::Result<Vec<u8>> {
@@ -247,7 +245,7 @@ fn pixels(image: &CGImage, size: [u32; 2]) -> anyhow::Result<Vec<u8>> {
         CGContext::draw_image(
             Some(&context),
             CGRect::new(
-                CGPoint::new(0.0, 0.0),
+                CGPoint::ZERO,
                 CGSize::new(f64::from(size[0]), f64::from(size[1])),
             ),
             Some(image),

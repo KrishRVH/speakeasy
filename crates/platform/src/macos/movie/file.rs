@@ -2,7 +2,7 @@ use std::{
     fs::File,
     os::unix::fs::FileExt as _,
     panic::{AssertUnwindSafe, catch_unwind},
-    sync::{Mutex, PoisonError},
+    sync::{Mutex, MutexGuard, PoisonError},
 };
 
 use anyhow::{Context as _, ensure};
@@ -35,14 +35,22 @@ struct Input {
 }
 
 impl Input {
-    fn read(&self, bytes: &mut [u8], at: u64) -> anyhow::Result<()> {
-        let lease = self.file.lock().unwrap_or_else(PoisonError::into_inner);
+    fn read(&self, buffer: &mut [u8], at: u64) -> anyhow::Result<()> {
+        let lease = self.lease();
         let file = lease.as_ref().context("Video input has closed")?;
         ensure!(file.metadata()?.len() == self.bytes, "Video length changed");
-        let result = file.read_exact_at(bytes, at);
+        let result = file.read_exact_at(buffer, at);
         drop(lease);
         result?;
         Ok(())
+    }
+
+    fn close(&self) {
+        *self.lease() = None;
+    }
+
+    fn lease(&self) -> MutexGuard<'_, Option<File>> {
+        self.file.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -188,11 +196,6 @@ impl Drop for Asset {
             self.native.cancelLoading();
             self.native.resourceLoader().setDelegate_queue(None, None);
         }
-        *self
-            .reader
-            .ivars()
-            .file
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = None;
+        self.reader.ivars().close();
     }
 }
