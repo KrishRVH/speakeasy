@@ -103,13 +103,13 @@ impl Source {
             stride.is_power_of_two(),
             "source sampling stride is invalid",
         )?;
-        let count = index.count(FRAME_LIMIT, 8)?;
+        let sample_count = index.count(FRAME_LIMIT, 8)?;
         require(
-            count > 0 && count as u64 <= arrivals,
+            sample_count > 0 && sample_count as u64 <= arrivals,
             "source sample count is invalid",
         )?;
-        let mut moments = Vec::with_capacity(count);
-        for _ in 0..count {
+        let mut moments = Vec::with_capacity(sample_count);
+        for _ in 0..sample_count {
             let at = Moment::from_millis(index.wide()?);
             require(
                 at <= duration && moments.last().is_none_or(|previous| *previous < at),
@@ -117,11 +117,11 @@ impl Source {
             )?;
             moments.push(at);
         }
-        let count = index.count(moments.len(), 16)?;
-        require(count > 0, "source has no frame geometry")?;
-        let mut segments: Vec<Segment> = Vec::with_capacity(count);
+        let segment_count = index.count(moments.len(), 16)?;
+        require(segment_count > 0, "source has no frame geometry")?;
+        let mut segments: Vec<Segment> = Vec::with_capacity(segment_count);
         let mut expected = MAGIC.len() as u64;
-        for _ in 0..count {
+        for _ in 0..segment_count {
             let first = index.usize()?;
             require(
                 first < moments.len()
@@ -137,8 +137,10 @@ impl Source {
                 "source frame dimensions exceed the format limit",
             )?;
             let geometry: Vec<_> = tiles(convert::count(width), convert::count(height)).collect();
-            let count = index.count(geometry.len(), 4)?;
-            require(count == geometry.len(), "source tile count is invalid")?;
+            require(
+                index.count(geometry.len(), 4)? == geometry.len(),
+                "source tile count is invalid",
+            )?;
             let locations = geometry
                 .into_iter()
                 .map(|tile| index.versions(first..moments.len(), tile, &mut expected, start))
