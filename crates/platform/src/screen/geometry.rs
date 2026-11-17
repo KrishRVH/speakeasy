@@ -99,11 +99,16 @@ pub(crate) fn pack_rows(
     if size == 0 || stride < row {
         return None;
     }
+    let extent = height
+        .checked_sub(1)?
+        .checked_mul(stride)?
+        .checked_add(row)?;
+    let rows = rows.get(..extent)?;
     let mut packed = Vec::with_capacity(size);
-    for line in rows.chunks(stride).take(height) {
+    for line in rows.chunks(stride) {
         packed.extend_from_slice(line.get(..row)?);
     }
-    (packed.len() == size).then_some(packed)
+    Some(packed)
 }
 
 #[expect(
@@ -296,5 +301,10 @@ mod tests {
         assert_eq!(pack_rows(&rows, 4, 2, 4), None, "Overlapping rows");
         assert_eq!(pack_rows(&rows, 0, 1, 1), None, "No stride");
         assert_eq!(pack_rows(&rows, 8, 0, 4), None, "No width");
+    }
+
+    #[test]
+    fn an_image_too_large_for_its_rows_packs_nothing_before_allocating() {
+        assert_eq!(pack_rows(&[], usize::MAX, usize::MAX / 4, 1), None);
     }
 }
