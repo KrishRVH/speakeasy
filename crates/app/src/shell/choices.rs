@@ -202,7 +202,7 @@ impl Services {
         }
     }
 
-    pub(super) fn control_status(&self) -> Status {
+    fn control_status(&self) -> Status {
         let snapshot = self.output.borrow();
         Status {
             version: env!("CARGO_PKG_VERSION").into(),

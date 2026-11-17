@@ -117,7 +117,7 @@ pub(crate) struct Services {
     pub(super) path: PathBuf,
     pub(super) default_settings: bool,
     pub config: Config,
-    pub(super) styles: watch::Sender<Style>,
+    styles: watch::Sender<Style>,
     pub(super) choices: super::choices::Choices,
     pub output: watch::Sender<Snapshot>,
     pub(super) meter: watch::Sender<Meter>,
@@ -288,7 +288,7 @@ impl Services {
     pub(super) fn recover_show(
         &self,
         interrupted: crate::show::Interrupted,
-    ) -> Result<crate::runtime::RecoveryReceipt, &'static str> {
+    ) -> Result<runtime::RecoveryReceipt, &'static str> {
         if self.mode.is_demo() || self.is_quitting() {
             return Err("Recovery is unavailable in this preview or while quitting.");
         }
@@ -365,29 +365,25 @@ impl Services {
             self.pause(cx);
         }
         self.config = Config::clone(&config);
-        if self
-            .lifecycle
-            .queue(Restart::Apply(Box::new(config.clone())))
-        {
+        if self.lifecycle.is_pausing() {
+            self.lifecycle.queue(Restart::Apply(Box::new(config)));
             return Ok(());
         }
-        match self.runtime() {
-            Some(runtime) => {
-                runtime.configure(config);
-                Ok(())
-            },
-            None => self.start(config),
+        if let Some(runtime) = self.runtime() {
+            runtime.configure(config);
+            return Ok(());
         }
-    }
-
-    fn start(&mut self, config: ValidConfig) -> anyhow::Result<()> {
-        self.show_copies.cancel();
-        let baseline = self.config.clone();
         let config = self
             .choices
             .selected
             .as_ref()
             .map_or(config, |choice| choice.config.clone());
+        self.start(config)
+    }
+
+    fn start(&mut self, config: ValidConfig) -> anyhow::Result<()> {
+        self.show_copies.cancel();
+        let baseline = self.config.clone();
         let preset = self.preset_name().map(str::to_owned);
         let Self {
             lifecycle,
