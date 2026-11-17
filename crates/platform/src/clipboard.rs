@@ -1,6 +1,6 @@
 use anyhow::{Context as _, ensure};
 
-use crate::image::encode_png;
+use crate::{BgraImage, image::encode_png};
 
 const EDGE_LIMIT: u32 = 4096;
 
@@ -47,22 +47,14 @@ impl ClipboardContent {
         let content = Self::text(text)?;
         ensure!(
             (1..=EDGE_LIMIT).contains(&width) && (1..=EDGE_LIMIT).contains(&height),
-            "Clipboard images must be between 1 and 4096 pixels per side"
+            "Clipboard images must be between 1 and {EDGE_LIMIT} pixels per side"
         );
-        let bytes = usize::try_from(
-            width
-                .checked_mul(height)
-                .and_then(|pixels| pixels.checked_mul(4))
-                .context("Clipboard image size overflowed")?,
-        )?;
-        ensure!(
-            bgra.len() == bytes,
-            "Clipboard image dimensions do not match its pixels"
-        );
+        let pixels = BgraImage::new([width, height], bgra)
+            .context("Clipboard image dimensions do not match its pixels")?;
         let image = Image {
             #[cfg(any(target_os = "windows", test))]
-            dib: dib(width, height, &bgra)?,
-            png: png(width, height, bgra)?,
+            dib: dib(&pixels)?,
+            png: png(pixels)?,
         };
         Ok(Self {
             image: Some(image),
@@ -91,7 +83,9 @@ pub(crate) fn copy_when<L>(
     Ok(true)
 }
 
-fn png(width: u32, height: u32, mut pixels: Vec<u8>) -> anyhow::Result<Vec<u8>> {
+fn png(image: BgraImage) -> anyhow::Result<Vec<u8>> {
+    let [width, height] = image.size();
+    let mut pixels = image.into_pixels();
     for [blue, _, red, _] in pixels.as_chunks_mut::<4>().0 {
         std::mem::swap(blue, red);
     }
@@ -99,7 +93,7 @@ fn png(width: u32, height: u32, mut pixels: Vec<u8>) -> anyhow::Result<Vec<u8>> 
 }
 
 #[cfg(any(target_os = "windows", test))]
-fn dib(width: u32, height: u32, bgra: &[u8]) -> anyhow::Result<Vec<u8>> {
+fn dib(image: &BgraImage) -> anyhow::Result<Vec<u8>> {
     const V5_HEADER_LEN: u32 = 124;
     const BITFIELDS_OFFSET: usize = 40;
     const INTENT_OFFSET: usize = 108;
@@ -107,16 +101,13 @@ fn dib(width: u32, height: u32, bgra: &[u8]) -> anyhow::Result<Vec<u8>> {
     const LCS_SRGB: u32 = 0x7352_4742;
     const LCS_GM_IMAGES: u32 = 4;
 
+    let [width, height] = image.size();
+    let bgra = image.pixels();
     let header_len = usize::try_from(V5_HEADER_LEN)?;
     let mut out = Vec::with_capacity(bgra.len().saturating_add(header_len));
     out.extend(V5_HEADER_LEN.to_le_bytes());
     out.extend(i32::try_from(width)?.to_le_bytes());
-    out.extend(
-        i32::try_from(height)?
-            .checked_neg()
-            .context("Clipboard image height overflowed")?
-            .to_le_bytes(),
-    );
+    out.extend(i32::try_from(height)?.saturating_neg().to_le_bytes());
     out.extend(1_u16.to_le_bytes());
     out.extend(32_u16.to_le_bytes());
     out.extend(BI_BITFIELDS.to_le_bytes());
