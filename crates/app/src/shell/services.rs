@@ -129,7 +129,7 @@ pub(crate) struct Services {
     pub mode: LaunchMode,
     pub(super) visibility: Option<Task<()>>,
     #[cfg(any(target_os = "windows", target_os = "macos"))]
-    pub(super) recovery: Option<Task<()>>,
+    pub(super) last_show: Option<Task<()>>,
     pub(super) tray_hint_seen: bool,
     requests: Option<Task<()>>,
     pub(super) microphone_scan: Option<MicrophoneScan>,
@@ -182,7 +182,7 @@ impl Services {
             mode,
             visibility: None,
             #[cfg(any(target_os = "windows", target_os = "macos"))]
-            recovery: None,
+            last_show: None,
             tray_hint_seen: false,
             requests: None,
             microphone_scan: None,
@@ -653,7 +653,7 @@ impl Services {
 
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         {
-            self.recovery = None;
+            self.last_show = None;
         }
         announce(&self.output, QUITTING);
         let stopped = self.lifecycle.retiring().map(Owners::retire);

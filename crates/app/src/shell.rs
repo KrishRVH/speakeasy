@@ -1,7 +1,7 @@
 mod choices;
 mod demo;
 #[cfg(any(target_os = "windows", target_os = "macos"))]
-mod recovery;
+mod last_show;
 mod save;
 mod services;
 mod settings;
@@ -13,7 +13,7 @@ pub(crate) use settings::onboarding::pending as onboarding_pending;
 pub(crate) use shutdown::mac_acceptance::native_quit_check;
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
-pub(crate) use self::recovery::LastShow;
+pub(crate) use self::last_show::LastShow;
 pub(crate) use self::{
     services::{LaunchMode, Services, send, toggle_enabled},
     shutdown::request_quit,

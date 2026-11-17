@@ -353,8 +353,8 @@ module unless a test file is named.
   the user's click instead of the synthesized click `tray-icon` sends. The tray follows runtime
   snapshots and observes `Services` itself, so settings such as the theme need no snapshot to reach
   it; tray.rs's tests check that and when each menu entry acts.
-  [shell/recovery.rs](../crates/app/src/shell/recovery.rs) copies or opens the last Show off the UI
-  thread.
+  [shell/last_show.rs](../crates/app/src/shell/last_show.rs) copies or opens the last Show off the
+  UI thread.
 - **Instance and relaunch**: [instance.rs](../crates/app/src/instance.rs) owns the lock and the
   secret-gated loopback commands. Shortcut opcodes 0–2 serve relaunch and Linux desktop bindings.
   Opcode 3 carries versioned JSON in a length-prefixed 4 KiB frame. An owned server thread bounds
