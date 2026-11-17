@@ -103,7 +103,7 @@ api! {
 pub(super) struct Sender {
     keyboard: Option<Keyboard>,
     text: Option<Device>,
-    context: EiContext,
+    context: Ref<Ei>,
     api: Api,
     keys: PasteKeys,
     sequence: u32,
@@ -112,7 +112,11 @@ pub(super) struct Sender {
 
 impl Sender {
     pub(super) fn connect(api: Api, fd: OwnedFd, keys: PasteKeys) -> anyhow::Result<Self> {
-        let context = EiContext::new_sender(&api)?;
+        let context = Ref {
+            raw: NonNull::new(unsafe { (api.ei_new_sender)(ptr::null_mut()) })
+                .context("Cannot create the Wayland input sender")?,
+            unref: api.ei_unref,
+        };
 
         let status = unsafe { (api.ei_setup_backend_fd)(context.as_ptr(), fd.into_raw_fd()) };
         ensure!(status == 0, "Cannot connect the Wayland input sender");
@@ -158,7 +162,7 @@ impl Sender {
             keyboard.device.resumed,
             keyboard.paste.as_ref().map(|paste| paste.state),
         )?;
-        Ok((keyboard.device.raw, chord))
+        Ok((keyboard.device.handle.raw, chord))
     }
 
     pub(super) fn ready_text<'t>(
@@ -174,7 +178,7 @@ impl Sender {
         if text.contains('\0') {
             return Err(TextBlocked::NullCharacter);
         }
-        let device = device.raw;
+        let device = device.handle.raw;
         Ok(ReadyText {
             sender: self,
             input,
@@ -202,19 +206,21 @@ impl Sender {
 
     fn next_event(&self) -> Option<Event> {
         unsafe {
-            let raw = NonNull::new((self.api.ei_get_event)(self.context.as_ptr()))?;
-            Some(Event {
-                raw,
-                kind: (self.api.ei_event_get_type)(raw.as_ptr()),
-                device: NonNull::new((self.api.ei_event_get_device)(raw.as_ptr())),
+            let handle = Ref {
+                raw: NonNull::new((self.api.ei_get_event)(self.context.as_ptr()))?,
                 unref: self.api.ei_event_unref,
+            };
+            Some(Event {
+                kind: (self.api.ei_event_get_type)(handle.as_ptr()),
+                device: NonNull::new((self.api.ei_event_get_device)(handle.as_ptr())),
+                handle,
             })
         }
     }
 
     fn bind_seat(&self, event: &Event) {
         unsafe {
-            let seat = (self.api.ei_event_get_seat)(event.raw.as_ptr());
+            let seat = (self.api.ei_event_get_seat)(event.handle.as_ptr());
             if seat.is_null() || !(self.api.ei_seat_has_capability)(seat, CAPABILITY_KEYBOARD) {
                 return;
             }
@@ -244,7 +250,6 @@ impl Sender {
                     device: Device::acquire(&self.api, device),
                     paste: device_keymap(&self.api, device.as_ptr())
                         .and_then(|keymap| PasteLayouts::new(&keymap, self.keys))
-                        .ok()
                         .map(|layouts| KeymapPaste {
                             layouts,
                             state: PasteState::Unknown,
@@ -285,7 +290,7 @@ impl Sender {
         else {
             return;
         };
-        let raw = event.raw.as_ptr();
+        let raw = event.handle.as_ptr();
 
         let (group, active_mask) = unsafe {
             (
@@ -439,69 +444,49 @@ enum PasteState {
     Ready(PasteChord<u32>),
 }
 
-struct EiContext {
-    raw: NonNull<Ei>,
-    unref: Unref<Ei>,
+struct Ref<T> {
+    raw: NonNull<T>,
+    unref: Unref<T>,
 }
 
-impl EiContext {
-    fn new_sender(api: &Api) -> anyhow::Result<Self> {
-        let raw = unsafe { (api.ei_new_sender)(ptr::null_mut()) };
-        Ok(Self {
-            raw: NonNull::new(raw).context("Cannot create the Wayland input sender")?,
-            unref: api.ei_unref,
-        })
-    }
-
-    const fn as_ptr(&self) -> *mut Ei {
+impl<T> Ref<T> {
+    const fn as_ptr(&self) -> *mut T {
         self.raw.as_ptr()
     }
 }
 
-impl Drop for EiContext {
+impl<T> Drop for Ref<T> {
     fn drop(&mut self) {
         unsafe { (self.unref)(self.raw.as_ptr()) };
     }
 }
 
 struct Device {
-    raw: NonNull<EiDevice>,
+    handle: Ref<EiDevice>,
     resumed: bool,
-    unref: Unref<EiDevice>,
 }
 
 impl Device {
     unsafe fn acquire(api: &Api, device: NonNull<EiDevice>) -> Self {
         unsafe { (api.ei_device_ref)(device.as_ptr()) };
         Self {
-            raw: device,
+            handle: Ref {
+                raw: device,
+                unref: api.ei_device_unref,
+            },
             resumed: false,
-            unref: api.ei_device_unref,
         }
     }
 
     fn is(&self, device: Option<NonNull<EiDevice>>) -> bool {
-        device == Some(self.raw)
-    }
-}
-
-impl Drop for Device {
-    fn drop(&mut self) {
-        unsafe { (self.unref)(self.raw.as_ptr()) };
+        device == Some(self.handle.raw)
     }
 }
 
 struct Event {
-    raw: NonNull<EiEvent>,
+    handle: Ref<EiEvent>,
     kind: i32,
     device: Option<NonNull<EiDevice>>,
-    unref: Unref<EiEvent>,
-}
-
-impl Drop for Event {
-    fn drop(&mut self) {
-        unsafe { (self.unref)(self.raw.as_ptr()) };
-    }
 }
 
 struct PasteLayouts {
@@ -510,14 +495,13 @@ struct PasteLayouts {
 }
 
 impl PasteLayouts {
-    fn new(keymap: &xkb::Keymap, keys: PasteKeys) -> anyhow::Result<Self> {
+    fn new(keymap: &xkb::Keymap, keys: PasteKeys) -> Option<Self> {
         let blockers = ["Shift", "Control", "Mod1", "Mod2", "Mod3", "Mod4", "Mod5"]
             .into_iter()
             .filter_map(|name| 1_u32.checked_shl(keymap.mod_get_index(name)))
             .fold(0, |mask, bit| mask | bit)
             & !num_lock_modifiers(keymap);
-        ensure!(blockers != 0, "Missing paste modifier mapping");
-        Ok(Self {
+        (blockers != 0).then(|| Self {
             blockers,
             chords: (0..keymap.num_layouts())
                 .map(|group| {
@@ -566,27 +550,26 @@ unsafe fn register_readiness(fd: RawFd) -> anyhow::Result<AsyncFd<OwnedFd>> {
     super::watch_readable(unsafe { BorrowedFd::borrow_raw(fd) })
 }
 
-unsafe fn device_keymap(api: &Api, device: *mut EiDevice) -> anyhow::Result<xkb::Keymap> {
+unsafe fn device_keymap(api: &Api, device: *mut EiDevice) -> Option<xkb::Keymap> {
     let (fd, size) = unsafe {
         let keymap = (api.ei_device_keyboard_get_keymap)(device);
-        ensure!(
-            !keymap.is_null() && (api.ei_keymap_get_type)(keymap) == KEYMAP_XKB,
-            "No XKB keymap"
-        );
+        if keymap.is_null() || (api.ei_keymap_get_type)(keymap) != KEYMAP_XKB {
+            return None;
+        }
         (
             (api.ei_keymap_get_fd)(keymap),
             (api.ei_keymap_get_size)(keymap),
         )
     };
-    ensure!(
-        fd >= 0 && size > 0 && size <= MAX_KEYMAP_SIZE,
-        "Invalid XKB keymap size"
-    );
+    if fd < 0 || !(1..=MAX_KEYMAP_SIZE).contains(&size) {
+        return None;
+    }
 
-    let file = File::from(unsafe { BorrowedFd::borrow_raw(fd) }.try_clone_to_owned()?);
+    let descriptor = unsafe { BorrowedFd::borrow_raw(fd) };
+    let file = File::from(descriptor.try_clone_to_owned().ok()?);
     let mut bytes = vec![0; size];
-    file.read_exact_at(&mut bytes, 0)?;
-    let mut source = String::from_utf8(bytes)?;
+    file.read_exact_at(&mut bytes, 0).ok()?;
+    let mut source = String::from_utf8(bytes).ok()?;
     source.truncate(source.trim_end_matches('\0').len());
     let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
     xkb::Keymap::new_from_string(
@@ -595,7 +578,6 @@ unsafe fn device_keymap(api: &Api, device: *mut EiDevice) -> anyhow::Result<xkb:
         xkb::KEYMAP_FORMAT_TEXT_V1,
         xkb::KEYMAP_COMPILE_NO_FLAGS,
     )
-    .context("Invalid XKB keymap")
 }
 
 fn utf8_chunks(mut text: &str) -> impl Iterator<Item = &str> {
@@ -631,7 +613,8 @@ mod tests {
                 xkb::KEYMAP_COMPILE_NO_FLAGS,
             )
             .context("Fixture keymap")?;
-            let layouts = PasteLayouts::new(&keymap, PasteKeys::CtrlShiftV)?;
+            let layouts = PasteLayouts::new(&keymap, PasteKeys::CtrlShiftV)
+                .context("Fixture paste modifiers")?;
             assert_eq!(
                 layouts.chord(group),
                 Some(PasteChord {
@@ -677,7 +660,9 @@ mod tests {
         )
         .context("Fixture keymap")?;
         assert_eq!(
-            PasteLayouts::new(&keymap, PasteKeys::CtrlV)?.chord(0),
+            PasteLayouts::new(&keymap, PasteKeys::CtrlV)
+                .context("Fixture paste modifiers")?
+                .chord(0),
             Some(PasteChord {
                 control: 29,
                 shift: None,
@@ -685,7 +670,8 @@ mod tests {
             }),
             "A layout without Shift refused Ctrl+V"
         );
-        let terminal = PasteLayouts::new(&keymap, PasteKeys::CtrlShiftV)?;
+        let terminal =
+            PasteLayouts::new(&keymap, PasteKeys::CtrlShiftV).context("Fixture paste modifiers")?;
         assert!(terminal.chord(0).is_none());
         assert_eq!(
             terminal.blockers & mask(&keymap, "Mod3"),
