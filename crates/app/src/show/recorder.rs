@@ -383,9 +383,7 @@ impl<'a> Take<'a> {
                             (Ending::ScreenStopped, anyhow!(message))
                         },
                         Ok(ScreenEvent::MovieStopped) => {
-                            let (id, events) = &self.notices;
-                            #[expect(clippy::let_underscore_must_use, reason = "A departed owner no longer observes this capture's status; a full lane must not stall screen capture")]
-                            let _ = events.try_send(ShowEvent::MovieStopped(*id));
+                            self.notify(ShowEvent::MovieStopped);
                             continue;
                         },
                         Err(_) => (Ending::ScreenStopped, anyhow!(CAPTURE_STOPPED)),
@@ -449,12 +447,16 @@ impl<'a> Take<'a> {
             return;
         }
         self.checkpoint_warned = true;
+        self.notify(ShowEvent::CheckpointLost);
+    }
+
+    fn notify(&self, notice: fn(SessionId) -> ShowEvent) {
         let (id, events) = &self.notices;
         #[expect(
             clippy::let_underscore_must_use,
             reason = "A departed owner cannot receive notices; a full lane must not stall screen capture"
         )]
-        let _ = events.try_send(ShowEvent::CheckpointLost(*id));
+        let _ = events.try_send(notice(*id));
     }
 
     fn log(&mut self, event: TakeEvent) {
@@ -521,7 +523,7 @@ impl<'a> Take<'a> {
                 self.apply(TakeEvent::Pointer {
                     at,
                     point: Point::from(part.within(position)),
-                    part: [part.left, part.top, part.right, part.bottom].into(),
+                    part: rect(part),
                     drawing,
                     pressed,
                 })?;
@@ -559,12 +561,7 @@ impl<'a> Take<'a> {
                         WindowLayer::Menu => Layer::Menu,
                         WindowLayer::Bar => Layer::Bar,
                     },
-                    bounds: Rect::from([
-                        placed.part.left,
-                        placed.part.top,
-                        placed.part.right,
-                        placed.part.bottom,
-                    ]),
+                    bounds: rect(placed.part),
                 })
                 .collect(),
         });
@@ -633,6 +630,10 @@ fn surface([width, height]: [f32; 2], part: Part) -> Size {
         width: width * part.width(),
         height: height * part.height(),
     }
+}
+
+fn rect(part: Part) -> Rect {
+    Rect::from([part.left, part.top, part.right, part.bottom])
 }
 
 fn first_frame_deadline() -> tokio::time::Instant {
