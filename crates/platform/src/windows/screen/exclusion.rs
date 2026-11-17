@@ -26,11 +26,16 @@ pub(super) struct Exclusions {
 
 impl Exclusions {
     pub(super) fn refresh(&mut self) -> Result<bool, Failure> {
-        let before = self.left_out.len();
+        let mut excluded_any = false;
         for window in top_level_windows()? {
-            let capturable = is_own_window(window)
-                && matches!(affinity(window), None | Some(WDA_NONE))
-                && !self.left_out.contains(&window);
+            if !is_own_window(window) {
+                continue;
+            }
+            let remembered = self.left_out.contains(&window);
+            let capturable = match affinity(window) {
+                Some(affinity) => affinity == WDA_NONE,
+                None => !remembered,
+            };
             if !capturable {
                 continue;
             }
@@ -41,12 +46,15 @@ impl Exclusions {
                 )
             };
             if excluded {
-                self.left_out.push(window);
+                excluded_any = true;
+                if !remembered {
+                    self.left_out.push(window);
+                }
             } else if visible {
                 return Err(Failure::Exposed);
             }
         }
-        Ok(self.left_out.len() > before)
+        Ok(excluded_any)
     }
 }
 

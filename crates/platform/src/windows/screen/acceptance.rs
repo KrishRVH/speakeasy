@@ -179,6 +179,27 @@ fn capture_leaves_out_every_speakeasy_window_until_it_stops() -> anyhow::Result<
 }
 
 #[test]
+#[ignore = "Creates a hidden owned window; captures nothing"]
+fn a_remembered_window_made_capturable_again_is_excluded_again() -> anyhow::Result<()> {
+    let window = Popup::create(w!("STATIC"), 0, [0; 4])?;
+    let mut exclusions = Exclusions::default();
+    exclusions.refresh()?;
+    assert_eq!(affinity(window.0), Some(WDA_EXCLUDEFROMCAPTURE));
+
+    set_affinity(window.0, WDA_NONE)?;
+    assert!(
+        exclusions.refresh()?,
+        "Excluding it again must discard pending frames"
+    );
+    assert_eq!(
+        affinity(window.0),
+        Some(WDA_EXCLUDEFROMCAPTURE),
+        "A remembered window stayed capturable"
+    );
+    Ok(())
+}
+
+#[test]
 #[ignore = "Shows owned windows briefly; tallies captured pixels only where proven theirs"]
 fn a_window_or_area_capture_reads_back_only_its_part() -> anyhow::Result<()> {
     per_monitor_aware()?;
