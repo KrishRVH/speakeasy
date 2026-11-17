@@ -834,12 +834,15 @@ fn a_tap_outage_ends_a_hold_but_not_a_released_dictation() -> anyhow::Result<()>
         "Shift taps across the outage pinned"
     );
 
-    assert!(mac.observe(function(true), keyboard_fn_up, now()).starts());
+    assert!(
+        mac.observe(function(true), keyboard_fn_up, at(400))
+            .starts()
+    );
     mac.missed_events(&input);
     assert!(matches!(events.try_recv()?, Input::Interrupt));
     assert!(matches!(events.try_recv()?, Input::Release));
     assert_eq!(
-        delivered(&mac.observe(function(false), keyboard_fn_up, now())),
+        delivered(&mac.observe(function(false), keyboard_fn_up, at(500))),
         []
     );
     Ok(())
