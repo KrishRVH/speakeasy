@@ -29,6 +29,17 @@ fn open(bytes: &[u8]) -> Result<Source, SourceError> {
     })
 }
 
+fn seal(body: &[u8], index: &[u8]) -> Vec<u8> {
+    let size = u64::try_from(index.len()).unwrap().to_le_bytes();
+    [body, index, &size, FOOTER].concat()
+}
+
+fn unseal(archive: &[u8]) -> (&[u8], &[u8]) {
+    let (data, footer) = archive.split_last_chunk::<16>().unwrap();
+    let size = usize::try_from(u64::from_le_bytes(*footer.first_chunk().unwrap())).unwrap();
+    data.split_at(data.len().checked_sub(size).unwrap())
+}
+
 fn fixture() -> (Journal, Moment) {
     let mut journal = Journal::with_budget(1_000);
     for n in 0..24_u8 {
@@ -93,25 +104,25 @@ fn indexing_never_reads_pixels_and_a_frame_never_loads_the_entire_source() {
         read(&bytes, range)
     })
     .unwrap();
-    assert_eq!(ranges.len(), 3);
-    assert_eq!(ranges[0], 0..8);
+    let [magic, _footer, index]: [Range<u64>; 3] = ranges.try_into().unwrap();
+    assert_eq!(magic, 0..MAGIC.len() as u64);
     assert!(
-        ranges[2].start > 8,
+        index.start > magic.end,
         "Reading metadata decoded or scanned source pixels"
     );
+    let index_checksum = index.end - size_of::<u32>() as u64..index.end;
     let mut fetched = 0;
     let served = source
         .frame(Moment::START, |range| {
             fetched += range.end - range.start;
             assert!(
-                (range.start >= 8 && range.end <= ranges[2].start)
-                    || range == (ranges[2].end.saturating_sub(4)..ranges[2].end)
+                (range.start >= magic.end && range.end <= index.start) || range == index_checksum
             );
             read(&bytes, range)
         })
         .unwrap();
     assert_eq!(served.image, journal.frame_at(Moment::START).unwrap());
-    assert!(fetched < ranges[2].start - 8);
+    assert!(fetched < index.start - magic.end);
 }
 
 #[test]
@@ -123,16 +134,17 @@ fn torn_sources_and_damaged_tiles_never_produce_partial_images() {
     }
     let source = open(&bytes).unwrap();
     let mut damaged = bytes.clone();
-    damaged[13] ^= 0x40;
+    let first_tile_payload = MAGIC.len() + size_of::<u32>() + size_of::<u8>();
+    damaged[first_tile_payload] ^= 0x40;
     assert!(
         source
             .frame(Moment::START, |range| read(&damaged, range))
             .is_err()
     );
-    let mut damaged = bytes;
-    let end = damaged.len();
-    damaged[end - 17] ^= 1;
-    assert!(open(&damaged).is_err());
+    let (tiles, index) = unseal(&bytes);
+    let mut index = index.to_vec();
+    *index.last_mut().unwrap() ^= 1;
+    assert!(open(&seal(tiles, &index)).is_err());
 }
 
 #[test]
@@ -172,9 +184,7 @@ proptest! {
     fn arbitrary_indexes_are_bounded_and_never_reach_tile_reads(
         bytes in prop::collection::vec(any::<u8>(), 0..4_096),
     ) {
-        let index = framed(INDEX_RECORD, &bytes).unwrap();
-        let size = u64::try_from(index.len()).unwrap().to_le_bytes();
-        let archive = [MAGIC.as_slice(), &index, &size, FOOTER].concat();
+        let archive = seal(MAGIC, &framed(INDEX_RECORD, &bytes).unwrap());
         prop_assert!(open(&archive).is_err());
     }
 
@@ -186,12 +196,8 @@ proptest! {
     ) {
         let (journal, duration) = fixture();
         let bytes = encode(&journal, duration);
-        let (data, footer) = bytes.split_last_chunk::<16>().unwrap();
-        let size = usize::try_from(u64::from_le_bytes(*footer.first_chunk().unwrap())).unwrap();
-        let (tiles, index) = data.split_at(data.len().checked_sub(size).unwrap());
-        let index = damaged(index, at, byte, keep);
-        let size = u64::try_from(index.len()).unwrap().to_le_bytes();
-        let archive = [tiles, &index, &size, FOOTER].concat();
+        let (tiles, index) = unseal(&bytes);
+        let archive = seal(tiles, &damaged(index, at, byte, keep));
         if let Ok(source) = open(&archive) {
             for moment in source.moments() {
                 #[expect(
@@ -226,7 +232,7 @@ fn replacing_a_source_with_same_sized_evidence_cannot_reuse_an_old_timestamp() {
 }
 
 #[test]
-fn high_entropy_tiles_remain_readable_when_deflate_expands_the_pixels() {
+fn tiles_that_deflate_expands_remain_readable() {
     let image = Image::from_bgra(
         64,
         64,
@@ -246,6 +252,10 @@ fn high_entropy_tiles_remain_readable_when_deflate_expands_the_pixels() {
         .admit()
         .unwrap()
         .record(Moment::START, image.clone());
+    assert!(
+        journal.segments[0].tiles[0][0].data.len() > 64 * 64 * PIXEL,
+        "Deflate no longer expands the tile"
+    );
     let bytes = encode(&journal, Moment::from_millis(100));
     assert_eq!(
         open(&bytes)
