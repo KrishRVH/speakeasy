@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use speakeasy_show::{Manifest, Narration};
 
-use super::{DISCLOSURE, Roots, protocol, scope::PAGE};
+use super::{
+    DISCLOSURE, Roots, protocol,
+    scope::{PAGE, PATH_LIMIT},
+};
 use crate::show::{
     evidence::{
         Inspection, Overview,
@@ -16,7 +19,10 @@ use crate::show::{
 
 const TEXT_LIMIT: usize = 64 << 10;
 const WORD_LIMIT: usize = 512;
+const TIME_LIMIT: usize = 32;
 const IMAGE_LIMIT: u64 = 8 << 20;
+const PIXEL_EDGE_LIMIT: u32 = 4096;
+const DECODE_LIMIT: u64 = 64 << 20;
 const EVIDENCE_LIMIT: usize = 1 << 20;
 
 #[derive(Clone, Copy)]
@@ -27,28 +33,33 @@ pub(super) enum Tool {
 }
 
 impl Tool {
-    pub(super) fn parse(name: &str) -> Option<Self> {
-        match name {
-            "show_list" => Some(Self::List),
-            "show_read" => Some(Self::Read),
-            "show_image" => Some(Self::Image),
-            _ => None,
+    const ALL: [Self; 3] = [Self::List, Self::Read, Self::Image];
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::List => "show_list",
+            Self::Read => "show_read",
+            Self::Image => "show_image",
         }
+    }
+
+    pub(super) fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|tool| tool.name() == name)
     }
 }
 
 pub(super) fn definitions() -> Value {
-    let show = json!({"type": "string", "minLength": 1, "maxLength": 4096, "description": "Exact absolute Show path from show_list, or an unambiguous folder name within a configured root. Never latest."});
-    let at = json!({"type": "string", "maxLength": 32, "description": "Recording time as seconds or M:SS.mmm."});
+    let show = json!({"type": "string", "minLength": 1, "maxLength": PATH_LIMIT, "description": "Exact absolute Show path from show_list, or an unambiguous folder name within a configured root. Never latest."});
+    let at = json!({"type": "string", "maxLength": TIME_LIMIT, "description": "Recording time as seconds or M:SS.mmm."});
     let positive = json!({"type": "integer", "minimum": 1});
     let phrase = json!({"type": "string", "minLength": 1, "maxLength": 2048, "description": "Phrase in recorded narration, requiring word timings; not edited summary text."});
     let annotations = json!({"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false});
     json!([
-        {"name": "show_list", "description": format!("List at most {PAGE} saved Shows inside launch-time roots, with metadata only and a continuation cursor. {DISCLOSURE}"),
-         "inputSchema": {"type": "object", "properties": {"cursor": {"type": "string", "maxLength": 4096}}, "additionalProperties": false}, "annotations": annotations},
-        {"name": "show_read", "description": format!("Read one exact Show's edited summary and metadata. Optionally include bounded recorded narration and one time, mark, or phrase lookup. Multiple phrase matches remain ambiguous unless match is given. Text truncation and missing or untimed narration are disclosed. {DISCLOSURE}"),
+        {"name": Tool::List.name(), "description": format!("List at most {PAGE} saved Shows inside launch-time roots, with metadata only and a continuation cursor. {DISCLOSURE}"),
+         "inputSchema": {"type": "object", "properties": {"cursor": {"type": "string", "maxLength": PATH_LIMIT}}, "additionalProperties": false}, "annotations": annotations},
+        {"name": Tool::Read.name(), "description": format!("Read one exact Show's edited summary and metadata. Optionally include bounded recorded narration and one time, mark, or phrase lookup. Multiple phrase matches remain ambiguous unless match is given. Text truncation and missing or untimed narration are disclosed. {DISCLOSURE}"),
          "inputSchema": {"type": "object", "properties": {"show": show, "narration": {"type": "boolean", "default": false}, "at": at, "mark": positive, "phrase": phrase, "match": positive}, "required": ["show"], "additionalProperties": false}, "annotations": annotations},
-        {"name": "show_image", "description": format!("Read exactly one PNG, at most 8 MiB. Choose one sheet, keyframe, time, mark, or phrase (with match if ambiguous). Sheet/keyframe numbers start at 1. Time/mark/phrase reads the retained source image at or before the selection, or the first sample if capture began later, with actual sample time. Source images have no ink. Missing retained source is an error; no fallback or file writes. {DISCLOSURE}"),
+        {"name": Tool::Image.name(), "description": format!("Read exactly one PNG, at most 8 MiB. Choose one sheet, keyframe, time, mark, or phrase (with match if ambiguous). Sheet/keyframe numbers start at 1. Time/mark/phrase reads the retained source image at or before the selection, or the first sample if capture began later, with actual sample time. Source images have no ink. Missing retained source is an error; no fallback or file writes. {DISCLOSURE}"),
          "inputSchema": {"type": "object", "properties": {"show": show, "sheet": positive, "keyframe": positive, "at": at, "mark": positive, "phrase": phrase, "match": positive}, "required": ["show"], "oneOf": [{"required": ["sheet"]}, {"required": ["keyframe"]}, {"required": ["at"]}, {"required": ["mark"]}, {"required": ["phrase"]}], "additionalProperties": false}, "annotations": annotations}
     ])
 }
@@ -81,13 +92,6 @@ struct Listed {
 
 fn list(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
     let request: List = decode(arguments)?;
-    if request
-        .cursor
-        .as_ref()
-        .is_some_and(|cursor| cursor.len() > 4096)
-    {
-        return Err("Invalid Show list cursor".to_owned());
-    }
     let (shows, cursor) = roots.list(request.cursor.as_deref())?;
     Ok(vec![text(&Listed {
         shows,
@@ -120,22 +124,18 @@ struct ReadEvidence {
 fn read(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
     let request: Read = decode(arguments)?;
     let query = lookup(request.at, request.mark, request.phrase, request.occurrence)?;
-    let directory = roots.resolve(&request.show)?;
-    let entry = recall::Entry::open(&directory).map_err(|_private| "Cannot read that Show")?;
-    let show = entry
-        .show
-        .as_ref()
-        .map_err(|_private| "That Show's manifest is damaged or unsupported")?;
-    let summary =
-        recall::summary(&directory).map_err(|_private| "Cannot read that Show's edited summary")?;
+    let entry = open(roots, &request.show)?;
+    let manifest = manifest_of(&entry)?;
+    let summary = recall::summary(&entry.directory)
+        .map_err(|_private| "Cannot read that Show's edited summary")?;
     let found = query
         .as_ref()
-        .map(|query| query.resolve(&show.manifest))
+        .map(|query| query.resolve(manifest))
         .transpose()
         .map_err(|safe| safe.to_string())?;
-    let narration = request.narration.then(|| narration(&show.manifest));
+    let narration = request.narration.then(|| narration(manifest));
     let content = ReadEvidence {
-        show: Inspection::of(&entry, directory.parent()),
+        show: Inspection::of(&entry, entry.directory.parent()),
         summary: excerpt(&summary),
         narration,
         location: found,
@@ -201,20 +201,16 @@ fn image(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
         (None, None, Some(query)) => Picture::Source(query),
         _ => return Err("Choose exactly one sheet, keyframe, time, mark or phrase".to_owned()),
     };
-    let directory = roots.resolve(&request.show)?;
-    let entry = recall::Entry::open(&directory).map_err(|_private| "Cannot read that Show")?;
-    let show = entry
-        .show
-        .as_ref()
-        .map_err(|_private| "That Show's manifest is damaged or unsupported")?;
-    let manifest = &show.manifest;
+    let entry = open(roots, &request.show)?;
+    let manifest = manifest_of(&entry)?;
+    let directory = &entry.directory;
     let (png, metadata) = match picture {
         Picture::Sheet(number) => {
             let (name, frames) = number
                 .checked_sub(1)
                 .and_then(|index| manifest.sheets().nth(index))
                 .ok_or("That Show has no sheet with that number")?;
-            let png = recall::read_file(&directory, &name, IMAGE_LIMIT)
+            let png = recall::read_file(directory, &name, IMAGE_LIMIT)
                 .map_err(|_private| "That saved sheet is unavailable or exceeds 8 MiB")?;
             (
                 png,
@@ -226,7 +222,7 @@ fn image(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
                 .checked_sub(1)
                 .and_then(|index| manifest.keyframes().get(index))
                 .ok_or("That Show has no keyframe with that number")?;
-            let png = recall::read_file(&directory, &frame.file(), IMAGE_LIMIT)
+            let png = recall::read_file(directory, &frame.file(), IMAGE_LIMIT)
                 .map_err(|_private| "That saved keyframe is unavailable or exceeds 8 MiB")?;
             let marks: Vec<_> = manifest
                 .marks()
@@ -240,7 +236,7 @@ fn image(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
                 json!({"show": directory, "keyframe": number, "atMs": frame.at.as_millis(), "marks": marks, "crop": frame.crop, "annotations": true}),
             )
         },
-        Picture::Source(query) => source_image(&directory, manifest, &query)?,
+        Picture::Source(query) => source_image(directory, manifest, &query)?,
     };
     if !u64::try_from(png.len()).is_ok_and(|length| length <= IMAGE_LIMIT) {
         return Err("The selected image is not a PNG of at most 8 MiB".to_owned());
@@ -248,9 +244,9 @@ fn image(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
     let mut reader =
         image::ImageReader::with_format(std::io::Cursor::new(&png), image::ImageFormat::Png);
     let mut limits = image::Limits::default();
-    limits.max_image_width = Some(4096);
-    limits.max_image_height = Some(4096);
-    limits.max_alloc = Some(64 << 20);
+    limits.max_image_width = Some(PIXEL_EDGE_LIMIT);
+    limits.max_image_height = Some(PIXEL_EDGE_LIMIT);
+    limits.max_alloc = Some(DECODE_LIMIT);
     reader.limits(limits);
     reader.decode().map_err(
         |_private| "The selected PNG is damaged or exceeds the image dimensions or decoding limit",
@@ -259,6 +255,19 @@ fn image(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
         text(&metadata)?,
         json!({"type": "image", "data": STANDARD.encode(png), "mimeType": "image/png"}),
     ])
+}
+
+fn open(roots: &Roots, show: &str) -> Result<recall::Entry, &'static str> {
+    let directory = roots.resolve(show)?;
+    recall::Entry::open(&directory).map_err(|_private| "Cannot read that Show")
+}
+
+fn manifest_of(entry: &recall::Entry) -> Result<&Manifest, &'static str> {
+    entry
+        .show
+        .as_ref()
+        .map(|show| &show.manifest)
+        .map_err(|_private| "That Show's manifest is damaged or unsupported")
 }
 
 fn source_image(
@@ -294,7 +303,7 @@ fn lookup(
     const TIME: &str = "Time must be seconds or M:SS.mmm";
     match (at, mark, phrase, occurrence) {
         (None, None, None, None) => Ok(None),
-        (Some(at), None, None, None) if at.len() <= 32 => query::time(&at)
+        (Some(at), None, None, None) if at.len() <= TIME_LIMIT => query::time(&at)
             .map(|at| Some(Query::At(at)))
             .map_err(|_private| TIME),
         (Some(_), None, None, None) => Err(TIME),

@@ -12,6 +12,8 @@ use crate::show::{
 
 pub(super) const PAGE: usize = 100;
 
+pub(super) const PATH_LIMIT: usize = 4_096;
+
 pub(super) struct Roots(Vec<Root>);
 
 struct Root {
@@ -81,7 +83,7 @@ impl Roots {
     pub(super) fn resolve(&self, show: &str) -> Result<PathBuf, &'static str> {
         let path = Path::new(show);
         if show.is_empty()
-            || show.len() > 4_096
+            || show.len() > PATH_LIMIT
             || path
                 .components()
                 .any(|part| matches!(part, Component::ParentDir))
@@ -135,7 +137,8 @@ impl Roots {
     ) -> Result<(Vec<Overview>, Option<String>), &'static str> {
         let after = cursor.map(PathBuf::from);
         if let Some(after) = &after
-            && (!after.is_absolute()
+            && (after.as_os_str().len() > PATH_LIMIT
+                || !after.is_absolute()
                 || !self.0.iter().any(|root| after.starts_with(&root.directory))
                 || after
                     .components()
