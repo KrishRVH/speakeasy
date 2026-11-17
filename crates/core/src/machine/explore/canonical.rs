@@ -8,25 +8,15 @@ use crate::gesture::Moment;
 
 pub(super) const STALE: SessionId = SessionId::new(0);
 
-pub(super) fn ids(machine: &Machine<Abstract>) -> Vec<SessionId> {
-    ids_in(&format!("{:?}", shown(machine)))
-}
-
-fn ids_in(render: &str) -> Vec<SessionId> {
-    let mut ids: Vec<SessionId> = render
+fn ids(render: &str) -> Vec<u64> {
+    let mut ids: Vec<u64> = render
         .split("SessionId(")
         .skip(1)
         .filter_map(|after| after.split_once(')')?.0.parse().ok())
-        .map(SessionId::new)
         .collect();
     ids.sort_unstable();
     ids.dedup();
     ids
-}
-
-pub(super) fn name(ids: &[SessionId], id: SessionId) -> String {
-    ids.binary_search(&id)
-        .map_or_else(|_| "new".into(), |rank| rank.to_string())
 }
 
 fn replace(render: &str, tag: &str, value: impl Fn(u64) -> String) -> String {
@@ -85,14 +75,12 @@ fn observed(outcome: &Outcome<Abstract>) -> Outcome<Abstract> {
     }
 }
 
-pub(super) fn render(
-    machine: &Machine<Abstract>,
-    clock: Moment,
-    mode: Option<RecognitionMode>,
-) -> String {
+fn render(machine: &Machine<Abstract>, clock: Moment, mode: Option<RecognitionMode>) -> String {
     let render = format!("{:?} recorder: {mode:?}", shown(machine));
-    let ids = ids_in(&render);
-    let renamed = replace(&render, "SessionId(", |id| name(&ids, SessionId::new(id)));
+    let ids = ids(&render);
+    let renamed = replace(&render, "SessionId(", |id| {
+        ids.partition_point(|&earlier| earlier < id).to_string()
+    });
     replace(&renamed, "Moment(", |moment| {
         clock
             .nanos()

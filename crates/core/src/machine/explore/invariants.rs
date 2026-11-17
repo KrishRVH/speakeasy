@@ -1,9 +1,11 @@
 use super::{
     super::{
-        Device, Machine, Payload, Worker,
+        Device, Event, Machine, Payload, Worker,
         session::{Purpose, Session},
     },
     Abstract,
+    canonical::STALE,
+    oracle::{Effect, Query},
 };
 use crate::gesture::State;
 
@@ -30,7 +32,7 @@ pub(super) fn state(machine: &Machine<Abstract>, settled: bool) -> Result<(), St
         {
             return Err("A capturing session has no recording deadline".into());
         }
-        if (session.is_delivering() || session.is_reopening()) && gesture != State::Processing {
+        if session.awaits_delivery() && gesture != State::Processing {
             return Err("A delivery runs while the gesture still records".into());
         }
         if session.is_practice() && machine.practice.is_none() {
@@ -77,47 +79,52 @@ pub(super) fn state(machine: &Machine<Abstract>, settled: bool) -> Result<(), St
 pub(super) fn transition(
     before: &Machine<Abstract>,
     after: &Machine<Abstract>,
-    label: &str,
-    effects: &str,
+    event: &Event<Abstract>,
+    effects: &[Effect],
 ) -> Result<(), String> {
-    let effects: Vec<&str> = effects.split(' ').collect();
-    let delivering = |machine: &Machine<Abstract>| {
-        machine
-            .session
-            .as_ref()
-            .is_some_and(|session| session.is_delivering() || session.is_reopening())
-    };
-    let starts = effects
+    let deliveries: Vec<&Effect> = effects
         .iter()
         .filter(|effect| {
-            **effect == "insert" || effect.starts_with("publish(") || **effect == "reopen"
+            matches!(
+                effect,
+                Effect::Insert | Effect::Publish { .. } | Effect::Reopen
+            )
         })
-        .count();
-    if starts > 1 {
-        return Err("One step started two deliveries".into());
+        .collect();
+    match deliveries[..] {
+        [] => {},
+        [delivery] => {
+            let Some(session) = after.session.as_ref() else {
+                return Err("A delivery started without a session to own it".into());
+            };
+            if !session.awaits_delivery() {
+                return Err("A delivery started but its session does not await it".into());
+            }
+            let settled = matches!(event, Event::Delivered(_))
+                || effects
+                    .iter()
+                    .any(|effect| matches!(effect, Effect::RetireDelivery(_)));
+            if before
+                .session
+                .as_ref()
+                .is_some_and(Session::awaits_delivery)
+                && !settled
+            {
+                return Err("A second delivery started while the first was in flight".into());
+            }
+            if matches!(delivery, Effect::Insert) && (session.is_show() || session.is_practice()) {
+                return Err("A Show or practice inserted text".into());
+            }
+            if matches!(delivery, Effect::Reopen) && before.session.is_some() {
+                return Err("Recovery started while a session was active".into());
+            }
+        },
+        _ => return Err("One step started two deliveries".into()),
     }
-    if starts == 1 {
-        let Some(session) = after.session.as_ref() else {
-            return Err("A delivery started without a session to own it".into());
-        };
-        if !(session.is_delivering() || session.is_reopening()) {
-            return Err("A delivery started but its session does not await it".into());
-        }
-        let settled = label.starts_with("delivered(")
-            || effects
-                .iter()
-                .any(|effect| effect.starts_with("retire_delivery("));
-        if delivering(before) && !settled {
-            return Err("A second delivery started while the first was in flight".into());
-        }
-        if effects.contains(&"insert") && (session.is_show() || session.is_practice()) {
-            return Err("A Show or practice inserted text".into());
-        }
-        if effects.contains(&"reopen") && before.session.is_some() {
-            return Err("Recovery started while a session was active".into());
-        }
-    }
-    if effects.iter().any(|effect| effect.starts_with("practise=")) {
+    if effects
+        .iter()
+        .any(|effect| matches!(effect, Effect::Answered(Query::Practise, _)))
+    {
         if !before
             .session
             .as_ref()
@@ -134,11 +141,13 @@ pub(super) fn transition(
     {
         return Err("An earlier Show replaced a later remembered one".into());
     }
-    if label.contains("stale")
+    if matches!(event, Event::Capture(STALE, _) | Event::Show(STALE, _))
         && let (Some(was), Some(is)) = (&before.session, &after.session)
         && was.id == is.id
         && was.phase() != is.phase()
-        && !effects.iter().any(|effect| effect.contains('='))
+        && !effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::Answered(..)))
     {
         return Err("An event for an earlier session moved the current one".into());
     }

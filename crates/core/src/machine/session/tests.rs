@@ -3,7 +3,7 @@ use std::time::Duration;
 use super::*;
 use crate::machine::{
     Part,
-    fixture::{Clip, Log, Sample},
+    fixture::{Log, Sample},
 };
 
 fn opened(log: &mut Log, show: bool) -> Session<Sample> {
@@ -17,7 +17,7 @@ fn opened(log: &mut Log, show: bool) -> Session<Sample> {
 
 fn sealed() -> Sealed<Sample> {
     Sealed {
-        audio: Clip::of([1, 2]),
+        audio: vec![1, 2],
         trimmed: Duration::from_millis(500),
         partition: None,
     }

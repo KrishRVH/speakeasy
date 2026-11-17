@@ -8,7 +8,7 @@ use std::{collections::HashMap, env, mem, thread};
 use self::{
     alphabet::{CONFIGS, Step, steps},
     canonical::key,
-    oracle::{Abstract, Oracle},
+    oracle::{Abstract, Effect, Oracle},
 };
 use super::{Event, Flow, Machine, Now, RecognitionMode, SessionId};
 use crate::gesture::{Moment, Timing};
@@ -47,29 +47,28 @@ enum Reached {
 }
 
 struct Successor {
-    label: String,
-    effects: String,
+    step: Step,
     reached: Reached,
 }
 
 struct Broken {
-    label: String,
-    effects: String,
+    step: Step,
+    effects: Vec<Effect>,
     reason: String,
 }
 
 struct Search {
     index: HashMap<u128, usize>,
-    parents: Vec<Option<(usize, String)>>,
+    parents: Vec<Option<(usize, Step)>>,
     next: Vec<(usize, Explored)>,
     transitions: u64,
     bounded: u64,
 }
 
 impl Search {
-    fn reach(&mut self, source: usize, label: String, reached: Reached) {
+    fn reach(&mut self, source: usize, successor: Successor) {
         self.transitions = self.transitions.saturating_add(1);
-        let Reached::State(explored, found) = reached else {
+        let Reached::State(explored, found) = successor.reached else {
             return;
         };
         if self.index.contains_key(&found) {
@@ -81,19 +80,18 @@ impl Search {
         }
         let state = self.parents.len();
         self.index.insert(found, state);
-        self.parents.push(Some((source, label)));
+        self.parents.push(Some((source, successor.step)));
         self.next.push((state, *explored));
     }
 }
 
-fn step(
+fn apply(
     state: &Explored,
-    label: &str,
     event: &Event<Abstract>,
     script: Vec<usize>,
-) -> (Successor, Option<Vec<usize>>) {
+) -> (Reached, Vec<Effect>, Option<Vec<usize>>) {
     let mut machine = state.machine.clone();
-    let mut oracle = Oracle::new(script, canonical::ids(&state.machine));
+    let mut oracle = Oracle::new(script);
     let now = Now {
         moment: state.clock,
         instant: (),
@@ -115,24 +113,19 @@ fn step(
         },
     };
     let next = oracle.next_script();
-    let successor = Successor {
-        label: label.to_owned(),
-        effects: oracle.effects,
-        reached,
-    };
-    (successor, next)
+    (reached, oracle.effects, next)
 }
 
-fn check(state: &Explored, successor: &Successor) -> Result<(), String> {
-    match &successor.reached {
+fn check(
+    state: &Explored,
+    event: &Event<Abstract>,
+    reached: &Reached,
+    effects: &[Effect],
+) -> Result<(), String> {
+    match reached {
         Reached::State(next, _) => {
             invariants::state(&next.machine, true)?;
-            invariants::transition(
-                &state.machine,
-                &next.machine,
-                &successor.label,
-                &successor.effects,
-            )
+            invariants::transition(&state.machine, &next.machine, event, effects)
         },
         Reached::Failed(machine) => invariants::state(machine, false),
         Reached::Stopped => Ok(()),
@@ -141,8 +134,8 @@ fn check(state: &Explored, successor: &Successor) -> Result<(), String> {
 
 fn expand(state: &Explored) -> Result<Vec<Successor>, Broken> {
     let mut successors = Vec::new();
-    for (label, kind) in steps(&state.machine, state.clock, state.mode()) {
-        let event = match kind {
+    for step in steps(&state.machine, state.clock, state.mode()) {
+        let event = match step {
             Step::Elapse => {
                 let explored = Explored {
                     clock: state.clock.after(1),
@@ -150,8 +143,7 @@ fn expand(state: &Explored) -> Result<Vec<Successor>, Broken> {
                 };
                 let key = explored.key();
                 successors.push(Successor {
-                    label,
-                    effects: String::new(),
+                    step: Step::Elapse,
                     reached: Reached::State(Box::new(explored), key),
                 });
                 continue;
@@ -160,15 +152,18 @@ fn expand(state: &Explored) -> Result<Vec<Successor>, Broken> {
         };
         let mut script = Some(Vec::new());
         while let Some(answers) = script.take() {
-            let (successor, next) = step(state, &label, &event, answers);
-            if let Err(reason) = check(state, &successor) {
+            let (reached, effects, next) = apply(state, &event, answers);
+            if let Err(reason) = check(state, &event, &reached, &effects) {
                 return Err(Broken {
-                    label: successor.label,
-                    effects: successor.effects,
+                    step: Step::Event(event),
+                    effects,
                     reason,
                 });
             }
-            successors.push(successor);
+            successors.push(Successor {
+                step: Step::Event(event.clone()),
+                reached,
+            });
             script = next;
         }
     }
@@ -205,10 +200,10 @@ fn expand_all(level: &[(usize, Explored)]) -> Vec<Result<Vec<Successor>, Broken>
     })
 }
 
-fn path(parents: &[Option<(usize, String)>], mut state: usize) -> Vec<String> {
+fn path(parents: &[Option<(usize, Step)>], mut state: usize) -> Vec<Step> {
     let mut path = Vec::new();
-    while let Some((parent, label)) = &parents[state] {
-        path.push(label.clone());
+    while let Some((parent, step)) = &parents[state] {
+        path.push(step.clone());
         state = *parent;
     }
     path.reverse();
@@ -216,7 +211,7 @@ fn path(parents: &[Option<(usize, String)>], mut state: usize) -> Vec<String> {
 }
 
 fn explore(depth_limit: Option<usize>) {
-    let mut start = Oracle::new(Vec::new(), Vec::new());
+    let mut start = Oracle::new(Vec::new());
     let machine = Machine::new(TIMING, CONFIGS[0], false, (), None, &mut start);
     let initial = Explored {
         machine,
@@ -239,14 +234,14 @@ fn explore(depth_limit: Option<usize>) {
         for ((source, _), expansion) in expansions {
             let successors = expansion.unwrap_or_else(|broken| {
                 let mut path = path(&search.parents, *source);
-                path.push(broken.label);
+                path.push(broken.step);
                 panic!(
-                    "{} after {path:?} with effects [{}]",
+                    "{} after {path:?} with effects {:?}",
                     broken.reason, broken.effects
                 )
             });
             for successor in successors {
-                search.reach(*source, successor.label, successor.reached);
+                search.reach(*source, successor);
             }
         }
         eprintln!(

@@ -17,7 +17,7 @@ pub enum Outcome<P: Payload> {
 }
 
 impl<P: Payload> Outcome<P> {
-    pub const fn phase(&self) -> Phase {
+    pub(super) const fn phase(&self) -> Phase {
         match self {
             Self::Idle => Phase::Idle,
             Self::Done | Self::Practiced => Phase::Done,
@@ -69,7 +69,7 @@ impl<P: Payload> Notice<P> {
         }
     }
 
-    pub const fn is_warning(&self) -> bool {
+    pub(super) const fn is_warning(&self) -> bool {
         matches!(self, Self::CheckpointLost | Self::MovieStopped)
     }
 }

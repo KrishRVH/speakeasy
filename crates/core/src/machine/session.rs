@@ -550,7 +550,7 @@ impl<P: Payload> Session<P> {
     }
 
     pub(super) fn into_cleanup(self, env: &mut impl Env<P>) -> bool {
-        if matches!(self.stage, Stage::Delivering | Stage::Reopening) {
+        if self.awaits_delivery() {
             env.retire_delivery(self.id);
             return true;
         }

@@ -1,9 +1,6 @@
-use super::{
-    super::{
-        Cue, Env, Failure, Keeping, Kept, Origin, Payload, Publication, RecognitionMode, Recorder,
-        Refusal, Release, Request, SessionId, Settings, Source, Status,
-    },
-    canonical,
+use super::super::{
+    Cue, Env, Failure, Keeping, Kept, Payload, Publication, RecognitionMode, Recorder, Refusal,
+    Release, Request, SessionId, Settings, Status,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -55,21 +52,82 @@ impl Payload for Abstract {
     fn append((): &mut (), (): ()) {}
 }
 
+#[derive(Debug)]
+#[expect(
+    dead_code,
+    reason = "A failure trace shows what each query asked about only through Debug"
+)]
+pub(super) enum Query {
+    Admit,
+    Shield,
+    Closed,
+    Keep,
+    Microphone {
+        session: SessionId,
+        mode: RecognitionMode,
+    },
+    Screen {
+        session: SessionId,
+        frames: bool,
+    },
+    KeepAudio,
+    Cut,
+    Compose,
+    Ready,
+    Practise,
+}
+
+#[derive(Debug)]
+#[expect(
+    dead_code,
+    reason = "A failure trace shows each effect's arguments only through Debug"
+)]
+pub(super) enum Effect {
+    Answered(Query, &'static str),
+    Revoke,
+    Finish(Recorder),
+    Retire(Recorder),
+    ListenWhole,
+    ExpectCue,
+    Pin,
+    Meter(SessionId),
+    Load,
+    Reload,
+    Recover {
+        probe: bool,
+    },
+    Transcribe(Request<Abstract>),
+    Insert,
+    RefusePractice,
+    Publish {
+        publication: Publication<Abstract>,
+        receipt: bool,
+    },
+    Reopen,
+    RefuseRecovery(Failure<Abstract>),
+    RetireDelivery(SessionId),
+    Release(SessionId, Release<Abstract>),
+    Remember,
+    Announce,
+    Cue(Cue),
+    HoldCues(bool),
+    Respond(Result<Status<Abstract>, Refusal>),
+    CloseInput,
+}
+
 pub(super) struct Oracle {
     script: Vec<usize>,
     chosen: Vec<(usize, usize)>,
-    ids: Vec<SessionId>,
-    pub(super) effects: String,
+    pub(super) effects: Vec<Effect>,
     pub(super) opened: Option<(SessionId, RecognitionMode)>,
 }
 
 impl Oracle {
-    pub(super) fn new(script: Vec<usize>, ids: Vec<SessionId>) -> Self {
+    pub(super) const fn new(script: Vec<usize>) -> Self {
         Self {
             script,
             chosen: Vec::new(),
-            ids,
-            effects: String::new(),
+            effects: Vec::new(),
             opened: None,
         }
     }
@@ -87,53 +145,35 @@ impl Oracle {
         Some(script)
     }
 
-    fn effect(&mut self, effect: &str) {
-        if !self.effects.is_empty() {
-            self.effects.push(' ');
-        }
-        self.effects.push_str(effect);
-    }
-
-    fn choose(&mut self, query: &str, answers: &[&str]) -> usize {
+    fn choose(&mut self, query: Query, answers: &[&'static str]) -> usize {
         let choice = self.script.get(self.chosen.len()).copied().unwrap_or(0);
         self.chosen.push((choice, answers.len()));
-        self.effect(&format!("{query}={}", answers[choice]));
+        self.effects.push(Effect::Answered(query, answers[choice]));
         choice
-    }
-
-    fn name(&self, id: SessionId) -> String {
-        canonical::name(&self.ids, id)
-    }
-}
-
-const fn recorder(recorder: Recorder) -> &'static str {
-    match recorder {
-        Recorder::Microphone => "microphone",
-        Recorder::Screen => "screen",
     }
 }
 
 impl Env<Abstract> for Oracle {
     fn admit(&mut self) -> Option<()> {
-        (self.choose("admit", &["permit", "refused"]) == 0).then_some(())
+        (self.choose(Query::Admit, &["permit", "refused"]) == 0).then_some(())
     }
 
     fn style(&mut self) {}
 
     fn shield(&mut self, (): &()) -> bool {
-        self.choose("shield", &["shielded", "exposed"]) == 0
+        self.choose(Query::Shield, &["shielded", "exposed"]) == 0
     }
 
     fn revoke(&mut self, (): &()) {
-        self.effect("revoke");
+        self.effects.push(Effect::Revoke);
     }
 
     fn closed(&mut self) -> bool {
-        self.choose("closed", &["open", "closed"]) == 1
+        self.choose(Query::Closed, &["open", "closed"]) == 1
     }
 
     fn keep(&mut self, (): ()) -> Keeping<Abstract> {
-        match self.choose("keep", &["kept", "unneeded", "lost"]) {
+        match self.choose(Query::Keep, &["kept", "unneeded", "lost"]) {
             0 => Keeping::Kept(Kept {
                 checkpoint: (),
                 audio: (),
@@ -150,8 +190,8 @@ impl Env<Abstract> for Oracle {
         _: &Settings,
         mode: RecognitionMode,
     ) -> Result<(), ()> {
-        let query = format!("microphone({},{mode:?})", self.name(session));
-        if self.choose(&query, &["recording", "failed"]) == 0 {
+        let query = Query::Microphone { session, mode };
+        if self.choose(query, &["recording", "failed"]) == 0 {
             self.opened = Some((session, mode));
             Ok(())
         } else {
@@ -166,163 +206,127 @@ impl Env<Abstract> for Oracle {
         (): (),
         frames: Option<()>,
     ) -> Result<(), ()> {
-        let query = format!("screen({},{})", self.name(session), frames.is_some());
-        (self.choose(&query, &["recording", "failed"]) == 0)
+        let query = Query::Screen {
+            session,
+            frames: frames.is_some(),
+        };
+        (self.choose(query, &["recording", "failed"]) == 0)
             .then_some(())
             .ok_or(())
     }
 
-    fn finish(&mut self, which: Recorder) {
-        self.effect(&format!("finish({})", recorder(which)));
+    fn finish(&mut self, recorder: Recorder) {
+        self.effects.push(Effect::Finish(recorder));
     }
 
-    fn retire(&mut self, which: Recorder) {
-        self.effect(&format!("retire({})", recorder(which)));
+    fn retire(&mut self, recorder: Recorder) {
+        self.effects.push(Effect::Retire(recorder));
     }
 
     fn listen_whole(&mut self) {
-        self.effect("listen_whole");
+        self.effects.push(Effect::ListenWhole);
     }
 
     fn expect_cue(&mut self) {
-        self.effect("expect_cue");
+        self.effects.push(Effect::ExpectCue);
     }
 
     fn keep_audio(&mut self, (): (), (): (), _: &Settings) -> bool {
-        self.choose("keep_audio", &["kept", "lost"]) == 0
+        self.choose(Query::KeepAudio, &["kept", "lost"]) == 0
     }
 
     fn pin(&mut self, (): ()) {
-        self.effect("pin");
+        self.effects.push(Effect::Pin);
     }
 
     fn meter(&mut self, session: SessionId, (): ()) {
-        let effect = format!("meter({})", self.name(session));
-        self.effect(&effect);
+        self.effects.push(Effect::Meter(session));
     }
 
     fn load(&mut self, _: &Settings) {
-        self.effect("load");
+        self.effects.push(Effect::Load);
     }
 
     fn reload(&mut self, _: &Settings) {
-        self.effect("reload");
+        self.effects.push(Effect::Reload);
     }
 
     fn recover(&mut self, _: &Settings, probe: bool) {
-        self.effect(&format!("recover({probe})"));
+        self.effects.push(Effect::Recover { probe });
     }
 
     fn cut(&mut self, (): &(), (): &()) -> Option<()> {
-        (self.choose("cut", &["cut", "uncut"]) == 0).then_some(())
+        (self.choose(Query::Cut, &["cut", "uncut"]) == 0).then_some(())
     }
 
     fn transcribe(&mut self, request: Request<Abstract>, _: &Settings) {
-        let source = match request.source {
-            Source::Audio(()) => "audio",
-            Source::Live(()) => "live",
-        };
-        let effect = format!(
-            "transcribe({},{:?},{source},{:?})",
-            self.name(request.ticket.session),
-            request.ticket.part,
-            request.detail
-        );
-        self.effect(&effect);
+        self.effects.push(Effect::Transcribe(request));
     }
 
     fn compose(&mut self, (): (), (): (), _: &Settings) -> Option<()> {
-        (self.choose("compose", &["text", "empty"]) == 0).then_some(())
+        (self.choose(Query::Compose, &["text", "empty"]) == 0).then_some(())
     }
 
     fn insert(&mut self, (): (), (): &(), _: &Settings) {
-        self.effect("insert");
+        self.effects.push(Effect::Insert);
     }
 
     fn ready(&mut self, (): &()) -> bool {
-        self.choose("ready", &["ready", "closed"]) == 0
+        self.choose(Query::Ready, &["ready", "closed"]) == 0
     }
 
     fn refuse_practice(&mut self, (): ()) {
-        self.effect("refuse_practice");
+        self.effects.push(Effect::RefusePractice);
     }
 
     fn practise(&mut self, (): &(), (): &(), (): ()) -> bool {
-        self.choose("practise", &["delivered", "closed"]) == 0
+        self.choose(Query::Practise, &["delivered", "closed"]) == 0
     }
 
     fn publish(&mut self, publication: Publication<Abstract>, (): &(), receipt: Option<()>) {
-        let origin = match publication.origin {
-            Origin::Live => "live",
-            Origin::Recovered { pending: () } => "recovered",
-        };
-        self.effect(&format!(
-            "publish({:?},{},{origin},{})",
-            publication.loss,
-            publication.checkpoint.is_some(),
-            receipt.is_some()
-        ));
+        self.effects.push(Effect::Publish {
+            publication,
+            receipt: receipt.is_some(),
+        });
     }
 
     fn reopen(&mut self, (): ()) {
-        self.effect("reopen");
+        self.effects.push(Effect::Reopen);
     }
 
     fn refuse_recovery(&mut self, (): (), failure: &Failure<Abstract>) {
-        self.effect(&format!("refuse_recovery({failure:?})"));
+        self.effects.push(Effect::RefuseRecovery(failure.clone()));
     }
 
     fn retire_delivery(&mut self, session: SessionId) {
-        let effect = format!("retire_delivery({})", self.name(session));
-        self.effect(&effect);
+        self.effects.push(Effect::RetireDelivery(session));
     }
 
     fn release(&mut self, session: SessionId, (): (), release: Release<Abstract>) {
-        let effect = format!("release({},{release:?})", self.name(session));
-        self.effect(&effect);
+        self.effects.push(Effect::Release(session, release));
     }
 
     fn remember(&mut self, (): ()) {
-        self.effect("remember");
+        self.effects.push(Effect::Remember);
     }
 
     fn announce(&mut self) {
-        self.effect("announce");
+        self.effects.push(Effect::Announce);
     }
 
     fn cue(&mut self, cue: Cue) {
-        self.effect(&format!("cue({cue:?})"));
+        self.effects.push(Effect::Cue(cue));
     }
 
     fn hold_cues(&mut self, held: bool) {
-        self.effect(&format!("hold_cues({held})"));
+        self.effects.push(Effect::HoldCues(held));
     }
 
     fn respond(&mut self, (): (), reply: Result<Status<Abstract>, Refusal>) {
-        let detail = match reply {
-            Ok(status) => {
-                let session = status
-                    .session
-                    .map_or_else(|| "none".into(), |session| self.name(session));
-                let Status {
-                    phase,
-                    model,
-                    desktop_ready,
-                    preset,
-                    last_dictation,
-                    ..
-                } = status;
-                format!(
-                    "{phase:?},{model:?},{desktop_ready},{session},{},{last_dictation}",
-                    preset.is_some()
-                )
-            },
-            Err(refusal) => format!("{refusal:?}"),
-        };
-        self.effect(&format!("respond({detail})"));
+        self.effects.push(Effect::Respond(reply));
     }
 
     fn close_input(&mut self) {
-        self.effect("close_input");
+        self.effects.push(Effect::CloseInput);
     }
 }

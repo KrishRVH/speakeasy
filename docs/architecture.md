@@ -910,7 +910,7 @@ and marks a ticket for an ended session stale. At every state and transition,
 
 A failure prints the path of events that reached it. `mise run rust:test` explores five events deep,
 and `mise run rust:explore` explores to a fixed point: 1,430,956 states and 127,475,062 transitions
-in about a minute on 32 threads, with 1.3 GB of memory at its peak.
+in under a minute on 32 threads, with about 1 GB of memory at its peak.
 
 The explored space has bounds. Timing scales to a one-tick tap, two-tick double tap, and three-tick
 limit. Three settings cover sounds on and off, each recognition mode, and GPU probing. A state with

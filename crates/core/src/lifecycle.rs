@@ -11,6 +11,7 @@ impl ConfigEpoch {
 }
 
 #[derive(Debug)]
+#[cfg_attr(test, derive(Clone))]
 pub struct Lifecycle<Owners, Restart> {
     state: State<Owners, Restart>,
     epoch: ConfigEpoch,
@@ -18,6 +19,7 @@ pub struct Lifecycle<Owners, Restart> {
 }
 
 #[derive(Debug, Default)]
+#[cfg_attr(test, derive(Clone))]
 enum State<Owners, Restart> {
     #[default]
     Disabled,

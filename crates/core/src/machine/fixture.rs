@@ -8,23 +8,8 @@ use super::{
 #[derive(Clone, Debug)]
 pub(super) struct Sample;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Clip {
-    pub wav: Vec<u8>,
-    pub language: Option<&'static str>,
-}
-
-impl Clip {
-    pub(super) fn of(wav: impl Into<Vec<u8>>) -> Self {
-        Self {
-            wav: wav.into(),
-            language: None,
-        }
-    }
-}
-
 impl Payload for Sample {
-    type Audio = Clip;
+    type Audio = Vec<u8>;
     type AudioLog = mpsc::Sender<()>;
     type Call = ();
     type Checkpoint = &'static str;
@@ -163,11 +148,8 @@ impl Env<Sample> for Log {
 
     fn recover(&mut self, _: &Settings, _: bool) {}
 
-    fn cut(&mut self, audio: &Clip, range: &Range<usize>) -> Option<Clip> {
-        Some(Clip {
-            wav: audio.wav.get(range.clone())?.to_vec(),
-            language: audio.language,
-        })
+    fn cut(&mut self, audio: &Vec<u8>, range: &Range<usize>) -> Option<Vec<u8>> {
+        Some(audio.get(range.clone())?.to_vec())
     }
 
     fn transcribe(&mut self, _: Request<Sample>, _: &Settings) {}

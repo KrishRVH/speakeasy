@@ -118,7 +118,7 @@ pub(super) struct Restored {
     pub narrated_copy: bool,
 }
 
-pub(super) type Delivered = machine::Delivered<Native>;
+type Delivered = machine::Delivered<Native>;
 
 pub(super) enum Delivery {
     Inserted(anyhow::Result<speakeasy_platform::Inserted>),

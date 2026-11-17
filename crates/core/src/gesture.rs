@@ -24,7 +24,7 @@ impl Moment {
     }
 
     #[must_use]
-    pub const fn after(self, nanos: u64) -> Self {
+    pub(crate) const fn after(self, nanos: u64) -> Self {
         Self(self.0.saturating_add(nanos))
     }
 
@@ -47,8 +47,8 @@ impl Timing {
         limit: nanos(RECORDING_LIMIT),
     };
 
-    #[must_use]
-    pub const fn new(tap: u64, double_tap: u64, limit: u64) -> Self {
+    #[cfg(test)]
+    pub(crate) const fn new(tap: u64, double_tap: u64, limit: u64) -> Self {
         Self {
             tap,
             double_tap,
@@ -56,8 +56,8 @@ impl Timing {
         }
     }
 
-    #[must_use]
-    pub const fn limit(self) -> u64 {
+    #[cfg(test)]
+    pub(crate) const fn limit(self) -> u64 {
         self.limit
     }
 }
@@ -69,7 +69,7 @@ impl Default for Timing {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum State {
+pub(crate) enum State {
     Idle,
     Held,
     PendingTap,
@@ -78,14 +78,14 @@ pub enum State {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Action {
+pub(crate) enum Action {
     Start,
     Finish,
     Cancel,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct Gesture {
+pub(crate) struct Gesture {
     phase: Phase,
     down: bool,
     timing: Timing,
@@ -93,14 +93,14 @@ pub struct Gesture {
 
 impl Gesture {
     #[must_use]
-    pub fn new(timing: Timing) -> Self {
+    pub(crate) fn new(timing: Timing) -> Self {
         Self {
             timing,
             ..Self::default()
         }
     }
 
-    pub fn deliver(&mut self) -> bool {
+    pub(crate) fn deliver(&mut self) -> bool {
         if self.phase != Phase::Idle {
             return false;
         }
@@ -108,7 +108,7 @@ impl Gesture {
         true
     }
 
-    pub fn save(&mut self) -> bool {
+    pub(crate) fn save(&mut self) -> bool {
         if self.phase != Phase::Idle {
             return false;
         }
@@ -117,7 +117,7 @@ impl Gesture {
     }
 
     #[must_use]
-    pub fn state(&self) -> State {
+    pub(crate) fn state(&self) -> State {
         match self.phase {
             Phase::Idle => State::Idle,
             Phase::Held { .. } => State::Held,
@@ -129,7 +129,7 @@ impl Gesture {
         }
     }
 
-    pub fn press(&mut self, now: Moment) -> Option<Action> {
+    pub(crate) fn press(&mut self, now: Moment) -> Option<Action> {
         let expired = self.tick(now);
         let already_down = mem::replace(&mut self.down, true);
         if already_down || expired.is_some() {
@@ -155,7 +155,7 @@ impl Gesture {
         }
     }
 
-    pub fn release(&mut self, now: Moment) -> Option<Action> {
+    pub(crate) fn release(&mut self, now: Moment) -> Option<Action> {
         let expired = self.tick(now);
         self.down = false;
         match self.phase {
@@ -176,19 +176,19 @@ impl Gesture {
         }
     }
 
-    pub fn lock(&mut self) {
+    pub(crate) fn lock(&mut self) {
         if let Phase::Held { started } = self.phase {
             self.phase = Phase::HandsFree { started };
         }
     }
 
-    pub fn show(&mut self) {
+    pub(crate) fn show(&mut self) {
         if let Phase::Held { started } | Phase::HandsFree { started } = self.phase {
             self.phase = Phase::Show { started };
         }
     }
 
-    pub fn toggle(&mut self, now: Moment) -> Option<Action> {
+    pub(crate) fn toggle(&mut self, now: Moment) -> Option<Action> {
         match self.phase {
             Phase::Idle => {
                 self.phase = Phase::HandsFree { started: now };
@@ -204,7 +204,7 @@ impl Gesture {
     }
 
     #[must_use]
-    pub fn deadline(&self) -> Option<Moment> {
+    pub(crate) fn deadline(&self) -> Option<Moment> {
         match self.phase {
             Phase::Idle | Phase::Processing | Phase::Saving => None,
             Phase::Held { started }
@@ -219,7 +219,7 @@ impl Gesture {
         }
     }
 
-    pub fn tick(&mut self, now: Moment) -> Option<Action> {
+    pub(crate) fn tick(&mut self, now: Moment) -> Option<Action> {
         if self.deadline().is_some_and(|deadline| now >= deadline) {
             self.finish()
         } else {
@@ -227,7 +227,7 @@ impl Gesture {
         }
     }
 
-    pub fn finish(&mut self) -> Option<Action> {
+    pub(crate) fn finish(&mut self) -> Option<Action> {
         self.phase = match self.phase {
             Phase::Idle | Phase::Processing | Phase::Saving => return None,
             Phase::Held { .. } | Phase::PendingTap { .. } | Phase::HandsFree { .. } => {
@@ -238,28 +238,28 @@ impl Gesture {
         Some(Action::Finish)
     }
 
-    pub fn escape(&mut self) -> Option<Action> {
+    pub(crate) fn escape(&mut self) -> Option<Action> {
         match self.phase {
             Phase::Show { .. } | Phase::ShowArmed { .. } if !self.down => None,
             _ => self.cancel(),
         }
     }
 
-    pub fn interrupt(&mut self) -> Option<Action> {
+    pub(crate) fn interrupt(&mut self) -> Option<Action> {
         match self.phase {
             Phase::Show { .. } | Phase::ShowArmed { .. } => self.finish(),
             _ => self.cancel(),
         }
     }
 
-    pub fn cancel(&mut self) -> Option<Action> {
+    pub(crate) fn cancel(&mut self) -> Option<Action> {
         if self.phase == Phase::Saving {
             return None;
         }
         self.abandon()
     }
 
-    pub fn abandon(&mut self) -> Option<Action> {
+    pub(crate) fn abandon(&mut self) -> Option<Action> {
         if self.phase == Phase::Idle {
             return None;
         }
@@ -267,7 +267,7 @@ impl Gesture {
         Some(Action::Cancel)
     }
 
-    pub fn complete(&mut self) {
+    pub(crate) fn complete(&mut self) {
         if matches!(self.phase, Phase::Processing | Phase::Saving) {
             self.phase = Phase::Idle;
         }

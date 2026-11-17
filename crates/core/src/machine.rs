@@ -699,8 +699,7 @@ impl<P: Payload> Machine<P> {
         self.desktop_ready
     }
 
-    #[must_use]
-    pub fn status(&self) -> Status<P> {
+    fn status(&self) -> Status<P> {
         Status {
             phase: self.phase(),
             model: self.worker.model(),
