@@ -1,7 +1,7 @@
 use std::{future::pending, iter, mem, time::Duration};
 
 use anyhow::{anyhow, ensure};
-use speakeasy_core::machine::{Detail, Request, Source, Ticket, Transcript};
+use speakeasy_core::machine::{Completion, Detail, Request, Source, Ticket, Transcript};
 use speakeasy_show::Narration;
 use tokio::{
     sync::watch,
@@ -25,8 +25,16 @@ use crate::{
 
 const RECOVERY_PROBE: Duration = Duration::from_secs(2);
 
+const LOAD_STOPPED: &str = "Loading the local model stopped unexpectedly. Try again.";
+
+const TRANSCRIPTION_STOPPED: &str = "Transcription stopped unexpectedly. Try again.";
+
+pub(super) struct Worker<W> {
+    state: State<W>,
+}
+
 #[derive(Default)]
-pub(super) enum Worker<W> {
+enum State<W> {
     #[default]
     Unavailable,
     Loading(Job<W>),
@@ -37,39 +45,53 @@ pub(super) enum Worker<W> {
     },
 }
 
+impl<W> Default for Worker<W> {
+    fn default() -> Self {
+        Self {
+            state: State::Unavailable,
+        }
+    }
+}
+
 impl<W: Speech> Worker<W> {
     pub(super) fn load<P: Ports<Speech = W>>(ports: &P, config: &Config) -> Self {
-        Self::Loading(Job::spawn(|cancelled| {
-            ports.load(config.clone(), cancelled)
-        }))
+        Self {
+            state: State::Loading(Job::spawn(|cancelled| {
+                ports.load(config.clone(), cancelled)
+            })),
+        }
     }
 
-    pub(super) async fn completed(&mut self) -> Completion<W> {
-        let completion = match self {
-            Self::Loading(job) => Completion::Loaded(joined(
-                (&mut job.task).await,
-                "Loading the local model stopped unexpectedly. Try again.",
-            )),
-            Self::Transcribing { ticket, job } => match joined(
-                (&mut job.task).await,
-                "Transcription stopped unexpectedly. Try again.",
-            ) {
-                Ok((worker, Transcription::Heard(transcript))) => {
-                    Completion::Transcribed(*ticket, Ok((worker, transcript)))
-                },
-                Ok((worker, Transcription::Cancelled)) => Completion::Loaded(Ok(worker)),
-                Ok((worker, Transcription::Abandoned)) => Completion::Abandoned(*ticket, worker),
-                Err(error) => Completion::Transcribed(*ticket, Err(error)),
+    pub(super) async fn completed(&mut self) -> Completion<Native> {
+        let (state, completion) = match &mut self.state {
+            State::Loading(job) => match joined((&mut job.task).await, LOAD_STOPPED) {
+                Ok(worker) => (State::Ready(worker), Completion::Loaded(Ok(()))),
+                Err(error) => (
+                    State::Unavailable,
+                    Completion::Loaded(Err(error.to_string())),
+                ),
             },
-            Self::Unavailable | Self::Ready(_) => pending().await,
+            State::Transcribing { ticket, job } => {
+                let ticket = *ticket;
+                match joined((&mut job.task).await, TRANSCRIPTION_STOPPED) {
+                    Ok((worker, transcription)) => {
+                        (State::Ready(worker), transcription.completion(ticket))
+                    },
+                    Err(error) => (
+                        State::Unavailable,
+                        Completion::Transcribed(ticket, Err(error.to_string())),
+                    ),
+                }
+            },
+            State::Unavailable | State::Ready(_) => pending().await,
         };
-        *self = Self::Unavailable;
+        self.state = state;
         completion
     }
 
     pub(super) fn reload<P: Ports<Speech = W>>(&mut self, ports: &P, config: &Config) {
         let previous = self.take_cancelled();
-        *self = Self::Loading(Job::spawn(|cancelled| {
+        self.state = State::Loading(Job::spawn(|cancelled| {
             let load = ports.load(config.clone(), cancelled.clone());
             async move {
                 previous.stop().await;
@@ -86,7 +108,7 @@ impl<W: Speech> Worker<W> {
         probe: bool,
     ) {
         let previous = self.take_cancelled();
-        *self = Self::Loading(Job::spawn(|mut cancelled| {
+        self.state = State::Loading(Job::spawn(|mut cancelled| {
             let load = ports.load(config.clone(), cancelled.clone());
             async move {
                 if let Some(worker) = previous.into_responsive(probe, &mut cancelled).await {
@@ -99,10 +121,10 @@ impl<W: Speech> Worker<W> {
     }
 
     pub(super) fn transcribe(&mut self, config: &Config, request: Request<Native>) {
-        let mut worker = match mem::take(self) {
-            Self::Ready(worker) => worker,
+        let mut worker = match mem::take(&mut self.state) {
+            State::Ready(worker) => worker,
             other => {
-                *self = other;
+                self.state = other;
                 return;
             },
         };
@@ -118,7 +140,7 @@ impl<W: Speech> Worker<W> {
             corrections: config.vocabulary.clone(),
         };
         let terms = config.recognition_terms.clone();
-        *self = Self::Transcribing {
+        self.state = State::Transcribing {
             ticket: request.ticket,
             job: Job::spawn(|mut cancelled| async move {
                 let heard = async {
@@ -158,10 +180,10 @@ impl<W: Speech> Worker<W> {
     }
 
     fn request_stop(&self) {
-        match self {
-            Self::Loading(job) => job.cancel(),
-            Self::Transcribing { job, .. } => job.cancel(),
-            Self::Unavailable | Self::Ready(_) => {},
+        match &self.state {
+            State::Loading(job) => job.cancel(),
+            State::Transcribing { job, .. } => job.cancel(),
+            State::Unavailable | State::Ready(_) => {},
         }
     }
 
@@ -177,10 +199,8 @@ impl<W: Speech> Worker<W> {
         probe: bool,
         cancelled: &mut watch::Receiver<bool>,
     ) -> Option<W> {
-        let (mut worker, transcribed) = self.into_worker().await?;
-        if !*cancelled.borrow()
-            && (transcribed || (probe && responds(&mut worker, cancelled).await))
-        {
+        let (mut worker, answered) = self.into_worker().await?;
+        if !*cancelled.borrow() && (answered || (probe && responds(&mut worker, cancelled).await)) {
             return Some(worker);
         }
         worker.stop().await;
@@ -194,38 +214,41 @@ impl<W: Speech> Worker<W> {
     }
 
     async fn into_worker(self) -> Option<(W, bool)> {
-        match self {
-            Self::Ready(worker) => Some((worker, false)),
-            Self::Loading(job) => job.task.await.ok()?.ok().map(|worker| (worker, false)),
-            Self::Transcribing { job, .. } => {
-                job.task.await.ok()?.ok().map(|(worker, transcription)| {
-                    (
-                        worker,
-                        matches!(
-                            transcription,
-                            Transcription::Heard(_) | Transcription::Abandoned
-                        ),
-                    )
-                })
-            },
-            Self::Unavailable => None,
+        match self.state {
+            State::Ready(worker) => Some((worker, false)),
+            State::Loading(job) => job.task.await.ok()?.ok().map(|worker| (worker, false)),
+            State::Transcribing { job, .. } => job
+                .task
+                .await
+                .ok()?
+                .ok()
+                .map(|(worker, transcription)| (worker, transcription.answered())),
+            State::Unavailable => None,
         }
     }
 }
 
-pub(super) enum Completion<W> {
-    Abandoned(Ticket, W),
-    Loaded(anyhow::Result<W>),
-    Transcribed(Ticket, anyhow::Result<(W, Transcript<Native>)>),
-}
-
-pub(super) enum Transcription {
+enum Transcription {
     Abandoned,
     Heard(Transcript<Native>),
     Cancelled,
 }
 
-pub(super) struct Job<T> {
+impl Transcription {
+    const fn answered(&self) -> bool {
+        matches!(self, Self::Heard(_) | Self::Abandoned)
+    }
+
+    fn completion(self, ticket: Ticket) -> Completion<Native> {
+        match self {
+            Self::Heard(transcript) => Completion::Transcribed(ticket, Ok(transcript)),
+            Self::Cancelled => Completion::Loaded(Ok(())),
+            Self::Abandoned => Completion::Abandoned(ticket),
+        }
+    }
+}
+
+struct Job<T> {
     cancellation: watch::Sender<bool>,
     task: JoinHandle<anyhow::Result<T>>,
 }

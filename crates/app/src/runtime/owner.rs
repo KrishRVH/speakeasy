@@ -16,7 +16,7 @@ use async_channel::{Receiver, RecvError, Sender};
 use speakeasy_core::{
     gesture::{Moment, Timing},
     machine::{
-        self, Capture, Env, Event, Failure, Halt, Keeping, Kept, Machine, Now, Outcome,
+        self, Capture, Completion, Env, Event, Failure, Halt, Keeping, Kept, Machine, Now, Outcome,
         Publication, RecognitionMode, Recorder, Refusal, Release, Request, Screening, SessionId,
         Status, Stopped, Unheard,
     },
@@ -36,7 +36,7 @@ use super::{
     native::{self, Clip, Delivery, Native},
     now,
     ports::{CaptureEvent, Ports, Published, ShowEvent},
-    worker::{Completion, Worker},
+    worker::Worker,
 };
 use crate::{
     audio::{self, SilentMicrophone},
@@ -46,7 +46,7 @@ use crate::{
     transcript::{self, style::Style},
 };
 
-enum Wake<W> {
+enum Wake {
     Stop,
     Input(Result<Input, RecvError>),
     Report(Report),
@@ -54,7 +54,7 @@ enum Wake<W> {
     Command(Directive),
     Capture(CaptureEvent),
     Show(ShowEvent),
-    Worker(Completion<W>),
+    Worker(Completion<Native>),
     Delivered(Result<Delivery, JoinError>),
     Abandoned(SessionId, Result<Delivery, JoinError>),
     Retired(Recorder),
@@ -166,7 +166,7 @@ impl<P: Ports> Owner<P> {
         Self { machine, world }
     }
 
-    async fn wait(&mut self) -> Wake<P::Speech> {
+    async fn wait(&mut self) -> Wake {
         let world = &mut self.world;
         let origin = world.origin;
         let timer = or_pending(self.machine.deadline().and_then(|deadline| {
@@ -200,7 +200,7 @@ impl<P: Ports> Owner<P> {
         }
     }
 
-    fn event(&mut self, wake: Wake<P::Speech>) -> Option<Event<Native>> {
+    fn event(&mut self, wake: Wake) -> Option<Event<Native>> {
         let world = &mut self.world;
         Some(match wake {
             Wake::Stop => Event::Stop,
@@ -219,7 +219,7 @@ impl<P: Ports> Owner<P> {
             Wake::Command(directive) => return world.direct(directive),
             Wake::Capture(event) => capture(event),
             Wake::Show(event) => screening(event),
-            Wake::Worker(completion) => Event::Worker(world.completed(completion)),
+            Wake::Worker(completion) => Event::Worker(completion),
             Wake::Delivered(result) => {
                 world.delivery = None;
                 Event::Delivered(Delivery::settled(result))
@@ -331,27 +331,6 @@ impl<P: Ports> World<P> {
                 self.shortcut = shortcut.into();
                 self.cancel_shortcut = cancel.into();
                 machine::Input::DesktopReady
-            },
-        }
-    }
-
-    fn completed(&mut self, completion: Completion<P::Speech>) -> machine::Completion<Native> {
-        match completion {
-            Completion::Abandoned(ticket, worker) => {
-                self.worker = Worker::Ready(worker);
-                machine::Completion::Abandoned(ticket)
-            },
-            Completion::Loaded(Ok(worker)) => {
-                self.worker = Worker::Ready(worker);
-                machine::Completion::Loaded(Ok(()))
-            },
-            Completion::Loaded(Err(error)) => machine::Completion::Loaded(Err(error.to_string())),
-            Completion::Transcribed(ticket, Ok((worker, transcript))) => {
-                self.worker = Worker::Ready(worker);
-                machine::Completion::Transcribed(ticket, Ok(transcript))
-            },
-            Completion::Transcribed(ticket, Err(error)) => {
-                machine::Completion::Transcribed(ticket, Err(error.to_string()))
             },
         }
     }
