@@ -18,24 +18,7 @@ fn retain(directory: &Path, journal: &Journal, duration: u64) -> anyhow::Result<
 }
 
 #[test]
-fn source_arguments_reject_ambiguous_times_and_missing_destinations() -> anyhow::Result<()> {
-    for (text, ms) in [("0", 0), ("12.5", 12_500), ("1:02.005", 62_005)] {
-        assert_eq!(query::time(text)?.as_millis(), ms);
-    }
-    for text in [
-        "",
-        "-1",
-        "NaN",
-        "1:60",
-        "1:2:3",
-        "1.",
-        ".1",
-        "1.1234",
-        "1e3",
-        "18446744073709551615",
-    ] {
-        assert!(query::time(text).is_err(), "accepted {text}");
-    }
+fn source_arguments_need_one_focus_and_a_destination_for_files() {
     for args in [
         vec!["show"],
         vec!["show", "--at", "1"],
@@ -66,7 +49,6 @@ fn source_arguments_reject_ambiguous_times_and_missing_destinations() -> anyhow:
     let args = ["show", "--at", "1", "--out", "x", "--annotated", "--video"];
     assert!(parse(Verb::Frame, args.into_iter().map(OsString::from)).is_ok());
     assert!(parse(Verb::Frames, args.into_iter().map(OsString::from)).is_err());
-    Ok(())
 }
 
 #[test]

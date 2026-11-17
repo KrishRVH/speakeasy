@@ -235,22 +235,3 @@ fn an_unreadable_manifest_still_reports_the_shows_pin() -> anyhow::Result<()> {
     );
     Ok(())
 }
-
-#[test]
-fn an_emptied_summary_is_valid_and_an_undecodable_one_fails_privately() -> anyhow::Result<()> {
-    let show = tempfile::tempdir()?;
-    let summary_path = show.path().join("summary.md");
-    fs::write(&summary_path, b"")?;
-    assert!(
-        recall::summary(show.path())?.is_empty(),
-        "An intentionally emptied summary is a valid edit"
-    );
-    fs::write(&summary_path, b"PRIVATE\xff")?;
-    assert!(
-        !recall::summary(show.path())
-            .unwrap_err()
-            .to_string()
-            .contains("PRIVATE")
-    );
-    Ok(())
-}

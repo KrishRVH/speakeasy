@@ -185,3 +185,22 @@ fn five_minutes_of_dense_ink_has_room_in_the_read_limit() {
     assert!(u64::try_from(bytes.len()).unwrap() < MANIFEST_LIMIT / 2);
     assert!(Manifest::parse(&bytes).is_ok());
 }
+
+#[test]
+fn an_emptied_summary_is_valid_and_an_undecodable_one_fails_privately() -> anyhow::Result<()> {
+    let show = tempfile::tempdir()?;
+    let summary_path = show.path().join("summary.md");
+    fs::write(&summary_path, b"")?;
+    assert!(
+        summary(show.path())?.is_empty(),
+        "An intentionally emptied summary is a valid edit"
+    );
+    fs::write(&summary_path, b"PRIVATE\xff")?;
+    assert!(
+        !summary(show.path())
+            .unwrap_err()
+            .to_string()
+            .contains("PRIVATE")
+    );
+    Ok(())
+}

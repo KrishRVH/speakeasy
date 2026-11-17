@@ -106,3 +106,30 @@ pub(in crate::show) fn time(value: &str) -> anyhow::Result<Moment> {
             .context("Time is too large")?,
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn times_are_whole_seconds_or_minutes_with_up_to_three_decimals() -> anyhow::Result<()> {
+        for (text, ms) in [("0", 0), ("12.5", 12_500), ("1:02.005", 62_005)] {
+            assert_eq!(time(text)?.as_millis(), ms);
+        }
+        for text in [
+            "",
+            "-1",
+            "NaN",
+            "1:60",
+            "1:2:3",
+            "1.",
+            ".1",
+            "1.1234",
+            "1e3",
+            "18446744073709551615",
+        ] {
+            assert!(time(text).is_err(), "accepted {text}");
+        }
+        Ok(())
+    }
+}
