@@ -61,7 +61,7 @@ impl Signature {
     #[must_use]
     pub(crate) fn of(image: &Image) -> Self {
         let pixels: Vec<&[[u8; 4]]> = image.rows().map(|row| row.as_chunks::<4>().0).collect();
-        let column_spans = spans(convert::count(image.width()), COLUMNS);
+        let column_spans: Vec<_> = spans(convert::count(image.width()), COLUMNS).collect();
         let mut cells = [0; CELLS];
         for (line, rows) in cells
             .as_chunks_mut::<COLUMNS>()
@@ -240,16 +240,14 @@ fn neighbors(cell: usize) -> impl Iterator<Item = usize> {
     })
 }
 
-pub(crate) fn spans(length: usize, parts: usize) -> Vec<Range<usize>> {
+pub(crate) fn spans(length: usize, parts: usize) -> impl Iterator<Item = Range<usize>> {
     let scale = length as f32 / parts as f32;
-    (0..parts)
-        .map(|part| {
-            let start = convert::count_floor(part as f32 * scale).min(length.saturating_sub(1));
-            let end = convert::count_floor((part as f32 + 1.0) * scale)
-                .clamp(start.saturating_add(1), length.max(1));
-            start..end
-        })
-        .collect()
+    (0..parts).map(move |part| {
+        let start = convert::count_floor(part as f32 * scale).min(length.saturating_sub(1));
+        let end = convert::count_floor((part as f32 + 1.0) * scale)
+            .clamp(start.saturating_add(1), length.max(1));
+        start..end
+    })
 }
 
 fn cell_range(low: f32, high: f32, cells: usize) -> Range<usize> {

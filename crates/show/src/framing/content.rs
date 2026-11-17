@@ -29,9 +29,8 @@ impl Content {
         };
         let columns = cells(surface.width, frame.width());
         let pixels: Vec<&[[u8; 4]]> = frame.rows().map(|row| row.as_chunks::<4>().0).collect();
-        let column_spans = spans(convert::count(frame.width()), columns);
+        let column_spans: Vec<_> = spans(convert::count(frame.width()), columns).collect();
         let lines = spans(pixels.len(), cells(surface.height, frame.height()))
-            .into_iter()
             .map(|rows| {
                 column_spans
                     .iter()
