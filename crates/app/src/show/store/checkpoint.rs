@@ -309,7 +309,7 @@ impl Checkpoint {
     pub(crate) fn replay(&self) -> anyhow::Result<Take> {
         let opened = recall::regular_file(&self.directory, LOG, FILE_LIMIT)
             .and_then(|()| File::open(self.directory.join(LOG)));
-        let mut log = found(opened)?.context(NO_FRAMES)?;
+        let mut log = io::BufReader::new(found(opened)?.context(NO_FRAMES)?);
         let mut header = [0; Log::HEADER_BYTES];
         log.read_exact(&mut header)
             .context("The Show checkpoint header is incomplete")?;
@@ -328,10 +328,10 @@ impl Checkpoint {
                 break;
             }
             let mut record = vec![0; size];
-            let Some((prefix, rest)) = record.split_at_mut_checked(4) else {
+            let Some((prefix, rest)) = record.split_first_chunk_mut::<4>() else {
                 break;
             };
-            prefix.copy_from_slice(&length);
+            *prefix = length;
             if !read_complete(&mut log, rest)? {
                 break;
             }
