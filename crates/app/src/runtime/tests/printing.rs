@@ -1,0 +1,93 @@
+use anyhow::Context as _;
+
+use super::*;
+use crate::control::{Call, Command, Disposition, Reply};
+
+async fn captured(h: &Harness) -> anyhow::Result<String> {
+    let started = h.call(Command::Capture { style: None }).await?;
+    assert_eq!(started.result, Disposition::Ok);
+    receive(&h.captures).await?;
+    started
+        .session
+        .context("Capture did not identify its session")
+}
+
+impl Harness {
+    async fn call(&self, command: Command) -> anyhow::Result<Reply> {
+        let (call, receipt) = Call::new(command);
+        self.runtime.control(call);
+        receive(&receipt).await
+    }
+
+    fn print(&self, session: String) -> async_channel::Receiver<Reply> {
+        let (call, receipt) = Call::new(Command::Print { session });
+        self.runtime.control(call);
+        receipt
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_captured_dictation_answers_its_caller_and_pastes_nothing() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    h.ready().await?;
+    let token = captured(&h).await?;
+    let printed = h.print(token);
+    h.transcribe_next_as("Fixture words.").await?;
+    let reply = receive(&printed).await?;
+    assert_eq!(reply.result, Disposition::Ok);
+    assert_eq!(reply.text.as_deref(), Some("Fixture words."));
+    h.phase(Phase::Done).await?;
+    assert!(h.pasted.try_recv().is_err());
+    assert!(h.entered.try_recv().is_err());
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn only_a_captured_dictation_can_be_printed() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    h.ready().await?;
+    let started = h.call(Command::Start { style: None }).await?;
+    receive(&h.captures).await?;
+    let token = started
+        .session
+        .context("Start did not identify its session")?;
+    let refused = receive(&h.print(token.clone())).await?;
+    assert_eq!(refused.result, Disposition::Refused);
+    assert!(refused.text.is_none());
+    assert_eq!(
+        h.call(Command::Stop { session: token }).await?.result,
+        Disposition::Ok
+    );
+    h.transcribe_next_as("Typed fixture.").await?;
+    assert_eq!(receive(&h.pasted).await?, "Typed fixture.");
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_capture_that_ends_without_words_refuses_its_caller() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    h.ready().await?;
+    let token = captured(&h).await?;
+    let printed = h.print(token);
+    h.transcribe_next_as("").await?;
+    let reply = receive(&printed).await?;
+    assert_eq!(reply.result, Disposition::Refused);
+    assert!(reply.text.is_none());
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_capture_stopped_without_print_keeps_its_words_off_the_screen() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    h.ready().await?;
+    let token = captured(&h).await?;
+    assert_eq!(
+        h.call(Command::Stop { session: token }).await?.result,
+        Disposition::Ok
+    );
+    h.transcribe_next_as("Private fixture.").await?;
+    h.phase(Phase::Error).await?;
+    assert!(h.pasted.try_recv().is_err());
+    assert!(h.snapshot().last_dictation);
+    h.close().await
+}

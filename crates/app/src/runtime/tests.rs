@@ -960,6 +960,7 @@ mod dictation;
 mod last_show;
 mod model;
 mod practice;
+mod printing;
 mod recognition;
 mod recovery;
 mod replay;

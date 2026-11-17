@@ -38,6 +38,16 @@ fn wire_commands_preserve_atomic_style_and_session_identity() {
                 session: "0123456789abcdef-7".into(),
             },
         ),
+        (
+            r#"{"v":1,"op":"capture"}"#,
+            Command::Capture { style: None },
+        ),
+        (
+            r#"{"v":1,"op":"print","session":"0123456789abcdef-7"}"#,
+            Command::Print {
+                session: "0123456789abcdef-7".into(),
+            },
+        ),
         (r#"{"v":1,"op":"paste_last"}"#, Command::PasteLast),
         (
             r#"{"v":1,"op":"style","name":"verbatim"}"#,
@@ -188,6 +198,18 @@ fn cli_parsing_keeps_config_separate_and_rejects_ambiguous_calls() -> anyhow::Re
         }
     );
     assert_eq!(
+        parse(&["dictation", "start", "--style", "camel", "--print"])?.command,
+        Command::Capture {
+            style: Some(Style::Identifier(Case::Camel))
+        }
+    );
+    assert_eq!(
+        parse(&["dictation", "stop", "0123456789abcdef-7", "--print"])?.command,
+        Command::Print {
+            session: "0123456789abcdef-7".into()
+        }
+    );
+    assert_eq!(
         parse(&["preset", "Fixture preset"])?.command,
         Command::Preset {
             name: "Fixture preset".into()
@@ -195,6 +217,8 @@ fn cli_parsing_keeps_config_separate_and_rejects_ambiguous_calls() -> anyhow::Re
     );
     for arguments in [
         vec!["dictation", "stop"],
+        vec!["dictation", "stop", "--print"],
+        vec!["dictation", "cancel", "0123456789abcdef-7", "--print"],
         vec!["dictation", "cancel", ""],
         vec!["dictation", "stop", "private fixture"],
         vec!["dictation", "start", "--style", "private fixture"],
@@ -211,4 +235,22 @@ fn cli_parsing_keeps_config_separate_and_rejects_ambiguous_calls() -> anyhow::Re
         assert!(!format!("{error:#}").contains("private fixture"));
     }
     Ok(())
+}
+
+#[test]
+fn printed_text_fits_its_reply_or_is_refused_without_the_text() {
+    let words = "fixture ".repeat(2_000);
+    let reply = Reply::printed(words.clone());
+    assert_eq!(reply.text.as_deref(), Some(words.as_str()));
+    let encoded = reply.encode().unwrap();
+    assert!(encoded.len() > MAX_BYTES);
+    assert_eq!(
+        Reply::decode(&encoded).and_then(|reply| reply.text),
+        Some(words)
+    );
+
+    let refused = Reply::printed("\u{1}".repeat(MAX_REPLY_BYTES));
+    assert_eq!(refused.result, Disposition::Refused);
+    assert!(refused.text.is_none());
+    assert!(!format!("{refused:?}").contains('\u{1}'));
 }

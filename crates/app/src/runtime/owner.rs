@@ -21,7 +21,7 @@ use speakeasy_core::{
         Status, Stopped, Unheard,
     },
 };
-use speakeasy_platform::{Enter, Input, InputSender, InsertPermit, Scope, Taps};
+use speakeasy_platform::{Enter, Input, InputSender, InsertPermit, Inserted, Scope, Taps};
 use speakeasy_show::Ending;
 use tokio::{
     sync::{mpsc, oneshot, watch},
@@ -46,6 +46,9 @@ use crate::{
     show::{self, Checkpointing, SavedShow, Unwound},
     transcript::{self, style::Style},
 };
+
+const UNCLAIMED: &str =
+    "A script started this dictation to read it but stopped without asking, so nothing was pasted.";
 
 enum Wake {
     Stop,
@@ -492,11 +495,24 @@ impl<P: Ports> Env<Native> for World<P> {
         mut text: Zeroizing<String>,
         permit: &InsertPermit,
         config: &Config,
-        enter: machine::Enter,
+        handoff: machine::Handoff<Native>,
     ) {
-        let enter = match enter {
-            machine::Enter::Withheld => Enter::Withheld,
-            machine::Enter::Pressed => Enter::Pressed,
+        let enter = match handoff {
+            machine::Handoff::Insert(machine::Enter::Withheld) => Enter::Withheld,
+            machine::Handoff::Insert(machine::Enter::Pressed) => Enter::Pressed,
+            machine::Handoff::Print(call) => {
+                call.respond(Reply::printed(mem::take(&mut *text)));
+                self.delivery = Some(tokio::spawn(async {
+                    Delivered::Inserted(Ok(Inserted::Sent))
+                }));
+                return;
+            },
+            machine::Handoff::Capture => {
+                self.delivery = Some(tokio::spawn(async {
+                    Delivered::Inserted(Ok(Inserted::Unavailable(UNCLAIMED)))
+                }));
+                return;
+            },
         };
         let insertion = self.ports.insert(
             mem::take(&mut *text),

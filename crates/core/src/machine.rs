@@ -21,7 +21,7 @@ use self::session::{Purpose, Session};
 pub use self::{
     outcome::{Failure, Notice, Outcome, Refusal},
     recognition::{Detail, Part, Partition, Request, Ticket, Transcript},
-    session::{Enter, Kept, Origin, Publication, Recognized, Release, Reopened, Sealed},
+    session::{Enter, Handoff, Kept, Origin, Publication, Recognized, Release, Reopened, Sealed},
 };
 use crate::gesture::{Action, Gesture, Moment, State, Timing};
 
@@ -134,7 +134,13 @@ pub trait Env<P: Payload> {
     fn compose(&mut self, heard: P::Heard, style: P::Style, config: &P::Config)
     -> Option<P::Heard>;
 
-    fn insert(&mut self, text: P::Heard, permit: &P::Permit, config: &P::Config, enter: Enter);
+    fn insert(
+        &mut self,
+        text: P::Heard,
+        permit: &P::Permit,
+        config: &P::Config,
+        handoff: Handoff<P>,
+    );
 
     fn ready(&mut self, practice: &P::Practice) -> bool;
 
@@ -395,7 +401,9 @@ pub enum Report<P: Payload> {
 pub enum Command<P: Payload> {
     Status,
     Start(Option<P::Style>),
+    Capture(Option<P::Style>),
     Stop(Option<SessionId>),
+    Print(Option<SessionId>),
     Cancel(Option<SessionId>),
     PasteLast,
     Unsupported,
@@ -1225,10 +1233,10 @@ impl<P: Payload> Machine<P> {
     ) -> ControlFlow<Halt> {
         match action {
             Some(Action::Start) => {
-                let purpose = self
-                    .practice
-                    .clone()
-                    .map_or(Purpose::Dictation(Enter::Withheld), Purpose::Practice);
+                let purpose = self.practice.clone().map_or(
+                    Purpose::Dictation(Handoff::Insert(Enter::Withheld)),
+                    Purpose::Practice,
+                );
                 return self.start_session(now, purpose, env);
             },
             Some(Action::Finish) => {
@@ -1378,9 +1386,50 @@ impl<P: Payload> Machine<P> {
         }
     }
 
+    fn shape_started(&mut self, style: Option<P::Style>, captured: bool) {
+        let Some(session) = &mut self.session else {
+            return;
+        };
+        if let Some(style) = style {
+            session.style = style;
+            self.latest.style = style;
+        }
+        if captured {
+            session.capture();
+        }
+    }
+
+    fn print(
+        &mut self,
+        now: Now<P>,
+        call: P::Call,
+        token: Option<SessionId>,
+        env: &mut impl Env<P>,
+    ) -> ControlFlow<Halt> {
+        if token.is_none() || self.control_session() != token {
+            env.respond(call, Err(Refusal::NotActive));
+            return ControlFlow::Continue(());
+        }
+        let call = match &mut self.session {
+            Some(session) => match session.print_to(call) {
+                Ok(()) => {
+                    let action = self.gesture.finish();
+                    return self.handle_action(now, action, env);
+                },
+                Err(call) => call,
+            },
+            None => call,
+        };
+        env.respond(call, Err(Refusal::NotCaptured));
+        ControlFlow::Continue(())
+    }
+
     fn end_session(&mut self, outcome: Outcome<P>, env: &mut impl Env<P>) {
-        if let Some(session) = self.session.take() {
+        if let Some(mut session) = self.session.take() {
             env.revoke(&session.permit);
+            if let Some(call) = session.take_caller() {
+                env.respond(call, Err(Refusal::Unheard));
+            }
         }
         self.gesture.complete();
         self.clear_warning();
@@ -1396,10 +1445,13 @@ impl<P: Payload> Machine<P> {
     fn abandon(&mut self, env: &mut impl Env<P>) {
         self.gesture.abandon();
         self.clear_warning();
-        let Some(session) = self.session.take() else {
+        let Some(mut session) = self.session.take() else {
             return;
         };
         env.revoke(&session.permit);
+        if let Some(call) = session.take_caller() {
+            env.respond(call, Err(Refusal::Unheard));
+        }
         if session.is_show() {
             self.retire(Recorder::Screen, env);
         }
@@ -1580,9 +1632,13 @@ impl<P: Payload> Machine<P> {
         command: Command<P>,
         env: &mut impl Env<P>,
     ) -> ControlFlow<Halt> {
+        if let Command::Print(token) = command {
+            return self.print(now, call, token, env);
+        }
         let reply = match command {
             Command::Status => Ok(()),
-            Command::Start(style) => {
+            Command::Print(_) => Err(Refusal::NotActive),
+            Command::Start(style) | Command::Capture(style) => {
                 if self.is_busy() {
                     Err(Refusal::Busy)
                 } else if !self.desktop_ready || self.worker.model() != ModelState::Ready {
@@ -1590,12 +1646,7 @@ impl<P: Payload> Machine<P> {
                 } else {
                     let action = self.gesture.toggle(now.moment);
                     self.handle_action(now, action, env)?;
-                    if let Some(style) = style
-                        && let Some(session) = &mut self.session
-                    {
-                        session.style = style;
-                        self.latest.style = style;
-                    }
+                    self.shape_started(style, matches!(command, Command::Capture(_)));
                     if self.control_session().is_some() {
                         Ok(())
                     } else {

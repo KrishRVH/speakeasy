@@ -376,8 +376,9 @@ fn print_help() -> io::Result<()> {
          clipboard.\n\
          --demo-tray also previews native tray, minimize, close and relaunch behavior.\n\
          speakeasy status [--config PATH]\n\
-         speakeasy dictation start [--style STYLE] [--config PATH]\n\
-         speakeasy dictation stop|cancel TOKEN [--config PATH]\n\
+         speakeasy dictation start [--print] [--style STYLE] [--config PATH]\n\
+         speakeasy dictation stop TOKEN [--print] [--config PATH]\n\
+         speakeasy dictation cancel TOKEN [--config PATH]\n\
          speakeasy paste-last [--config PATH]\n\
          speakeasy style STYLE [--config PATH]\n\
          speakeasy preset NAME [--config PATH]\n\n\

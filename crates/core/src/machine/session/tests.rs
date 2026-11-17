@@ -11,7 +11,7 @@ fn opened(log: &mut Log, show: bool) -> Session<Sample> {
         SessionId::FIRST,
         1,
         Duration::ZERO,
-        Purpose::Dictation(Enter::Withheld),
+        Purpose::Dictation(Handoff::Insert(Enter::Withheld)),
         (),
     );
     if show {

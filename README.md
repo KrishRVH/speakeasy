@@ -460,12 +460,15 @@ the Windows `speakeasy-cli.exe`, so roots and Show paths stay Windows paths, and
 unchanged. The server's initialization instructions carry the disclosure above and the reading guide
 that `speakeasy show skill` prints.
 
-Scripts can control a running desktop app without reading dictation text:
+Scripts can control a running desktop app. Only a dictation a script starts with `--print` returns
+its words, and only to `dictation stop TOKEN --print`:
 
 ```sh
 speakeasy status
 speakeasy dictation start --style snake
 speakeasy dictation stop "TOKEN_FROM_START"
+speakeasy dictation start --print
+speakeasy dictation stop "TOKEN_FROM_START" --print
 speakeasy dictation cancel "TOKEN_FROM_START"
 speakeasy paste-last
 speakeasy style prose
@@ -479,8 +482,18 @@ JSON and also exit 2. Start creates a hands-free ordinary dictation; stop and ca
 exact session token, which expires with that session or app restart. Busy starts, stale tokens, and
 commands targeting Shows or private practice are refused. Read status after an uncertain result
 instead of blindly retrying. `style` changes the next-recording default; `dictation start --style`
-overrides only that recording. These explicit commands work on all three platforms; Linux's
-desktop-binding `--toggle` and `--cancel` still require Desktop bindings.
+overrides only that recording.
+
+`dictation start --print` records the same hands-free dictation, but its words never reach the
+focused app. `dictation stop TOKEN --print` finishes it, waits up to two minutes for recognition,
+and returns the text as the reply's `text` field, cleaned up like any dictation in its style. A
+printed dictation pastes nothing; Paste last dictation can still paste it. Stopping it without
+`--print`, or finishing it with the shortcut, pastes nothing and says so. Printing a dictation
+started without `--print` is refused, as is printing one twice, and one that ends empty, cancelled,
+or failed refuses its caller. Keyboard dictations, Shows, practice, and earlier dictations can never
+be read back. Text over the 64 KiB reply limit is refused; paste it instead. These explicit commands
+work on all three platforms; Linux's desktop-binding `--toggle` and `--cancel` still require Desktop
+bindings.
 
 `show skill` prints the [agent reading guide](skills/speakeasy-show/SKILL.md) embedded in the
 installed binary. `show skill --install DIR` writes it to `DIR/speakeasy-show/SKILL.md` for an agent

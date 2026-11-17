@@ -79,7 +79,9 @@ publication retains voice for explicit video export; cancellation or discard rem
 Save narration and retained voice durably before retiring the checkpoint, and recover to a new
 bundle without overwriting edits. Preserve user settings and edits. Keep secrets in ignored local
 `.env` files; never print keys, recorded audio, screen pixels, transcript text, or engine output,
-including through `Debug`. Models and generated artifacts stay out of Git.
+including through `Debug`. The one exception is `dictation stop TOKEN --print`, which returns a
+script-started `--print` dictation's text to that caller only. Models and generated artifacts stay
+out of Git.
 
 ## Tests and review
 

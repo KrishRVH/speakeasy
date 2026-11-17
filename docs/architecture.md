@@ -360,17 +360,21 @@ module unless a test file is named.
   UI thread.
 - **Instance and relaunch**: [instance.rs](../crates/app/src/instance.rs) owns the lock and the
   secret-gated loopback commands. Shortcut opcodes 0–2 serve relaunch and Linux desktop bindings.
-  Opcode 3 carries versioned JSON in a length-prefixed 4 KiB frame. An owned server thread bounds
-  authentication and owns up to eight concurrent control receipts, each with a two-second deadline.
-  Shortcut cancel/toggle bindings remain responsive while a receipt waits; shutdown drains every
-  task. [control.rs](../crates/app/src/control.rs) rejects malformed commands without echoing input.
+  Opcode 3 carries versioned JSON in a length-prefixed 4 KiB command frame; replies may use the full
+  64 KiB frame. An owned server thread bounds authentication and owns up to eight concurrent control
+  receipts, each with a two-second deadline, except a print, which waits up to two minutes. Shortcut
+  cancel/toggle bindings remain responsive while a receipt waits; shutdown drains every task.
+  [control.rs](../crates/app/src/control.rs) rejects malformed commands without echoing input.
   [owner/commands.rs](../crates/app/src/runtime/owner/commands.rs) admits actions only for live
   callers and acknowledges actual owner decisions. Stop/cancel tokens combine the runtime
   incarnation with the session ID and exclude Shows and practice. Style is acknowledged by its
   Services owner without inventing a session-status observation; ordinary status is observed by the
-  session owner. A lost receipt is unknown, never proof of refusal.
-  [tests/control.rs](../crates/app/src/runtime/tests/control.rs) covers stale authority, busy
-  admission, per-session style, and preset adoption.
+  session owner. A lost receipt is unknown, never proof of refusal. A capture (`start --print`)
+  marks its session's handoff; a print stores its call in that session, which answers it with the
+  text in place of insertion or refuses it when the session ends without text, so one session
+  answers one print at most. [tests/printing.rs](../crates/app/src/runtime/tests/printing.rs) covers
+  that handoff. [tests/control.rs](../crates/app/src/runtime/tests/control.rs) covers stale
+  authority, busy admission, per-session style, and preset adoption.
 - **Command line**: [main.rs](../crates/app/src/main.rs) parses options and routes what they ask
   for, and [show/command.rs](../crates/app/src/show/command.rs) parses `show` commands. Its
   [output.rs](../crates/app/src/show/command/output.rs) projects metadata without private text,

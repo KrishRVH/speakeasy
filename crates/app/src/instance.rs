@@ -137,7 +137,7 @@ impl Instance {
         let mut reply = ReplyDeadline {
             stream: &mut stream,
             sent: Instant::now(),
-            timeout: control::TIMEOUT.saturating_add(IO_TIMEOUT),
+            timeout: command.timeout().saturating_add(IO_TIMEOUT),
         };
         match read_frame(&mut reply) {
             Ok(bytes) => Reply::decode(&bytes).unwrap_or_else(|| Reply::unknown(UNCONFIRMED)),
@@ -383,7 +383,7 @@ fn read_frame(reader: &mut impl Read) -> io::Result<Vec<u8>> {
     let mut length = [0; 2];
     reader.read_exact(&mut length)?;
     let length = usize::from(u16::from_be_bytes(length));
-    if length > control::MAX_BYTES {
+    if length > control::MAX_REPLY_BYTES {
         return Err(io::ErrorKind::InvalidData.into());
     }
     let mut bytes = vec![0; length];

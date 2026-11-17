@@ -14,7 +14,9 @@ use crate::{config::presets::validate_name, paths, transcript::style::Style};
 
 const VERSION: u8 = 1;
 pub(crate) const MAX_BYTES: usize = 4096;
+pub(crate) const MAX_REPLY_BYTES: usize = 65_535;
 pub(crate) const TIMEOUT: Duration = Duration::from_secs(2);
+const PRINT_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
@@ -24,7 +26,14 @@ pub(crate) enum Command {
         #[serde(skip_serializing_if = "Option::is_none")]
         style: Option<Style>,
     },
+    Capture {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        style: Option<Style>,
+    },
     Stop {
+        session: String,
+    },
+    Print {
         session: String,
     },
     Cancel {
@@ -86,6 +95,8 @@ pub(crate) struct Reply {
     pub session: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<Status>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
 }
 
 impl fmt::Debug for Reply {
@@ -104,6 +115,7 @@ impl Reply {
             reason: None,
             session: None,
             status: None,
+            text: None,
         }
     }
 
@@ -114,6 +126,21 @@ impl Reply {
             reason: None,
             session: status.session.clone(),
             status: Some(status),
+            text: None,
+        }
+    }
+
+    pub(crate) fn printed(text: String) -> Self {
+        let reply = Self {
+            text: Some(text),
+            ..Self::accepted()
+        };
+        if reply.encode().is_ok() {
+            reply
+        } else {
+            Self::refused(
+                "The dictation is too long to print. Choose Paste last dictation to paste it instead.",
+            )
         }
     }
 
@@ -132,6 +159,7 @@ impl Reply {
             reason: Some(reason),
             session: None,
             status: None,
+            text: None,
         }
     }
 
@@ -153,7 +181,7 @@ impl Reply {
     pub(crate) fn encode(&self) -> Result<Vec<u8>, &'static str> {
         let bytes =
             serde_json::to_vec(self).map_err(|_error| "Cannot encode the control reply.")?;
-        if bytes.len() > MAX_BYTES {
+        if bytes.len() > MAX_REPLY_BYTES {
             return Err("The control reply exceeds its size limit.");
         }
         Ok(bytes)
@@ -185,9 +213,9 @@ impl Call {
         let now = Instant::now();
         (
             Self {
+                deadline: now.checked_add(command.timeout()).unwrap_or(now),
                 command,
                 reply,
-                deadline: now.checked_add(TIMEOUT).unwrap_or(now),
                 caller: None,
             },
             receipt,
@@ -246,6 +274,20 @@ struct Incoming {
 }
 
 impl Command {
+    pub(crate) const fn timeout(&self) -> Duration {
+        match self {
+            Self::Print { .. } => PRINT_TIMEOUT,
+            Self::Status
+            | Self::Start { .. }
+            | Self::Capture { .. }
+            | Self::Stop { .. }
+            | Self::Cancel { .. }
+            | Self::PasteLast
+            | Self::Style { .. }
+            | Self::Preset { .. } => TIMEOUT,
+        }
+    }
+
     pub(crate) fn encode(&self) -> Result<Vec<u8>, &'static str> {
         let bytes = serde_json::to_vec(&Outgoing {
             v: VERSION,
@@ -272,8 +314,12 @@ impl Command {
         ) {
             ("status", None, None, None) => Ok(Self::Status),
             ("start", None, None, style) => Ok(Self::Start { style }),
+            ("capture", None, None, style) => Ok(Self::Capture { style }),
             ("stop", Some(session), None, None) if valid_token(&session) => {
                 Ok(Self::Stop { session })
+            },
+            ("print", Some(session), None, None) if valid_token(&session) => {
+                Ok(Self::Print { session })
             },
             ("cancel", Some(session), None, None) if valid_token(&session) => {
                 Ok(Self::Cancel { session })
@@ -331,7 +377,15 @@ impl Invocation {
             ["dictation", "start", "--style", name] => Command::Start {
                 style: Some(style(name)?),
             },
+            ["dictation", "start", "--print"] => Command::Capture { style: None },
+            ["dictation", "start", "--print", "--style", name]
+            | ["dictation", "start", "--style", name, "--print"] => Command::Capture {
+                style: Some(style(name)?),
+            },
             ["dictation", "stop", token] => Command::Stop {
+                session: session(token)?,
+            },
+            ["dictation", "stop", token, "--print"] => Command::Print {
                 session: session(token)?,
             },
             ["dictation", "cancel", token] => Command::Cancel {
@@ -346,7 +400,8 @@ impl Invocation {
                 }
             },
             _ => bail!(
-                "Use status, dictation start [--style STYLE], dictation stop|cancel TOKEN, \
+                "Use status, dictation start [--print] [--style STYLE], dictation stop TOKEN [--print], \
+                 dictation cancel TOKEN, \
                  paste-last, style STYLE, or preset NAME."
             ),
         };
@@ -365,7 +420,7 @@ fn style(name: &str) -> anyhow::Result<Style> {
 
 fn session(token: &str) -> anyhow::Result<String> {
     ensure!(
-        valid_token(token),
+        valid_token(token) && !token.starts_with('-'),
         "Use the exact session token that dictation start returned."
     );
     Ok(token.into())

@@ -87,6 +87,8 @@ pub enum Refusal {
     Unsupported,
     PresetBusy,
     PresetStale,
+    NotCaptured,
+    Unheard,
 }
 
 #[cfg(not(test))]

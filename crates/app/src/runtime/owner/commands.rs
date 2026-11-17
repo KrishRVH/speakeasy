@@ -15,7 +15,9 @@ impl<P: Ports> World<P> {
                 let command = match &call.command {
                     Command::Status => machine::Command::Status,
                     Command::Start { style } => machine::Command::Start(*style),
+                    Command::Capture { style } => machine::Command::Capture(*style),
                     Command::Stop { session } => machine::Command::Stop(self.session(session)),
+                    Command::Print { session } => machine::Command::Print(self.session(session)),
                     Command::Cancel { session } => machine::Command::Cancel(self.session(session)),
                     Command::PasteLast => machine::Command::PasteLast,
                     Command::Style { .. } | Command::Preset { .. } => machine::Command::Unsupported,
@@ -88,6 +90,12 @@ pub(in crate::runtime) const fn refusal(refusal: Refusal) -> &'static str {
         Refusal::PresetBusy => "Finish dictation or practice before choosing a preset.",
         Refusal::PresetStale => {
             "Dictation or settings changed while the preset was being checked. Choose it again."
+        },
+        Refusal::NotCaptured => {
+            "Only a dictation started with dictation start --print can be printed, and only once."
+        },
+        Refusal::Unheard => {
+            "The dictation ended without words to print: it was empty, cancelled, or failed."
         },
     }
 }

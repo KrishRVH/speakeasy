@@ -25,8 +25,15 @@ pub enum Enter {
 }
 
 #[cfg_attr(test, derive(Clone, Debug))]
+pub enum Handoff<P: Payload> {
+    Insert(Enter),
+    Capture,
+    Print(P::Call),
+}
+
+#[cfg_attr(test, derive(Clone, Debug))]
 pub(super) enum Purpose<P: Payload> {
-    Dictation(Enter),
+    Dictation(Handoff<P>),
     Replay,
     Practice(P::Practice),
     Show(Show<P>),
@@ -602,19 +609,55 @@ impl<P: Payload> Session<P> {
     }
 
     pub(super) fn submit(&mut self) {
-        if let Purpose::Dictation(enter) = &mut self.purpose {
+        if let Purpose::Dictation(Handoff::Insert(enter)) = &mut self.purpose {
             *enter = Enter::Pressed;
+        }
+    }
+
+    pub(super) fn capture(&mut self) {
+        if let Purpose::Dictation(handoff) = &mut self.purpose {
+            *handoff = Handoff::Capture;
+        }
+    }
+
+    pub(super) fn print_to(&mut self, call: P::Call) -> Result<(), P::Call> {
+        match &mut self.purpose {
+            Purpose::Dictation(handoff @ Handoff::Capture) => {
+                *handoff = Handoff::Print(call);
+                Ok(())
+            },
+            Purpose::Dictation(Handoff::Insert(_) | Handoff::Print(_))
+            | Purpose::Replay
+            | Purpose::Practice(_)
+            | Purpose::Show(_) => Err(call),
+        }
+    }
+
+    pub(super) fn take_caller(&mut self) -> Option<P::Call> {
+        match &mut self.purpose {
+            Purpose::Dictation(handoff @ Handoff::Print(_)) => {
+                match mem::replace(handoff, Handoff::Capture) {
+                    Handoff::Print(call) => Some(call),
+                    Handoff::Insert(_) | Handoff::Capture => None,
+                }
+            },
+            Purpose::Dictation(Handoff::Insert(_) | Handoff::Capture)
+            | Purpose::Replay
+            | Purpose::Practice(_)
+            | Purpose::Show(_) => None,
         }
     }
 
     pub(super) fn insert(&mut self, text: P::Heard, config: &P::Config, env: &mut impl Env<P>) {
         let dictation = self.is_dictation().then(|| text.clone());
-        let enter = match self.purpose {
-            Purpose::Dictation(enter) => enter,
-            Purpose::Replay | Purpose::Practice(_) | Purpose::Show(_) => Enter::Withheld,
+        let handoff = match &mut self.purpose {
+            Purpose::Dictation(handoff) => mem::replace(handoff, Handoff::Insert(Enter::Withheld)),
+            Purpose::Replay | Purpose::Practice(_) | Purpose::Show(_) => {
+                Handoff::Insert(Enter::Withheld)
+            },
         };
         self.recognition = Recognition::new(self.id);
-        env.insert(text, &self.permit, config, enter);
+        env.insert(text, &self.permit, config, handoff);
         self.stage = Stage::Delivering { dictation };
     }
 
@@ -702,6 +745,7 @@ impl<P: Payload> Session<P> {
 #[cfg(not(test))]
 redacted!(
     Kept,
+    Handoff,
     Sealed,
     Reopened,
     Recognized,
