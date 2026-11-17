@@ -411,7 +411,7 @@ impl Settings {
                 false,
             ),
             Some(Speech::Own) => ("Your own engine · Choose its files".into(), true),
-            None if self.download.installing().is_some() => ("Setting up…".into(), false),
+            None if self.engine_work.installing().is_some() => ("Setting up…".into(), false),
             None => ("Not set up".into(), true),
         }
     }
@@ -453,10 +453,10 @@ impl Settings {
         let kit = ui.kit();
         let speech = Speech::of(&self.config, self.own_engine);
         let installing = self
-            .download
+            .engine_work
             .installing()
             .map(|installing| (installing.model, installing.setup.progress()));
-        let busy = self.download.is_busy();
+        let busy = self.engine_work.is_busy();
         let card = |action: Action,
                     title: &'static str,
                     about: &'static str,
@@ -599,7 +599,7 @@ impl Settings {
                 "Use nemo-speech from NeMo-Speech.cpp and a GGUF speech model.",
             ),
         };
-        let can_choose = self.file_picker.is_none();
+        let can_choose = !self.engine_work.is_busy();
         let row = |kind: &'static str, path: &Path, action: Action| {
             div()
                 .flex()

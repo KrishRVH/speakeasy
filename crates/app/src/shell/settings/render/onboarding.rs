@@ -28,7 +28,7 @@ impl Settings {
         };
         let (label, action, enabled) = self.onboarding_primary(step, ui);
         let back = match step {
-            Step::Prepare if self.download.installing().is_some() => {
+            Step::Prepare if self.engine_work.installing().is_some() => {
                 Some(ui.button("Cancel download", Action::Setup, Weight::Quiet))
             },
             Step::Prepare => None,
@@ -143,8 +143,10 @@ impl Settings {
         let next = Action::Onboarding(TourAction::Next);
         match step {
             Step::Prepare if self.unreadable || self.resetting() => ("Continue", next, false),
-            Step::Prepare if self.download.installing().is_some() => ("Setting up…", next, false),
-            Step::Prepare if self.download.is_pausing() => ("Pausing download…", next, false),
+            Step::Prepare if self.engine_work.installing().is_some() => {
+                ("Setting up…", next, false)
+            },
+            Step::Prepare if self.engine_work.is_pausing() => ("Pausing download…", next, false),
             Step::Prepare | Step::Practice if self.saving.is_some() => ("Saving…", next, false),
             Step::Prepare if !is_demo(ui.cx) && self.config.needs_engine() => {
                 ("Set up automatically · 0.8 GB", Action::Setup, true)
@@ -186,7 +188,7 @@ impl Settings {
         let kit = ui.kit();
         let blocked = self.unreadable || self.resetting();
         let installing = self
-            .download
+            .engine_work
             .installing()
             .map(|installing| installing.setup.progress());
         let needs_setup =

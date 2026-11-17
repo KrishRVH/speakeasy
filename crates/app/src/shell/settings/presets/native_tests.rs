@@ -2,7 +2,7 @@ use anyhow::ensure;
 use gpui::{AsyncApp, Task, WindowHandle};
 
 use super::{
-    super::{native_interaction::settle, vocabulary},
+    super::{EngineFile, EngineWork, native_interaction::settle, vocabulary},
     *,
 };
 use crate::{
@@ -58,13 +58,17 @@ pub(in crate::shell::settings) async fn exercise(
     settle(cx).await;
     settings.update(cx, |view, window, cx| {
         let unmodified = view.config.clone();
-        view.file_picker = Some(Task::ready(()));
+        view.engine_work = EngineWork::Choosing {
+            engine: view.config.engine,
+            file: EngineFile::Model,
+            _picker: Task::ready(()),
+        };
         view.edit_preset(Edit::Use(0), window, cx);
         ensure!(
             view.config == unmodified,
             "Using a preset raced an outstanding file picker"
         );
-        view.finish_choice(Ok(None), super::super::EngineFile::Model, cx);
+        view.finish_choice(Ok(None), cx);
         view.config.vocabulary = vec![Correction {
             heard: "x ray".into(),
             written: "X-ray".into(),

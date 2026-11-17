@@ -82,6 +82,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     anyhow::Ok(())
                 })??;
                 parakeet_cleanup_language(settings, cx)?;
+                choice_after_an_engine_switch(settings, cx)?;
                 microphones::exercise(settings, cx).await?;
                 settings.update(cx, |view, window, cx| {
                     view.menus.trigger(Menu::Language).focus(window, cx);
@@ -295,6 +296,32 @@ fn parakeet_cleanup_language(
                 && view.config.fillers(&view.config.language)
                     == crate::transcript::Fillers::Preserve,
             "Turning off um and uh removal kept removing words"
+        );
+        view.config = original;
+        cx.notify();
+        anyhow::Ok(())
+    })??;
+    Ok(())
+}
+
+fn choice_after_an_engine_switch(
+    settings: WindowHandle<Settings>,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<()> {
+    let original = settings.read_with(cx, |view, _| view.config.clone())?;
+    settings.update(cx, |view, window, cx| {
+        view.engine_work = EngineWork::Choosing {
+            engine: Engine::Whisper,
+            file: EngineFile::Executable,
+            _picker: Task::ready(()),
+        };
+        view.act(Action::Engine(Engine::Nemo), window, cx);
+        view.finish_choice(Ok(Some("whisper-server".into())), cx);
+        ensure!(
+            view.config.engine == Engine::Nemo
+                && view.config.engine_executable.as_os_str().is_empty()
+                && !view.engine_work.is_busy(),
+            "A program chosen for whisper.cpp became the NeMo-Speech program"
         );
         view.config = original;
         cx.notify();

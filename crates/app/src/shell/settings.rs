@@ -50,10 +50,9 @@ pub(super) struct Settings {
     permissions: Option<Permissions>,
     notice: Option<Notice>,
     microphones: Vec<menu::Offered>,
-    file_picker: Option<Task<()>>,
     microphone_listing: Option<Task<()>>,
     preview: Option<Task<()>>,
-    download: Download,
+    engine_work: EngineWork,
     saving: Option<Task<()>>,
     saves: SaveQueue,
     saved: Option<Task<()>>,
@@ -88,13 +87,21 @@ struct Installing {
     _follow: Task<()>,
 }
 
-enum Download {
+enum EngineWork {
     Idle,
+    Choosing {
+        engine: Engine,
+        file: EngineFile,
+        _picker: Task<()>,
+    },
     Installing(Installing),
-    Pausing { setup: Setup, _retirement: Task<()> },
+    Pausing {
+        setup: Setup,
+        _retirement: Task<()>,
+    },
 }
 
-impl Download {
+impl EngineWork {
     const fn is_busy(&self) -> bool {
         !matches!(self, Self::Idle)
     }
@@ -106,14 +113,20 @@ impl Download {
     const fn installing(&self) -> Option<&Installing> {
         match self {
             Self::Installing(installing) => Some(installing),
-            Self::Idle | Self::Pausing { .. } => None,
+            Self::Idle | Self::Choosing { .. } | Self::Pausing { .. } => None,
         }
     }
 
     const fn setup(&self) -> Option<&Setup> {
         match self {
             Self::Installing(Installing { setup, .. }) | Self::Pausing { setup, .. } => Some(setup),
-            Self::Idle => None,
+            Self::Idle | Self::Choosing { .. } => None,
+        }
+    }
+
+    fn abandon_choice(&mut self) {
+        if matches!(self, Self::Choosing { .. }) {
+            *self = Self::Idle;
         }
     }
 }
@@ -142,10 +155,9 @@ impl Settings {
             permissions: None,
             notice: None,
             microphones: Vec::new(),
-            file_picker: None,
             microphone_listing: None,
             preview: None,
-            download: Download::Idle,
+            engine_work: EngineWork::Idle,
             saving: None,
             saves,
             saved: None,
@@ -322,7 +334,7 @@ impl Settings {
         let services = cx.global::<Services>();
         !services.mode.is_demo()
             && !services.is_quitting()
-            && !self.download.is_busy()
+            && self.engine_work.setup().is_none()
             && self.saving.is_none()
             && !self.resetting()
             && !self.update.holds_download()
@@ -366,7 +378,7 @@ impl Settings {
                 self.menus.dismiss_presets();
                 self.own_engine = false;
                 self.choosing_model = false;
-                self.file_picker = None;
+                self.engine_work.abandon_choice();
                 present_appearance(cx);
                 self.start_setup(cx);
             },
@@ -477,14 +489,15 @@ impl Settings {
     }
 
     fn choose(&mut self, file: EngineFile, window: &Window, cx: &Context<'_, Self>) {
-        if self.file_picker.is_some() {
+        if self.engine_work.is_busy() {
             return;
         }
+        let engine = self.config.engine;
         let programs = FileFilter {
             name: "Programs",
             pattern: "*.exe",
         };
-        let (title, filter) = match (self.config.engine, file) {
+        let (title, filter) = match (engine, file) {
             (Engine::Nemo, EngineFile::Executable) => ("Choose nemo-speech", programs),
             (Engine::Whisper, EngineFile::Executable) => ("Choose whisper-server", programs),
             (Engine::Nemo, EngineFile::Model) => (
@@ -503,21 +516,27 @@ impl Settings {
             ),
         };
         let picker = choose_file(window, title, filter, cx);
-        self.file_picker = Some(cx.spawn(async move |this, cx| {
-            let result = picker.await;
-            this.update_if_alive(cx, |view, cx| view.finish_choice(result, file, cx));
-        }));
+        self.engine_work = EngineWork::Choosing {
+            engine,
+            file,
+            _picker: cx.spawn(async move |this, cx| {
+                let result = picker.await;
+                this.update_if_alive(cx, |view, cx| view.finish_choice(result, cx));
+            }),
+        };
     }
 
     fn finish_choice(
         &mut self,
         result: anyhow::Result<Option<PathBuf>>,
-        file: EngineFile,
         cx: &mut Context<'_, Self>,
     ) {
-        self.file_picker = None;
+        let EngineWork::Choosing { engine, file, .. } = self.engine_work else {
+            return;
+        };
+        self.engine_work = EngineWork::Idle;
         match result {
-            Ok(Some(path)) => {
+            Ok(Some(path)) if engine == self.config.engine => {
                 match file {
                     EngineFile::Executable => self.config.engine_executable = path,
                     EngineFile::Model => {
@@ -531,7 +550,7 @@ impl Settings {
                 }
                 self.edited(cx);
             },
-            Ok(None) => {},
+            Ok(_) => {},
             Err(_) => {
                 self.notice = Some(Notice::Problem(
                     "Cannot open the file picker. Try again.".into(),
@@ -553,10 +572,12 @@ impl Settings {
     }
 
     fn toggle_setup(&mut self, cx: &Context<'_, Self>) {
-        match mem::replace(&mut self.download, Download::Idle) {
-            Download::Installing(Installing { setup, .. }) => self.pause_setup(setup, cx),
-            Download::Idle => self.start_setup(cx),
-            pausing @ Download::Pausing { .. } => self.download = pausing,
+        match mem::replace(&mut self.engine_work, EngineWork::Idle) {
+            EngineWork::Installing(Installing { setup, .. }) => self.pause_setup(setup, cx),
+            EngineWork::Idle => self.start_setup(cx),
+            busy @ (EngineWork::Choosing { .. } | EngineWork::Pausing { .. }) => {
+                self.engine_work = busy;
+            },
         }
     }
 
@@ -567,7 +588,7 @@ impl Settings {
     fn install_model(&mut self, model: Model, cx: &Context<'_, Self>) {
         if cx.global::<Services>().is_quitting()
             || is_demo(cx)
-            || self.download.is_busy()
+            || self.engine_work.is_busy()
             || self.unreadable
             || self.resetting()
         {
@@ -594,7 +615,7 @@ impl Settings {
             let outcome = outcome.await;
             this.update_if_alive(cx, |view, cx| view.finish_setup(outcome, cx));
         });
-        self.download = Download::Installing(Installing {
+        self.engine_work = EngineWork::Installing(Installing {
             model,
             setup,
             _follow: follow_setup,
@@ -607,13 +628,13 @@ impl Settings {
         let retirement = cx.spawn(async move |this, cx| {
             stopped.await;
             this.update_if_alive(cx, |view, cx| {
-                if view.download.is_pausing() {
-                    view.download = Download::Idle;
+                if view.engine_work.is_pausing() {
+                    view.engine_work = EngineWork::Idle;
                 }
                 cx.notify();
             });
         });
-        self.download = Download::Pausing {
+        self.engine_work = EngineWork::Pausing {
             setup,
             _retirement: retirement,
         };
@@ -627,8 +648,8 @@ impl Settings {
         outcome: Option<anyhow::Result<Installed>>,
         cx: &mut Context<'_, Self>,
     ) {
-        if self.download.installing().is_some() {
-            self.download = Download::Idle;
+        if self.engine_work.installing().is_some() {
+            self.engine_work = EngineWork::Idle;
         }
         self.downloaded = crate::setup::downloaded();
         match outcome {
@@ -648,7 +669,7 @@ impl Settings {
     }
 
     fn request_setup_stop(&self) {
-        if let Some(setup) = self.download.setup() {
+        if let Some(setup) = self.engine_work.setup() {
             setup.request_stop();
         }
     }
@@ -728,7 +749,7 @@ impl Settings {
 
     pub(super) fn cancel_background_work(&mut self) {
         self.practice.stop();
-        self.file_picker = None;
+        self.engine_work.abandon_choice();
         self.microphone_listing = None;
         self.preview = None;
         self.request_setup_stop();
@@ -737,10 +758,10 @@ impl Settings {
 
     pub(super) fn drained(&mut self) -> bool {
         let update_drained = self.update.drained();
-        if self.download.setup().is_some_and(Setup::is_finished) {
-            self.download = Download::Idle;
+        if self.engine_work.setup().is_some_and(Setup::is_finished) {
+            self.engine_work = EngineWork::Idle;
         }
-        !self.download.is_busy()
+        !self.engine_work.is_busy()
             && self.onboarding_completion.is_none()
             && self.saves.is_idle()
             && update_drained

@@ -335,10 +335,11 @@ module unless a test file is named.
   a repeated purge succeeds. Services pauses dictation, retires the runtime, and purges on an owned
   thread that Quit drains; nothing resumes until it exits, and a failed purge restores the previous
   settings. Settings refuses reset during setup, saves, or a held Windows update and refuses setup
-  while settings are unreadable or a reset runs. On success it adopts default settings as its saved
-  baseline and starts automatic setup; as on a new install, the first complete save enables
-  dictation, even if it was paused. [reset/tests.rs](../crates/app/src/reset/tests.rs) covers what
-  stays, refusals, failure order, and linked folders. Update preparation holds the same
+  while settings are unreadable, a reset runs, or an engine file choice is open; a file chosen for
+  an engine the user has since switched away from is dropped. On success it adopts default settings
+  as its saved baseline and starts automatic setup; as on a new install, the first complete save
+  enables dictation, even if it was paused. [reset/tests.rs](../crates/app/src/reset/tests.rs)
+  covers what stays, refusals, failure order, and linked folders. Update preparation holds the same
   `updates.lock` outside its removable cache; deleting payloads cannot replace a live lease.
 - **Tray and status**: [tray.rs](../crates/app/src/tray.rs), [tray/](../crates/app/src/tray),
   [status.rs](../crates/app/src/status.rs),

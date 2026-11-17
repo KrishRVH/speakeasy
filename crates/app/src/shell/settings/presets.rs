@@ -65,10 +65,6 @@ impl Editor {
 }
 
 impl Settings {
-    const fn presets_busy(&self) -> bool {
-        self.download.is_busy() || self.file_picker.is_some()
-    }
-
     pub(super) fn edit_preset(
         &mut self,
         edit: Edit,
@@ -76,7 +72,7 @@ impl Settings {
         cx: &mut Context<'_, Self>,
     ) {
         let changes = matches!(edit, Edit::Use(_) | Edit::Update(_) | Edit::Save);
-        if cx.global::<Services>().is_quitting() || (changes && self.presets_busy()) {
+        if cx.global::<Services>().is_quitting() || (changes && self.engine_work.is_busy()) {
             return;
         }
         match edit {
@@ -160,7 +156,7 @@ impl Settings {
     pub(super) fn presets_section(&self, ui: &Ui<'_>) -> Div {
         let kit = ui.kit();
         let palette = ui.palette;
-        let busy = self.presets_busy();
+        let busy = self.engine_work.is_busy();
         let mut rows: Vec<_> = self
             .config
             .presets
