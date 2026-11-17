@@ -151,26 +151,8 @@ impl Readback {
                 );
             }
         }
-        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-
-        unsafe { context.Map(&self.staging, 0, D3D11_MAP_READ, 0, Some(&raw mut mapped))? };
-        let packed = self.pack(&mapped);
-
-        unsafe { context.Unmap(&self.staging, 0) };
-        packed
-    }
-
-    fn pack(&self, mapped: &D3D11_MAPPED_SUBRESOURCE) -> windows::core::Result<Vec<u8>> {
-        let [width, height] = self.size.map(|edge| edge as usize);
-        let row = width.saturating_mul(BYTES_PER_PIXEL);
-        let pitch = mapped.RowPitch as usize;
-        if pitch < row || mapped.pData.is_null() {
-            return Err(E_UNEXPECTED.into());
-        }
-        let length = mapped_len(pitch, row, height).ok_or(E_UNEXPECTED)?;
-
-        let bytes = unsafe { slice::from_raw_parts(mapped.pData.cast::<u8>(), length) };
-        pack_rows(bytes, pitch, width, height).ok_or_else(|| E_UNEXPECTED.into())
+        let mapping = Mapping::read(context, &self.staging)?;
+        mapping.pack(self.size)
     }
 }
 
@@ -198,6 +180,47 @@ impl Mips {
             view: created(view)?,
             level,
         })
+    }
+}
+
+struct Mapping<'a> {
+    context: &'a ID3D11DeviceContext,
+    texture: &'a ID3D11Texture2D,
+    mapped: D3D11_MAPPED_SUBRESOURCE,
+}
+
+impl<'a> Mapping<'a> {
+    fn read(
+        context: &'a ID3D11DeviceContext,
+        texture: &'a ID3D11Texture2D,
+    ) -> windows::core::Result<Self> {
+        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+
+        unsafe { context.Map(texture, 0, D3D11_MAP_READ, 0, Some(&raw mut mapped))? };
+        Ok(Self {
+            context,
+            texture,
+            mapped,
+        })
+    }
+
+    fn pack(&self, size: [u32; 2]) -> windows::core::Result<Vec<u8>> {
+        let [width, height] = size.map(|edge| edge as usize);
+        let row = width.saturating_mul(BYTES_PER_PIXEL);
+        let pitch = self.mapped.RowPitch as usize;
+        if pitch < row || self.mapped.pData.is_null() {
+            return Err(E_UNEXPECTED.into());
+        }
+        let length = mapped_len(pitch, row, height).ok_or(E_UNEXPECTED)?;
+
+        let bytes = unsafe { slice::from_raw_parts(self.mapped.pData.cast::<u8>(), length) };
+        pack_rows(bytes, pitch, width, height).ok_or_else(|| E_UNEXPECTED.into())
+    }
+}
+
+impl Drop for Mapping<'_> {
+    fn drop(&mut self) {
+        unsafe { self.context.Unmap(self.texture, 0) };
     }
 }
 

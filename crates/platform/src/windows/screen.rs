@@ -1,5 +1,3 @@
-use crate::movie::recording as movie;
-
 mod exclusion;
 mod layout;
 mod readback;
@@ -72,6 +70,7 @@ use self::{
 use super::{BASE_DPI, is_key_down, is_own_window, modifiers, ok_or_last_error};
 use crate::{
     NativeWindow,
+    movie::recording as movie,
     screen::{
         self, Frame, Part, PointerSample, Region, ScreenEvent, Target, WindowGone,
         geometry::{Bounds, part_of_box, pixel_box},
@@ -298,13 +297,17 @@ fn pointer_part(target: Target) -> Option<Part> {
     if !is_current(target.display) {
         return None;
     }
-    let part = match target.region {
-        Region::Window(window, _) => window_part(target.display.native, window).ok().flatten(),
-        _ => Some(target.part()),
-    }?;
+    let part = current_part(target).ok().flatten()?;
     let [width, height] = target.display.native.extent();
     let size = [u32::try_from(width).ok()?, u32::try_from(height).ok()?];
     Some(part_of_box(pixel_box(part, size), size))
+}
+
+fn current_part(target: Target) -> Result<Option<Part>, WindowGone> {
+    match target.region {
+        Region::Window(window, _) => window_part(target.display.native, window),
+        Region::Whole | Region::Area(_) => Ok(Some(target.part())),
+    }
 }
 
 fn pointer_location() -> Option<POINT> {
@@ -437,9 +440,7 @@ impl Pacer {
 }
 
 struct Capture {
-    display: screen::Display,
-    followed: Option<Window>,
-    part: Part,
+    target: Target,
     content: [u32; 2],
     device: ID3D11Device,
     context: ID3D11DeviceContext,
@@ -466,11 +467,9 @@ impl Capture {
         longest_edge: u32,
         stopping: &Receiver<Infallible>,
     ) -> Result<Self, Failure> {
-        let display = target.display().native;
-
         let access =
             GraphicsCaptureAccess::RequestAccessAsync(GraphicsCaptureAccessKind::Borderless);
-        let monitor = display.handle();
+        let monitor = target.display.native.handle();
         let (device, context) = device_for(monitor)?;
         let dxgi: IDXGIDevice = device.cast()?;
 
@@ -502,14 +501,8 @@ impl Capture {
         }
 
         best_effort(session.SetIsBorderRequired(false));
-        let followed = match target.region {
-            Region::Window(window, _) => Some(window),
-            Region::Whole | Region::Area(_) => None,
-        };
         Ok(Self {
-            display: target.display,
-            followed,
-            part,
+            target,
             content: content_size,
             device,
             context,
@@ -528,7 +521,7 @@ impl Capture {
         if self.item_closed.is_closed() {
             return Err(Failure::DisplayLost);
         }
-        if !is_current(self.display) {
+        if !is_current(self.target.display) {
             return Err(Failure::DisplayChanged);
         }
 
@@ -552,7 +545,7 @@ impl Capture {
         if captured < clean_from {
             return Ok(false);
         }
-        let part = self.follow()?;
+        let part = self.part()?;
         self.pending = Some(PendingFrame {
             frame,
             at: captured,
@@ -577,7 +570,7 @@ impl Capture {
         let Some(PendingFrame { frame, at, part }) = self.pending.take() else {
             return Ok(None);
         };
-        if self.follow()? != part {
+        if self.part()? != part {
             return Ok(None);
         }
         let surface: IDirect3DDxgiInterfaceAccess = frame.Surface()?.cast()?;
@@ -590,7 +583,7 @@ impl Capture {
         }
         let [left, top, ..] = crop;
         let bgra = self.readback.read(&self.context, &texture, [left, top])?;
-        if self.follow()? != part {
+        if self.part()? != part {
             return Ok(None);
         }
         let [width, height] = self.readback.size();
@@ -603,11 +596,8 @@ impl Capture {
         }))
     }
 
-    fn follow(&mut self) -> Result<Part, WindowGone> {
-        if let Some(window) = self.followed {
-            self.part = window_part(self.display.native, window)?.ok_or(WindowGone::Closed)?;
-        }
-        Ok(self.part)
+    fn part(&self) -> Result<Part, WindowGone> {
+        current_part(self.target)?.ok_or(WindowGone::Closed)
     }
 }
 
