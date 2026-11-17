@@ -18,33 +18,32 @@ fn validating_and_starting_never_discard_live_or_retiring_owners() {
         }
     }
 
-    let (completion, dropped) = mpsc::channel();
-    let mut lifecycle = live::<_, ()>(Owner(completion.clone()));
+    let (drops, dropped) = mpsc::channel();
+    let mut lifecycle = live::<_, ()>(Owner(drops.clone()));
     assert!(lifecycle.validate().is_none());
     assert_eq!(
-        lifecycle.start(|| Ok::<_, ()>(Owner(completion.clone()))),
+        lifecycle.start(|| Ok::<_, ()>(Owner(drops.clone()))),
         Ok(false)
     );
     assert!(dropped.try_recv().is_err());
     assert!(lifecycle.pause());
     assert!(lifecycle.validate().is_none());
-    assert_eq!(
-        lifecycle.start(|| Ok::<_, ()>(Owner(completion.clone()))),
-        Ok(false)
-    );
+    assert_eq!(lifecycle.start(|| Ok::<_, ()>(Owner(drops))), Ok(false));
     assert!(dropped.try_recv().is_err());
     lifecycle.retired();
     dropped.try_recv().unwrap();
+}
+
+#[test]
+fn a_resume_check_counts_as_running_until_quit_ends_it() {
+    let mut lifecycle = Lifecycle::<(), ()>::default();
     let checking = lifecycle.validate().unwrap();
-    assert!(lifecycle.is_running(|_| false));
+    assert!(lifecycle.is_running(|()| false));
     assert!(lifecycle.quit());
-    assert!(!lifecycle.is_running(|_| false));
+    assert!(!lifecycle.is_running(|()| false));
     assert!(!lifecycle.validated(checking));
     assert!(lifecycle.validate().is_none());
-    assert_eq!(
-        lifecycle.start(|| Ok::<_, ()>(Owner(completion))),
-        Ok(false)
-    );
+    assert_eq!(lifecycle.start(|| Ok::<_, ()>(())), Ok(false));
 }
 
 #[test]
