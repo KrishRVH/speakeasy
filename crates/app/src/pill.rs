@@ -555,7 +555,7 @@ impl Scene {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Content {
     TrayHint,
     SecureInput,

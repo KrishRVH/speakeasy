@@ -119,7 +119,7 @@ fn a_copied_show_shows_its_label_unless_it_lost_its_screen_or_narration() {
         ..recording(Duration::ZERO)
     };
     let finished = copied(Ending::Finished, None);
-    assert!(finished.content() == Content::Slot);
+    assert_eq!(finished.content(), Content::Slot);
     assert_eq!(finished.feedback(), Some(COPIED_FOR));
     for (short, footer) in [
         (copied(Ending::ScreenStopped, None), None),
@@ -128,8 +128,9 @@ fn a_copied_show_shows_its_label_unless_it_lost_its_screen_or_narration() {
             Some(DETAILS),
         ),
     ] {
-        assert!(
-            short.content() == Content::Notice,
+        assert_eq!(
+            short.content(),
+            Content::Notice,
             "The message says what the Show lost"
         );
         assert_eq!(
@@ -150,7 +151,7 @@ fn a_show_with_nothing_to_record_says_so_long_enough_to_read() {
         ..recording(Duration::ZERO)
     };
     assert!(unchosen.is_shown(), "Unlike a cancel, it is explained");
-    assert!(unchosen.content() == Content::Notice);
+    assert_eq!(unchosen.content(), Content::Notice);
     assert_eq!(unchosen.capsule_size(), MESSAGE_SIZE);
     assert_eq!(unchosen.feedback(), Some(NOTICE_FOR));
 }
@@ -161,8 +162,9 @@ fn a_notice_reads_as_a_muted_message_rather_than_a_failure() {
         phase: Phase::Notice,
         ..recording(Duration::ZERO)
     };
-    assert!(
-        notice.content() == Content::Notice,
+    assert_eq!(
+        notice.content(),
+        Content::Notice,
         "A notice needs no action"
     );
     assert_eq!(notice.capsule_size(), MESSAGE_SIZE);
@@ -236,7 +238,7 @@ fn secure_input_replaces_the_slot_while_capture_is_open_until_the_notice_or_the_
         ..recording(Duration::from_secs(seconds))
     };
     let recording = held(2, Phase::Recording);
-    assert!(recording.content() == Content::SecureInput);
+    assert_eq!(recording.content(), Content::SecureInput);
     assert_eq!(
         recording.capsule_size(),
         MESSAGE_SIZE,
@@ -247,16 +249,19 @@ fn secure_input_replaces_the_slot_while_capture_is_open_until_the_notice_or_the_
         Some(left),
         "The slot returns as the notice ends"
     );
-    assert!(
-        held(2, Phase::Stopping).content() == Content::SecureInput,
+    assert_eq!(
+        held(2, Phase::Stopping).content(),
+        Content::SecureInput,
         "The notice stays while capture closes"
     );
-    assert!(
-        held(2, Phase::Processing).content() == Content::Slot,
+    assert_eq!(
+        held(2, Phase::Processing).content(),
+        Content::Slot,
         "Processing shows its sweep once capture ends"
     );
-    assert!(
-        held(280, Phase::Recording).content() == Content::Slot,
+    assert_eq!(
+        held(280, Phase::Recording).content(),
+        Content::Slot,
         "The countdown to the limit outranks the notice"
     );
 }

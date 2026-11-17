@@ -35,7 +35,7 @@ fn run_native(
     check: impl AsyncFnOnce(&AsyncApp) -> anyhow::Result<()> + 'static,
 ) -> anyhow::Result<()> {
     let (completed, outcome) = std::sync::mpsc::channel();
-    let (application, presentation) = crate::application::new().unwrap();
+    let (application, presentation) = crate::application::new()?;
     application.run(move |cx| {
         cx.set_global(presentation);
         cx.spawn(async move |cx| {
