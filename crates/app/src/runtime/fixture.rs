@@ -131,7 +131,7 @@ impl Ports for Fixture {
         let inserted = self.inserted.clone();
         async move {
             if !permit.commit() {
-                return Ok(Inserted::Unavailable("Fixture insertion was cancelled"));
+                return Ok(Inserted::Cancelled);
             }
             inserted.try_send((Instant::now(), text))?;
             Ok(Inserted::Sent)
