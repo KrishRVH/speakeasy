@@ -1,7 +1,7 @@
-use std::{mem, ops::Range, time::Duration};
+use std::{ops::Range, time::Duration};
 
-use anyhow::{Context as _, bail};
-use zeroize::{Zeroize, Zeroizing};
+use anyhow::Context as _;
+use zeroize::Zeroizing;
 
 use super::speech::Audibility;
 use crate::runtime::ports::Sealed;
@@ -12,16 +12,21 @@ pub(super) const SAMPLE_BYTES: usize = 2;
 const MINIMUM_RECORDING: Duration = Duration::from_millis(200);
 const RECLAIM_SLACK_BYTES: usize = 8 * 1024 * 1024;
 const INCOMPLETE_HEADER: &str = "Recording header is incomplete. Try recording again.";
+const UNSUPPORTED_FORMAT: &str =
+    "Recording format is unsupported. Choose another microphone in Settings, then try again.";
+const MISPLACED_PIECE: &str = "Recording piece does not fit the recording. Try recording again.";
 
 pub(super) struct Pcm16 {
-    bytes: Vec<u8>,
+    bytes: Zeroizing<Vec<u8>>,
     limit: usize,
 }
 
 impl Pcm16 {
     pub(super) fn from_kept(audio: Zeroizing<Vec<u8>>) -> Self {
         let samples = audio.len() / SAMPLE_BYTES;
-        let mut bytes = Vec::with_capacity(audio.len().saturating_add(WAV_HEADER_BYTES));
+        let mut bytes = Zeroizing::new(Vec::with_capacity(
+            audio.len().saturating_add(WAV_HEADER_BYTES),
+        ));
         bytes.resize(WAV_HEADER_BYTES, 0);
         bytes.extend_from_slice(&audio);
         Self {
@@ -31,16 +36,11 @@ impl Pcm16 {
     }
 
     pub(super) fn with_reservation(reserved: usize, limit: usize) -> Self {
-        let mut bytes = Vec::with_capacity(WAV_HEADER_BYTES.saturating_add(bytes_in(reserved)));
+        let mut bytes = Zeroizing::new(Vec::with_capacity(
+            WAV_HEADER_BYTES.saturating_add(bytes_in(reserved)),
+        ));
         bytes.resize(WAV_HEADER_BYTES, 0);
         Self { bytes, limit }
-    }
-
-    fn silence(samples: usize) -> Self {
-        Self {
-            bytes: vec![0; WAV_HEADER_BYTES.saturating_add(bytes_in(samples))],
-            limit: samples,
-        }
     }
 
     pub(super) fn audio(&self) -> &[u8] {
@@ -91,7 +91,7 @@ impl Pcm16 {
         self.retain_audio(range);
         self.release_excess_capacity();
         Ok(Some(Sealed {
-            wav: Zeroizing::new(self.into_wav(rate)?),
+            wav: self.into_wav(rate)?,
             trimmed,
             audible,
             partition: None,
@@ -104,7 +104,7 @@ impl Pcm16 {
         speech: &Audibility,
         rate: u32,
     ) -> anyhow::Result<Sealed> {
-        let audio = self.audio().get(range.clone()).context(INCOMPLETE_HEADER)?;
+        let audio = self.audio().get(range.clone()).context(MISPLACED_PIECE)?;
         Ok(Sealed {
             wav: encode(audio, rate)?,
             trimmed: duration_of(range.start, rate),
@@ -135,34 +135,23 @@ impl Pcm16 {
     }
 
     fn reallocate(&mut self, capacity: usize) {
-        let mut replacement = Vec::with_capacity(capacity);
+        let mut replacement = Zeroizing::new(Vec::with_capacity(capacity));
         replacement.extend_from_slice(&self.bytes);
-        self.bytes.zeroize();
         self.bytes = replacement;
     }
 
-    fn into_wav(mut self, rate: u32) -> anyhow::Result<Vec<u8>> {
-        let Some((header, audio)) = self.bytes.split_first_chunk_mut::<WAV_HEADER_BYTES>() else {
-            bail!(INCOMPLETE_HEADER);
-        };
-        let Some(encoded) = wav_header(audio.len(), rate) else {
-            bail!(
-                "Recording format is unsupported. Choose another microphone in Settings, then try again."
-            );
-        };
-        *header = encoded;
-        Ok(mem::take(&mut self.bytes))
-    }
-}
-
-impl Drop for Pcm16 {
-    fn drop(&mut self) {
-        self.bytes.zeroize();
+    fn into_wav(mut self, rate: u32) -> anyhow::Result<Zeroizing<Vec<u8>>> {
+        let (header, audio) = self
+            .bytes
+            .split_first_chunk_mut::<WAV_HEADER_BYTES>()
+            .context(INCOMPLETE_HEADER)?;
+        *header = wav_header(audio.len(), rate).context(UNSUPPORTED_FORMAT)?;
+        Ok(self.bytes)
     }
 }
 
 fn encode(audio: &[u8], rate: u32) -> anyhow::Result<Zeroizing<Vec<u8>>> {
-    let header = wav_header(audio.len(), rate).context(INCOMPLETE_HEADER)?;
+    let header = wav_header(audio.len(), rate).context(UNSUPPORTED_FORMAT)?;
     let mut wav = Zeroizing::new(Vec::with_capacity(
         WAV_HEADER_BYTES.saturating_add(audio.len()),
     ));
@@ -172,12 +161,13 @@ fn encode(audio: &[u8], rate: u32) -> anyhow::Result<Zeroizing<Vec<u8>>> {
 }
 
 pub(crate) fn wav_tail(wav: &[u8], range: Range<usize>) -> anyhow::Result<Zeroizing<Vec<u8>>> {
-    let audio = wav
-        .get(WAV_HEADER_BYTES..)
-        .filter(|audio| range.end == audio.len())
-        .and_then(|audio| audio.get(range))
-        .context(INCOMPLETE_HEADER)?;
-    encode(audio, wav_sample_rate(wav)?)
+    let rate = wav_sample_rate(wav)?;
+    let audio = wav.get(WAV_HEADER_BYTES..).context(INCOMPLETE_HEADER)?;
+    let tail = audio
+        .get(range.clone())
+        .filter(|_| range.end == audio.len())
+        .context(MISPLACED_PIECE)?;
+    encode(tail, rate)
 }
 
 fn wav_header(data_bytes: usize, rate: u32) -> Option<[u8; WAV_HEADER_BYTES]> {
@@ -215,9 +205,10 @@ fn wav_header(data_bytes: usize, rate: u32) -> Option<[u8; WAV_HEADER_BYTES]> {
 }
 
 pub(crate) fn wav_sample_rate(wav: &[u8]) -> anyhow::Result<u32> {
-    let Some(field) = wav.get(SAMPLE_RATE_OFFSET..).and_then(<[u8]>::first_chunk) else {
-        bail!(INCOMPLETE_HEADER);
-    };
+    let field = wav
+        .get(SAMPLE_RATE_OFFSET..)
+        .and_then(<[u8]>::first_chunk)
+        .context(INCOMPLETE_HEADER)?;
     Ok(u32::from_le_bytes(*field))
 }
 
@@ -233,7 +224,10 @@ pub(crate) fn wav_duration(wav: &[u8]) -> anyhow::Result<Duration> {
 }
 
 pub(crate) fn silent_wav(rate: u32, duration: Duration) -> anyhow::Result<Vec<u8>> {
-    Pcm16::silence(samples_in(duration, rate)).into_wav(rate)
+    let audio_bytes = bytes_in(samples_in(duration, rate));
+    let mut wav = Vec::from(wav_header(audio_bytes, rate).context(UNSUPPORTED_FORMAT)?);
+    wav.resize(WAV_HEADER_BYTES.saturating_add(audio_bytes), 0);
+    Ok(wav)
 }
 
 pub(super) fn samples_in(duration: Duration, rate: u32) -> usize {
@@ -268,7 +262,7 @@ mod tests {
     #[test]
     fn wav_encoding_rewrites_the_header_in_place_with_exact_riff_lengths() -> anyhow::Result<()> {
         let mut pcm = Pcm16 {
-            bytes: vec![0xFF; WAV_HEADER_BYTES],
+            bytes: Zeroizing::new(vec![0xFF; WAV_HEADER_BYTES]),
             limit: usize::MAX,
         };
         for sample in [i16::MIN, 0, i16::MAX] {
@@ -291,22 +285,18 @@ mod tests {
 
     #[test]
     fn wav_encoding_rejects_incomplete_headers_partial_samples_and_invalid_rates() {
-        let unsupported = "Recording format is unsupported";
         for (length, rate, expected) in [
             (WAV_HEADER_BYTES - 1, 16_000, INCOMPLETE_HEADER),
-            (WAV_HEADER_BYTES + 1, 16_000, unsupported),
-            (WAV_HEADER_BYTES + 2, 0, unsupported),
-            (WAV_HEADER_BYTES + 2, u32::MAX, unsupported),
+            (WAV_HEADER_BYTES + 1, 16_000, UNSUPPORTED_FORMAT),
+            (WAV_HEADER_BYTES + 2, 0, UNSUPPORTED_FORMAT),
+            (WAV_HEADER_BYTES + 2, u32::MAX, UNSUPPORTED_FORMAT),
         ] {
             let pcm = Pcm16 {
-                bytes: vec![0x5A; length],
+                bytes: Zeroizing::new(vec![0x5A; length]),
                 limit: usize::MAX,
             };
             let error = pcm.into_wav(rate).unwrap_err().to_string();
-            assert!(
-                error.starts_with(expected),
-                "{length} bytes at {rate} Hz: {error}"
-            );
+            assert_eq!(error, expected, "{length} bytes at {rate} Hz");
         }
     }
 
@@ -323,7 +313,7 @@ mod tests {
     }
 
     #[test]
-    fn profiling_duration_rejects_incomplete_audio_and_zero_rate() -> anyhow::Result<()> {
+    fn wav_duration_needs_a_whole_header_whole_samples_and_a_rate() -> anyhow::Result<()> {
         let duration = Duration::from_millis(500);
         let wav = silent_wav(16_000, duration)?;
         assert_eq!(wav_duration(&wav)?, duration);
@@ -341,28 +331,33 @@ mod tests {
     }
 
     #[test]
-    fn quiet_edges_keep_word_padding_and_interior_pauses_but_clicks_are_rejected() {
+    fn quiet_edges_keep_word_padding_and_interior_pauses() {
         let rate = 16_000;
+        let second = samples_in(Duration::from_secs(1), rate);
         let pcm = pcm_from(&[
-            (rate * 2, 0),
-            (rate, 3000),
-            (rate * 3, 0),
-            (rate, 3000),
-            (rate * 2, 0),
+            (2 * second, 0),
+            (second, 3000),
+            (3 * second, 0),
+            (second, 3000),
+            (2 * second, 0),
         ]);
-        let padding = rate / 2;
-        let kept = bytes_in(rate * 2 - padding)..bytes_in(rate * 7 + padding);
+        let padding = second / 2;
+        let kept = bytes_in(2 * second - padding)..bytes_in(7 * second + padding);
         let expected = pcm.audio()[kept].to_vec();
-        let click = pcm_from(&[(rate / 20, 3000), (rate * 2 - rate / 20, 0)]);
-        let rate = u32::try_from(rate).unwrap();
         let sealed = pcm.seal(Audibility::new(rate), rate).unwrap().unwrap();
         assert_eq!(&sealed.wav[WAV_HEADER_BYTES..], expected);
         assert_eq!(wav_sample_rate(&sealed.wav).unwrap(), rate);
-
         assert_eq!(sealed.trimmed, Duration::from_millis(1_500));
         assert_eq!(sealed.audible, Duration::from_secs(2));
+    }
 
-        assert!(click.seal(Audibility::new(rate), rate).unwrap().is_none());
+    #[test]
+    fn an_isolated_click_is_not_speech() {
+        let rate = 16_000;
+        let second = samples_in(Duration::from_secs(1), rate);
+        let click = second / 20;
+        let pcm = pcm_from(&[(click, 3000), (2 * second - click, 0)]);
+        assert!(pcm.seal(Audibility::new(rate), rate).unwrap().is_none());
     }
 
     #[test]
@@ -386,11 +381,13 @@ mod tests {
     #[test]
     fn sparse_long_recording_releases_capacity_without_changing_padded_audio() {
         let rate = 48_000;
+        let second = samples_in(Duration::from_secs(1), rate);
         let mut pcm = Pcm16 {
-            bytes: vec![0; WAV_HEADER_BYTES + bytes_in(rate * 300)],
+            bytes: Zeroizing::new(vec![0; WAV_HEADER_BYTES + bytes_in(300 * second)]),
             limit: usize::MAX,
         };
-        let speech = WAV_HEADER_BYTES + bytes_in(rate * 40)..WAV_HEADER_BYTES + bytes_in(rate * 50);
+        let speech =
+            WAV_HEADER_BYTES + bytes_in(40 * second)..WAV_HEADER_BYTES + bytes_in(50 * second);
         for (pair, sample) in pcm.bytes[speech]
             .as_chunks_mut::<SAMPLE_BYTES>()
             .0
@@ -399,10 +396,9 @@ mod tests {
         {
             *pair = sample.to_le_bytes();
         }
-        let padding = rate / 2;
-        let kept = bytes_in(rate * 40 - padding)..bytes_in(rate * 50 + padding);
+        let padding = second / 2;
+        let kept = bytes_in(40 * second - padding)..bytes_in(50 * second + padding);
         let expected = pcm.audio()[kept].to_vec();
-        let rate = u32::try_from(rate).unwrap();
         let sealed = pcm.seal(Audibility::new(rate), rate).unwrap().unwrap();
         assert_eq!(&sealed.wav[WAV_HEADER_BYTES..], expected);
         assert_eq!(sealed.wav.capacity(), sealed.wav.len());
@@ -420,7 +416,7 @@ mod tests {
             bytes.resize(length, 0x5A);
             let allocation = bytes.as_ptr();
             let mut pcm = Pcm16 {
-                bytes,
+                bytes: Zeroizing::new(bytes),
                 limit: usize::MAX,
             };
             pcm.release_excess_capacity();
@@ -436,11 +432,12 @@ mod tests {
     fn profile_audio_seal() -> anyhow::Result<()> {
         use std::{hint::black_box, time::Instant};
 
+        const RUNS: usize = 21;
         let rate = 48_000;
-        let fixture = pcm_from(&[(rate, 0), (rate * 297, 3000), (rate * 2, 0)]);
-        let rate = u32::try_from(rate)?;
-        let mut timings = Vec::new();
-        for _ in 0..21 {
+        let second = samples_in(Duration::from_secs(1), rate);
+        let fixture = pcm_from(&[(second, 0), (297 * second, 3000), (2 * second, 0)]);
+        let mut timings = Vec::with_capacity(RUNS);
+        for _ in 0..RUNS {
             let pcm = Pcm16 {
                 bytes: fixture.bytes.clone(),
                 limit: usize::MAX,
@@ -459,8 +456,9 @@ mod tests {
         }
         timings.sort_by(f64::total_cmp);
         eprintln!(
-            "audio_seal: seconds=300 median_ms={:.3} p95_ms={:.3} runs=21",
-            timings[10], timings[19]
+            "audio_seal: seconds=300 median_ms={:.3} p95_ms={:.3} runs={RUNS}",
+            timings[RUNS / 2],
+            timings[RUNS * 95 / 100]
         );
         Ok(())
     }
