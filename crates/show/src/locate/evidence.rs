@@ -22,13 +22,17 @@ pub struct Evidence {
 }
 
 impl Evidence {
+    pub const FRAMES: usize = 12;
+
     pub fn compose<E: From<Error>>(
         moments: &[Moment],
         crop: Option<Rect>,
         mut frame: impl FnMut(Moment) -> Result<SourceFrame, E>,
         typeface: &Typeface,
     ) -> Result<Self, E> {
-        if !(1..=12).contains(&moments.len()) || !moments.is_sorted_by(|one, two| one < two) {
+        if !(1..=Self::FRAMES).contains(&moments.len())
+            || !moments.is_sorted_by(|one, two| one < two)
+        {
             return Err(
                 Error::invalid("Choose between 1 and 12 distinct ordered source frames").into(),
             );

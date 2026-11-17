@@ -94,7 +94,11 @@ pub(super) fn parse(
             },
             Some("--most") if verb == Verb::Frames && most.is_none() => {
                 let frames = super::count("--most", &mut args)?;
-                anyhow::ensure!(frames <= 12, "--most accepts at most 12 frames");
+                anyhow::ensure!(
+                    frames <= Evidence::FRAMES,
+                    "--most accepts at most {} frames",
+                    Evidence::FRAMES
+                );
                 most = Some(frames);
             },
             Some("--out") if destination.is_none() => {
