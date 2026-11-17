@@ -13,7 +13,9 @@ use self::{
 use super::{Event, Halt, Machine, Now, RecognitionMode, SessionId};
 use crate::gesture::{Moment, Timing};
 
-const TIMING: Timing = Timing::new(1, 2, 3);
+const LIMIT: u64 = 3;
+
+const TIMING: Timing = Timing::new(1, 2, LIMIT);
 
 const RETIRING: usize = 2;
 

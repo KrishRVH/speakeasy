@@ -2,7 +2,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 
 use super::{
     super::{Failure, Machine, Outcome, Part, Phase, RecognitionMode, SessionId, Ticket, Worker},
-    Abstract, TIMING,
+    Abstract, LIMIT,
 };
 use crate::gesture::Moment;
 
@@ -82,11 +82,7 @@ fn render(machine: &Machine<Abstract>, clock: Moment, mode: Option<RecognitionMo
         ids.partition_point(|&earlier| earlier < id).to_string()
     });
     replace(&renamed, "Moment(", |moment| {
-        clock
-            .nanos()
-            .saturating_sub(moment)
-            .min(TIMING.limit())
-            .to_string()
+        clock.nanos().saturating_sub(moment).min(LIMIT).to_string()
     })
 }
 

@@ -55,11 +55,6 @@ impl Timing {
             limit,
         }
     }
-
-    #[cfg(test)]
-    pub(crate) const fn limit(self) -> u64 {
-        self.limit
-    }
 }
 
 impl Default for Timing {
