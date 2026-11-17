@@ -57,6 +57,7 @@ const MARGIN: i32 = 32;
 
 const OVERLAY: [i32; 4] = [200, 120, 440, 280];
 const BLACK: [u8; 3] = [0; 3];
+const GRAY: [u8; 3] = [0x60; 3];
 const MAGENTA: [u8; 3] = [255, 0, 255];
 
 const TOLERANCE: u8 = 6;
@@ -81,6 +82,7 @@ const SUBJECT_CLASS: PCWSTR = w!("SpeakeasyCaptureSubject");
 const LISTED_CLASS: PCWSTR = w!("SpeakeasyListedWindow");
 
 const GPUI_POPUP_STYLES: [u32; 2] = [0, WS_EX_TOOLWINDOW | WS_EX_TOPMOST];
+const TOPMOST: u32 = WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
 
 fn pattern(x: i32, y: i32) -> [u8; 3] {
     if y >= BAND_TOP {
@@ -234,8 +236,7 @@ fn a_window_capture_stops_once_its_window_closes_or_goes_off_screen() -> anyhow:
     join_lasting_apartment()?;
     let display = display_under_pointer()?;
 
-    let gray = unsafe { CreateSolidBrush(0x0060_6060) };
-    let _class = Class::register(SUBJECT_CLASS, Some(DefWindowProcW), gray)?;
+    let _class = Class::register(SUBJECT_CLASS, Some(DefWindowProcW), brush(GRAY))?;
     let bounds = Layout::centered_on(display.native).pattern;
     for (departure, gone) in [
         (Departure::Hide, WindowGone::OffScreen),
@@ -244,14 +245,10 @@ fn a_window_capture_stops_once_its_window_closes_or_goes_off_screen() -> anyhow:
         (Departure::MoveAway, WindowGone::OffScreen),
         (Departure::Close, WindowGone::Closed),
     ] {
-        let window = Popup::create(
-            SUBJECT_CLASS,
-            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-            bounds,
-        )?;
-        window.show();
+        let subject = Popup::create(SUBJECT_CLASS, TOPMOST, bounds)?;
+        subject.show();
         dispatch_messages_for(COMPOSED);
-        let followed = Window(window.0 as isize);
+        let followed = subject.window();
         let part = window_part(display.native, followed)
             .map_err(|gone| anyhow!(gone))?
             .context("Cannot read the owned window's frame")?;
@@ -265,7 +262,7 @@ fn a_window_capture_stops_once_its_window_closes_or_goes_off_screen() -> anyhow:
         read_next(&mut capture, started)?.context("No frame arrived")?;
 
         let departing = Instant::now();
-        let _remaining = departure.take_off_screen(window)?;
+        let _remaining = departure.take_off_screen(subject)?;
         let stopped = read_next(&mut capture, departing);
         assert!(
             matches!(stopped, Err(Failure::Window(reason)) if reason == gone),
@@ -280,8 +277,7 @@ fn a_window_capture_stops_once_its_window_closes_or_goes_off_screen() -> anyhow:
 fn window_layouts_sort_windows_by_layer_and_leave_ours_out() -> anyhow::Result<()> {
     per_monitor_aware()?;
     let display = display_under_pointer()?;
-    let gray = unsafe { CreateSolidBrush(0x0060_6060) };
-    let _class = Class::register(LISTED_CLASS, Some(DefWindowProcW), gray)?;
+    let _class = Class::register(LISTED_CLASS, Some(DefWindowProcW), brush(GRAY))?;
     let bounds = Layout::centered_on(display.native).pattern;
     let shown = |styles: [u32; 2]| -> anyhow::Result<Popup> {
         let window = Popup::styled(LISTED_CLASS, styles, bounds)?;
@@ -301,7 +297,10 @@ fn window_layouts_sort_windows_by_layer_and_leave_ours_out() -> anyhow::Result<(
     assert_eq!(classify(menu.0), Some(WindowLayer::Menu));
     assert_eq!(classify(floating.0), Some(WindowLayer::Floating));
     assert_eq!(classify(through.0), None);
-    assert_eq!(cloaked.map(|window| classify(window.0)), Some(None));
+    assert_eq!(
+        cloaked.as_ref().map(|window| classify(window.0)),
+        Some(None)
+    );
     assert_eq!(classify(hidden.0), None);
     let listed = stack(display.native).context("Cannot list windows")?;
     assert!(
@@ -425,7 +424,7 @@ fn synthetic_frame(
         .collect();
     let data = D3D11_SUBRESOURCE_DATA {
         pSysMem: bgra.as_ptr().cast(),
-        SysMemPitch: width.checked_mul(4).unwrap(),
+        SysMemPitch: width.strict_mul(4),
         SysMemSlicePitch: 0,
     };
     let mut texture = None;
@@ -637,27 +636,20 @@ impl Crop {
         let [display_left, display_top, ..] = display.edges;
         let extent = display.extent().map(i32::cast_unsigned);
         let [left, top, right, bottom] = pixel_box(frame.part, extent).map(u32::cast_signed);
-        let [width, height] = [
-            right.checked_sub(left).unwrap(),
-            bottom.checked_sub(top).unwrap(),
-        ];
-        let [left, top] = [
-            display_left.checked_add(left).unwrap(),
-            display_top.checked_add(top).unwrap(),
-        ];
+        let [width, height] = [right.strict_sub(left), bottom.strict_sub(top)];
+        let [left, top] = [display_left.strict_add(left), display_top.strict_add(top)];
         let [frame_width, frame_height] = frame.image.size();
-        let scale = width.checked_div(frame_width.cast_signed()).unwrap();
+        let scale = width.strict_div(frame_width.cast_signed());
         ensure!(
-            scale > 0 && frame_height.cast_signed().checked_mul(scale).unwrap() == height,
+            scale > 0 && frame_height.cast_signed().strict_mul(scale) == height,
             "The frame does not match its part of the display"
         );
-        let frame_pixels =
-            |physical: i32| physical.checked_div(scale).unwrap().cast_unsigned() as usize;
-        let column = frame_pixels(area.left.checked_sub(left).unwrap());
-        let row = frame_pixels(area.top.checked_sub(top).unwrap());
-        let crop_width = frame_pixels(area.right.checked_sub(area.left).unwrap());
-        let crop_height = frame_pixels(area.bottom.checked_sub(area.top).unwrap());
-        let end_column = column.checked_add(crop_width).unwrap();
+        let frame_pixels = |physical: i32| physical.strict_div(scale).cast_unsigned() as usize;
+        let column = frame_pixels(area.left.strict_sub(left));
+        let row = frame_pixels(area.top.strict_sub(top));
+        let crop_width = frame_pixels(area.right.strict_sub(area.left));
+        let crop_height = frame_pixels(area.bottom.strict_sub(area.top));
+        let end_column = column.strict_add(crop_width);
         let frame_width = frame_width as usize;
         let (pixels, _) = frame.image.pixels().as_chunks::<BYTES_PER_PIXEL>();
         let bgra = pixels
@@ -704,7 +696,7 @@ struct Scene {
     overlay_edges: [i32; 4],
     pattern: Option<HWND>,
     requests: Sender<()>,
-    replies: Receiver<anyhow::Result<isize>>,
+    replies: Receiver<anyhow::Result<Window>>,
     close: Sender<Infallible>,
     painter: Option<thread::JoinHandle<()>>,
 }
@@ -716,11 +708,11 @@ impl Scene {
         let (replying, replies) = async_channel::bounded(3);
         let (close, closing) = async_channel::bounded::<Infallible>(1);
         let painter = thread::spawn(move || paint(layout, &replying, &requested, &closing));
-        let backdrop = replies.recv_blocking()??;
-        let overlay = replies.recv_blocking()??;
+        let backdrop = replies.recv_blocking()??.handle();
+        let overlay = replies.recv_blocking()??.handle();
         Ok(Self {
-            backdrop: backdrop as HWND,
-            overlay: overlay as HWND,
+            backdrop,
+            overlay,
             overlay_edges: layout.overlay.edges,
             pattern: None,
             requests,
@@ -732,7 +724,7 @@ impl Scene {
 
     fn open_pattern(&mut self) -> anyhow::Result<HWND> {
         self.requests.try_send(())?;
-        let pattern = self.replies.recv_blocking()?? as HWND;
+        let pattern = self.replies.recv_blocking()??.handle();
         self.pattern = Some(pattern);
         Ok(pattern)
     }
@@ -870,52 +862,37 @@ struct Layout {
 
 impl Layout {
     fn centered_on(display: Display) -> Self {
-        let [left, top, right, bottom] = display.edges;
         let [width, height] = [PATTERN_WIDTH + 2 * MARGIN, PATTERN_HEIGHT + 2 * MARGIN];
-
-        let offset_x = right.checked_sub(left).unwrap().checked_sub(width).unwrap() / 2;
-        let offset_y = bottom
-            .checked_sub(top)
-            .unwrap()
-            .checked_sub(height)
-            .unwrap()
-            / 2;
-        let x = left.checked_add(offset_x & !1).unwrap();
-        let y = top.checked_add(offset_y & !1).unwrap();
-        let [pattern_x, pattern_y] = [
-            x.checked_add(MARGIN).unwrap(),
-            y.checked_add(MARGIN).unwrap(),
+        let [left, top, ..] = display.edges;
+        let [across, down] = display.extent();
+        let origin = [
+            left.strict_add((across.strict_sub(width) / 2) & !1),
+            top.strict_add((down.strict_sub(height) / 2) & !1),
         ];
-        let [overlay_left, overlay_top, overlay_right, overlay_bottom] = OVERLAY;
+        let inset = origin.map(|edge| edge.strict_add(MARGIN));
         Self {
-            backdrop: [
-                x,
-                y,
-                x.checked_add(width).unwrap(),
-                y.checked_add(height).unwrap(),
-            ],
-            pattern: [
-                pattern_x,
-                pattern_y,
-                pattern_x.checked_add(PATTERN_WIDTH).unwrap(),
-                pattern_y.checked_add(PATTERN_HEIGHT).unwrap(),
-            ],
+            backdrop: translated([0, 0, width, height], origin),
+            pattern: translated([0, 0, PATTERN_WIDTH, PATTERN_HEIGHT], inset),
             overlay: Display {
                 monitor: display.monitor,
-                edges: [
-                    pattern_x.checked_add(overlay_left).unwrap(),
-                    pattern_y.checked_add(overlay_top).unwrap(),
-                    pattern_x.checked_add(overlay_right).unwrap(),
-                    pattern_y.checked_add(overlay_bottom).unwrap(),
-                ],
+                edges: translated(OVERLAY, inset),
             },
         }
     }
 }
 
+fn translated([left, top, right, bottom]: [i32; 4], [x, y]: [i32; 2]) -> [i32; 4] {
+    [
+        left.strict_add(x),
+        top.strict_add(y),
+        right.strict_add(x),
+        bottom.strict_add(y),
+    ]
+}
+
 fn paint(
     layout: Layout,
-    replies: &Sender<anyhow::Result<isize>>,
+    replies: &Sender<anyhow::Result<Window>>,
     requests: &Receiver<()>,
     closing: &Receiver<Infallible>,
 ) {
@@ -930,39 +907,35 @@ fn paint(
 
 fn paint_scene(
     layout: Layout,
-    replies: &Sender<anyhow::Result<isize>>,
+    replies: &Sender<anyhow::Result<Window>>,
     requests: &Receiver<()>,
     closing: &Receiver<Infallible>,
 ) -> anyhow::Result<()> {
-    let [gray, magenta] = [[0x60; 3], MAGENTA].map(|[red, green, blue]| unsafe {
-        CreateSolidBrush(u32::from_le_bytes([red, green, blue, 0]))
-    });
     let _classes = [
-        Class::register(BACKDROP_CLASS, Some(DefWindowProcW), gray)?,
-        Class::register(OVERLAY_CLASS, Some(DefWindowProcW), magenta)?,
+        Class::register(BACKDROP_CLASS, Some(DefWindowProcW), brush(GRAY))?,
+        Class::register(OVERLAY_CLASS, Some(DefWindowProcW), brush(MAGENTA))?,
         Class::register(PATTERN_CLASS, Some(paint_pattern), null_mut())?,
     ];
-    let topmost = WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
-    let backdrop = Popup::create(BACKDROP_CLASS, topmost, layout.backdrop)?;
+    let backdrop = Popup::create(BACKDROP_CLASS, TOPMOST, layout.backdrop)?;
     set_affinity(backdrop.0, WDA_MONITOR)?;
     backdrop.show();
-    replies.try_send(Ok(backdrop.0 as isize))?;
+    replies.try_send(Ok(backdrop.window()))?;
     let overlay = Popup::styled(OVERLAY_CLASS, GPUI_POPUP_STYLES, [0, 0, 1, 1])?;
 
     let native = unsafe { native_window(overlay.0) }?;
     configure_overlay(&native, layout.overlay)?;
     set_overlay_visible(&native, true);
-    replies.try_send(Ok(overlay.0 as isize))?;
+    replies.try_send(Ok(overlay.window()))?;
     let mut pattern = None;
     let deadline = Instant::now().checked_add(ON_SCREEN).unwrap();
     while !closing.is_closed() && Instant::now() < deadline {
         if pattern.is_none() && requests.try_recv().is_ok() {
-            let window = Popup::create(PATTERN_CLASS, topmost, layout.pattern)?;
-            window.show();
+            let opened = Popup::create(PATTERN_CLASS, TOPMOST, layout.pattern)?;
+            opened.show();
 
             set_overlay_visible(&native, true);
-            replies.try_send(Ok(window.0 as isize))?;
-            pattern = Some(window);
+            replies.try_send(Ok(opened.window()))?;
+            pattern = Some(opened);
         }
         dispatch_messages();
         thread::sleep(Duration::from_millis(5));
@@ -987,6 +960,10 @@ fn dispatch_messages_for(duration: Duration) {
         dispatch_messages();
         thread::sleep(Duration::from_millis(5));
     }
+}
+
+fn brush([red, green, blue]: [u8; 3]) -> HBRUSH {
+    unsafe { CreateSolidBrush(u32::from_le_bytes([red, green, blue, 0])) }
 }
 
 struct Class(PCWSTR);
@@ -1049,6 +1026,10 @@ impl Popup {
 
     fn show(&self) {
         unsafe { ShowWindow(self.0, SW_SHOWNOACTIVATE) };
+    }
+
+    fn window(&self) -> Window {
+        Window(self.0 as isize)
     }
 }
 

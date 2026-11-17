@@ -8,22 +8,17 @@ fn target_geometry_tracks_an_owned_window_without_sampling_input() -> anyhow::Re
     let display =
         describe(unsafe { MonitorFromPoint(POINT::default(), MONITOR_DEFAULTTOPRIMARY) })?;
 
-    let gray = unsafe { CreateSolidBrush(0x0060_6060) };
-    let _class = Class::register(SUBJECT_CLASS, Some(DefWindowProcW), gray)?;
+    let _class = Class::register(SUBJECT_CLASS, Some(DefWindowProcW), brush(GRAY))?;
     let [left, top, right, bottom] = Layout::centered_on(display.native).pattern;
-    let window = Popup::create(
-        SUBJECT_CLASS,
-        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-        [left, top, right, bottom],
-    )?;
-    window.show();
+    let subject = Popup::create(SUBJECT_CLASS, TOPMOST, [left, top, right, bottom])?;
+    subject.show();
     dispatch_messages_for(COMPOSED);
-    let original = window_part(display.native, Window(window.0 as isize))
+    let original = window_part(display.native, subject.window())
         .map_err(|gone| anyhow!(gone))?
         .context("The owned target has no visible frame")?;
     let target = Target {
         display,
-        region: Region::Window(Window(window.0 as isize), original),
+        region: Region::Window(subject.window(), original),
     };
     let area = Target::area(display, original);
     let moved = RECT {
@@ -35,7 +30,7 @@ fn target_geometry_tracks_an_owned_window_without_sampling_input() -> anyhow::Re
 
     let positioned = unsafe {
         SetWindowPos(
-            window.0,
+            subject.0,
             null_mut(),
             moved.left,
             moved.top,
@@ -74,7 +69,7 @@ fn target_geometry_tracks_an_owned_window_without_sampling_input() -> anyhow::Re
         elapsed[500], elapsed[950]
     );
 
-    unsafe { ShowWindow(window.0, SW_HIDE) };
+    unsafe { ShowWindow(subject.0, SW_HIDE) };
     assert!(pointer_part(target).is_none());
     assert_eq!(pointer_part(area), Some(original));
     Ok(())
