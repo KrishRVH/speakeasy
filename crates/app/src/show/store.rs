@@ -137,14 +137,14 @@ pub(super) fn stage(
     retained: Option<Retained<'_>>,
 ) -> anyhow::Result<Staged> {
     let directory = location.directory();
-    anyhow::ensure!(
-        !directory.exists(),
-        "{} already exists, and a Show never replaces one",
-        directory.display()
-    );
     let parent = directory
         .parent()
         .context("A Show's directory needs a parent")?;
+    anyhow::ensure!(
+        !entry_exists(directory).map_err(cannot_save(parent))?,
+        "{} already exists, and a Show never replaces one",
+        directory.display()
+    );
     let staging = staging(parent).map_err(cannot_save(parent))?;
     let source_lost = retained.as_ref().is_some_and(|retained| {
         source::write(staging.path(), retained.journal, retained.duration).is_err()

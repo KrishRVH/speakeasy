@@ -254,10 +254,12 @@ fn a_bundle_appears_whole_under_a_fresh_name() -> anyhow::Result<()> {
 fn a_dangling_link_holds_its_name_so_a_fresh_folder_can_still_be_created() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let now = at(1_792_420_563);
-    std::os::unix::fs::symlink(
-        root.path().join("missing"),
-        root.path().join(utc_stamp(now)),
-    )?;
+    let taken = root.path().join(utc_stamp(now));
+    std::os::unix::fs::symlink(root.path().join("missing"), &taken)?;
+    assert!(
+        stage(managed(&taken), bundle()?, None).is_err(),
+        "A Show was staged over a dangling link"
+    );
     let fresh = fresh_directory(root.path(), now)?;
     assert_eq!(fresh.file_name(), Some("20261019T143603Z-2".as_ref()));
     fs::create_dir(&fresh)?;
