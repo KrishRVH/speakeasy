@@ -248,10 +248,10 @@ impl Detail {
         }
         let mut source_available = false;
         let mut coverage = "This Show has no retained source frames.".to_owned();
-        match source::size(directory) {
-            Ok(None) => {},
+        match source::present(directory) {
+            Ok(false) => {},
             Err(error) => warnings.push(format!("Source frames are unavailable: {error}")),
-            Ok(Some(_)) => match source::inspect(directory) {
+            Ok(true) => match source::inspect(directory) {
                 Err(error) => warnings.push(format!("Source frames are unavailable: {error:#}")),
                 Ok(source) if Some(source.duration()) != duration => warnings
                     .push("Source frames do not match this Show's recording timeline.".into()),

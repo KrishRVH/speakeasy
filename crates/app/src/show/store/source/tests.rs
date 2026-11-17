@@ -5,7 +5,7 @@ use super::*;
 #[test]
 fn optional_source_roundtrips_without_modifying_earlier_exports() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
-    assert_eq!(size(root.path())?, None);
+    assert!(!present(root.path())?);
     let mut journal = Journal::new();
     for (at, color) in [(200, 30), (900, 90)] {
         journal.admit().unwrap().record(
@@ -38,7 +38,7 @@ fn linked_sources_and_destinations_never_cross_the_bundle_boundary() -> anyhow::
     let other = tempfile::NamedTempFile::new()?;
     fs::write(other.path(), b"PRIVATE_PIXELS")?;
     symlink(other.path(), root.path().join(FILE))?;
-    assert!(size(root.path()).is_err());
+    assert!(present(root.path()).is_err());
     assert!(inspect(root.path()).is_err());
     assert!(export(&root.path().join(FILE), b"replacement").is_err());
     assert_eq!(fs::read(other.path())?, b"PRIVATE_PIXELS");

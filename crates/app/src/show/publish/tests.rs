@@ -780,7 +780,7 @@ fn retrieval_is_advertised_only_when_both_source_and_command_are_available() -> 
             assert!(copied.contains(&format!("show frames {id} --json")));
             assert!(copied.contains(&format!("``{}``", command.display())));
         }
-        assert_eq!(store::source::size(show.directory())?.is_some(), source_ok);
+        assert_eq!(store::source::present(show.directory())?, source_ok);
     }
     Ok(())
 }

@@ -149,7 +149,7 @@ fn archive(
         }
         files = files.saturating_add(1);
     }
-    let retained_frames = source::size(directory)?.is_some();
+    let retained_frames = source::present(directory)?;
     if retained_frames {
         let index = source::inspect(directory).context("Cannot export damaged retained frames")?;
         anyhow::ensure!(

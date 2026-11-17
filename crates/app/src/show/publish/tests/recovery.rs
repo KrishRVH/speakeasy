@@ -260,7 +260,7 @@ fn optional_source_failure_still_saves_selected_keyframes_and_reports_the_loss()
     };
     assert!(source_lost);
     assert!(store::recall::Entry::open(show.directory())?.show.is_ok());
-    assert!(store::source::size(show.directory())?.is_none());
+    assert!(!store::source::present(show.directory())?);
     assert!(fs::read_dir(show.directory())?.all(|entry| {
         !entry
             .unwrap()

@@ -27,11 +27,8 @@ pub(crate) fn longest_gap(source: &Source) -> u64 {
         .unwrap_or(0)
 }
 
-pub(crate) fn size(directory: &Path) -> io::Result<Option<u64>> {
-    if found(recall::regular_file(directory, FILE, Source::FILE_LIMIT))?.is_none() {
-        return Ok(None);
-    }
-    Ok(Some(fs::metadata(directory.join(FILE))?.len()))
+pub(crate) fn present(directory: &Path) -> io::Result<bool> {
+    Ok(found(recall::regular_file(directory, FILE, Source::FILE_LIMIT))?.is_some())
 }
 
 pub(crate) fn inspect(directory: &Path) -> anyhow::Result<Source> {

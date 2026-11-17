@@ -183,7 +183,7 @@ impl Request {
 
 fn index(directory: &Path) -> anyhow::Result<speakeasy_show::Source> {
     anyhow::ensure!(
-        source::size(directory)?.is_some(),
+        source::present(directory)?,
         "This Show has no retained source frames. Its selected keyframes may still be available through show inspect."
     );
     source::inspect(directory)
