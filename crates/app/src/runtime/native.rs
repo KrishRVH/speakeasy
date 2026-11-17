@@ -5,7 +5,7 @@ use std::{
 };
 
 use speakeasy_core::machine::{self, Payload, RecognitionMode, Settings};
-use speakeasy_platform::{InsertPermit, Scope, Taps};
+use speakeasy_platform::{InsertPermit, Inserted, Scope, Taps};
 use speakeasy_show::{Ending, Narration, NarrationLoss};
 use tokio::{sync::mpsc, task::JoinError};
 use zeroize::Zeroizing;
@@ -123,7 +123,7 @@ pub(super) struct Restored {
 type Delivered = machine::Delivered<Native>;
 
 pub(super) enum Delivery {
-    Inserted(anyhow::Result<speakeasy_platform::Inserted>),
+    Inserted(anyhow::Result<Inserted>),
     Published(anyhow::Result<Published>),
     Abandoned(anyhow::Result<()>),
     Reopened(anyhow::Result<Box<Reopened>>),
@@ -131,58 +131,55 @@ pub(super) enum Delivery {
 
 impl Delivery {
     pub(super) fn settled(result: Result<Self, JoinError>) -> Delivered {
-        use speakeasy_platform::Inserted;
-        match result {
-            Ok(Self::Inserted(Ok(Inserted::Sent))) => Delivered::Inserted(machine::Inserted::Sent),
-            Ok(Self::Inserted(Ok(Inserted::Copied(message)))) => {
-                Delivered::Inserted(machine::Inserted::Copied(message.into()))
-            },
-            Ok(Self::Inserted(Ok(Inserted::Unavailable(message)))) => {
-                Delivered::Inserted(machine::Inserted::Unavailable(message.into()))
-            },
-            Ok(Self::Inserted(Ok(Inserted::Cancelled))) => {
-                Delivered::Inserted(machine::Inserted::Cancelled)
-            },
-            Ok(Self::Inserted(Err(_))) => Delivered::Inserted(machine::Inserted::Failed),
-            Ok(Self::Published(Ok(Published::Saved {
-                show,
-                ending,
-                preservation,
-                copied,
-            }))) => Delivered::Published(machine::Published::Saved {
-                shown: show,
-                saved: Copied {
+        let Ok(delivery) = result else {
+            return Delivered::Panicked;
+        };
+        match delivery {
+            Self::Inserted(inserted) => Delivered::Inserted(match inserted {
+                Ok(Inserted::Sent) => machine::Inserted::Sent,
+                Ok(Inserted::Copied(message)) => machine::Inserted::Copied(message.into()),
+                Ok(Inserted::Unavailable(message)) => {
+                    machine::Inserted::Unavailable(message.into())
+                },
+                Ok(Inserted::Cancelled) => machine::Inserted::Cancelled,
+                Err(_) => machine::Inserted::Failed,
+            }),
+            Self::Published(published) => Delivered::Published(match published {
+                Ok(Published::Saved {
+                    show,
                     ending,
                     preservation,
+                    copied,
+                }) => machine::Published::Saved {
+                    shown: show,
+                    saved: Copied {
+                        ending,
+                        preservation,
+                    },
+                    copied: copied.map_err(|error| format!("{error:#}")),
                 },
-                copied: copied.map_err(|error| format!("{error:#}")),
-            }),
-            Ok(Self::Published(Ok(Published::Recovered {
-                show,
-                preservation,
-                narrated_copy,
-            }))) => Delivered::Published(machine::Published::Recovered {
-                shown: show,
-                recovered: Restored {
+                Ok(Published::Recovered {
+                    show,
                     preservation,
                     narrated_copy,
+                }) => machine::Published::Recovered {
+                    shown: show,
+                    recovered: Restored {
+                        preservation,
+                        narrated_copy,
+                    },
                 },
+                Ok(Published::Cancelled) => machine::Published::Cancelled,
+                Err(error) => machine::Published::Failed(format!("{error:#}")),
             }),
-            Ok(Self::Published(Ok(Published::Cancelled))) => {
-                Delivered::Published(machine::Published::Cancelled)
-            },
-            Ok(Self::Published(Err(error))) => {
-                Delivered::Published(machine::Published::Failed(format!("{error:#}")))
-            },
-            Ok(Self::Abandoned(result)) => {
+            Self::Abandoned(result) => {
                 Delivered::Abandoned(result.map_err(|error| format!("{error:#}")))
             },
-            Ok(Self::Reopened(result)) => Delivered::Reopened(
+            Self::Reopened(result) => Delivered::Reopened(
                 result
                     .map(|reopened| reopen(*reopened))
                     .map_err(|error| format!("{error:#}")),
             ),
-            Err(_) => Delivered::Panicked,
         }
     }
 }

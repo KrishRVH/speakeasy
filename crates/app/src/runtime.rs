@@ -327,11 +327,11 @@ impl<Host> Runtime<Host> {
         &self,
         interrupted: Interrupted,
     ) -> Result<RecoveryReceipt, &'static str> {
-        let (completed, result) = async_channel::bounded(1);
+        let (receipt, result) = async_channel::bounded(1);
         self.recoveries
             .try_send(Recovery {
                 interrupted,
-                completed,
+                receipt,
             })
             .map_err(|error| match error {
                 TrySendError::Full(_) => "A Show recovery is already waiting.",
@@ -507,7 +507,7 @@ pub(crate) enum PracticeEvent {
 
 struct Recovery {
     interrupted: Interrupted,
-    completed: Sender<Result<SavedShow, String>>,
+    receipt: Sender<Result<SavedShow, String>>,
 }
 
 struct Wiring<P> {

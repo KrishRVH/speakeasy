@@ -5,7 +5,7 @@ use std::{
     convert::Infallible,
     future::{pending, poll_fn},
     mem,
-    ops::ControlFlow,
+    ops::{ControlFlow, Range},
     pin::Pin,
     sync::Arc,
     task::Poll,
@@ -22,6 +22,7 @@ use speakeasy_core::{
     },
 };
 use speakeasy_platform::{Input, InputSender, InsertPermit, Scope, Taps};
+use speakeasy_show::Ending;
 use tokio::{
     sync::{mpsc, watch},
     task::{JoinError, JoinHandle},
@@ -38,8 +39,9 @@ use super::{
     worker::{Completion, Worker},
 };
 use crate::{
-    audio::SilentMicrophone,
+    audio::{self, SilentMicrophone},
     config::Config,
+    control::{Call, Reply},
     show::{self, Checkpointing, SavedShow, Unwound},
     transcript::{self, style::Style},
 };
@@ -228,10 +230,10 @@ impl<P: Ports> Owner<P> {
             Wake::Retired(recorder) => Event::Retired(recorder),
             Wake::Recover(Recovery {
                 interrupted,
-                completed,
+                receipt,
             }) => Event::Recover {
                 interrupted,
-                receipt: completed,
+                receipt,
             },
             Wake::Practice(practice) => Event::Practice(practice),
             Wake::EndPractice => Event::PracticeClosed,
@@ -252,7 +254,7 @@ impl<P: Ports> Owner<P> {
         let world = &self.world;
         let (ending, narration_lost) = match machine.outcome() {
             Outcome::ShowCopied(copied) => (copied.ending, copied.preservation.narration_lost),
-            _ => (speakeasy_show::Ending::Finished, None),
+            _ => (Ending::Finished, None),
         };
         let snapshot = Snapshot {
             epoch: world.epoch,
@@ -475,12 +477,12 @@ impl<P: Ports> Env<Native> for World<P> {
         self.worker.recover(&self.ports, config, probe);
     }
 
-    fn cut(&mut self, audio: &Clip, range: &std::ops::Range<usize>) -> Option<Clip> {
-        let wav = crate::audio::wav_tail(&audio.wav, range.clone()).ok()?;
+    fn cut(&mut self, clip: &Clip, range: &Range<usize>) -> Option<Clip> {
+        let wav = audio::wav_tail(&clip.wav, range.clone()).ok()?;
         Some(Clip {
             wav: Zeroizing::new(wav),
-            language: audio.language.clone(),
-            audible: audio.audible,
+            language: clip.language.clone(),
+            audible: clip.audible,
         })
     }
 
@@ -541,7 +543,7 @@ impl<P: Ports> Env<Native> for World<P> {
         &mut self,
         publication: Publication<Native>,
         permit: &InsertPermit,
-        receipt: Option<async_channel::Sender<Result<SavedShow, String>>>,
+        receipt: Option<Sender<Result<SavedShow, String>>>,
     ) {
         let Publication {
             mut footage,
@@ -594,7 +596,7 @@ impl<P: Ports> Env<Native> for World<P> {
 
     fn refuse_recovery(
         &mut self,
-        receipt: async_channel::Sender<Result<SavedShow, String>>,
+        receipt: Sender<Result<SavedShow, String>>,
         failure: &Failure<Native>,
     ) {
         #[expect(
@@ -641,10 +643,10 @@ impl<P: Ports> Env<Native> for World<P> {
         self.ports.hold_cues(held);
     }
 
-    fn respond(&mut self, call: crate::control::Call, reply: Result<Status<Native>, Refusal>) {
+    fn respond(&mut self, call: Call, reply: Result<Status<Native>, Refusal>) {
         let reply = match reply {
-            Ok(status) => crate::control::Reply::ok(self.status(status)),
-            Err(refusal) => crate::control::Reply::refused(commands::refusal(refusal)),
+            Ok(status) => Reply::ok(self.status(status)),
+            Err(refusal) => Reply::refused(commands::refusal(refusal)),
         };
         call.respond(reply);
     }
@@ -678,35 +680,34 @@ pub(super) async fn run<P: Ports>(wiring: Wiring<P>) {
 }
 
 fn capture(event: CaptureEvent) -> Event<Native> {
-    let (session, capture) =
-        match event {
-            CaptureEvent::Streaming(session, audio) => (session, Capture::Streaming(audio)),
-            CaptureEvent::Ready(session) => (session, Capture::Ready),
-            CaptureEvent::CheckpointLost(session) => (session, Capture::CheckpointLost),
-            CaptureEvent::Level(session, level) => (session, Capture::Level(level)),
-            CaptureEvent::Piece(session, number, audio) => {
-                (session, Capture::Piece(number, Clip::heard(audio, None)))
-            },
-            CaptureEvent::Finished(session, result) => (
-                session,
-                Capture::Finished(result.map(|sealed| sealed.map(native::sealed)).map_err(
-                    |error| Unheard {
-                        silent: error.is::<SilentMicrophone>(),
-                        text: error.to_string(),
-                    },
-                )),
+    let (session, capture) = match event {
+        CaptureEvent::Streaming(session, audio) => (session, Capture::Streaming(audio)),
+        CaptureEvent::Ready(session) => (session, Capture::Ready),
+        CaptureEvent::CheckpointLost(session) => (session, Capture::CheckpointLost),
+        CaptureEvent::Level(session, level) => (session, Capture::Level(level)),
+        CaptureEvent::Piece(session, number, audio) => {
+            (session, Capture::Piece(number, Clip::heard(audio, None)))
+        },
+        CaptureEvent::Finished(session, result) => {
+            let finished = result
+                .map(|sealed| sealed.map(native::sealed))
+                .map_err(|error| Unheard {
+                    silent: error.is::<SilentMicrophone>(),
+                    text: error.to_string(),
+                });
+            (session, Capture::Finished(finished))
+        },
+        CaptureEvent::Lost(session, sealed, lost) => (
+            session,
+            Capture::Lost(
+                native::sealed(sealed),
+                machine::Lost {
+                    notice: lost.notice.into(),
+                    failure: lost.failure.to_string(),
+                },
             ),
-            CaptureEvent::Lost(session, sealed, lost) => (
-                session,
-                Capture::Lost(
-                    native::sealed(sealed),
-                    machine::Lost {
-                        notice: lost.notice.into(),
-                        failure: lost.failure.to_string(),
-                    },
-                ),
-            ),
-        };
+        ),
+    };
     Event::Capture(session, capture)
 }
 
@@ -739,20 +740,18 @@ fn next_finished<T>(
     tasks: &mut Vec<(SessionId, JoinHandle<T>)>,
 ) -> impl Future<Output = (SessionId, Result<T, JoinError>)> + '_ {
     poll_fn(move |cx| {
-        let mut finished = None;
-        tasks.retain_mut(|(session, task)| {
-            if finished.is_some() {
-                return true;
-            }
-            match Pin::new(task).poll(cx) {
-                Poll::Ready(result) => {
-                    finished = Some((*session, result));
-                    false
-                },
-                Poll::Pending => true,
-            }
-        });
-        finished.map_or(Poll::Pending, Poll::Ready)
+        let finished = tasks
+            .iter_mut()
+            .enumerate()
+            .find_map(|(index, (_, task))| match Pin::new(task).poll(cx) {
+                Poll::Ready(result) => Some((index, result)),
+                Poll::Pending => None,
+            });
+        let Some((index, result)) = finished else {
+            return Poll::Pending;
+        };
+        let (session, _) = tasks.remove(index);
+        Poll::Ready((session, result))
     })
 }
 
