@@ -50,7 +50,7 @@ struct PasteChord<K> {
     v: K,
 }
 
-impl<K: Copy> PasteChord<K> {
+impl<K> PasteChord<K> {
     fn resolve(paste: LinuxPaste, mut key: impl FnMut(Keysym) -> Option<K>) -> Option<Self> {
         Some(Self {
             control: key(Keysym::Control_L)?,

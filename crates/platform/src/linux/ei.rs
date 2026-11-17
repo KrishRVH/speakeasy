@@ -153,13 +153,13 @@ impl Sender {
         })
     }
 
-    fn paste_target(&self) -> Result<(*mut EiDevice, PasteChord<u32>), PasteBlocked> {
+    fn paste_target(&self) -> Result<(NonNull<EiDevice>, PasteChord<u32>), PasteBlocked> {
         let keyboard = self.keyboard.as_ref().ok_or(PasteBlocked::NoKeyboard)?;
         let chord = paste_readiness(
             keyboard.device.resumed,
             keyboard.paste.as_ref().map(|paste| paste.state),
         )?;
-        Ok((keyboard.device.as_ptr(), chord))
+        Ok((keyboard.device.raw, chord))
     }
 
     pub(super) fn ready_text<'t>(
@@ -175,7 +175,7 @@ impl Sender {
         if text.contains('\0') {
             return Err(TextBlocked::NullCharacter);
         }
-        let device = device.as_ptr();
+        let device = device.raw;
         Ok(ReadyText {
             sender: self,
             input,
@@ -264,15 +264,15 @@ impl Sender {
     }
 
     fn set_resumed(&mut self, device: Option<NonNull<EiDevice>>, resumed: bool) {
-        if let Some(keyboard) = self
-            .keyboard
-            .as_mut()
-            .filter(|keyboard| keyboard.device.is(device))
+        if let Some(keyboard) = &mut self.keyboard
+            && keyboard.device.is(device)
         {
             keyboard.device.resumed = resumed;
             keyboard.forget_modifiers();
         }
-        if let Some(text) = self.text.as_mut().filter(|text| text.is(device)) {
+        if let Some(text) = &mut self.text
+            && text.is(device)
+        {
             text.resumed = resumed;
         }
     }
@@ -344,7 +344,7 @@ fn paste_readiness(
 #[must_use]
 pub(super) struct ReadyPaste<'a> {
     sender: &'a mut Sender,
-    keyboard: *mut EiDevice,
+    keyboard: NonNull<EiDevice>,
     chord: PasteChord<u32>,
 }
 
@@ -358,6 +358,7 @@ impl ReadyPaste<'_> {
         let sequence = sender.next_sequence();
         let api = &sender.api;
         let context = sender.context.as_ptr();
+        let keyboard = keyboard.as_ptr();
 
         unsafe {
             (api.ei_device_start_emulating)(keyboard, sequence);
@@ -385,7 +386,7 @@ pub(super) enum TextBlocked {
 pub(super) struct ReadyText<'a, 't> {
     sender: &'a mut Sender,
     input: TextInput,
-    device: *mut EiDevice,
+    device: NonNull<EiDevice>,
     text: &'t str,
 }
 
@@ -400,6 +401,7 @@ impl ReadyText<'_, '_> {
         let sequence = sender.next_sequence();
         let api = &sender.api;
         let context = sender.context.as_ptr();
+        let device = device.as_ptr();
 
         unsafe {
             (api.ei_device_start_emulating)(device, sequence);
@@ -481,10 +483,6 @@ impl Device {
 
     fn is(&self, device: Option<NonNull<EiDevice>>) -> bool {
         device == Some(self.raw)
-    }
-
-    const fn as_ptr(&self) -> *mut EiDevice {
-        self.raw.as_ptr()
     }
 }
 
