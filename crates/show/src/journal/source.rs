@@ -319,11 +319,8 @@ impl Journal {
                     word(&mut index, length)?;
                     offset = offset
                         .checked_add(length)
+                        .filter(|end| (*end as u64) < Source::FILE_LIMIT)
                         .ok_or(SourceError("source file is too large"))?;
-                    require(
-                        (offset as u64) < Source::FILE_LIMIT,
-                        "source file is too large",
-                    )?;
                     emit_record(TILE_RECORD, &version.data, &mut emit)?;
                 }
             }

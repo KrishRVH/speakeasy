@@ -228,11 +228,9 @@ pub fn start(header: &[u8]) -> Result<Take, SourceError> {
     )?;
     let mut data = Cursor(payload(record, HEADER)?);
     let budget = usize::try_from(data.wide()?)
-        .map_err(|_out_of_range| SourceError("checkpoint memory budget is too large"))?;
-    require(
-        budget <= MAX_BUDGET,
-        "checkpoint memory budget is too large",
-    )?;
+        .ok()
+        .filter(|budget| *budget <= MAX_BUDGET)
+        .ok_or(SourceError("checkpoint memory budget is too large"))?;
     let surface = Size {
         width: f32::from_le_bytes(data.take()?),
         height: f32::from_le_bytes(data.take()?),
@@ -247,12 +245,11 @@ pub fn start(header: &[u8]) -> Result<Take, SourceError> {
 }
 
 pub fn record_size(prefix: &[u8]) -> Result<usize, SourceError> {
-    let length = Cursor(prefix)
+    Cursor(prefix)
         .usize()?
         .checked_add(RECORD_OVERHEAD)
-        .ok_or(SourceError("checkpoint record is too large"))?;
-    require(length <= RECORD_LIMIT, "checkpoint record is too large")?;
-    Ok(length)
+        .filter(|length| *length <= RECORD_LIMIT)
+        .ok_or(SourceError("checkpoint record is too large"))
 }
 
 pub fn encode(event: &TakeEvent) -> Result<Vec<u8>, SourceError> {
