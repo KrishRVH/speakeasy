@@ -40,7 +40,7 @@ fn loading_a_domain_restores_its_words_and_model_without_changing_global_prefere
     let technical = Preset::capture("Coding".into(), &coding)?;
     technical.load(&mut writing);
     assert_eq!(
-        Vocabulary::new(&writing.vocabulary).text("Use rust."),
+        Vocabulary::new(&writing.vocabulary).text("Use rust.".into()),
         "Use Rust."
     );
     assert_eq!(writing.engine, Engine::Nemo);
@@ -51,7 +51,7 @@ fn loading_a_domain_restores_its_words_and_model_without_changing_global_prefere
     assert_eq!(writing.theme, Theme::Iris);
     prose.load(&mut writing);
     assert_eq!(
-        Vocabulary::new(&writing.vocabulary).text("Remove the rust."),
+        Vocabulary::new(&writing.vocabulary).text("Remove the rust.".into()),
         "Remove the rust."
     );
     assert_eq!(writing.engine, Engine::Whisper);

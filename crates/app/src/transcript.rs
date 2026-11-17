@@ -21,7 +21,7 @@ pub(crate) fn for_dictation(
     configured: Fillers,
     corrections: &[Correction],
 ) -> String {
-    style.apply(Vocabulary::new(corrections).text(&for_insertion(heard, style.fillers(configured))))
+    style.apply(Vocabulary::new(corrections).text(for_insertion(heard, style.fillers(configured))))
 }
 
 fn for_insertion(text: &str, fillers: Fillers) -> String {

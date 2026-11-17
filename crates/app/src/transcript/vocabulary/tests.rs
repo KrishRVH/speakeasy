@@ -32,7 +32,7 @@ fn longest_phrase_preserves_edges_without_rewriting_identifiers_or_chaining() {
         ("cube 'control' ÉLAN!", "Kube 'control' Élan!"),
         ("中文cube cube中文", "中文cube cube中文"),
     ] {
-        assert_eq!(vocabulary.text(input), expected);
+        assert_eq!(vocabulary.text(input.to_owned()), expected);
     }
 }
 

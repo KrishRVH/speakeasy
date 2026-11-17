@@ -74,7 +74,7 @@ pub(in crate::shell::settings) async fn exercise(
         view.edit_correction(vocabulary::Edit::Save, window, cx);
         ensure!(
             view.config.language == "fr"
-                && Vocabulary::new(&view.config.vocabulary).text("Use cube control.")
+                && Vocabulary::new(&view.config.vocabulary).text("Use cube control.".into())
                     == "Use kubectl."
                 && view.config.recognition_terms.phrases() == ["Kubernetes"],
             "Using a preset did not apply its language, corrections, and hints, or a correction being revised overwrote them"

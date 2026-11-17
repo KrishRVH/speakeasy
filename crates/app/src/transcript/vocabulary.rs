@@ -1,4 +1,4 @@
-use std::{cmp::Reverse, collections::HashSet, fmt};
+use std::{cmp::Reverse, collections::HashSet, fmt, iter};
 
 use anyhow::ensure;
 use serde::{Deserialize, Serialize};
@@ -82,9 +82,9 @@ impl<'a> Vocabulary<'a> {
         Self { rules }
     }
 
-    pub(crate) fn text(&self, text: &str) -> String {
+    pub(crate) fn text(&self, text: String) -> String {
         if self.rules.is_empty() {
-            return text.to_owned();
+            return text;
         }
         let tokens: Vec<_> = text.split_whitespace().collect();
         let mut output = String::with_capacity(text.len());
@@ -106,23 +106,21 @@ impl<'a> Vocabulary<'a> {
 
     pub(crate) fn narration(&self, narration: Narration) -> Narration {
         match narration {
-            Narration::Text(text) => Narration::Text(self.text(&text)),
+            Narration::Text(text) => Narration::Text(self.text(text)),
             Narration::Words(words) if !self.rules.is_empty() => {
                 let mut output = Vec::with_capacity(words.len());
-                let mut rest = words.as_slice();
-                while let Some((first, tail)) = rest.split_first() {
-                    if let Some((count, text)) =
-                        self.replacement(rest.iter().map(|word| word.text.as_str()))
-                    {
-                        let replaced = rest.get(..count).unwrap_or_default();
-                        let span = replaced
-                            .iter()
+                let mut words = words.into_iter();
+                while let Some(first) = words.next() {
+                    let tokens = iter::once(first.text.as_str())
+                        .chain(words.as_slice().iter().map(|word| word.text.as_str()));
+                    if let Some((count, text)) = self.replacement(tokens) {
+                        let span = words
+                            .by_ref()
+                            .take(count.saturating_sub(1))
                             .fold(first.span, |span, word| span.union(word.span));
                         output.push(Word { text, span });
-                        rest = rest.get(count..).unwrap_or_default();
                     } else {
-                        output.push(first.clone());
-                        rest = tail;
+                        output.push(first);
                     }
                 }
                 Narration::Words(output)
