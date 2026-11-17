@@ -77,6 +77,24 @@ fn window_edges_and_carry_in_expose_missing_coverage() {
     assert_eq!(samples.times, [at(1000), at(1500)]);
 }
 
+#[test]
+fn only_a_region_at_the_origin_can_be_the_whole_image() {
+    let image = Image::filled(4, 3, [1, 2, 3]).unwrap();
+    let whole = PixelRect {
+        left: 0,
+        top: 0,
+        width: 4,
+        height: 3,
+    };
+    assert_eq!(whole.cut(image.clone()).unwrap(), image);
+    for offset in [
+        PixelRect { left: 1, ..whole },
+        PixelRect { top: 1, ..whole },
+    ] {
+        assert!(offset.cut(image.clone()).is_err(), "{offset:?}");
+    }
+}
+
 proptest! {
     #[test]
     fn selection_is_bounded_distinct_and_keeps_the_anchor(

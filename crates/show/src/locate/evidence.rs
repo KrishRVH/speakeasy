@@ -41,7 +41,13 @@ impl PixelRect {
     }
 
     pub(crate) fn cut(self, image: Image) -> Result<Image, Error> {
-        if self.width == image.width() && self.height == image.height() {
+        let whole = Self {
+            left: 0,
+            top: 0,
+            width: image.width(),
+            height: image.height(),
+        };
+        if self == whole {
             Ok(image)
         } else {
             image.cropped(self.left, self.top, self.width, self.height)
