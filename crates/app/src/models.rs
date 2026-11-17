@@ -10,6 +10,8 @@ pub(crate) enum Model {
 }
 
 impl Model {
+    pub(crate) const ALL: [Self; 2] = [Self::Parakeet, Self::Nemotron];
+
     pub(crate) const fn file_name(self) -> &'static str {
         match self {
             Self::Parakeet => "parakeet-tdt-0.6b-v3.q8_0.gguf",
@@ -19,7 +21,7 @@ impl Model {
 
     pub(crate) fn at(path: &Path) -> Option<Self> {
         let name = path.file_name()?;
-        [Self::Parakeet, Self::Nemotron]
+        Self::ALL
             .into_iter()
             .find(|choice| name == choice.file_name())
     }

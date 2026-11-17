@@ -45,18 +45,25 @@ const NEMOTRON: Download<'static> = Download {
 
 const CHECKING: Progress = Progress::Step("Checking this machine");
 
+const fn source(model: Model) -> (&'static Download<'static>, &'static str) {
+    match model {
+        Model::Parakeet => (&PARAKEET, "Downloading Parakeet v3"),
+        Model::Nemotron => (&NEMOTRON, "Downloading Nemotron 3.5"),
+    }
+}
+
 pub(crate) fn downloaded() -> Vec<Model> {
     let Ok(root) = crate::paths::data_root() else {
         return Vec::new();
     };
-    [(Model::Parakeet, &PARAKEET), (Model::Nemotron, &NEMOTRON)]
+    Model::ALL
         .into_iter()
-        .filter(|(_, download)| {
+        .filter(|&model| {
+            let (download, _) = source(model);
             model_directory(&root, download)
                 .join(download.file_name())
                 .is_file()
         })
-        .map(|(model, _)| model)
         .collect()
 }
 
@@ -276,10 +283,7 @@ async fn install(
         .read_timeout(Duration::from_secs(30))
         .build()?;
     let engine = choose_engine(&client, root, progress, installation).await?;
-    let (download, step) = match choice {
-        Model::Parakeet => (&PARAKEET, "Downloading Parakeet v3"),
-        Model::Nemotron => (&NEMOTRON, "Downloading Nemotron 3.5"),
-    };
+    let (download, step) = source(choice);
     let model = fetch(
         &client,
         download,

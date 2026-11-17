@@ -23,8 +23,20 @@ fn installed(choice: Model, use_gpu: bool) -> Installed {
 }
 
 #[test]
+fn each_managed_model_downloads_under_the_name_that_identifies_it() {
+    for model in Model::ALL {
+        let (download, _) = source(model);
+        assert_eq!(
+            Model::at(Path::new(download.file_name())),
+            Some(model),
+            "{model:?}"
+        );
+    }
+}
+
+#[test]
 fn model_installation_preserves_language_gpu_preference_and_unrelated_edits() {
-    for choice in [Model::Parakeet, Model::Nemotron] {
+    for choice in Model::ALL {
         let mut config = Config {
             language: "ja-JP".into(),
             use_gpu: false,
