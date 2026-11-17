@@ -38,10 +38,7 @@ impl<P: Payload> Outcome<P> {
 pub enum Failure<P: Payload> {
     Said(P::Text),
     InputLost,
-    Undelivered {
-        said: Option<P::Text>,
-        replay: bool,
-    },
+    Undelivered(Option<P::Text>),
     PublishStopped,
     NotCopied {
         saved: P::Saved,

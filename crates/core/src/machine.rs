@@ -1152,7 +1152,6 @@ impl<P: Payload> Machine<P> {
         if keeps_dictation && let Some(text) = session.take_dictation() {
             self.last_dictation = Some(text);
         }
-        let replay = !show && self.last_dictation.is_some();
         let outcome = match delivered {
             Delivered::Reopened(Ok(reopened)) => {
                 session.reopened(reopened);
@@ -1179,10 +1178,7 @@ impl<P: Payload> Machine<P> {
             | Delivered::Published(Published::Cancelled)
             | Delivered::Abandoned(Ok(())) => Outcome::Cancelled,
             Delivered::Inserted(Inserted::Unavailable(text)) => {
-                Outcome::Failed(Failure::Undelivered {
-                    said: Some(text),
-                    replay,
-                })
+                Outcome::Failed(Failure::Undelivered(Some(text)))
             },
             Delivered::Published(Published::Recovered { shown, recovered }) => {
                 self.remember(shown, self.latest.id, env);
@@ -1193,7 +1189,7 @@ impl<P: Payload> Machine<P> {
             | Delivered::Reopened(Err(text)) => Outcome::Failed(Failure::Said(text)),
             Delivered::Panicked if show => Outcome::Failed(Failure::PublishStopped),
             Delivered::Inserted(Inserted::Failed) | Delivered::Panicked => {
-                Outcome::Failed(Failure::Undelivered { said: None, replay })
+                Outcome::Failed(Failure::Undelivered(None))
             },
         };
         if let Outcome::Failed(failure) = &outcome

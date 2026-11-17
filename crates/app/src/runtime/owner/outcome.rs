@@ -74,11 +74,9 @@ pub(super) fn failure(failure: &Failure<Native>) -> String {
             "Speakeasy stopped watching the dictation shortcut. Resume dictation to try again."
                 .into()
         },
-        Failure::Undelivered { said, replay } => {
+        Failure::Undelivered(said) => {
             let mut message = said.clone().unwrap_or_else(|| INSERT_FAILED.into());
-            if *replay {
-                message.push_str(REPLAY_HINT);
-            }
+            message.push_str(REPLAY_HINT);
             message
         },
         Failure::PublishStopped => PUBLISH_STOPPED.into(),
