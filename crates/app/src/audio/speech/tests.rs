@@ -12,10 +12,6 @@ use crate::{
 const RATE: u32 = 16_000;
 const SECOND: usize = 32_000;
 
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "Each sample stays within the i16 range the amplitude names"
-)]
 fn tone(bytes: usize, hz: f64, amplitude: f64) -> Vec<u8> {
     let samples = bytes / SAMPLE_BYTES;
     let fade = f64::from(RATE) / 200.0;
@@ -23,7 +19,12 @@ fn tone(bytes: usize, hz: f64, amplitude: f64) -> Vec<u8> {
         let edge = index.min(samples.saturating_sub(index)) as f64 / fade;
         let envelope = (edge.min(1.0) * TAU / 4.0).sin().powi(2);
         let phase = TAU * hz * index as f64 / f64::from(RATE);
-        (phase.sin() * amplitude * envelope) as i16
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "Each sample stays within the i16 range the amplitude names"
+        )]
+        let sample = (phase.sin() * amplitude * envelope) as i16;
+        sample
     }))
 }
 

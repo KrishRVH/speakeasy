@@ -290,10 +290,6 @@ impl Bank {
     }
 }
 
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "Interpolated cue samples lie within full scale, which f32 holds far more finely than PCM16"
-)]
 fn resample(pcm: &[u8], rate: NonZeroU32) -> Box<[f32]> {
     let mut band = Lowpass::new(0.45 * f64::from(rate.get()), RATE as f64)
         .filter(|_| u64::from(rate.get()) < RATE);
@@ -320,7 +316,13 @@ fn resample(pcm: &[u8], rate: NonZeroU32) -> Box<[f32]> {
             let position = frame.saturating_mul(RATE);
             let (index, offset) = (position / rate, position % rate);
             let (before, after) = (sample(index), sample(index.saturating_add(1)));
-            (before + (after - before) * (offset as f64 / rate.get() as f64)) as f32
+            let fraction = offset as f64 / rate.get() as f64;
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "Interpolated cue samples lie within full scale, which f32 holds far more finely than PCM16"
+            )]
+            let interpolated = (before + (after - before) * fraction) as f32;
+            interpolated
         })
         .collect()
 }

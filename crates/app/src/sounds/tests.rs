@@ -144,15 +144,16 @@ fn recordings_resample_by_interpolating_between_samples() {
     assert_eq!(rendered.len(), cue.len() / 2 * 44_100 / 48_000);
 }
 
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "A half-scale sine stays within the i16 range"
-)]
 fn recorded_tone(hz: f64) -> Vec<u8> {
     (0..48_000)
         .flat_map(|index| {
             let phase = TAU * hz * f64::from(index) / 48_000.0;
-            ((phase.sin() * 16_384.0) as i16).to_le_bytes()
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "A half-scale sine stays within the i16 range"
+            )]
+            let sample = (phase.sin() * 16_384.0) as i16;
+            sample.to_le_bytes()
         })
         .collect()
 }

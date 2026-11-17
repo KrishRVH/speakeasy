@@ -368,16 +368,17 @@ fn poisoned<T>(error: PoisonError<T>) -> anyhow::Error {
     anyhow!("Capture fixture gate was poisoned: {error}")
 }
 
-#[expect(
-    clippy::disallowed_types,
-    reason = "A test-only condition variable forces native-thread park ordering without microphone access"
-)]
 async fn consumer_wakes(cancel: bool, wake_before_park: bool) -> anyhow::Result<bool> {
-    use std::sync::{Condvar, Mutex};
-
     let (events, audio) = async_channel::bounded(1);
     let (armed, arming) = async_channel::bounded(1);
-    let gate = Arc::new((Mutex::new(!wake_before_park), Condvar::new()));
+    #[expect(
+        clippy::disallowed_types,
+        reason = "A test-only condition variable forces native-thread park ordering without microphone access"
+    )]
+    let gate = Arc::new((
+        std::sync::Mutex::new(!wake_before_park),
+        std::sync::Condvar::new(),
+    ));
     let waiting = Arc::clone(&gate);
     let capture = Capture::spawn(SessionId::FIRST, events, move |_, control, _| {
         ensure!(control.mode() == Mode::Recording);
