@@ -1,3 +1,6 @@
+mod audio;
+mod deletion;
+
 use speakeasy_show::{Image, Moment, Size, TakeEvent};
 
 use super::*;
@@ -191,9 +194,6 @@ async fn a_windows_reader_that_denies_delete_sharing_cannot_orphan_private_frame
     assert!(!path.exists());
     Ok(())
 }
-
-mod audio;
-mod deletion;
 
 #[tokio::test]
 async fn ownership_release_unlocks_even_if_an_inherited_descriptor_remains_open()

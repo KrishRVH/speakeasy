@@ -1,4 +1,5 @@
 use super::*;
+use crate::show::store::checkpoint::audio::FILE as AUDIO;
 
 async fn audio_checkpoint(parent: &Path) -> anyhow::Result<Checkpoint> {
     let parent = parent.to_owned();
@@ -27,13 +28,13 @@ async fn narration_write_failure_keeps_audio_and_success_keeps_it_until_bundle_p
     assert_eq!(&*checkpoint.audio()?.unwrap().pcm, &[1, 0, 2, 0]);
     fs::remove_dir(path.join(NARRATION))?;
     let held = root.path().join("held-audio");
-    fs::rename(path.join(super::super::audio::FILE), &held)?;
-    fs::create_dir(path.join(super::super::audio::FILE))?;
+    fs::rename(path.join(AUDIO), &held)?;
+    fs::create_dir(path.join(AUDIO))?;
     let narration = Narration::Text("synthetic successful transcription".into());
     checkpoint.narrate(&narration, true)?;
     assert_eq!(checkpoint.narration()?, Some((narration, true)));
-    fs::remove_dir(path.join(super::super::audio::FILE))?;
-    fs::rename(held, path.join(super::super::audio::FILE))?;
+    fs::remove_dir(path.join(AUDIO))?;
+    fs::rename(held, path.join(AUDIO))?;
     checkpoint.narrate(&Narration::default(), false)?;
     assert!(checkpoint.has_audio()?);
     Ok(())
@@ -46,14 +47,14 @@ async fn failed_audio_discard_keeps_the_lock_and_marker_until_cleanup_can_retry(
     let checkpoint = audio_checkpoint(root.path()).await?;
     let path = checkpoint.directory.clone();
     let held = root.path().join("held-audio");
-    fs::rename(path.join(super::super::audio::FILE), &held)?;
-    fs::create_dir(path.join(super::super::audio::FILE))?;
+    fs::rename(path.join(AUDIO), &held)?;
+    fs::create_dir(path.join(AUDIO))?;
     assert!(checkpoint.discard().is_err());
     assert!(path.join(LOCK).is_file());
     assert!(path.join(DISCARDED).is_file());
     assert_eq!(list(root.path(), SystemTime::now()).shows, []);
-    fs::remove_dir(path.join(super::super::audio::FILE))?;
-    fs::rename(held, path.join(super::super::audio::FILE))?;
+    fs::remove_dir(path.join(AUDIO))?;
+    fs::rename(held, path.join(AUDIO))?;
     sweep(root.path(), SystemTime::now())?;
     assert!(!path.exists());
     Ok(())

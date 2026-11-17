@@ -11,9 +11,12 @@ use std::{
 use anyhow::Context as _;
 pub(crate) use audio::{KeptAudio, MAX_CUES};
 pub(crate) use keeper::{AudioLog, FrameLog, Keeper, Kept};
-use speakeasy_show::{Log, Narration, Take};
+use speakeasy_show::{Bundle, Log, Moment, Narration, Take};
 
-use super::{Staged, age, entry_exists, found, recall, remove_if_present, sync_directory};
+use super::{
+    Staged, address::ShowId, age, entry_exists, found, movie, recall, remove_if_present,
+    sync_directory,
+};
 
 const ROOT: &str = ".checkpoints";
 const LOG: &str = "take.log";
@@ -178,9 +181,32 @@ impl Checkpoint {
     pub(in crate::show) fn retain_movie(
         &self,
         staged: &mut Staged,
-        annotations: speakeasy_show::Moment,
+        annotations: Moment,
     ) -> anyhow::Result<bool> {
-        staged.retain_movie(&self.directory, annotations)
+        let lost = match movie::checkpoint(&self.directory)? {
+            movie::CheckpointMovie::Absent => return Ok(false),
+            movie::CheckpointMovie::Unavailable => {
+                staged.summary.push_str("\n\nVideo could not be saved: no complete fragment survived. The saved keyframes and narration remain available.\n");
+                true
+            },
+            movie::CheckpointMovie::Present(movie) => {
+                let metadata = movie::retain(staged.staging.path(), *movie, annotations).context(
+                    "Cannot retain the recorded movie; its checkpoint remains available",
+                )?;
+                staged
+                    .summary
+                    .push_str(&metadata.note(&staged.directory.join(movie::FILE))?);
+                false
+            },
+        };
+        let mut summary = OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(staged.staging.path().join(Bundle::SUMMARY))?;
+        summary.write_all(staged.summary.as_bytes())?;
+        summary.sync_all()?;
+        sync_directory(staged.staging.path())?;
+        Ok(lost)
     }
 
     pub(in crate::show) fn retain_voice(&self, staged: &Staged) -> anyhow::Result<()> {
@@ -262,18 +288,9 @@ impl Checkpoint {
         else {
             return Ok(None);
         };
-        let marker = std::str::from_utf8(&marker)
-            .ok()
+        let (target, publication) = published(&marker)
+            .filter(|(target, _)| age::recorded_at(target).is_some())
             .context("Checkpoint publication marker is invalid")?;
-        let (target, publication) = marker
-            .strip_suffix(NARRATED)
-            .map_or((marker, Publication::Pending), |target| {
-                (target, Publication::Narrated)
-            });
-        anyhow::ensure!(
-            age::recorded_at(target).is_some(),
-            "Checkpoint publication marker is invalid"
-        );
         let target = self
             .directory
             .parent()
@@ -330,13 +347,14 @@ impl Checkpoint {
     }
 
     pub(crate) fn discard(self) -> anyhow::Result<()> {
-        match File::create_new(self.directory.join(DISCARDED)) {
+        let discarded = self.directory.join(DISCARDED);
+        match File::create_new(&discarded) {
             Ok(file) => file.sync_all()?,
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                regular(&self.directory.join(DISCARDED))?;
+                regular(&discarded)?;
                 OpenOptions::new()
                     .write(true)
-                    .open(self.directory.join(DISCARDED))?
+                    .open(&discarded)?
                     .sync_all()?;
             },
             Err(error) => return Err(error.into()),
@@ -347,9 +365,9 @@ impl Checkpoint {
             audio::FILE,
             NARRATION,
             LOG,
-            super::movie::FILE,
-            super::movie::HEADER,
-            super::movie::geometry::FILE,
+            movie::FILE,
+            movie::HEADER,
+            movie::geometry::FILE,
         ] {
             remove_if_present(&self.directory.join(name))
                 .context("Cannot remove Show content; close files open in the Show's folder")?;
@@ -383,7 +401,7 @@ pub(super) fn discard_published(
     };
     let id = std::str::from_utf8(&bytes)
         .ok()
-        .and_then(super::address::ShowId::parse)
+        .and_then(ShowId::parse)
         .context(DAMAGED)?;
     let path = parent.join(ROOT).join(id.as_str());
     if !entry_exists(&path).context(DAMAGED)? {
@@ -393,9 +411,9 @@ pub(super) fn discard_published(
         "This Show is still recording or recovering. Let it finish, then try deleting it again.",
     )?;
     let marker = recall::read_file(&path, PUBLISHED, MARKER_LIMIT).context(DAMAGED)?;
-    let marker = std::str::from_utf8(&marker).ok().context(DAMAGED)?;
-    let target = marker.strip_suffix(NARRATED).unwrap_or(marker);
-    let target = super::address::ShowId::parse(target).context(DAMAGED)?;
+    let target = published(&marker)
+        .and_then(|(target, _)| ShowId::parse(target))
+        .context(DAMAGED)?;
     if directory.file_name().and_then(|name| name.to_str()) != Some(target.as_str()) {
         return Ok(None);
     }
@@ -406,6 +424,15 @@ pub(super) fn discard_published(
 pub(crate) struct Problem {
     pub directory: PathBuf,
     pub message: String,
+}
+
+impl Problem {
+    fn new(directory: PathBuf, error: &anyhow::Error) -> Self {
+        Self {
+            directory,
+            message: format!("{error:#}"),
+        }
+    }
 }
 
 pub(crate) fn list(parent: &Path, now: SystemTime) -> Listing {
@@ -456,29 +483,16 @@ fn visit(
     let entries = match entries(&root) {
         Ok(Some(entries)) => entries,
         Ok(None) => return Vec::new(),
-        Err(error) => {
-            return vec![Problem {
-                directory: root,
-                message: format!("{error:#}"),
-            }];
-        },
+        Err(error) => return vec![Problem::new(root, &error)],
     };
-    let mut problems = Vec::new();
-    for entry in entries {
-        let directory = entry
-            .as_ref()
-            .map_or_else(|_| root.clone(), fs::DirEntry::path);
-        let visited = entry
-            .map_err(anyhow::Error::from)
-            .and_then(|entry| visit_entry(&entry, now, &mut each));
-        if let Err(error) = visited {
-            problems.push(Problem {
-                directory,
-                message: format!("{error:#}"),
-            });
-        }
-    }
-    problems
+    entries
+        .filter_map(|entry| match entry {
+            Ok(entry) => visit_entry(&entry, now, &mut each)
+                .err()
+                .map(|error| Problem::new(entry.path(), &error)),
+            Err(error) => Some(Problem::new(root.clone(), &error.into())),
+        })
+        .collect()
 }
 
 fn entries(root: &Path) -> anyhow::Result<Option<fs::ReadDir>> {
@@ -514,6 +528,14 @@ fn visit_entry(
 pub(in crate::show) enum Publication {
     Pending,
     Narrated,
+}
+
+fn published(marker: &[u8]) -> Option<(&str, Publication)> {
+    let marker = std::str::from_utf8(marker).ok()?;
+    Some(match marker.strip_suffix(NARRATED) {
+        Some(target) => (target, Publication::Narrated),
+        None => (marker, Publication::Pending),
+    })
 }
 
 fn lock(directory: &Path) -> io::Result<Option<Checkpoint>> {
