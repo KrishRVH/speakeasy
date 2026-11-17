@@ -12,6 +12,28 @@ fn located(directory: &Path) -> Location<'_> {
     Location::managed(directory, None).unwrap()
 }
 
+fn keyframe(index: usize, crop: Option<Rect>) -> Keyframe {
+    Keyframe {
+        index,
+        at: Moment::from_millis(u64::try_from(index).unwrap().saturating_mul(1_000)),
+        reason: Reason::SceneChange,
+        event: "scene changed".to_owned(),
+        said: None,
+        marks: 0..0,
+        action: None,
+        crop,
+    }
+}
+
+fn manifest(recording: Recording, keyframes: Vec<Keyframe>) -> Manifest {
+    Manifest {
+        version: Manifest::VERSION,
+        recording,
+        marks: Vec::new(),
+        keyframes,
+    }
+}
+
 #[test]
 fn show_json_keeps_its_wire_format() {
     let click = Action::Click {
@@ -183,26 +205,13 @@ fn show_json_keeps_its_wire_format() {
 
 #[test]
 fn the_summary_says_how_to_read_every_sheet_and_sets_each_full_path_apart() {
-    let manifest = Manifest {
-        version: Manifest::VERSION,
-        recording: Recording {
+    let manifest = manifest(
+        Recording {
             duration: Moment::from_millis(8_000),
             ..Recording::default()
         },
-        marks: Vec::new(),
-        keyframes: (1..=7)
-            .map(|index| Keyframe {
-                index,
-                at: Moment::from_millis(index as u64 * 1_000),
-                reason: Reason::SceneChange,
-                event: "scene changed".to_owned(),
-                said: None,
-                marks: 0..0,
-                action: None,
-                crop: None,
-            })
-            .collect(),
-    };
+        (1..=7).map(|index| keyframe(index, None)).collect(),
+    );
     let directory = Path::new("My Shows").join("show 1");
     let summary = Summary {
         manifest: &manifest,
@@ -259,25 +268,14 @@ fn the_summary_says_how_to_read_every_sheet_and_sets_each_full_path_apart() {
 
 #[test]
 fn the_summary_names_the_show_id_and_its_folder_as_wsl_sees_it() {
-    let manifest = Manifest {
-        version: Manifest::VERSION,
-        recording: Recording {
+    let manifest = manifest(
+        Recording {
             duration: Moment::from_millis(1_000),
             ending: Ending::WindowClosed,
             ..Recording::default()
         },
-        marks: Vec::new(),
-        keyframes: vec![Keyframe {
-            index: 1,
-            at: Moment::from_millis(500),
-            reason: Reason::Middle,
-            event: "middle".to_owned(),
-            said: None,
-            marks: 0..0,
-            action: None,
-            crop: None,
-        }],
-    };
+        vec![keyframe(1, None)],
+    );
     let wsl = Wsl::configured("[automount]\nroot = /windir\n");
     let summary = |directory: &str, wsl| {
         Summary {
@@ -497,16 +495,7 @@ fn a_failed_frame_stops_loading_before_the_next_sheet() {
         marks: Vec::new(),
         shots: (1..=13)
             .map(|index| Shot {
-                keyframe: Keyframe {
-                    index,
-                    at: Moment::from_millis(index as u64),
-                    reason: Reason::Middle,
-                    event: String::new(),
-                    said: None,
-                    marks: 0..0,
-                    action: None,
-                    crop: None,
-                },
+                keyframe: keyframe(index, None),
                 plan: None,
             })
             .collect(),
@@ -516,10 +505,10 @@ fn a_failed_frame_stops_loading_before_the_next_sheet() {
         selection,
         |moment| {
             assert!(
-                moment.as_millis() <= 9,
+                moment.as_millis() <= 9_000,
                 "Loaded the sheet after a failed sheet"
             );
-            if moment.as_millis() == 7 {
+            if moment.as_millis() == 7_000 {
                 Err(Error::unsampled())
             } else {
                 Image::filled(160, 100, [90; 3])

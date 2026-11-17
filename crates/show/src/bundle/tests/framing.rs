@@ -6,19 +6,6 @@ const SCREEN: Size = Size {
     height: 600.0,
 };
 
-fn keyframe(index: usize, crop: Option<Rect>) -> Keyframe {
-    Keyframe {
-        index,
-        at: Moment::from_millis(u64::try_from(index).unwrap().saturating_mul(1_000)),
-        reason: Reason::SceneChange,
-        event: "scene changed".to_owned(),
-        said: None,
-        marks: 0..0,
-        action: None,
-        crop,
-    }
-}
-
 fn near(one: Rect, other: Rect) -> bool {
     [
         one.left - other.left,
@@ -83,9 +70,7 @@ fn a_cropped_frame_is_cut_to_the_crop_it_records_and_keeps_everything_drawn() {
     };
     assert!(near(first, chosen), "{first:?}");
     assert!(grown.encloses(chosen) && grown.contains(click), "{grown:?}");
-    let (_, files) = bundle
-        .into_files(super::located(Path::new("show")), None)
-        .unwrap();
+    let (_, files) = bundle.into_files(located(Path::new("show")), None).unwrap();
     for (index, crop) in crops.into_iter().enumerate() {
         let crop = crop.unwrap_or(Rect::UNIT);
         let name = format!("frames/frame-{:02}.png", index + 1);
@@ -111,22 +96,20 @@ fn a_cropped_frame_is_cut_to_the_crop_it_records_and_keeps_everything_drawn() {
 fn the_summary_names_cropped_frames_and_how_to_see_the_whole_screen() {
     let part = Some(Rect::from([0.1, 0.1, 0.6, 0.6]));
     let summary = |crops: &[Option<Rect>], command| {
-        let manifest = Manifest {
-            version: Manifest::VERSION,
-            recording: Recording {
+        let manifest = manifest(
+            Recording {
                 duration: Moment::from_millis(8_000),
                 ..Recording::default()
             },
-            marks: Vec::new(),
-            keyframes: crops
+            crops
                 .iter()
                 .enumerate()
                 .map(|(position, &crop)| keyframe(position + 1, crop))
                 .collect(),
-        };
+        );
         Summary {
             manifest: &manifest,
-            location: super::located(Path::new("ID")),
+            location: located(Path::new("ID")),
             command,
         }
         .to_string()
