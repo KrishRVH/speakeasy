@@ -34,9 +34,8 @@ const SELECTION_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub(super) struct Insertions<'a> {
     transfers: Transfers<'a>,
-    preparing: Option<Preparing<'a>>,
+    in_flight: Option<InFlight<'a>>,
     remote: Option<Remote>,
-    pending: Option<(Insertion, Instant)>,
     selection: Option<Selection>,
     forfeited: Option<InsertPermit>,
     notices: &'a Receiver<Notice>,
@@ -57,9 +56,8 @@ impl<'a> Insertions<'a> {
     ) -> Self {
         Self {
             transfers: Transfers::new(),
-            preparing: None,
+            in_flight: None,
             remote,
-            pending: None,
             selection: None,
             forfeited: None,
             notices,
@@ -82,11 +80,15 @@ impl<'a> Insertions<'a> {
         stopping: &Receiver<Infallible>,
     ) -> anyhow::Result<()> {
         loop {
-            self.advance_pending()?;
+            self.advance_waiting()?;
             let accepts_transfers = self.accepts_transfers();
-            let idle = self.is_idle();
+            let idle = self.in_flight.is_none();
             let modifier_wait = or_pending(self.modifier_wait());
-            let prepared = or_pending(self.preparing.as_mut().map(|work| work.task.as_mut()));
+            let prepared = or_pending(
+                self.in_flight
+                    .as_mut()
+                    .and_then(|in_flight| in_flight.phase.preparation()),
+            );
             let readable = or_pending(
                 self.remote
                     .as_ref()
@@ -104,7 +106,12 @@ impl<'a> Insertions<'a> {
                     self.serve_transfer(&event.context(CLIPBOARD_DISCONNECTED)?)?;
                 },
                 request = requests.recv(), if idle => match request {
-                    Ok(request) => self.pending = Some((request, Instant::now())),
+                    Ok(request) => {
+                        self.in_flight = Some(InFlight {
+                            request,
+                            phase: Phase::AwaitingModifiers(Instant::now()),
+                        });
+                    },
                     Err(_) => break,
                 },
                 readable = readable => readable?.clear_ready(),
@@ -113,10 +120,6 @@ impl<'a> Insertions<'a> {
         }
         self.cancel_all();
         Ok(())
-    }
-
-    fn is_idle(&self) -> bool {
-        self.pending.is_none() && self.preparing.is_none()
     }
 
     fn clipboard_session(&self) -> Option<&OwnedObjectPath> {
@@ -133,10 +136,13 @@ impl<'a> Insertions<'a> {
     fn accepts_transfers(&self) -> bool {
         self.clipboard_session().is_some()
             && self.transfers.len() < MAX_TRANSFERS
-            && self
-                .preparing
-                .as_ref()
-                .is_none_or(|work| !work.setting_selection)
+            && !matches!(
+                self.in_flight,
+                Some(InFlight {
+                    phase: Phase::SettingSelection(_),
+                    ..
+                })
+            )
     }
 
     fn apply_queued_notices(&mut self) {
@@ -155,15 +161,20 @@ impl<'a> Insertions<'a> {
     }
 
     fn modifier_wait(&self) -> Option<tokio::time::Sleep> {
-        self.pending
-            .as_ref()
-            .map(|(_, started)| deadline(*started, MODIFIER_WAIT))
+        match self.in_flight.as_ref()?.phase {
+            Phase::AwaitingModifiers(started) => Some(deadline(started, MODIFIER_WAIT)),
+            Phase::SettingSelection(_) | Phase::Preparing(_) => None,
+        }
     }
 
-    fn advance_pending(&mut self) -> anyhow::Result<()> {
+    fn advance_waiting(&mut self) -> anyhow::Result<()> {
         self.apply_queued_notices();
         self.dispatch()?;
-        let Some((request, _)) = self.pending.take_if(|(request, started)| {
+        let Some(InFlight { request, .. }) = self.in_flight.take_if(|in_flight| {
+            let Phase::AwaitingModifiers(started) = in_flight.phase else {
+                return false;
+            };
+            let request = &in_flight.request;
             !request.permit.active()
                 || self.paste == LinuxPaste::Manual
                 || request.delivery == Delivery::Direct
@@ -180,31 +191,24 @@ impl<'a> Insertions<'a> {
             return Ok(());
         }
         let permit = request.permit.clone();
-        let (task, setting_selection) = match (request.delivery, self.clipboard_session()) {
-            (Delivery::Direct, _) => (
-                query_focus(self.worker, permit, Route::Direct).boxed_local(),
-                false,
-            ),
-            (Delivery::Paste, Some(session)) => (
+        let phase = match (request.delivery, self.clipboard_session()) {
+            (Delivery::Direct, _) => {
+                Phase::Preparing(query_focus(self.worker, permit, Route::Direct).boxed_local())
+            },
+            (Delivery::Paste, Some(session)) => Phase::SettingSelection(
                 set_selection(self.clipboard, session.clone(), permit).boxed_local(),
-                true,
             ),
-            (Delivery::Paste, None) => (
+            (Delivery::Paste, None) => Phase::Preparing(
                 copy_with_x11(self.worker, request.text.clone(), permit).boxed_local(),
-                false,
             ),
         };
-        self.preparing = Some(Preparing {
-            request,
-            setting_selection,
-            task,
-        });
+        self.in_flight = Some(InFlight { request, phase });
         Ok(())
     }
 
     fn advance_preparation(&mut self, prepared: anyhow::Result<Prepared>) -> anyhow::Result<()> {
         let request = self
-            .preparing
+            .in_flight
             .take()
             .context("Missing clipboard preparation")?
             .request;
@@ -237,10 +241,9 @@ impl<'a> Insertions<'a> {
                 return Ok(());
             },
         };
-        self.preparing = Some(Preparing {
+        self.in_flight = Some(InFlight {
             request,
-            setting_selection: false,
-            task,
+            phase: Phase::Preparing(task),
         });
         Ok(())
     }
@@ -293,20 +296,33 @@ impl<'a> Insertions<'a> {
     }
 
     fn cancel_all(self) {
-        if let Some((request, _)) = self.pending {
-            request.reply.send(Ok(Inserted::Cancelled));
-        }
-        if let Some(work) = self.preparing {
-            work.request.reply.send(Ok(Inserted::Cancelled));
+        if let Some(in_flight) = self.in_flight {
+            in_flight.request.reply.send(Ok(Inserted::Cancelled));
         }
     }
 }
 
-struct Preparing<'a> {
+struct InFlight<'a> {
     request: Insertion,
-    setting_selection: bool,
-    task: LocalBoxFuture<'a, anyhow::Result<Prepared>>,
+    phase: Phase<'a>,
 }
+
+enum Phase<'a> {
+    AwaitingModifiers(Instant),
+    SettingSelection(Preparation<'a>),
+    Preparing(Preparation<'a>),
+}
+
+impl<'a> Phase<'a> {
+    fn preparation(&mut self) -> Option<&mut Preparation<'a>> {
+        match self {
+            Self::AwaitingModifiers(_) => None,
+            Self::SettingSelection(task) | Self::Preparing(task) => Some(task),
+        }
+    }
+}
+
+type Preparation<'a> = LocalBoxFuture<'a, anyhow::Result<Prepared>>;
 
 enum Prepared {
     SelectionSet,
