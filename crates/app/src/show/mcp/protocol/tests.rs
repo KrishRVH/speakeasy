@@ -10,7 +10,7 @@ fn modern(id: Value, method: &str) -> Value {
 
 fn exchange(lines: &[Value]) -> anyhow::Result<Vec<Value>> {
     let root = tempfile::tempdir()?;
-    let roots = Roots::open(vec![root.path().to_owned()]).map_err(anyhow::Error::msg)?;
+    let roots = Roots::open(&[root.path().to_owned()]).map_err(anyhow::Error::msg)?;
     let mut input = Vec::new();
     for line in lines {
         serde_json::to_writer(&mut input, line)?;
@@ -110,7 +110,7 @@ fn both_handshakes_carry_the_disclosure_and_the_reading_guide() -> anyhow::Resul
 #[test]
 fn malformed_oversized_and_invalid_requests_recover_at_the_next_line() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
-    let roots = Roots::open(vec![root.path().to_owned()]).map_err(anyhow::Error::msg)?;
+    let roots = Roots::open(&[root.path().to_owned()]).map_err(anyhow::Error::msg)?;
     let mut input = b"{private malformed\n".to_vec();
     input.extend(std::iter::repeat_n(b'x', LINE_LIMIT + 300));
     input.extend_from_slice(b"\n");
@@ -171,7 +171,7 @@ fn output_is_bounded_and_a_closed_client_ends_the_server() -> anyhow::Result<()>
         }
     }
     let root = tempfile::tempdir()?;
-    let roots = Roots::open(vec![root.path().to_owned()]).map_err(anyhow::Error::msg)?;
+    let roots = Roots::open(&[root.path().to_owned()]).map_err(anyhow::Error::msg)?;
     let input = serde_json::to_vec(&modern(json!(1), "server/discover"))?;
     serve(&roots, &mut Cursor::new(input), &mut Closed)?;
     assert!(encode(&"x".repeat(RESPONSE_LIMIT), RESPONSE_LIMIT).is_err());

@@ -34,7 +34,7 @@ fn reads_preserve_edits_and_every_file_and_only_explicitly_expose_content() -> a
     let root = tempfile::tempdir()?;
     let directory = fixture(root.path(), "exact")?;
     let before = snapshot(root.path())?;
-    let roots = Roots::open(vec![root.path().to_owned()]).map_err(anyhow::Error::msg)?;
+    let roots = Roots::open(&[root.path().to_owned()]).map_err(anyhow::Error::msg)?;
     let listed = call(&roots, Tool::List, json!({}));
     assert_eq!(content(&listed)?["shows"].as_array().unwrap().len(), 1);
     assert!(!serde_json::to_string(&listed)?.contains("PRIVATE_"));
@@ -60,7 +60,7 @@ fn image_returns_exact_saved_bytes_and_never_falls_back_from_missing_source() ->
 {
     let root = tempfile::tempdir()?;
     let directory = fixture(root.path(), "exact")?;
-    let roots = Roots::open(vec![root.path().to_owned()]).map_err(anyhow::Error::msg)?;
+    let roots = Roots::open(&[root.path().to_owned()]).map_err(anyhow::Error::msg)?;
     for (selector, file) in [
         ("sheet", "contact-sheet.png"),
         ("keyframe", "frames/frame-01.png"),
@@ -124,7 +124,7 @@ fn image_returns_exact_saved_bytes_and_never_falls_back_from_missing_source() ->
 fn truncation_is_truthful_and_untimed_or_lost_narration_is_not_timed() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let directory = fixture(root.path(), "exact")?;
-    let roots = Roots::open(vec![root.path().to_owned()]).map_err(anyhow::Error::msg)?;
+    let roots = Roots::open(&[root.path().to_owned()]).map_err(anyhow::Error::msg)?;
     let text = "é".repeat(TEXT_LIMIT);
     fs::write(directory.join("summary.md"), &text)?;
     let mut manifest = fixture_manifest();
@@ -165,7 +165,7 @@ fn invalid_selectors_unknown_properties_damage_and_oversize_do_not_leak_content(
 -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let directory = fixture(root.path(), "exact")?;
-    let roots = Roots::open(vec![root.path().to_owned()]).map_err(anyhow::Error::msg)?;
+    let roots = Roots::open(&[root.path().to_owned()]).map_err(anyhow::Error::msg)?;
     for arguments in [
         json!({"show": "exact", "sheet": 0}),
         json!({"show": "exact", "sheet": 1, "keyframe": 1}),
@@ -212,7 +212,7 @@ fn linked_content_cannot_escape_an_allowed_bundle() -> anyhow::Result<()> {
     let directory = fixture(root.path(), "exact")?;
     let outside = tempfile::NamedTempFile::new()?;
     fs::write(outside.path(), b"PRIVATE_OUTSIDE")?;
-    let roots = Roots::open(vec![root.path().to_owned()]).map_err(anyhow::Error::msg)?;
+    let roots = Roots::open(&[root.path().to_owned()]).map_err(anyhow::Error::msg)?;
     for (name, tool, arguments) in [
         ("summary.md", Tool::Read, json!({"show": "exact"})),
         (

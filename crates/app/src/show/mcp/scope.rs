@@ -67,7 +67,7 @@ impl Root {
 }
 
 impl Roots {
-    pub(super) fn open(roots: Vec<PathBuf>) -> Result<Self, &'static str> {
+    pub(super) fn open(roots: &[PathBuf]) -> Result<Self, &'static str> {
         let roots = roots
             .iter()
             .map(|root| Root::open(root))
