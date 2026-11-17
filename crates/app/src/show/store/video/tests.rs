@@ -159,7 +159,7 @@ fn refusal_and_cancellation_never_replace_an_existing_file() -> anyhow::Result<(
 }
 
 #[test]
-fn a_full_export_starts_with_voice_recorded_before_the_video() -> anyhow::Result<()> {
+fn exports_start_with_earlier_voice_and_keep_a_partial_last_frame() -> anyhow::Result<()> {
     let checkpoint = tempfile::tempdir()?;
     let show = tempfile::tempdir()?;
     let annotations = Moment::from_millis(1000);
@@ -170,11 +170,11 @@ fn a_full_export_starts_with_voice_recorded_before_the_video() -> anyhow::Result
         annotations,
     )?;
     let reading = movie::Reading::open(show.path(), annotations)?;
-    let timing = timeline::Timing::new(&reading.movie, None, Some(&audio(0)))?;
-    assert_eq!(
-        (timing.start_ms, timing.end_ms, timing.frames),
-        (0, 2000, 60)
-    );
+    let full = timeline::Timing::new(&reading.movie, None, Some(&audio(0)))?;
+    assert_eq!((full.start_ms, full.end_ms, full.frames), (0, 2000, 60));
+    let span = Span::new(Moment::START, Moment::from_millis(1250));
+    let clip = timeline::Timing::new(&reading.movie, Some(span), Some(&audio(0)))?;
+    assert_eq!((clip.start_ms, clip.end_ms, clip.frames), (0, 1250, 38));
     Ok(())
 }
 
