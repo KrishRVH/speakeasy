@@ -18,10 +18,7 @@ use speakeasy_platform::{
     OwnedThread, Scope,
 };
 use speakeasy_show::{Ending, NarrationLoss};
-use tokio::{
-    sync::{mpsc, oneshot, watch},
-    task::JoinError,
-};
+use tokio::sync::{mpsc, oneshot, watch};
 use zeroize::Zeroizing;
 
 use self::ports::{CaptureEvent, Ports, Published, ShowEvent};
@@ -583,14 +580,6 @@ pub(crate) fn now() -> Instant {
 fn input_lane() -> (InputSender, Receiver<Input>) {
     let (sender, inputs) = async_channel::bounded(64);
     (InputSender::new(sender), inputs)
-}
-
-async fn reap<T>(task: impl Future<Output = Result<T, JoinError>>) {
-    #[expect(
-        clippy::let_underscore_must_use,
-        reason = "A reaped task's result or panic belongs to no current session; awaiting it still completes its owned cleanup"
-    )]
-    let _ = task.await;
 }
 
 #[cfg(test)]

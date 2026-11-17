@@ -1,12 +1,9 @@
 use std::{future::pending, mem, time::Duration};
 
 use speakeasy_platform::Taps;
-use tokio::task::JoinHandle;
+use tokio::task::{JoinError, JoinHandle};
 
-use super::{
-    ports::{Capturing, Listening, Pinning},
-    reap,
-};
+use super::ports::{Capturing, Listening, Pinning};
 use crate::show::AudioLog;
 
 #[derive(Default)]
@@ -79,4 +76,12 @@ impl<R: Pinning> Device<R> {
             recording.pin(taps);
         }
     }
+}
+
+async fn reap(task: impl Future<Output = Result<(), JoinError>>) {
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "A reaped task's result or panic belongs to no current session; awaiting it still completes its owned cleanup"
+    )]
+    let _ = task.await;
 }
