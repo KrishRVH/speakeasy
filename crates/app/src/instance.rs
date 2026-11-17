@@ -386,7 +386,7 @@ async fn serve_control(
     let reply = match command {
         Ok(command) => {
             let (call, receipt) = Call::new(command);
-            let deadline = call.deadline;
+            let deadline = call.deadline();
             match requests.try_send(Event::Control(call)) {
                 Ok(()) => {
                     let mut extra = [0];

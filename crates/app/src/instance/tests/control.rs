@@ -93,7 +93,7 @@ fn concurrent_control_is_bounded_and_shutdown_closes_every_receipt() -> anyhow::
     assert_eq!(next_request(&requests)?, Request::Cancel);
     drop(instance);
     for call in calls {
-        assert!(call.reply.is_closed());
+        assert!(call.reply().is_closed());
         assert!(!call.is_live());
     }
     for mut client in clients {
@@ -125,7 +125,7 @@ async fn a_disconnected_caller_closes_its_pending_owner_receipt() -> anyhow::Res
         bail!("Control request became a shortcut action");
     };
     drop(client);
-    tokio::time::timeout(PATIENCE, call.reply.closed()).await?;
+    tokio::time::timeout(PATIENCE, call.reply().closed()).await?;
     assert!(!call.is_live());
     Ok(())
 }

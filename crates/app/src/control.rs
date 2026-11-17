@@ -168,8 +168,8 @@ impl Reply {
 
 pub(crate) struct Call {
     pub command: Command,
-    pub reply: Sender<Reply>,
-    pub deadline: Instant,
+    reply: Sender<Reply>,
+    deadline: Instant,
     caller: Option<Sender<Reply>>,
 }
 
@@ -192,6 +192,15 @@ impl Call {
             },
             receipt,
         )
+    }
+
+    pub(crate) const fn deadline(&self) -> Instant {
+        self.deadline
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn reply(&self) -> &Sender<Reply> {
+        &self.reply
     }
 
     pub(crate) fn is_live(&self) -> bool {
