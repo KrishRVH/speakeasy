@@ -92,7 +92,7 @@ impl Settings {
                     .get(index)
                     .map(|preset| preset.name().to_owned())
                 {
-                    self.store_preset(name, Some(index), cx);
+                    self.store_preset(&name, Some(index), cx);
                 }
             },
             Edit::Delete(index) => {
@@ -111,7 +111,7 @@ impl Settings {
             },
             Edit::Save => {
                 let name = self.presets.name.read(cx).text().to_owned();
-                if self.store_preset(name, None, cx) {
+                if self.store_preset(&name, None, cx) {
                     self.presets.clear(cx);
                 }
             },
@@ -122,11 +122,11 @@ impl Settings {
 
     fn store_preset(
         &mut self,
-        name: String,
+        name: &str,
         replacing: Option<usize>,
         cx: &mut Context<'_, Self>,
     ) -> bool {
-        let stored = Preset::capture(&name, &self.config).and_then(|preset| {
+        let stored = Preset::capture(name, &self.config).and_then(|preset| {
             let mut presets = self.config.presets.clone();
             match replacing.and_then(|index| presets.get_mut(index)) {
                 Some(current) => *current = preset,
