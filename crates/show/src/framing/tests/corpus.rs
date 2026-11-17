@@ -1,7 +1,7 @@
 use serde::Deserialize;
 
 use super::*;
-use crate::{InkPoint, Layer, Reason, Span, Stroke, Window, marks};
+use crate::{InkPoint, Keyframe, Layer, Reason, Span, Stroke, Window, marks};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -153,18 +153,13 @@ impl Case {
                 assert_eq!(range.len(), held.len(), "{} marks interleave", self.name);
                 Shot {
                     keyframe: Keyframe {
-                        index,
-                        at: Moment::from_millis(expected.at),
                         reason: if held.is_empty() {
                             Reason::Middle
                         } else {
                             Reason::Mark
                         },
-                        event: String::new(),
-                        said: None,
                         marks: range,
-                        action: None,
-                        crop: None,
+                        ..keyframe(index, expected.at)
                     },
                     plan: None,
                 }

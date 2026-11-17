@@ -442,4 +442,4 @@ fn is_double_click(earlier: Action, later: Action) -> bool {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

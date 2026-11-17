@@ -2,10 +2,23 @@ use proptest::prelude::*;
 
 use super::*;
 use crate::{
-    Ending, InkPoint, Narration, Point, Size, Stroke,
+    InkPoint, Narration, Point, Size, Stroke,
     recording::tests::words,
     signature::tests::{signature, with_patch},
 };
+
+pub(crate) fn keyframe(index: usize, at: u64) -> Keyframe {
+    Keyframe {
+        index,
+        at: Moment::from_millis(at),
+        reason: Reason::Middle,
+        event: String::new(),
+        said: None,
+        marks: 0..0,
+        action: None,
+        crop: None,
+    }
+}
 
 fn sample(at: u64, level: u8) -> Sample {
     Sample {
@@ -47,17 +60,14 @@ fn click(at: u64) -> Action {
 fn recording(strokes: Vec<Stroke>, actions: Vec<Action>, narration: Narration) -> Recording {
     Recording {
         duration: Moment::from_millis(60_000),
-        ending: Ending::Finished,
         surface: Size {
             width: 1000.0,
             height: 1000.0,
         },
         strokes,
-        pins: Vec::new(),
         actions,
         narration,
-        narration_lost: None,
-        spaces: crate::Spaces::default(),
+        ..Recording::default()
     }
 }
 
@@ -794,14 +804,9 @@ proptest! {
 fn debugging_a_keyframe_never_prints_what_was_said() {
     let shown = |event: &str, said: &str| {
         let keyframe = Keyframe {
-            index: 1,
-            at: Moment::from_millis(0),
-            reason: Reason::Middle,
             event: event.to_owned(),
             said: Some(said.to_owned()),
-            marks: 0..0,
-            action: None,
-            crop: None,
+            ..keyframe(1, 0)
         };
         format!("{keyframe:?}")
     };

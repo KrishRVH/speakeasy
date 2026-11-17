@@ -467,7 +467,9 @@ fn closed_curve(points: &[Point]) -> Option<Path> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Reason, Size, marks, recording::Pin, typeface::tests::typeface};
+    use crate::{
+        Reason, Size, marks, recording::Pin, select::tests::keyframe, typeface::tests::typeface,
+    };
 
     #[test]
     fn a_pin_is_numbered_on_its_keyframe_and_on_frames_just_after() {
@@ -489,18 +491,13 @@ mod tests {
         let radius = ink::label_radius(w, h);
         let disc = marks[0].label_center(w, h, radius) + Point::new(0.0, -0.7 * radius);
         let inked = |at: u64, own| {
-            let keyframe = Keyframe {
-                index: 1,
-                at: Moment::from_millis(at),
+            let shown = Keyframe {
                 reason: Reason::Mark,
-                event: String::new(),
-                said: None,
                 marks: own,
-                action: None,
-                crop: None,
+                ..keyframe(1, at)
             };
             let mut image = Image::filled(width, height, [128; 3]).unwrap();
-            annotate(&mut image, &keyframe, &recording, &marks, &typeface());
+            annotate(&mut image, &shown, &recording, &marks, &typeface());
             let pixels = image.as_ref().data().as_chunks::<4>().0;
             [point.scaled(w, h), disc].map(|spot| {
                 pixels.iter().enumerate().any(|(index, pixel)| {
@@ -518,27 +515,16 @@ mod tests {
     fn clicked(screen: [u8; 3]) -> Vec<(Point, [u8; 4])> {
         let (width, height) = (160_u32, 100_u32);
         let point = Point::new(0.5, 0.5);
-        let keyframe = Keyframe {
-            index: 1,
-            at: Moment::from_millis(1_250),
+        let shown = Keyframe {
             reason: Reason::Click,
-            event: String::new(),
-            said: None,
-            marks: 0..0,
             action: Some(Action::Click {
                 at: Moment::from_millis(1_000),
                 point,
             }),
-            crop: None,
+            ..keyframe(1, 1_250)
         };
         let mut image = Image::filled(width, height, screen).unwrap();
-        annotate(
-            &mut image,
-            &keyframe,
-            &Recording::default(),
-            &[],
-            &typeface(),
-        );
+        annotate(&mut image, &shown, &Recording::default(), &[], &typeface());
         let click = point.scaled(width as f32, height as f32);
         image
             .rows()

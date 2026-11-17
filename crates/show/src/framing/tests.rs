@@ -1,7 +1,7 @@
 use proptest::prelude::*;
 
 use super::*;
-use crate::{Keyframe, Reason, recording::spaces};
+use crate::{recording::spaces, select::tests::keyframe};
 
 mod corpus;
 mod windows;
@@ -13,16 +13,7 @@ const SCREEN: Size = Size {
 
 fn shot(index: usize, at: u64) -> Shot {
     Shot {
-        keyframe: Keyframe {
-            index,
-            at: Moment::from_millis(at),
-            reason: Reason::Middle,
-            event: String::new(),
-            said: None,
-            marks: 0..0,
-            action: None,
-            crop: None,
-        },
+        keyframe: keyframe(index, at),
         plan: None,
     }
 }
