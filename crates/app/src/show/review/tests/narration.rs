@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use speakeasy_show::{Moment, Narration as Recorded, NarrationLoss, Recording, Span, Word};
 
 use super::super::{
@@ -89,36 +91,27 @@ fn evidence_reports_missing_and_untimed_narration_without_inventing_words() {
 }
 
 #[test]
-fn navigation_reports_exact_earlier_and_first_later_samples_and_never_infers_text() {
-    let root = Source::Demo.load().unwrap();
-    let (rows, _) = library::list(&root.directory).unwrap();
-    let directory = &rows[0].directory;
-    let mut detail = Detail::open(directory, Mode::Keyframes).unwrap();
-    detail.frames.truncate(4);
-    for (frame, at) in detail.frames.iter_mut().zip([100, 700, 1_500, 30_000]) {
-        frame.at = Moment::from_millis(at);
-    }
+fn navigation_reports_exact_earlier_and_first_later_samples_and_never_infers_text()
+-> anyhow::Result<()> {
+    let directory = Path::new("synthetic");
+    let mut detail = detail(
+        [100, 700, 1_500, 30_000]
+            .into_iter()
+            .zip(1..)
+            .map(|(at, number)| frame(number, at, keyframe(number)))
+            .collect(),
+    );
     for (at, index, relation) in [
-        (0, 0, Relation::Later(std::time::Duration::from_millis(100))),
+        (0, 0, Relation::Later(Duration::from_millis(100))),
         (700, 1, Relation::At),
-        (
-            20_000,
-            2,
-            Relation::Earlier(std::time::Duration::from_millis(18_500)),
-        ),
-        (
-            40_000,
-            3,
-            Relation::Earlier(std::time::Duration::from_millis(10_000)),
-        ),
+        (20_000, 2, Relation::Earlier(Duration::from_millis(18_500))),
+        (40_000, 3, Relation::Earlier(Duration::from_millis(10_000))),
     ] {
         assert_eq!(
             detail.locate(Moment::from_millis(at)),
             Some((index, relation))
         );
     }
-    detail.summary = Ok("PRIVATE_EDIT".into());
-    detail.frames[2].marker = "PRIVATE_CUE".into();
     let request = Request {
         at: Moment::from_millis(20_000),
         origin: Origin::Clause(0),
@@ -127,43 +120,44 @@ fn navigation_reports_exact_earlier_and_first_later_samples_and_never_infers_tex
         at: Moment::START,
         origin: Origin::Clause(0),
     };
-    for (mode, kind) in [
-        (Mode::Keyframes, "first keyframe"),
-        (Mode::Source, "first retained sample"),
+    let source = retained()?;
+    for (kind, [first, third]) in [
+        ("first keyframe", [keyframe(1), keyframe(3)]),
+        ("first retained sample", [source.clone(), source]),
     ] {
-        let caption = early.caption(&detail.frames[0], mode, detail.frames[0].presentation());
+        let first = frame(1, 100, first);
+        let caption = early.caption(&first, first.presentation());
         assert!(caption.contains(kind) && caption.contains("100 ms later"));
         assert!(!caption.contains("first available"));
         assert!(
             !pointer(
                 directory,
-                &detail.frames[0],
-                mode,
+                &first,
                 Some(early),
-                detail.frames[0].at.since(speakeasy_show::Moment::START),
-                crate::show::store::movie::AnnotationState::Off,
+                first.presentation(),
+                movie::AnnotationState::Off,
             )
             .contains("first available")
         );
-    }
-    for mode in [Mode::Keyframes, Mode::Source] {
+        let mut third = frame(3, 1_500, third);
+        third.marker = "PRIVATE_CUE".into();
         let text = pointer(
             directory,
-            &detail.frames[2],
-            mode,
+            &third,
             Some(request),
-            detail.frames[2].at.since(speakeasy_show::Moment::START),
-            crate::show::store::movie::AnnotationState::Off,
+            third.presentation(),
+            movie::AnnotationState::Off,
         );
         assert!(!text.contains("PRIVATE"));
         assert!(text.contains("0:20.000") && text.contains("0:01.500"));
         assert!(text.contains("18500 ms earlier"));
-        if mode == Mode::Source {
+        if matches!(third.file, preview::Content::Source { .. }) {
             assert!(text.contains("--at 0:01.500"));
         }
     }
     detail.frames.clear();
     assert_eq!(detail.locate(Moment::START), None);
+    Ok(())
 }
 
 #[test]
@@ -229,103 +223,58 @@ fn narration_distinguishes_silence_missing_words_and_untimed_text_and_bounds_the
 #[test]
 fn a_video_reference_requests_inside_the_displayed_sample_instead_of_rounding_into_its_predecessor()
 {
-    use std::time::Duration;
-    let mut frame = super::library::Frame {
-        number: 2,
-        at: Moment::from_millis(283),
-        marker: String::new(),
-        cropped: false,
-        file: crate::show::preview::Content::Video {
-            span: Duration::from_nanos(33_333_333)..Duration::from_nanos(66_666_666),
-            annotations: Moment::from_millis(1000),
-            scene: None,
-        },
+    let directory = Path::new("synthetic");
+    let reference = |frame: &library::Frame, sampled| {
+        pointer(directory, frame, None, sampled, movie::AnnotationState::Off)
     };
+    let mut sample = frame(
+        2,
+        283,
+        video(Duration::from_nanos(33_333_333)..Duration::from_nanos(66_666_666)),
+    );
     let at = Duration::from_nanos(if cfg!(target_os = "macos") {
         283_333_333
     } else {
         283_333_300
     });
-    let text = pointer(
-        std::path::Path::new("synthetic"),
-        &frame,
-        Mode::Video,
-        None,
-        at,
-        crate::show::store::movie::AnnotationState::Off,
-    );
+    let text = reference(&sample, at);
     assert!(text.contains("sample at 0:00.283"));
     assert!(text.contains("--video --at 0:00.284"));
-    assert!(
-        !pointer(
-            std::path::Path::new("synthetic"),
-            &frame,
-            Mode::Video,
-            None,
-            Duration::from_millis(300),
-            crate::show::store::movie::AnnotationState::Off,
-        )
-        .contains("--at")
+    assert!(!reference(&sample, Duration::from_millis(300)).contains("--at"));
+    sample.file = video(Duration::from_nanos(33_333_333)..Duration::from_micros(33_500));
+    assert!(!reference(&sample, at).contains("--at"));
+    let sample = frame(
+        2,
+        99,
+        video(Duration::from_micros(99_500)..Duration::from_nanos(100_000_033)),
     );
-    if let crate::show::preview::Content::Video { span, .. } = &mut frame.file {
-        span.end = Duration::from_micros(33_500);
-    }
-    assert!(
-        !pointer(
-            std::path::Path::new("synthetic"),
-            &frame,
-            Mode::Video,
-            None,
-            at,
-            crate::show::store::movie::AnnotationState::Off,
-        )
-        .contains("--at")
-    );
-    frame.at = Moment::from_millis(99);
-    frame.file = crate::show::preview::Content::Video {
-        span: Duration::from_micros(99_500)..Duration::from_nanos(100_000_033),
-        annotations: Moment::from_millis(1000),
-        scene: None,
-    };
-    let reference = pointer(
-        std::path::Path::new("synthetic"),
-        &frame,
-        Mode::Video,
-        None,
-        Duration::from_micros(99_500),
-        crate::show::store::movie::AnnotationState::Off,
-    );
+    let boundary = reference(&sample, Duration::from_micros(99_500));
     assert_eq!(
-        reference.contains("--at"),
+        boundary.contains("--at"),
         cfg!(target_os = "macos"),
         "Only the nanosecond clock keeps the next sample strictly beyond 100 ms"
     );
 }
 
 #[test]
-fn video_seeking_and_request_captions_preserve_submillisecond_order() -> anyhow::Result<()> {
-    use std::time::Duration;
-    let root = Source::Demo.load()?;
-    let (rows, _) = library::list(&root.directory)?;
-    let mut detail = library::Detail::open(&rows[0].directory, Mode::Keyframes)?;
-    detail.frames = [0_u64, 33_333_300]
-        .into_iter()
-        .enumerate()
-        .map(|(index, nanos)| {
-            let at = Duration::from_nanos(nanos);
-            library::Frame {
-                number: index + 1,
-                at: Moment::from_millis(250).saturating_add(at),
-                marker: String::new(),
-                cropped: false,
-                file: crate::show::preview::Content::Video {
-                    span: at..at.saturating_add(Duration::from_nanos(33_333_300)),
-                    annotations: Moment::from_millis(1000),
-                    scene: None,
-                },
-            }
-        })
-        .collect();
+fn video_seeking_and_request_captions_preserve_submillisecond_order() {
+    let mut detail = detail(
+        [0_u64, 33_333_300]
+            .into_iter()
+            .zip(1..)
+            .map(|(nanos, number)| {
+                let at = Duration::from_nanos(nanos);
+                library::Frame {
+                    at: Moment::from_millis(250).saturating_add(at),
+                    ..frame(
+                        number,
+                        0,
+                        video(at..at.saturating_add(Duration::from_nanos(33_333_300))),
+                    )
+                }
+            })
+            .collect(),
+    );
     assert_eq!(
         detail.locate(Moment::from_millis(283)),
         Some((0, Relation::Earlier(Duration::from_millis(33))))
@@ -335,19 +284,14 @@ fn video_seeking_and_request_captions_preserve_submillisecond_order() -> anyhow:
         at: Moment::from_millis(283),
         origin: Origin::Mark(1),
     };
-    let caption = request.caption(
-        &detail.frames[1],
-        Mode::Video,
-        detail.frames[1].presentation(),
-    );
+    let caption = request.caption(&detail.frames[1], detail.frames[1].presentation());
     assert!(caption.contains("0.333 ms later"));
     assert!(!caption.contains("same timestamp"));
-    detail.frames[1].at = Moment::from_millis(284);
-    detail.frames[1].file = crate::show::preview::Content::Video {
-        span: Duration::from_nanos(34_000_033)..Duration::from_millis(50),
-        annotations: Moment::from_millis(1000),
-        scene: None,
-    };
+    detail.frames[1] = frame(
+        2,
+        284,
+        video(Duration::from_nanos(34_000_033)..Duration::from_millis(50)),
+    );
     assert_eq!(
         detail.locate(Moment::from_millis(284)),
         if cfg!(target_os = "macos") {
@@ -357,5 +301,65 @@ fn video_seeking_and_request_captions_preserve_submillisecond_order() -> anyhow:
         },
         "Navigation disagreed with the platform decoder's clock"
     );
-    Ok(())
+}
+
+fn detail(frames: Vec<library::Frame>) -> Detail {
+    Detail {
+        frames,
+        marks: Vec::new(),
+        warnings: Vec::new(),
+        summary: Ok(String::new()),
+        narration: Narration::Silent,
+        source_available: false,
+        coverage: String::new(),
+        movie: None,
+    }
+}
+
+fn frame(number: usize, at: u64, file: preview::Content) -> library::Frame {
+    library::Frame {
+        number,
+        at: Moment::from_millis(at),
+        marker: String::new(),
+        cropped: false,
+        file,
+    }
+}
+
+fn keyframe(number: usize) -> preview::Content {
+    preview::Content::Png(format!("frames/frame-{number:02}.png"))
+}
+
+fn video(span: Range<Duration>) -> preview::Content {
+    preview::Content::Video {
+        span,
+        annotations: Moment::from_millis(1000),
+        scene: None,
+    }
+}
+
+fn retained() -> anyhow::Result<preview::Content> {
+    let mut journal = speakeasy_show::Journal::new();
+    journal
+        .admit()
+        .context("Synthetic frame was not admitted")?
+        .record(
+            Moment::START,
+            speakeasy_show::Image::from_bgra(2, 2, [40, 50, 60, 255].repeat(4))?,
+        );
+    let mut bytes = Vec::new();
+    journal.write_source::<speakeasy_show::SourceError>(Moment::from_millis(1_000), |chunk| {
+        bytes.extend_from_slice(chunk);
+        Ok(())
+    })?;
+    let index = speakeasy_show::Source::read(u64::try_from(bytes.len())?, |range| {
+        let range = usize::try_from(range.start)?..usize::try_from(range.end)?;
+        bytes
+            .get(range)
+            .map(<[u8]>::to_vec)
+            .context("Synthetic source read past its end")
+    })?;
+    Ok(preview::Content::Source {
+        index: Arc::new(index),
+    })
 }

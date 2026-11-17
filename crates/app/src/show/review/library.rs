@@ -156,8 +156,8 @@ impl Frame {
         )
     }
 
-    pub(super) const fn offers_whole_screen(&self, mode: Mode, source_available: bool) -> bool {
-        self.cropped && source_available && matches!(mode, Mode::Keyframes)
+    pub(super) const fn offers_whole_screen(&self, source_available: bool) -> bool {
+        self.cropped && source_available && matches!(self.file, Content::Png(_))
     }
 
     pub(super) fn presentation(&self) -> std::time::Duration {

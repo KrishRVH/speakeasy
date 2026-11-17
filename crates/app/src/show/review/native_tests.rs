@@ -260,20 +260,13 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
             Some(index),
             detail.locate(request.at).map(|(index, _)| index)
         );
+        let frame = detail
+            .frames
+            .get(index)
+            .context("Narration selected a missing frame")?;
         assert!(
             request
-                .caption(
-                    detail
-                        .frames
-                        .get(index)
-                        .context("Narration selected a missing frame")?,
-                    view.mode,
-                    detail
-                        .frames
-                        .get(index)
-                        .context("Missing synthetic frame")?
-                        .presentation()
-                )
+                .caption(frame, frame.presentation())
                 .contains("retained sample")
         );
         view.copy(CopyKind::Evidence, cx);

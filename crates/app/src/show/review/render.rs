@@ -457,7 +457,7 @@ impl Review {
         let caption = self.request.and_then(|request| {
             let frame = self.detail.as_ref()?.frames.get(frame)?;
             match &self.image {
-                ImageState::Ready(decoded) => Some(request.caption(frame, self.mode, decoded.at)),
+                ImageState::Ready(decoded) => Some(request.caption(frame, decoded.at)),
                 _ => None,
             }
         });
@@ -629,7 +629,7 @@ impl Review {
         };
         let whole_screen = frames
             .get(index)
-            .is_some_and(|frame| frame.offers_whole_screen(self.mode, source_available));
+            .is_some_and(|frame| frame.offers_whole_screen(source_available));
         div()
             .flex()
             .flex_col()

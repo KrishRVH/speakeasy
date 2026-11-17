@@ -106,13 +106,19 @@ fn a_cropped_keyframe_says_so_and_offers_the_whole_screen() -> anyhow::Result<()
             frame.cropped,
             "{caption}"
         );
-        assert_eq!(
-            frame.offers_whole_screen(library::Mode::Keyframes, true),
-            frame.cropped
-        );
-        assert!(!frame.offers_whole_screen(library::Mode::Keyframes, false));
-        assert!(!frame.offers_whole_screen(library::Mode::Source, true));
+        assert_eq!(frame.offers_whole_screen(true), frame.cropped);
+        assert!(!frame.offers_whole_screen(false));
     }
+    let cropped_video = library::Frame {
+        cropped: true,
+        file: preview::Content::Video {
+            span: Duration::ZERO..Duration::from_millis(33),
+            annotations: speakeasy_show::Moment::START,
+            scene: None,
+        },
+        ..uncropped
+    };
+    assert!(!cropped_video.offers_whole_screen(true));
     Ok(())
 }
 

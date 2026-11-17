@@ -110,14 +110,7 @@ async fn exercise_video(cx: &mut AsyncApp) -> anyhow::Result<()> {
             .and_then(|detail| detail.frames.get(1))
             .context("Missing indexed video frame")?;
         Ok((
-            navigation::pointer(
-                &directory,
-                frame,
-                Mode::Video,
-                None,
-                decoded.at,
-                decoded.annotations,
-            ),
+            navigation::pointer(&directory, frame, None, decoded.at, decoded.annotations),
             Arc::clone(&decoded.image),
         ))
     })??;

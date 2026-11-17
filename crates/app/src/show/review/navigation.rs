@@ -1,9 +1,12 @@
-use std::{cmp::Ordering, fmt, path::Path, time::Duration};
+use std::{cmp::Ordering, fmt, ops::Range, path::Path, time::Duration};
 
 use speakeasy_show::Moment;
 
-use super::library::{Frame, Mode};
-use crate::show::store::movie::decoder_time;
+use super::library::Frame;
+use crate::show::{
+    preview::Content,
+    store::movie::{AnnotationState, decoder_time},
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Origin {
@@ -60,7 +63,7 @@ impl fmt::Display for Stamp {
 }
 
 impl Request {
-    pub(super) fn caption(self, frame: &Frame, mode: Mode, sampled: Duration) -> String {
+    pub(super) fn caption(self, frame: &Frame, sampled: Duration) -> String {
         let origin = match self.origin {
             Origin::Clause(_) => "Narration clause".into(),
             Origin::Mark(number) => format!("Mark #{number}"),
@@ -71,10 +74,10 @@ impl Request {
         } else {
             ""
         };
-        let sample = match mode {
-            Mode::Keyframes => format!("{first}keyframe #{}", frame.number),
-            Mode::Source => format!("{first}retained sample #{}", frame.number),
-            Mode::Video => "video sample".into(),
+        let sample = match frame.file {
+            Content::Png(_) => format!("{first}keyframe #{}", frame.number),
+            Content::Source { .. } => format!("{first}retained sample #{}", frame.number),
+            Content::Video { .. } => "video sample".into(),
         };
         format!(
             "{origin} at {} · {sample} at {}, {relation}",
@@ -87,26 +90,25 @@ impl Request {
 pub(super) fn pointer(
     directory: &Path,
     frame: &Frame,
-    mode: Mode,
     request: Option<Request>,
     sampled: Duration,
-    annotations: crate::show::store::movie::AnnotationState,
+    annotations: AnnotationState,
 ) -> String {
     let at = Stamp(frame.at);
-    let sample = match mode {
-        Mode::Keyframes => format!(
+    let sample = match &frame.file {
+        Content::Png(name) => format!(
             "Keyframe #{} at {at}: {}",
             frame.number,
-            code(&directory.join(format!("frames/frame-{:02}.png", frame.number)))
+            code(&directory.join(name))
         ),
-        Mode::Source => format!(
+        Content::Source { .. } => format!(
             "Retained source sample #{} at {at} (no annotations).\nUse the installed Speakeasy \
              command (named in summary.md when available) with `show frame SHOW --at {at} --out \
              NEW.png --json`; pass this folder as SHOW.",
             frame.number
         ),
-        Mode::Video => {
-            let command = video_query(frame, sampled).map_or_else(String::new, |at| {
+        Content::Video { span, .. } => {
+            let command = video_query(frame, span, sampled).map_or_else(String::new, |at| {
                 let annotated = if annotations.painted() {
                     " --annotated"
                 } else {
@@ -126,7 +128,7 @@ pub(super) fn pointer(
         },
     };
     let request = request.map_or_else(String::new, |request| {
-        format!("{}\n", request.caption(frame, mode, sampled))
+        format!("{}\n", request.caption(frame, sampled))
     });
     format!(
         "Show folder: {}\n{sample}\n{request}A frame shows its own timestamp; nearby samples do \
@@ -135,10 +137,7 @@ pub(super) fn pointer(
     )
 }
 
-fn video_query(frame: &Frame, sampled: Duration) -> Option<Moment> {
-    let crate::show::preview::Content::Video { span, .. } = &frame.file else {
-        return None;
-    };
+fn video_query(frame: &Frame, span: &Range<Duration>, sampled: Duration) -> Option<Moment> {
     let start = frame.presentation();
     if decoder_time(start) != decoder_time(sampled) {
         return None;

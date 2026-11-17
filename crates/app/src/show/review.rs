@@ -653,7 +653,6 @@ impl Review {
         let pointer = navigation::pointer(
             &key.directory,
             frame,
-            self.mode,
             self.request,
             decoded.at,
             decoded.annotations,
