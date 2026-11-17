@@ -37,7 +37,7 @@ pub(in crate::shell::settings) fn exercise(
             "Permissions did not reach practice"
         );
         ensure!(
-            view.practice.task.is_none(),
+            view.practice.live.is_none(),
             "Demo started a real practice session"
         );
         view.practice.text = zeroize::Zeroizing::new(" \n\t".into());
@@ -68,7 +68,7 @@ pub(in crate::shell::settings) fn exercise(
             "Completion retained private text"
         );
         ensure!(
-            view.practice.task.is_none(),
+            view.practice.live.is_none(),
             "Completion retained practice ownership"
         );
         anyhow::Ok(())

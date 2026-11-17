@@ -12,11 +12,15 @@ use crate::{
 
 #[derive(Default)]
 pub(super) struct Practice {
-    pub(super) task: Option<Task<()>>,
+    pub(super) text: Zeroizing<String>,
+    pub(super) live: Option<Live>,
+}
+
+pub(super) struct Live {
+    pub(super) _events: Task<()>,
+    pub(super) _levels: Task<()>,
     pub(super) ready: bool,
     pub(super) level: f32,
-    levels: Option<Task<()>>,
-    pub(super) text: Zeroizing<String>,
 }
 
 impl Practice {
@@ -45,7 +49,7 @@ impl Settings {
             self.practice.text = Zeroizing::new("A little practice goes a long way.".into());
             return;
         }
-        if self.practice.task.is_some() {
+        if self.practice.live.is_some() {
             self.end_practice(cx);
             return;
         }
@@ -56,18 +60,19 @@ impl Settings {
                 return;
             },
         };
-        self.practice.stop();
         self.notice = None;
-        self.practice.levels = Some(follow(
+        let levels = follow(
             cx.global::<Services>().meter.subscribe(),
             cx,
             |meter| meter.level.clamp(0.0, 1.0),
             |view, level, cx| {
-                view.practice.level = level;
-                cx.notify();
+                if let Some(live) = &mut view.practice.live {
+                    live.level = level;
+                    cx.notify();
+                }
             },
-        ));
-        self.practice.task = Some(cx.spawn(async move |this, cx| {
+        );
+        let events = cx.spawn(async move |this, cx| {
             while let Some(event) = receipt.recv().await {
                 let Ok(ControlFlow::Continue(())) =
                     this.update(cx, |view, cx| view.practice_event(event, cx))
@@ -75,10 +80,17 @@ impl Settings {
                     return;
                 };
             }
-            this.update_if_alive(cx, |view, cx| {
-                view.end_practice(cx);
-            });
-        }));
+            this.update_if_alive(cx, Self::end_practice);
+        });
+        self.practice = Practice {
+            live: Some(Live {
+                _events: events,
+                _levels: levels,
+                ready: false,
+                level: 0.0,
+            }),
+            ..Practice::default()
+        };
     }
 
     fn practice_event(
@@ -87,7 +99,11 @@ impl Settings {
         cx: &mut Context<'_, Self>,
     ) -> ControlFlow<()> {
         match event {
-            PracticeEvent::Ready => self.practice.ready = true,
+            PracticeEvent::Ready => {
+                if let Some(live) = &mut self.practice.live {
+                    live.ready = true;
+                }
+            },
             PracticeEvent::Text(text) => self.practice.text = text,
             PracticeEvent::Unavailable(message) => {
                 self.notice = Some(Notice::Problem(message.into()));

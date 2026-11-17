@@ -192,7 +192,7 @@ impl Settings {
             .py(px(16.0))
             .border_t_1()
             .border_color(palette.line());
-        if self.practice.task.is_none() {
+        let Some(live) = &self.practice.live else {
             let running = ui.cx.global::<Services>().is_running() && !is_demo(ui.cx);
             let note = if is_demo(ui.cx) {
                 "Practice uses your microphone, so the preview leaves it off."
@@ -216,9 +216,9 @@ impl Settings {
                         running,
                     )),
             );
-        }
+        };
         let indicator = self.presentation.indicator;
-        let live = if !self.practice.text.is_empty() {
+        let result = if !self.practice.text.is_empty() {
             div().text_size(px(16.0)).child(gpui::text!(
                 id = "practice-words",
                 self.practice.text.to_string()
@@ -228,13 +228,13 @@ impl Settings {
                 .flex()
                 .items_center()
                 .gap(px(10.0))
-                .child(level(palette.live, self.practice.level))
+                .child(level(palette.live, live.level))
                 .child("Listening…")
         } else if indicator == Indicator::Busy {
             div()
                 .text_color(rgb(palette.muted))
                 .child("Turning speech into text…")
-        } else if self.practice.ready {
+        } else if live.ready {
             div()
                 .flex()
                 .flex_wrap()
@@ -264,7 +264,7 @@ impl Settings {
                     .bg(rgb(palette.room))
                     .border_1()
                     .border_color(palette.line())
-                    .child(live),
+                    .child(result),
             )
             .child(
                 div()

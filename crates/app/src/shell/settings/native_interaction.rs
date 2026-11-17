@@ -244,10 +244,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                         view.config.language == "auto",
                         "Refreshing permission lost a language edit"
                     );
-                    view.practice.text =
-                        zeroize::Zeroizing::new("Synthetic private practice".into());
-                    view.practice.ready = true;
-                    view.practice.task = Some(Task::ready(()));
+                    view.practice = practicing();
                     anyhow::Ok(())
                 })??;
                 navigate(settings, cx)?;
@@ -259,10 +256,9 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                         view.practice.text.is_empty(),
                         "Closing retained private practice text"
                     );
-                    ensure!(!view.practice.ready, "Closing retained practice readiness");
                     ensure!(
-                        view.practice.task.is_none(),
-                        "Closing retained the practice task"
+                        view.practice.live.is_none(),
+                        "Closing retained the live practice"
                     );
                     anyhow::Ok(())
                 })??;
@@ -365,9 +361,7 @@ fn navigate(settings: WindowHandle<Settings>, cx: &mut AsyncApp) -> anyhow::Resu
                 "Page change lost keyboard focus"
             );
             ensure!(
-                view.practice.task.is_none()
-                    && view.practice.text.is_empty()
-                    && !view.practice.ready,
+                view.practice.live.is_none() && view.practice.text.is_empty(),
                 "Leaving the dictation page retained private practice"
             );
             ensure!(
@@ -377,12 +371,20 @@ fn navigate(settings: WindowHandle<Settings>, cx: &mut AsyncApp) -> anyhow::Resu
             anyhow::Ok(())
         })??;
     }
-    settings.update(cx, |view, _, _| {
-        view.practice.text = zeroize::Zeroizing::new("Synthetic private practice".into());
-        view.practice.ready = true;
-        view.practice.task = Some(Task::ready(()));
-    })?;
+    settings.update(cx, |view, _, _| view.practice = practicing())?;
     Ok(())
+}
+
+fn practicing() -> practice::Practice {
+    practice::Practice {
+        text: zeroize::Zeroizing::new("Synthetic private practice".into()),
+        live: Some(practice::Live {
+            _events: Task::ready(()),
+            _levels: Task::ready(()),
+            ready: true,
+            level: 0.0,
+        }),
+    }
 }
 
 fn grant_microphone_on_return() -> impl FnMut() -> Permissions {

@@ -157,7 +157,7 @@ impl Settings {
                 ("Retry dictation", Action::Resume, true)
             },
             Step::Practice
-                if self.practice.text.trim().is_empty() && self.practice.task.is_none() =>
+                if self.practice.text.trim().is_empty() && self.practice.live.is_none() =>
             {
                 (
                     if is_demo(ui.cx) {
@@ -308,17 +308,18 @@ impl Settings {
     fn onboarding_practice(&self, ui: &Ui<'_>) -> Div {
         let kit = ui.kit();
         let palette = ui.palette;
-        let active = self.practice.task.is_some();
+        let live = self.practice.live.as_ref();
+        let active = live.is_some();
         let recognized = !self.practice.text.trim().is_empty();
-        let recording = active && self.presentation.indicator == Indicator::Recording;
+        let recording = live.filter(|_| self.presentation.indicator == Indicator::Recording);
         let external = self.uses_desktop_bindings();
-        let status = if recording {
+        let status = if recording.is_some() {
             "Listening…"
         } else if active && self.presentation.indicator == Indicator::Busy {
             "Turning speech into text…"
         } else if recognized {
             "That worked. Continue when you're ready."
-        } else if self.practice.ready || is_demo(ui.cx) {
+        } else if live.is_some_and(|live| live.ready) || is_demo(ui.cx) {
             if external {
                 "Press your shortcut, say a sentence, then press it again."
             } else {
@@ -359,8 +360,8 @@ impl Settings {
                     } else {
                         palette.muted
                     }))
-                    .when(recording, |status| {
-                        status.child(level(palette.live, self.practice.level))
+                    .when_some(recording, |status, live| {
+                        status.child(level(palette.live, live.level))
                     })
                     .child(status),
             );
