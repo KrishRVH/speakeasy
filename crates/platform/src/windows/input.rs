@@ -467,13 +467,24 @@ mod tests {
     use super::*;
     use crate::windows::ok_or_last_error;
 
-    #[test]
-    fn session_registration_retries_for_a_while_without_spinning() {
-        let start = Instant::now();
+    fn failed_once(start: Instant) -> Registration {
         let mut registration = Registration::due(start);
         registration.attempt_when_due(start, || false);
+        registration
+    }
+
+    #[test]
+    fn a_failed_registration_sleeps_until_its_retry_is_due() {
+        let start = Instant::now();
+        let mut registration = failed_once(start);
         assert_eq!(registration.timeout(start), 5_000, "A failed attempt spins");
         registration.attempt_when_due(start, || panic!("Retried before it was due"));
+    }
+
+    #[test]
+    fn registration_is_abandoned_and_sleeps_once_its_retries_run_out() {
+        let start = Instant::now();
+        let mut registration = failed_once(start);
         let mut now = start;
         for _ in 0..Registration::RETRIES {
             now += Registration::RETRY_AFTER;
@@ -485,13 +496,20 @@ mod tests {
             INFINITE,
             "Abandoned retries wake"
         );
+    }
 
-        let mut registration = Registration::due(start);
-        registration.attempt_when_due(start, || false);
+    #[test]
+    fn a_successful_retry_registers_and_stops_waking() {
+        let start = Instant::now();
+        let mut registration = failed_once(start);
         registration.attempt_when_due(start + Registration::RETRY_AFTER, || true);
         assert_eq!(registration, Registration::Registered);
         assert_eq!(registration.timeout(start), INFINITE);
+    }
 
+    #[test]
+    fn the_last_fraction_of_a_millisecond_rounds_up_to_a_whole_wait() {
+        let start = Instant::now();
         let almost_due = Registration::Pending {
             at: start + Duration::from_micros(1),
             retries: 0,
