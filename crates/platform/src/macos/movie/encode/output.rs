@@ -4,7 +4,7 @@ use std::{
     os::unix::fs::OpenOptionsExt as _,
     panic::{AssertUnwindSafe, catch_unwind},
     path::Path,
-    sync::{Mutex, PoisonError},
+    sync::{Mutex, MutexGuard, PoisonError},
 };
 
 use anyhow::{Context as _, ensure};
@@ -38,11 +38,7 @@ define_class!(
     unsafe impl AVAssetWriterDelegate for Output {
         #[unsafe(method(assetWriter:didOutputSegmentData:segmentType:))]
         fn segment(&self, _: &AVAssetWriter, data: &NSData, kind: AVAssetSegmentType) {
-            let mut sink = self
-                .ivars()
-                .sink
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
+            let mut sink = self.sink();
             if !matches!(
                 catch_unwind(AssertUnwindSafe(|| sink.write(data, kind))),
                 Ok(Ok(()))
@@ -78,11 +74,7 @@ impl Output {
     }
 
     pub(super) fn check(&self) -> anyhow::Result<()> {
-        let sink = self
-            .ivars()
-            .sink
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let sink = self.sink();
         ensure!(
             !sink.failed && sink.file.is_some(),
             "Movie segment output failed"
@@ -92,11 +84,7 @@ impl Output {
     }
 
     pub(super) fn close(&self) -> anyhow::Result<()> {
-        let mut sink = self
-            .ivars()
-            .sink
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut sink = self.sink();
         let file = sink.file.take().context("Movie output already closed")?;
         file.sync_all()?;
         ensure!(
@@ -108,21 +96,20 @@ impl Output {
     }
 
     pub(super) fn retire(&self) {
+        self.sink().file = None;
+    }
+
+    fn sink(&self) -> MutexGuard<'_, Sink> {
         self.ivars()
             .sink
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .file = None;
     }
 
     #[cfg(test)]
     pub(super) fn file_identity(&self) -> (std::os::fd::RawFd, std::fs::Metadata) {
         use std::os::fd::AsRawFd as _;
-        let sink = self
-            .ivars()
-            .sink
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let sink = self.sink();
         let file = sink.file.as_ref().unwrap();
         let identity = (file.as_raw_fd(), file.metadata().unwrap());
         drop(sink);
@@ -133,11 +120,12 @@ impl Output {
 impl Sink {
     fn write(&mut self, data: &NSData, kind: AVAssetSegmentType) -> anyhow::Result<()> {
         ensure!(!self.failed, "Movie output has failed");
-        ensure!(
-            (!self.initialized && kind == AVAssetSegmentType::Initialization)
-                || (self.initialized && kind == AVAssetSegmentType::Separable),
-            "Movie segments arrived out of order"
-        );
+        let expected = if self.initialized {
+            AVAssetSegmentType::Separable
+        } else {
+            AVAssetSegmentType::Initialization
+        };
+        ensure!(kind == expected, "Movie segments arrived out of order");
         let end = self
             .bytes
             .checked_add(u64::try_from(data.length())?)

@@ -13,7 +13,7 @@ use objc2_foundation::{NSDictionary, NSNumber, NSString};
 pub(super) fn video(
     [width, height]: [u32; 2],
 ) -> anyhow::Result<Retained<NSDictionary<NSString, AnyObject>>> {
-    let key =
+    let setting =
         |value: Option<&'static NSString>| value.context("Native video setting is unavailable");
     let width = NSNumber::new_u32(width);
     let height = NSNumber::new_u32(height);
@@ -24,42 +24,42 @@ pub(super) fn video(
     unsafe {
         let color = NSDictionary::from_slices(
             &[
-                key(AVVideoColorPrimariesKey)?,
-                key(AVVideoTransferFunctionKey)?,
-                key(AVVideoYCbCrMatrixKey)?,
+                setting(AVVideoColorPrimariesKey)?,
+                setting(AVVideoTransferFunctionKey)?,
+                setting(AVVideoYCbCrMatrixKey)?,
             ],
             &[
-                key(AVVideoColorPrimaries_ITU_R_709_2)?,
-                key(AVVideoTransferFunction_IEC_sRGB)?,
-                key(AVVideoYCbCrMatrix_ITU_R_709_2)?,
+                setting(AVVideoColorPrimaries_ITU_R_709_2)?,
+                setting(AVVideoTransferFunction_IEC_sRGB)?,
+                setting(AVVideoYCbCrMatrix_ITU_R_709_2)?,
             ],
         );
         let compression = NSDictionary::from_slices(
             &[
-                key(AVVideoAverageBitRateKey)?,
-                key(AVVideoExpectedSourceFrameRateKey)?,
-                key(AVVideoMaxKeyFrameIntervalKey)?,
-                key(AVVideoAllowFrameReorderingKey)?,
-                key(AVVideoProfileLevelKey)?,
+                setting(AVVideoAverageBitRateKey)?,
+                setting(AVVideoExpectedSourceFrameRateKey)?,
+                setting(AVVideoMaxKeyFrameIntervalKey)?,
+                setting(AVVideoAllowFrameReorderingKey)?,
+                setting(AVVideoProfileLevelKey)?,
             ],
             &[
                 &*bitrate as &AnyObject,
                 &*rate,
                 &*rate,
                 &*reorder,
-                key(AVVideoProfileLevelH264HighAutoLevel)?,
+                setting(AVVideoProfileLevelH264HighAutoLevel)?,
             ],
         );
         Ok(NSDictionary::from_slices(
             &[
-                key(AVVideoCodecKey)?,
-                key(AVVideoWidthKey)?,
-                key(AVVideoHeightKey)?,
-                key(AVVideoColorPropertiesKey)?,
-                key(AVVideoCompressionPropertiesKey)?,
+                setting(AVVideoCodecKey)?,
+                setting(AVVideoWidthKey)?,
+                setting(AVVideoHeightKey)?,
+                setting(AVVideoColorPropertiesKey)?,
+                setting(AVVideoCompressionPropertiesKey)?,
             ],
             &[
-                key(AVVideoCodecTypeH264)? as &AnyObject,
+                setting(AVVideoCodecTypeH264)? as &AnyObject,
                 &*width,
                 &*height,
                 &*color,
