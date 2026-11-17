@@ -20,16 +20,21 @@ fn next_request(requests: &Receiver<Event>) -> anyhow::Result<Request> {
     }
 }
 
-fn occupy_server_with_pending_requests(path: &Path) -> anyhow::Result<()> {
-    Instance::send(path, Request::Toggle)?;
-    Instance::send(path, Request::Cancel)?;
+fn dial(path: &Path) -> anyhow::Result<(TcpStream, u128)> {
     let endpoint = Endpoint::read(&path.with_file_name(PORT_FILE))?;
-    let mut next = TcpStream::connect_timeout(
+    let stream = TcpStream::connect_timeout(
         &SocketAddr::from((Ipv4Addr::LOCALHOST, endpoint.port)),
         PATIENCE,
     )?;
+    Ok((stream, endpoint.nonce))
+}
+
+fn occupy_server_with_pending_requests(path: &Path) -> anyhow::Result<()> {
+    Instance::send(path, Request::Toggle)?;
+    Instance::send(path, Request::Cancel)?;
+    let (mut next, nonce) = dial(path)?;
     next.set_read_timeout(Some(IO_TIMEOUT))?;
-    next.write_all(&endpoint.nonce.to_le_bytes())?;
+    next.write_all(&nonce.to_le_bytes())?;
     assert!(next.read_exact(&mut [0]).is_err());
     Ok(())
 }
@@ -57,13 +62,9 @@ fn requests_without_the_secret_are_never_delivered() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
     let (_instance, requests) = Instance::acquire(&path)?.context("First owner missing")?;
-    let endpoint = Endpoint::read(&path.with_file_name(PORT_FILE))?;
-    let mut forged = TcpStream::connect_timeout(
-        &SocketAddr::from((Ipv4Addr::LOCALHOST, endpoint.port)),
-        PATIENCE,
-    )?;
+    let (mut forged, nonce) = dial(&path)?;
     forged.set_read_timeout(Some(PATIENCE))?;
-    forged.write_all(&(endpoint.nonce ^ 1).to_le_bytes())?;
+    forged.write_all(&(nonce ^ 1).to_le_bytes())?;
     forged.write_all(&[Request::Cancel as u8])?;
     assert!(
         forged.read_exact(&mut [0]).is_err(),
@@ -79,16 +80,10 @@ fn a_secret_trickled_past_the_timeout_is_never_acknowledged() -> anyhow::Result<
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
     let (_instance, _requests) = Instance::acquire(&path)?.context("First owner missing")?;
-    let endpoint = Endpoint::read(&path.with_file_name(PORT_FILE))?;
-    let mut slow = TcpStream::connect_timeout(
-        &SocketAddr::from((Ipv4Addr::LOCALHOST, endpoint.port)),
-        PATIENCE,
-    )?;
-
+    let (mut slow, nonce) = dial(&path)?;
     slow.set_nodelay(true)?;
     slow.set_read_timeout(Some(PATIENCE))?;
-
-    for byte in endpoint.nonce.to_le_bytes() {
+    for byte in nonce.to_le_bytes() {
         if slow.write_all(&[byte]).is_err() {
             break;
         }
