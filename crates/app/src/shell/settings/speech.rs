@@ -72,7 +72,11 @@ mod tests {
         assert_eq!(Speech::of(&Config::default(), false), None);
         assert_eq!(Speech::of(&Config::default(), true), Some(Speech::Own));
         use_own_engine(&mut config);
-        assert_eq!(Speech::of(&config, true), Some(Speech::Own));
+        assert_eq!(
+            Speech::of(&config, false),
+            Some(Speech::Own),
+            "Choosing your own engine hid its program after the window reopened"
+        );
         assert_eq!(
             config.engine_executable,
             parakeet().engine_executable,
