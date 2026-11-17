@@ -199,7 +199,7 @@ impl Pinning for FixtureDevice {
     fn pin(&self, _: Taps) {}
 }
 
-async fn wait_for_signal<T: Send>(
+async fn wait_for_signal<T>(
     signal: &Receiver<T>,
     updates: &mut watch::Receiver<Snapshot>,
     limit: Duration,
@@ -207,12 +207,20 @@ async fn wait_for_signal<T: Send>(
     timeout(limit, async {
         tokio::select! {
             result = signal.recv() => Ok(result?),
-            failed = updates.wait_for(|snapshot| snapshot.phase == Phase::Error) => {
-                anyhow::bail!("Fixture owner failed: {}", failed?.message);
-            }
+            ended = updates.wait_for(|snapshot| {
+                matches!(snapshot.phase, Phase::Error | Phase::Cancelled)
+            }) => Err(interruption(&*ended?)),
         }
     })
     .await?
+}
+
+fn interruption(snapshot: &Snapshot) -> anyhow::Error {
+    if snapshot.phase == Phase::Cancelled {
+        anyhow::anyhow!("Fixture session was cancelled")
+    } else {
+        anyhow::anyhow!("Fixture owner failed: {}", snapshot.message)
+    }
 }
 
 async fn wait_for_phase(
@@ -461,16 +469,17 @@ async fn recording(
         let phase = timeout(
             REQUEST_TIMEOUT,
             updates.wait_for(|snapshot| {
-                matches!(snapshot.phase, Phase::Done | Phase::Empty | Phase::Error)
+                matches!(
+                    snapshot.phase,
+                    Phase::Done | Phase::Empty | Phase::Error | Phase::Cancelled
+                )
             }),
         )
         .await??
         .phase;
-        anyhow::ensure!(
-            phase != Phase::Error,
-            "Fixture owner failed: {}",
-            updates.borrow().message
-        );
+        if matches!(phase, Phase::Error | Phase::Cancelled) {
+            return Err(interruption(&updates.borrow()));
+        }
         let (inserted, text) = if phase == Phase::Empty {
             (None, String::new())
         } else {
