@@ -115,6 +115,57 @@ async fn closed_feed_and_premature_or_malformed_final_never_return_text() -> any
 }
 
 #[tokio::test]
+async fn a_transcript_that_is_not_text_fails_even_on_events_recognition_ignores()
+-> anyhow::Result<()> {
+    const FINAL: &str =
+        r#"{"type":"conversation.item.input_audio_transcription.completed","transcript":"First."}"#;
+    for (events, acknowledgement) in [
+        (
+            &[
+                r#"{"type":"conversation.item.input_audio_transcription.delta","transcript":123}"#,
+                FINAL,
+            ][..],
+            r#"{"type":"input_audio_buffer.committed"}"#,
+        ),
+        (
+            &[FINAL][..],
+            r#"{"type":"input_audio_buffer.committed","transcript":123}"#,
+        ),
+    ] {
+        let (mut client, mut server) = sockets().await?;
+        let (frames, received) = mpsc::channel(1);
+        drop(frames);
+        let (ending, tail) = oneshot::channel();
+        assert!(ending.send(Zeroizing::new(Vec::new())).is_ok());
+        let exchange = async {
+            for &event in events {
+                send(&mut server, Message::Text(event.into())).await?;
+            }
+            let Some(Ok(Message::Text(_))) = server.next().await else {
+                anyhow::bail!("Missing commit");
+            };
+            send(&mut server, Message::Text(acknowledgement.into())).await
+        };
+        let result = timeout(PATIENCE, async {
+            tokio::try_join!(
+                recognize(
+                    &mut client,
+                    LiveAudio {
+                        rate: 16_000,
+                        frames: received,
+                        tail,
+                    }
+                ),
+                exchange
+            )
+        })
+        .await?;
+        assert_eq!(result.unwrap_err().to_string(), FAILED);
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_committed_stream_cannot_wait_forever_for_its_final() -> anyhow::Result<()> {
     let (mut client, mut server) = sockets().await?;
     let (frames, received) = mpsc::channel(1);

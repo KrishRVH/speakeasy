@@ -58,7 +58,7 @@ pub(super) async fn transcribe(
     )
     .await?;
     within(CONNECT_TIMEOUT, async {
-        expect(&mut socket, Event::Created).await?;
+        expect(&mut socket, Kind::Created).await?;
         let session = serde_json::json!({
             "type": "session.update",
             "session": {
@@ -68,7 +68,7 @@ pub(super) async fn transcribe(
             }
         });
         send(&mut socket, Message::Text(session.to_string().into())).await?;
-        expect(&mut socket, Event::Updated).await
+        expect(&mut socket, Kind::Updated).await
     })
     .await?;
     within(INFERENCE_TIMEOUT, recognize(&mut socket, audio)).await
@@ -111,26 +111,29 @@ async fn recognize(socket: &mut Socket, mut audio: LiveAudio) -> anyhow::Result<
                     bail!(FAILED);
                 };
                 match message {
-                    Message::Text(bytes) => match parse(&bytes)? {
-                        Event::Completed { transcript } => {
-                            let words = transcript.trim();
-                            ensure!(
-                                words.len().saturating_add(1)
-                                    <= MAX_RESPONSE_BYTES.saturating_sub(text.len()),
-                                FAILED
-                            );
-                            if !text.is_empty() && !words.is_empty() {
-                                text.push(' ');
-                            }
-                            text.push_str(words);
-                            final_seen = true;
-                        },
-                        Event::Committed => {
-                            ensure!(committed && final_seen, FAILED);
-                            return Ok(Some(mem::take(&mut *text)));
-                        },
-                        Event::Error => bail!(FAILED),
-                        Event::Created | Event::Updated | Event::Ignored => {},
+                    Message::Text(bytes) => {
+                        let Event { kind, transcript } = parse(&bytes)?;
+                        match kind {
+                            Kind::Completed => {
+                                let words = transcript.as_deref().context(FAILED)?.trim();
+                                ensure!(
+                                    words.len().saturating_add(1)
+                                        <= MAX_RESPONSE_BYTES.saturating_sub(text.len()),
+                                    FAILED
+                                );
+                                if !text.is_empty() && !words.is_empty() {
+                                    text.push(' ');
+                                }
+                                text.push_str(words);
+                                final_seen = true;
+                            },
+                            Kind::Committed => {
+                                ensure!(committed && final_seen, FAILED);
+                                return Ok(Some(mem::take(&mut *text)));
+                            },
+                            Kind::Error => bail!(FAILED),
+                            Kind::Created | Kind::Updated | Kind::Ignored => {},
+                        }
                     },
                     Message::Ping(_) => within(CONNECT_TIMEOUT, socket.flush()).await?,
                     Message::Pong(_) => {},
@@ -141,15 +144,21 @@ async fn recognize(socket: &mut Socket, mut audio: LiveAudio) -> anyhow::Result<
     }
 }
 
+#[derive(Deserialize)]
+struct Event {
+    #[serde(rename = "type")]
+    kind: Kind,
+    transcript: Option<String>,
+}
+
 #[derive(Deserialize, PartialEq, Eq)]
-#[serde(tag = "type")]
-enum Event {
+enum Kind {
     #[serde(rename = "session.created")]
     Created,
     #[serde(rename = "session.updated")]
     Updated,
     #[serde(rename = "conversation.item.input_audio_transcription.completed")]
-    Completed { transcript: String },
+    Completed,
     #[serde(rename = "input_audio_buffer.committed")]
     Committed,
     #[serde(rename = "error")]
@@ -163,11 +172,11 @@ fn parse(text: &str) -> anyhow::Result<Event> {
     serde_json::from_str(text).ok().context(FAILED)
 }
 
-async fn expect(socket: &mut Socket, expected: Event) -> anyhow::Result<()> {
+async fn expect(socket: &mut Socket, expected: Kind) -> anyhow::Result<()> {
     let Some(Ok(Message::Text(text))) = socket.next().await else {
         bail!(FAILED);
     };
-    ensure!(parse(&text)? == expected, FAILED);
+    ensure!(parse(&text)?.kind == expected, FAILED);
     Ok(())
 }
 
