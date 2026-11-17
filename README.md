@@ -908,13 +908,13 @@ every ordering of events against both within the bounds
   non-activating and passes clicks through, and that closing Shows keeps Settings open. It also
   checks Settings through Windows UI Automation with synthetic Unicode input: roles, selection,
   switches, invocation, focus, input limits, bounds, hide/minimize, and retired providers. Build the
-  app test executable with `cargo test --locked -p speakeasy --no-run`, then pass its path to the
-  same script with `-StaticAccessibility` to check nonactivating and normal reopen without animation
-  or unrelated redraws, stale field edits and text ranges, and the provider after window
-  destruction. It also checks that scrolling text into view keeps selection and focus, that retained
-  ranges survive field resizing, and that a reveal requested before a resize is painted lands in the
-  resized layout. `scripts/check-tray-windows.ps1 -Executable <speakeasy.exe>` checks minimize,
-  close, relaunch, and configuration preservation with owned `--demo-tray` windows.
+  app test executable with `cargo test --locked -p speakeasy --bin speakeasy --no-run`, then pass
+  its path to the same script with `-StaticAccessibility` to check nonactivating and normal reopen
+  without animation or unrelated redraws, stale field edits and text ranges, and the provider after
+  window destruction. It also checks that scrolling text into view keeps selection and focus, that
+  retained ranges survive field resizing, and that a reveal requested before a resize is painted
+  lands in the resized layout. `scripts/check-tray-windows.ps1 -Executable <speakeasy.exe>` checks
+  minimize, close, relaunch, and configuration preservation with owned `--demo-tray` windows.
   `mise run ps:syntax` parses the Windows scripts on a native PowerShell host.
 - On Linux, `mise exec -- python scripts/check_demo_linux.py target/release/speakeasy` opens a
   private Xvfb display, checks rendered Settings and Shows, and checks that the preview shows and
@@ -995,6 +995,14 @@ every ordering of events against both within the bounds
   checks the owned review window's rapid seeks, scrubber, keyboard and narration navigation, exact
   copied evidence retrieval, and cleanup on close. It injects events into that window without
   installing hooks, recording the screen, or touching the clipboard.
+- The Windows platform filter `receipts_describe_presented_layouts_and_exclude_superseded_inputs`,
+  run like `encode_synthetic_movie_fragments`, writes `geometry.mp4` and `geometry.csv` to
+  `SPEAKEASY_MOVIE_PROBE_DIRECTORY`: synthetic resized frames and the layouts they present. Set
+  `SPEAKEASY_MOVIE_GEOMETRY_DIRECTORY` to that directory, keep `SPEAKEASY_MOVIE_READ_DIRECTORY`, and
+  run `cargo test --locked -p speakeasy native_mark_crops_ -- --ignored --test-threads=1`, then the
+  same command with `native_annotated_video_exports_`. They check that mark crops match the
+  presented pixels, that annotated exports match full-canvas crops, and that incompatible coordinate
+  spaces and uncovered samples are refused, using generated pixels only.
 
 Live microphone, editor, and screen acceptance is tracked under
 [verification](docs/architecture.md#verification).
