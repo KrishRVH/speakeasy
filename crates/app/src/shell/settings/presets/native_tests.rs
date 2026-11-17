@@ -2,7 +2,7 @@ use anyhow::ensure;
 use gpui::{AsyncApp, Task, WindowHandle};
 
 use super::{
-    super::{EngineFile, EngineWork, native_interaction::settle, vocabulary},
+    super::{EngineFile, EngineWork, native_interaction::draw, vocabulary},
     *,
 };
 use crate::{
@@ -11,11 +11,7 @@ use crate::{
     transcript::vocabulary::{Correction, Vocabulary},
 };
 
-#[expect(
-    clippy::future_not_send,
-    reason = "Owned Settings actions use GPUI's UI-thread context"
-)]
-pub(in crate::shell::settings) async fn exercise(
+pub(in crate::shell::settings) fn exercise(
     settings: WindowHandle<Settings>,
     cx: &mut AsyncApp,
 ) -> anyhow::Result<()> {
@@ -55,7 +51,7 @@ pub(in crate::shell::settings) async fn exercise(
         view.config.recognition_terms = Terms::default();
         anyhow::Ok(())
     })??;
-    settle(cx).await;
+    draw(settings, cx)?;
     settings.update(cx, |view, window, cx| {
         let unmodified = view.config.clone();
         view.engine_work = EngineWork::Choosing {

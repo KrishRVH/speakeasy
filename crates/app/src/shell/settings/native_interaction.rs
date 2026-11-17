@@ -1,15 +1,15 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, ensure};
 use gpui::{
-    AppContext as _, AsyncApp, KeyDownEvent, KeyUpEvent, Keystroke, PlatformInput, WindowHandle,
-    WindowOptions,
+    AnyWindowHandle, AppContext as _, AsyncApp, KeyDownEvent, KeyUpEvent, Keystroke, PlatformInput,
+    WindowHandle, WindowOptions,
 };
 
 use super::{menu::Menu, *};
 use crate::{runtime::Meter, shell::LaunchMode, show::Canvas};
 
-const SETTLE: Duration = Duration::from_millis(100);
+const ACTIVATION: Duration = Duration::from_secs(5);
 
 mod microphones;
 
@@ -60,8 +60,8 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     cx.new(|cx| Settings::new(config, updates, window, cx))
                 })?;
                 cx.update(|cx| cx.global_mut::<Services>().settings = Some(settings));
-                onboarding::native_tests::exercise(settings, cx).await?;
-                presets::native_tests::exercise(settings, cx).await?;
+                onboarding::native_tests::exercise(settings, cx)?;
+                presets::native_tests::exercise(settings, cx)?;
                 settings.update(cx, |view, _, cx| {
                     let applied = cx.global::<Services>().config.language.clone();
                     view.config.language = "de".into();
@@ -83,7 +83,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                 })??;
                 parakeet_cleanup_language(settings, cx)?;
                 choice_after_an_engine_switch(settings, cx)?;
-                microphones::exercise(settings, cx).await?;
+                microphones::exercise(settings, cx)?;
                 settings.update(cx, |view, window, cx| {
                     view.menus.trigger(Menu::Language).focus(window, cx);
                 })?;
@@ -92,9 +92,9 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     settings.read_with(cx, |view, _| view.menus.open == Some(Menu::Language))?,
                     "The toggle's release immediately selected a language"
                 );
-                settle(cx).await;
+                draw(settings, cx)?;
                 key(settings, "end", cx)?;
-                settle(cx).await;
+                draw(settings, cx)?;
                 settings.update(cx, |view, _, _| {
                     ensure!(
                         view.menus.scroll.offset().y < gpui::px(0.0),
@@ -139,12 +139,14 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     cx.notify();
                     anyhow::Ok(())
                 })??;
-                settle(cx).await;
+                wait_for(
+                    settings,
+                    Window::is_window_active,
+                    "The owned focus fixture did not activate",
+                    cx,
+                )
+                .await?;
                 settings.update(cx, |view, window, cx| {
-                    ensure!(
-                        window.is_window_active(),
-                        "The owned focus fixture did not activate"
-                    );
                     ensure!(
                         cx.global::<Services>().focus.subscribe().held(),
                         "Active Settings left insertion free to type into it"
@@ -152,7 +154,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     view.menus.trigger(Menu::Language).focus(window, cx);
                     anyhow::Ok(())
                 })??;
-                settle(cx).await;
+                draw(settings, cx)?;
                 key(settings, "space", cx)?;
                 settings.update(cx, |view, window, cx| {
                     ensure!(
@@ -163,7 +165,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     cx.notify();
                     anyhow::Ok(())
                 })??;
-                settle(cx).await;
+                draw(settings, cx)?;
                 settings.update(cx, |view, window, cx| view.menus.group.focus(window, cx))?;
                 key(settings, "home", cx)?;
                 key(settings, "enter", cx)?;
@@ -176,9 +178,9 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     cx.notify();
                     anyhow::Ok(())
                 })??;
-                settle(cx).await;
+                draw(settings, cx)?;
                 settings.update(cx, |_, window, cx| window.blur(cx))?;
-                settle(cx).await;
+                draw(settings, cx)?;
                 settings.update(cx, |view, window, cx| {
                     ensure!(
                         view.menus.open.is_none(),
@@ -188,18 +190,19 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     cx.notify();
                     anyhow::Ok(())
                 })??;
-                settle(cx).await;
+                draw(settings, cx)?;
                 let other = cx.open_window(WindowOptions::default(), |_, cx| {
                     cx.new(|_| gpui::EmptyView)
                 })?;
-                settle(cx).await;
                 other.update(cx, |_, window, _| activate(window))??;
-                settle(cx).await;
+                wait_for(
+                    settings,
+                    |window| !window.is_window_active(),
+                    "The second owned window did not activate",
+                    cx,
+                )
+                .await?;
                 settings.update(cx, |view, window, cx| {
-                    ensure!(
-                        !window.is_window_active(),
-                        "The second owned window did not activate"
-                    );
                     ensure!(
                         !cx.global::<Services>().focus.subscribe().held(),
                         "Inactive Settings still blocked insertion"
@@ -217,7 +220,13 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     );
                     activate(window)
                 })??;
-                settle(cx).await;
+                wait_for(
+                    settings,
+                    Window::is_window_active,
+                    "Settings did not reactivate",
+                    cx,
+                )
+                .await?;
                 settings.update(cx, |view, window, _| {
                     ensure!(
                         view.menus.trigger(Menu::Language).is_focused(window),
@@ -239,7 +248,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     view.practice.task = Some(Task::ready(()));
                     anyhow::Ok(())
                 })??;
-                navigate(settings, cx).await?;
+                navigate(settings, cx)?;
                 other.update(cx, |_, window, _| window.remove_window())?;
 
                 cx.update(|cx| close(settings, cx))?;
@@ -330,11 +339,7 @@ fn choice_after_an_engine_switch(
     Ok(())
 }
 
-#[expect(
-    clippy::future_not_send,
-    reason = "The owned-window fixture dispatches keys and checks focus on GPUI's UI thread"
-)]
-async fn navigate(settings: WindowHandle<Settings>, cx: &mut AsyncApp) -> anyhow::Result<()> {
+fn navigate(settings: WindowHandle<Settings>, cx: &mut AsyncApp) -> anyhow::Result<()> {
     use super::navigation::Page;
 
     for (page, activation) in [
@@ -345,9 +350,9 @@ async fn navigate(settings: WindowHandle<Settings>, cx: &mut AsyncApp) -> anyhow
         settings.update(cx, |view, window, cx| {
             view.navigation.tab(page).focus(window, cx);
         })?;
-        settle(cx).await;
+        draw(settings, cx)?;
         key(settings, activation, cx)?;
-        settle(cx).await;
+        draw(settings, cx)?;
         settings.update(cx, |view, window, _| {
             ensure!(
                 view.navigation.page == page,
@@ -392,8 +397,24 @@ fn grant_microphone_on_return() -> impl FnMut() -> Permissions {
     }
 }
 
-pub(super) fn settle(cx: &AsyncApp) -> Task<()> {
-    cx.background_executor().timer(SETTLE)
+pub(super) fn draw(window: impl Into<AnyWindowHandle>, cx: &mut AsyncApp) -> anyhow::Result<()> {
+    cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+}
+
+async fn wait_for(
+    settings: WindowHandle<Settings>,
+    reached: impl Fn(&Window) -> bool,
+    failure: &'static str,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<()> {
+    let start = Instant::now();
+    while !settings.update(cx, |_, window, _| reached(window))? {
+        ensure!(start.elapsed() < ACTIVATION, failure);
+        cx.background_executor()
+            .timer(Duration::from_millis(10))
+            .await;
+    }
+    Ok(())
 }
 
 fn close(settings: WindowHandle<Settings>, cx: &mut App) -> anyhow::Result<()> {

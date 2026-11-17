@@ -9,21 +9,14 @@ fn devices(ids: &[&str]) -> Vec<InputDevice> {
         .collect()
 }
 
-#[expect(
-    clippy::future_not_send,
-    reason = "The microphone menu acceptance drives GPUI on its UI thread"
-)]
-pub(super) async fn exercise(
-    settings: WindowHandle<Settings>,
-    cx: &mut AsyncApp,
-) -> anyhow::Result<()> {
+pub(super) fn exercise(settings: WindowHandle<Settings>, cx: &mut AsyncApp) -> anyhow::Result<()> {
     settings.update(cx, |view, window, cx| {
         view.microphones_listed(Ok(devices(&["first", "second", "third"])), cx);
         view.toggle_menu(Menu::Microphone, window, cx);
         view.menus.cursor = 2;
         cx.notify();
     })?;
-    settle(cx).await;
+    draw(settings, cx)?;
     settings.update(cx, |view, _, cx| {
         view.microphones_listed(Ok(devices(&["third", "second"])), cx);
         let rows = view.menu_items(Menu::Microphone);

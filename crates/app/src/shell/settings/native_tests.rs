@@ -3,7 +3,7 @@ use gpui::{
     AppContext as _, Bounds, EntityInputHandler as _, WindowBounds, WindowOptions, point, px, size,
 };
 
-use super::{native_interaction::settle, *};
+use super::{native_interaction::draw, *};
 use crate::{config::valid_config, theme::Theme};
 
 #[test]
@@ -136,7 +136,7 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                     );
                     anyhow::Ok(())
                 })??;
-                settle(cx).await;
+                draw(window, cx)?;
                 window.update(cx, |field, window, cx| {
                     let bounds = field.bounds_for_range(8..11, Bounds::default(), window, cx);
                     ensure!(bounds.is_some(), "The field did not shape its text");

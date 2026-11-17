@@ -4,14 +4,10 @@ use gpui::{AsyncApp, WindowHandle};
 use super::{Action, Step};
 use crate::shell::settings::{
     Action as SettingsAction, Settings,
-    native_interaction::{key, settle},
+    native_interaction::{draw, key},
 };
 
-#[expect(
-    clippy::future_not_send,
-    reason = "Owned-window interaction runs on GPUI's application thread"
-)]
-pub(in crate::shell::settings) async fn exercise(
+pub(in crate::shell::settings) fn exercise(
     settings: WindowHandle<Settings>,
     cx: &mut AsyncApp,
 ) -> anyhow::Result<()> {
@@ -24,7 +20,7 @@ pub(in crate::shell::settings) async fn exercise(
         );
         anyhow::Ok(())
     })??;
-    settle(cx).await;
+    draw(settings, cx)?;
     settings.update(cx, |view, window, cx| {
         view.act(SettingsAction::Onboarding(Action::Next), window, cx);
         ensure!(
@@ -33,7 +29,7 @@ pub(in crate::shell::settings) async fn exercise(
         );
         anyhow::Ok(())
     })??;
-    settle(cx).await;
+    draw(settings, cx)?;
     settings.update(cx, |view, window, cx| {
         view.act(SettingsAction::Onboarding(Action::Next), window, cx);
         ensure!(
@@ -53,14 +49,14 @@ pub(in crate::shell::settings) async fn exercise(
         window.blur(cx);
         anyhow::Ok(())
     })??;
-    settle(cx).await;
+    draw(settings, cx)?;
     settings.update(cx, |_, window, cx| window.focus_prev(cx))?;
     key(settings, "enter", cx)?;
     ensure!(
         settings.read_with(cx, |view, _| !view.practice.text.trim().is_empty())?,
         "Demo practice produced no simulated result"
     );
-    settle(cx).await;
+    draw(settings, cx)?;
     key(settings, "enter", cx)?;
     settings.update(cx, |view, _, _| {
         ensure!(
@@ -77,7 +73,7 @@ pub(in crate::shell::settings) async fn exercise(
         );
         anyhow::Ok(())
     })??;
-    settle(cx).await;
+    draw(settings, cx)?;
     settings.update(cx, |view, window, cx| {
         view.act(SettingsAction::Onboarding(Action::Finish), window, cx);
         ensure!(
