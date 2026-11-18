@@ -10,7 +10,7 @@
 AppId=io.github.krvh.speakeasy
 AppName=Speakeasy
 AppVersion={#AppVersion}
-AppPublisher=Speakeasy
+AppPublisher=KrishRVH
 AppPublisherURL=https://github.com/KrishRVH/speakeasy
 DefaultDirName={localappdata}\Programs\Speakeasy
 DisableProgramGroupPage=yes
