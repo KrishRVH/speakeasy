@@ -83,14 +83,22 @@ pub(crate) fn start(
     own_focus: OwnFocus,
 ) -> anyhow::Result<(OwnedThread, Monitor, Inserter)> {
     let shortcut = options.shortcut_key.windows;
-    let (insertion, inserter) =
-        insertion::Worker::start(input.clone(), own_focus, move |request| {
-            insertion::settle(Insert { shortcut }, request)
-        })?;
+    let typed = insertion::KeyCount::default();
+    let (insertion, inserter) = insertion::Worker::start(input.clone(), own_focus, {
+        let typed = typed.clone();
+        let mut continuation = insertion::Continuation::default();
+        move |request| {
+            let native = Insert {
+                shortcut,
+                typed: typed.clone(),
+            };
+            insertion::settle(native, request, &mut continuation)
+        }
+    })?;
     let stop = Arc::new(StopEvent::new()?);
     let thread = OwnedThread::spawn("input-monitor", {
         let stop = Arc::clone(&stop);
-        move || monitor(&input, &stop, shortcut)
+        move || monitor(&input, &stop, shortcut, typed)
     })?;
     Ok((thread, Monitor { stop, insertion }, inserter))
 }
@@ -115,6 +123,7 @@ struct HookState {
     input: InputSender,
     shortcut: crate::WindowsShortcut,
     policy: keyboard::Windows,
+    typed: insertion::KeyCount,
 }
 
 impl HookState {
@@ -126,6 +135,9 @@ impl HookState {
             unsafe {
                 PostThreadMessageW(GetCurrentThreadId(), MASK_START, 0, 0);
             }
+        }
+        if keyboard::Windows::types(key, down, &decision) {
+            self.typed.add();
         }
         decision.swallows()
     }
@@ -289,11 +301,17 @@ impl Registration {
     }
 }
 
-fn monitor(input: &InputSender, stop: &StopEvent, shortcut: crate::WindowsShortcut) {
+fn monitor(
+    input: &InputSender,
+    stop: &StopEvent,
+    shortcut: crate::WindowsShortcut,
+    typed: insertion::KeyCount,
+) {
     HOOK.set(Some(HookState {
         input: input.clone(),
         shortcut,
         policy: keyboard::Windows::new(shortcut),
+        typed,
     }));
     let watched = panic::catch_unwind(AssertUnwindSafe(|| run_event_loop(input, stop, shortcut)))
         .unwrap_or_else(|_| Err(io::Error::other("it stopped unexpectedly")));

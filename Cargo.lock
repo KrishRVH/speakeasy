@@ -4887,6 +4887,7 @@ dependencies = [
  "objc2-screen-capture-kit",
  "objc2-uniform-type-identifiers",
  "png 0.18.1",
+ "proptest",
  "raw-window-handle",
  "serde",
  "speakeasy-show",

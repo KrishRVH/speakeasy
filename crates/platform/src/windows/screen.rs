@@ -310,7 +310,7 @@ fn current_part(target: Target) -> Result<Option<Part>, WindowGone> {
     }
 }
 
-fn pointer_location() -> Option<POINT> {
+pub(super) fn pointer_location() -> Option<POINT> {
     let mut point = POINT::default();
 
     (unsafe { GetCursorPos(&raw mut point) } != FALSE).then_some(point)

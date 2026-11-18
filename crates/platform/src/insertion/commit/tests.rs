@@ -3,7 +3,8 @@ use std::{collections::VecDeque, panic};
 use anyhow::Context as _;
 
 use super::{
-    CLIPBOARD_CHANGED, CLIPBOARD_CHANGED_BEFORE_PASTE, NativeInsert, Worker, insert, settle,
+    CLIPBOARD_CHANGED, CLIPBOARD_CHANGED_BEFORE_PASTE, Continuation, NativeInsert, Worker, insert,
+    settle,
 };
 use crate::{
     InputSender, InsertPermit, PATIENCE,
@@ -48,6 +49,8 @@ struct Fake {
     releases: VecDeque<bool>,
     restored: Option<async_channel::Sender<u8>>,
     targets: VecDeque<u8>,
+    activity: u8,
+    texts: Vec<String>,
     return_fails: bool,
 }
 
@@ -63,6 +66,8 @@ impl Fake {
             releases: VecDeque::new(),
             restored: None,
             targets: VecDeque::new(),
+            activity: 0,
+            texts: Vec::new(),
             return_fails: false,
         }
     }
@@ -85,6 +90,7 @@ impl Fake {
 }
 
 impl NativeInsert for Fake {
+    type Activity = u8;
     type Contents = u8;
     type Keys = Keys;
     type Lease = ();
@@ -101,8 +107,9 @@ impl NativeInsert for Fake {
         Some(self.clipboard)
     }
 
-    fn write(&mut self, (): (), _: &str) -> anyhow::Result<()> {
+    fn write(&mut self, (): (), text: &str) -> anyhow::Result<()> {
         self.reach(Step::Write);
+        self.texts.push(text.to_owned());
         self.clipboard = WRITTEN;
         Ok(())
     }
@@ -133,8 +140,9 @@ impl NativeInsert for Fake {
         Ok(Keys::Insert(Delivery::Paste))
     }
 
-    fn text_keys(&mut self, _: &str) -> anyhow::Result<Keys> {
+    fn text_keys(&mut self, text: &str) -> anyhow::Result<Keys> {
         self.reach(Step::TextKeys);
+        self.texts.push(text.to_owned());
         Ok(Keys::Insert(Delivery::Direct))
     }
 
@@ -145,6 +153,10 @@ impl NativeInsert for Fake {
 
     fn target(&mut self) -> Option<u8> {
         Some(self.targets.pop_front().unwrap_or(1))
+    }
+
+    fn activity(&mut self) -> Option<u8> {
+        Some(self.activity)
     }
 
     fn external_focus(&mut self) -> bool {
@@ -253,7 +265,7 @@ async fn the_clipboard_returns_after_the_reply_unless_it_changed_again() -> anyh
                     restored: Some(restored.clone()),
                     ..Fake::new()
                 };
-                settle(native, request)
+                settle(native, request, &mut Continuation::default())
             })?;
         let sent = inserter
             .insert("text".into(), permit()?, Delivery::Paste, Enter::Withheld)

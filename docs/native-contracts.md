@@ -8,8 +8,8 @@ APIs also require these thread, buffer, and callback lifetime rules.
 ## Owned threads and insertion authority
 
 Owners: `crates/platform/src/owned_thread.rs`, `input.rs`, `insertion.rs`, `insertion/commit.rs`,
-`clipboard.rs`, `monitor.rs`; `crates/app/src/show/recorder.rs`, `show/wsl.rs`, and `instance.rs`
-hold the app's recorder, WSL lookup, and instance-listener threads.
+`insertion/continuation.rs`, `clipboard.rs`, `monitor.rs`; `crates/app/src/show/recorder.rs`,
+`show/wsl.rs`, and `instance.rs` hold the app's recorder, WSL lookup, and instance-listener threads.
 
 `OwnedThread` owns exactly one join handle. Its exit lane closes after the body returns or unwinds;
 thread-local destructors can still run afterward. Async join therefore performs the final OS join on
@@ -32,6 +32,16 @@ commitment is not permission to repeat input after an error. Synthetic key array
 their synchronous submission and carry the app's own-input marker so hooks ignore them. Direct text
 is split only at valid encoding boundaries. Clipboard data and decoded images never enter
 Debug/error output.
+
+`KeyCount` is a relaxed atomic counter. The Windows keyboard hook adds each key press it passes
+through that is not a modifier or lock key. The Mac event tap adds each key-down it passes through,
+since modifiers arrive as FlagsChanged, and adds one whenever the tap was disabled and may have
+missed typing. Both callbacks skip keys with the own-input marker first. The insertion worker
+compares the reading it takes after one paste with the one it takes before the next: the count and
+the pointer position, and on macOS the HID system's mouse-down counters, which Speakeasy never posts
+to. No other memory needs ordering against the count. A pointer that cannot be read means no
+reading, and no space. On macOS the worker first asks the main thread for `secure_input` through the
+main dispatch queue and waits 50 ms; secure input, or no answer, also means no reading.
 
 A dictation sent with Return spends its permit on the text; the Return 100 ms later is a second send
 that requires the foreground window (macOS: the frontmost app) captured right after the text,

@@ -58,6 +58,9 @@ objc2-screen-capture-kit = { workspace = true, features = ["SCError", "SCScreens
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
 
+[dev-dependencies]
+proptest.workspace = true
+
 [target.'cfg(target_os = "windows")'.dev-dependencies]
 tempfile.workspace = true
 windows-sys = { workspace = true, features = ["Win32_System_StationsAndDesktops"] }

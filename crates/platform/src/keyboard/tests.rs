@@ -6,6 +6,7 @@ use super::*;
 use crate::{MacShortcut, WindowsShortcut};
 
 mod f13;
+mod typing;
 mod windows_shortcuts;
 
 const LEFT_CONTROL: u32 = 0xA2;

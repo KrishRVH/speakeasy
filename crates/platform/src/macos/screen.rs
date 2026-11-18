@@ -571,7 +571,7 @@ pub(crate) fn pointer(target: Target, shortcut: crate::Shortcut) -> Option<Point
     })
 }
 
-fn pointer_location() -> Option<[f64; 2]> {
+pub(super) fn pointer_location() -> Option<[f64; 2]> {
     let event = CGEvent::new(None)?;
     let point = CGEvent::location(Some(&event));
     Some([point.x, point.y])

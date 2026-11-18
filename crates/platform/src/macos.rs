@@ -11,8 +11,8 @@ use std::{
     os::{fd::AsFd as _, unix::fs::MetadataExt as _},
     panic::{self, AssertUnwindSafe},
     ptr::NonNull,
-    sync::{Arc, Mutex, MutexGuard, PoisonError},
-    time::Instant,
+    sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc},
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context as _, anyhow, bail, ensure};
@@ -32,6 +32,7 @@ use core_graphics::{
     },
     event_source::{CGEventSource, CGEventSourceStateID},
 };
+use dispatch2::DispatchQueue;
 use objc2::{MainThreadMarker, MainThreadOnly as _, rc::Retained, runtime::ProtocolObject};
 use objc2_app_kit::{
     NSAlert, NSEvent, NSFloatingWindowLevel, NSPasteboard, NSScreen, NSView, NSWindow,
@@ -81,10 +82,18 @@ pub(super) fn start(
     own_focus: OwnFocus,
 ) -> anyhow::Result<(OwnedThread, Monitor, Inserter)> {
     let shortcut = options.shortcut_key.mac;
-    let (insertion, inserter) =
-        insertion::Worker::start(input.clone(), own_focus, move |request| {
-            objc2::rc::autoreleasepool(|_| insertion::settle(Insert { shortcut }, request))
-        })?;
+    let typed = insertion::KeyCount::default();
+    let (insertion, inserter) = insertion::Worker::start(input.clone(), own_focus, {
+        let typed = typed.clone();
+        let mut continuation = insertion::Continuation::default();
+        move |request| {
+            let native = Insert {
+                shortcut,
+                typed: typed.clone(),
+            };
+            objc2::rc::autoreleasepool(|_| insertion::settle(native, request, &mut continuation))
+        }
+    })?;
     #[expect(
         clippy::disallowed_types,
         reason = "The event tap and AppKit lifecycle callbacks share the same narrowly locked policy; see SharedPolicy"
@@ -92,6 +101,7 @@ pub(super) fn start(
     let policy = Arc::new(SharedPolicy {
         shortcut,
         policy: Mutex::new(keyboard::Mac::new(shortcut)),
+        typed,
     });
     let observers = lifecycle_observers(&input, &policy);
     let control = Arc::new(MonitorControl::default());
@@ -135,6 +145,7 @@ struct SharedPolicy {
         reason = "AppKit posts lifecycle notifications on its own thread while the event tap decides keys on its run loop, which cannot receive them as events; deciding and delivering under one lock keeps the owner's inputs in decision order"
     )]
     policy: Mutex<keyboard::Mac>,
+    typed: insertion::KeyCount,
 }
 
 impl SharedPolicy {
@@ -354,12 +365,14 @@ fn observe(
     event: &CGEvent,
 ) -> CallbackResult {
     let shortcut = policy.shortcut;
+    let typed = &policy.typed;
     let mut policy = policy.lock();
     if matches!(
         kind,
         CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput
     ) {
         policy.missed_events(input);
+        typed.add();
         if !port.reenable() {
             input.close();
         }
@@ -389,6 +402,9 @@ fn observe(
     };
     let decision = policy.observe(key_event, || shortcut_key_down(shortcut), Instant::now());
     decision.deliver(input);
+    if keyboard::Mac::types(key_event, &decision) {
+        typed.add();
+    }
     if decision.swallows() {
         CallbackResult::Drop
     } else {
@@ -488,9 +504,11 @@ fn shortcut_key_down(shortcut: MacShortcut) -> bool {
 
 struct Insert {
     shortcut: MacShortcut,
+    typed: insertion::KeyCount,
 }
 
 impl insertion::NativeInsert for Insert {
+    type Activity = (u64, [f64; 2], [u32; 3]);
     type Contents = clipboard::Saved;
     type Keys = Vec<CGEvent>;
     type Lease = clipboard::Lease;
@@ -570,6 +588,24 @@ impl insertion::NativeInsert for Insert {
             .map(|app| app.processIdentifier())
     }
 
+    fn activity(&mut self) -> Option<Self::Activity> {
+        if secure_input_from_worker() != Some(false) {
+            return None;
+        }
+        let clicks = [
+            cg::CGEventType::LeftMouseDown,
+            cg::CGEventType::RightMouseDown,
+            cg::CGEventType::OtherMouseDown,
+        ]
+        .map(|kind| {
+            cg::CGEventSource::counter_for_event_type(
+                cg::CGEventSourceStateID::HIDSystemState,
+                kind,
+            )
+        });
+        Some((self.typed.read(), screen::pointer_location()?, clicks))
+    }
+
     fn shortcut_released(&mut self) -> bool {
         !modifiers_for(self.shortcut).any()
     }
@@ -612,6 +648,20 @@ unsafe extern "C" {
 
 pub(super) fn secure_input() -> bool {
     MainThreadMarker::new().is_some_and(|_| unsafe { IsSecureEventInputEnabled() } != 0)
+}
+
+const SECURE_INPUT_PATIENCE: Duration = Duration::from_millis(50);
+
+fn secure_input_from_worker() -> Option<bool> {
+    let (reply, answer) = mpsc::sync_channel(1);
+    DispatchQueue::main().exec_async(move || {
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "A worker that stopped waiting dropped its receiver and already treats the answer as unknown"
+        )]
+        let _ = reply.try_send(secure_input());
+    });
+    answer.recv_timeout(SECURE_INPUT_PATIENCE).ok()
 }
 
 pub(super) fn attach_stdio() -> bool {

@@ -359,6 +359,7 @@ pub(super) struct Windows {
 impl Windows {
     const ALT: u16 = 0x12;
     const AREA: u16 = 0x41;
+    const CAPS_LOCK: u16 = 0x14;
     const CHORD_KEYS: [u16; 5] = [
         Self::LEFT_CONTROL,
         Self::RIGHT_CONTROL,
@@ -369,15 +370,35 @@ impl Windows {
     const CONTROL: u16 = 0x11;
     const ESCAPE: u16 = 0x1B;
     const F13: u16 = 0x7C;
+    const LEFT_ALT: u16 = 0xA4;
     const LEFT_CONTROL: u16 = 0xA2;
     const LEFT_SHIFT: u16 = 0xA0;
     const LEFT_WINDOWS: u16 = 0x5B;
+    const MODIFIERS: [u16; 14] = [
+        Self::SHIFT,
+        Self::LEFT_SHIFT,
+        Self::RIGHT_SHIFT,
+        Self::CONTROL,
+        Self::LEFT_CONTROL,
+        Self::RIGHT_CONTROL,
+        Self::ALT,
+        Self::LEFT_ALT,
+        Self::RIGHT_ALT,
+        Self::LEFT_WINDOWS,
+        Self::RIGHT_WINDOWS,
+        Self::CAPS_LOCK,
+        Self::NUM_LOCK,
+        Self::SCROLL_LOCK,
+    ];
+    const NUM_LOCK: u16 = 0x90;
     const PASTE_LAST: u16 = 0x56;
     const RETURN: u16 = 0x0D;
+    const RIGHT_ALT: u16 = 0xA5;
     const RIGHT_CONTROL: u16 = 0xA3;
     const RIGHT_SHIFT: u16 = 0xA1;
     const RIGHT_WINDOWS: u16 = 0x5C;
     const SCREEN: u16 = 0x53;
+    const SCROLL_LOCK: u16 = 0x91;
     const SHIFT: u16 = 0x10;
     const SHIFT_KEYS: [u16; 3] = [Self::SHIFT, Self::LEFT_SHIFT, Self::RIGHT_SHIFT];
     const SPACE: u16 = 0x20;
@@ -404,6 +425,11 @@ impl Windows {
         let missed_release = self.reconcile(physical.chord_keys);
         self.decide(key, down, physical, at)
             .after_missed_release(missed_release)
+    }
+
+    pub(super) fn types(key: u32, down: bool, decision: &Decision) -> bool {
+        down && !decision.swallows()
+            && u16::try_from(key).is_ok_and(|key| !Self::MODIFIERS.contains(&key))
     }
 
     fn reconcile(&mut self, chord_keys: [bool; 5]) -> bool {
@@ -537,6 +563,7 @@ impl crate::MacShortcut {
 }
 
 #[cfg(any(target_os = "macos", test))]
+#[derive(Clone, Copy)]
 pub(super) enum MacEvent {
     Key {
         code: i64,
@@ -639,6 +666,10 @@ impl Mac {
                 .chord
                 .reconcile(event.held_before(self.shortcut, keyboard_held));
         self.decide(event, at).after_missed_release(missed_release)
+    }
+
+    pub(super) const fn types(event: MacEvent, decision: &Decision) -> bool {
+        matches!(event, MacEvent::Key { down: true, .. }) && !decision.swallows()
     }
 
     fn decide(&mut self, event: MacEvent, at: Instant) -> Decision {

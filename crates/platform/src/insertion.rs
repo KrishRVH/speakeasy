@@ -1,5 +1,7 @@
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
 mod commit;
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+mod continuation;
 
 use std::{
     thread,
@@ -11,7 +13,10 @@ use async_channel::{Receiver, Sender};
 use tokio::sync::watch;
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
-pub(crate) use self::commit::{NativeInsert, Worker, settle};
+pub(crate) use self::{
+    commit::{NativeInsert, Worker, settle},
+    continuation::{Continuation, KeyCount},
+};
 use crate::InsertPermit;
 
 pub(crate) const MODIFIER_WAIT: Duration = Duration::from_millis(800);

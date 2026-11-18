@@ -1,4 +1,5 @@
 use std::{
+    mem,
     panic::{self, AssertUnwindSafe},
     thread,
     time::Duration,
@@ -9,7 +10,7 @@ use async_channel::Receiver;
 
 use super::{
     Delivery, Enter, INSERTION_STOPPED, Inserted, Inserter, Insertion, MODIFIER_WAIT, OwnFocus,
-    wait_for_released_modifiers,
+    continuation::Continuation, wait_for_released_modifiers,
 };
 use crate::{InputSender, InsertPermit, OwnedThread};
 
@@ -23,7 +24,7 @@ impl Worker {
     pub(crate) fn start(
         input: InputSender,
         own_focus: OwnFocus,
-        serve_one: impl Fn(&Insertion) -> Settled + Send + 'static,
+        serve_one: impl FnMut(&Insertion) -> Settled + Send + 'static,
     ) -> std::io::Result<(Self, Inserter)> {
         let (inserter, requests) = Inserter::lane(own_focus);
         let thread = OwnedThread::spawn("insertion", {
@@ -68,7 +69,7 @@ impl From<anyhow::Result<Inserted>> for Settled {
     }
 }
 
-fn serve(requests: &Receiver<Insertion>, serve_one: impl Fn(&Insertion) -> Settled) {
+fn serve(requests: &Receiver<Insertion>, mut serve_one: impl FnMut(&Insertion) -> Settled) {
     while let Ok(request) = requests.recv_blocking() {
         let settled = panic::catch_unwind(AssertUnwindSafe(|| serve_one(&request)))
             .unwrap_or_else(|_| Err(anyhow!(INSERTION_STOPPED)).into());
@@ -84,8 +85,12 @@ fn serve(requests: &Receiver<Insertion>, serve_one: impl Fn(&Insertion) -> Settl
     }
 }
 
-pub(crate) fn settle<N: NativeInsert + 'static>(mut native: N, request: &Insertion) -> Settled {
-    match deliver(&mut native, request) {
+pub(crate) fn settle<N: NativeInsert + 'static>(
+    mut native: N,
+    request: &Insertion,
+    continuation: &mut Continuation<N>,
+) -> Settled {
+    match deliver(&mut native, request, continuation) {
         Ok((outcome, saved)) => Settled {
             outcome: Ok(outcome),
             restore: saved.map(|saved| {
@@ -105,6 +110,7 @@ pub(crate) struct Saved<N: NativeInsert> {
 fn deliver<N: NativeInsert>(
     native: &mut N,
     request: &Insertion,
+    continuation: &mut Continuation<N>,
 ) -> anyhow::Result<(Inserted, Option<Saved<N>>)> {
     let patience = match request.enter {
         Enter::Withheld => MODIFIER_WAIT,
@@ -115,9 +121,11 @@ fn deliver<N: NativeInsert>(
         patience,
         || Ok(!native.shortcut_released()),
     )?;
+    let previous = mem::take(continuation);
+    let text = previous.lead(native, &request.text);
     let (inserted, saved) = insert(
         native,
-        &request.text,
+        &text,
         &request.permit,
         request.delivery,
         &request.own_focus,
@@ -127,6 +135,7 @@ fn deliver<N: NativeInsert>(
         thread::sleep(SUBMIT_SETTLE);
         return Ok((submit(native, &request.own_focus, target), None));
     }
+    *continuation = previous.follow(native, &text, &inserted);
     Ok((inserted, saved))
 }
 
@@ -158,6 +167,8 @@ pub(crate) trait NativeInsert {
 
     type Target: PartialEq;
 
+    type Activity: PartialEq;
+
     fn acquire(&mut self) -> anyhow::Result<Self::Lease>;
 
     fn save(&mut self, lease: &Self::Lease) -> Option<Self::Contents>;
@@ -179,6 +190,8 @@ pub(crate) trait NativeInsert {
     fn external_focus(&mut self) -> bool;
 
     fn target(&mut self) -> Option<Self::Target>;
+
+    fn activity(&mut self) -> Option<Self::Activity>;
 
     fn shortcut_released(&mut self) -> bool;
 

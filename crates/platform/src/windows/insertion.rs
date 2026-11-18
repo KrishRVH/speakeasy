@@ -127,6 +127,7 @@ fn write_clipboard(
 
 pub(super) struct Insert {
     pub(super) shortcut: crate::WindowsShortcut,
+    pub(super) typed: crate::insertion::KeyCount,
 }
 
 pub(super) enum Keys {
@@ -136,6 +137,7 @@ pub(super) enum Keys {
 }
 
 impl NativeInsert for Insert {
+    type Activity = (u64, [i32; 2]);
     type Contents = Vec<(u32, Vec<u8>)>;
     type Keys = Keys;
     type Lease = clipboard_win::Clipboard;
@@ -204,6 +206,11 @@ impl NativeInsert for Insert {
     fn target(&mut self) -> Option<usize> {
         let focused = unsafe { GetForegroundWindow() };
         (!focused.is_null()).then(|| focused.addr())
+    }
+
+    fn activity(&mut self) -> Option<Self::Activity> {
+        let pointer = super::screen::pointer_location()?;
+        Some((self.typed.read(), [pointer.x, pointer.y]))
     }
 
     fn shortcut_released(&mut self) -> bool {
@@ -337,6 +344,7 @@ mod tests {
         assert_private_text("the copied text")?;
         let mut insert = Insert {
             shortcut: crate::WindowsShortcut::default(),
+            typed: crate::insertion::KeyCount::default(),
         };
         let lease = insert.acquire()?;
         insert.write(lease, TEXT)?;

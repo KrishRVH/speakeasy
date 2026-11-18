@@ -163,7 +163,10 @@ module unless a test file is named.
   [macos.rs](../crates/platform/src/macos.rs), [linux/x11/](../crates/platform/src/linux/x11),
   [linux/portal/](../crates/platform/src/linux/portal), and
   [linux/ei.rs](../crates/platform/src/linux/ei.rs) own delivery, the permit commit, and clipboard
-  checks. Settings and Shows report their activation through `report_focus` in
+  checks. [insertion/continuation.rs](../crates/platform/src/insertion/continuation.rs) decides the
+  one space between back-to-back dictations from the last sent text's final character, its target,
+  and an activity snapshot; that trail is the commit worker's only state between requests. Settings
+  and Shows report their activation through `report_focus` in
   [shell/window.rs](../crates/app/src/shell/window.rs) to a `FocusReport`, and every platform
   refuses input while its `OwnFocus` is held, whatever the OS reports about focus; on a layer-shell
   Wayland desktop that report is the only way to tell Speakeasy's windows from another

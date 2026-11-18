@@ -321,6 +321,13 @@ original seven-day schedule even when the saved bundle is kept.
   that buffer can be recovered.
 - Insertion does not steal focus. OS submission is the observable result; success in every editor
   cannot be inferred from submitting keystrokes.
+- On Windows and macOS, a dictation delivered straight after the last one starts with one space when
+  the earlier text ended a word and the new one does not open with closing punctuation. Straight
+  after means the same window (macOS: the same app), no key typed, and no pointer movement in
+  between; macOS also notices a click that leaves the pointer still. Line breaks and scripts written
+  without spaces, such as Chinese, Japanese, and Thai, join directly. Text sent with Return or left
+  on the clipboard starts fresh. Secure Keyboard Entry hides typing from Speakeasy, so macOS adds no
+  space while it is on, and Linux cannot observe typing between dictations, so it never adds one.
 - Settings exposes automatic setup while no engine is set up, speech model selection including a
   user-installed engine, reset, microphone selection, language where applicable, GPU preference,
   text delivery, English filler removal, reduced motion, sounds, theme, and on Windows start at
