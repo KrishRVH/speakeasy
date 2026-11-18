@@ -167,9 +167,10 @@ module unless a test file is named.
   one space between back-to-back dictations from the last sent text's final character, its target,
   and an activity snapshot; that trail is the commit worker's only state between requests. Settings
   and Shows report their activation through `report_focus` in
-  [shell/window.rs](../crates/app/src/shell/window.rs) to a `FocusReport`, and every platform
-  refuses input while its `OwnFocus` is held, whatever the OS reports about focus; on a layer-shell
-  Wayland desktop that report is the only way to tell Speakeasy's windows from another
+  [shell/window.rs](../crates/app/src/shell/window.rs) to a `FocusReport`, starting with the state a
+  window opens in, since Windows can open one already active without an activation change; every
+  platform refuses input while its `OwnFocus` is held, whatever the OS reports about focus; on a
+  layer-shell Wayland desktop that report is the only way to tell Speakeasy's windows from another
   application's. On Windows and macOS, `copy_text` writes a Show's summary through the paste's own
   clipboard write, so both carry the same private markers.
   [clipboard.rs](../crates/platform/src/clipboard.rs) prepares bounded PNG/bitmap representations

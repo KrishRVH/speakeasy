@@ -86,6 +86,7 @@ pub(crate) fn reveal_shows(cx: &mut App) {
 
 pub(crate) fn report_focus<V: 'static>(window: &mut Window, cx: &Context<'_, V>) {
     let id = window.window_handle().window_id().as_u64();
+    settle_focus(id, window.is_window_active(), cx);
     cx.observe_window_activation(window, move |_, window, cx| {
         settle_focus(id, window.is_window_active(), cx);
     })

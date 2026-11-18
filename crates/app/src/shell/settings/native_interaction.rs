@@ -204,6 +204,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     cx,
                 )
                 .await?;
+                draw(settings, cx)?;
                 settings.update(cx, |view, window, cx| {
                     ensure!(
                         !cx.global::<Services>().focus.subscribe().held(),
