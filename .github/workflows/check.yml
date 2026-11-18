@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       installer:
-        description: Build and test the Windows installer on the Windows runner
+        description: Build the Windows installer on the HP and test it on a GitHub-hosted desktop
         type: boolean
         default: false
       mac_updates:
@@ -91,8 +91,27 @@ jobs:
         run: |
           mise install github:EmbarkStudios/cargo-about
           ./scripts/package-windows.ps1
-      - name: Check the Windows update handoff
+      - name: Upload the Windows installer for acceptance
         if: runner.os == 'Windows' && inputs.installer
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-installer
+          path: artifacts/speakeasy-windows-x64-setup.exe
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
+  installer-desktop:
+    if: ${{ inputs.installer }}
+    needs: native
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: windows-installer
+          path: artifacts
+      - name: Check the Windows update handoff
         shell: pwsh
         timeout-minutes: 5
         run: ./scripts/check-installer.ps1 -Installer artifacts/speakeasy-windows-x64-setup.exe
