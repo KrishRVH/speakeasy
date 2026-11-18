@@ -40,8 +40,8 @@ use objc2_app_kit::{
 };
 use objc2_core_graphics as cg;
 use objc2_foundation::{
-    NSDistributedNotificationCenter, NSNotification, NSNotificationCenter, NSObjectProtocol,
-    NSPoint, NSString, ns_string,
+    NSDistributedNotificationCenter, NSMouseInRect, NSNotification, NSNotificationCenter,
+    NSObjectProtocol, NSPoint, NSString, ns_string,
 };
 use raw_window_handle::{RawWindowHandle, WindowHandle};
 
@@ -52,7 +52,6 @@ use super::{
     NativeWindow, OwnFocus, OwnedThread, PILL_MARGIN, PILL_WIDTH, insertion,
     keyboard::{self, MacEvent, Modifiers},
     monitor::MonitorControl,
-    screen::geometry::Bounds,
 };
 
 const OWN_INPUT: i64 = 0x5350_4541;
@@ -443,7 +442,7 @@ fn pill_origin_under_pointer(main: MainThreadMarker) -> Option<NSPoint> {
     let pointer = NSEvent::mouseLocation();
     let screen = NSScreen::screens(main)
         .iter()
-        .find(|screen| Bounds::from(screen.frame()).contains([pointer.x, pointer.y]))?;
+        .find(|screen| NSMouseInRect(pointer, screen.frame(), false))?;
     let frame = screen.visibleFrame();
     Some(NSPoint::new(
         frame.origin.x + (frame.size.width - f64::from(PILL_WIDTH)) / 2.0,
