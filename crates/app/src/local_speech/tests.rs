@@ -206,6 +206,24 @@ fn server_arguments_match_each_engine() {
     );
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn engines_on_apple_gpus_skip_ggml_metal_tensor_kernels() {
+    for engine in [Engine::Nemo, Engine::Whisper] {
+        let config = Config {
+            engine,
+            ..Config::default()
+        };
+        let command = server_command(&config, 8080, "secret", Path::new("served"));
+        assert!(
+            command.as_std().get_envs().any(|(name, value)| {
+                name == "GGML_METAL_TENSOR_DISABLE" && value == Some("1".as_ref())
+            }),
+            "{engine:?}"
+        );
+    }
+}
+
 #[test]
 fn engine_secrets_are_unrelated_128_bit_tokens() -> anyhow::Result<()> {
     let (first, second) = (random_token()?, random_token()?);

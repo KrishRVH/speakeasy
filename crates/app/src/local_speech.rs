@@ -519,6 +519,8 @@ fn server_command(config: &Config, port: u16, secret: &str, served: &Path) -> Co
             }
         },
     }
+    #[cfg(target_os = "macos")]
+    command.env("GGML_METAL_TENSOR_DISABLE", "1");
     #[cfg(unix)]
     command.process_group(0);
     command

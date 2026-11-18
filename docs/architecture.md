@@ -946,6 +946,9 @@ other local accounts can read it through `/proc` unless `/proc` is mounted with 
 route is the only guard on Whisper's `/inference` and model-loading `/load` requests, so prefer
 Parakeet on shared Linux machines; automatic setup installs it.
 
+On macOS both engines start with `GGML_METAL_TENSOR_DISABLE=1`. ggml turns its Metal tensor kernels
+on by itself for M5-class GPUs, and there they return "no speech" or garbage text.
+
 Nemotron's continuous stream opens only when the worker is ready and speech passes the audio gate.
 The drain thread offers bounded PCM chunks without blocking capture. Backpressure leaves its cursor
 for the next drain; completion hands over the remaining tail. Whole audio remains available until
