@@ -402,6 +402,7 @@ impl<'a> Kit<'a> {
             )
             .child(
                 div()
+                    .w_full()
                     .h(px(2.0))
                     .rounded(px(1.0))
                     .when(selected, |rule| rule.bg(rgb(palette.lamp))),
@@ -589,7 +590,11 @@ impl<'a> Kit<'a> {
             .border_1()
             .border_color(alpha(tone.color(palette), 0.3))
             .bg(tone.wash(palette))
-            .child(div().pt(px(4.0)).child(facet(tone.color(palette), 10.0)))
+            .child(div().pt(px(4.0)).child(if tone == Tone::Warn {
+                facet(tone.color(palette), 10.0)
+            } else {
+                hollow(tone.color(palette), 10.0)
+            }))
             .child(
                 div()
                     .flex_1()

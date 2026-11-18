@@ -140,7 +140,9 @@ impl Review {
                         div()
                             .flex_1()
                             .text_color(rgb(palette.muted))
-                            .child(self.library.rows.len().to_string()),
+                            .when(self.root.is_some(), |count| {
+                                count.child(self.library.rows.len().to_string())
+                            }),
                     )
                     .child(command(
                         kit,
@@ -195,7 +197,7 @@ impl Review {
         let recorded = row.recorded(now);
         let description = row.duration.map_or_else(
             || "Details unavailable".into(),
-            |duration| format!("{duration} · {} frames", row.frames),
+            |duration| format!("{duration} · {} keyframes", row.frames),
         );
         let tags: Vec<_> = (row.pinned == Some(true))
             .then_some(("Kept", Tone::Lamp))
@@ -257,6 +259,12 @@ impl Review {
             )
         } else if self.listing.is_some() {
             (None, "Looking for Shows…", false)
+        } else if self.root.is_none() {
+            (
+                Some("Can't open Shows"),
+                "Speakeasy couldn't read the Shows folder.",
+                false,
+            )
         } else if !self.library.rows.is_empty() {
             (None, "Choose a Show to review.", false)
         } else if cfg!(target_os = "linux") {
@@ -362,7 +370,7 @@ impl Review {
                 );
                 body.child(div().px(px(24.0)).pt(px(16.0)).child(confirm(
                     Confirmation {
-                        message: format!("Permanently delete {name}? {DELETE_SHOW}"),
+                        message: format!("Permanently delete this Show ({name})? {DELETE_SHOW}"),
                         cancel: Action::CancelDelete,
                         can_cancel: self.can_dismiss(),
                         confirm: Action::ConfirmDelete(offer),

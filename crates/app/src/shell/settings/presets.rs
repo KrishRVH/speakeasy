@@ -253,13 +253,22 @@ impl Settings {
             .flex()
             .flex_col()
             .gap(px(8.0))
-            .child(kit.heading("Presets"))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.0))
+                    .child(kit.heading("Presets"))
+                    .child(ui.text(
+                        "A preset keeps a speech model with its language, GPU use, hints, corrections, and um and uh removal.",
+                    )),
+            )
             .child(kit.group(rows))
-            .child(ui.text(if full {
-                format!("Speakeasy keeps up to {LIMIT} presets. Delete one to save another.")
-            } else {
-                "A preset keeps a speech model, language, hints, and corrections together.".into()
-            }))
+            .when(full, |section| {
+                section.child(ui.text(format!(
+                    "Speakeasy keeps up to {LIMIT} presets. Delete one to save another."
+                )))
+            })
     }
 }
 

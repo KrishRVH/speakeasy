@@ -37,8 +37,10 @@ pub(super) const fn blocked(permission: Permission) -> bool {
 
 pub(super) const OPEN: &str = if cfg!(target_os = "linux") {
     "Microphone help"
+} else if cfg!(target_os = "macos") {
+    "Open System Settings"
 } else {
-    "Open settings"
+    "Open Windows Settings"
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

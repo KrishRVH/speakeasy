@@ -139,7 +139,7 @@ impl Reply {
             reply
         } else {
             Self::refused(
-                "The dictation is too long to print. Choose Paste last dictation to paste it instead.",
+                "The dictation is too long to print. Choose “Paste last dictation” to paste it instead.",
             )
         }
     }

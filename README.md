@@ -619,15 +619,16 @@ hear the correction.
 
 **General → Privacy** shows microphone access, screen access for Shows on Windows and Mac, and
 Accessibility on Mac, without prompting or capturing anything. Permission status refreshes when
-Settings comes to the front, and a blocked Mac permission offers **Open settings** for its system
-page. Windows and Linux access stays **Checked when used**, because a privacy setting alone cannot
-prove access. The setup guide's permission step offers **Open settings** on Windows and Mac, and
-Linux's **Microphone help** opens this README's Linux section. An allowed permission does not prove
-the hardware or another app works. **Start practice** under your shortcut lets you use the real
-shortcut and microphone while your words appear only in Settings. Nothing is pasted, copied, or
-saved, and practice cannot record a Show. **End practice**, hiding the window, losing focus, or
-changing settings ends practice and clears its text. To check delivery, end practice and dictate
-into an editor; practice does not verify another app's input or clipboard behavior.
+Settings comes to the front, and a blocked Mac permission offers **Open System Settings** for its
+system page. Windows and Linux access stays **Checked when used**, because a privacy setting alone
+cannot prove access. The setup guide's permission step offers **Open Windows Settings** or **Open
+System Settings**, and Linux's **Microphone help** opens this README's Linux section. An allowed
+permission does not prove the hardware or another app works. **Start practice** under your shortcut
+lets you use the real shortcut and microphone while your words appear only in Settings. Nothing is
+pasted, copied, or saved, and practice cannot record a Show. **End practice**, hiding the window,
+losing focus, or changing settings ends practice and clears its text. To check delivery, end
+practice and dictate into an editor; practice does not verify another app's input or clipboard
+behavior.
 
 **Check for updates** under General contacts the repository's latest-release endpoint on GitHub only
 when clicked. It sends no recordings, settings, or device details. **Release notes** opens that
@@ -854,10 +855,10 @@ Settings live in `%APPDATA%\speakeasy\settings.json` on Windows and
 `settings.example.json`, the settings a first launch starts from; pass `--config <path>` to use
 another file. Saving writes only the settings you changed, so edits you make to the file by hand
 stay. When a settings file from another Speakeasy version cannot be read, Settings and the setup
-guide offer **Start fresh…**; **General → Start over…** does the same at any time. After you
-confirm, it deletes the downloaded engines, models, and updates and then the settings file, with its
-phrase corrections, hints, and presets, and downloads Parakeet again. Every Show stays. If something
-cannot be removed, the settings stay and Speakeasy says what to close or fix. On Windows and Mac,
+guide offer **Start over…**, which **General** also offers at any time. After you confirm, it
+deletes the downloaded engines, models, and updates and then the settings file, with its phrase
+corrections, hints, and presets, and downloads Parakeet again. Every Show stays. If something cannot
+be removed, the settings stay and Speakeasy says what to close or fix. On Windows and Mac,
 configured launches go straight to the tray or menu bar; Linux opens Settings at startup. Closing
 Settings hides it; Windows minimize also hides it. Reopening Speakeasy or choosing **Settings…** in
 the tray brings it back.

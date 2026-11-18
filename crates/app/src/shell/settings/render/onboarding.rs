@@ -300,7 +300,7 @@ impl Settings {
         let status = if recording.is_some() {
             "Listening…"
         } else if active && self.presentation.indicator == Indicator::Busy {
-            "Turning speech into text…"
+            "Transcribing locally…"
         } else if recognized {
             "That worked. Continue when you're ready."
         } else if live.is_some_and(|live| live.ready) || is_demo(ui.cx) {
@@ -384,7 +384,7 @@ impl Settings {
             )
             .when(active, |card| {
                 card.child(div().flex().child(ui.button(
-                    "Stop practice",
+                    "End practice",
                     Action::Practice,
                     Weight::Quiet,
                 )))
@@ -454,6 +454,6 @@ impl Settings {
                 "That was all on this computer. Now try your shortcut in a note or a chat."
             }))
             .child(kit.group(lines))
-            .child(ui.text("Come back any time: Settings → General → Setup guide."))
+            .child(ui.text("Come back any time: Settings › General › Setup guide."))
     }
 }

@@ -9,20 +9,20 @@ use crate::runtime::{
 };
 
 const INSERT_FAILED: &str =
-    "Cannot submit the text. Check desktop permissions and clipboard access, then try again.";
+    "Cannot submit the text. Check desktop permissions and clipboard access.";
 
 const REPLAY_HINT: &str = if cfg!(target_os = "macos") {
-    " Your words are still available. Hold the dictation shortcut and press V, or choose Paste last dictation in the menu bar."
+    "Your words are kept: hold the shortcut and press V, or choose “Paste last dictation” in the menu bar."
 } else if cfg!(target_os = "windows") {
-    " Your words are still available. Hold the dictation shortcut and press V, or choose Paste last dictation in the tray."
+    "Your words are kept: hold the shortcut and press V, or choose “Paste last dictation” in the tray."
 } else {
-    " Your words are still available. Choose Paste last dictation in the tray, or run speakeasy paste-last."
+    "Your words are kept: choose “Paste last dictation” in the tray, or run speakeasy paste-last."
 };
 
 const WITHHELD_HINT: &str = if cfg!(any(target_os = "macos", target_os = "windows")) {
     " Hold the dictation shortcut and press V to paste your words."
 } else {
-    " Choose Paste last dictation in the tray, or run speakeasy paste-last."
+    " Choose “Paste last dictation” in the tray, or run speakeasy paste-last."
 };
 
 pub(super) fn message(outcome: &Outcome<Native>, notice: Option<&Notice<Native>>) -> String {
@@ -76,9 +76,8 @@ pub(super) fn failure(failure: &Failure<Native>) -> String {
                 .into()
         },
         Failure::Undelivered(said) => {
-            let mut message = said.clone().unwrap_or_else(|| INSERT_FAILED.into());
-            message.push_str(REPLAY_HINT);
-            message
+            let cause = said.as_deref().unwrap_or(INSERT_FAILED);
+            format!("{REPLAY_HINT} {cause}")
         },
         Failure::PublishStopped => PUBLISH_STOPPED.into(),
         Failure::NotCopied {

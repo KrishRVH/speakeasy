@@ -150,11 +150,10 @@ impl Frame {
         } else {
             ""
         };
-        let at = self.at();
         format!(
-            "#{} of {count} · {at} · {} ms{}{crop}",
+            "#{} of {count} · {}{}{crop}",
             self.number,
-            at.as_millis(),
+            super::navigation::Stamp(self.at()),
             self.marker
         )
     }

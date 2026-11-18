@@ -61,7 +61,7 @@ fn handle(action: TrayAction, cx: &mut App) {
 fn presentation(state: &TrayState) -> TrayPresentation {
     TrayPresentation {
         rgba: raster(state.status.indicator, state.theme, IconStyle::Color),
-        description: state.status.description.to_string(),
+        description: state.status.outside_settings().into_owned(),
         menu: state.menu,
     }
 }

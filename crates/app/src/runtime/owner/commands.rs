@@ -76,7 +76,7 @@ impl<P: Ports> World<P> {
 }
 
 const SCRIPTS_CANNOT_READ: &str =
-    "Turn on Scripts can read their dictations in Settings, Dictation, Writing, to use --print.";
+    "Turn on “Scripts can read their dictations” in Settings › Dictation › Writing to use --print.";
 
 pub(in crate::runtime) const fn refusal(refusal: Refusal) -> &'static str {
     match refusal {

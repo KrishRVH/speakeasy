@@ -186,6 +186,11 @@ impl Config {
         managed_model(self.engine, &self.model, self.nemo_model)
     }
 
+    pub(crate) fn speech_label(&self) -> &'static str {
+        self.model_choice()
+            .map_or_else(|| self.engine.label(), Model::label)
+    }
+
     pub(crate) fn delivery(&self) -> Delivery {
         match self.text_delivery {
             TextDelivery::Type => Delivery::Direct,

@@ -27,6 +27,7 @@ use crate::{
 };
 
 const CHECKING: &str = "Checking local speech settings…";
+pub(crate) const SIMULATED_MODEL: &str = "Simulated model";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LaunchMode {
@@ -235,12 +236,17 @@ impl Services {
     }
 
     pub(crate) fn status(&self, snapshot: &Snapshot) -> Status {
-        let engine = self
+        let config = self
             .choices
             .selected
             .as_ref()
-            .map_or(self.config.engine, |choice| choice.config.engine);
-        Status::new(snapshot, self.service_state(), engine)
+            .map_or(&self.config, |choice| &*choice.config);
+        let model = if self.mode.is_demo() {
+            SIMULATED_MODEL
+        } else {
+            config.speech_label()
+        };
+        Status::new(snapshot, self.service_state(), model)
     }
 
     pub(crate) fn style(&self) -> Style {
@@ -758,7 +764,7 @@ fn handle_request(request: Request, cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::Engine, status::Indicator};
+    use crate::status::Indicator;
 
     #[test]
     fn a_resume_check_and_a_start_read_as_busy_until_the_owner_reports() {
@@ -766,7 +772,7 @@ mod tests {
             let status = Status::new(
                 &announcement(&Snapshot::default(), message),
                 ServiceState::Running,
-                Engine::Whisper,
+                "Whisper",
             );
             assert_eq!(status.indicator, Indicator::Busy, "{}", status.description);
         }

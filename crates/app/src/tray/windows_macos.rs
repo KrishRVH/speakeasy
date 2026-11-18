@@ -57,13 +57,15 @@ struct Presenter {
 impl Presenter {
     fn present(&mut self, state: &TrayState) {
         best_effort(self.redraw_icon(state.status.indicator, state.theme));
-        self.status.set_text(&state.status.description);
+        let status = state.status.outside_settings();
+        self.status.set_text(&status);
         set_tooltip(
             &self.icon,
-            &format!(
-                "Speakeasy · {}\nHold {} to dictate",
-                state.status.description, state.shortcut
-            ),
+            &if state.status.indicator == Indicator::Ready {
+                format!("Speakeasy · {status}\nHold {} to dictate", state.shortcut)
+            } else {
+                format!("Speakeasy · {status}")
+            },
         );
         let TrayMenu {
             pause,

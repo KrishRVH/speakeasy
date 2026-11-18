@@ -341,7 +341,7 @@ impl Settings {
             Tone::Warn,
             "Settings can't be read",
             format!(
-                "Speakeasy can't read {file}, often because another version wrote it. Fix the error and restart, or start fresh: Speakeasy removes its settings and downloads, then downloads Parakeet again. Your Shows stay."
+                "Speakeasy can't read {file}, often because another version wrote it. Fix the error and restart, or start over: Speakeasy removes its settings and downloads, then downloads Parakeet again. Your Shows stay."
             ),
             Some(self.reset_controls(ui)),
         )
@@ -351,30 +351,32 @@ impl Settings {
         let enabled = self.can_reset(ui.cx);
         let controls = div().flex().flex_wrap().items_center().gap(px(8.0));
         match self.reset {
-            Reset::Idle => controls.child(ui.button_if(
-                "Start fresh…",
-                Action::Reset,
-                Weight::Destroy,
-                enabled,
-            )),
+            Reset::Idle => {
+                controls.child(ui.button_if("Start over…", Action::Reset, Weight::Destroy, enabled))
+            },
             Reset::Confirming => controls
+                .child(ui.button("Cancel", Action::CancelReset, Weight::Quiet))
                 .child(ui.button_if(
                     "Delete settings and downloads",
                     Action::ConfirmReset,
                     Weight::ConfirmDestroy,
                     enabled,
-                ))
-                .child(ui.button("Cancel", Action::CancelReset, Weight::Quiet)),
+                )),
             Reset::Running { .. } => controls.child(ui.kit().detail(crate::status::RESETTING)),
         }
     }
 
     fn footer(&self, ui: &Ui<'_>) -> impl IntoElement {
         let palette = ui.palette;
+        let service = ui.cx.global::<Services>().service_state();
         let problem = self.notice.as_ref().is_some_and(Notice::is_problem)
             || self.presentation.indicator == Indicator::Attention;
+        let setting_up = !problem
+            && service == ServiceState::NotSetUp
+            && self.engine_work.installing().is_some();
         let marker = match self.presentation.indicator {
             _ if problem => facet(palette.warn, 8.0),
+            _ if setting_up => hollow(palette.lamp, 8.0),
             Indicator::Recording => facet(palette.live, 8.0),
             Indicator::Ready => facet(palette.lamp, 8.0),
             Indicator::Busy => hollow(palette.lamp, 8.0),
@@ -384,9 +386,9 @@ impl Settings {
         let message: SharedString = match &self.notice {
             Some(notice) => notice.text(),
             None if saved => "Saved".into(),
+            None if setting_up => "Setting up…".into(),
             None => self.presentation.message.as_str().into(),
         };
-        let service = ui.cx.global::<Services>().service_state();
         let (label, action, weight, enabled) = match service {
             ServiceState::Paused if !self.locked() && !is_demo(ui.cx) => {
                 ("Resume", Action::Resume, Weight::Primary, true)

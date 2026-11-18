@@ -2,10 +2,7 @@ use std::borrow::Cow;
 
 use speakeasy_core::machine::{ModelState, Phase};
 
-use crate::{
-    config::Engine,
-    runtime::{LOADING, Snapshot},
-};
+use crate::runtime::{LOADING, Snapshot};
 
 pub(crate) const PAUSING: &str = "Pausing dictation…";
 pub(crate) const PAUSED: &str = "Dictation paused";
@@ -47,21 +44,17 @@ pub(crate) enum Indicator {
 pub(crate) struct Status {
     pub indicator: Indicator,
     pub description: Cow<'static, str>,
+    points_to_settings: bool,
 }
 
 impl Status {
-    pub(crate) fn new(snapshot: &Snapshot, service: ServiceState, engine: Engine) -> Self {
+    pub(crate) fn new(snapshot: &Snapshot, service: ServiceState, model: &'static str) -> Self {
         let (indicator, description) = match (service, snapshot.phase, snapshot.desktop_ready) {
             (ServiceState::Quitting, ..) => (Indicator::Busy, QUITTING.into()),
             (ServiceState::Pausing, ..) => (Indicator::Busy, PAUSING.into()),
-            (_, Phase::Error, _) => (
-                Indicator::Attention,
-                "Needs attention · Open Settings".into(),
-            ),
+            (_, Phase::Error, _) => (Indicator::Attention, "Needs attention".into()),
             (ServiceState::Paused, ..) => (Indicator::Paused, PAUSED.into()),
-            (ServiceState::NotSetUp, ..) => {
-                (Indicator::Paused, "Not set up · Open Settings".into())
-            },
+            (ServiceState::NotSetUp, ..) => (Indicator::Paused, "Not set up".into()),
             (ServiceState::Running, _, false) => {
                 (Indicator::Busy, "Waiting for desktop access…".into())
             },
@@ -101,19 +94,25 @@ impl Status {
                 true,
             ) => match snapshot.model {
                 ModelState::Loading => (Indicator::Busy, LOADING.into()),
-                ModelState::Ready => (
-                    Indicator::Ready,
-                    format!("Ready · {}", engine.label()).into(),
-                ),
-                ModelState::Unavailable => (
-                    Indicator::Attention,
-                    "Model unavailable · Open Settings".into(),
-                ),
+                ModelState::Ready => (Indicator::Ready, format!("Ready · {model}").into()),
+                ModelState::Unavailable => {
+                    (Indicator::Attention, "Speech model unavailable".into())
+                },
             },
         };
         Self {
             indicator,
             description,
+            points_to_settings: indicator == Indicator::Attention
+                || service == ServiceState::NotSetUp,
+        }
+    }
+
+    pub(crate) fn outside_settings(&self) -> Cow<'_, str> {
+        if self.points_to_settings {
+            Cow::Owned(format!("{} · Open Settings", self.description))
+        } else {
+            Cow::Borrowed(&self.description)
         }
     }
 }
@@ -123,11 +122,11 @@ mod tests {
     use super::*;
 
     fn indicator(snapshot: &Snapshot, service: ServiceState) -> Indicator {
-        Status::new(snapshot, service, Engine::Whisper).indicator
+        Status::new(snapshot, service, "Whisper").indicator
     }
 
     fn description(snapshot: &Snapshot, service: ServiceState) -> Cow<'static, str> {
-        Status::new(snapshot, service, Engine::Whisper).description
+        Status::new(snapshot, service, "Whisper").description
     }
 
     #[test]
@@ -232,7 +231,7 @@ mod tests {
         );
         assert_eq!(
             description(&snapshot, ServiceState::Running),
-            "Needs attention · Open Settings"
+            "Needs attention"
         );
         snapshot.phase = Phase::Idle;
         snapshot.desktop_ready = true;
@@ -262,14 +261,55 @@ mod tests {
             "Preparing the Show…"
         );
         snapshot.phase = Phase::Idle;
-        assert_eq!(
-            description(&snapshot, ServiceState::NotSetUp),
-            "Not set up · Open Settings"
-        );
+        assert_eq!(description(&snapshot, ServiceState::NotSetUp), "Not set up");
         snapshot.phase = Phase::Error;
         assert_eq!(
             indicator(&snapshot, ServiceState::NotSetUp),
             Indicator::Attention
         );
+    }
+
+    #[test]
+    fn only_the_tray_points_to_settings_and_only_where_settings_can_help() {
+        let at = |phase, model| Snapshot {
+            phase,
+            model,
+            desktop_ready: true,
+            ..Snapshot::default()
+        };
+        let ready = at(Phase::Idle, ModelState::Ready);
+        let unavailable = at(Phase::Idle, ModelState::Unavailable);
+        let failed = at(Phase::Error, ModelState::Ready);
+        for (snapshot, service, inside, outside) in [
+            (
+                &ready,
+                ServiceState::Running,
+                "Ready · Parakeet v3",
+                "Ready · Parakeet v3",
+            ),
+            (&ready, ServiceState::Paused, PAUSED, PAUSED),
+            (
+                &ready,
+                ServiceState::NotSetUp,
+                "Not set up",
+                "Not set up · Open Settings",
+            ),
+            (
+                &unavailable,
+                ServiceState::Running,
+                "Speech model unavailable",
+                "Speech model unavailable · Open Settings",
+            ),
+            (
+                &failed,
+                ServiceState::Running,
+                "Needs attention",
+                "Needs attention · Open Settings",
+            ),
+        ] {
+            let status = Status::new(snapshot, service, "Parakeet v3");
+            assert_eq!(status.description, inside, "{service:?}");
+            assert_eq!(status.outside_settings(), outside, "{service:?}");
+        }
     }
 }

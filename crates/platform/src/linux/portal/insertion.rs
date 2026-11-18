@@ -421,19 +421,19 @@ fn insert_direct(sender: Option<&mut ei::Sender>, request: &Insertion, external:
 const fn text_remedy(blocked: TextBlocked) -> Inserted {
     Inserted::Unavailable(match blocked {
         TextBlocked::Unsupported => {
-            "This desktop does not support direct text input. Set Insert text by to a Paste option in Settings."
+            "This desktop does not support direct text input. Set “Insert text by” to a Paste option in Settings."
         },
         TextBlocked::Paused => {
-            "Direct text input is paused on this desktop. Set Insert text by to a Paste option in Settings."
+            "Direct text input is paused on this desktop. Set “Insert text by” to a Paste option in Settings."
         },
         TextBlocked::NullCharacter => {
-            "Direct input cannot contain a null character. Set Insert text by to a Paste option in Settings."
+            "Direct input cannot contain a null character. Set “Insert text by” to a Paste option in Settings."
         },
     })
 }
 
 const SELECTION_LOST: Inserted = Inserted::Unavailable(
-    "The clipboard changed or could not be confirmed before pasting. Set Insert text by to Copy for manual paste in Settings.",
+    "The clipboard changed or could not be confirmed before pasting. Set “Insert text by” to Copy for manual paste in Settings.",
 );
 
 fn finish_paste(

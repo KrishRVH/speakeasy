@@ -25,7 +25,7 @@ use crate::{
 
 const RECOVERY_PROBE: Duration = Duration::from_secs(2);
 
-const LOAD_STOPPED: &str = "Loading the local model stopped unexpectedly. Try again.";
+const LOAD_STOPPED: &str = "Loading the speech model stopped unexpectedly. Try again.";
 
 const TRANSCRIPTION_STOPPED: &str = "Transcription stopped unexpectedly. Try again.";
 

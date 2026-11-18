@@ -29,15 +29,17 @@ are 32 px tall with a 6 px corner. A window's main action is a filled lamp butto
 are raised outlines, and low-weight commands such as Quit are muted text. Destructive actions use
 the attention color, never `live`: an outline first, then a filled button to confirm. Switches are
 tracks lit in lamp. Dropdowns open a menu under their trigger, check the chosen item, and follow the
-arrow keys, Home, End, Enter, Space, Escape, and Tab. Tabs and segmented choices mark the active
-item in lamp. Focus rings appear only after keyboard use, so pointer clicks stay quiet. Accessible
-names stay plain and the state lives in accessible properties: a switch named “Reduce motion”
-reports on or off, and a swatch radio is named “Theme: Iris”.
+arrow keys, Home, End, Enter, Space, Escape, and Tab. Tabs mark the active item with a lamp rule;
+segmented choices raise it. Focus rings appear only after keyboard use, so pointer clicks stay
+quiet. Accessible names stay plain and the state lives in accessible properties: a switch named
+“Reduce motion” reports on or off, and a swatch radio is named “Theme: Iris”.
 
 Settings groups each page into captioned panels of rows: a title, an optional muted detail, and one
 control at the right. Changes apply as they are made. A jewel leads the footer status line: lamp
-while dictation is ready, `live` while it records, attention for a problem, hollow otherwise; after
-each save the line reads “Saved” with a check.
+while dictation is ready, `live` while it records, attention for a problem, hollow lamp beside
+“Setting up…” while first setup installs a speech model, hollow otherwise; after each save the line
+reads “Saved” with a check. Inside Settings the line names the problem; the tray adds “Open
+Settings” to it.
 
 ## Pill
 
@@ -153,10 +155,10 @@ A preset row shows **In use** when the current settings match it or the tray sel
 **Use** otherwise; its ⋯ menu updates it from the current settings or deletes it.
 
 A banner reports a settings file this version cannot read, names the file, and offers **Start
-fresh…**; the status line keeps the exact error for anyone who would rather fix the file. Otherwise
-General offers **Start over…**. Both confirm in place with **Delete settings and downloads** beside
-Cancel. Reset pauses dictation, deletes the downloaded engines, models, and updates and then the
-settings file, keeps every Show and the finished-guide marker, and starts automatic setup, whose
+over…**; the status line keeps the exact error for anyone who would rather fix the file. Otherwise
+General offers **Start over…**. Both confirm in place with Cancel and then **Delete settings and
+downloads**. Reset pauses dictation, deletes the downloaded engines, models, and updates and then
+the settings file, keeps every Show and the finished-guide marker, and starts automatic setup, whose
 completion enables dictation as on a fresh install. It is unavailable during setup, saves, or a
 Windows update download, and setup and update downloads are unavailable while it runs. A failed
 reset keeps the previous settings and explains what stopped it. Quit waits for a running reset.
@@ -178,7 +180,7 @@ Recording turns the slot red; busy, paused, and attention add a cut-jewel badge:
 split by a vertical facet for paused, and a warn jewel with a center facet for attention. macOS
 renders a template icon, so recording also adds a solid jewel and every state differs by shape. On
 Windows and Linux a faint keyline keeps the lamp color legible on light taskbars. The menu shows
-current status and engine, Pause/Resume, Start/Finish, Cancel, Settings, and Quit; Finish and Cancel
+status and speech model, Pause/Resume, Start/Finish, Cancel, Settings, and Quit; Finish and Cancel
 name a Show while it records, and Start and Cancel Show are disabled while it saves. Before any
 engine is set up, the menu says so and Resume waits for setup. It never animates while idle. On
 Windows and macOS, Show screen and Show area… follow Paste last dictation, Dictation style, and
@@ -206,17 +208,19 @@ it automatically. The newest Show is selected on first load; refresh preserves t
 Deletion or expiry clears the selection and its pixels, with no fallback to another Show.
 
 The window uses the shared kit in sentence case. The left list sits under a slim header with the
-Show count and Refresh; each row shows age, duration, and frame count, with tags for kept,
+Show count and Refresh; each row shows age, duration, and keyframe count, with tags for kept,
 interrupted, pending or lost narration, early-ending, and damaged status. A soft fill and a lamp bar
-mark the selected Show. With no Shows, Windows and macOS explain how to record one, with S, W, and A
-as keycaps. The selected Show's header carries its retention and status tags, Send to agent as the
-main action and Copy summary on Windows and macOS, Keep Show or Allow expiry (Allow cleanup once
-overdue), and a More actions menu for the image copy, Open folder, video, export, and Delete Show
-commands; the menu dims actions that are unavailable. Below the header come warnings, a segmented
-switch for the frame source, one keyframe with its time and numbered marks, frame chips, and a
-Summary or Narration switch over the current summary as inert plain text. An interrupted Show leads
-with its recovery action; Discard stays apart as a destructive outline, and its confirmation adds a
-Cannot be undone tag, Cancel, and a filled Discard permanently. Delete Show opens the same
+mark the selected Show. When the Shows folder cannot be read as the window opens, the header drops
+the count and the list says so; a later failed refresh keeps the rows it showed. Either way a notice
+gives the error and its remedy. With no Shows, Windows and macOS explain how to record one, with S,
+W, and A as keycaps. The selected Show's header carries its retention and status tags, Send to agent
+as the main action and Copy summary on Windows and macOS, Keep Show or Allow expiry (Allow cleanup
+once overdue), and a More actions menu for the image copy, Open folder, video, export, and Delete
+Show commands; the menu dims actions that are unavailable. Below the header come warnings, a
+segmented switch for the frame source, one keyframe with its time and numbered marks, frame chips,
+and a Summary or Narration switch over the current summary as inert plain text. An interrupted Show
+leads with its recovery action; Discard stays apart as a destructive outline, and its confirmation
+adds a Cannot be undone tag, Cancel, and a filled Discard permanently. Delete Show opens the same
 confirmation treatment for a saved Show, names its folder ID, and explains that saved files and
 associated recovery audio are removed even when kept. Exported copies stay. Cancel or Escape
 dismisses either confirmation, except while its discard runs; changing Shows or refreshing

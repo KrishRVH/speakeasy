@@ -21,16 +21,16 @@ const LABEL_FADE_FROM: f32 = 0.6;
 const JEWEL: f32 = 14.0;
 
 const TRAY_HINT: &str = if cfg!(target_os = "macos") {
-    "In the menu bar · Use Speakeasy’s menu to quit"
+    "In the menu bar · Use Speakeasy's menu to quit"
 } else {
-    "In the tray · Use Speakeasy’s menu to quit"
+    "In the tray · Use Speakeasy's menu to quit"
 };
 const DRAW_HINT: &str = "Hold Shift to draw";
 const SECURE_INPUT: &str =
-    "Secure keyboard entry is on, so Escape, Space, Return, V, S, W, and A won’t reach Speakeasy.";
+    "Secure keyboard entry is on, so Escape, Space, Return, V, S, W, and A won't reach Speakeasy.";
 const SECURE_INPUT_SOURCES: &str = "Often a password field or terminal";
 const DEFAULT_MICROPHONE: &str =
-    "Your chosen microphone isn’t connected, so this uses the default one.";
+    "Your chosen microphone isn't connected, so this uses the default one.";
 const DEFAULT_MICROPHONE_SOURCE: &str = "Choose another in Settings";
 
 impl Pill {

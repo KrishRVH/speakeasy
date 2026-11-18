@@ -55,7 +55,13 @@ fn pick(picked: Option<std::ops::Range<usize>>, word: usize) -> std::ops::Range<
 impl Editor {
     pub(super) fn new(theme: Theme, window: &Window, cx: &mut Context<'_, Settings>) -> Self {
         Self {
-            addition: Pair::new(["speak easy", "Speakeasy"], Edit::Add, theme, window, cx),
+            addition: Pair::new(
+                ["e.g. speak easy", "e.g. Speakeasy"],
+                Edit::Add,
+                theme,
+                window,
+                cx,
+            ),
             revision: Pair::new(["", ""], Edit::Save, theme, window, cx),
             editing: None,
             practiced: field(
@@ -366,7 +372,7 @@ impl Settings {
             .child(ui.button_if(
                 "Add",
                 Action::Correction(Edit::Add),
-                Weight::Primary,
+                Weight::Secondary,
                 self.vocabulary.addition.is_complete(ui.cx),
             ))
     }

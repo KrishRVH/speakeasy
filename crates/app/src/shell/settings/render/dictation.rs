@@ -5,7 +5,7 @@ use gpui::{AnyElement, Div, FontWeight, SharedString, div, prelude::*, px, rgb};
 use super::{Ui, fraction, progress_text, setup_progress};
 use crate::{
     config::Engine,
-    controls::{Tone, Weight},
+    controls::{PANEL_CORNER, Tone, Weight},
     models::{self, Model},
     shell::{
         Services,
@@ -68,7 +68,7 @@ impl Settings {
             .flex()
             .items_center()
             .gap(px(18.0))
-            .px(px(20.0))
+            .px(px(16.0))
             .pt(px(20.0))
             .pb(px(18.0))
             .when(!bindings, |heading| {
@@ -96,7 +96,7 @@ impl Settings {
             .flex_wrap()
             .gap_x(px(28.0))
             .gap_y(px(8.0))
-            .px(px(20.0))
+            .px(px(16.0))
             .py(px(12.0))
             .border_t_1()
             .border_color(palette.line())
@@ -128,20 +128,20 @@ impl Settings {
                         .items_center()
                         .gap(px(6.0))
                         .child(kit.keys(&self.cancel_shortcut(), false))
-                        .child(div().text_color(rgb(palette.muted)).child("while talking"))
+                        .child("while talking")
                 },
             ));
         div()
             .flex()
             .flex_col()
-            .rounded(px(12.0))
+            .rounded(PANEL_CORNER)
             .border_1()
             .border_color(palette.line())
             .bg(rgb(palette.panel))
             .child(heading)
             .child(legend)
             .when(!cfg!(target_os = "linux"), |card| {
-                card.child(kit.detail(self.shortcut_help()).px(px(20.0)).pb(px(12.0)))
+                card.child(kit.detail(self.shortcut_help()).px(px(16.0)).pb(px(12.0)))
             })
             .child(self.practice_panel(ui))
     }
@@ -193,7 +193,7 @@ impl Settings {
             .flex()
             .flex_col()
             .gap(px(10.0))
-            .px(px(20.0))
+            .px(px(16.0))
             .py(px(16.0))
             .border_t_1()
             .border_color(palette.line());
@@ -247,7 +247,7 @@ impl Settings {
         } else if indicator == Indicator::Busy {
             div()
                 .text_color(rgb(palette.muted))
-                .child("Turning speech into text…")
+                .child("Transcribing locally…")
         } else if live.ready {
             div()
                 .flex()
@@ -410,7 +410,7 @@ impl Settings {
 
     fn model_summary(&self, ui: &Ui<'_>) -> (SharedString, bool) {
         if is_demo(ui.cx) {
-            return ("Simulated model".into(), false);
+            return (crate::shell::services::SIMULATED_MODEL.into(), false);
         }
         match Speech::of(&self.config, self.own_engine) {
             Some(Speech::Managed(Model::Parakeet)) => (
@@ -679,7 +679,7 @@ impl Settings {
         );
         let symbols = kit.setting(
             "Spoken symbols",
-            "In Prose, “new line”, “new paragraph”, “underscore”, “open paren” and similar phrases write their symbol. Verbatim keeps the words.",
+            "In the Prose dictation style, “new line”, “new paragraph”, “underscore”, “open paren” and similar phrases write their symbol. Verbatim keeps the words.",
             ui.switch(
                 "Spoken symbols",
                 Setting::SpokenSymbols.is_on(&self.config),
@@ -688,7 +688,7 @@ impl Settings {
         );
         let scripts = kit.setting(
             "Scripts can read their dictations",
-            "Lets speakeasy dictation start --print return its words to the script that started it instead of pasting them. The pill says To script while it records.",
+            "Lets speakeasy dictation start --print return its words to the script that started it instead of pasting them. The pill shows “To script” while it records.",
             ui.switch(
                 "Scripts can read their dictations",
                 Setting::PrintToScripts.is_on(&self.config),

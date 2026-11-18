@@ -32,7 +32,7 @@ use crate::{
     transcript::style::Style,
 };
 
-pub(crate) const LOADING: &str = "Loading local model…";
+pub(crate) const LOADING: &str = "Loading speech model…";
 
 const SHOW_COPIED: &str = "Show copied. Paste it into your coding agent.";
 
