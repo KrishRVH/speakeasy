@@ -1,0 +1,24 @@
+name: Commits
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+# Check cancels its run when a newer push lands, so subjects are checked here, where each push keeps
+# its own run over exactly the commits it carried.
+jobs:
+  subjects:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require Conventional Commit subjects
+        shell: bash
+        run: |
+          subjects=$(jq -r '.commits[].message | split("\n")[0]' "$GITHUB_EVENT_PATH")
+          bad=$(grep -Ev '^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([a-z0-9._/-]+\))?!?: [^ ]' <<< "$subjects" || true)
+          if [ -n "$bad" ]; then
+            echo "::error::Commit subjects must follow Conventional Commits; see the step log."
+            printf '%s\n' "$bad" >&2
+            exit 1
+          fi
