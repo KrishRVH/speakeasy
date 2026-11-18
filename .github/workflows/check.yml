@@ -32,7 +32,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: check-${{ github.ref }}
+  group: check-${{ github.ref }}-${{ inputs.installer && 'installer' || 'regular' }}
   cancel-in-progress: true
 
 # The local gate runs on Linux, where the app cannot build for macOS or for Windows' MSVC target
