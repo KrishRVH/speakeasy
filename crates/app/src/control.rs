@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::{Context as _, anyhow, bail, ensure};
 use async_channel::{Receiver, Sender};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use crate::{config::presets::validate_name, paths, transcript::style::Style};
@@ -97,12 +97,7 @@ pub(crate) struct Reply {
     pub session: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<Status>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        serialize_with = "serialize_text",
-        deserialize_with = "deserialize_text"
-    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<Zeroizing<String>>,
 }
 
@@ -205,23 +200,6 @@ impl Reply {
             .ok()
             .filter(|reply| reply.v == VERSION)
     }
-}
-
-#[expect(
-    clippy::ref_option,
-    reason = "serde's serialize_with passes the Option field by reference"
-)]
-fn serialize_text<S: Serializer>(
-    text: &Option<Zeroizing<String>>,
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    text.as_deref().serialize(serializer)
-}
-
-fn deserialize_text<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<Zeroizing<String>>, D::Error> {
-    Ok(Option::<String>::deserialize(deserializer)?.map(Zeroizing::new))
 }
 
 pub(crate) struct Call {
