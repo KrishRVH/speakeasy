@@ -47,17 +47,16 @@ pub(crate) fn validate(rules: &[Correction]) -> anyhow::Result<()> {
                 .all(|word| word.trim_matches(PUNCTUATION) == word),
             "Correction {row}: omit surrounding punctuation from the phrase you say."
         );
-        let heard: Vec<_> = rule
-            .heard
-            .split_whitespace()
-            .map(str::to_lowercase)
-            .collect();
         ensure!(
-            seen.insert(heard),
+            seen.insert(spoken(&rule.heard)),
             "Correction {row} repeats an earlier spoken phrase."
         );
     }
     Ok(())
+}
+
+fn spoken(heard: &str) -> Vec<String> {
+    heard.split_whitespace().map(str::to_lowercase).collect()
 }
 
 pub(crate) struct Vocabulary<'a> {
@@ -68,14 +67,7 @@ impl<'a> Vocabulary<'a> {
     pub(crate) fn new(rules: &'a [Correction]) -> Self {
         let mut rules: Vec<_> = rules
             .iter()
-            .map(|rule| {
-                let heard: Vec<_> = rule
-                    .heard
-                    .split_whitespace()
-                    .map(str::to_lowercase)
-                    .collect();
-                (heard, rule.written.trim())
-            })
+            .map(|rule| (spoken(&rule.heard), rule.written.trim()))
             .filter(|(heard, _)| !heard.is_empty())
             .collect();
         rules.sort_by_key(|(heard, _)| Reverse(heard.len()));

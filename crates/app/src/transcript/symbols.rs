@@ -46,7 +46,7 @@ const COMMANDS: &[(&[&str], Mark)] = &[
     (&["backtick"], Mark::Pair('`')),
 ];
 
-pub(crate) fn written(text: &str) -> String {
+pub(super) fn written(text: &str) -> String {
     let tokens: Vec<&str> = text.split_whitespace().collect();
     let mut output = Writer::default();
     let mut rest = tokens.as_slice();
@@ -68,7 +68,7 @@ pub(crate) fn written(text: &str) -> String {
 fn command<'a>(
     previous: Option<&str>,
     tokens: &'a [&'a str],
-    written: &Writer,
+    writer: &Writer,
 ) -> Option<(Mark, &'a [&'a str])> {
     COMMANDS.iter().find_map(|(words, mark)| {
         let spoken = tokens.get(..words.len())?;
@@ -115,8 +115,8 @@ fn command<'a>(
                     && !stops()
             },
             Mark::Open(symbol) => opens(symbol),
-            Mark::Close(symbol) => written.pending(symbol),
-            Mark::Pair(symbol) => written.pending(symbol) || opens(symbol),
+            Mark::Close(symbol) => writer.pending(symbol),
+            Mark::Pair(symbol) => writer.pending(symbol) || opens(symbol),
         };
         fits.then_some((*mark, spoken))
     })
@@ -198,10 +198,10 @@ impl Writer {
             Mark::Open(symbol) => self.open(symbol),
             Mark::Close(symbol) => self.close(symbol, ending),
             Mark::Pair(symbol) => {
-                if self.text.matches(symbol).count() % 2 == 0 {
-                    self.open(symbol);
-                } else {
+                if self.pending(symbol) {
                     self.close(symbol, ending);
+                } else {
+                    self.open(symbol);
                 }
             },
         }

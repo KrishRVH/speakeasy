@@ -61,21 +61,21 @@ impl Style {
         Self::ALL.into_iter().find(|style| style.name() == name)
     }
 
-    pub(crate) const fn fillers(self, configured: Fillers) -> Fillers {
+    pub(super) const fn fillers(self, configured: Fillers) -> Fillers {
         match self {
             Self::Verbatim => Fillers::Preserve,
             Self::Prose | Self::Identifier(_) => configured,
         }
     }
 
-    pub(crate) const fn symbols(self, configured: Symbols) -> Symbols {
+    pub(super) const fn symbols(self, configured: Symbols) -> Symbols {
         match self {
             Self::Prose => configured,
             Self::Verbatim | Self::Identifier(_) => Symbols::Keep,
         }
     }
 
-    pub(crate) fn apply(self, text: String) -> String {
+    pub(super) fn apply(self, text: String) -> String {
         match self {
             Self::Prose | Self::Verbatim => text,
             Self::Identifier(case) => case.apply(&text),
