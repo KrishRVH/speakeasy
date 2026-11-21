@@ -183,7 +183,8 @@ fn oversized_control_frames_are_refused_without_waiting_for_the_body() -> anyhow
 }
 
 #[test]
-fn a_peer_closing_after_the_control_opcode_is_never_reported_as_success() -> anyhow::Result<()> {
+fn a_peer_closing_after_reading_the_control_request_is_never_reported_as_success()
+-> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
@@ -199,6 +200,7 @@ fn a_peer_closing_after_the_control_opcode_is_never_reported_as_success() -> any
         let mut opcode = [0];
         stream.read_exact(&mut opcode)?;
         assert_eq!(opcode, [CONTROL]);
+        read_frame(&mut stream)?;
         Ok(())
     });
     let reply = Instance::control(&path, Command::PasteLast);
