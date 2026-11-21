@@ -136,9 +136,9 @@ the pill shows:
 Soft kalimba notes mark the moments you may not be watching: a high note once Speakeasy is
 listening, a lower one when you finish, the five-minute limit does, or the microphone stops after
 you speak, a muted low note when you cancel, two rising notes when a Show starts, and a short chord
-when text or a Show you just recorded is copied. Speakeasy listens beneath its own cues, so a
-recording that hears only a cue sends nothing, while a word said over one still counts. Turn them
-off with **Play sounds** in Settings.
+when text or a Show you just recorded is copied, or **Copy last Show** copies one while dictation
+runs. Speakeasy listens beneath its own cues, so a recording that hears only a cue sends nothing,
+while a word said over one still counts. Turn them off with **Play sounds** in Settings.
 
 ### Show your coding agent
 

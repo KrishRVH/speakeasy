@@ -207,6 +207,34 @@ async fn dictation_left_on_the_clipboard_sounds_as_copied() -> anyhow::Result<()
 }
 
 #[tokio::test(start_paused = true)]
+async fn copy_last_show_sounds_its_chord_only_for_a_copy_while_idle() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    let (id, events) = h.start().await?;
+    h.take_sounds();
+    h.report(Report::ShowCopied)?;
+    events.send(CaptureEvent::Level(id, 0.5)).await?;
+    h.observe_level(0.5).await?;
+    h.input(Input::Cancel);
+    h.phase(Phase::Cancelled).await?;
+    assert_eq!(
+        h.take_sounds(),
+        [Sound::Played(Cue::Cancel), Sound::Held(false)],
+        "A copy sounded during a recording"
+    );
+
+    for report in [
+        Report::ShowGone(SavedShow::assume("shows/gone".to_owned())),
+        Report::Failed("Public fixture failure".into()),
+        Report::ShowCopied,
+    ] {
+        h.report(report)?;
+    }
+    h.observe(|snapshot| snapshot.reported == 3).await?;
+    assert_eq!(h.take_sounds(), [Sound::Played(Cue::Copied)]);
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
 async fn with_sounds_off_nothing_plays_or_holds_the_output_and_no_microphone_expects_a_cue()
 -> anyhow::Result<()> {
     let config = Config {
@@ -218,6 +246,8 @@ async fn with_sounds_off_nothing_plays_or_holds_the_output_and_no_microphone_exp
     h.start().await?;
     h.input(Input::Cancel);
     h.phase(Phase::Cancelled).await?;
+    h.report(Report::ShowCopied)?;
+    h.phase(Phase::Copied).await?;
     assert_eq!(h.take_sounds(), []);
     h.close().await
 }

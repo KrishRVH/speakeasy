@@ -885,7 +885,10 @@ impl<P: Payload> Machine<P> {
         }
         self.outcome = match report {
             Report::Failed(text) | Report::Recurring(text) => Outcome::Failed(Failure::Said(text)),
-            Report::ShowCopied => Outcome::ShowCopied(P::Saved::default()),
+            Report::ShowCopied => {
+                self.cue(Cue::Copied, env);
+                Outcome::ShowCopied(P::Saved::default())
+            },
             Report::ShowGone => Outcome::ShowGone,
         };
     }

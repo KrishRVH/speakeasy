@@ -112,17 +112,19 @@ once the microphone listens, a lower note when a recording finishes, by gesture,
 limit, as its microphone is lost after speech, as a Show's screen, window, or audio capture stops,
 or as an interruption finishes a Show, a muted low note when the user cancels or a Show has nothing
 to record, two rising notes when a Show starts, and a rising chord when text or a Show waits on the
-clipboard. Text arriving in the editor, errors, hands-free locking, **Copy last Show**, and
-dictation that an interruption discards stay silent; the pill already says them. **Play sounds** in
-Settings turns every cue off.
+clipboard, by **Copy last Show** too while dictation runs. Text arriving in the editor, errors,
+hands-free locking, and dictation that an interruption discards stay silent; the pill already says
+them. **Play sounds** in Settings turns every cue off.
 
 Each cue echoes the pill. The high note sounds as the pill opens to listening rather than at the
 press, so it never promises a microphone still opening, and a desktop shortcut that takes the keys
 before then makes no sound; S, W, or A during that wait, or a Show started from the tray, makes the
 first note the Show's. A cue is heard within 300 ms of its moment, counting the output device's
-reported latency, or not at all. The device opens with the press, alongside the microphone, so the
-first cue never waits for it; it stays open through the session and closes ten seconds after the
-session and its last cue, however the session ended, so an idle Speakeasy holds no audio stream.
+reported latency, or not at all. The device opens with the press, alongside the microphone, so a
+session's first cue never waits for it; it stays open through the session and closes ten seconds
+after the session and its last cue, however the session ended. Copy last Show's chord, the one cue
+between sessions, opens the device itself, so a slow device can drop it, and the device closes ten
+seconds later; otherwise an idle Speakeasy holds no audio stream.
 
 The microphone can overhear the start and Show cues, which are high-passed at 400 Hz. For the 600 ms
 after the microphone learns of either, the speech gate counts only sound below 300 Hz, where a
