@@ -395,17 +395,11 @@ fn cancellation_restores_the_snapshot_only_while_the_dictation_owns_the_clipboar
 #[test]
 fn cancellation_after_the_write_reports_cancelled_even_when_the_restore_fails() -> anyhow::Result<()>
 {
-    for (revoked_at, holds) in [
-        (Step::Write, true),
-        (Step::Holds, false),
-        (Step::ShortcutReleased, true),
-        (Step::Mark, true),
-    ] {
+    for revoked_at in [Step::Write, Step::Holds, Step::ShortcutReleased, Step::Mark] {
         for fails in [vec![], vec![Step::Restore]] {
             let permit = permit()?;
             let mut native = Fake {
                 clipboard: 1,
-                holds,
                 revokes_at: Some((revoked_at, permit.clone())),
                 fails,
                 ..Fake::new()
@@ -462,6 +456,28 @@ fn a_failed_write_restores_nothing_after_releasing_its_lease() -> anyhow::Result
 }
 
 #[test]
+fn cancellation_restores_only_a_clipboard_that_still_holds_the_dictation() -> anyhow::Result<()> {
+    for holds in [true, false] {
+        let permit = permit()?;
+        let mut native = Fake {
+            clipboard: 1,
+            holds,
+            revokes_at: Some((Step::Write, permit.clone())),
+            ..Fake::new()
+        };
+        let (outcome, ..) = insert(&mut native, "text", &permit, Delivery::Paste, &unfocused())?;
+        assert_eq!(outcome, Inserted::Cancelled);
+        assert_eq!(
+            native.steps.contains(&Step::Restore),
+            holds,
+            "Escape restored a clipboard whose dictation check said {holds}"
+        );
+        assert_eq!(native.clipboard, if holds { 1 } else { WRITTEN });
+    }
+    Ok(())
+}
+
+#[test]
 fn a_failed_restore_keeps_the_error_that_stopped_the_paste() -> anyhow::Result<()> {
     for failed in [Step::Holds, Step::PasteKeys] {
         for fails in [vec![failed], vec![failed, Step::Restore]] {
@@ -481,10 +497,16 @@ fn a_failed_restore_keeps_the_error_that_stopped_the_paste() -> anyhow::Result<(
             .context("A paste that failed reported an outcome")?;
             assert_eq!(error.to_string(), format!("Fixture {failed:?} failure"));
             assert!(!native.sent());
+            let verified = failed == Step::PasteKeys;
+            assert_eq!(
+                native.steps.contains(&Step::Restore),
+                verified,
+                "A paste that failed at {failed:?} restored a clipboard it had not verified"
+            );
             assert_eq!(
                 native.clipboard == 1,
-                !native.fails.contains(&Step::Restore),
-                "A paste that failed kept the dictated copy"
+                verified && !native.fails.contains(&Step::Restore),
+                "A paste that failed at {failed:?} kept the wrong copy"
             );
         }
     }

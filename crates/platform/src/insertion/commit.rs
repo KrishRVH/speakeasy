@@ -228,20 +228,19 @@ fn insert<N: NativeInsert>(
                 return Ok((Inserted::Cancelled, None));
             }
             let written = (native.write(lease, text, contents.as_ref())?, contents);
+            if !native.holds(text, &written.0)? {
+                let outcome = if permit.active() {
+                    CLIPBOARD_CHANGED
+                } else {
+                    Inserted::Cancelled
+                };
+                return Ok((outcome, None));
+            }
             if !permit.active() {
                 restore_now(native, Some(written));
                 return Ok((Inserted::Cancelled, None));
             }
-            let keys = match native.holds(text, &written.0) {
-                Ok(true) => native.paste_keys(),
-                Ok(false) if permit.active() => return Ok((CLIPBOARD_CHANGED, None)),
-                Ok(false) => {
-                    restore_now(native, Some(written));
-                    return Ok((Inserted::Cancelled, None));
-                },
-                Err(error) => Err(error),
-            };
-            match keys {
+            match native.paste_keys() {
                 Ok(keys) => (keys, Some(written)),
                 Err(error) => {
                     restore_now(native, Some(written));

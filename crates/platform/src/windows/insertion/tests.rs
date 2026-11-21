@@ -146,6 +146,7 @@ fn check_on_a_private_window_station() -> anyhow::Result<()> {
         "The clipboard lost the text just written"
     );
     assert_private_text("the pasted text")?;
+    assert_only_its_own_copy_is_read(&mut insert)?;
     assert_private_image()?;
     copy_without_text()?;
     assert!(
@@ -202,6 +203,40 @@ fn assert_previous(html: NonZeroU32, source: &str) -> anyhow::Result<()> {
         markup, b"<b>previous</b>",
         "{source} lost the replaced HTML"
     );
+    Ok(())
+}
+
+fn assert_only_its_own_copy_is_read(insert: &mut Insert) -> anyhow::Result<()> {
+    let concealed = clipboard_win::raw::register_format(CONCEALED)
+        .context("Cannot register a clipboard format")?;
+    for (marked, hidden, source) in [
+        (true, true, "A concealed copy of the same text"),
+        (
+            false,
+            false,
+            "A copy of the same text without the dictation's private marks",
+        ),
+    ] {
+        {
+            let _clipboard = open_clipboard()?;
+            clipboard_win::raw::empty()?;
+            if marked {
+                mark_private()?;
+            }
+            if hidden {
+                clipboard_win::raw::set_without_clear(concealed.get(), &[0])?;
+            }
+            clipboard_win::raw::set_string_with(
+                &windows_line_endings(TEXT),
+                clipboard_win::options::NoClear,
+            )?;
+        }
+        let mark = insert.mark();
+        assert!(
+            !insert.holds(TEXT, &mark)?,
+            "{source} was taken for the dictation"
+        );
+    }
     Ok(())
 }
 

@@ -220,10 +220,7 @@ impl NativeInsert for Insert {
     fn holds(&mut self, text: &str, mark: &Option<NonZeroU32>) -> anyhow::Result<bool> {
         let _clipboard = open_clipboard()?;
 
-        if mark.is_none()
-            || *mark != clipboard_win::raw::seq_num()
-            || !clipboard_win::raw::is_format_avail(clipboard_win::formats::CF_UNICODETEXT)
-        {
+        if mark.is_none() || *mark != clipboard_win::raw::seq_num() || !bears_dictation_marks() {
             return Ok(false);
         }
         let mut current = Zeroizing::new(Vec::new());
@@ -305,6 +302,18 @@ impl NativeInsert for Insert {
         }
         Ok(keys.blocked)
     }
+}
+
+fn bears_dictation_marks() -> bool {
+    let present = |name| {
+        clipboard_win::raw::register_format(name)
+            .map(|format| clipboard_win::raw::is_format_avail(format.get()))
+    };
+    present(CONCEALED) == Some(false)
+        && PRIVATE_FORMATS
+            .into_iter()
+            .all(|name| present(name) == Some(true))
+        && clipboard_win::raw::is_format_avail(clipboard_win::formats::CF_UNICODETEXT)
 }
 
 fn still_down(sent: &[INPUT]) -> Vec<INPUT> {
