@@ -92,16 +92,17 @@ app liveness for `AsyncApp`, and `App::shutdown` ordering.
   surface new role objects with the saved title, app ID, size limits, maximized or fullscreen
   state, and decoration request, or the layer surface's options, which runtime exclusive-zone and
   edge changes keep current, on the output the compositor chooses; the window draws on that new
-  role's first configure. Each configure or close carries the role object that sent it and is
-  handled only while that role is current, checked again after every observer callback, since a
-  callback can hide and show the window. A withdrawn window never draws, reports itself hidden,
-  and takes decoration requests without a decoration object to send them to; a popup cannot open
-  on one. Floating windows, dialogs, and popups open shown and ignore it. Check it on sway with two
-  outputs: the `--demo-tray` pill shows its tray hint on the output focused when Settings closes,
-  and under `WAYLAND_DEBUG=client` hiding and showing Settings while it resizes logs configures
-  for the old role as discarded and never ends the connection. Keeping the layer surface left the
-  hint on the output where the pill first showed, and acknowledging such a configure ended the
-  connection with `wrong configure serial`.
+  role's first configure. Each configure or close, from the xdg_surface, toplevel, decoration, or
+  layer surface, carries the role object that sent it and is handled only while that role is
+  current, checked again after every observer callback, since a callback can hide and show the
+  window. A withdrawn window never draws, reports itself hidden, and takes decoration requests
+  without a decoration object to send them to; a popup cannot open on one. Floating windows,
+  dialogs, and popups open shown and ignore it. Check it on sway with two outputs: the
+  `--demo-tray` pill shows its tray hint on the output focused when Settings closes, and under
+  `WAYLAND_DEBUG=client` hiding and showing Settings while it resizes logs configures for the old
+  role as discarded and never ends the connection. Keeping the layer surface left the hint on the
+  output where the pill first showed, and acknowledging such a configure ended the connection with
+  `wrong configure serial`.
 
 ## gpui-pre-wgpu
 

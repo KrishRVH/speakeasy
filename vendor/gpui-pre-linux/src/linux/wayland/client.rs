@@ -1854,7 +1854,7 @@ impl Dispatch<xdg_surface::XdgSurface, ObjectId> for WaylandClientStatePtr {
 impl Dispatch<xdg_toplevel::XdgToplevel, ObjectId> for WaylandClientStatePtr {
     fn event(
         this: &mut Self,
-        _: &xdg_toplevel::XdgToplevel,
+        toplevel: &xdg_toplevel::XdgToplevel,
         event: <xdg_toplevel::XdgToplevel as Proxy>::Event,
         surface_id: &ObjectId,
         _: &Connection,
@@ -1867,7 +1867,9 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ObjectId> for WaylandClientStatePtr {
         };
 
         drop(state);
-        let should_close = window.handle_toplevel_event(event);
+        // Speakeasy patch: a queued event names the toplevel that sent it, which hiding and
+        // showing the window during an earlier event can have replaced.
+        let should_close = window.handle_toplevel_event(&toplevel.id(), event);
 
         if should_close {
             // The close logic will be handled in drop_window()
@@ -2860,7 +2862,7 @@ impl Dispatch<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1, ObjectId>
 {
     fn event(
         this: &mut Self,
-        _: &zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1,
+        decoration: &zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1,
         event: zxdg_toplevel_decoration_v1::Event,
         surface_id: &ObjectId,
         _: &Connection,
@@ -2873,7 +2875,9 @@ impl Dispatch<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1, ObjectId>
         };
 
         drop(state);
-        window.handle_toplevel_decoration_event(event);
+        // Speakeasy patch: a queued event names the decoration that sent it, which hiding and
+        // showing the window during an earlier event can have replaced.
+        window.handle_toplevel_decoration_event(&decoration.id(), event);
     }
 }
 

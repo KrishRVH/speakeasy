@@ -1311,7 +1311,15 @@ impl WaylandWindowStatePtr {
         }
     }
 
-    pub fn handle_toplevel_decoration_event(&self, event: zxdg_toplevel_decoration_v1::Event) {
+    // Speakeasy patch: only the current decoration object sets the window's decorations.
+    pub fn handle_toplevel_decoration_event(
+        &self,
+        role: &ObjectId,
+        event: zxdg_toplevel_decoration_v1::Event,
+    ) {
+        if self.state.borrow().surface_state.decoration().map(Proxy::id).as_ref() != Some(role) {
+            return;
+        }
         if let zxdg_toplevel_decoration_v1::Event::Configure { mode } = event {
             match mode {
                 WEnum::Value(zxdg_toplevel_decoration_v1::Mode::ServerSide) => {
@@ -1352,7 +1360,11 @@ impl WaylandWindowStatePtr {
         }
     }
 
-    pub fn handle_toplevel_event(&self, event: xdg_toplevel::Event) -> bool {
+    // Speakeasy patch: only the current toplevel configures or closes the window.
+    pub fn handle_toplevel_event(&self, role: &ObjectId, event: xdg_toplevel::Event) -> bool {
+        if self.state.borrow().surface_state.toplevel().map(Proxy::id).as_ref() != Some(role) {
+            return false;
+        }
         match event {
             xdg_toplevel::Event::Configure {
                 width,
