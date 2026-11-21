@@ -1207,11 +1207,14 @@ impl WaylandWindowStatePtr {
         }
     }
 
-    pub fn handle_xdg_surface_event(&self, event: xdg_surface::Event) {
+    // Speakeasy patch: a configure is handled only while the role object that sent it is
+    // current. Observer callbacks below can hide and show the window, which replaces the role,
+    // so each later step checks it again.
+    pub fn handle_xdg_surface_event(&self, role: &ObjectId, event: xdg_surface::Event) {
         if let xdg_surface::Event::Configure { serial } = event {
-            let Some(role) = self.state.borrow().surface_state.configure_object() else {
+            if self.state.borrow().surface_state.configure_object().as_ref() != Some(role) {
                 return;
-            };
+            }
             {
                 let mut state = self.state.borrow_mut();
                 if let Some(window_controls) = state.in_progress_window_controls.take() {
@@ -1226,7 +1229,8 @@ impl WaylandWindowStatePtr {
             }
             {
                 let mut state = self.state.borrow_mut();
-                if state.surface_state.configure_object().as_ref() != Some(&role) {
+                // Speakeasy patch: the appearance observer can have replaced the role.
+                if state.surface_state.configure_object().as_ref() != Some(role) {
                     return;
                 }
 
@@ -1263,9 +1267,10 @@ impl WaylandWindowStatePtr {
                     if visibility_changed {
                         self.report_visibility(configure.visibility);
                     }
+                    // Speakeasy patch: the visibility observer can have replaced the role.
                     if throttled
                         || self.state.borrow().surface_state.configure_object().as_ref()
-                            != Some(&role)
+                            != Some(role)
                     {
                         return;
                     }
@@ -1275,7 +1280,8 @@ impl WaylandWindowStatePtr {
                 }
             }
             let state = self.state.borrow_mut();
-            if state.surface_state.configure_object().as_ref() != Some(&role) {
+            // Speakeasy patch: the resize observers can have replaced the role.
+            if state.surface_state.configure_object().as_ref() != Some(role) {
                 return;
             }
             state.surface_state.ack_configure(serial);
@@ -1461,7 +1467,15 @@ impl WaylandWindowStatePtr {
         }
     }
 
-    pub fn handle_layersurface_event(&self, event: zwlr_layer_surface_v1::Event) -> bool {
+    // Speakeasy patch: only the current layer surface configures or closes the window.
+    pub fn handle_layersurface_event(
+        &self,
+        role: &ObjectId,
+        event: zwlr_layer_surface_v1::Event,
+    ) -> bool {
+        if self.state.borrow().surface_state.configure_object().as_ref() != Some(role) {
+            return false;
+        }
         match event {
             zwlr_layer_surface_v1::Event::Configure {
                 width,
@@ -1486,7 +1500,7 @@ impl WaylandWindowStatePtr {
                 drop(state);
 
                 // just do the same thing we'd do as an xdg_surface
-                self.handle_xdg_surface_event(xdg_surface::Event::Configure { serial });
+                self.handle_xdg_surface_event(role, xdg_surface::Event::Configure { serial });
 
                 false
             }

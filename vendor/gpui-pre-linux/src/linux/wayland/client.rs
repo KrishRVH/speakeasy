@@ -1833,7 +1833,7 @@ impl Dispatch<wl_output::WlOutput, ()> for WaylandClientStatePtr {
 impl Dispatch<xdg_surface::XdgSurface, ObjectId> for WaylandClientStatePtr {
     fn event(
         state: &mut Self,
-        _: &xdg_surface::XdgSurface,
+        xdg_surface: &xdg_surface::XdgSurface,
         event: xdg_surface::Event,
         surface_id: &ObjectId,
         _: &Connection,
@@ -1845,7 +1845,9 @@ impl Dispatch<xdg_surface::XdgSurface, ObjectId> for WaylandClientStatePtr {
             return;
         };
         drop(state);
-        window.handle_xdg_surface_event(event);
+        // Speakeasy patch: a queued event names the role object that sent it, which hiding
+        // and showing the window during an earlier event can have replaced.
+        window.handle_xdg_surface_event(&xdg_surface.id(), event);
     }
 }
 
@@ -1877,7 +1879,7 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ObjectId> for WaylandClientStatePtr {
 impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ObjectId> for WaylandClientStatePtr {
     fn event(
         this: &mut Self,
-        _: &zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
+        layer_surface: &zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
         event: <zwlr_layer_surface_v1::ZwlrLayerSurfaceV1 as Proxy>::Event,
         surface_id: &ObjectId,
         _: &Connection,
@@ -1890,7 +1892,9 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ObjectId> for WaylandCl
         };
 
         drop(state);
-        let should_close = window.handle_layersurface_event(event);
+        // Speakeasy patch: a queued event names the layer surface that sent it, which hiding
+        // and showing the window during an earlier event can have replaced.
+        let should_close = window.handle_layersurface_event(&layer_surface.id(), event);
 
         if should_close {
             // Close logic will be handled in drop_window()

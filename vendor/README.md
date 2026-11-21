@@ -87,17 +87,18 @@ app liveness for `AsyncApp`, and `App::shutdown` ordering.
   surface, and commits a null buffer, so the compositor keeps nothing of it and the client
   discards a configure sent to those objects instead of acknowledging it. Showing gives the same
   surface new role objects with the saved title, app ID, size limits, maximized or fullscreen
-  state, and decoration request, or
-  the layer surface's options, which runtime exclusive-zone and edge changes keep current, on the
-  output the compositor chooses; the window draws on that new role's first configure. Configure
-  handling checks its role again after observer callbacks, since they can replace it. A withdrawn
-  window never draws, reports itself hidden, and takes decoration requests without a decoration
-  object to send them to; a popup cannot open on one. Floating windows, dialogs, and
-  popups open shown and ignore it. On sway with two outputs, the `--demo-tray` pill shows its tray
-  hint on the output focused when Settings closes, and under `WAYLAND_DEBUG=client` a configure
-  that arrives after a hide is logged as discarded. Keeping the layer surface left the hint on the
-  output where the pill first showed, and acknowledging such a configure ended the connection with
-  `wrong configure serial`.
+  state, and decoration request, or the layer surface's options, which runtime exclusive-zone and
+  edge changes keep current, on the output the compositor chooses; the window draws on that new
+  role's first configure. Each configure or close carries the role object that sent it and is
+  handled only while that role is current, checked again after every observer callback, since a
+  callback can hide and show the window. A withdrawn window never draws, reports itself hidden,
+  and takes decoration requests without a decoration object to send them to; a popup cannot open
+  on one. Floating windows, dialogs, and popups open shown and ignore it. Check it on sway with two
+  outputs: the `--demo-tray` pill shows its tray hint on the output focused when Settings closes,
+  and under `WAYLAND_DEBUG=client` hiding and showing Settings while it resizes logs configures
+  for the old role as discarded and never ends the connection. Keeping the layer surface left the
+  hint on the output where the pill first showed, and acknowledging such a configure ended the
+  connection with `wrong configure serial`.
 
 ## gpui-pre-wgpu
 
