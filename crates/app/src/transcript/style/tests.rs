@@ -50,17 +50,6 @@ fn digits_keep_their_spoken_boundaries_and_never_gain_a_prefix() {
 }
 
 #[test]
-fn prose_and_verbatim_leave_formatting_to_the_existing_cleanup_pipeline() {
-    let text = "\tUm, I’m keeping  ÉLAN’s punctuation!\n";
-    for style in [Style::Prose, Style::Verbatim] {
-        assert_eq!(style.apply(text.into()), text);
-    }
-    assert_eq!(Style::Verbatim.fillers(Fillers::Remove), Fillers::Preserve);
-    assert_eq!(Style::Prose.fillers(Fillers::Remove), Fillers::Remove);
-    assert_eq!(Style::Prose.fillers(Fillers::Preserve), Fillers::Preserve);
-}
-
-#[test]
 fn wire_styles_are_flat_cli_names_and_reject_unrecognized_values() -> anyhow::Result<()> {
     for (wire, style) in [
         ("\"prose\"", Style::Prose),

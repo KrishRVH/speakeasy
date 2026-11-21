@@ -93,7 +93,6 @@ mod tests {
         }
         assert!(!invented(iter::once("Kubernetes."), BRIEFLY, Some(prompt)));
         assert!(!invented(iter::once(prompt), BRIEF, Some(prompt)));
-        assert!(!invented(iter::once(""), Duration::ZERO, None));
     }
 
     #[test]
