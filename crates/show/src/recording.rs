@@ -121,22 +121,22 @@ impl Stroke {
     }
 
     #[must_use]
-    pub fn points(&self) -> &[InkPoint] {
+    pub(crate) fn points(&self) -> &[InkPoint] {
         &self.points
     }
 
     #[must_use]
-    pub fn span(&self) -> Span {
+    pub(crate) fn span(&self) -> Span {
         Span::new(self.first.at, self.last.at)
     }
 
     #[must_use]
-    pub const fn first(&self) -> InkPoint {
+    pub(crate) const fn first(&self) -> InkPoint {
         self.first
     }
 
     #[must_use]
-    pub const fn last(&self) -> InkPoint {
+    pub(crate) const fn last(&self) -> InkPoint {
         self.last
     }
 
@@ -181,7 +181,7 @@ pub enum Action {
 
 impl Action {
     #[must_use]
-    pub const fn span(self) -> Span {
+    pub(crate) const fn span(self) -> Span {
         match self {
             Self::Click { at, .. } => Span::at(at),
             Self::Drag { span, .. } => span,
@@ -189,7 +189,7 @@ impl Action {
     }
 
     #[must_use]
-    pub const fn point(self) -> Point {
+    pub(crate) const fn point(self) -> Point {
         match self {
             Self::Click { point, .. } | Self::Drag { to: point, .. } => point,
         }

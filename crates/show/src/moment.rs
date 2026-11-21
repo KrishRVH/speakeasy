@@ -27,7 +27,7 @@ impl Moment {
     }
 
     #[must_use]
-    pub const fn distance(self, other: Self) -> Duration {
+    pub(crate) const fn distance(self, other: Self) -> Duration {
         Duration::from_millis(self.0.abs_diff(other.0))
     }
 
