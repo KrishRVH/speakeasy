@@ -50,12 +50,13 @@ it. A failure after the text landed reports that Return was not pressed, never a
 dictation keeps its clipboard snapshot unused, so a slow target cannot paste the restored copy and
 then receive Return. A paste snapshots the clipboard under the same lease that writes the dictation,
 and the insertion thread answers the request before it waits 500 ms and puts the snapshot back. The
-restore reopens the clipboard and writes only if the sequence number or change count still equals
-the one recorded within the dictation's write transaction. Cancellation before submission restores
-the same snapshot immediately or clears the dictated copy when no snapshot was available. Windows
-and macOS inspect every clipboard format or item type for concealed content before reading any
-payload. The thread serves the next request only after the restore, which therefore snapshots the
-restored copy. The snapshot lives only on the insertion thread and is dropped after the restore.
+write records the sequence number or change count once its copy is complete, on Windows after the
+clipboard closes, because closing advances the number. The restore reopens the clipboard and writes
+only if that number is unchanged. Cancellation before submission restores the same snapshot
+immediately or clears the dictated copy when no snapshot was available. Windows and macOS inspect
+every clipboard format or item type for concealed content before reading any payload. The thread
+serves the next request only after the restore, which therefore snapshots the restored copy. The
+snapshot lives only on the insertion thread and is dropped after the restore.
 
 `MonitorControl` serializes publishing a live run-loop handle, readiness and stop. Stop-before-start
 remains effective; retirement removes the handle before a later stop can wake it. This lock cannot

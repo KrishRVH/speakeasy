@@ -89,17 +89,21 @@ fn check_on_a_private_window_station() -> anyhow::Result<()> {
         typed: crate::insertion::KeyCount::default(),
     };
     let lease = insert.acquire()?;
-    insert.write(lease, TEXT)?;
-    let mark = insert.mark();
+    let written = insert.write(lease, TEXT)?;
+    assert_eq!(
+        written,
+        insert.mark(),
+        "The write's mark is not the clipboard's sequence number after the write"
+    );
     assert!(
-        insert.holds(TEXT, &mark)?,
+        insert.holds(TEXT, &written)?,
         "The clipboard lost the text just written"
     );
     assert_private_text("the pasted text")?;
     assert_private_image()?;
     copy_without_text()?;
     assert!(
-        !insert.holds(TEXT, &mark)?,
+        !insert.holds(TEXT, &written)?,
         "A copy with no text must read as a change"
     );
 
@@ -119,8 +123,7 @@ fn assert_restores_only_what_it_replaced(insert: &mut Insert) -> anyhow::Result<
     let saved = insert
         .save(&lease)
         .context("Ordinary text and HTML were not saved")?;
-    insert.write(lease, TEXT)?;
-    let mark = insert.mark();
+    let mark = insert.write(lease, TEXT)?;
     insert.restore(Some(saved), &mark)?;
     {
         let _clipboard = open_clipboard()?;
@@ -139,8 +142,7 @@ fn assert_restores_only_what_it_replaced(insert: &mut Insert) -> anyhow::Result<
     let saved = insert
         .save(&lease)
         .context("The previous copy was not saved")?;
-    insert.write(lease, TEXT)?;
-    let mark = insert.mark();
+    let mark = insert.write(lease, TEXT)?;
     copy_without_text()?;
     insert.restore(Some(saved), &mark)?;
     {

@@ -39,7 +39,7 @@ const SAVED_BYTES: usize = 64 << 20;
 type SavedFormat = (u32, Zeroizing<Vec<u8>>);
 
 pub(crate) fn copy_text(text: &str) -> anyhow::Result<()> {
-    write_clipboard(open_clipboard()?, text, None).map(|_| ())
+    write_clipboard(open_clipboard()?, text, None)
 }
 
 pub(crate) fn copy_content(
@@ -47,7 +47,7 @@ pub(crate) fn copy_content(
     authorized: impl FnOnce() -> bool,
 ) -> anyhow::Result<bool> {
     clipboard::copy_when(authorized, open_clipboard, |lease| {
-        write_clipboard(lease, &content.text, content.image.as_ref()).map(|_| ())
+        write_clipboard(lease, &content.text, content.image.as_ref())
     })
 }
 
@@ -108,7 +108,7 @@ fn write_clipboard(
     _lease: clipboard_win::Clipboard,
     text: &str,
     image: Option<&clipboard::Image>,
-) -> anyhow::Result<Option<NonZeroU32>> {
+) -> anyhow::Result<()> {
     let image = image
         .map(|image| {
             clipboard_win::raw::register_format("PNG")
@@ -133,8 +133,7 @@ fn write_clipboard(
         Ok(()) => error,
         Err(_) => error
             .context("The clipboard may contain an incomplete copy; clear it before trying again"),
-    })?;
-    Ok(clipboard_win::raw::seq_num())
+    })
 }
 
 pub(super) struct Insert {
@@ -165,7 +164,8 @@ impl NativeInsert for Insert {
     }
 
     fn write(&mut self, lease: clipboard_win::Clipboard, text: &str) -> anyhow::Result<Self::Mark> {
-        write_clipboard(lease, text, None)
+        write_clipboard(lease, text, None)?;
+        Ok(clipboard_win::raw::seq_num())
     }
 
     fn restore(

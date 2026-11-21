@@ -142,12 +142,12 @@ fn publish(lease: Lease, items: &[Retained<NSPasteboardItem>]) -> anyhow::Result
         .map(|item| ProtocolObject::from_ref(&**item))
         .collect();
     let items = NSArray::from_slice(&writers);
-    let mark = lease
+    lease
         .pasteboard
         .prepareForNewContentsWithOptions(NSPasteboardContentsOptions::CurrentHostOnly);
     ensure!(
         lease.pasteboard.writeObjects(&items),
         "Cannot place the complete copy on the clipboard"
     );
-    Ok(mark)
+    Ok(lease.pasteboard.changeCount())
 }
