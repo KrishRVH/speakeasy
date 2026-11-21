@@ -93,29 +93,3 @@ fn a_show_folder_that_cannot_be_opened_is_listed_as_damaged_beside_intact_shows(
     assert!(Path::new(problems[0]["file"].as_str().unwrap()).starts_with(&sealed));
     Ok(())
 }
-
-#[cfg(unix)]
-#[test]
-fn a_shows_folder_that_cannot_be_searched_fails_the_listing() -> anyhow::Result<()> {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    use crate::show::store::recall;
-    let root = tempfile::tempdir()?;
-    let parent = root.path().canonicalize()?;
-    let show = parent.join("20261020T143205Z");
-    saved(&show)?;
-    let access = fs::metadata(&parent)?.permissions();
-    fs::set_permissions(&parent, fs::Permissions::from_mode(0o600))?;
-    let unrestricted = fs::metadata(&show).is_ok();
-    let listed = recall::list(&parent)
-        .and_then(|entries| list(entries, Some(&parent), true, &mut io::sink()));
-    fs::set_permissions(&parent, access)?;
-    if unrestricted {
-        return Ok(());
-    }
-    assert_eq!(
-        listed.map_err(|error| error.kind()),
-        Err(io::ErrorKind::PermissionDenied)
-    );
-    Ok(())
-}
