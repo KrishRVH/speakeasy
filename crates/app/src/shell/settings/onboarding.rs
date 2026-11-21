@@ -6,7 +6,7 @@ use std::{
 use gpui::{Context, Task, Window, point, px};
 use speakeasy_platform::OwnedThread;
 
-use super::{Notice, Settings, is_demo};
+use super::{Action as SettingsAction, Notice, Settings, is_demo};
 use crate::{gpui_ext::EntityUpdate as _, shell::Services};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -99,6 +99,47 @@ impl Settings {
             running: demo || cx.global::<Services>().is_running(),
             recognized: self.practice.recognized(),
         })
+    }
+
+    pub(super) fn onboarding_primary(
+        &self,
+        step: Step,
+        cx: &Context<'_, Self>,
+    ) -> (&'static str, Option<SettingsAction>) {
+        let demo = is_demo(cx);
+        let running = demo || cx.global::<Services>().is_running();
+        let advance = || {
+            (self.onboarding_next(step, cx) != step)
+                .then_some(SettingsAction::Onboarding(Action::Next))
+        };
+        match step {
+            Step::Prepare if self.resetting() => ("Starting over…", None),
+            Step::Prepare if self.unreadable => ("Continue", None),
+            Step::Prepare if self.engine_work.installing().is_some() => ("Setting up…", None),
+            Step::Prepare if self.engine_work.is_pausing() => ("Pausing download…", None),
+            Step::Prepare | Step::Practice if self.saving.is_some() => ("Saving…", None),
+            Step::Prepare if !demo && !self.config.speech_configured() => (
+                "Set up automatically · 0.8 GB",
+                (!self.engine_work.is_busy()).then_some(SettingsAction::Setup),
+            ),
+            Step::Permissions | Step::Practice if !running => {
+                ("Retry dictation", Some(SettingsAction::Resume))
+            },
+            Step::Practice if !self.practice.recognized() && self.practice.live.is_none() => (
+                if demo {
+                    "Simulate dictation"
+                } else {
+                    "Start practice"
+                },
+                Some(SettingsAction::Practice),
+            ),
+            Step::Ready => (
+                "Start using Speakeasy",
+                Some(SettingsAction::Onboarding(Action::Finish)),
+            ),
+            Step::Permissions => ("Try dictation", advance()),
+            Step::Prepare | Step::Practice => ("Continue", advance()),
+        }
     }
 
     pub(super) fn onboarding_action(

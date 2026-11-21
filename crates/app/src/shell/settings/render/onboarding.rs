@@ -4,14 +4,11 @@ use super::{Action, Notice, Settings, Ui, dictation::level, fraction, progress_t
 use crate::{
     controls::{Weight, icon},
     icons,
-    shell::{
-        Services,
-        settings::{
-            is_demo,
-            menu::Menu,
-            onboarding::{Action as TourAction, Step},
-            permissions,
-        },
+    shell::settings::{
+        is_demo,
+        menu::Menu,
+        onboarding::{Action as TourAction, Step},
+        permissions,
     },
     status::Indicator,
 };
@@ -26,7 +23,7 @@ impl Settings {
             Step::Practice => self.onboarding_practice(ui),
             Step::Ready => self.onboarding_ready(ui),
         };
-        let (label, action) = self.onboarding_primary(step, ui);
+        let (label, action) = self.onboarding_primary(step, ui.cx);
         let back = match step {
             Step::Prepare if self.engine_work.installing().is_some() => {
                 Some(ui.button("Cancel download", Action::Setup, Weight::Quiet))
@@ -133,43 +130,6 @@ impl Settings {
                         ),
                     ),
             )
-    }
-
-    fn onboarding_primary(&self, step: Step, ui: &Ui<'_>) -> (&'static str, Option<Action>) {
-        let demo = is_demo(ui.cx);
-        let running = demo || ui.cx.global::<Services>().is_running();
-        let advance = || {
-            (self.onboarding_next(step, ui.cx) != step)
-                .then_some(Action::Onboarding(TourAction::Next))
-        };
-        match step {
-            Step::Prepare if self.resetting() => ("Starting over…", None),
-            Step::Prepare if self.unreadable => ("Continue", None),
-            Step::Prepare if self.engine_work.installing().is_some() => ("Setting up…", None),
-            Step::Prepare if self.engine_work.is_pausing() => ("Pausing download…", None),
-            Step::Prepare | Step::Practice if self.saving.is_some() => ("Saving…", None),
-            Step::Prepare if !demo && !self.config.speech_configured() => (
-                "Set up automatically · 0.8 GB",
-                (!self.engine_work.is_busy()).then_some(Action::Setup),
-            ),
-            Step::Permissions | Step::Practice if !running => {
-                ("Retry dictation", Some(Action::Resume))
-            },
-            Step::Practice if !self.practice.recognized() && self.practice.live.is_none() => (
-                if demo {
-                    "Simulate dictation"
-                } else {
-                    "Start practice"
-                },
-                Some(Action::Practice),
-            ),
-            Step::Ready => (
-                "Start using Speakeasy",
-                Some(Action::Onboarding(TourAction::Finish)),
-            ),
-            Step::Permissions => ("Try dictation", advance()),
-            Step::Prepare | Step::Practice => ("Continue", advance()),
-        }
     }
 
     fn onboarding_prepare(&self, ui: &Ui<'_>) -> Div {

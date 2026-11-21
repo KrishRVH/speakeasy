@@ -1,10 +1,15 @@
+use std::path::PathBuf;
+
 use anyhow::ensure;
 use gpui::{AsyncApp, WindowHandle};
 
 use super::{Action, Step};
-use crate::shell::settings::{
-    Action as SettingsAction, Settings,
-    native_interaction::{draw, key},
+use crate::shell::{
+    LaunchMode, Services,
+    settings::{
+        Action as SettingsAction, SaveQueue, Settings,
+        native_interaction::{draw, key},
+    },
 };
 
 pub(in crate::shell::settings) fn exercise(
@@ -17,6 +22,19 @@ pub(in crate::shell::settings) fn exercise(
         ensure!(
             view.onboarding == Some(Step::Prepare),
             "Replay did not open setup"
+        );
+        let path = cx.global::<Services>().path.clone();
+        view.config.model = PathBuf::new();
+        view.saves = SaveQueue::new(path.clone(), view.config.clone());
+        cx.global_mut::<Services>().mode = LaunchMode::Live;
+        let primary = view.onboarding_primary(Step::Prepare, cx);
+        let next = view.onboarding_next(Step::Prepare, cx);
+        cx.global_mut::<Services>().mode = LaunchMode::DemoTray;
+        view.config.clone_from(&original);
+        view.saves = SaveQueue::new(path, original.clone());
+        ensure!(
+            primary.1 == Some(SettingsAction::Setup) && next == Step::Prepare,
+            "An engine without a model skipped automatic setup"
         );
         anyhow::Ok(())
     })??;
