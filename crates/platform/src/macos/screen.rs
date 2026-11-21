@@ -65,7 +65,6 @@ enum Failure {
     Permission,
     Stalled,
     Unstarted,
-    Unstopped,
     DisplayLost,
     Exposed,
 }
@@ -94,9 +93,6 @@ impl fmt::Display for Failure {
             },
             Self::Stalled => "Screen capture stopped responding. Start the Show again.",
             Self::Unstarted => "Cannot start screen capture. Start the Show again.",
-            Self::Unstopped => {
-                "Screen capture did not confirm that it stopped. Quit Speakeasy to make sure it ends."
-            },
             Self::DisplayLost => {
                 "The recorded display is no longer available. Start the Show again."
             },

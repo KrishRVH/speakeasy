@@ -71,7 +71,7 @@ pub(super) fn capture(
     } else {
         interval.max(INTERVAL)
     };
-    let mut stream = Stream::new(&source, target.part(), cadence)?;
+    let mut stream = Stream::new(&source, target.part(), cadence, stopping)?;
     let outcome = match stream.start(stopping) {
         Ok(Started::Running) => record(
             target, interval, events, stopping, deadline, geometry, &stream, &mut movie,
@@ -88,9 +88,7 @@ pub(super) fn capture(
             report(events, failure);
         }
         movie.stop(ended);
-        if retry_stop(|| stream.stop(), thread::sleep).is_err() {
-            report(events, Failure::Unstopped);
-        }
+        retry_stop(|| stream.stop().is_ok(), thread::sleep);
     }
     drop(stream);
     movie.stop(ended);
@@ -187,6 +185,7 @@ struct Stream {
     failures: Receiver<Failure>,
     stopped: Receiver<Infallible>,
     confirm: Sender<Infallible>,
+    request: Receiver<Infallible>,
     running: bool,
 }
 
@@ -196,7 +195,12 @@ enum Started {
 }
 
 impl Stream {
-    fn new(source: &Source, part: Part, interval: Duration) -> Result<Self, Failure> {
+    fn new(
+        source: &Source,
+        part: Part,
+        interval: Duration,
+        request: &Receiver<Infallible>,
+    ) -> Result<Self, Failure> {
         let configuration = source.configuration(part).ok_or(Failure::DisplayLost)?;
         let nanos = i64::try_from(interval.as_nanos()).map_err(|_overflow| Failure::Unstarted)?;
 
@@ -236,6 +240,7 @@ impl Stream {
             failures: failed,
             stopped,
             confirm,
+            request: request.clone(),
             running: false,
         })
     }
@@ -283,9 +288,14 @@ impl Drop for Stream {
         if self.running && self.stop().is_err() {
             #[expect(
                 clippy::mem_forget,
-                reason = "ScreenCaptureKit never confirmed that this stream stopped; releasing its stream, output or queue could leave capture calling freed objects, so they stay retained for the process's life while the closed frame lane makes the output discard every sample"
+                reason = "ScreenCaptureKit never confirmed that this stream stopped; releasing its stream, output or queue could leave capture calling freed objects, so they stay retained for the process's life while the closed frame lane makes the output discard every sample, and the retained stop request tells the capture's owner"
             )]
-            mem::forget((self.native.clone(), self.output.clone(), self.queue.clone()));
+            mem::forget((
+                self.native.clone(),
+                self.output.clone(),
+                self.queue.clone(),
+                self.request.clone(),
+            ));
             return;
         }
         #[expect(
@@ -368,17 +378,13 @@ async fn acknowledged(
     if stopped.is_closed() { Ok(()) } else { waited }
 }
 
-fn retry_stop(
-    mut stop: impl FnMut() -> Result<(), Failure>,
-    mut pause: impl FnMut(Duration),
-) -> Result<(), Failure> {
+fn retry_stop(mut stop: impl FnMut() -> bool, mut pause: impl FnMut(Duration)) {
     for wait in STOP_PAUSES {
         pause(wait);
-        if stop().is_ok() {
-            return Ok(());
+        if stop() {
+            return;
         }
     }
-    Err(Failure::Unstopped)
 }
 
 fn completion_result(error: Option<&NSError>, operation: Operation) -> Result<(), Failure> {

@@ -62,7 +62,7 @@ pub use self::{
     process::ProcessGroup,
     screen::{
         Display, Frame, Part, PlacedWindow, PointerMonitor, PointerSample, Scope, ScreenCapture,
-        ScreenEvent, Target, WindowGone, WindowLayer, WindowLayout, WindowWatch,
+        ScreenEvent, Target, Unstopped, WindowGone, WindowLayer, WindowLayout, WindowWatch,
     },
     wsl::wsl,
 };

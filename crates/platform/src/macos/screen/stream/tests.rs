@@ -91,25 +91,22 @@ async fn a_start_ends_when_capture_stops_or_is_cancelled_before_its_completion()
 }
 
 #[test]
-fn stop_retries_back_off_and_give_up() {
+fn stop_retries_back_off_until_one_confirms() {
     let mut pauses = Vec::new();
-    let gave_up = retry_stop(|| Err(Failure::Stalled), |pause| pauses.push(pause));
-    assert!(matches!(gave_up, Err(Failure::Unstopped)));
+    retry_stop(|| false, |pause| pauses.push(pause));
     assert!(pauses.first().is_some_and(|first| !first.is_zero()));
     assert!(
         pauses.windows(2).all(|pair| pair[0] < pair[1]),
         "Stop retries do not back off"
     );
 
-    let mut answers = [Err(Failure::Stalled), Ok(())].into_iter();
     let mut attempts = 0;
-    let stopped = retry_stop(
+    retry_stop(
         || {
             attempts += 1;
-            answers.next().unwrap_or(Err(Failure::Stalled))
+            attempts == 2
         },
         |_| {},
     );
-    assert!(stopped.is_ok());
     assert_eq!(attempts, 2);
 }

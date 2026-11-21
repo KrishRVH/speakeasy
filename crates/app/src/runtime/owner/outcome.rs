@@ -1,4 +1,5 @@
 use speakeasy_core::machine::{Failure, Notice, Outcome, Refusal};
+use speakeasy_platform::Unstopped;
 use speakeasy_show::{Ending, NarrationLoss};
 
 use super::commands;
@@ -66,6 +67,13 @@ pub(super) fn message(outcome: &Outcome<Native>, notice: Option<&Notice<Native>>
         preserved(&mut message, *preservation);
     }
     message
+}
+
+pub(super) fn warn_unstopped(message: &mut String) {
+    if !message.is_empty() {
+        message.push(' ');
+    }
+    message.push_str(&Unstopped.to_string());
 }
 
 pub(super) fn failure(failure: &Failure<Native>) -> String {

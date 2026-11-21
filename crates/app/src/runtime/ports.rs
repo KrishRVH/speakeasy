@@ -66,6 +66,7 @@ pub(crate) enum ShowEvent {
     MovieStopped(SessionId),
     Finished(SessionId, anyhow::Result<Box<Footage>>),
     Unchosen(SessionId, Unchosen),
+    Unstopped,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

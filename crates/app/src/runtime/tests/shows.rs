@@ -90,6 +90,35 @@ async fn cancelling_a_show_frees_the_screen_for_the_next() -> anyhow::Result<()>
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_screen_that_never_confirmed_stopping_warns_and_refuses_the_next_show()
+-> anyhow::Result<()> {
+    let unstopped = speakeasy_platform::Unstopped.to_string();
+    let mut h = Harness::new()?;
+    let (_, _, screen) = start_show(&mut h).await?;
+    screen.send(ShowEvent::Unstopped).await?;
+    h.observe(|snapshot| snapshot.message.contains(&unstopped))
+        .await?;
+    finish_show(&h);
+    h.transcribe_next_as("look here").await?;
+    h.phase(Phase::Copied).await?;
+    let copied = h.snapshot().message;
+    assert!(copied.starts_with("Show copied"), "{copied}");
+    assert!(
+        copied.ends_with(&unstopped),
+        "The warning left the Show's outcome"
+    );
+
+    h.input(Input::Press);
+    h.phase(Phase::Recording).await?;
+    receive(&h.captures).await?;
+    h.input(Input::Show(Scope::Screen));
+    h.phase(Phase::Error).await?;
+    assert!(h.shows.try_recv().is_err(), "A replacement capture started");
+    assert!(h.snapshot().message.ends_with(&unstopped));
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
 async fn escape_alone_leaves_a_hands_free_show_recording_and_publishable() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
     start_show(&mut h).await?;

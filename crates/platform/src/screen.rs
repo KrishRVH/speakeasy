@@ -216,6 +216,19 @@ pub struct ScreenCapture {
     thread: StoppableThread,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Unstopped;
+
+impl fmt::Display for Unstopped {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(
+            "Screen capture did not confirm that it stopped. Quit Speakeasy to make sure it ends.",
+        )
+    }
+}
+
+impl std::error::Error for Unstopped {}
+
 impl ScreenCapture {
     pub fn start(
         target: Target,
@@ -234,8 +247,15 @@ impl ScreenCapture {
         self.thread.request_stop();
     }
 
-    pub fn stopped(&self) -> impl Future<Output = ()> + Send + use<> {
-        self.thread.stopped()
+    pub fn stopped(&self) -> impl Future<Output = Result<(), Unstopped>> + Send + use<> {
+        let released = self.thread.released();
+        async move {
+            if released.await {
+                Ok(())
+            } else {
+                Err(Unstopped)
+            }
+        }
     }
 }
 

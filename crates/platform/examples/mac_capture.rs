@@ -200,7 +200,7 @@ mod native {
             )?;
             let result = inspect(&frames, part).await;
             capture.request_stop();
-            capture.stopped().await;
+            capture.stopped().await?;
             while frames.try_recv().is_ok() {}
             ensure!(
                 frames.is_closed(),
