@@ -8,13 +8,13 @@ use anyhow::Context as _;
 
 use super::manifest::NAME;
 
+const LOCK: &str = "updates.lock";
 const CACHE_ACCESS: &str = "Cannot access the update cache. Check free space and folder access.";
 
 pub(super) fn acquire(root: &Path) -> anyhow::Result<File> {
     fs::create_dir_all(root)
         .context("Cannot create the update cache. Check free space and folder access.")?;
-    let lock =
-        speakeasy_platform::open_lock(&root.join(crate::updates::LOCK)).context(CACHE_ACCESS)?;
+    let lock = speakeasy_platform::open_lock(&root.join(LOCK)).context(CACHE_ACCESS)?;
 
     match lock.try_lock() {
         Ok(()) => {},

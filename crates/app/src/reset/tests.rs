@@ -1,7 +1,4 @@
-use std::{
-    fs::{self, File, OpenOptions},
-    path::PathBuf,
-};
+use std::{fs, path::PathBuf};
 
 use anyhow::Context as _;
 
@@ -25,7 +22,6 @@ fn fixture(root: &Path) -> anyhow::Result<(PathBuf, PathBuf)> {
         fs::create_dir_all(path.parent().context("fixture has a folder")?)?;
         fs::write(path, "PUBLIC_FIXTURE")?;
     }
-    fs::write(data.join("setup.lock"), [])?;
     Ok((settings, data))
 }
 
@@ -34,8 +30,8 @@ fn a_purge_forgets_settings_and_downloads_but_keeps_every_show() -> anyhow::Resu
     let root = tempfile::tempdir()?;
     let (settings, data) = fixture(root.path())?;
     purge(&settings, &data)?;
-    assert!(!settings.exists(), "Unreadable settings survived the purge");
-    for folder in ["engines", "models", "downloads", "updates"] {
+    assert!(!settings.exists(), "The settings survived the purge");
+    for folder in DOWNLOADS {
         assert!(!data.join(folder).exists(), "{folder} survived the purge");
     }
     assert!(
@@ -44,62 +40,7 @@ fn a_purge_forgets_settings_and_downloads_but_keeps_every_show() -> anyhow::Resu
         "The purge removed a Show"
     );
     assert!(settings.with_added_extension("onboarded").is_file());
-    assert!(data.join("setup.lock").is_file());
     purge(&settings, &data)?;
-    Ok(())
-}
-
-#[test]
-fn a_purge_refuses_while_another_copy_sets_up_or_prepares_an_update() -> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let (settings, data) = fixture(root.path())?;
-    for lock in [data.join("setup.lock"), data.join("updates.lock")] {
-        let held = File::create(&lock)?;
-        held.try_lock()?;
-        assert!(
-            purge(&settings, &data).is_err(),
-            "{lock:?} did not stop the purge"
-        );
-        assert!(
-            settings.is_file() && data.join("models").is_dir(),
-            "A refused purge removed files"
-        );
-        drop(held);
-    }
-    purge(&settings, &data)
-}
-
-#[test]
-fn a_purge_keeps_both_leases_through_deletion_even_without_a_cache() -> anyhow::Result<()> {
-    for cache_exists in [true, false] {
-        let root = tempfile::tempdir()?;
-        let (settings, data) = fixture(root.path())?;
-        if !cache_exists {
-            fs::remove_dir_all(data.join("updates"))?;
-        }
-        purge_with(&settings, &data, |path| {
-            remove(path)?;
-            for name in ["setup.lock", "updates.lock"] {
-                let contender = OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .open(data.join(name))?;
-                assert!(matches!(
-                    contender.try_lock(),
-                    Err(TryLockError::WouldBlock)
-                ));
-            }
-            assert!(settings.is_file());
-            Ok(())
-        })?;
-        for name in ["setup.lock", "updates.lock"] {
-            let available = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(data.join(name))?;
-            available.try_lock()?;
-        }
-    }
     Ok(())
 }
 
@@ -107,76 +48,12 @@ fn a_purge_keeps_both_leases_through_deletion_even_without_a_cache() -> anyhow::
 fn a_failed_purge_keeps_the_settings() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let (settings, data) = fixture(root.path())?;
-    let purged = purge_with(&settings, &data, |path| {
-        if path.ends_with("models") {
-            return Err(io::ErrorKind::PermissionDenied.into());
-        }
-        remove(path)
-    });
-    assert!(purged.is_err());
+    fs::remove_dir_all(data.join("models"))?;
+    fs::write(data.join("models"), "PUBLIC_FIXTURE")?;
+    assert!(purge(&settings, &data).is_err());
     assert!(
         settings.is_file(),
         "A purge that kept a download still deleted the settings"
     );
-    Ok(())
-}
-
-#[cfg(unix)]
-#[test]
-fn a_download_that_cannot_be_examined_fails_its_removal() -> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let not_a_folder = root.path().join("data");
-    fs::write(&not_a_folder, "PUBLIC_FIXTURE")?;
-    assert!(remove(&not_a_folder.join("models")).is_err());
-    Ok(())
-}
-
-#[cfg(unix)]
-#[test]
-fn a_linked_folder_loses_only_its_link() -> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let (settings, data) = fixture(root.path())?;
-    let elsewhere = root.path().join("elsewhere");
-    fs::create_dir_all(&elsewhere)?;
-    fs::write(elsewhere.join("keep.txt"), "PUBLIC_FIXTURE")?;
-    fs::remove_dir_all(data.join("models"))?;
-    std::os::unix::fs::symlink(&elsewhere, data.join("models"))?;
-    purge(&settings, &data)?;
-    assert!(!data.join("models").exists());
-    assert!(
-        elsewhere.join("keep.txt").is_file(),
-        "The purge followed a link out of Speakeasy's folder"
-    );
-    Ok(())
-}
-
-#[cfg(unix)]
-#[test]
-fn reset_unlinks_a_socket_in_place_of_a_download_directory() -> anyhow::Result<()> {
-    use std::os::unix::net::UnixListener;
-
-    let root = tempfile::tempdir()?;
-    let (settings, data) = fixture(root.path())?;
-    let path = data.join("models");
-    fs::remove_dir_all(&path)?;
-    let _socket = UnixListener::bind(&path)?;
-    purge(&settings, &data)?;
-    assert!(!path.exists());
-    Ok(())
-}
-
-#[cfg(unix)]
-#[test]
-fn reset_restricts_existing_and_new_lock_files_to_the_owner() -> anyhow::Result<()> {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    let root = tempfile::tempdir()?;
-    let (settings, data) = fixture(root.path())?;
-    fs::set_permissions(data.join("setup.lock"), fs::Permissions::from_mode(0o644))?;
-    purge(&settings, &data)?;
-    for name in ["setup.lock", "updates.lock"] {
-        let mode = fs::metadata(data.join(name))?.permissions().mode();
-        assert_eq!(mode & 0o777, 0o600);
-    }
     Ok(())
 }

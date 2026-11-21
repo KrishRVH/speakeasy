@@ -415,18 +415,16 @@ module unless a test file is named.
   full install is opt-in. Setup and update preparation report each step through
   [progress.rs](../crates/app/src/progress.rs), with a byte count only when the step's total is
   known.
-- **Reset**: [reset.rs](../crates/app/src/reset.rs) holds `setup.lock` and `updates.lock` in the
-  data root through deletion, refuses while another copy holds either, and deletes engines, models,
-  downloads, and updates folders, and deletes the settings file last, following a settings symlink
-  to its target. A linked folder loses only its link; Shows and the finished-guide marker stay, and
-  a repeated purge succeeds. Services pauses dictation, retires the runtime, and purges on an owned
-  thread that Quit drains; nothing resumes until it exits, and a failed purge restores the previous
-  settings. Settings refuses reset during setup, saves, or a held Windows update and refuses setup
-  while settings are unreadable or a reset runs. On success it adopts default settings as its saved
-  baseline and starts automatic setup; as on a new install, the first complete save enables
-  dictation, even if it was paused. [reset/tests.rs](../crates/app/src/reset/tests.rs) covers what
-  stays, refusals, failure order, and linked folders. Update preparation holds the same
-  `updates.lock` outside its removable cache; deleting payloads cannot replace a live lease.
+- **Reset**: [reset.rs](../crates/app/src/reset.rs) deletes the engines, models, downloads, and
+  updates folders, then the settings file, following a settings symlink to its target. Shows and the
+  finished-guide marker stay, and a repeated purge succeeds. Services pauses dictation, retires the
+  runtime, and purges on an owned thread that Quit drains; nothing resumes until it exits, and a
+  failed purge restores the previous settings. Settings refuses reset during setup, saves, or a held
+  Windows update and refuses setup while settings are unreadable or a reset runs. On success it
+  adopts default settings as its saved baseline and starts automatic setup; as on a new install, the
+  first complete save enables dictation, even if it was paused.
+  [reset/tests.rs](../crates/app/src/reset/tests.rs) covers what stays and that a failed purge keeps
+  the settings.
 - **Tray and status**: [tray.rs](../crates/app/src/tray.rs), [tray/](../crates/app/src/tray),
   [status.rs](../crates/app/src/status.rs),
   [platform/src/linux/tray.rs](../crates/platform/src/linux/tray.rs), and

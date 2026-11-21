@@ -31,7 +31,7 @@ use crate::{
     progress::Progress,
 };
 
-pub(crate) const LOCK: &str = "setup.lock";
+const LOCK: &str = "setup.lock";
 
 const PARAKEET: Download<'static> = Download {
     url: "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3/resolve/541d1f99c6b0c3cd0b11a95167540bb8edefd82b/parakeet-tdt-0.6b-v3.q8_0.gguf",
