@@ -228,6 +228,39 @@ async fn a_pending_show_whose_audio_denies_reads_stays_discardable() -> anyhow::
     Ok(())
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn a_saved_show_keeps_its_recovery_until_its_folder_is_synced() -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+    let root = tempfile::tempdir()?;
+    let interrupted = with_audio(root.path()).await?.interrupted()?;
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o300))?;
+    let saved = save_live(
+        root.path(),
+        interrupted.lock()?,
+        Narration::Text("synthetic narration".into()),
+        None,
+    );
+    let unsynced = store::checkpoint::list(root.path(), SystemTime::now());
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700))?;
+    let show = saved?;
+    assert!(
+        interrupted.directory().exists(),
+        "Recovery retired before the saved Show's folder was synced"
+    );
+    assert_eq!(unsynced.shows, []);
+    assert_eq!(
+        unsynced.problems.len(),
+        1,
+        "Cleanup retired an unsynced Show"
+    );
+    assert!(show.directory().exists());
+    assert_eq!(recoverable(root.path()), []);
+    store::sweep(root.path(), SystemTime::now())?;
+    assert!(!interrupted.directory().exists());
+    Ok(())
+}
+
 #[tokio::test]
 async fn damaged_audio_does_not_block_saving_intact_frames_and_narration() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;

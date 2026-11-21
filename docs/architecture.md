@@ -710,7 +710,9 @@ module unless a test file is named.
   valid voice prefix into the staged bundle before checkpoint retirement; audio too damaged to read
   is left out of voice rather than blocking the frames and narration. Publication binds durable
   checkpoint and bundle markers before rename; the marker distinguishes narrated publication so a
-  crash before checkpoint deletion cannot offer duplicate recovery. A retry's marker also names the
+  crash before checkpoint deletion cannot offer duplicate recovery. Publication and cleanup retire
+  a checkpoint only after syncing the Shows folder that holds its bundle, so recovery files never
+  outlive a rename the disk may lose. A retry's marker also names the
   pending bundle it supersedes, which stays the checkpoint's owner for recovery and deletion until
   the new bundle lands. If checkpoint storage never
   opens, in-memory footage remains publishable. A lost checkpoint completion stops publication; an

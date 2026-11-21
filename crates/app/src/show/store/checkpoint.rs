@@ -40,6 +40,9 @@ const UNMATCHED: &str =
 const UNRETRYABLE: &str = "This Show's kept audio is damaged, so its narration cannot be retried. \
                            The saved Show is unaffected; remove this recovery folder with \
                            speakeasy show discard.";
+const UNLANDED: &str = "Cannot confirm that the saved Show reached the disk, so its recovery \
+                        files stay. Check access to the Shows folder; cleanup retries within \
+                        the hour";
 const ROOT_LINKED: &str = "Show checkpoints must be a directory, not a link";
 
 const FILE_LIMIT: u64 = 1 << 30;
@@ -310,11 +313,31 @@ impl Checkpoint {
         {
             return Ok(true);
         }
-        Ok(match self.publication()? {
+        let superseded = match self.publication()? {
             Some(Publication::Narrated) => true,
             Some(Publication::Pending) => self.retryable().is_ok_and(|retryable| !retryable),
             None => false,
-        })
+        };
+        if superseded {
+            self.landed()?;
+        }
+        Ok(superseded)
+    }
+
+    pub(in crate::show) fn retire(self) -> anyhow::Result<()> {
+        self.landed()?;
+        self.discard()
+    }
+
+    fn landed(&self) -> anyhow::Result<()> {
+        sync_directory(self.shows()?).context(UNLANDED)
+    }
+
+    fn shows(&self) -> anyhow::Result<&Path> {
+        self.directory
+            .parent()
+            .and_then(Path::parent)
+            .context("Checkpoint has no Shows folder")
     }
 
     fn publication(&self) -> anyhow::Result<Option<Publication>> {
@@ -337,11 +360,7 @@ impl Checkpoint {
             superseded,
         } = marker;
         let id = self.id()?;
-        let shows = self
-            .directory
-            .parent()
-            .and_then(Path::parent)
-            .context("Checkpoint has no Shows folder")?;
+        let shows = self.shows()?;
         let candidates = iter::once((target, publication))
             .chain(superseded.map(|previous| (previous, Publication::Pending)));
         for (target, publication) in candidates {

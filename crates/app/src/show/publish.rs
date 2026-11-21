@@ -266,7 +266,7 @@ fn remove_published(checkpoint: Checkpoint) {
         clippy::let_underscore_must_use,
         reason = "Durable publication markers let expiry cleanup retry without offering duplicate recovery"
     )]
-    let _ = checkpoint.discard();
+    let _ = checkpoint.retire();
 }
 
 struct Persisted {
