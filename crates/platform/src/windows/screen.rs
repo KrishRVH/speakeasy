@@ -351,7 +351,6 @@ fn record(
     join_lasting_apartment()?;
     let mut exclusions = Exclusions::default();
     exclusions.refresh()?;
-    let mut clean_from = clean_after_now();
     let mut movie = movie::Movie::new(movie);
     let cadence = if movie.wants_frames() {
         interval.min(movie::INTERVAL)
@@ -363,9 +362,8 @@ fn record(
     let mut motion = Instant::now();
     let outcome = (|| {
         while !stopping.is_closed() && !events.is_closed() {
-            if capture.poll(clean_from)? && exclusions.refresh()? {
-                clean_from = clean_after_now();
-                capture.discard_pending();
+            if capture.poll()? && exclusions.refresh()? {
+                capture.discard_until_now();
             }
             let now = Instant::now();
             let mut movie_failed = false;
@@ -411,9 +409,40 @@ fn next_motion(motion: Instant, now: Instant) -> Instant {
         .unwrap_or(now)
 }
 
-fn clean_after_now() -> Instant {
-    let now = Instant::now();
-    now.checked_add(COMPOSITION_MARGIN).unwrap_or(now)
+struct Admission {
+    clean_from: Instant,
+    measured: bool,
+}
+
+impl Admission {
+    fn after(now: Instant) -> Self {
+        Self {
+            clean_from: now.checked_add(COMPOSITION_MARGIN).unwrap_or(now),
+            measured: true,
+        }
+    }
+
+    fn restart(&mut self, now: Instant) {
+        *self = Self::after(now);
+    }
+
+    fn observe(
+        &mut self,
+        observed: Result<Option<Part>, WindowGone>,
+        now: Instant,
+    ) -> Result<Option<Part>, WindowGone> {
+        let part = observed?;
+        match part {
+            None => self.measured = false,
+            Some(_) if !self.measured => self.restart(now),
+            Some(_) => {},
+        }
+        Ok(part)
+    }
+
+    fn admits(&self, composed: Instant) -> bool {
+        composed >= self.clean_from
+    }
 }
 
 struct Pacer {
@@ -452,6 +481,7 @@ struct Capture {
     longest_edge: u32,
     readback: Readback,
     pending: Option<PendingFrame>,
+    admission: Admission,
 }
 
 struct PendingFrame {
@@ -514,10 +544,11 @@ impl Capture {
             longest_edge,
             readback,
             pending: None,
+            admission: Admission::after(Instant::now()),
         })
     }
 
-    fn poll(&mut self, clean_from: Instant) -> Result<bool, Failure> {
+    fn poll(&mut self) -> Result<bool, Failure> {
         if self.item_closed.is_closed() {
             return Err(Failure::DisplayLost);
         }
@@ -528,7 +559,12 @@ impl Capture {
         if unsafe { self.device.GetDeviceRemovedReason() }.is_err() {
             return Err(Failure::DeviceLost);
         }
-        let part = current_part(self.target)?;
+        let part = self
+            .admission
+            .observe(current_part(self.target), Instant::now())?;
+        if part.is_none() {
+            self.pending = None;
+        }
         let mut newest = None;
         while let Some(frame) = self.next_frame()? {
             newest = Some(frame);
@@ -543,7 +579,7 @@ impl Capture {
             return Err(Failure::DisplayChanged);
         }
         let captured = composed_at(frame.SystemRelativeTime()?);
-        if captured < clean_from {
+        if !self.admission.admits(captured) {
             return Ok(false);
         }
         self.pending = Some(PendingFrame {
@@ -562,7 +598,8 @@ impl Capture {
         }
     }
 
-    fn discard_pending(&mut self) {
+    fn discard_until_now(&mut self) {
+        self.admission.restart(Instant::now());
         self.pending = None;
     }
 
@@ -829,5 +866,47 @@ mod tests {
         pacer.sent(at(250));
         assert!(!pacer.due(at(449)), "Spacing runs from the last frame sent");
         assert!(pacer.due(at(450)));
+    }
+
+    #[test]
+    fn unreadable_bounds_keep_a_window_show_and_crop_only_frames_composed_after_they_return() {
+        let start = Instant::now();
+        let at = |milliseconds| {
+            start
+                .checked_add(Duration::from_millis(milliseconds))
+                .unwrap()
+        };
+        let before = Part::WHOLE;
+        let after = Part {
+            left: 0.5,
+            ..Part::WHOLE
+        };
+        let mut admission = Admission::after(at(0));
+        assert_eq!(
+            admission.observe(Ok(Some(before)), at(100)),
+            Ok(Some(before))
+        );
+        assert!(admission.admits(at(100)));
+        assert_eq!(
+            admission.observe(Ok(None), at(200)),
+            Ok(None),
+            "Unreadable bounds ended the Show"
+        );
+        assert_eq!(admission.observe(Ok(Some(after)), at(400)), Ok(Some(after)));
+        assert!(
+            !admission.admits(at(300)),
+            "A frame composed while the bounds were unreadable took the new rectangle"
+        );
+        assert!(!admission.admits(at(420)));
+        assert!(admission.admits(at(450)));
+        assert_eq!(admission.observe(Ok(Some(after)), at(500)), Ok(Some(after)));
+        assert!(
+            admission.admits(at(460)),
+            "Steady geometry moved the composition cutoff"
+        );
+        assert_eq!(
+            admission.observe(Err(WindowGone::Closed), at(600)),
+            Err(WindowGone::Closed)
+        );
     }
 }

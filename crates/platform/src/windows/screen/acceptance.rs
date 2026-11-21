@@ -258,13 +258,11 @@ fn a_window_capture_stops_once_its_window_closes_or_goes_off_screen() -> anyhow:
             region: Region::Window(followed, part),
         };
         let (_stop, stopping) = async_channel::bounded::<Infallible>(1);
-        let started = Instant::now();
         let mut capture = Capture::start(target, INTERVAL, u32::MAX, &stopping)?;
-        read_next(&mut capture, started)?.context("No frame arrived")?;
+        read_next(&mut capture)?.context("No frame arrived")?;
 
         let _remaining = departure.take_off_screen(subject)?;
-        let cutoff = Instant::now() + Duration::from_secs(1);
-        let stopped = capture.poll(cutoff);
+        let stopped = capture.poll();
         assert!(
             matches!(stopped, Err(Failure::Window(reason)) if reason == gone),
             "{departure:?} left capture at {stopped:?}"
@@ -586,15 +584,14 @@ const fn whole(display: screen::Display) -> Target {
 fn unfiltered_frame(target: Target, longest_edge: u32) -> anyhow::Result<Frame> {
     join_lasting_apartment()?;
     let (_stop, stopping) = async_channel::bounded::<Infallible>(1);
-    let started = Instant::now();
     let mut capture = Capture::start(target, INTERVAL, longest_edge, &stopping)?;
-    read_next(&mut capture, started)?.context("No frame arrived")
+    read_next(&mut capture)?.context("No frame arrived")
 }
 
-fn read_next(capture: &mut Capture, since: Instant) -> Result<Option<Frame>, Failure> {
+fn read_next(capture: &mut Capture) -> Result<Option<Frame>, Failure> {
     let deadline = Instant::now().checked_add(FIRST_FRAME).unwrap();
     while Instant::now() < deadline {
-        if capture.poll(since)?
+        if capture.poll()?
             && let Some(frame) = capture.read_pending()?
         {
             return Ok(Some(frame));
