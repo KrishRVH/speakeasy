@@ -1348,6 +1348,11 @@ impl WaylandWindowStatePtr {
                     return;
                 }
             }
+            // Speakeasy patch: the appearance observer can have replaced the role.
+            if self.state.borrow().surface_state.decoration().map(Proxy::id).as_ref() != Some(role)
+            {
+                return;
+            }
             update_window(self.state.borrow_mut());
             self.request_redraw();
         }
@@ -1434,8 +1439,12 @@ impl WaylandWindowStatePtr {
                 if let Some(mut should_close) = cb.should_close.take() {
                     let result = (should_close)();
                     cb.should_close = Some(should_close);
+                    drop(cb);
+                    // Speakeasy patch: the close observer can have replaced the role.
+                    let result = result
+                        && self.state.borrow().surface_state.toplevel().map(Proxy::id).as_ref()
+                            == Some(role);
                     if result {
-                        drop(cb);
                         self.close();
                     }
                     result
