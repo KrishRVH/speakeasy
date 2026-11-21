@@ -196,10 +196,6 @@ Movie reads exclude writers while a validated prefix is in use. NTFS refuses to 
 directory above an open directory handle, so a root an MCP server holds for its session pins its
 ancestors until the server exits.
 
-`open_lock` gives Unix lease files mode 0600, refuses links and multiply linked files, and narrows
-an older file's mode. Narrowing cannot revoke a descriptor another user opened before it, and macOS
-ACL entries the file inherited from its folder still apply.
-
 ## Linux desktop and transfer ownership
 
 Owners: `crates/platform/src/linux.rs`, `linux/ei.rs`, `linux/portal.rs`,

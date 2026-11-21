@@ -50,7 +50,7 @@ pub use self::{
         WindowsShortcut, attach_stdio, copy_text, prepare, reduced_motion, secure_input,
         show_startup_error,
     },
-    directory::{ReadDirectory, open_lock},
+    directory::ReadDirectory,
     image::BgraImage,
     input::{IdleInput, Input, InputSender, InsertPermit, Taps},
     insertion::{Delivery, Enter, FocusReport, Inserted, Inserter, OwnFocus},

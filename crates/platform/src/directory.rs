@@ -107,29 +107,5 @@ fn not_a_directory() -> io::Error {
     io::Error::new(io::ErrorKind::NotADirectory, "not a plain directory")
 }
 
-pub fn open_lock(path: &Path) -> io::Result<File> {
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true).write(true).create(true).truncate(false);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _};
-
-        let file = options
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-            .open(path)?;
-        let metadata = file.metadata()?;
-        if !metadata.is_file() || metadata.nlink() != 1 {
-            return Err(io::Error::other("lock must be a private regular file"));
-        }
-        if metadata.permissions().mode() & 0o777 != 0o600 {
-            file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-        }
-        Ok(file)
-    }
-    #[cfg(windows)]
-    options.open(path)
-}
-
 #[cfg(test)]
 mod tests;

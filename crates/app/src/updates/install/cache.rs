@@ -14,7 +14,7 @@ const CACHE_ACCESS: &str = "Cannot access the update cache. Check free space and
 pub(super) fn acquire(root: &Path) -> anyhow::Result<File> {
     fs::create_dir_all(root)
         .context("Cannot create the update cache. Check free space and folder access.")?;
-    let lock = speakeasy_platform::open_lock(&root.join(LOCK)).context(CACHE_ACCESS)?;
+    let lock = crate::paths::open_lock(&root.join(LOCK)).context(CACHE_ACCESS)?;
 
     match lock.try_lock() {
         Ok(()) => {},

@@ -227,7 +227,7 @@ impl Installation {
 
     async fn acquire(root: &Path, progress: &watch::Sender<Progress>) -> anyhow::Result<Self> {
         fs::create_dir_all(root).map_err(file_error(root))?;
-        let lock = speakeasy_platform::open_lock(&root.join(LOCK)).map_err(file_error(root))?;
+        let lock = crate::paths::open_lock(&root.join(LOCK)).map_err(file_error(root))?;
         loop {
             match lock.try_lock() {
                 Ok(()) => {
