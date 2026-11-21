@@ -17,10 +17,8 @@ Tokio's blocking pool, while Drop always joins synchronously. The blocking closu
 thread owner, so cancelling a join cannot detach native cleanup. `OwnedThread::join` reports a
 worker panic, a missing Tokio runtime, or a failed join task without exposing panic content. A
 missing runtime still triggers the synchronous fallback. `StoppableThread` closes its stop lane
-before joining. Stop requests do not acknowledge cleanup. A body whose native resources outlive it
-retains a clone of its stop receiver with them, so the thread reports that it was not released after
-the body returns. Owners that depend on thread-local destruction await the full join before opening
-replacements.
+before joining. Stop requests do not acknowledge cleanup. Owners that depend on thread-local
+destruction await the full join before opening replacements.
 
 The Show recorder explicitly delivers its terminal outcome on its dedicated native thread. Its guard
 delivers an unwind failure only if normal delivery has not started. Both paths hide the canvas and
@@ -374,10 +372,12 @@ its attempt stopped waiting still confirms every later attempt. Each stop waits 
 for its completion or the did-stop signal, whichever comes first. An unconfirmed stop is reported
 and retried after 0.1, 0.4, 1 and 2 seconds. If none confirms, the stream, output and queue stay
 retained for the life of the process, since releasing them could leave capture calling freed
-objects; the closed frame lane makes the output discard every sample. The capture thread's stop
-receiver stays retained with them, so `ScreenCapture::stopped` resolves `Unstopped`. The recorder
-forwards that result to the session owner outside the frame lane. From then on the owner adds the
-quit warning to every status message and refuses screen recording until Speakeasy restarts. A stream
+objects; the closed frame lane makes the output discard every sample. Retaining them latches a
+process-wide flag before the capture thread exits, whether the recorder awaited the stop or dropped
+the capture after a failed start. From then on `ScreenCapture::available` returns `Unstopped` and
+`ScreenCapture::start` refuses, and every session owner, including one created by Pause and Resume
+or a shortcut change, reads the flag when it presents status: it adds the quit warning to every
+status message and refuses a Show before opening the picker until Speakeasy restarts. A stream
 dropped before confirming cessation requests stop once more first. Failure notification precedes
 potentially blocking cleanup. Callback samples are borrowed only during the call; copied bounded
 BGRA leaves the callback. Native image buffers stay locked through reads. The stream's bounded

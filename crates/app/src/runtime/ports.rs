@@ -66,7 +66,6 @@ pub(crate) enum ShowEvent {
     MovieStopped(SessionId),
     Finished(SessionId, anyhow::Result<Box<Footage>>),
     Unchosen(SessionId, Unchosen),
-    Unstopped,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -176,6 +175,8 @@ pub(crate) trait Ports: Send + 'static {
     type Awake: Send + 'static;
 
     fn prepares_desktop(&self) -> bool;
+
+    fn screen_unstopped(&self) -> bool;
 
     fn keep_awake(&self, keep: Keep) -> Option<Self::Awake>;
 

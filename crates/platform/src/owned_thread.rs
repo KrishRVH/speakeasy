@@ -95,15 +95,6 @@ impl StoppableThread {
         self.thread.exited()
     }
 
-    pub(crate) fn released(&self) -> impl Future<Output = bool> + Send + use<> {
-        let exited = self.thread.exited();
-        let stop = self.stop.clone();
-        async move {
-            exited.await;
-            stop.receiver_count() == 0
-        }
-    }
-
     #[must_use]
     pub fn is_finished(&self) -> bool {
         self.thread.is_finished()
@@ -245,25 +236,6 @@ mod tests {
             Ok(()),
             "Dropping the thread did not return"
         );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn only_a_body_that_leaves_no_stop_request_behind_is_released() -> anyhow::Result<()> {
-        let returned = StoppableThread::spawn("returns", drop)?;
-        returned.request_stop();
-        assert!(tokio::time::timeout(PATIENCE, returned.released()).await?);
-
-        let (kept, keeper) = mpsc::channel();
-        let outlived = StoppableThread::spawn("outlived", move |stopping| {
-            kept.send(stopping).unwrap();
-        })?;
-        outlived.request_stop();
-        assert!(
-            !tokio::time::timeout(PATIENCE, outlived.released()).await?,
-            "A stop request kept past the body counted as released"
-        );
-        drop(keeper);
         Ok(())
     }
 }

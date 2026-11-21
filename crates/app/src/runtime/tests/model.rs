@@ -64,6 +64,10 @@ impl Ports for ModelPorts {
         false
     }
 
+    fn screen_unstopped(&self) -> bool {
+        false
+    }
+
     fn keep_awake(&self, _: speakeasy_platform::Keep) -> Option<Self::Awake> {
         None
     }

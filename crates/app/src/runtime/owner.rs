@@ -99,7 +99,6 @@ struct World<P: Ports> {
     worker: Worker<P::Speech>,
     microphone: Device<P::Microphone>,
     screen: Device<P::Screen>,
-    screen_unstopped: bool,
     delivery: Option<JoinHandle<Delivered>>,
     retiring: Vec<(SessionId, JoinHandle<Delivered>)>,
     snapshots: watch::Sender<Snapshot>,
@@ -161,7 +160,6 @@ impl<P: Ports> Owner<P> {
             worker: Worker::default(),
             microphone: Device::Free,
             screen: Device::Free,
-            screen_unstopped: false,
             delivery: None,
             retiring: Vec::new(),
             snapshots,
@@ -251,7 +249,7 @@ impl<P: Ports> Owner<P> {
                 }
                 capture(event)
             },
-            Wake::Show(event) => return world.screening(event),
+            Wake::Show(event) => screening(event),
             Wake::Worker(completion) => Event::Worker(completion),
             Wake::Delivered(result) => {
                 world.delivery = None;
@@ -328,7 +326,7 @@ impl<P: Ports> Owner<P> {
         let machine = &self.machine;
         let world = &self.world;
         let mut message = outcome::message(machine.outcome(), machine.notice());
-        if world.screen_unstopped {
+        if world.ports.screen_unstopped() {
             outcome::warn_unstopped(&mut message);
         }
         let (ending, narration_lost) = match machine.outcome() {
@@ -480,7 +478,7 @@ impl<P: Ports> Env<Native> for World<P> {
         scope: Scope,
         frames: Option<show::FrameLog>,
     ) -> Result<(), String> {
-        if self.screen_unstopped {
+        if self.ports.screen_unstopped() {
             return Err(SCREEN_UNSTOPPED.into());
         }
         let recorder = self
@@ -809,26 +807,20 @@ fn capture(event: CaptureEvent) -> Event<Native> {
     Event::Capture(session, capture)
 }
 
-impl<P: Ports> World<P> {
-    fn screening(&mut self, event: ShowEvent) -> Option<Event<Native>> {
-        let (session, screening) = match event {
-            ShowEvent::CheckpointLost(session) => (session, Screening::CheckpointLost),
-            ShowEvent::MovieStopped(session) => (session, Screening::MovieStopped),
-            ShowEvent::Finished(session, result) => (
-                session,
-                Screening::Finished(result.map_err(|error| Stopped {
-                    unwound: error.is::<Unwound>(),
-                    text: format!("{error:#}"),
-                })),
-            ),
-            ShowEvent::Unchosen(session, unchosen) => (session, Screening::Unchosen(unchosen)),
-            ShowEvent::Unstopped => {
-                self.screen_unstopped = true;
-                return None;
-            },
-        };
-        Some(Event::Show(session, screening))
-    }
+fn screening(event: ShowEvent) -> Event<Native> {
+    let (session, screening) = match event {
+        ShowEvent::CheckpointLost(session) => (session, Screening::CheckpointLost),
+        ShowEvent::MovieStopped(session) => (session, Screening::MovieStopped),
+        ShowEvent::Finished(session, result) => (
+            session,
+            Screening::Finished(result.map_err(|error| Stopped {
+                unwound: error.is::<Unwound>(),
+                text: format!("{error:#}"),
+            })),
+        ),
+        ShowEvent::Unchosen(session, unchosen) => (session, Screening::Unchosen(unchosen)),
+    };
+    Event::Show(session, screening)
 }
 
 fn keep_presented(snapshots: &watch::Sender<Snapshot>, show: &SavedShow) {

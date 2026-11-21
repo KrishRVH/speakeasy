@@ -89,15 +89,25 @@ async fn cancelling_a_show_frees_the_screen_for_the_next() -> anyhow::Result<()>
     h.close().await
 }
 
+async fn refuses_a_show(h: &mut Harness) -> anyhow::Result<()> {
+    h.input(Input::Press);
+    h.phase(Phase::Recording).await?;
+    receive(&h.captures).await?;
+    h.input(Input::Show(Scope::Screen));
+    h.phase(Phase::Error).await?;
+    ensure!(h.shows.try_recv().is_err(), "Screen capture started again");
+    Ok(())
+}
+
 #[tokio::test(start_paused = true)]
-async fn a_screen_that_never_confirmed_stopping_warns_and_refuses_the_next_show()
+async fn a_screen_that_never_confirmed_stopping_refuses_shows_for_every_later_owner()
 -> anyhow::Result<()> {
     let unstopped = speakeasy_platform::Unstopped.to_string();
-    let mut h = Harness::new()?;
-    let (_, _, screen) = start_show(&mut h).await?;
-    screen.send(ShowEvent::Unstopped).await?;
-    h.observe(|snapshot| snapshot.message.contains(&unstopped))
-        .await?;
+    let (retain, retained) = watch::channel(false);
+    let unstoppable = |ports: &mut FakePorts| ports.screen_unstopped = retained.clone();
+    let mut h = Harness::with_ports(Config::default(), unstoppable)?;
+    start_show(&mut h).await?;
+    retain.send_replace(true);
     finish_show(&h);
     h.transcribe_next_as("look here").await?;
     h.phase(Phase::Copied).await?;
@@ -107,14 +117,15 @@ async fn a_screen_that_never_confirmed_stopping_warns_and_refuses_the_next_show(
         copied.ends_with(&unstopped),
         "The warning left the Show's outcome"
     );
-
-    h.input(Input::Press);
-    h.phase(Phase::Recording).await?;
-    receive(&h.captures).await?;
-    h.input(Input::Show(Scope::Screen));
-    h.phase(Phase::Error).await?;
-    assert!(h.shows.try_recv().is_err(), "A replacement capture started");
+    refuses_a_show(&mut h).await?;
     assert!(h.snapshot().message.ends_with(&unstopped));
+    h.close().await?;
+
+    let mut h = Harness::with_ports(Config::default(), unstoppable)?;
+    h.observe(|snapshot| snapshot.message == unstopped)
+        .await
+        .map_err(|_elapsed| anyhow!("A replacement owner dropped the warning"))?;
+    refuses_a_show(&mut h).await?;
     h.close().await
 }
 

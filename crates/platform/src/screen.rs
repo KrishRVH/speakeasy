@@ -3,7 +3,9 @@ pub(crate) mod geometry;
 
 use std::{
     collections::HashMap,
-    fmt, thread,
+    fmt,
+    sync::atomic::{AtomicBool, Ordering},
+    thread,
     time::{Duration, Instant},
 };
 
@@ -229,7 +231,28 @@ impl fmt::Display for Unstopped {
 
 impl std::error::Error for Unstopped {}
 
+#[expect(
+    clippy::disallowed_types,
+    reason = "A capture that never confirmed stopping keeps its native stream for the life of the process, beyond the session owner that started it and any owner that replaces it, so the refusal to start another capture belongs to the process"
+)]
+static UNSTOPPED: AtomicBool = AtomicBool::new(false);
+
+impl Unstopped {
+    #[cfg(target_os = "macos")]
+    pub(crate) fn remember() {
+        UNSTOPPED.store(true, Ordering::Relaxed);
+    }
+}
+
 impl ScreenCapture {
+    pub fn available() -> Result<(), Unstopped> {
+        if UNSTOPPED.load(Ordering::Relaxed) {
+            Err(Unstopped)
+        } else {
+            Ok(())
+        }
+    }
+
     pub fn start(
         target: Target,
         interval: Duration,
@@ -237,6 +260,7 @@ impl ScreenCapture {
         events: Sender<ScreenEvent>,
         movie: Option<crate::MovieTarget>,
     ) -> anyhow::Result<Self> {
+        Self::available()?;
         let thread = StoppableThread::spawn("screen-capture", move |stopping| {
             native::capture(target, interval, longest_edge, &events, &stopping, movie);
         })?;
@@ -247,15 +271,8 @@ impl ScreenCapture {
         self.thread.request_stop();
     }
 
-    pub fn stopped(&self) -> impl Future<Output = Result<(), Unstopped>> + Send + use<> {
-        let released = self.thread.released();
-        async move {
-            if released.await {
-                Ok(())
-            } else {
-                Err(Unstopped)
-            }
-        }
+    pub fn stopped(&self) -> impl Future<Output = ()> + Send + use<> {
+        self.thread.stopped()
     }
 }
 

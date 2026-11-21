@@ -210,7 +210,7 @@ fn record(
                 part,
                 framing,
                 lanes.canvas,
-                (id, events.clone()),
+                (id, events),
             );
             if let Some(writer) = &mut log
                 && !writer.begin(JOURNAL_BUDGET, surface(display.size, part), framing)
@@ -241,7 +241,7 @@ fn record(
                 frames,
                 samples,
                 layouts,
-                stop: stop(&capture, &pointer, watch.as_ref(), &events),
+                stop: stop(&capture, &pointer, watch.as_ref()),
             };
             take.log = log;
             let footage = take.run(lanes, sources).await?;
@@ -677,30 +677,18 @@ fn first_frame_deadline(limit: Option<tokio::time::Instant>) -> tokio::time::Ins
     limit.map_or(waited, |limit| waited.min(limit))
 }
 
-async fn stop(
-    capture: &ScreenCapture,
-    pointer: &PointerMonitor,
-    watch: Option<&WindowWatch>,
-    owner: &Sender<ShowEvent>,
-) {
+async fn stop(capture: &ScreenCapture, pointer: &PointerMonitor, watch: Option<&WindowWatch>) {
     capture.request_stop();
     pointer.request_stop();
     let watched = watch.map(|watch| {
         watch.request_stop();
         watch.stopped()
     });
-    let (retired, (), ()) = tokio::join!(capture.stopped(), pointer.stopped(), async {
+    tokio::join!(capture.stopped(), pointer.stopped(), async {
         if let Some(watched) = watched {
             watched.await;
         }
     });
-    if retired.is_err() {
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "A departed owner starts no further screen capture to refuse"
-        )]
-        let _ = owner.send(ShowEvent::Unstopped).await;
-    }
 }
 
 #[cfg(test)]

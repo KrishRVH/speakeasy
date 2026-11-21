@@ -86,6 +86,7 @@ struct FakePorts {
     insertion: Option<Gate<InsertPermit>>,
     insert_results: Option<Receiver<Inserted>>,
     screen_error: Option<&'static str>,
+    screen_unstopped: watch::Receiver<bool>,
     screen_report: ScreenReport,
     screen_retirement: Option<Gate<()>>,
     publication: Option<Gate<()>>,
@@ -168,6 +169,7 @@ impl FakePorts {
             insertion: None,
             insert_results: None,
             screen_error: None,
+            screen_unstopped: watch::channel(false).1,
             screen_report: ScreenReport::Footage,
             screen_retirement: None,
             publication: None,
@@ -229,6 +231,10 @@ impl Ports for FakePorts {
 
     fn prepares_desktop(&self) -> bool {
         self.desktop_pending
+    }
+
+    fn screen_unstopped(&self) -> bool {
+        *self.screen_unstopped.borrow()
     }
 
     fn keep_awake(&self, keep: speakeasy_platform::Keep) -> Option<Self::Awake> {

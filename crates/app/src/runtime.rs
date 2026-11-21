@@ -446,6 +446,10 @@ impl Ports for Desktop {
         true
     }
 
+    fn screen_unstopped(&self) -> bool {
+        speakeasy_platform::ScreenCapture::available().is_err()
+    }
+
     fn keep_awake(&self, keep: Keep) -> Option<Self::Awake> {
         speakeasy_platform::Awake::hold(keep)
     }
