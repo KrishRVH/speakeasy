@@ -22,6 +22,7 @@ const EVENT_DEVICE_REMOVED: i32 = 6;
 const EVENT_DEVICE_PAUSED: i32 = 7;
 const EVENT_DEVICE_RESUMED: i32 = 8;
 const EVENT_KEYBOARD_MODIFIERS: i32 = 9;
+const EVENT_PONG: i32 = 90;
 const CAPABILITY_KEYBOARD: i32 = 1 << 2;
 const CAPABILITY_TEXT: i32 = 1 << 6;
 const KEYMAP_XKB: i32 = 1;
@@ -42,13 +43,15 @@ struct EiSeat([u8; 0]);
 struct EiDevice([u8; 0]);
 #[repr(C)]
 struct EiKeymap([u8; 0]);
+#[repr(C)]
+struct EiPing([u8; 0]);
 
 type Unref<T> = unsafe extern "C" fn(*mut T) -> *mut T;
 type TextInput = unsafe extern "C" fn(*mut EiDevice, *const u8, usize);
 
 macro_rules! api {
     ($($name:ident: $kind:ty),+ $(,)?) => {
-        pub(super) struct Api { $($name: $kind,)+ text_utf8: Option<TextInput> }
+        pub(super) struct Api { $($name: $kind,)+ text_utf8: Option<TextInput>, ping: Option<PingApi> }
         impl Api {
             pub(super) fn load() -> anyhow::Result<Self> {
                 unsafe {
@@ -62,7 +65,8 @@ macro_rules! api {
                         .get::<TextInput>(b"ei_device_text_utf8_with_length\0")
                         .ok()
                         .map(|symbol| *symbol);
-                    Ok(Self { $($name,)+ text_utf8 })
+                    let ping = PingApi::load(&library);
+                    Ok(Self { $($name,)+ text_utf8, ping })
                 }
             }
         }
@@ -98,6 +102,35 @@ api! {
     ei_event_keyboard_get_xkb_mods_latched: unsafe extern "C" fn(*mut EiEvent) -> u32,
     ei_event_keyboard_get_xkb_mods_locked: unsafe extern "C" fn(*mut EiEvent) -> u32,
     ei_event_keyboard_get_xkb_group: unsafe extern "C" fn(*mut EiEvent) -> u32,
+}
+
+#[derive(Clone, Copy)]
+struct PingApi {
+    create: unsafe extern "C" fn(*mut Ei) -> *mut EiPing,
+    send: unsafe extern "C" fn(*mut EiPing),
+    unref: Unref<EiPing>,
+    answered: unsafe extern "C" fn(*mut EiEvent) -> *mut EiPing,
+}
+
+impl PingApi {
+    unsafe fn load(library: &Library) -> Option<Self> {
+        unsafe {
+            Some(Self {
+                create: *library
+                    .get::<unsafe extern "C" fn(*mut Ei) -> *mut EiPing>(b"ei_new_ping\0")
+                    .ok()?,
+                send: *library
+                    .get::<unsafe extern "C" fn(*mut EiPing)>(b"ei_ping\0")
+                    .ok()?,
+                unref: *library.get::<Unref<EiPing>>(b"ei_ping_unref\0").ok()?,
+                answered: *library
+                    .get::<unsafe extern "C" fn(*mut EiEvent) -> *mut EiPing>(
+                        b"ei_event_pong_get_ping\0",
+                    )
+                    .ok()?,
+            })
+        }
+    }
 }
 
 pub(super) struct Sender {
@@ -152,8 +185,7 @@ impl Sender {
 
     fn paste_target(&self) -> Result<(NonNull<EiDevice>, PasteChord<u32>), PasteBlocked> {
         let keyboard = self.keyboard.as_ref().ok_or(PasteBlocked::NoKeyboard)?;
-        let chord = paste_readiness(keyboard.device.resumed, keyboard.paste.as_ref())?;
-        Ok((keyboard.device.handle.raw, chord))
+        Ok((keyboard.device.handle.raw, keyboard.readiness()?))
     }
 
     pub(super) fn ready_text<'t>(
@@ -189,6 +221,7 @@ impl Sender {
                 EVENT_DEVICE_PAUSED => self.set_resumed(event.device, false),
                 EVENT_DEVICE_RESUMED => self.set_resumed(event.device, true),
                 EVENT_KEYBOARD_MODIFIERS => self.update_modifiers(&event),
+                EVENT_PONG => self.settle(&event),
                 _ => {},
             }
         }
@@ -239,6 +272,7 @@ impl Sender {
             if (self.api.ei_device_has_capability)(device.as_ptr(), CAPABILITY_KEYBOARD) {
                 self.keyboard = Some(Keyboard {
                     device: Device::acquire(&self.api, device),
+                    settling: None,
                     paste: device_keymap(&self.api, device.as_ptr())
                         .and_then(|keymap| PasteLayouts::new(&keymap, self.keys))
                         .map(|layouts| KeymapPaste {
@@ -263,13 +297,23 @@ impl Sender {
         if let Some(keyboard) = &mut self.keyboard
             && keyboard.device.is(device)
         {
-            keyboard.set_resumed(resumed);
+            let settling = resumed.then(|| ping(&self.api, &self.context)).flatten();
+            keyboard.set_resumed(resumed, settling);
         }
         if let Some(text) = &mut self.text
             && text.is(device)
         {
             text.resumed = resumed;
         }
+    }
+
+    fn settle(&mut self, event: &Event) {
+        let (Some(calls), Some(keyboard)) = (self.api.ping, &mut self.keyboard) else {
+            return;
+        };
+        keyboard.settle(NonNull::new(unsafe {
+            (calls.answered)(event.handle.as_ptr())
+        }));
     }
 
     fn update_modifiers(&mut self, event: &Event) {
@@ -299,6 +343,16 @@ impl Sender {
         self.sequence = self.sequence.wrapping_add(1);
         self.sequence
     }
+}
+
+fn ping(api: &Api, context: &Ref<Ei>) -> Option<Ref<EiPing>> {
+    let calls = api.ping?;
+    let ping = Ref {
+        raw: NonNull::new(unsafe { (calls.create)(context.as_ptr()) })?,
+        unref: calls.unref,
+    };
+    unsafe { (calls.send)(ping.as_ptr()) };
+    Some(ping)
 }
 
 impl Drop for Sender {
@@ -408,15 +462,31 @@ impl ReadyText<'_, '_> {
 
 struct Keyboard {
     device: Device,
+    settling: Option<Ref<EiPing>>,
     paste: Option<KeymapPaste>,
 }
 
 impl Keyboard {
-    fn set_resumed(&mut self, resumed: bool) {
+    fn readiness(&self) -> Result<PasteChord<u32>, PasteBlocked> {
+        paste_readiness(
+            self.device.resumed && self.settling.is_none(),
+            self.paste.as_ref(),
+        )
+    }
+
+    fn set_resumed(&mut self, resumed: bool, settling: Option<Ref<EiPing>>) {
         self.device.resumed = resumed;
+        self.settling = settling;
         if !resumed && let Some(paste) = &mut self.paste {
             paste.active_mask = 0;
         }
+    }
+
+    fn settle(&mut self, answered: Option<NonNull<EiPing>>) {
+        drop(
+            self.settling
+                .take_if(|settling| Some(settling.raw) == answered),
+        );
     }
 }
 
@@ -714,10 +784,13 @@ mod tests {
     }
 
     #[test]
-    fn pausing_lifts_the_keyboard_modifiers_and_resuming_keeps_the_reported_ones() {
-        unsafe extern "C" fn keep(device: *mut EiDevice) -> *mut EiDevice {
-            device
+    fn a_resumed_keyboard_waits_for_its_ping_and_pausing_lifts_the_modifiers() {
+        unsafe extern "C" fn keep<T>(raw: *mut T) -> *mut T {
+            raw
         }
+        let mut other = 0_u8;
+        let (first, second) = (NonNull::dangling(), NonNull::from(&mut other).cast());
+        let ping = |raw| Some(Ref { raw, unref: keep });
         let mut keyboard = Keyboard {
             device: Device {
                 handle: Ref {
@@ -726,24 +799,42 @@ mod tests {
                 },
                 resumed: false,
             },
+            settling: None,
             paste: Some(KeymapPaste {
                 group: 0,
                 ..held_keymap()
             }),
         };
-        let readiness =
-            |keyboard: &Keyboard| paste_readiness(keyboard.device.resumed, keyboard.paste.as_ref());
-        keyboard.set_resumed(true);
+        keyboard.set_resumed(true, ping(first));
         assert_eq!(
-            readiness(&keyboard),
+            keyboard.readiness(),
+            Err(PasteBlocked::NoKeyboard),
+            "A resumed keyboard pasted before the compositor answered its ping"
+        );
+        keyboard.settle(Some(second));
+        assert_eq!(
+            keyboard.readiness(),
+            Err(PasteBlocked::NoKeyboard),
+            "Another ping's answer settled the keyboard"
+        );
+        keyboard.settle(Some(first));
+        assert_eq!(
+            keyboard.readiness(),
             Err(PasteBlocked::ShortcutKeys),
             "Resuming forgot the modifiers the compositor reported"
         );
-        keyboard.set_resumed(false);
-        assert_eq!(readiness(&keyboard), Err(PasteBlocked::NoKeyboard));
-        keyboard.set_resumed(true);
+        keyboard.set_resumed(false, None);
+        assert_eq!(keyboard.readiness(), Err(PasteBlocked::NoKeyboard));
+        keyboard.set_resumed(true, ping(second));
+        keyboard.settle(Some(first));
         assert_eq!(
-            readiness(&keyboard),
+            keyboard.readiness(),
+            Err(PasteBlocked::NoKeyboard),
+            "An earlier resume's answer settled a later one"
+        );
+        keyboard.settle(Some(second));
+        assert_eq!(
+            keyboard.readiness(),
             Ok(CHORD),
             "Modifiers held when the keyboard paused still blocked paste after it resumed"
         );
