@@ -166,27 +166,40 @@ fn a_paste_tells_failure_before_its_v_press_from_uncertain_delivery_after_it() {
 }
 
 #[test]
-fn focus_moving_to_speakeasy_during_the_last_clipboard_check_refuses_the_paste()
--> anyhow::Result<()> {
+fn focus_moving_to_speakeasy_during_a_clipboard_check_refuses_the_paste() -> anyhow::Result<()> {
     let (events, _received) = async_channel::bounded(1);
     let input = InputSender::new(events);
-    let permit = input.begin().context("Recording")?;
-    let report = crate::FocusReport::default();
-    let request = paste_request(&permit, report.subscribe());
-    let refused = authorize_paste(
-        &request,
-        &mut (),
-        |()| {
-            report.settle(7, true);
-            Ok(true)
-        },
-        |()| true,
-        |()| true,
-        |()| Ok(false),
-        |()| Ok(true),
-    )?;
-    assert_eq!(refused.break_value(), Delivery::Paste.check_focus(false));
-    assert!(permit.commit(), "A refused paste spent its authority");
+    for during_owner_check in [false, true] {
+        let permit = input.begin().context("Recording")?;
+        let report = crate::FocusReport::default();
+        let request = paste_request(&permit, report.subscribe());
+        let focus_during = |owner_check| {
+            if owner_check == during_owner_check {
+                report.settle(7, true);
+            }
+        };
+        let refused = authorize_paste(
+            &request,
+            &mut (),
+            |()| {
+                focus_during(false);
+                Ok(true)
+            },
+            |()| true,
+            |()| true,
+            |()| Ok(false),
+            |()| {
+                focus_during(true);
+                Ok(true)
+            },
+        )?;
+        assert_eq!(
+            refused.break_value(),
+            Delivery::Paste.check_focus(false),
+            "Focus that reached Speakeasy during a clipboard check went unseen (owner check: {during_owner_check})"
+        );
+        assert!(permit.commit(), "A refused paste spent its authority");
+    }
     Ok(())
 }
 
