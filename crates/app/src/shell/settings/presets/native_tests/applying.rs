@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{Context as _, ensure};
+use anyhow::ensure;
 use speakeasy_core::machine::{ModelState, Phase};
 use speakeasy_platform::Input;
 

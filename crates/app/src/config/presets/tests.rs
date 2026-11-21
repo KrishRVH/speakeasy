@@ -101,6 +101,29 @@ fn inactive_paths_survive_save_and_only_a_loaded_missing_model_prevents_applicat
 }
 
 #[test]
+fn settings_with_a_preset_saved_without_a_model_still_load() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("settings.json");
+    let held = valid_config(directory.path())?;
+    let mut incomplete = serde_json::to_value(Preset::capture("Earlier", &held)?)?;
+    incomplete["model"] = "".into();
+    let mut file = serde_json::to_value(&held)?;
+    file["presets"] = serde_json::json!([incomplete]);
+    std::fs::write(&path, serde_json::to_vec(&file)?)?;
+    let (loaded, Startup::Configured(valid)) = Config::load(&path) else {
+        anyhow::bail!("A preset saved without a model made the whole settings file invalid");
+    };
+    assert_eq!(loaded.engine_executable, valid.engine_executable);
+    let mut chosen = loaded;
+    let [earlier] = valid.presets.as_slice() else {
+        anyhow::bail!("Loading dropped the incomplete preset");
+    };
+    earlier.load(&mut chosen);
+    assert!(!chosen.speech_configured());
+    Ok(())
+}
+
+#[test]
 fn sparse_settings_need_no_presets_and_invalid_libraries_are_rejected_even_without_an_engine()
 -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;

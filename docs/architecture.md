@@ -87,7 +87,9 @@ module unless a test file is named.
   Use during a session. Without a running owner, a valid candidate clears the transient selection
   and restarts a pending Resume check. A transient selection takes precedence in the Settings
   indicator, which follows Services as well as snapshots, while its row still holds the definition
-  that was chosen. Capturing a preset requires both speech paths.
+  that was chosen. Capturing a preset requires both speech paths; a stored preset missing one
+  still loads with its settings, and Use on it asks for an engine and model without changing
+  dictation.
 - **Audio capture**: [audio.rs](../crates/app/src/audio.rs) with
   [control.rs](../crates/app/src/audio/control.rs), [stream.rs](../crates/app/src/audio/stream.rs),
   [pcm.rs](../crates/app/src/audio/pcm.rs), [speech.rs](../crates/app/src/audio/speech.rs), and

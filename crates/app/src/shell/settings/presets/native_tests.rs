@@ -1,4 +1,4 @@
-use anyhow::ensure;
+use anyhow::{Context as _, ensure};
 use gpui::{AsyncApp, KeyDownEvent, KeyUpEvent, Keystroke, Task, WindowHandle};
 
 use super::{
@@ -124,6 +124,21 @@ pub(in crate::shell::settings) fn exercise(
             view.config.language == "en",
             "The surviving preset was not usable"
         );
+        let mut incomplete = serde_json::to_value(Preset::capture("Earlier", &view.config)?)?;
+        incomplete
+            .as_object_mut()
+            .context("A preset serializes as an object")?
+            .insert("model".into(), "".into());
+        view.config.presets.push(serde_json::from_value(incomplete)?);
+        let before = view.config.clone();
+        view.edit_preset(Edit::Use(1), window, cx);
+        ensure!(
+            view.config == before
+                && matches!(&view.notice, Some(Notice::Problem(text)) if text.contains("Choose an engine and model")),
+            "Using a preset saved without a model changed dictation or did not say what to fix"
+        );
+        view.config.presets.pop();
+        view.notice = None;
         menu_cursor_survives_engine_work(view, window, cx)?;
         view.toggle_menu(Menu::Preset(0), window, cx);
         view.finish_reset(Ok(()), cx);
