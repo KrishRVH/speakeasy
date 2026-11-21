@@ -1,10 +1,7 @@
 use std::time::Duration;
 
 use super::*;
-use crate::machine::{
-    Part,
-    fixture::{Log, Sample},
-};
+use crate::machine::fixture::{Log, Sample};
 
 fn opened(log: &mut Log, show: bool) -> Session<Sample> {
     let mut session = Session::<Sample>::new(
@@ -126,15 +123,12 @@ fn a_show_goes_on_without_narration_only_from_the_stages_its_loss_can_reach() {
         !show.go_on_without_audio(false),
         "Sealed audio can no longer stop"
     );
-    assert!(show.request(&mut log).is_some());
+    let request = show.request(&mut log).unwrap();
     assert!(
         !show.go_on_without_transcript(),
         "Speech keeps its one retry"
     );
-    assert!(show.absorb_failure(Ticket {
-        session: show.id,
-        part: Part::Final
-    }));
+    assert!(show.absorb_failure(request.ticket()));
     assert!(show.request(&mut log).is_some());
     assert!(show.go_on_without_transcript());
     assert_eq!(loss(&show), Some(NarrationLoss::NotTranscribed));

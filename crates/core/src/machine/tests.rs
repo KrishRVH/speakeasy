@@ -70,19 +70,17 @@ fn explicit_show_needs_a_shield_before_opening_the_microphone() {
 fn accepting_a_preset_clears_an_old_failure() {
     let mut log = Log::default();
     let mut machine = machine(&mut log);
-    for event in [
-        Event::Worker(Completion::Loaded(Err("previous model failed".into()))),
-        Event::Preset {
-            call: (),
-            name: "Another preset".into(),
-            config: settings(),
-            session: SessionId::default(),
-            changed: false,
-        },
-        Event::Worker(Completion::Loaded(Ok(()))),
-    ] {
-        assert!(machine.step(now(), event, &mut log).is_continue());
-    }
+    let failed = Event::Worker(Completion::Loaded(Err("previous model failed".into())));
+    assert!(machine.step(now(), failed, &mut log).is_continue());
+    assert_eq!(machine.phase(), Phase::Error);
+    let preset = Event::Preset {
+        call: (),
+        name: "Another preset".into(),
+        config: settings(),
+        session: SessionId::default(),
+        changed: false,
+    };
+    assert!(machine.step(now(), preset, &mut log).is_continue());
     assert_eq!(machine.phase(), Phase::Idle);
 }
 
@@ -113,14 +111,15 @@ fn a_show_keeps_its_microphone_loss_notice_while_the_worker_reloads_and_retries(
             .step(now(), Event::Input(Input::StartShow(())), &mut log)
             .is_continue()
     );
-    let id = machine.latest.id;
+    let id = machine.latest_session();
     assert!(
         machine
             .step(now(), Event::Capture(id, Capture::Ready), &mut log)
             .is_continue()
     );
 
-    machine.worker = Worker::Unavailable;
+    let warmup = Event::Worker(Completion::Loaded(Err("Warmup failed".into())));
+    assert!(machine.step(now(), warmup, &mut log).is_continue());
     let lost = Capture::Lost(
         Sealed {
             audio: vec![1],
