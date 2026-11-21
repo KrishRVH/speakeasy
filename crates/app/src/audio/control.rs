@@ -4,12 +4,14 @@ use std::{
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u8)]
 pub(super) enum Mode {
-    Recording = 0,
-    Finishing = 1,
-    Cancelled = 2,
+    Recording,
+    Finishing,
+    Cancelled,
 }
+
+const FINISH: u8 = 1;
+const CANCEL: u8 = 2;
 
 #[derive(Default)]
 pub(super) struct Control {
@@ -36,21 +38,26 @@ impl Drop for Publishing<'_> {
 
 impl Control {
     pub(super) fn mode(&self) -> Mode {
-        const RECORDING: u8 = Mode::Recording as u8;
-        const FINISHING: u8 = Mode::Finishing as u8;
-        match self.mode.load(Ordering::SeqCst) {
-            RECORDING => Mode::Recording,
-            FINISHING => Mode::Finishing,
-            _ => Mode::Cancelled,
+        let requested = self.mode.load(Ordering::SeqCst);
+        if requested & CANCEL != 0 {
+            Mode::Cancelled
+        } else if requested & FINISH != 0 {
+            Mode::Finishing
+        } else {
+            Mode::Recording
         }
     }
 
+    pub(super) fn finished(&self) -> bool {
+        self.mode.load(Ordering::SeqCst) & FINISH != 0
+    }
+
     pub(super) fn finish(&self) {
-        self.mode.fetch_max(Mode::Finishing as u8, Ordering::SeqCst);
+        self.mode.fetch_or(FINISH, Ordering::SeqCst);
     }
 
     pub(super) fn cancel(&self) {
-        self.mode.fetch_max(Mode::Cancelled as u8, Ordering::SeqCst);
+        self.mode.fetch_or(CANCEL, Ordering::SeqCst);
     }
 
     pub(super) fn publishing(&self) -> Publishing<'_> {

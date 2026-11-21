@@ -391,6 +391,7 @@ impl<D> Recorder<D> {
     ) -> Captured<D> {
         let mut keeping = checkpoint::Keeping::new(&requests.keep);
         let drained = self.drain(id, events, control, requests, &mut keeping);
+        let finished = control.finished();
         control.finish();
         control.quiesce();
         let ending = if matches!(drained, Ok(None)) {
@@ -398,7 +399,7 @@ impl<D> Recorder<D> {
         } else {
             AudioEnding::Interrupted
         };
-        let tail = (!abandoned(control, events))
+        let tail = (finished || !abandoned(control, events))
             .then(|| keeping.close(self.pcm.audio(), self.rate, ending, id, events))
             .flatten();
         let Self {
@@ -458,6 +459,10 @@ impl<D> Recorder<D> {
                 profile.polled();
             }
             if abandoned(control, events) {
+                if control.finished() {
+                    control.quiesce();
+                    self.sounded |= consume_pcm(&mut self.ring, &mut self.pcm, &mut meter);
+                }
                 return Ok(None);
             }
             if requests.whole.try_recv().is_ok() {
