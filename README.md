@@ -1098,7 +1098,9 @@ below.
 The public surface is what people, scripts, and coding agents rely on from one release to the next:
 
 - the gestures: hold-to-talk, double-tap hands-free, cancelling, and a Show's S, W, A, and Shift;
-- the command line: `speakeasy` options and `speakeasy show` commands;
+- the command line: `speakeasy` options, `speakeasy show` commands, and `speakeasy dictation` script
+  commands, including what `speakeasy-cli` relays and the JSON each prints;
+- the Show MCP server: its tools, their arguments, and the JSON they return;
 - saved settings and what each one means;
 - Show bundles: their files, the `show.json` format with its `version`, and their retention;
 - the supported platforms, their requirements, and the release packages.
