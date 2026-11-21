@@ -24,7 +24,7 @@ pub struct Tracker {
     press: Button,
     pin_after: Option<Moment>,
     shift_down: Option<Moment>,
-    shift_uses: Vec<Moment>,
+    shift_uses: Vec<Span>,
     strokes: Vec<Stroke>,
     pins: Vec<Pin>,
     actions: Vec<Action>,
@@ -145,7 +145,7 @@ impl Tracker {
         self.pointer = Some(InkPoint { point, at });
         self.shift_down = drawing.then(|| self.shift_down.unwrap_or(at));
         if drawing && pressed {
-            self.use_shift();
+            self.use_shift(at);
         }
         let inside = Rect::UNIT.contains(point);
         if drawing && inside {
@@ -196,8 +196,8 @@ impl Tracker {
             .shift_uses
             .iter()
             .rev()
-            .take_while(|&&used| used >= taps.start())
-            .any(|&used| used <= taps.end());
+            .take_while(|used| used.end() >= taps.start())
+            .any(|used| used.start() <= taps.end());
         let pinned = self.pins.last().is_some_and(|pin| taps.start() <= pin.at);
         if !used
             && !pinned
@@ -280,15 +280,17 @@ impl Tracker {
             false
         };
         if deliberate {
-            self.use_shift();
+            self.use_shift(point.at);
         }
     }
 
-    fn use_shift(&mut self) {
-        if let Some(down) = self.shift_down
-            && self.shift_uses.last().is_none_or(|&used| used < down)
-        {
-            self.shift_uses.push(down);
+    fn use_shift(&mut self, at: Moment) {
+        let Some(down) = self.shift_down else {
+            return;
+        };
+        match self.shift_uses.last_mut() {
+            Some(used) if used.start() == down => *used = used.union(Span::at(at)),
+            _ => self.shift_uses.push(Span::new(down, at)),
         }
     }
 
@@ -458,6 +460,22 @@ mod tests {
             let recording = tracker.finish(at(90));
             assert_eq!(recording.strokes[0].span().start(), at(start), "{inked}");
         }
+    }
+
+    #[test]
+    fn a_tap_that_draws_after_another_shift_hold_between_polls_drops_no_pin() {
+        let mut tracker = Tracker::new(SURFACE);
+        let at = Moment::from_millis;
+        tracker.observe(at(0), Point::new(0.5, 0.4), true, false);
+        tracker.observe(at(30), Point::new(0.5, 0.4), true, false);
+        tracker.observe(at(60), Point::new(0.52, 0.4), true, false);
+        tracker.observe(at(90), Point::new(0.52, 0.4), false, false);
+        tracker.observe(at(150), Point::new(0.52, 0.4), true, false);
+        tracker.observe(at(210), Point::new(0.52, 0.4), false, false);
+        assert!(
+            !tracker.pin(Span::new(at(40), at(200))),
+            "A first tap that drew ink dropped a pin because Shift stayed down across polls"
+        );
     }
 
     #[test]
