@@ -157,9 +157,7 @@ pub(crate) fn publish<P: Pasteboard>(
         board.clear();
         board.write(&previous);
     }
-    Err(anyhow::anyhow!(
-        "Cannot place the complete copy on the clipboard"
-    ))
+    anyhow::bail!("Cannot place the complete copy on the clipboard")
 }
 
 #[cfg(any(target_os = "macos", test))]

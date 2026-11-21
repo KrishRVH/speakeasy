@@ -44,8 +44,6 @@ fn a_group_led_by_a_process_this_one_never_spawned_is_never_signaled() -> anyhow
         time::{Duration, Instant},
     };
 
-    use anyhow::Context as _;
-
     let held = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
     let port = held.local_addr()?.port();
 
@@ -121,8 +119,6 @@ fn listeners_held_by_members_other_than_the_leader_count() -> anyhow::Result<()>
         process::{Command, Stdio},
     };
 
-    use anyhow::Context as _;
-
     let held = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
     let port = held.local_addr()?.port();
 
@@ -152,8 +148,6 @@ fn only_listeners_held_inside_the_job_count() -> anyhow::Result<()> {
         os::windows::io::AsHandle as _,
         process::{Command, Stdio},
     };
-
-    use anyhow::Context as _;
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
     let port = listener.local_addr()?.port();

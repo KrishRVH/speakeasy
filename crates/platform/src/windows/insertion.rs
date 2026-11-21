@@ -178,7 +178,7 @@ fn roll_back(previous: Option<&[SavedFormat]>) -> anyhow::Result<()> {
 
 pub(super) struct Insert {
     pub(super) shortcut: crate::WindowsShortcut,
-    pub(super) typed: crate::insertion::KeyCount,
+    pub(super) typed: insertion::KeyCount,
 }
 
 pub(super) struct Keys {

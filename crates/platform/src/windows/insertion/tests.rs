@@ -39,7 +39,7 @@ fn strokes(input: &[INPUT]) -> Vec<(u16, u16, u32)> {
 fn insert() -> Insert {
     Insert {
         shortcut: crate::WindowsShortcut::default(),
-        typed: crate::insertion::KeyCount::default(),
+        typed: insertion::KeyCount::default(),
     }
 }
 
@@ -175,10 +175,7 @@ fn check_on_a_private_window_station() -> anyhow::Result<()> {
     enter_private_station()?;
     copy_text(TEXT)?;
     assert_private_text("the copied text")?;
-    let mut insert = Insert {
-        shortcut: crate::WindowsShortcut::default(),
-        typed: crate::insertion::KeyCount::default(),
-    };
+    let mut insert = insert();
     let lease = insert.acquire()?;
     let written = insert.write(lease, TEXT, None)?;
     assert_eq!(
@@ -489,11 +486,7 @@ fn copy_without_text() -> anyhow::Result<()> {
 }
 
 fn ensure_hidden_station() -> anyhow::Result<()> {
-    let mut flags = USEROBJECTFLAGS {
-        fInherit: 0,
-        fReserved: 0,
-        dwFlags: 0,
-    };
+    let mut flags = USEROBJECTFLAGS::default();
     ok_or_last_error(unsafe {
         GetUserObjectInformationW(
             GetProcessWindowStation(),

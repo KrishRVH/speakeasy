@@ -101,11 +101,7 @@ fn settings() -> (Option<u32>, Option<u32>, Option<FilterKeys>) {
     let size = u32::try_from(size_of::<FILTERKEYS>()).unwrap_or_default();
     let mut filter = FILTERKEYS {
         cbSize: size,
-        dwFlags: 0,
-        iWaitMSec: 0,
-        iDelayMSec: 0,
-        iRepeatMSec: 0,
-        iBounceMSec: 0,
+        ..FILTERKEYS::default()
     };
     let [read_delay, read_speed, read_filter] = unsafe {
         [
