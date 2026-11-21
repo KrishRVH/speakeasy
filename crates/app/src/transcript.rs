@@ -84,11 +84,15 @@ fn hesitation(token: &str) -> Option<&str> {
 }
 
 fn close_after_hesitation(text: &mut String, ending: &str) {
-    if text.ends_with(',') {
-        text.pop();
-    }
-    if !text.is_empty() && !text.ends_with(SENTENCE_ENDINGS) {
-        text.push_str(ending);
+    if ending.is_empty() {
+        if text.ends_with(',') {
+            text.pop();
+        }
+    } else {
+        text.truncate(text.trim_end_matches(PAUSES).len());
+        if !text.is_empty() && !text.ends_with(SENTENCE_ENDINGS) {
+            text.push_str(ending);
+        }
     }
 }
 
@@ -176,6 +180,9 @@ mod tests {
             ("Send, uM, uh, the report, UH.", "Send the report."),
             ("Ready uh?", "Ready?"),
             ("Ready uh?!", "Ready?!"),
+            ("Ready; um.", "Ready."),
+            ("Ready: uh?", "Ready?"),
+            ("Meet at 9 a.m., um.", "Meet at 9 a.m."),
             ("Wait um...", "Wait..."),
             ("Done. Um. Next!", "Done. Next!"),
             ("um… uh: hello; um; there!", "hello; there!"),
