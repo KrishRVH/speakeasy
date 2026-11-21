@@ -1197,10 +1197,11 @@ change paused-time behavior; bound the test's own waits with
 native mechanics in the adapter and deterministic decisions in portable code.
 
 Opt-in checks are `#[ignore = "..."]` tests whose reason says what each touches, and
-`rg -A1 '#\[ignore =' crates` lists them. Run one at a time with
-`cargo test -p <package> <test name> -- --ignored`; for `profile_*`, add `--release` before `--` and
-`--nocapture` after it. Never run `--ignored` without a name filter: unfiltered, it records the real
-screen on Windows and macOS, opens windows on Linux's current display, and with
+`rg -A1 '#\[ignore =' crates` lists them. Run one at a time with its task where the README or
+[performance notes](performance.md) name one, or else with
+`cargo test --locked -p <package> <test name> -- --ignored`; for `profile_*`, add `--release` before
+`--` and `--nocapture` after it. Never run `--ignored` without a name filter: unfiltered, it records
+the real screen on Windows and macOS, opens windows on Linux's current display, and with
 `SPEAKEASY_FIXTURE_WAV` set downloads about 0.8 GB. Fixture tests read `SPEAKEASY_FIXTURE_CONFIG`, a
 settings file, and `SPEAKEASY_FIXTURE_WAV`, public audio such as whisper.cpp's `samples/jfk.wav`.
 `profile_recording_dictation` also reads `SPEAKEASY_FIXTURE_REFERENCE`, a public reference text

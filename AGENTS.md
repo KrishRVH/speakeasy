@@ -22,7 +22,7 @@ pins the compiler.
   subject is not a Conventional Commit, lints and tests each push on Windows and macOS, and builds
   and publishes release packages.
 - The `native:`, `linux:`, `macos:`, `windows:`, `movie:`, and `profile:` tasks run opt-in native
-  checks and profiles, each on the system its name or description gives.
+  checks and profiles; a system that a task's name or description names is the only one it runs on.
 
 Choose each command by what it does:
 
