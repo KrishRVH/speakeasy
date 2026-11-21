@@ -104,7 +104,7 @@ async fn cancelled_text_never_replaces_recall_and_settings_preserve_it() -> anyh
     preparing.release().await?;
     assert_eq!(receive(&h.pasted).await?, "Kept fixture.");
     h.phase(Phase::Done).await?;
-    change_settings(&h);
+    change_settings(&mut h);
     h.phase(Phase::Idle).await?;
     assert!(h.snapshot().last_dictation);
     h.input(Input::PasteLast);

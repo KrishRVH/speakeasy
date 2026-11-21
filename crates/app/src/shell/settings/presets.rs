@@ -173,7 +173,7 @@ impl Settings {
         self.using = None;
         match used {
             Some(Ok(_)) if !presets::same_choices(started, &self.config) => {
-                cx.update_global::<Services, _>(|services, cx| services.restore_owner(cx));
+                cx.update_global::<Services, _>(|services, _| services.restore_owner());
                 self.notice = Some(Notice::Problem(USE_OVERTAKEN.into()));
             },
             Some(Ok(config)) => {

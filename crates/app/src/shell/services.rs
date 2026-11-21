@@ -60,6 +60,12 @@ enum Restart {
     Reset(Box<Purge>),
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum Landing {
+    Saved,
+    Retained,
+}
+
 type Purged = Result<(), String>;
 pub(super) type ResetReceipt = async_channel::Receiver<Purged>;
 
@@ -312,6 +318,12 @@ impl Services {
         self.lifecycle.active().map(|owners| &owners.runtime)
     }
 
+    pub(super) fn runtime_mut(&mut self) -> Option<&mut Runtime> {
+        self.lifecycle
+            .active_mut()
+            .map(|owners| &mut owners.runtime)
+    }
+
     pub(super) fn live_runtime(&self) -> Option<&Runtime> {
         self.runtime().filter(|runtime| runtime.is_running())
     }
@@ -406,6 +418,10 @@ impl Services {
     }
 
     pub(crate) fn apply(&mut self, config: ValidConfig, cx: &App) -> anyhow::Result<()> {
+        self.land(config, Landing::Saved, cx)
+    }
+
+    fn land(&mut self, config: ValidConfig, landing: Landing, cx: &App) -> anyhow::Result<()> {
         if !self.lifecycle.reconfigure() {
             return Ok(());
         }
@@ -423,8 +439,13 @@ impl Services {
             self.lifecycle.queue(Restart::Apply(Box::new(config)));
             return Ok(());
         }
-        if let Some(runtime) = self.runtime() {
-            runtime.configure(config);
+        if let Some(runtime) = self.runtime_mut() {
+            match landing {
+                Landing::Saved => runtime.configure(config),
+                Landing::Retained => {
+                    runtime.revert(config.into_inner());
+                },
+            }
             return Ok(());
         }
         let config = self
@@ -437,6 +458,7 @@ impl Services {
 
     fn start(&mut self, config: ValidConfig, baseline: Config) -> anyhow::Result<()> {
         self.show_copies.cancel();
+        self.choices.supersede();
         let launched = Config::clone(&config);
         #[cfg(test)]
         let launch = self.launch;
@@ -497,6 +519,7 @@ impl Services {
         submitted: &Config,
         config: ValidConfig,
         saved_at: ConfigEpoch,
+        landing: Landing,
         cx: &App,
     ) -> anyhow::Result<()> {
         #[cfg(target_os = "windows")]
@@ -513,7 +536,7 @@ impl Services {
                 .lifecycle
                 .save_may_enable(saved_at, |owners| owners.runtime.is_running())
         {
-            self.apply(config, cx)
+            self.land(config, landing, cx)
         } else {
             self.reset_choice_for(&config);
             self.config = config.into_inner();
@@ -564,36 +587,24 @@ impl Services {
         Ok(())
     }
 
-    pub(super) fn forget_preset(&mut self, cx: &App) {
-        self.choices.cancel();
-        self.choices.selected = None;
-        self.recheck(cx);
-    }
-
     #[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
     pub(super) fn launched(&self) -> Option<&Config> {
         self.lifecycle.active().map(|owners| &owners.launched)
     }
 
-    pub(super) fn recheck(&mut self, cx: &App) {
-        if self.validation.is_some() {
-            self.validate(cx);
-        }
+    fn candidate(&self) -> &Config {
+        self.choices.selected.as_ref().map_or_else(
+            || self.admitted.as_ref().unwrap_or(&self.config),
+            |choice| &*choice.config,
+        )
     }
 
     fn validate(&mut self, cx: &App) {
         let Some(epoch) = self.lifecycle.validate() else {
             return;
         };
-        let config = self
-            .choices
-            .selected
-            .as_ref()
-            .map_or_else(
-                || self.admitted.as_ref().unwrap_or(&self.config),
-                |choice| &*choice.config,
-            )
-            .clone();
+        let checked = self.candidate().clone();
+        let config = checked.clone();
         let path = self.path.clone();
         let validation = cx
             .background_executor()
@@ -601,16 +612,25 @@ impl Services {
         announce(&self.output, CHECKING);
         self.validation = Some(cx.spawn(async move |cx| {
             let result = validation.await;
-            cx.update(|cx| Self::validation_complete(epoch, result, cx));
+            cx.update(|cx| Self::validation_complete(epoch, &checked, result, cx));
         }));
     }
 
-    fn validation_complete(epoch: ConfigEpoch, result: anyhow::Result<ValidConfig>, cx: &mut App) {
+    fn validation_complete(
+        epoch: ConfigEpoch,
+        checked: &Config,
+        result: anyhow::Result<ValidConfig>,
+        cx: &mut App,
+    ) {
         let applied = cx.update_global::<Self, _>(|services, cx| {
             if !services.lifecycle.validated(epoch) {
                 return Ok(());
             }
             services.validation = None;
+            if services.candidate() != checked {
+                services.validate(cx);
+                return Ok(());
+            }
             if result.is_err() && services.choices.selected.is_none() {
                 services.speech_checked = false;
             }
@@ -701,7 +721,7 @@ impl Services {
             },
             done,
         };
-        self.choices.selected = None;
+        self.choices.forget();
         self.admitted = None;
         self.pause(cx);
         announce(&self.output, RESETTING);

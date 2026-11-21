@@ -15,7 +15,7 @@ mod outcome;
 mod recognition;
 mod session;
 
-use std::ops::ControlFlow;
+use std::{mem, ops::ControlFlow};
 
 use self::session::{Purpose, Session};
 pub use self::{
@@ -345,6 +345,7 @@ pub enum Event<P: Payload> {
     Input(Input<P>),
     Report(Report<P>),
     Configure(P::Config),
+    Revert(P::Config),
     Control {
         call: P::Call,
         command: Command<P>,
@@ -745,7 +746,12 @@ impl<P: Payload> Machine<P> {
                 None
             },
             Event::Configure(config) => {
-                self.configure(config, env);
+                self.configure(config, Outcome::Idle, env);
+                None
+            },
+            Event::Revert(config) => {
+                let outcome = mem::replace(&mut self.outcome, Outcome::Idle);
+                self.configure(config, outcome, env);
                 None
             },
             Event::Control { call, command } => return self.control(now, call, command, env),
@@ -893,7 +899,7 @@ impl<P: Payload> Machine<P> {
         };
     }
 
-    fn configure(&mut self, config: P::Config, env: &mut impl Env<P>) {
+    fn configure(&mut self, config: P::Config, settled: Outcome<P>, env: &mut impl Env<P>) {
         self.practice = None;
         self.preset = None;
         let cancelled = self.gesture.abandon().is_some();
@@ -902,7 +908,7 @@ impl<P: Payload> Machine<P> {
             self.cue(Cue::Cancel, env);
             Outcome::Cancelled
         } else {
-            Outcome::Idle
+            settled
         };
     }
 

@@ -705,7 +705,7 @@ async fn a_show_that_lost_its_narration_and_is_discarded_leaves_no_trace() -> an
     events.send(disconnected_before_speech(id)).await?;
     h.phase(Phase::Processing).await?;
 
-    change_settings(&h);
+    change_settings(&mut h);
     h.phase(Phase::Cancelled).await?;
     retiring.release().await?;
     assert!(
@@ -856,7 +856,7 @@ async fn new_settings_discard_a_show_whose_screen_stopped_while_it_is_saved() ->
         .send(ShowEvent::Finished(id, Ok(stopped_footage())))
         .await?;
     let (_, mut reply) = receive(&h.jobs).await?;
-    change_settings(&h);
+    change_settings(&mut h);
     h.phase(Phase::Cancelled).await?;
     timeout(PATIENCE, reply.closed()).await?;
     assert!(

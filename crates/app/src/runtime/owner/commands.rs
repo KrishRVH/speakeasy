@@ -15,7 +15,7 @@ impl<P: Ports> World<P> {
                 if matches!(
                     call.command,
                     Command::Capture { .. } | Command::Print { .. }
-                ) && !self.changes.borrow().print_to_scripts =>
+                ) && !self.baseline.print_to_scripts =>
             {
                 call.respond(Reply::refused(SCRIPTS_CANNOT_READ));
                 None
@@ -44,13 +44,22 @@ impl<P: Ports> World<P> {
                 name,
                 config: config.into_inner(),
                 session: SessionId::new(session),
-                changed: self.changes.borrow().change_to(&baseline) >= Change::Session,
+                changed: self.baseline.change_to(&baseline) >= Change::Session,
             }),
             Directive::Adopt { config, answer } if idle && answer.is_live() => {
                 answer.answer(Ok(()));
-                let config = *config;
-                self.adopted = Some(config.clone());
-                Some(Event::Configure(config))
+                self.baseline.clone_from(&config);
+                Some(Event::Configure(*config))
+            },
+            Directive::Revert(config) => {
+                self.baseline = *config;
+                self.reverting = true;
+                None
+            },
+            Directive::Apply(config) => {
+                self.baseline.clone_from(&config);
+                self.reverting = false;
+                Some(Event::Configure(*config))
             },
             Directive::Adopt { answer, .. } => {
                 answer.answer(Err(refusal(Refusal::PresetBusy)));

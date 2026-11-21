@@ -1,16 +1,21 @@
 use async_channel::Receiver;
 use gpui::{App, Task};
-use speakeasy_core::lifecycle::ConfigEpoch;
 
 use super::Services;
 use crate::{
     config::{Change, Config, ValidConfig, presets::Preset},
     control::{Call, Command, Disposition, Reply, Status},
-    runtime::Adopted,
+    runtime::{Adopted, Runtime},
 };
 
 const UNACKNOWLEDGED: &str =
     "Preset selection stopped before acknowledging. Read status before choosing again.";
+
+const REPLACED: &str =
+    "Newer settings replaced the preset before it was confirmed. Choose it again.";
+
+const USE_UNACKNOWLEDGED: &str =
+    "Dictation stopped before the preset was applied. Resume, then use it again.";
 
 const USE_BUSY: &str = "Finish the current session or preset selection before using a preset.";
 
@@ -23,7 +28,7 @@ pub(super) type Used = Result<ValidConfig, &'static str>;
 
 enum Admission {
     Ready(ValidConfig),
-    Waiting(ValidConfig, Receiver<Adopted>),
+    Waiting(ValidConfig, u64, Receiver<Adopted>),
 }
 
 pub(super) struct Selected {
@@ -32,8 +37,7 @@ pub(super) struct Selected {
 }
 
 struct Selection {
-    generation: u64,
-    epoch: ConfigEpoch,
+    request: u64,
     session: u64,
     preset: Preset,
     baseline: Config,
@@ -42,35 +46,52 @@ struct Selection {
 #[derive(Default)]
 pub(super) struct Choices {
     pub selected: Option<Selected>,
-    generation: u64,
+    sent: u64,
+    answered: u64,
+    honored: u64,
     choosing: Option<Task<()>>,
     using: Option<Task<()>>,
-    applying: bool,
 }
 
 impl Choices {
     pub(super) fn cancel(&mut self) {
-        self.generation = self.generation.wrapping_add(1);
         self.choosing = None;
         self.using = None;
-        self.applying = false;
     }
 
-    fn supersede(&mut self) -> bool {
-        let acknowledging = self.choosing.take_if(|_| self.applying);
-        let unsettled = acknowledging.is_some();
-        if let Some(acknowledging) = acknowledging {
-            acknowledging.detach();
+    pub(super) fn forget(&mut self) {
+        self.cancel();
+        self.supersede();
+        self.selected = None;
+    }
+
+    pub(super) fn supersede(&mut self) {
+        let request = self.request();
+        self.answered = request;
+        self.honored = request;
+    }
+
+    fn request(&mut self) -> u64 {
+        self.sent = self.sent.wrapping_add(1);
+        self.sent
+    }
+
+    fn answer(&mut self, request: u64, accepted: bool) -> bool {
+        self.answered = self.answered.max(request);
+        let honored = accepted && request > self.honored;
+        if honored {
+            self.honored = request;
         }
-        self.generation = self.generation.wrapping_add(1);
-        self.choosing = None;
-        self.applying = false;
-        unsettled
+        honored
+    }
+
+    const fn is_settled(&self) -> bool {
+        self.answered == self.sent
     }
 
     #[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
-    pub(super) const fn is_applying(&self) -> bool {
-        self.applying
+    pub(super) const fn awaits_owner(&self) -> bool {
+        !self.is_settled() && self.choosing.is_none()
     }
 }
 
@@ -92,7 +113,7 @@ impl Services {
 
         let (call, receipt) = Call::new(Command::Preset { name });
         cx.update_global::<Self, _>(|services, cx| services.control(call, cx));
-        let generation = cx.global::<Self>().choices.generation;
+        let sent = cx.global::<Self>().choices.sent;
         cx.spawn(async move |cx| {
             let Ok(reply) = receipt.recv().await else {
                 return;
@@ -102,7 +123,7 @@ impl Services {
             };
             cx.update(|cx| {
                 let services = cx.global::<Self>();
-                if services.choices.generation == generation {
+                if services.choices.sent == sent {
                     services.report(crate::runtime::Report::Failed(reason));
                 }
             });
@@ -137,12 +158,9 @@ impl Services {
     }
 
     fn choose_preset(&mut self, name: String, call: Call, cx: &App) {
-        if self.choices.applying
-            || self.runtime().is_none()
-            || self.output.borrow().phase.is_active()
-        {
+        if self.runtime().is_none() || self.output.borrow().phase.is_active() {
             call.respond(Reply::refused(
-                "Finish the current session or preset selection before choosing a preset.",
+                "Finish the current session before choosing a preset.",
             ));
             return;
         }
@@ -163,12 +181,9 @@ impl Services {
         preset.load(&mut candidate);
         let path = self.path.clone();
         let session = self.output.borrow().session;
-        let epoch = self.config_epoch();
-        self.choices.cancel();
-        let generation = self.choices.generation;
+        let request = self.choices.request();
         let selection = Selection {
-            generation,
-            epoch,
+            request,
             session,
             preset,
             baseline,
@@ -184,6 +199,9 @@ impl Services {
             let (selected, receipt) = match admission {
                 Ok(admission) => admission,
                 Err(reason) => {
+                    cx.update_global::<Self, _>(|services, _| {
+                        services.choices.answer(request, false)
+                    });
                     call.respond(Reply::refused(reason));
                     return;
                 },
@@ -192,8 +210,8 @@ impl Services {
                 .recv()
                 .await
                 .unwrap_or_else(|_| Reply::unknown(UNACKNOWLEDGED));
-            cx.update_global::<Self, _>(|services, _| {
-                services.confirm_preset(generation, selected, &reply);
+            let reply = cx.update_global::<Self, _>(|services, _| {
+                services.confirm_preset(request, selected, reply)
             });
             call.respond(reply);
         }));
@@ -206,16 +224,12 @@ impl Services {
         caller: &Call,
     ) -> Result<(Selected, Receiver<Reply>), &'static str> {
         let Selection {
-            generation,
-            epoch,
+            request,
             session,
             preset,
             baseline,
         } = selection;
-        if !caller.is_live()
-            || self.choices.generation != generation
-            || self.config_epoch() != epoch
-        {
+        if !caller.is_live() || self.choices.sent != request {
             return Err("Preset selection expired or was replaced. Choose it again.");
         }
         let config = result.map_err(
@@ -232,20 +246,25 @@ impl Services {
             session,
             call,
         );
-        self.choices.applying = true;
+        if let Some(acknowledging) = self.choices.choosing.take() {
+            acknowledging.detach();
+        }
         Ok((Selected { preset, config }, receipt))
     }
 
-    fn confirm_preset(&mut self, generation: u64, selected: Selected, reply: &Reply) {
-        if self.choices.generation != generation {
-            return;
+    fn confirm_preset(&mut self, request: u64, selected: Selected, reply: Reply) -> Reply {
+        let accepted = reply.result == Disposition::Ok;
+        if !self.choices.answer(request, accepted) {
+            return if accepted {
+                Reply::refused(REPLACED)
+            } else {
+                reply
+            };
         }
-        self.choices.applying = false;
-        if reply.result == Disposition::Ok {
-            self.choices.selected = Some(selected);
-            self.output
-                .send_modify(|snapshot| snapshot.preset = self.preset_name().map(str::to_owned));
-        }
+        self.choices.selected = Some(selected);
+        self.output
+            .send_modify(|snapshot| snapshot.preset = self.preset_name().map(str::to_owned));
+        reply
     }
 
     fn control_status(&self) -> Status {
@@ -281,106 +300,91 @@ impl Services {
             let result = validation.await;
             let admission = cx.update_global::<Self, _>(|services, cx| {
                 let current = current(cx);
-                services.admit_use(result, current, cx)
+                services.admit_use(result, current)
             });
             let outcome = match admission {
                 Ok(Admission::Ready(config)) => Ok(config),
-                Ok(Admission::Waiting(config, receipt)) => {
-                    let adopted = receipt.recv().await.unwrap_or(Err(UNACKNOWLEDGED));
+                Ok(Admission::Waiting(config, request, receipt)) => {
+                    let adopted = receipt.recv().await.unwrap_or(Err(USE_UNACKNOWLEDGED));
                     cx.update_global::<Self, _>(|services, _| {
-                        services.confirm_use(&config, adopted)
+                        services.confirm_use(request, &config, adopted)
                     })
                     .map(|()| config)
                 },
                 Err(reason) => Err(reason),
             };
             if answer.try_send(outcome).is_err() {
-                cx.update_global::<Self, _>(|services, cx| services.restore_owner(cx));
+                cx.update_global::<Self, _>(|services, _| services.restore_owner());
             }
         }));
         Ok(used)
     }
 
-    pub(super) fn follow_draft(&mut self, draft: &Config, cx: &App) {
-        let Some(admitted) = &mut self.admitted else {
-            return;
-        };
-        if admitted == draft {
-            return;
+    pub(super) fn follow_draft(&mut self, draft: &Config) {
+        if let Some(admitted) = &mut self.admitted {
+            admitted.clone_from(draft);
         }
-        admitted.clone_from(draft);
-        self.recheck(cx);
     }
 
-    pub(super) fn restore_owner(&mut self, cx: &App) {
+    pub(super) fn restore_owner(&mut self) {
         self.admitted = None;
         let saved = self.config.clone();
-        let Some((seen, reverted)) = self
-            .runtime()
-            .and_then(|runtime| runtime.revert(saved.clone()))
-        else {
-            return;
-        };
-        let generation = self.choices.generation;
-        cx.spawn(async move |cx| {
-            if !reverted.recv().await.is_ok_and(|adopted| adopted.is_ok()) {
-                return;
-            }
-            cx.update_global::<Self, _>(|services, _| {
-                if services.choices.generation == generation
-                    && let Some(runtime) = services.runtime()
-                {
-                    runtime.settle_reverted(&seen, saved);
-                }
-            });
-        })
-        .detach();
+        if self
+            .runtime_mut()
+            .is_some_and(|runtime| runtime.revert(saved))
+        {
+            self.choices.supersede();
+            self.choices.selected = None;
+        }
     }
 
     fn admit_use(
         &mut self,
         result: anyhow::Result<ValidConfig>,
         current: bool,
-        cx: &App,
     ) -> Result<Admission, &'static str> {
         if !current {
             return Err(USE_OVERTAKEN);
         }
         let config = result.map_err(|_unavailable| USE_UNAVAILABLE)?;
-        let unsettled = self.choices.supersede();
         let Some(runtime) = self.live_runtime() else {
             if self.config.change_to(&config) >= Change::Session {
                 self.admitted = Some(config.clone().into_inner());
             }
-            self.forget_preset(cx);
+            self.choices.forget();
             return Ok(Admission::Ready(config));
         };
-        if !unsettled
-            && self.preset_name().is_none()
-            && self.config.change_to(&config) < Change::Session
+        if self.choices.is_settled()
+            && self.choices.selected.is_none()
+            && runtime.baseline().change_to(&config) < Change::Session
         {
             return Ok(Admission::Ready(config));
         }
         let receipt = runtime.adopt(config.clone());
-        self.choices.applying = true;
-        Ok(Admission::Waiting(config, receipt))
+        Ok(Admission::Waiting(config, self.choices.request(), receipt))
     }
 
-    fn confirm_use(&mut self, config: &ValidConfig, adopted: Adopted) -> Adopted {
-        self.choices.applying = false;
+    fn confirm_use(&mut self, request: u64, config: &ValidConfig, adopted: Adopted) -> Adopted {
+        let honored = self.choices.answer(request, adopted.is_ok());
         adopted?;
+        if !honored {
+            return Err(USE_OVERTAKEN);
+        }
         self.choices.selected = None;
         self.output.send_modify(|snapshot| snapshot.preset = None);
-        if let Some(runtime) = self.runtime() {
+        if let Some(runtime) = self.runtime_mut() {
             runtime.settle(config.clone());
         }
         Ok(())
     }
 
     pub(super) fn reset_choice_for(&mut self, config: &Config) {
-        if self.config.change_to(config) >= Change::Session {
-            self.choices.cancel();
-            self.choices.selected = None;
+        let baseline = self.runtime().map_or(&self.config, Runtime::baseline);
+        if baseline.change_to(config) >= Change::Session {
+            self.choices.forget();
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

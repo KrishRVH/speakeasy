@@ -163,7 +163,7 @@ async fn a_show_whose_audio_stopped_keeps_its_checkpoint_when_revoked() -> anyho
         if quit {
             h.runtime.request_stop();
         } else {
-            change_settings(&h);
+            change_settings(&mut h);
             h.phase(Phase::Cancelled).await?;
         }
         h.close().await?;

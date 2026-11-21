@@ -910,7 +910,7 @@ impl<Host: Sync> Harness<Host> {
     async fn finish(&self) -> anyhow::Result<TranscriptReply> {
         self.input(Input::Toggle);
         let (language, reply) = receive(&self.jobs).await?;
-        assert_eq!(language, self.runtime.configuration.borrow().language);
+        assert_eq!(language, self.runtime.baseline.language);
         Ok(reply)
     }
 
@@ -1005,8 +1005,8 @@ fn finish_show(h: &Harness) {
     }
 }
 
-fn change_settings(h: &Harness) {
-    let mut config = h.runtime.configuration.borrow().clone();
+fn change_settings(h: &mut Harness) {
+    let mut config = h.runtime.baseline.clone();
     config.remove_fillers = !config.remove_fillers;
     h.runtime.configure(ValidConfig::assume(config));
 }

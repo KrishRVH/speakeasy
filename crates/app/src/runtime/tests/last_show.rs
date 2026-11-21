@@ -111,7 +111,7 @@ async fn a_show_saved_as_it_is_abandoned_is_remembered_but_still_reads_as_cancel
     save_show(&mut h, "second").await?;
 
     persisted.reached().await?;
-    change_settings(&h);
+    change_settings(&mut h);
     h.phase(Phase::Cancelled).await?;
     persisted.release().await?;
     h.observe(|snapshot| snapshot.last_show == Some(saved("second")))

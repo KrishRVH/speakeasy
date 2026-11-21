@@ -425,7 +425,7 @@ async fn dictation_inserts_once_and_request_preferences_keep_the_warm_worker() -
         "Request preferences reloaded the model"
     );
     assert!(h.pasted.try_recv().is_err(), "A result was submitted twice");
-    let mut config = h.runtime.configuration.borrow().clone();
+    let mut config = h.runtime.baseline.clone();
     config.engine = Engine::Whisper;
     h.runtime.configure(ValidConfig::assume(config));
     receive(&h.loads).await?;

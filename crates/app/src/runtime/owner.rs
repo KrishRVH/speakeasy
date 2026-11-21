@@ -3,7 +3,7 @@ mod outcome;
 
 use std::{
     convert::Infallible,
-    future::{pending, poll_fn},
+    future::{pending, poll_fn, ready},
     mem,
     ops::{ControlFlow, Range},
     pin::Pin,
@@ -58,7 +58,7 @@ enum Wake {
     Stop,
     Input(Result<Input, RecvError>),
     Report(Report),
-    Configuration,
+    Revert,
     Command(Directive),
     Capture(CaptureEvent),
     Show(ShowEvent),
@@ -80,7 +80,7 @@ struct Owner<P: Ports> {
 struct World<P: Ports> {
     ports: P,
     origin: Instant,
-    changes: watch::Receiver<Config>,
+    baseline: Config,
     styles: watch::Receiver<Style>,
     commands: Receiver<Directive>,
     incarnation: u64,
@@ -108,14 +108,14 @@ struct World<P: Ports> {
     cancel_shortcut: Arc<str>,
     default_microphone: Option<SessionId>,
     awake: Option<(Keep, Option<P::Awake>)>,
-    adopted: Option<Config>,
+    reverting: bool,
 }
 
 impl<P: Ports> Owner<P> {
     fn new(wiring: Wiring<P>) -> Self {
         let Wiring {
             config,
-            changes,
+            baseline,
             styles,
             commands,
             incarnation,
@@ -141,7 +141,7 @@ impl<P: Ports> Owner<P> {
         let mut world = World {
             ports,
             origin,
-            changes,
+            baseline,
             styles,
             commands,
             incarnation,
@@ -169,7 +169,7 @@ impl<P: Ports> Owner<P> {
             cancel_shortcut: speakeasy_platform::CANCEL_SHORTCUT.into(),
             default_microphone: None,
             awake: None,
-            adopted: None,
+            reverting: false,
         };
         let machine = Machine::new(
             Timing::DICTATION,
@@ -190,17 +190,18 @@ impl<P: Ports> Owner<P> {
             Some(sleep_until(at.into()))
         }));
         let idle = self.machine.is_idle();
+        let revert = world.reverting && idle && self.machine.practice().is_none();
         let practice_closed = or_pending(self.machine.practice().map(mpsc::Sender::closed));
         let delivered = or_pending(world.delivery.as_mut());
 
         tokio::select! {
             biased;
             _ = world.stopping.recv() => Wake::Stop,
+            () = ready(()), if revert => Wake::Revert,
             () = practice_closed => Wake::EndPractice,
             Ok(practice) = world.practices.recv() => Wake::Practice(practice),
             input = world.inputs.recv() => Wake::Input(input),
             report = world.reports.recv() => report.map_or(Wake::Stop, Wake::Report),
-            change = world.changes.changed() => change.map_or(Wake::Stop, |()| Wake::Configuration),
             Ok(command) = world.commands.recv() => Wake::Command(command),
             Ok(event) = world.captures.recv() => Wake::Capture(event),
             Ok(event) = world.shows.recv() => Wake::Show(event),
@@ -231,12 +232,9 @@ impl<P: Ports> Owner<P> {
                     Report::ShowGone(_) => machine::Report::ShowGone,
                 })
             },
-            Wake::Configuration => {
-                let saved = world.changes.borrow_and_update().clone();
-                if world.adopted.take().is_some_and(|adopted| adopted == saved) {
-                    return None;
-                }
-                Event::Configure(saved)
+            Wake::Revert => {
+                world.reverting = false;
+                Event::Revert(world.baseline.clone())
             },
             Wake::Command(directive) => {
                 let idle = self.machine.is_idle() && self.machine.practice().is_none();

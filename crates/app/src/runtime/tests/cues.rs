@@ -107,7 +107,7 @@ async fn saving_settings_during_a_recording_sounds_its_cancel() -> anyhow::Resul
     let mut h = Harness::new()?;
     h.start().await?;
     h.take_sounds();
-    change_settings(&h);
+    change_settings(&mut h);
     h.phase(Phase::Cancelled).await?;
     assert_eq!(
         h.take_sounds(),
@@ -123,7 +123,7 @@ async fn turning_sounds_off_during_a_recording_lets_the_output_close() -> anyhow
     h.take_sounds();
     let config = Config {
         play_sounds: false,
-        ..h.runtime.configuration.borrow().clone()
+        ..h.runtime.baseline.clone()
     };
     h.runtime.configure(ValidConfig::assume(config));
     h.phase(Phase::Cancelled).await?;

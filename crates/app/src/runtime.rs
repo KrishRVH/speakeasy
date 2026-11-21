@@ -174,7 +174,7 @@ pub(crate) struct Meter {
 pub(crate) struct Runtime<Host = OwnedThread> {
     host: Host,
     pub input: InputSender,
-    configuration: watch::Sender<Config>,
+    baseline: Config,
     reports: Sender<Report>,
     recoveries: Sender<Recovery>,
     practices: Sender<mpsc::Sender<PracticeEvent>>,
@@ -298,15 +298,14 @@ impl<Host> Runtime<Host> {
             styles,
         } = configuration;
         let incarnation = getrandom::u64()?;
-        let (configuration, changes) = watch::channel(saved);
-        let (commands, directed) = async_channel::bounded(8);
+        let (commands, directed) = async_channel::unbounded();
         let (reports, reported) = async_channel::unbounded();
         let (stop, stopping) = async_channel::bounded(1);
         let (recoveries, recovering) = async_channel::bounded(1);
         let (practices, practicing) = async_channel::bounded(1);
         let host = run(Wiring {
             config: effective,
-            changes,
+            baseline: saved.clone(),
             styles,
             commands: directed,
             incarnation,
@@ -324,7 +323,7 @@ impl<Host> Runtime<Host> {
         Ok(Self {
             host,
             input,
-            configuration,
+            baseline: saved,
             reports,
             recoveries,
             practices,
@@ -367,17 +366,18 @@ impl<Host> Runtime<Host> {
         Ok(receipt)
     }
 
-    pub(crate) fn configure(&self, config: ValidConfig) {
-        self.restore(config.into_inner());
+    pub(crate) const fn baseline(&self) -> &Config {
+        &self.baseline
     }
 
-    pub(crate) fn restore(&self, saved: Config) {
-        if self.configuration.borrow().change_to(&saved) < Change::Session {
-            return;
+    pub(crate) fn configure(&mut self, config: ValidConfig) {
+        let config = config.into_inner();
+        let changed = self.baseline.change_to(&config) >= Change::Session;
+        self.baseline.clone_from(&config);
+        if changed {
+            self.input.cancel();
+            self.direct(Directive::Apply(Box::new(config)));
         }
-
-        self.input.cancel();
-        self.configuration.send_replace(saved);
     }
 
     pub(crate) fn adopt(&self, config: ValidConfig) -> Receiver<Adopted> {
@@ -389,27 +389,17 @@ impl<Host> Runtime<Host> {
         receipt
     }
 
-    pub(crate) fn revert(&self, saved: Config) -> Option<(Config, Receiver<Adopted>)> {
-        let seen = self.configuration.borrow().clone();
-        if seen.change_to(&saved) < Change::Session {
-            return None;
+    pub(crate) fn revert(&mut self, saved: Config) -> bool {
+        let changed = self.baseline.change_to(&saved) >= Change::Session;
+        self.baseline.clone_from(&saved);
+        if changed {
+            self.direct(Directive::Revert(Box::new(saved)));
         }
-        let (answer, receipt) = async_channel::bounded(1);
-        self.direct(Directive::Adopt {
-            config: Box::new(saved),
-            answer: Adopting(answer),
-        });
-        Some((seen, receipt))
+        changed
     }
 
-    pub(crate) fn settle_reverted(&self, seen: &Config, saved: Config) {
-        if *self.configuration.borrow() == *seen {
-            self.configuration.send_replace(saved);
-        }
-    }
-
-    pub(crate) fn settle(&self, config: ValidConfig) {
-        self.configuration.send_replace(config.into_inner());
+    pub(crate) fn settle(&mut self, config: ValidConfig) {
+        self.baseline = config.into_inner();
     }
 
     pub(crate) fn control(&self, call: Call) {
@@ -435,12 +425,9 @@ impl<Host> Runtime<Host> {
 
     fn direct(&self, directive: Directive) {
         if let Err(error) = self.commands.try_send(directive) {
-            let reason = if error.is_full() {
-                "Speakeasy is busy. Try the command again."
-            } else {
-                "Resume Speakeasy before using this command."
-            };
-            error.into_inner().refuse(reason);
+            error
+                .into_inner()
+                .refuse("Resume Speakeasy before using this command.");
         }
     }
 
@@ -576,7 +563,7 @@ struct Recovery {
 
 struct Wiring<P> {
     config: Config,
-    changes: watch::Receiver<Config>,
+    baseline: Config,
     styles: watch::Receiver<Style>,
     commands: Receiver<Directive>,
     incarnation: u64,
@@ -607,6 +594,8 @@ enum Directive {
         config: Box<Config>,
         answer: Adopting,
     },
+    Apply(Box<Config>),
+    Revert(Box<Config>),
 }
 
 impl Directive {
@@ -614,6 +603,7 @@ impl Directive {
         match self {
             Self::Control(call) | Self::Preset { call, .. } => call.respond(Reply::refused(reason)),
             Self::Adopt { answer, .. } => answer.answer(Err(reason)),
+            Self::Apply(_) | Self::Revert(_) => (),
         }
     }
 }

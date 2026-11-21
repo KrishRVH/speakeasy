@@ -14,7 +14,12 @@ use super::*;
 use crate::{
     config::Engine,
     control::{Call, Command, Disposition},
-    shell::{LaunchMode, choices::Selected, save::SaveQueue, services::Launch},
+    shell::{
+        LaunchMode,
+        choices::Selected,
+        save::SaveQueue,
+        services::{Landing, Launch},
+    },
     status::ServiceState,
 };
 
@@ -144,6 +149,7 @@ pub(in crate::shell::settings) async fn exercise(
         redrafted(settings, &path, &library, cx).await?;
         rechecked(&library, cx).await?;
         rebound(&library, cx).await?;
+        rollback::rolled_back(settings, &library, cx).await?;
         cx.update(|cx| {
             cx.update_global::<Services, _>(|services, _| {
                 services.config = library.clone();
@@ -231,7 +237,13 @@ async fn paused(
                 ..services.config.clone()
             };
             let saved_at = services.config_epoch().next();
-            services.adopt_saved(&german, ValidConfig::assume(german.clone()), saved_at, cx)
+            services.adopt_saved(
+                &german,
+                ValidConfig::assume(german.clone()),
+                saved_at,
+                Landing::Saved,
+                cx,
+            )
         })
     })?;
     settle(cx).await;
@@ -504,7 +516,7 @@ async fn resumed(library: &Config, cx: &mut AsyncApp) -> anyhow::Result<()> {
         cx.update(|cx| {
             cx.update_global::<Services, _>(|services, cx| {
                 let submitted = Config::clone(&admitted);
-                services.adopt_saved(&submitted, admitted, saved_at, cx)
+                services.adopt_saved(&submitted, admitted, saved_at, Landing::Saved, cx)
             })
         })?;
         let kept = still_showing(cx).await;
@@ -537,7 +549,7 @@ async fn rechecked(library: &Config, cx: &mut AsyncApp) -> anyhow::Result<()> {
     cx.update(|cx| {
         cx.update_global::<Services, _>(|services, cx| {
             services.resume(cx);
-            services.follow_draft(&german, cx);
+            services.follow_draft(&german);
         });
     });
     let started = until(cx, "Resume did not start the fake owner", |cx| {
@@ -573,7 +585,7 @@ async fn rebound(library: &Config, cx: &mut AsyncApp) -> anyhow::Result<()> {
     let saved_at = cx.update(|cx| cx.global::<Services>().config_epoch());
     cx.update(|cx| {
         cx.update_global::<Services, _>(|services, cx| {
-            services.follow_draft(&rebound, cx);
+            services.follow_draft(&rebound);
             services.resume(cx);
         });
     });
@@ -581,13 +593,19 @@ async fn rebound(library: &Config, cx: &mut AsyncApp) -> anyhow::Result<()> {
         let input = show_after_resume(cx).await?;
         cx.update(|cx| {
             cx.update_global::<Services, _>(|services, cx| {
-                services.adopt_saved(&older, admitted, saved_at, cx)
+                services.adopt_saved(&older, admitted, saved_at, Landing::Saved, cx)
             })
         })?;
         let outlasted = still_showing(cx).await;
         cx.update(|cx| {
             cx.update_global::<Services, _>(|services, cx| {
-                services.adopt_saved(&rebound, ValidConfig::assume(rebound.clone()), saved_at, cx)
+                services.adopt_saved(
+                    &rebound,
+                    ValidConfig::assume(rebound.clone()),
+                    saved_at,
+                    Landing::Saved,
+                    cx,
+                )
             })
         })?;
         let kept = still_showing(cx).await;
@@ -669,7 +687,7 @@ async fn stale_use(
     let mut armed = Some(input.clone());
     let observation = cx.update(|cx| {
         cx.observe_global::<Services>(move |cx| {
-            if cx.global::<Services>().choices.is_applying() {
+            if cx.global::<Services>().choices.awaits_owner() {
                 adopting = true;
                 return;
             }
@@ -705,16 +723,11 @@ async fn stale_use(
     settle(cx).await;
     let recording = snapshot(cx).phase == Phase::Recording;
     input.deliver(Input::Cancel);
+    input.deliver(Input::Release);
     until(cx, "The recording did not end", |cx| {
         Ok(!snapshot(cx).phase.is_active())
     })
     .await?;
-    cx.update(|cx| {
-        let services = cx.global::<Services>();
-        if let Some(runtime) = services.runtime() {
-            runtime.restore(services.config.clone());
-        }
-    });
     settings.update(cx, |view, _, cx| {
         view.config = draft.clone();
         view.saves = SaveQueue::new(path.to_owned(), draft);
@@ -746,7 +759,7 @@ async fn unavailable(settings: WindowHandle<Settings>, cx: &AsyncApp) -> anyhow:
     let mut armed = Some((missing, tried));
     let observation = cx.update(|cx| {
         cx.observe_global::<Services>(move |cx| {
-            if !cx.global::<Services>().choices.is_applying() {
+            if !cx.global::<Services>().choices.awaits_owner() {
                 return;
             }
             let Some((missing, tried)) = armed.take() else {
@@ -794,6 +807,8 @@ async fn running(
     })
     .await?;
     stale_use(settings, path, cx).await?;
+    rollback::waited_out(settings, path, cx).await?;
+    rollback::retained(settings, path, cx).await?;
 
     let overtaken = settings.update(cx, |view, window, cx| {
         let (call, receipt) = Call::new(Command::Preset {
@@ -824,7 +839,7 @@ async fn running(
     let mut armed = true;
     let observation = cx.update(|cx| {
         cx.observe_global::<Services>(move |cx| {
-            if !armed || !cx.global::<Services>().choices.is_applying() {
+            if !armed || !cx.global::<Services>().choices.awaits_owner() {
                 return;
             }
             armed = false;
@@ -1007,3 +1022,5 @@ async fn running(
     );
     Ok(())
 }
+
+mod rollback;

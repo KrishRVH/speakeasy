@@ -75,33 +75,42 @@ module unless a test file is named.
   [transcript/style.rs](../crates/app/src/transcript/style.rs) applies deterministic local casing
   after corrections, while Verbatim bypasses filler removal. Show narration keeps its own policy.
   [shell/choices.rs](../crates/app/src/shell/choices.rs) routes control commands and owns
-  saved-preset selection; Services holds the transient style. Tray and command presets validate off
-  the UI thread, leave saved settings unchanged, and require owner confirmation while idle.
-  Generation, saved-configuration epoch, session counter, and caller lifetime reject stale results.
-  The runtime keeps its saved configuration baseline separate from effective preset choices,
-  including after Resume. Text-only choices reuse the worker; engine changes reload it. Use in
-  Settings has one path: the candidate validates off the UI thread and then replaces any pending
-  tray or command choice, even one awaiting the owner's answer, whose caller still receives that
-  answer, so an unavailable candidate leaves that choice in place; a running owner adopts it only
-  while idle and while Settings still waits for it, in order with queued preset commands, and marks
-  the saved baseline it then receives as already applied; only then does Settings save it. A session
-  that starts while that save is written therefore survives its completion, and a refused or
-  unavailable preset changes neither dictation nor the settings file. A change to any setting a
+  saved-preset selection; Services holds the transient style. Every configuration request reaches
+  the session owner in the order Services sends it, on one lane: a save that changes what a session
+  reads, the rollback after a failed save, Use in Settings, and tray or command presets. The
+  [runtime](../crates/app/src/runtime.rs) handle keeps the baseline those requests leave in effect,
+  apart from a transient preset, including after Resume, and compares each save with it, never with
+  an older file. Only a save that changes what a session reads revokes input and ends the session at
+  once; any other leaves recordings and Shows running. A rollback, including to the save kept before
+  a later queued one failed, waits until no session or practice runs and then applies the newest
+  baseline without replacing the result of the session that just ended, so a save accepted meanwhile
+  replaces it; one whose desktop settings differ from those the owner launched with restarts it at
+  once, like any save. Each tray or command preset, and each Use sent to the owner, carries a
+  sequence number: Services honors an accepted answer only when no newer request was accepted and no
+  session-changing save, rollback, Reset, Use while paused, or owner restart followed it, and tells
+  a superseded tray or command caller it was refused, so a caller told it succeeded finds its preset
+  after Pause and Resume. Tray and command presets validate off the UI thread, leave saved settings
+  unchanged, and the owner confirms one only while idle, when no session has started and no
+  session-changing save has landed since it was chosen. Text-only choices reuse the worker; engine
+  changes reload it. Use in Settings validates its candidate off the UI thread; a running owner
+  adopts one that changes what a session reads only while idle, and only then does Settings save it.
+  A session that starts while that save is written therefore survives its completion, and a refused
+  or unavailable preset changes neither dictation nor the settings file. A change to any setting a
   preset keeps, made while the candidate validates, outlasts it: the owner never sees the candidate,
   and Settings drops the Use with a notice. If such a change comes after the owner adopted it, if
-  the save fails, or if Settings closes before the owner's answer reaches it, the owner returns to
-  the saved settings only while idle; a preset callback never cancels a session, so one in progress
-  keeps the preset until the next save or Resume. Settings disables Use during a session. Without a
-  live owner, including one that stopped on its own, a valid candidate clears the transient
-  selection and restarts a pending Resume check. One that changes the session becomes the
-  configuration Resume starts on, following each newer draft Settings writes and restarting a
-  pending Resume check, until the newest of those saves lands. Older saves landing meanwhile leave
-  the owner alone, and a save restarts the owner only when its desktop settings differ from those
-  the owner launched with, so the newest save keeps a session or Show started after Resume, even one
-  using a shortcut changed in that draft. A transient selection takes precedence in the Settings
-  indicator, which follows Services as well as snapshots, while its row still holds the definition
-  that was chosen. Capturing a preset requires both speech paths; a stored preset missing one still
-  loads with its settings, and Use on it asks for an engine and model without changing dictation.
+  the save fails, or if Settings closes before the owner's answer reaches it, Services rolls back.
+  Settings disables Use during a session. Without a live owner, including one that stopped on its
+  own, a valid candidate clears the transient selection. One that changes the session becomes the
+  configuration Resume starts on, following each newer draft Settings writes, until the newest of
+  those saves lands or a failed one rolls it back. A Resume check that finishes on anything but the
+  current candidate checks again, so Resume launches only the newest saved or accepted
+  configuration. Older saves landing meanwhile leave the owner alone, and a save restarts the owner
+  only when its desktop settings differ from those the owner launched with, so the newest save keeps
+  a session or Show started after Resume, even one using a shortcut changed in that draft. A
+  transient selection takes precedence in the Settings indicator, which follows Services as well as
+  snapshots, while its row still holds the definition that was chosen. Capturing a preset requires
+  both speech paths; a stored preset missing one still loads with its settings, and Use on it asks
+  for an engine and model without changing dictation.
 - **Audio capture**: [audio.rs](../crates/app/src/audio.rs) with
   [control.rs](../crates/app/src/audio/control.rs), [stream.rs](../crates/app/src/audio/stream.rs),
   [pcm.rs](../crates/app/src/audio/pcm.rs), [speech.rs](../crates/app/src/audio/speech.rs),

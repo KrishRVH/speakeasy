@@ -72,7 +72,7 @@ async fn reconfiguration_closes_practice_and_cancels_its_capture() -> anyhow::Re
     let mut h = Harness::new()?;
     let mut receipt = arm_practice(&h).await?;
     h.start().await?;
-    change_settings(&h);
+    change_settings(&mut h);
     assert!(timeout(PATIENCE, receipt.recv()).await?.is_none());
     h.phase(Phase::Cancelled).await?;
     assert!(h.pasted.try_recv().is_err());

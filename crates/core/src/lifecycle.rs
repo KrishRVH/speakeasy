@@ -109,6 +109,16 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
         }
     }
 
+    pub const fn active_mut(&mut self) -> Option<&mut Owners> {
+        match &mut self.state {
+            State::Running(owners) => Some(owners),
+            State::Disabled
+            | State::Validating(_)
+            | State::Stopping { .. }
+            | State::Quitting(_) => None,
+        }
+    }
+
     pub const fn retiring(&self) -> Option<&Owners> {
         match &self.state {
             State::Stopping { owners, .. } | State::Quitting(Some(owners)) => Some(owners),

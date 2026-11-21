@@ -166,7 +166,7 @@ async fn turning_print_off_during_a_capture_ends_it_and_refuses_its_caller() -> 
     let mut h = scripted()?;
     h.ready().await?;
     let token = captured(&mut h).await?;
-    let mut config = h.runtime.configuration.borrow().clone();
+    let mut config = h.runtime.baseline.clone();
     config.print_to_scripts = false;
     h.runtime.configure(ValidConfig::assume(config));
     h.observe(|snapshot| !snapshot.phase.is_active()).await?;

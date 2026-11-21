@@ -23,6 +23,7 @@ use updates::Update;
 use super::{
     Services, demo, request_quit,
     save::{SaveOutcome, SaveProgress, SaveQueue, SavedConfig},
+    services::Landing,
     window::choose_file,
 };
 use crate::{
@@ -410,7 +411,7 @@ impl Settings {
             return;
         }
         let epoch = services.config_epoch();
-        cx.update_global::<Services, _>(|services, cx| services.follow_draft(&self.config, cx));
+        cx.update_global::<Services, _>(|services, _| services.follow_draft(&self.config));
         if let Some(progress) = self.saves.submit(self.config.clone(), epoch) {
             self.advance_save(progress, cx);
         }
@@ -721,9 +722,9 @@ impl Settings {
         epoch: ConfigEpoch,
         cx: &mut Context<'_, Self>,
     ) {
-        let (saved, error) = match outcome {
-            SaveOutcome::Saved(saved) => (Some(saved), None),
-            SaveOutcome::Failed { error, kept } => (kept, Some(error)),
+        let (saved, error, landing) = match outcome {
+            SaveOutcome::Saved(saved) => (Some(saved), None, Landing::Saved),
+            SaveOutcome::Failed { error, kept } => (kept, Some(error), Landing::Retained),
         };
         let applied = saved.map(|saved| {
             saved.update_draft(&mut self.config);
@@ -732,11 +733,11 @@ impl Settings {
                 validated,
             } = *saved;
             cx.update_global::<Services, _>(|services, cx| {
-                services.adopt_saved(&submitted, validated, epoch, cx)
+                services.adopt_saved(&submitted, validated, epoch, landing, cx)
             })
         });
         if error.is_some() {
-            cx.update_global::<Services, _>(|services, cx| services.restore_owner(cx));
+            cx.update_global::<Services, _>(|services, _| services.restore_owner());
             let restored = cx.global::<Services>().config.clone();
             if restored.presets != self.config.presets {
                 self.menus.dismiss_presets();

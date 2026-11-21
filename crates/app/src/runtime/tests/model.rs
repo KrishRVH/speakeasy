@@ -569,7 +569,7 @@ impl Model {
                 }
             },
             Step::Configure(setting) => {
-                let mut config = self.runtime.configuration.borrow().clone();
+                let mut config = self.runtime.baseline.clone();
                 match setting {
                     Setting::Fillers => config.remove_fillers = !config.remove_fillers,
                     Setting::Gpu => config.use_gpu = !config.use_gpu,
