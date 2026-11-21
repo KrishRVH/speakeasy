@@ -10,6 +10,7 @@ use futures_util::{FutureExt as _, StreamExt as _, future::LocalBoxFuture};
 use x11rb::protocol::xproto::Window;
 use zbus::{
     Message, MessageStream, Proxy,
+    message::Sequence,
     zvariant::{OwnedObjectPath, Value},
 };
 
@@ -139,7 +140,7 @@ impl<'a> Insertions<'a> {
             && !matches!(
                 self.in_flight,
                 Some(InFlight {
-                    phase: Phase::SettingSelection(_),
+                    phase: Phase::ReplacingSelection(_),
                     ..
                 })
             )
@@ -158,7 +159,7 @@ impl<'a> Insertions<'a> {
     fn modifier_wait(&self) -> Option<tokio::time::Sleep> {
         match self.in_flight.as_ref()?.phase {
             Phase::AwaitingModifiers(started) => Some(deadline(started, MODIFIER_WAIT)),
-            Phase::SettingSelection(_) | Phase::Preparing(_) => None,
+            Phase::ReplacingSelection(_) | Phase::Preparing(_) => None,
         }
     }
 
@@ -187,7 +188,7 @@ impl<'a> Insertions<'a> {
             (Delivery::Direct, _) => {
                 Phase::Preparing(query_focus(self.worker, permit, Route::Direct).boxed_local())
             },
-            (Delivery::Paste, Some(session)) => Phase::SettingSelection(
+            (Delivery::Paste, Some(session)) => Phase::ReplacingSelection(
                 set_selection(self.clipboard, session.clone(), permit).boxed_local(),
             ),
             (Delivery::Paste, None) => Phase::Preparing(
@@ -199,34 +200,27 @@ impl<'a> Insertions<'a> {
     }
 
     fn advance_preparation(&mut self, prepared: anyhow::Result<Prepared>) -> anyhow::Result<()> {
-        let InFlight { request, phase } = self
+        let InFlight { request, .. } = self
             .in_flight
             .take()
             .context("Missing clipboard preparation")?;
         let permit = request.permit.clone();
-        let task = match prepared {
-            Ok(Prepared::SelectionSet) => {
-                self.selection = None;
+        let phase = match prepared {
+            Ok(Prepared::SelectionSet { replied }) => {
                 if !permit.active() {
                     request.reply.send(Ok(Inserted::Cancelled));
                     return Ok(());
                 }
-                confirm_selection(self.selecting, permit).boxed_local()
+                Phase::ReplacingSelection(
+                    confirm_selection(self.selecting, permit, replied).boxed_local(),
+                )
             },
-            Ok(Prepared::SelectionRefused(error)) => {
-                request.reply.send(if permit.active() {
-                    Err(error)
-                } else {
-                    Ok(Inserted::Cancelled)
-                });
-                return Ok(());
-            },
-            Ok(Prepared::Copied { owner }) => {
-                prepare_x11_paste(self.worker, owner, request.text.clone(), permit).boxed_local()
-            },
-            Ok(Prepared::Ownership { owned }) => {
-                query_focus(self.worker, permit, Route::PortalPaste { owned }).boxed_local()
-            },
+            Ok(Prepared::Copied { owner }) => Phase::Preparing(
+                prepare_x11_paste(self.worker, owner, request.text.clone(), permit).boxed_local(),
+            ),
+            Ok(Prepared::Ownership { owned }) => Phase::ReplacingSelection(
+                query_focus(self.worker, permit, Route::PortalPaste { owned }).boxed_local(),
+            ),
             Ok(Prepared::NotCopied) => {
                 let outcome = if permit.active() {
                     CLIPBOARD_CHANGED
@@ -240,9 +234,6 @@ impl<'a> Insertions<'a> {
                 return self.finish(request, external, route);
             },
             Err(error) => {
-                if matches!(phase, Phase::SettingSelection(_)) {
-                    self.selection = None;
-                }
                 request.reply.send(if permit.active() {
                     Err(error)
                 } else {
@@ -251,10 +242,7 @@ impl<'a> Insertions<'a> {
                 return Ok(());
             },
         };
-        self.in_flight = Some(InFlight {
-            request,
-            phase: Phase::Preparing(task),
-        });
+        self.in_flight = Some(InFlight { request, phase });
         Ok(())
     }
 
@@ -262,21 +250,18 @@ impl<'a> Insertions<'a> {
         self.apply_queued_notices();
         self.dispatch()?;
         let sender = self.sender.as_mut();
+        let forfeited = self.forfeited.as_ref();
         let outcome = match route {
             Route::Direct => insert_direct(sender, &request, external),
-            Route::X11Paste { owned } | Route::PortalPaste { owned } => finish_paste(
-                sender,
+            Route::X11Paste { owned } => {
+                finish_paste(sender, &request, self.paste, owned, external, forfeited)
+            },
+            Route::PortalPaste { owned } => publish_portal_selection(
+                &mut self.selection,
                 &request,
-                self.paste,
                 owned,
-                external,
-                self.forfeited.as_ref(),
+                finish_paste(sender, &request, self.paste, owned, external, forfeited),
             ),
-        };
-        let outcome = if matches!(route, Route::PortalPaste { .. }) {
-            publish_portal_selection(&mut self.selection, &request, outcome)
-        } else {
-            outcome
         };
         request.reply.send(Ok(outcome));
         Ok(())
@@ -333,7 +318,7 @@ struct InFlight<'a> {
 
 enum Phase<'a> {
     AwaitingModifiers(Instant),
-    SettingSelection(Preparation<'a>),
+    ReplacingSelection(Preparation<'a>),
     Preparing(Preparation<'a>),
 }
 
@@ -341,7 +326,7 @@ impl<'a> Phase<'a> {
     fn preparation(&mut self) -> Option<&mut Preparation<'a>> {
         match self {
             Self::AwaitingModifiers(_) => None,
-            Self::SettingSelection(task) | Self::Preparing(task) => Some(task),
+            Self::ReplacingSelection(task) | Self::Preparing(task) => Some(task),
         }
     }
 }
@@ -349,8 +334,7 @@ impl<'a> Phase<'a> {
 type Preparation<'a> = LocalBoxFuture<'a, anyhow::Result<Prepared>>;
 
 enum Prepared {
-    SelectionSet,
-    SelectionRefused(anyhow::Error),
+    SelectionSet { replied: Sequence },
     Copied { owner: Window },
     NotCopied,
     Ownership { owned: bool },
@@ -372,18 +356,14 @@ async fn set_selection(
         return Ok(Prepared::NotCopied);
     }
     let mime_types = Options::from([("mime_types", Value::from(PLAIN_TEXT.to_vec()))]);
-    match tokio::time::timeout(
+    let reply = tokio::time::timeout(
         SELECTION_TIMEOUT,
-        clipboard.call::<_, _, ()>("SetSelection", &(session, mime_types)),
+        clipboard.call_method("SetSelection", &(session, mime_types)),
     )
-    .await?
-    {
-        Ok(()) => Ok(Prepared::SelectionSet),
-        Err(refused @ zbus::Error::MethodError(..)) => {
-            Ok(Prepared::SelectionRefused(refused.into()))
-        },
-        Err(error) => Err(error.into()),
-    }
+    .await??;
+    Ok(Prepared::SelectionSet {
+        replied: reply.recv_position(),
+    })
 }
 
 async fn copy_with_x11(
@@ -400,9 +380,16 @@ async fn copy_with_x11(
 async fn confirm_selection(
     selecting: &Sender<SelectionHandoff>,
     permit: InsertPermit,
+    replied: Sequence,
 ) -> anyhow::Result<Prepared> {
     let (ready, confirmed) = Reply::channel();
-    selecting.send(SelectionHandoff { permit, ready }).await?;
+    selecting
+        .send(SelectionHandoff {
+            permit,
+            replied,
+            ready,
+        })
+        .await?;
     let owned = confirmed
         .recv()
         .await
@@ -512,15 +499,18 @@ fn finish_paste(
 fn publish_portal_selection(
     selection: &mut Option<Selection>,
     request: &Insertion,
+    replaced: bool,
     outcome: Inserted,
 ) -> Inserted {
-    match outcome {
-        Inserted::Sent => {},
-        Inserted::Copied(_) if request.permit.commit() => {},
-        Inserted::Copied(_) => return Inserted::Cancelled,
-        Inserted::Cancelled | Inserted::Unavailable(_) => return outcome,
+    let outcome = match outcome {
+        Inserted::Copied(_) if !request.permit.commit() => Inserted::Cancelled,
+        outcome => outcome,
+    };
+    if matches!(outcome, Inserted::Sent | Inserted::Copied(_)) {
+        *selection = Some(Selection::new(&request.text, request.permit.clone()));
+    } else if replaced {
+        *selection = None;
     }
-    *selection = Some(Selection::new(&request.text, request.permit.clone()));
     outcome
 }
 
@@ -601,7 +591,7 @@ mod tests {
             }
             let mut selection = None;
             let outcome =
-                publish_portal_selection(&mut selection, &request, COPIED_FOR_MANUAL_PASTE);
+                publish_portal_selection(&mut selection, &request, true, COPIED_FOR_MANUAL_PASTE);
             assert_eq!(selection.is_some(), active);
             assert_eq!(
                 outcome,
@@ -650,12 +640,12 @@ mod tests {
         let mut ownership = SelectionOwnership {
             session: Some(session.clone()),
             monitored: None,
-            owned: false,
+            owned_since: None,
         };
         let mut forfeited = None;
 
         let unconfirmed = input.begin().context("Unconfirmed recording")?;
-        ownership.adopt(unconfirmed.clone(), &notify)?;
+        ownership.adopt(unconfirmed.clone(), false, &notify)?;
         assert_eq!(
             paste_after_notices(&notices, &mut forfeited, &unconfirmed, false),
             SELECTION_LOST,
@@ -664,7 +654,7 @@ mod tests {
 
         ownership.observe(&owner_changed(&session, true)?, &notify)?;
         let taken = input.begin().context("Taken recording")?;
-        ownership.adopt(taken.clone(), &notify)?;
+        ownership.adopt(taken.clone(), true, &notify)?;
         ownership.observe(&owner_changed(&session, false)?, &notify)?;
         assert_eq!(
             paste_after_notices(&notices, &mut forfeited, &taken, true),
@@ -674,7 +664,7 @@ mod tests {
 
         ownership.observe(&owner_changed(&session, true)?, &notify)?;
         let escaped = input.begin().context("Escaped recording")?;
-        ownership.adopt(escaped.clone(), &notify)?;
+        ownership.adopt(escaped.clone(), true, &notify)?;
         input.deliver(Input::Cancel);
         ownership.observe(&owner_changed(&session, false)?, &notify)?;
         assert_eq!(
@@ -685,7 +675,7 @@ mod tests {
 
         let superseded = input.begin().context("Superseded recording")?;
         let _newer = input.begin().context("Newer recording")?;
-        ownership.adopt(superseded.clone(), &notify)?;
+        ownership.adopt(superseded.clone(), false, &notify)?;
         assert_eq!(
             paste_after_notices(&notices, &mut forfeited, &superseded, false),
             Inserted::Cancelled,

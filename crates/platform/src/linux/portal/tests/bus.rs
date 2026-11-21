@@ -164,8 +164,8 @@ impl FakePortal {
 
     async fn select(&mut self) -> anyhow::Result<()> {
         let call = self.expect("SetSelection").await?;
-        self.own().await?;
-        self.reply(&call).await
+        self.reply(&call).await?;
+        self.own().await
     }
 
     async fn served(&mut self, serial: u32) -> anyhow::Result<(Vec<u8>, bool)> {
@@ -362,18 +362,16 @@ fn on_private_bus(test: impl AsyncFnOnce(Bus) -> anyhow::Result<()>) -> anyhow::
 }
 
 #[test]
-fn private_bus_cancelled_selections_refuse_transfers_by_closing_them_empty() -> anyhow::Result<()> {
+fn private_bus_a_cancelled_copy_serves_the_previous_one_only_while_the_desktop_still_offers_it()
+-> anyhow::Result<()> {
     on_private_bus(async |bus| {
         let mut portal = FakePortal::start(&bus).await?;
         let client = Client::start(&bus).await?;
         client.copy(&mut portal, "alpha").await?;
-        portal.transfer(1).await?;
-        assert_eq!(portal.served(1).await?, (b"alpha".to_vec(), true));
 
         let (_, answer) = client.paste("bravo").await?;
         let selecting = portal.expect("SetSelection").await?;
         client.input.deliver(Input::Cancel);
-        portal.own().await?;
         portal.reply(&selecting).await?;
         assert!(
             matches!(
@@ -382,16 +380,36 @@ fn private_bus_cancelled_selections_refuse_transfers_by_closing_them_empty() -> 
             ),
             "Cancelling during SetSelection did not cancel the paste"
         );
+        portal.transfer(1).await?;
+        assert_eq!(
+            portal.served(1).await?,
+            (b"alpha".to_vec(), true),
+            "A copy cancelled before the desktop confirmed it discarded the previous copy"
+        );
+
+        let (_, answer) = client.paste("charlie").await?;
+        let selecting = portal.expect("SetSelection").await?;
         portal.transfer(2).await?;
         assert_eq!(
             portal.served(2).await?,
             (Vec::new(), false),
-            "A selection replaced by a cancelled paste still served the previous copy"
+            "A transfer while SetSelection was pending served text"
         );
-
-        let (_, answer) = client.paste("charlie").await?;
-        portal.select().await?;
+        portal.reply(&selecting).await?;
+        portal.transfer(3).await?;
+        assert_eq!(
+            portal.served(3).await?,
+            (Vec::new(), false),
+            "A transfer while the desktop confirmed a replacement served text"
+        );
+        portal.own().await?;
         client.focus().await?;
+        portal.transfer(4).await?;
+        assert_eq!(
+            portal.served(4).await?,
+            (Vec::new(), false),
+            "A transfer during a replacement served text before the paste committed"
+        );
         client.input.deliver(Input::Cancel);
         client.release_focus()?;
         assert!(
@@ -401,9 +419,40 @@ fn private_bus_cancelled_selections_refuse_transfers_by_closing_them_empty() -> 
             ),
             "Cancelling during preparation did not cancel the paste"
         );
-        portal.transfer(3).await?;
-        assert_eq!(portal.served(3).await?, (Vec::new(), false));
+        portal.transfer(5).await?;
+        assert_eq!(
+            portal.served(5).await?,
+            (Vec::new(), false),
+            "The desktop offered a cancelled copy and Speakeasy served the previous one for it"
+        );
         assert!(client.alive());
+        Ok(())
+    })
+}
+
+#[test]
+fn private_bus_a_replacement_the_desktop_never_confirms_keeps_the_previous_copy()
+-> anyhow::Result<()> {
+    on_private_bus(async |bus| {
+        let mut portal = FakePortal::start(&bus).await?;
+        let client = Client::start(&bus).await?;
+        client.copy(&mut portal, "alpha").await?;
+
+        let (_, answer) = client.paste("bravo").await?;
+        let selecting = portal.expect("SetSelection").await?;
+        portal.own().await?;
+        portal.reply(&selecting).await?;
+        let outcome = tokio::time::timeout(PATIENCE, answer.recv()).await???;
+        assert!(
+            matches!(outcome, Inserted::Unavailable(_)),
+            "A replacement confirmed only by ownership from before its reply ended {outcome:?}"
+        );
+        portal.transfer(1).await?;
+        assert_eq!(
+            portal.served(1).await?,
+            (b"alpha".to_vec(), true),
+            "An unconfirmed replacement discarded or replaced the copy the desktop still offers"
+        );
         Ok(())
     })
 }
@@ -531,8 +580,8 @@ fn private_bus_a_transfer_flood_while_transfers_are_full_refuses_without_stallin
                     let call = call?;
                     match call.header().member().map(MemberName::as_str) {
                         Some("SetSelection") => {
-                            portal.own().await?;
                             portal.reply(&call).await?;
+                            portal.own().await?;
                         },
                         Some("SelectionWrite") => refusals.push(portal.pipe(&call).await?),
                         Some("SelectionWriteDone") => {

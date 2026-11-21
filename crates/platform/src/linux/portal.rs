@@ -14,6 +14,7 @@ use futures_util::{FutureExt as _, StreamExt as _};
 use tokio::task::JoinSet;
 use zbus::{
     Connection, MatchRule, Message, MessageStream, Proxy,
+    message::Sequence,
     names::{MemberName, OwnedUniqueName},
     zvariant::{OwnedObjectPath, OwnedValue, Value},
 };
@@ -267,14 +268,15 @@ impl Pump {
     }
 
     fn complete_settled_handoff(&mut self) -> anyhow::Result<()> {
-        let owned = self.ownership.owned;
-        let Some(PendingHandoff { handoff, .. }) = self
-            .handoff
-            .take_if(|pending| owned || pending.started.elapsed() >= OWNERSHIP_SETTLE)
-        else {
+        let ownership = &self.ownership;
+        let Some(PendingHandoff { handoff, .. }) = self.handoff.take_if(|pending| {
+            ownership.confirms(pending.handoff.replied)
+                || pending.started.elapsed() >= OWNERSHIP_SETTLE
+        }) else {
             return Ok(());
         };
-        self.ownership.adopt(handoff.permit, &self.notify)?;
+        let owned = self.ownership.confirms(handoff.replied);
+        self.ownership.adopt(handoff.permit, owned, &self.notify)?;
         handoff.ready.send(owned);
         Ok(())
     }
@@ -329,13 +331,14 @@ impl Pump {
 
 struct SelectionHandoff {
     permit: InsertPermit,
+    replied: Sequence,
     ready: Reply<bool>,
 }
 
 struct SelectionOwnership {
     session: Option<OwnedObjectPath>,
     monitored: Option<InsertPermit>,
-    owned: bool,
+    owned_since: Option<Sequence>,
 }
 
 impl SelectionOwnership {
@@ -346,22 +349,30 @@ impl SelectionOwnership {
         {
             return Ok(());
         }
-        self.owned = change.is_ok_and(|(_, values)| {
+        let owned = change.is_ok_and(|(_, values)| {
             values
                 .get("session_is_owner")
                 .and_then(|value| bool::try_from(value).ok())
                 .unwrap_or(false)
         });
-        if !self.owned
-            && let Some(permit) = self.monitored.take()
-        {
+        self.owned_since = owned.then(|| event.recv_position());
+        if !owned && let Some(permit) = self.monitored.take() {
             lose_selection(permit, notify)?;
         }
         Ok(())
     }
 
-    fn adopt(&mut self, permit: InsertPermit, notify: &Sender<Notice>) -> anyhow::Result<()> {
-        if self.owned {
+    fn confirms(&self, replied: Sequence) -> bool {
+        self.owned_since.is_some_and(|since| since > replied)
+    }
+
+    fn adopt(
+        &mut self,
+        permit: InsertPermit,
+        owned: bool,
+        notify: &Sender<Notice>,
+    ) -> anyhow::Result<()> {
+        if owned {
             self.monitored = Some(permit);
             Ok(())
         } else {
@@ -623,7 +634,7 @@ async fn serve(
             ownership: SelectionOwnership {
                 session: clipboard_session.clone(),
                 monitored: None,
-                owned: false,
+                owned_since: None,
             },
             held: false,
             handoff: None,
@@ -842,11 +853,11 @@ mod tests {
         let mut ownership = SelectionOwnership {
             session: Some(session.clone()),
             monitored: Some(previous),
-            owned: true,
+            owned_since: Some(Sequence::default()),
         };
         ownership.observe(&owner_changed(&session, false)?, &notify)?;
         ownership.observe(&owner_changed(&session, true)?, &notify)?;
-        ownership.adopt(next.clone(), &notify)?;
+        ownership.adopt(next.clone(), true, &notify)?;
         let mut payload = Some(Selection::new("fixture", next.clone()));
         let mut forfeited = None;
         apply_notice(notices.try_recv()?, &mut payload, &mut forfeited);
@@ -863,7 +874,7 @@ mod tests {
         assert!(!next.commit(), "Current ownership loss authorized paste");
         assert!(payload.is_none());
         let unowned = input.begin().context("Unowned recording")?;
-        ownership.adopt(unowned.clone(), &notify)?;
+        ownership.adopt(unowned.clone(), false, &notify)?;
         assert!(
             !unowned.commit(),
             "Unconfirmed clipboard ownership authorized paste"
