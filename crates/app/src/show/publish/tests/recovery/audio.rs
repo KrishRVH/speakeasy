@@ -41,6 +41,30 @@ async fn with_pcm(
         .context("Fixture checkpoint is missing")
 }
 
+fn save_live(
+    parent: &Path,
+    checkpoint: Checkpoint,
+    narration: Narration,
+    loss: Option<NarrationLoss>,
+) -> anyhow::Result<SavedShow> {
+    let captured = narrated(Footage::from(checkpoint.replay()?), narration, loss);
+    let (_input, active) = permit();
+    let Published::Saved { show, .. } = publish_with(
+        Handoff::default(),
+        captured,
+        Origin::Live {
+            checkpoint: Some(checkpoint),
+        },
+        &active,
+        || Ok(parent.to_owned()),
+        |_| Ok(()),
+    )?
+    else {
+        bail!("Synthetic Show was not saved");
+    };
+    Ok(show)
+}
+
 #[tokio::test]
 async fn failed_save_keeps_durable_narration_and_original_voice() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
@@ -237,3 +261,4 @@ async fn kept_bundle_cannot_extend_audio_expiry_and_discard_audio_leaves_it_unto
 }
 
 mod publication;
+mod retirement;

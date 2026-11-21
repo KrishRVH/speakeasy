@@ -4,6 +4,7 @@ mod keeper;
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read as _, Write as _},
+    iter,
     path::{Path, PathBuf},
     time::SystemTime,
 };
@@ -24,6 +25,7 @@ const LOCK: &str = "owner.lock";
 const DISCARDED: &str = "discarded";
 const PUBLISHED: &str = "published";
 const NARRATED: &str = "\nnarrated";
+const SUPERSEDES: &str = "\nsupersedes ";
 const MARKER_LIMIT: u64 = 128;
 const PROVENANCE: &str = ".checkpoint";
 const NARRATION: &str = "narration.json";
@@ -32,6 +34,12 @@ const NARRATION_LIMIT: u64 = 4 << 20;
 const GONE: &str = "This interrupted Show expired, was discarded, or was already recovered. \
                    Refresh Shows.";
 const NO_FRAMES: &str = "No complete frame survived. Discard this interrupted Show.";
+const BUSY: &str = "This Show is already recording, recovering, or being discarded. Refresh Shows.";
+const UNMATCHED: &str =
+    "No interrupted Show matches that ID or path. Run speakeasy show list --json.";
+const UNRETRYABLE: &str = "This Show's kept audio is damaged, so its narration cannot be retried. \
+                           The saved Show is unaffected; remove this recovery folder with \
+                           speakeasy show discard.";
 const ROOT_LINKED: &str = "Show checkpoints must be a directory, not a link";
 
 const FILE_LIMIT: u64 = 1 << 30;
@@ -67,13 +75,7 @@ impl Interrupted {
     }
 
     pub(crate) fn id(&self) -> String {
-        format!(
-            "interrupted:{}",
-            self.directory
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-        )
+        label(&self.directory)
     }
 
     pub(crate) fn expires_at(&self) -> Option<String> {
@@ -90,10 +92,7 @@ impl Interrupted {
     }
 
     pub(crate) fn lock(&self) -> anyhow::Result<Checkpoint> {
-        let held = found(lock(&self.directory))?.context(GONE)?;
-        let checkpoint = held.context(
-            "This Show is already recording, recovering, or being discarded. Refresh Shows.",
-        )?;
+        let checkpoint = found(lock(&self.directory))?.context(GONE)?.context(BUSY)?;
         anyhow::ensure!(!checkpoint.retired(SystemTime::now())?, GONE);
         Ok(checkpoint)
     }
@@ -164,12 +163,19 @@ impl Checkpoint {
             .file_name()
             .and_then(|name| name.to_str())
             .context("Show has no ID")?;
+        let superseded = self
+            .association()?
+            .filter(|(_, previous)| *previous == Publication::Pending);
         super::write_flushed(&staged.staging.path().join(PROVENANCE), id.as_bytes())?;
         sync_directory(staged.staging.path())?;
         let mut marker = tempfile::NamedTempFile::new_in(&self.directory)?;
         marker.write_all(target.as_bytes())?;
         if publication == Publication::Narrated {
             marker.write_all(NARRATED.as_bytes())?;
+        }
+        if let Some((previous, _)) = superseded {
+            marker.write_all(SUPERSEDES.as_bytes())?;
+            marker.write_all(previous.as_str().as_bytes())?;
         }
         marker.as_file().sync_all()?;
         marker
@@ -276,41 +282,76 @@ impl Checkpoint {
     }
 
     pub(in crate::show) fn pending(&self) -> anyhow::Result<bool> {
-        Ok(self.publication()? == Some(Publication::Pending) && self.has_audio()?)
+        if self.publication()? != Some(Publication::Pending) {
+            return Ok(false);
+        }
+        self.retryable().map_err(|error| {
+            if error.is::<audio::Damaged>() {
+                anyhow::anyhow!(UNRETRYABLE)
+            } else {
+                error
+            }
+        })
+    }
+
+    fn retryable(&self) -> anyhow::Result<bool> {
+        Ok(entry_exists(&self.directory.join(NARRATION))? || self.has_audio()?)
     }
 
     fn retired(&self, now: SystemTime) -> anyhow::Result<bool> {
-        let discarded = entry_exists(&self.directory.join(DISCARDED))?;
-        Ok(discarded
+        if entry_exists(&self.directory.join(DISCARDED))?
             || age::expires_at(self.id()?).is_none_or(|expiry| expiry <= now)
-            || match self.publication()? {
-                Some(Publication::Narrated) => true,
-                Some(Publication::Pending) => !self.has_audio()?,
-                None => false,
-            })
+        {
+            return Ok(true);
+        }
+        Ok(match self.publication()? {
+            Some(Publication::Narrated) => true,
+            Some(Publication::Pending) => match self.retryable() {
+                Ok(retryable) => !retryable,
+                Err(damaged) if damaged.is::<audio::Damaged>() => false,
+                Err(error) => return Err(error),
+            },
+            None => false,
+        })
     }
 
     fn publication(&self) -> anyhow::Result<Option<Publication>> {
-        let Some(marker) = found(recall::read_file(&self.directory, PUBLISHED, MARKER_LIMIT))?
+        Ok(self.association()?.map(|(_, publication)| publication))
+    }
+
+    fn association(&self) -> anyhow::Result<Option<(ShowId, Publication)>> {
+        let Some(bytes) = found(recall::read_file(&self.directory, PUBLISHED, MARKER_LIMIT))?
         else {
             return Ok(None);
         };
-        let (target, publication) = published(&marker)
-            .filter(|(target, _)| age::recorded_at(target).is_some())
-            .context("Checkpoint publication marker is invalid")?;
-        let target = self
+        let marker = Marker::parse(&bytes).context("Checkpoint publication marker is invalid")?;
+        self.linked(marker)
+    }
+
+    fn linked(&self, marker: Marker) -> anyhow::Result<Option<(ShowId, Publication)>> {
+        let Marker {
+            target,
+            publication,
+            superseded,
+        } = marker;
+        let id = self.id()?;
+        let shows = self
             .directory
             .parent()
             .and_then(Path::parent)
-            .context("Checkpoint has no Shows folder")?
-            .join(target);
-        if !found(fs::symlink_metadata(&target))?.is_some_and(|metadata| metadata.is_dir()) {
-            return Ok(None);
+            .context("Checkpoint has no Shows folder")?;
+        let candidates = iter::once((target, publication))
+            .chain(superseded.map(|previous| (previous, Publication::Pending)));
+        for (target, publication) in candidates {
+            let bundle = shows.join(target.as_str());
+            if found(fs::symlink_metadata(&bundle))?.is_some_and(|metadata| metadata.is_dir())
+                && found(recall::read_file(&bundle, PROVENANCE, MARKER_LIMIT))?
+                    .is_some_and(|provenance| provenance == id.as_bytes())
+            {
+                return Ok(Some((target, publication)));
+            }
         }
-        let Some(provenance) = found(recall::read_file(&target, PROVENANCE, MARKER_LIMIT))? else {
-            return Ok(None);
-        };
-        Ok((provenance == self.id()?.as_bytes()).then_some(publication))
+        Ok(None)
     }
 
     pub(crate) fn replay(&self) -> anyhow::Result<Take> {
@@ -414,10 +455,11 @@ pub(super) fn discard_published(
         "This Show is still recording or recovering. Let it finish, then try deleting it again.",
     )?;
     let marker = recall::read_file(&path, PUBLISHED, MARKER_LIMIT).context(DAMAGED)?;
-    let target = published(&marker)
-        .and_then(|(target, _)| ShowId::parse(target))
-        .context(DAMAGED)?;
-    if directory.file_name().and_then(|name| name.to_str()) != Some(target.as_str()) {
+    let marker = Marker::parse(&marker).context(DAMAGED)?;
+    let owner = checkpoint.linked(marker).context(DAMAGED)?;
+    if owner.is_none_or(|(target, _)| {
+        directory.file_name().and_then(|name| name.to_str()) != Some(target.as_str())
+    }) {
         return Ok(None);
     }
     checkpoint.discard()?;
@@ -457,11 +499,33 @@ pub(crate) fn list(parent: &Path, now: SystemTime) -> Listing {
 
 pub(crate) fn resolve(parent: &Path, target: &Path) -> anyhow::Result<Interrupted> {
     let path = std::path::absolute(target)?;
-    list(parent, SystemTime::now())
-        .shows
+    let named = |directory: &Path| {
+        path == directory || target.to_str().is_some_and(|id| id == label(directory))
+    };
+    let Listing { shows, problems } = list(parent, SystemTime::now());
+    if let Some(show) = shows.into_iter().find(|show| named(&show.directory)) {
+        return Ok(show);
+    }
+    let directory = problems
         .into_iter()
-        .find(|show| target.to_str().is_some_and(|id| id == show.id()) || path == show.directory)
-        .context("No interrupted Show matches that ID or path. Run speakeasy show list --json.")
+        .map(|problem| problem.directory)
+        .find(|directory| named(directory))
+        .context(UNMATCHED)?;
+    let checkpoint = found(lock(&directory))?.context(UNMATCHED)?.context(BUSY)?;
+    let now = SystemTime::now();
+    anyhow::ensure!(!checkpoint.retired(now)?, UNMATCHED);
+    Ok(Interrupted {
+        recorded: checkpoint.recorded()?,
+        pending: checkpoint.publication()? == Some(Publication::Pending),
+        directory,
+    })
+}
+
+fn label(directory: &Path) -> String {
+    format!(
+        "interrupted:{}",
+        directory.file_name().unwrap_or_default().to_string_lossy()
+    )
 }
 
 pub(super) fn sweep(parent: &Path, now: SystemTime) -> anyhow::Result<()> {
@@ -538,12 +602,29 @@ pub(in crate::show) enum Publication {
     Narrated,
 }
 
-fn published(marker: &[u8]) -> Option<(&str, Publication)> {
-    let marker = std::str::from_utf8(marker).ok()?;
-    Some(match marker.strip_suffix(NARRATED) {
-        Some(target) => (target, Publication::Narrated),
-        None => (marker, Publication::Pending),
-    })
+struct Marker {
+    target: ShowId,
+    publication: Publication,
+    superseded: Option<ShowId>,
+}
+
+impl Marker {
+    fn parse(bytes: &[u8]) -> Option<Self> {
+        let marker = std::str::from_utf8(bytes).ok()?;
+        let (current, superseded) = match marker.split_once(SUPERSEDES) {
+            Some((current, previous)) => (current, Some(ShowId::parse(previous)?)),
+            None => (marker, None),
+        };
+        let (target, publication) = match current.strip_suffix(NARRATED) {
+            Some(target) => (target, Publication::Narrated),
+            None => (current, Publication::Pending),
+        };
+        Some(Self {
+            target: ShowId::parse(target)?,
+            publication,
+            superseded,
+        })
+    }
 }
 
 fn lock(directory: &Path) -> io::Result<Option<Checkpoint>> {

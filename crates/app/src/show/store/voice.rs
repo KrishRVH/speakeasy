@@ -61,8 +61,11 @@ pub(super) fn retain(
     if SystemTime::now() >= expires {
         return Ok(());
     }
-    let Some(input) = audio::available(checkpoint, audio::FILE)? else {
-        return Ok(());
+    let input = match audio::available(checkpoint, audio::FILE) {
+        Ok(Some(input)) => input,
+        Ok(None) => return Ok(()),
+        Err(damaged) if damaged.is::<audio::Damaged>() => return Ok(()),
+        Err(error) => return Err(error),
     };
     let mut input = input.take(audio::FILE_LIMIT.saturating_add(1));
     let mut output = File::create_new(staged.staging.path().join(FILE))?;

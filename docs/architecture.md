@@ -671,18 +671,23 @@ module unless a test file is named.
   [Audio checkpointing](../crates/app/src/audio/checkpoint.rs) preserves cue boundaries before and
   after promotion, so recovery seals through the same speech gate and trimming. Narration is
   atomically written and synced while audio remains recoverable. Successful transcription copies a
-  valid voice prefix into the staged bundle before checkpoint retirement. Publication binds durable
+  valid voice prefix into the staged bundle before checkpoint retirement; audio too damaged to read
+  is left out of voice rather than blocking the frames and narration. Publication binds durable
   checkpoint and bundle markers before rename; the marker distinguishes narrated publication so a
-  crash before checkpoint deletion cannot offer duplicate recovery. If checkpoint storage never
+  crash before checkpoint deletion cannot offer duplicate recovery. A retry's marker also names the
+  pending bundle it supersedes, which stays the checkpoint's owner for recovery and deletion until
+  the new bundle lands. If checkpoint storage never
   opens, in-memory footage remains publishable. A lost checkpoint completion stops publication; an
-  unknown checkpoint state cannot become an apparently complete bundle. Untranscribed audio keeps a
-  published checkpoint visible as Narration pending; a silent microphone's audio holds nothing to
-  retry or export, so its checkpoint records that disposition and retires without keeping voice. A
-  retry keeps the published association intact until a new bundle commits. Unfinished cancellation
+  unknown checkpoint state cannot become an apparently complete bundle. Untranscribed audio or saved
+  narration keeps a published checkpoint visible as Narration pending; one with neither retires. A
+  silent microphone's audio holds nothing to retry or export, so its checkpoint records that
+  disposition and retires without keeping voice. Unfinished cancellation
   records discard before deletion; private audio, narration, frame, and movie files are removed
   before the lock, so blocked deletion remains available to cleanup. Audio retains the original
   seven-day expiry regardless of a saved bundle's Keep marker. Discovery isolates damaged
-  checkpoints so healthy entries remain visible and saved bundles still expire.
+  checkpoints so healthy entries remain visible and saved bundles still expire. A pending checkpoint
+  whose audio is damaged stays listed as a problem, and `show discard` still removes it by ID or
+  path.
   [checkpoint/tests.rs](../crates/app/src/show/store/checkpoint/tests.rs) exercises damaged
   siblings, expiry, lock ownership, and durable discard/publication markers.
   [journal/log.rs](../crates/show/src/journal/log.rs) shares live/replay admission, thinning, and

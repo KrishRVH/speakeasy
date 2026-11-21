@@ -195,30 +195,6 @@ async fn only_audio_that_may_hold_speech_is_kept_for_retry_or_as_voice() -> anyh
     Ok(())
 }
 
-fn save_live(
-    parent: &Path,
-    checkpoint: Checkpoint,
-    narration: Narration,
-    loss: Option<NarrationLoss>,
-) -> anyhow::Result<SavedShow> {
-    let captured = narrated(Footage::from(checkpoint.replay()?), narration, loss);
-    let (_input, active) = permit();
-    let Published::Saved { show, .. } = publish_with(
-        Handoff::default(),
-        captured,
-        Origin::Live {
-            checkpoint: Some(checkpoint),
-        },
-        &active,
-        || Ok(parent.to_owned()),
-        |_| Ok(()),
-    )?
-    else {
-        bail!("Synthetic Show was not saved");
-    };
-    Ok(show)
-}
-
 #[tokio::test]
 async fn a_lost_narrated_copy_keeps_the_pending_bundle_link_deletable() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;

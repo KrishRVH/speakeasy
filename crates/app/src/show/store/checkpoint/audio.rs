@@ -1,4 +1,5 @@
 use std::{
+    fmt,
     fs::File,
     io::{self, BufReader, Seek as _},
     num::NonZeroU32,
@@ -6,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context as _, bail, ensure};
+use anyhow::{bail, ensure};
 use zeroize::Zeroizing;
 
 use super::{found, read_complete, recall};
@@ -21,12 +22,21 @@ pub(in crate::show::store) const FILE: &str = "audio.log";
 pub(in crate::show::store) const FILE_LIMIT: u64 = 128 << 20;
 pub(super) const CHUNK_BYTES: usize = 1 << 20;
 const PAYLOAD_LIMIT: usize = CHUNK_BYTES + 1;
-const DAMAGED: &str =
-    "The kept Show audio is damaged or unsupported. Its frames can still be recovered.";
 const BEGIN: u8 = 1;
 const SAMPLES: u8 = 2;
 const CUE: u8 = 3;
 const END: u8 = 4;
+
+#[derive(Debug)]
+pub(in crate::show::store) struct Damaged;
+
+impl fmt::Display for Damaged {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        out.write_str("The kept Show audio is damaged or unsupported.")
+    }
+}
+
+impl std::error::Error for Damaged {}
 
 pub(crate) struct KeptAudio {
     pub rate: NonZeroU32,
@@ -71,7 +81,7 @@ impl Record {
                     (1..=MAX_RATE).contains(rate)
                         && start.as_millis() <= u128::from(MAX_START_MS)
                         && language.len() <= LANGUAGE_BYTES,
-                    DAMAGED
+                    Damaged
                 );
                 bytes.push(BEGIN);
                 bytes.extend_from_slice(&rate.to_le_bytes());
@@ -81,7 +91,7 @@ impl Record {
             Self::Samples(pcm) => {
                 ensure!(
                     !pcm.is_empty() && pcm.len() <= CHUNK_BYTES && pcm.len().is_multiple_of(2),
-                    DAMAGED
+                    Damaged
                 );
                 bytes.push(SAMPLES);
                 bytes.extend_from_slice(pcm);
@@ -92,7 +102,7 @@ impl Record {
                         && before.is_multiple_of(2)
                         && at.is_multiple_of(2)
                         && *at <= pcm_limit(MAX_RATE),
-                    DAMAGED
+                    Damaged
                 );
                 bytes.push(CUE);
                 bytes.extend_from_slice(&u64::try_from(*before)?.to_le_bytes());
@@ -100,7 +110,7 @@ impl Record {
             },
             Self::End => bytes.push(END),
         }
-        let (length, payload) = bytes.split_first_chunk_mut::<4>().context(DAMAGED)?;
+        let (length, payload) = bytes.split_first_chunk_mut::<4>().ok_or(Damaged)?;
         *length = u32::try_from(payload.len())?.to_le_bytes();
         let checksum = crc32fast::hash(payload);
         bytes.extend_from_slice(&checksum.to_le_bytes());
@@ -110,7 +120,7 @@ impl Record {
 
 pub(in crate::show::store) fn read(file: File) -> anyhow::Result<KeptAudio> {
     let bytes = file.metadata()?.len();
-    ensure!(bytes <= FILE_LIMIT, DAMAGED);
+    ensure!(bytes <= FILE_LIMIT, Damaged);
     decode(BufReader::new(file), usize::try_from(bytes)?)
 }
 
@@ -122,7 +132,7 @@ pub(in crate::show::store) fn available(
     let Some((mut file, metadata)) = found(folder.file(Path::new(name)))? else {
         return Ok(None);
     };
-    ensure!(metadata.len() <= FILE_LIMIT, DAMAGED);
+    ensure!(metadata.len() <= FILE_LIMIT, Damaged);
     if metadata.len() <= u64::try_from(MAGIC.len())? {
         return Ok(None);
     }
@@ -141,7 +151,7 @@ enum Samples {
 }
 
 fn decode(file: impl io::Read, bytes: usize) -> anyhow::Result<KeptAudio> {
-    decode_prefix(file, bytes, Samples::All)?.context(DAMAGED)
+    Ok(decode_prefix(file, bytes, Samples::All)?.ok_or(Damaged)?)
 }
 
 fn decode_prefix(
@@ -153,23 +163,23 @@ fn decode_prefix(
     if !read_complete(&mut file, &mut magic)? {
         return Ok(None);
     }
-    ensure!(&magic == MAGIC, DAMAGED);
+    ensure!(&magic == MAGIC, Damaged);
     let Some(first) = next(&mut file)? else {
         return Ok(None);
     };
     let Some((&BEGIN, header)) = first.split_first() else {
-        bail!(DAMAGED);
+        bail!(Damaged);
     };
-    let (rate, header) = header.split_first_chunk::<4>().context(DAMAGED)?;
-    let (start, language) = header.split_first_chunk::<8>().context(DAMAGED)?;
-    let rate = NonZeroU32::new(u32::from_le_bytes(*rate)).context(DAMAGED)?;
+    let (rate, header) = header.split_first_chunk::<4>().ok_or(Damaged)?;
+    let (start, language) = header.split_first_chunk::<8>().ok_or(Damaged)?;
+    let rate = NonZeroU32::new(u32::from_le_bytes(*rate)).ok_or(Damaged)?;
     let start = u64::from_le_bytes(*start);
     ensure!(
         rate.get() <= MAX_RATE && start <= MAX_START_MS && language.len() <= LANGUAGE_BYTES,
-        DAMAGED
+        Damaged
     );
     let language = std::str::from_utf8(language)
-        .map_err(|_private_content| anyhow::anyhow!(DAMAGED))?
+        .map_err(|_private_content| Damaged)?
         .into();
     let limit = pcm_limit(rate.get());
     let mut audio = KeptAudio {
