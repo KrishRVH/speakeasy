@@ -417,20 +417,7 @@ impl Checkpoint {
     }
 
     pub(crate) fn discard(self) -> anyhow::Result<()> {
-        let discarded = self.directory.join(DISCARDED);
-        match File::create_new(&discarded) {
-            Ok(file) => file.sync_all()?,
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                regular(&discarded)?;
-                OpenOptions::new()
-                    .write(true)
-                    .open(&discarded)?
-                    .sync_all()?;
-            },
-            Err(error) => return Err(error.into()),
-        }
-        sync_directory(&self.directory)?;
-
+        mark_discarded(&self.directory)?;
         for name in [
             audio::FILE,
             NARRATION,
@@ -710,7 +697,7 @@ impl Checkpointing {
 
     pub(crate) async fn release(self, release: Release) -> anyhow::Result<()> {
         if let (Self::Writing(keeper), Release::Discard) = (&self, &release) {
-            keeper.stop();
+            keeper.discard();
         }
         let Some(checkpoint) = self.close().await? else {
             return Ok(());
@@ -727,6 +714,22 @@ impl Checkpointing {
             ))
         })
     }
+}
+
+fn mark_discarded(directory: &Path) -> io::Result<()> {
+    let discarded = directory.join(DISCARDED);
+    match File::create_new(&discarded) {
+        Ok(file) => file.sync_all()?,
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            regular(&discarded)?;
+            OpenOptions::new()
+                .write(true)
+                .open(&discarded)?
+                .sync_all()?;
+        },
+        Err(error) => return Err(error),
+    }
+    sync_directory(directory)
 }
 
 fn regular(path: &Path) -> io::Result<()> {

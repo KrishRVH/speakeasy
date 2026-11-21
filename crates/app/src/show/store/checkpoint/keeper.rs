@@ -34,6 +34,7 @@ pub(crate) struct Kept {
 
 pub(crate) struct Keeper {
     thread: StoppableThread,
+    discard: Sender<()>,
     closed: Receiver<anyhow::Result<Option<Checkpoint>>>,
 }
 
@@ -67,6 +68,7 @@ impl Keeper {
         let (frames, frame_input) = Input::lane(FRAME_EVENTS, FRAME_BYTES);
         let (audio, audio_input) = Input::lane(AUDIO_EVENTS, AUDIO_BYTES);
         let (returned, closed) = async_channel::bounded(1);
+        let (discard, discarding) = async_channel::bounded(1);
         let thread = StoppableThread::spawn("show-checkpoint", move |stopping| {
             let outcome = match parent().and_then(|parent| Checkpoint::create(&parent, recorded)) {
                 Ok(checkpoint) => tokio::runtime::Builder::new_current_thread()
@@ -77,6 +79,7 @@ impl Keeper {
                             frame_input,
                             audio_input,
                             stopping,
+                            discarding,
                         ));
                         Some(checkpoint)
                     })
@@ -90,20 +93,29 @@ impl Keeper {
             let _ = returned.try_send(outcome);
         })?;
         Ok(Kept {
-            keeper: Self { thread, closed },
+            keeper: Self {
+                thread,
+                discard,
+                closed,
+            },
             frames: FrameLog::new(frames),
             audio: AudioLog::new(audio),
         })
     }
 
-    pub(crate) fn stop(&self) {
+    pub(crate) fn discard(&self) {
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "A full single-slot lane already holds this discard, and the stop below ends the keeper either way"
+        )]
+        let _ = self.discard.try_send(());
         self.thread.request_stop();
     }
 
     pub(crate) async fn close(self) -> anyhow::Result<Option<Checkpoint>> {
         self.thread.stopped().await;
         tokio::task::spawn_blocking(move || {
-            let Self { thread, closed } = self;
+            let Self { thread, closed, .. } = self;
             drop(thread);
             closed
                 .try_recv()
@@ -208,6 +220,7 @@ async fn write(
     frames: Input<FrameRecord>,
     audio: Input<audio::Record>,
     stopping: Receiver<Infallible>,
+    discarding: Receiver<()>,
 ) {
     let mut frames = Some(frames);
     let mut audio = Some(audio);
@@ -216,6 +229,13 @@ async fn write(
     while frames.is_some() || audio.is_some() || movie.is_some() {
         if !stopped && stopping.is_closed() {
             stopped = true;
+            if discarding.try_recv().is_ok() {
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "Checkpoint discard writes the marker again once the keeper returns its files"
+                )]
+                let _ = super::mark_discarded(directory);
+            }
             if let Some(input) = frames.take() {
                 input.finish(false);
             }

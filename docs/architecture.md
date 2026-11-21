@@ -723,7 +723,9 @@ module unless a test file is named.
   neither stays listed for explicit discard. A silent microphone's audio holds
   nothing to retry or export, so its checkpoint records that disposition and retires without keeping
   voice; recovery treats complete, all-zero audio without saved narration the same way. Unfinished cancellation
-  records discard before deletion; private audio, narration, frame, and movie files are removed
+  records discard when its keeper receives it, before the native movie lease closes, so a kill
+  during teardown cannot return cancelled footage; an emergency drop leaves the checkpoint
+  recoverable; private audio, narration, frame, and movie files are removed
   before the lock, so blocked deletion remains available to cleanup. Audio retains the original
   seven-day expiry regardless of a saved bundle's Keep marker. Discovery isolates damaged
   checkpoints so healthy entries remain visible and saved bundles still expire. A pending checkpoint

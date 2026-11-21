@@ -171,6 +171,42 @@ async fn emergency_drop_cancels_but_waits_for_the_native_movie_file_lease() -> a
 }
 
 #[tokio::test]
+async fn discarding_records_its_intent_before_the_native_movie_lease_closes() -> anyhow::Result<()>
+{
+    let root = tempfile::tempdir()?;
+    let Kept {
+        keeper,
+        mut frames,
+        audio,
+    } = begin(root.path())?;
+    record_frame(&mut frames)?;
+    let target = frames.movie(Instant::now()).await.unwrap();
+    assert!(frames.close().await);
+    drop(audio);
+    keeper.discard();
+    tokio::time::timeout(PATIENCE, async {
+        while !target.cancelled() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await?;
+    let marked = std::fs::read_dir(root.path().join(super::super::ROOT))?
+        .filter_map(Result::ok)
+        .any(|entry| entry.path().join(super::super::DISCARDED).is_file());
+    drop(target);
+    let checkpoint = tokio::time::timeout(PATIENCE, keeper.close())
+        .await??
+        .context("Fixture checkpoint is missing")?;
+    assert!(
+        marked,
+        "Discard waited for the movie lease to record itself"
+    );
+    drop(checkpoint);
+    assert_eq!(list(root.path(), SystemTime::now()).shows, []);
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_lost_completion_stays_an_error_after_checkpoint_files_are_written() -> anyhow::Result<()>
 {
     let root = tempfile::tempdir()?;
