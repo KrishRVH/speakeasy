@@ -194,10 +194,20 @@ async fn quit_honors_a_cancel_queued_before_a_microphone_loss() -> anyhow::Resul
         let (id, microphone) = start_show_listening(&mut h).await?;
         receive(&h.shows).await?;
         let escape = matches!(cancel, Input::Escape);
-        h.input(cancel);
+        for input in [cancel, Input::Release, Input::Press] {
+            h.input(input);
+        }
         microphone.try_send(disconnected(id))?;
-        h.runtime.request_stop();
+        let cancelled = h.snapshot().session;
+        let updates = h.updates.clone();
+        h.runtime.stop.close();
+        tokio::task::yield_now().await;
         h.close().await?;
+        assert_eq!(
+            updates.borrow().session,
+            cancelled,
+            "Quit started a recording from a Press queued after the cancellation"
+        );
         let listing = show::checkpoint::list(root.path(), SystemTime::now());
         assert!(listing.problems.is_empty());
         assert_eq!(
@@ -207,6 +217,68 @@ async fn quit_honors_a_cancel_queued_before_a_microphone_loss() -> anyhow::Resul
             if escape { "held Escape" } else { "Cancel" }
         );
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn quit_reads_queued_shortcut_gestures_before_a_queued_escape() -> anyhow::Result<()> {
+    for released in [true, false] {
+        let root = tempfile::tempdir()?;
+        let mut h = Harness::with_ports(Config::default(), |ports| {
+            ports.checkpoint_root = Some(root.path().to_owned());
+            ports.screen_report = ScreenReport::Withheld;
+        })?;
+        let (id, microphone) = start_show_listening(&mut h).await?;
+        receive(&h.shows).await?;
+        let queued = if released {
+            Input::Release
+        } else {
+            h.input(Input::Release);
+            microphone.send(CaptureEvent::Level(id, 0.25)).await?;
+            h.observe_level(0.25).await?;
+            Input::Press
+        };
+        h.input(queued);
+        h.input(Input::Escape);
+        microphone.try_send(disconnected(id))?;
+        h.runtime.request_stop();
+        h.close().await?;
+        let listing = show::checkpoint::list(root.path(), SystemTime::now());
+        assert!(listing.problems.is_empty());
+        assert_eq!(
+            listing.shows.len(),
+            usize::from(released),
+            "Quit misread an Escape queued after a {}",
+            if released {
+                "Release, discarding the finished Show"
+            } else {
+                "fresh Press, keeping the cancelled Show"
+            }
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn quit_starts_no_show_requested_while_it_was_queued() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let mut h = Harness::with_ports(Config::default(), |ports| {
+        ports.checkpoint_root = Some(root.path().to_owned());
+        ports.screen_report = ScreenReport::Withheld;
+    })?;
+    h.input(Input::Press);
+    h.phase(Phase::Recording).await?;
+    let _microphone = receive(&h.captures).await?;
+    h.input(Input::Show(Scope::Screen));
+    let sounds = h.sounds.clone();
+    h.runtime.stop.close();
+    tokio::task::yield_now().await;
+    h.close().await?;
+    assert!(
+        std::iter::from_fn(|| sounds.try_recv().ok())
+            .all(|sound| sound != Sound::Played(Cue::Show)),
+        "Quit started a Show requested behind it"
+    );
     Ok(())
 }
 

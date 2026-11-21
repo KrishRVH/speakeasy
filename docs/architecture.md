@@ -954,9 +954,12 @@ No single module owns these rules; a change to any party keeps them.
 - **Finished Shows remain recoverable.** Quit, Pause, and reconfiguration revoke unfinished
   publication without deleting its checkpoint. The same holds while finished footage awaits
   transcription. A Show finishes when the user finishes it or its capture ends, including where its
-  audio stopped. Quit first applies a queued Escape or Cancel, then capture events already queued,
-  and no other queued input: a cancellation the user already sent still discards the unfinished
-  Show, and a capture ending that raced Quit still finishes it. The session decides checkpoint
+  audio stopped. While a session is active, Quit first applies the shortcut gestures already queued
+  (press, release, lock, submit, toggle, Escape, Cancel, interrupt) in arrival order, then capture
+  events already queued; it applies no other queued input and none once no session remains. A
+  cancellation the user already sent still discards the unfinished Show, an Escape is passive or
+  held as the queued shortcut presses and releases left it, a queued press starts nothing new, and a
+  capture ending that raced Quit still finishes the Show. The session decides checkpoint
   disposition; stale reports hold only in-memory footage. Cancelling unfinished capture, choosing no
   target, or a screen failure before the first frame discards its checkpoint. A recorder unwind
   preserves a finished session's checkpoint because it may contain surviving frames. Recovery waits

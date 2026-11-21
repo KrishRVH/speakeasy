@@ -293,10 +293,23 @@ impl<P: Ports> Owner<P> {
 
     fn settle(&mut self) -> ControlFlow<()> {
         for _ in 0..self.world.inputs.len() {
+            if self.machine.is_idle() {
+                break;
+            }
             let Ok(input) = self.world.inputs.try_recv() else {
                 break;
             };
-            if matches!(input, Input::Escape | Input::Cancel) {
+            if matches!(
+                input,
+                Input::Press
+                    | Input::Release
+                    | Input::Lock
+                    | Input::Submit
+                    | Input::Toggle
+                    | Input::Escape
+                    | Input::Cancel
+                    | Input::Interrupt
+            ) {
                 self.apply(Wake::Input(Ok(input)))?;
             }
         }
