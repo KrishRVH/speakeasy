@@ -403,28 +403,29 @@ module unless a test file is named.
   Shortcuts reach the UI in connection order. A connection that presents the secret holds later ones
   until it finishes its request, which it must do within 100 ms of connecting; one that has not
   presented it holds them only for its first 20 ms, so a connection without the secret delays a
-  shortcut by at most that. The server acknowledges a shortcut only while its caller is connected
-  and the server can hold it: at most two requests wait for a busy UI, counting the one in its
-  mailbox, and a shortcut beyond that is closed unacknowledged, so nothing fires after its caller
-  reports a refusal. A control frame is acknowledged once its header arrives; an oversized one is
-  refused without waiting for its body, and any other is answered once read. The server owns up to
-  eight separate control receipts, each with a two-second deadline, except a print, which waits up
-  to two minutes, and answers further calls as busy. A control caller keeps its connection open
-  until the reply; end of input abandons the call, since the server cannot tell a half-closed caller
-  from a departed one. Shortcut cancel/toggle bindings remain responsive while a receipt waits;
-  shutdown drains every task. [control.rs](../crates/app/src/control.rs) rejects malformed commands
-  without echoing input. Unix instance, setup, and update leases use owner-only regular files and
-  tighten the permissions of previously created lock files.
-  [owner/commands.rs](../crates/app/src/runtime/owner/commands.rs) admits actions only for live
-  callers and acknowledges actual owner decisions. Stop/cancel tokens combine the runtime
-  incarnation with the session ID and exclude Shows and practice. Style is acknowledged by its
-  Services owner without inventing a session-status observation; ordinary status is observed by the
-  session owner. A lost receipt is unknown, never proof of refusal. Capture and print are refused
-  before the machine unless `print_to_scripts` is on; changing it is a session change, so turning it
-  off ends a running capture. A capture (`start --print`) marks its session's handoff; a print
-  stores its call in that session, which answers it with the text in place of insertion or refuses
-  it when the session ends without text, so one session answers one print at most. Show promotion
-  leaves these private dictations in their original session.
+  shortcut by at most that. The server acknowledges a shortcut only when it can hold it: at most two
+  requests wait for a busy UI, counting the one in its mailbox, and a shortcut beyond that is closed
+  unacknowledged, so nothing fires after its caller reports a refusal. It also skips a shortcut
+  whose caller has visibly disconnected; that check is best effort, so a shortcut whose caller times
+  out or leaves while it is acknowledged can still fire. A control frame is acknowledged once its
+  header arrives; an oversized one is refused without waiting for its body, and any other is
+  answered once read. The server owns up to eight separate control receipts, each with a two-second
+  deadline, except a print, which waits up to two minutes, and answers further calls as busy. A
+  control caller keeps its connection open until the reply; end of input abandons the call, since
+  the server cannot tell a half-closed caller from a departed one. Shortcut cancel/toggle bindings
+  remain responsive while a receipt waits; shutdown drains every task.
+  [control.rs](../crates/app/src/control.rs) rejects malformed commands without echoing input. Unix
+  instance, setup, and update leases use owner-only regular files and tighten the permissions of
+  previously created lock files. [owner/commands.rs](../crates/app/src/runtime/owner/commands.rs)
+  admits actions only for live callers and acknowledges actual owner decisions. Stop/cancel tokens
+  combine the runtime incarnation with the session ID and exclude Shows and practice. Style is
+  acknowledged by its Services owner without inventing a session-status observation; ordinary status
+  is observed by the session owner. A lost receipt is unknown, never proof of refusal. Capture and
+  print are refused before the machine unless `print_to_scripts` is on; changing it is a session
+  change, so turning it off ends a running capture. A capture (`start --print`) marks its session's
+  handoff; a print stores its call in that session, which answers it with the text in place of
+  insertion or refuses it when the session ends without text, so one session answers one print at
+  most. Show promotion leaves these private dictations in their original session.
   [tests/printing.rs](../crates/app/src/runtime/tests/printing.rs) covers that handoff.
   [tests/control.rs](../crates/app/src/runtime/tests/control.rs) covers stale authority, busy
   admission, per-session style, and preset adoption.

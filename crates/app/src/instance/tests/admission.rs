@@ -121,15 +121,60 @@ fn concurrent_shortcuts_beyond_the_waiting_limit_are_refused_and_never_delivered
     Ok(())
 }
 
-#[test]
-fn a_shortcut_whose_caller_left_before_its_acknowledgement_never_fires() -> anyhow::Result<()> {
-    let directory = tempfile::tempdir()?;
-    let path = directory.path().join("settings.json");
-    let (_instance, requests) = Instance::acquire(&path)?.context("First owner missing")?;
-    let (mut departed, nonce) = dial(&path)?;
-    present(&mut departed, nonce, &[Request::Toggle as u8])?;
+fn deliverable(arrivals: &Arrivals) -> Option<Request> {
+    match arrivals.next(Instant::now()) {
+        Next::Deliver(_, request) => Some(request),
+        Next::HoldUntil(_) | Next::Hold => None,
+    }
+}
+
+async fn read_by_server(
+    arrivals: &mut Arrivals,
+    listener: &tokio::net::TcpListener,
+    nonce: u128,
+    request: Request,
+) -> anyhow::Result<(
+    TcpStream,
+    Result<(Id, Option<(AsyncStream, Incoming)>), JoinError>,
+)> {
+    let mut caller = TcpStream::connect(listener.local_addr()?)?;
+    present(&mut caller, nonce, &[request as u8])?;
+    arrivals.begin(listener.accept().await?.0, nonce);
+    let presented = arrivals
+        .verifying
+        .join_next_with_id()
+        .await
+        .context("The secret was never checked")?;
+    arrivals.verified(presented);
+    let read = arrivals
+        .reading
+        .join_next_with_id()
+        .await
+        .context("The request was never read")?;
+    Ok((caller, read))
+}
+
+#[tokio::test]
+async fn a_shortcut_whose_caller_has_visibly_left_is_not_admitted() -> anyhow::Result<()> {
+    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
+    let nonce = 7;
+    let mut arrivals = Arrivals::default();
+    let (departed, read) = read_by_server(&mut arrivals, &listener, nonce, Request::Toggle).await?;
     drop(departed);
-    Instance::send(&path, Request::Cancel)?;
-    assert_eq!(next_request(&requests)?, Request::Cancel);
+    let Ok((id, Some((stream, incoming)))) = read else {
+        bail!("The departed caller's request was not read");
+    };
+    assert_eq!(stream.peek(&mut [0]).await?, 0);
+    assert!(
+        arrivals
+            .finish(Ok((id, Some((stream, incoming)))), 0)
+            .await
+            .is_none()
+    );
+    assert_eq!(deliverable(&arrivals), None);
+    let (staying, read) = read_by_server(&mut arrivals, &listener, nonce, Request::Cancel).await?;
+    assert!(arrivals.finish(read, 0).await.is_none());
+    assert_eq!(deliverable(&arrivals), Some(Request::Cancel));
+    assert!(acknowledged(&staying)?);
     Ok(())
 }
