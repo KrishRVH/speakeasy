@@ -1,7 +1,7 @@
 #[cfg(target_os = "linux")]
 use std::fs;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
-use std::net::Ipv4Addr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 #[cfg(unix)]
 use std::{io, mem::MaybeUninit};
 #[cfg(target_os = "windows")]
@@ -16,7 +16,8 @@ use anyhow::Context as _;
 use windows_sys::Win32::{
     Foundation::{ERROR_INSUFFICIENT_BUFFER, FALSE, NO_ERROR},
     NetworkManagement::IpHelper::{
-        GetExtendedTcpTable, MIB_TCPROW_OWNER_PID, TCP_TABLE_OWNER_PID_LISTENER,
+        GetExtendedTcpTable, MIB_TCP6ROW_OWNER_PID, MIB_TCPROW_OWNER_PID,
+        TCP_TABLE_OWNER_PID_LISTENER,
     },
     System::{
         JobObjects::{
@@ -32,14 +33,53 @@ use windows_sys::Win32::{
 use crate::windows::{ok_or_last_error, take_handle};
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
-const LOOPBACK: u32 = u32::from_ne_bytes(Ipv4Addr::LOCALHOST.octets());
-
-#[cfg(any(target_os = "linux", target_os = "windows"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LoopbackListener {
     Missing,
     Owned,
     Foreign,
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn classify<L: PartialEq>(
+    mut listening: impl FnMut() -> anyhow::Result<Vec<L>>,
+    mut unheld: impl FnMut(Vec<L>) -> anyhow::Result<Vec<L>>,
+) -> anyhow::Result<LoopbackListener> {
+    const ATTEMPTS: usize = 4;
+    let mut listed = listening()?;
+    for _ in 0..ATTEMPTS {
+        if listed.is_empty() {
+            return Ok(LoopbackListener::Missing);
+        }
+        let foreign = unheld(listed)?;
+        if foreign.is_empty() {
+            return Ok(LoopbackListener::Owned);
+        }
+        listed = listening()?;
+        if foreign.iter().all(|listener| listed.contains(listener)) {
+            return Ok(LoopbackListener::Foreign);
+        }
+    }
+    anyhow::bail!("The listeners on the port kept changing")
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn reaches_loopback(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(address) => address == Ipv4Addr::LOCALHOST || address.is_unspecified(),
+        IpAddr::V6(address) => {
+            address.is_unspecified() || address.to_ipv4_mapped() == Some(Ipv4Addr::LOCALHOST)
+        },
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn ipv6(words: [u32; 4]) -> Ipv6Addr {
+    let mut octets = [0_u8; 16];
+    for (quad, word) in octets.as_chunks_mut::<4>().0.iter_mut().zip(words) {
+        *quad = word.to_ne_bytes();
+    }
+    Ipv6Addr::from(octets)
 }
 
 #[cfg(target_os = "windows")]
@@ -86,14 +126,13 @@ impl ProcessGroup {
     }
 
     pub fn loopback_listener(&self, port: u16) -> anyhow::Result<LoopbackListener> {
-        let owners = loopback_listener_owners(port)?;
-        Ok(if owners.is_empty() {
-            LoopbackListener::Missing
-        } else if owners.into_iter().all(|owner| self.contains(owner)) {
-            LoopbackListener::Owned
-        } else {
-            LoopbackListener::Foreign
-        })
+        classify(
+            || loopback_listener_owners(port),
+            |mut owners| {
+                owners.retain(|&owner| !self.contains(owner));
+                Ok(owners)
+            },
+        )
     }
 
     fn contains(&self, pid: u32) -> bool {
@@ -116,14 +155,65 @@ impl ProcessGroup {
 }
 
 #[cfg(target_os = "windows")]
-const ROW_WORDS: usize = 6;
+const IPV4_ROW_WORDS: usize = 6;
 #[cfg(target_os = "windows")]
-const _: () = assert!(size_of::<MIB_TCPROW_OWNER_PID>() == ROW_WORDS * size_of::<u32>());
+const IPV6_ROW_WORDS: usize = 14;
+#[cfg(target_os = "windows")]
+const _: () = {
+    use std::mem::offset_of;
+    assert!(size_of::<MIB_TCPROW_OWNER_PID>() == size_of::<[u32; IPV4_ROW_WORDS]>());
+    assert!(offset_of!(MIB_TCPROW_OWNER_PID, dwLocalAddr) == size_of::<[u32; 1]>());
+    assert!(offset_of!(MIB_TCPROW_OWNER_PID, dwLocalPort) == size_of::<[u32; 2]>());
+    assert!(offset_of!(MIB_TCPROW_OWNER_PID, dwOwningPid) == size_of::<[u32; 5]>());
+    assert!(size_of::<MIB_TCP6ROW_OWNER_PID>() == size_of::<[u32; IPV6_ROW_WORDS]>());
+    assert!(offset_of!(MIB_TCP6ROW_OWNER_PID, ucLocalAddr) == 0);
+    assert!(offset_of!(MIB_TCP6ROW_OWNER_PID, dwLocalPort) == size_of::<[u32; 5]>());
+    assert!(offset_of!(MIB_TCP6ROW_OWNER_PID, dwOwningPid) == size_of::<[u32; 13]>());
+};
 
 #[cfg(target_os = "windows")]
 fn loopback_listener_owners(port: u16) -> anyhow::Result<Vec<u32>> {
     const AF_INET: u32 = 2;
+    const AF_INET6: u32 = 23;
 
+    let mut owners = listener_owners(&listener_table(AF_INET)?, port, ipv4_row);
+    owners.extend(listener_owners(&listener_table(AF_INET6)?, port, ipv6_row));
+    Ok(owners)
+}
+
+#[cfg(target_os = "windows")]
+struct Row {
+    address: IpAddr,
+    port: u16,
+    owner: u32,
+}
+
+#[cfg(target_os = "windows")]
+fn ipv4_row(&[_, address, port, _, _, owner]: &[u32; IPV4_ROW_WORDS]) -> Row {
+    Row {
+        address: IpAddr::from(address.to_ne_bytes()),
+        port: network_port(port),
+        owner,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn ipv6_row(&[a, b, c, d, _, port, .., owner]: &[u32; IPV6_ROW_WORDS]) -> Row {
+    Row {
+        address: IpAddr::V6(ipv6([a, b, c, d])),
+        port: network_port(port),
+        owner,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn network_port(word: u32) -> u16 {
+    let [high, low, ..] = word.to_ne_bytes();
+    u16::from_be_bytes([high, low])
+}
+
+#[cfg(target_os = "windows")]
+fn listener_table(family: u32) -> anyhow::Result<Vec<u32>> {
     const ATTEMPTS: usize = 4;
     let mut table: Vec<u32> = Vec::new();
     let mut size = 0_u32;
@@ -133,13 +223,13 @@ fn loopback_listener_owners(port: u16) -> anyhow::Result<Vec<u32>> {
                 table.as_mut_ptr().cast(),
                 &raw mut size,
                 FALSE,
-                AF_INET,
+                family,
                 TCP_TABLE_OWNER_PID_LISTENER,
                 0,
             )
         };
         match status {
-            NO_ERROR => return Ok(listener_owners(&table, port)),
+            NO_ERROR => return Ok(table),
             ERROR_INSUFFICIENT_BUFFER => {
                 table.resize(usize::try_from(size)?.div_ceil(size_of::<u32>()), 0);
             },
@@ -150,19 +240,21 @@ fn loopback_listener_owners(port: u16) -> anyhow::Result<Vec<u32>> {
 }
 
 #[cfg(target_os = "windows")]
-fn listener_owners(table: &[u32], port: u16) -> Vec<u32> {
+fn listener_owners<const WORDS: usize>(
+    table: &[u32],
+    port: u16,
+    row: fn(&[u32; WORDS]) -> Row,
+) -> Vec<u32> {
     let Some((&count, rows)) = table.split_first() else {
         return Vec::new();
     };
-    rows.as_chunks::<ROW_WORDS>()
+    rows.as_chunks::<WORDS>()
         .0
         .iter()
         .take(usize::try_from(count).unwrap_or(usize::MAX))
-        .filter(|&&[_, address, local_port, ..]| {
-            let [high, low, ..] = local_port.to_ne_bytes();
-            address == LOOPBACK && u16::from_be_bytes([high, low]) == port
-        })
-        .map(|&[.., owner]| owner)
+        .map(row)
+        .filter(|listener| listener.port == port && reaches_loopback(listener.address))
+        .map(|listener| listener.owner)
         .collect()
 }
 
@@ -242,30 +334,40 @@ impl Drop for ProcessGroup {
 #[cfg(target_os = "linux")]
 impl ProcessGroup {
     pub fn loopback_listener(&self, port: u16) -> anyhow::Result<LoopbackListener> {
-        let mut unheld = loopback_listeners(&fs::read_to_string("/proc/net/tcp")?, port);
-        if unheld.is_empty() {
-            return Ok(LoopbackListener::Missing);
-        }
+        classify(
+            || loopback_listener_inodes(port),
+            |inodes| self.unheld(inodes),
+        )
+    }
+
+    fn unheld(&self, mut inodes: Vec<u64>) -> anyhow::Result<Vec<u64>> {
         let Some(leader) = self.leader.filter(|&leader| unreaped(leader)) else {
-            return Ok(LoopbackListener::Foreign);
+            return Ok(inodes);
         };
 
-        release_held(leader, &mut unheld);
-        if !unheld.is_empty() {
+        release_held(leader, &mut inodes);
+        if !inodes.is_empty() {
             for member in fs::read_dir("/proc")?
                 .flatten()
                 .filter_map(|entry| entry.file_name().to_str()?.parse().ok())
                 .filter(|&pid| process_group(pid) == Some(leader))
             {
-                release_held(member, &mut unheld);
+                release_held(member, &mut inodes);
             }
         }
-        Ok(if unheld.is_empty() {
-            LoopbackListener::Owned
-        } else {
-            LoopbackListener::Foreign
-        })
+        Ok(inodes)
     }
+}
+
+#[cfg(target_os = "linux")]
+fn loopback_listener_inodes(port: u16) -> anyhow::Result<Vec<u64>> {
+    let mut inodes = loopback_listeners(&fs::read_to_string("/proc/net/tcp")?, port);
+    match fs::read_to_string("/proc/net/tcp6") {
+        Ok(table) => inodes.extend(loopback_listeners(&table, port)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {},
+        Err(error) => return Err(error.into()),
+    }
+    Ok(inodes)
 }
 
 #[cfg(target_os = "linux")]
@@ -281,11 +383,21 @@ fn loopback_listeners(table: &str, port: u16) -> Vec<u64> {
             };
             let (address, local_port) = local.split_once(':')?;
             let listening = *state == LISTEN
-                && u32::from_str_radix(address, 16).ok()? == LOOPBACK
+                && reaches_loopback(kernel_address(address)?)
                 && u16::from_str_radix(local_port, 16).ok()? == port;
             listening.then_some(inode)?.parse().ok()
         })
         .collect()
+}
+
+#[cfg(target_os = "linux")]
+fn kernel_address(hex: &str) -> Option<IpAddr> {
+    let word = |digits: &[u8; 8]| u32::from_str_radix(std::str::from_utf8(digits).ok()?, 16).ok();
+    match hex.as_bytes().as_chunks::<8>() {
+        ([ipv4], []) => Some(IpAddr::from(word(ipv4)?.to_ne_bytes())),
+        ([a, b, c, d], []) => Some(IpAddr::V6(ipv6([word(a)?, word(b)?, word(c)?, word(d)?]))),
+        _ => None,
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -316,192 +428,4 @@ fn process_group(pid: libc::pid_t) -> Option<libc::pid_t> {
 }
 
 #[cfg(test)]
-mod tests {
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
-    use std::net::{Ipv4Addr, TcpListener, TcpStream};
-
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
-    use super::LoopbackListener;
-    use super::ProcessGroup;
-
-    #[cfg(unix)]
-    #[test]
-    fn invalid_process_ids_never_acquire_group_termination_authority() {
-        for pid in [0, 1, u32::MAX] {
-            assert!(
-                ProcessGroup::led_by(pid).is_err(),
-                "Accepted invalid child identifier {pid}"
-            );
-        }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn terminating_kills_the_group_its_unreaped_child_leads() -> anyhow::Result<()> {
-        use std::{
-            os::unix::process::{CommandExt as _, ExitStatusExt as _},
-            process::Command,
-        };
-
-        let mut child = Command::new("sleep").arg("60").process_group(0).spawn()?;
-        ProcessGroup::led_by(child.id())?.terminate();
-        assert_eq!(child.wait()?.signal(), Some(libc::SIGKILL));
-        Ok(())
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn a_group_led_by_a_process_this_one_never_spawned_is_never_signaled() -> anyhow::Result<()> {
-        use std::{
-            io::{BufRead as _, BufReader},
-            os::fd::OwnedFd,
-            process::{Command, Stdio},
-            thread,
-            time::{Duration, Instant},
-        };
-
-        use anyhow::Context as _;
-
-        let held = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
-        let port = held.local_addr()?.port();
-
-        let mut parent = Command::new("sh")
-            .args([
-                "-c",
-                "exec 3<&0 0</dev/null; setsid sleep 60 <&3 3<&- & exec 3<&-; echo $!; wait $!; \
-                 echo $?",
-            ])
-            .stdin(Stdio::from(OwnedFd::from(held)))
-            .stdout(Stdio::piped())
-            .spawn()?;
-        let mut reports =
-            BufReader::new(parent.stdout.take().context("Parent output missing")?).lines();
-        let stranger = reports.next().context("No identifier")??.parse()?;
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while super::process_group(stranger) != Some(stranger) {
-            anyhow::ensure!(Instant::now() < deadline, "It never led its own group");
-            thread::sleep(Duration::from_millis(5));
-        }
-        let mut group = ProcessGroup::led_by(stranger.cast_unsigned())?;
-        let counted = group.loopback_listener(port);
-        group.terminate();
-        Command::new("kill").arg(stranger.to_string()).status()?;
-        let ended = reports.next().context("No status")??;
-        parent.wait()?;
-        assert_eq!(counted?, LoopbackListener::Foreign);
-        assert_eq!(ended, "143", "Ended by SIGTERM, not SIGKILL");
-        Ok(())
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn only_listeners_held_inside_the_group_count() -> anyhow::Result<()> {
-        use std::{
-            os::{fd::OwnedFd, unix::process::CommandExt as _},
-            process::{Command, Stdio},
-        };
-
-        let held = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
-        let port = held.local_addr()?.port();
-
-        let client = TcpStream::connect(held.local_addr()?)?;
-        let foreign = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
-
-        let mut child = Command::new("sleep")
-            .arg("60")
-            .process_group(0)
-            .stdin(Stdio::from(OwnedFd::from(held)))
-            .spawn()?;
-        let mut group = ProcessGroup::led_by(child.id())?;
-        assert_eq!(group.loopback_listener(port)?, LoopbackListener::Owned);
-        assert_eq!(
-            group.loopback_listener(foreign.local_addr()?.port())?,
-            LoopbackListener::Foreign
-        );
-        assert_eq!(
-            group.loopback_listener(client.local_addr()?.port())?,
-            LoopbackListener::Missing
-        );
-        group.terminate();
-        child.wait()?;
-        assert_ne!(group.loopback_listener(port)?, LoopbackListener::Owned);
-        Ok(())
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn listeners_held_by_members_other_than_the_leader_count() -> anyhow::Result<()> {
-        use std::{
-            io::{BufRead as _, BufReader},
-            os::{fd::OwnedFd, unix::process::CommandExt as _},
-            process::{Command, Stdio},
-        };
-
-        use anyhow::Context as _;
-
-        let held = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
-        let port = held.local_addr()?.port();
-
-        let mut leader = Command::new("sh")
-            .args([
-                "-c",
-                "exec 3<&0; (sleep 60 <&3 3<&- &); exec 0</dev/null 3<&-; echo; exec sleep 60",
-            ])
-            .process_group(0)
-            .stdin(Stdio::from(OwnedFd::from(held)))
-            .stdout(Stdio::piped())
-            .spawn()?;
-        let mut group = ProcessGroup::led_by(leader.id())?;
-        let handed_over = leader.stdout.take().context("Leader output missing")?;
-        BufReader::new(handed_over).read_line(&mut String::new())?;
-        assert_eq!(group.loopback_listener(port)?, LoopbackListener::Owned);
-        group.terminate();
-        leader.wait()?;
-        Ok(())
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn only_listeners_held_inside_the_job_count() -> anyhow::Result<()> {
-        use std::{
-            io::{BufRead as _, BufReader},
-            os::windows::io::AsHandle as _,
-            process::{Command, Stdio},
-        };
-
-        use anyhow::Context as _;
-
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
-        let port = listener.local_addr()?.port();
-        let client = TcpStream::connect(listener.local_addr()?)?;
-        assert_eq!(super::loopback_listener_owners(port)?, [std::process::id()]);
-        assert_eq!(
-            super::loopback_listener_owners(client.local_addr()?.port())?,
-            Vec::<u32>::new()
-        );
-
-        let mut child = Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                "$listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); \
-                 $listener.Start(); [Console]::Out.WriteLine($listener.LocalEndpoint.Port); \
-                 [Console]::Out.Flush(); Start-Sleep 60",
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .spawn()?;
-        let group = ProcessGroup::contain(child.as_handle())?;
-        let mut reported = String::new();
-        BufReader::new(child.stdout.take().context("Child output missing")?)
-            .read_line(&mut reported)?;
-        let held = reported.trim().parse()?;
-        assert_eq!(group.loopback_listener(held)?, LoopbackListener::Owned);
-        assert_ne!(group.loopback_listener(port)?, LoopbackListener::Owned);
-
-        drop(group);
-        child.wait()?;
-        Ok(())
-    }
-}
+mod tests;
