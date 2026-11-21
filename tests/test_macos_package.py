@@ -1,6 +1,5 @@
 """Distribution fails closed around notarization; command stubs never sign or upload a binary."""
 
-import fcntl
 import json
 import shutil
 import subprocess
@@ -9,6 +8,9 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32", reason="Runs the Mac packaging script through POSIX command stubs"
+)
 OUTPUTS = ("Speakeasy.app", "speakeasy-macos.zip", "speakeasy-macos.dmg")
 
 
@@ -174,6 +176,8 @@ def test_partial_distribution_configuration_fails_before_building(tmp_path: Path
 
 
 def test_a_second_run_leaves_the_running_package_alone(tmp_path: Path) -> None:
+    import fcntl
+
     artifacts = tmp_path / "artifacts"
     seed_stale_outputs(artifacts)
     with (artifacts / ".package-macos.lock").open("a") as lock:
