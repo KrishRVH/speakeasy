@@ -1,4 +1,4 @@
-use std::mem;
+use std::{collections::VecDeque, mem, time::Duration};
 
 use crate::{
     Action, InkPoint, Mark, Moment, Pin, Point, Recording, Rect, Size, Spaces, Span, Stroke, marks,
@@ -13,13 +13,15 @@ const SHORTEST_STROKE_PIXELS: f32 = 6.0;
 
 const MOST_STROKE_POINTS: usize = 2_400;
 
+const PIN_LOOKBACK: Duration = Duration::from_secs(2);
+
 #[derive(Debug)]
 pub struct Tracker {
     surface: Size,
     space: Option<Space>,
     generation: Option<u64>,
     spaces: Spaces,
-    pointer: Option<InkPoint>,
+    seen: VecDeque<Seen>,
     ink: Option<Ink>,
     press: Button,
     pin_after: Option<Moment>,
@@ -28,6 +30,12 @@ pub struct Tracker {
     strokes: Vec<Stroke>,
     pins: Vec<Pin>,
     actions: Vec<Action>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Seen {
+    point: InkPoint,
+    space: Option<Space>,
 }
 
 #[derive(Debug)]
@@ -98,7 +106,7 @@ impl Tracker {
                 pins: Vec::new(),
                 actions: Vec::new(),
             },
-            pointer: None,
+            seen: VecDeque::new(),
             ink: None,
             press: Button::Up,
             pin_after: None,
@@ -130,25 +138,26 @@ impl Tracker {
     pub(crate) fn gap(&mut self, at: Moment) {
         self.lift();
         self.space = None;
-        self.pointer = None;
+        self.seen.clear();
         self.press = Button::Unknown;
         self.shift_down = None;
         self.pin_after = Some(self.pin_after.unwrap_or(at).max(at));
     }
 
     pub fn observe(&mut self, at: Moment, point: Point, drawing: bool, pressed: bool) {
-        if self.pointer.is_none()
+        if self.seen.is_empty()
             && let Some(gap) = &mut self.pin_after
         {
             *gap = (*gap).max(at);
         }
-        self.pointer = Some(InkPoint { point, at });
-        self.shift_down = drawing.then(|| self.shift_down.unwrap_or(at));
-        if drawing && pressed {
+        self.see(InkPoint { point, at });
+        let inking = drawing && self.pins.last().is_none_or(|pin| at > pin.at);
+        self.shift_down = inking.then(|| self.shift_down.unwrap_or(at));
+        if inking && pressed {
             self.use_shift(at);
         }
         let inside = Rect::UNIT.contains(point);
-        if drawing && inside {
+        if inking && inside {
             self.draw(InkPoint { point, at });
         } else {
             self.lift();
@@ -202,10 +211,18 @@ impl Tracker {
         if !used
             && !pinned
             && self.pin_after.is_none_or(|gap| taps.start() > gap)
-            && let Some(InkPoint {
-                point,
-                at: observed,
-            }) = self.pointer
+            && let Some(&Seen {
+                point:
+                    InkPoint {
+                        point,
+                        at: observed,
+                    },
+                space,
+            }) = self
+                .seen
+                .iter()
+                .rev()
+                .find(|seen| seen.point.at <= taps.end())
             && Rect::UNIT.contains(point)
         {
             if self
@@ -227,7 +244,7 @@ impl Tracker {
             });
             self.spaces
                 .pins
-                .push(self.space.map(|space| PinSpace { space, observed }));
+                .push(space.map(|space| PinSpace { space, observed }));
             true
         } else {
             false
@@ -282,6 +299,21 @@ impl Tracker {
         if deliberate {
             self.use_shift(point.at);
         }
+    }
+
+    fn see(&mut self, point: InkPoint) {
+        let horizon = point.at.saturating_sub(PIN_LOOKBACK);
+        while self
+            .seen
+            .get(1)
+            .is_some_and(|next| next.point.at <= horizon)
+        {
+            self.seen.pop_front();
+        }
+        self.seen.push_back(Seen {
+            point,
+            space: self.space,
+        });
     }
 
     fn use_shift(&mut self, at: Moment) {
@@ -451,14 +483,27 @@ mod tests {
     #[test]
     fn accepting_a_pin_retires_only_ink_begun_during_its_taps() {
         let at = Moment::from_millis;
-        for (inked, start) in [(40, 70), (60, 60)] {
+        for (inked, delivered_first, start) in [(40, false, 70), (60, false, 60), (45, true, 70)] {
             let mut tracker = Tracker::new(SURFACE);
-            tracker.observe(at(inked), Point::new(0.5, 0.5), true, false);
+            tracker.observe(at(5), Point::new(0.5, 0.5), false, false);
+            let ink = |tracker: &mut Tracker| {
+                tracker.observe(at(inked), Point::new(0.5, 0.5), true, false);
+            };
+            if !delivered_first {
+                ink(&mut tracker);
+            }
             assert!(tracker.pin(Span::new(at(10), at(50))));
+            if delivered_first {
+                ink(&mut tracker);
+            }
             tracker.observe(at(70), Point::new(0.508, 0.5), true, false);
             tracker.observe(at(80), Point::new(0.55, 0.5), true, false);
             let recording = tracker.finish(at(90));
-            assert_eq!(recording.strokes[0].span().start(), at(start), "{inked}");
+            assert_eq!(
+                recording.strokes[0].span().start(),
+                at(start),
+                "Ink seen at {inked} ms, pin delivered first: {delivered_first}"
+            );
         }
     }
 
@@ -521,6 +566,17 @@ mod tests {
             pin(t, first, second),
             "A stroke seen after the taps but before their pin"
         );
+        let (first, second) = (clean(t, 5_500, 0.75), clean(t, 5_660, 0.75));
+        t.observe(
+            Moment::from_millis(5_740),
+            Point::new(1.3, 0.4),
+            false,
+            false,
+        );
+        assert!(
+            pin(t, first, second),
+            "The pointer left the surface after the taps but before their pin"
+        );
         let recording = tracker.finish(Moment::from_millis(6_000));
         assert_eq!(
             recording.pins,
@@ -535,7 +591,11 @@ mod tests {
                 },
                 Pin {
                     at: Moment::from_millis(5_220),
-                    point: Point::new(0.7 + 0.02, 0.4)
+                    point: Point::new(0.7, 0.4)
+                },
+                Pin {
+                    at: Moment::from_millis(5_720),
+                    point: Point::new(0.75, 0.4)
                 }
             ]
         );

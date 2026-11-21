@@ -22,7 +22,7 @@ fn tracker() -> Tracker {
 }
 
 #[test]
-fn delayed_pins_follow_the_point_used_instead_of_the_tap_timestamp() {
+fn delayed_pins_take_the_point_and_part_seen_when_their_taps_ended() {
     let mut tracker = tracker();
     tracker.observe(ms(50), Point::new(0.2, 0.3), false, false);
     assert!(tracker.locate(RESIZED));
@@ -30,9 +30,13 @@ fn delayed_pins_follow_the_point_used_instead_of_the_tap_timestamp() {
     assert!(tracker.pin(Span::new(ms(80), ms(100))));
     let mark = tracker.marks().remove(0);
     let recording = tracker.finish(ms(150));
-    assert_eq!(recording.mark_part(&mark), Some(RESIZED));
-    assert_eq!(recording.pins[0].point, Point::new(0.6, 0.7));
-    assert_eq!(recording.spaces.pins[0].unwrap().observed, ms(120));
+    assert_eq!(
+        recording.mark_part(&mark),
+        Some(Rect::UNIT),
+        "A delayed pin took the part seen after its taps"
+    );
+    assert_eq!(recording.pins[0].point, Point::new(0.2, 0.3));
+    assert_eq!(recording.spaces.pins[0].unwrap().observed, ms(50));
 }
 
 #[test]

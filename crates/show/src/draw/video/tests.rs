@@ -165,10 +165,11 @@ fn labels_wait_for_the_complete_mark() {
 #[test]
 fn delayed_pins_wait_for_observation_and_unknown_geometry_is_omitted() {
     let mut tracker = tracker();
-    tracker.observe(ms(120), Point::new(0.5, 0.5), false, false);
+    tracker.observe(ms(60), Point::new(0.5, 0.5), false, false);
     assert!(tracker.pin(Span::new(ms(80), ms(100))));
     let marks = tracker.marks();
     let mut recording = tracker.finish(ms(3000));
+    recording.spaces.pins[0].as_mut().unwrap().observed = ms(120);
     let scene = Annotations::new(&recording, &marks).unwrap();
     assert_eq!(
         painted(&scene, Duration::from_micros(119_999)),

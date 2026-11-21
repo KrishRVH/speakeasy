@@ -780,8 +780,10 @@ module unless a test file is named.
   queued pins through the chosen end after the producers stop, each pin after the samples up to its
   release, as the live order would judge it; teardown adds no annotations. Checkpoint replay preserves these same gaps. Pointer
   events also carry their source display rectangle. The tracker retains one coordinate-space proof
-  per stroke and pin: mixed strokes and groups across resizes or gaps have none. A delayed pin uses
-  the actual pointer point’s proof; stroke cuts preserve the carried joint’s proof. A recording
+  per stroke and pin: mixed strokes and groups across resizes or gaps have none. A pin takes the
+  last pointer sample at or before its second tap's release, with that sample's proof, however late
+  the taps arrive, and samples from before an accepted pin start no ink. Stroke cuts preserve the
+  carried joint’s proof. A recording
   without spaces, such as the scripted demo, has unknown provenance. Geometry, overlay timing, and
   the area drag run on every host; native capture is opt-in, and window lookup and the picker's
   clicks need native acceptance. On Windows, an opt-in acceptance test stops an owned window's

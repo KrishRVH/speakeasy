@@ -295,11 +295,11 @@ original seven-day schedule even when the saved bundle is kept.
   off its display ends the Show with what it recorded until then, and the pill and summary say why.
 - Shift draws ink, alone or while the shortcut is still held; the ink holds briefly after the pen
   lifts, then fades, and clicks pass through to the apps underneath. Two taps of Shift alone, each
-  released within 300 ms and the second pressed within 400 ms of the first's release, drop a pin at
-  the pointer, unless either tap drew ink or clicked or another modifier was held; no pin lands off
-  the recorded window or area. Marks and pins share one numbering in the order they began, ① ② ③;
-  each number sits beside what it numbers on the overlay, fading with the ink, and in the bundle's
-  keyframes and summary.
+  released within 300 ms and the second pressed within 400 ms of the first's release, drop a pin
+  where the pointer was at the second release, unless either tap drew ink or clicked or another
+  modifier was held; no pin lands off the recorded window or area. Marks and pins share one
+  numbering in the order they began, ① ② ③; each number sits beside what it numbers on the overlay,
+  fading with the ink, and in the bundle's keyframes and summary.
 - Windows/macOS Escape continues to the focused app. It cancels dictation immediately at any stage,
   but a Show, area choice included, only while the shortcut is held: during the hold that started it
   or the press that would finish it. Otherwise a recording Show ignores Escape, and the tray's
