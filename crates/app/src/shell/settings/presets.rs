@@ -24,6 +24,7 @@ use crate::{
 pub(super) struct Editor {
     name: Entity<TextField>,
     naming: bool,
+    resolved: Option<(Preset, Preset)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,6 +50,7 @@ impl Editor {
         Self {
             name,
             naming: false,
+            resolved: None,
         }
     }
 
@@ -153,7 +155,12 @@ impl Settings {
     fn finish_use(&mut self, preset: &Preset, used: Option<Used>, cx: &mut Context<'_, Self>) {
         self.using = None;
         match used {
-            Some(Ok(_)) => self.load_preset(preset, cx),
+            Some(Ok(config)) => {
+                let resolved = Preset::capture(preset.name(), &config)
+                    .unwrap_or_else(|_unchanged| preset.clone());
+                self.presets.resolved = Some((preset.clone(), resolved.clone()));
+                self.load_preset(&resolved, cx);
+            },
             Some(Err(reason)) => self.notice = Some(Notice::Problem(reason.into())),
             None => (),
         }
@@ -198,7 +205,16 @@ impl Settings {
 
     fn preset_in_use(&self, preset: &Preset) -> bool {
         self.presentation.preset.as_deref().map_or_else(
-            || preset.matches(&self.config),
+            || {
+                preset.matches(&self.config)
+                    || self
+                        .presets
+                        .resolved
+                        .as_ref()
+                        .is_some_and(|(stored, resolved)| {
+                            stored == preset && resolved.matches(&self.config)
+                        })
+            },
             |active| active == preset.name(),
         )
     }

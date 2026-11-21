@@ -91,9 +91,15 @@ pub(in crate::shell::settings) async fn exercise(
         ..baseline.clone()
     };
     let mut library = baseline.clone();
+    let relative = Config {
+        engine_executable: "engine".into(),
+        model: "model.gguf".into(),
+        ..baseline.clone()
+    };
     library.presets = vec![
         Preset::capture("Saved", &baseline)?,
         Preset::capture("French", &french)?,
+        Preset::capture("Relative", &relative)?,
     ];
     fs::write(&path, serde_json::to_vec_pretty(&library)?)?;
     let (presented, mode, settings_path, applied) = cx.update(|cx| {
@@ -118,6 +124,7 @@ pub(in crate::shell::settings) async fn exercise(
     })?;
     let exercised = async {
         paused(settings, &baseline, cx).await?;
+        resolved(settings, &path, &library, cx).await?;
         cx.update(|cx| {
             cx.update_global::<Services, _>(|services, _| {
                 services.config = library.clone();
@@ -225,6 +232,54 @@ async fn paused(
 
 #[expect(
     clippy::future_not_send,
+    reason = "Native acceptance drives Services and the owned Settings window on GPUI's UI thread"
+)]
+async fn resolved(
+    settings: WindowHandle<Settings>,
+    path: &Path,
+    library: &Config,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<()> {
+    let edited = Config {
+        model: path.with_file_name("edited elsewhere.gguf"),
+        ..library.clone()
+    };
+    fs::write(path, serde_json::to_vec_pretty(&edited)?)?;
+    cx.update(|cx| {
+        cx.update_global::<Services, _>(|services, _| {
+            services.config = library.clone();
+            services.choices.selected = None;
+            services
+                .output
+                .send_modify(|snapshot| snapshot.preset = None);
+        });
+    });
+    settings.update(cx, |view, _, cx| {
+        view.config = library.clone();
+        view.saves = SaveQueue::new(path.to_owned(), library.clone());
+        cx.notify();
+    })?;
+    using(settings, 2, cx).await?;
+    ensure!(
+        Config::read(path)?.model == edited.model,
+        "Using a preset that spells the saved files relatively rewrote the settings file"
+    );
+    settings.read_with(cx, |view, _| {
+        ensure!(
+            view.config
+                .presets
+                .get(2)
+                .is_some_and(|relative| view.preset_in_use(relative)),
+            "The relatively spelled preset still offered Use after it applied"
+        );
+        anyhow::Ok(())
+    })??;
+    fs::write(path, serde_json::to_vec_pretty(library)?)?;
+    Ok(())
+}
+
+#[expect(
+    clippy::future_not_send,
     reason = "Native acceptance drives Services, a fake owner, and the owned Settings window on GPUI's UI thread"
 )]
 async fn running(
@@ -267,7 +322,7 @@ async fn running(
         "The tray could not choose a preset"
     );
     settings.update(cx, |view, _, _| {
-        let [saved, french] = view.config.presets.as_slice() else {
+        let [saved, french, _] = view.config.presets.as_slice() else {
             anyhow::bail!("The fixture presets are missing");
         };
         ensure!(
