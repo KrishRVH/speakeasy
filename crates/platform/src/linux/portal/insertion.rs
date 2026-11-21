@@ -203,6 +203,10 @@ impl<'a> Insertions<'a> {
     }
 
     fn advance_preparation(&mut self, prepared: anyhow::Result<Prepared>) -> anyhow::Result<()> {
+        let replacing = self
+            .in_flight
+            .as_ref()
+            .is_some_and(|in_flight| matches!(in_flight.phase, Phase::ReplacingSelection(_)));
         let InFlight { request, .. } = self
             .in_flight
             .take()
@@ -210,6 +214,7 @@ impl<'a> Insertions<'a> {
         let permit = request.permit.clone();
         let phase = match prepared {
             Ok(Prepared::SelectionSet { replied }) => {
+                self.selection = None;
                 if !permit.active() {
                     request.reply.send(Ok(Inserted::Cancelled));
                     return Ok(());
@@ -237,6 +242,9 @@ impl<'a> Insertions<'a> {
                 return self.finish(request, external, route);
             },
             Err(error) => {
+                if replacing && !refused(&error) {
+                    self.selection = None;
+                }
                 request.reply.send(if permit.active() {
                     Err(error)
                 } else {
@@ -262,7 +270,6 @@ impl<'a> Insertions<'a> {
             Route::PortalPaste { owned } => publish_portal_selection(
                 &mut self.selection,
                 &request,
-                owned,
                 finish_paste(sender, &request, self.paste, owned, external, forfeited),
             ),
         };
@@ -527,7 +534,6 @@ fn finish_paste(
 fn publish_portal_selection(
     selection: &mut Option<Selection>,
     request: &Insertion,
-    replaced: bool,
     outcome: Inserted,
 ) -> Inserted {
     let outcome = match outcome {
@@ -536,10 +542,12 @@ fn publish_portal_selection(
     };
     if matches!(outcome, Inserted::Sent | Inserted::Copied(_)) {
         *selection = Some(Selection::new(&request.text, request.permit.clone()));
-    } else if replaced {
-        *selection = None;
     }
     outcome
+}
+
+fn refused(error: &anyhow::Error) -> bool {
+    matches!(error.downcast_ref(), Some(zbus::Error::MethodError(..)))
 }
 
 const fn paste_remedy(blocked: PasteBlocked) -> Inserted {
@@ -619,7 +627,7 @@ mod tests {
             }
             let mut selection = None;
             let outcome =
-                publish_portal_selection(&mut selection, &request, true, COPIED_FOR_MANUAL_PASTE);
+                publish_portal_selection(&mut selection, &request, COPIED_FOR_MANUAL_PASTE);
             assert_eq!(selection.is_some(), active);
             assert_eq!(
                 outcome,
@@ -635,25 +643,20 @@ mod tests {
     }
 
     #[test]
-    fn a_sent_paste_serves_its_text_and_an_unfinished_replacement_serves_nothing()
-    -> anyhow::Result<()> {
+    fn a_sent_paste_serves_its_text() -> anyhow::Result<()> {
         let (events, _receiver) = async_channel::bounded(1);
         let input = InputSender::new(events);
-        let paste = |text| -> anyhow::Result<(InsertPermit, Insertion)> {
-            let permit = input.begin().context("Recording")?;
-            let request = insertion(
-                text,
-                &permit,
-                Delivery::Paste,
-                FocusReport::default().subscribe(),
-            );
-            Ok((permit, request))
-        };
-        let (sent, request) = paste("fixture")?;
+        let sent = input.begin().context("Recording")?;
+        let request = insertion(
+            "fixture",
+            &sent,
+            Delivery::Paste,
+            FocusReport::default().subscribe(),
+        );
         assert!(sent.commit());
         let mut selection = None;
         assert_eq!(
-            publish_portal_selection(&mut selection, &request, true, Inserted::Sent),
+            publish_portal_selection(&mut selection, &request, Inserted::Sent),
             Inserted::Sent
         );
         assert!(
@@ -661,27 +664,6 @@ mod tests {
                 .as_ref()
                 .is_some_and(|selection| selection.serves(&sent)),
             "A sent paste left nothing to serve"
-        );
-        let (_, kept) = paste("unconfirmed")?;
-        assert_eq!(
-            publish_portal_selection(&mut selection, &kept, false, CLIPBOARD_CHANGED),
-            CLIPBOARD_CHANGED
-        );
-        assert!(
-            selection
-                .as_ref()
-                .is_some_and(|selection| selection.serves(&sent)),
-            "A replacement the portal never confirmed withdrew the sent copy"
-        );
-        let (_, replaced) = paste("confirmed")?;
-        replaced.permit.revoke();
-        assert_eq!(
-            publish_portal_selection(&mut selection, &replaced, true, Inserted::Cancelled),
-            Inserted::Cancelled
-        );
-        assert!(
-            selection.is_none(),
-            "A confirmed replacement cancelled before its paste kept serving the copy it replaced"
         );
         Ok(())
     }

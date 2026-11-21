@@ -73,10 +73,10 @@ failure. X11 queues each paste and its releases before one server synchronizatio
 submission. Manual copy skips the modifier wait. Wayland serves bounded, asynchronous clipboard
 transfers while receiving input and cancellation, and a failed transfer fails only that paste;
 clipboard calls through Xwayland run on a serialized, owned worker. A committed clipboard selection
-remains available until a newer committed copy replaces it, ownership changes, or the service
-retires. A copy the portal refuses or never confirms, or one cancelled before the portal confirms
-it, leaves that selection in place; one cancelled after the portal confirms it leaves nothing to
-serve.
+remains available until the portal accepts a newer copy, ownership changes, or the service retires.
+A copy the portal refuses leaves that selection in place. Once the portal accepts a newer copy, or
+stops answering before it decides, the desktop can offer that copy at any later time, so Speakeasy
+serves nothing until the newer copy commits.
 
 Settings' **Insert text by** control offers **Paste (Ctrl+V)**, **Paste (Ctrl+Shift+V)** for
 terminals, **Type (keeps clipboard)**, and **Copy for manual paste**. The `text_delivery` setting
