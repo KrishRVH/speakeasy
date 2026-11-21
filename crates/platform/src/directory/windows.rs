@@ -1,11 +1,11 @@
 use std::{
     ffi::{OsStr, OsString},
-    fs::{File, Metadata, OpenOptions},
+    fs::{File, OpenOptions},
     io,
     mem::{offset_of, size_of},
     os::windows::{
         ffi::{OsStrExt as _, OsStringExt as _},
-        fs::{MetadataExt as _, OpenOptionsExt as _},
+        fs::OpenOptionsExt as _,
         io::{AsRawHandle as _, FromRawHandle as _},
     },
     path::Path,
@@ -27,9 +27,10 @@ use windows_sys::{
             STATUS_NO_MORE_FILES, STATUS_NO_SUCH_FILE, UNICODE_STRING,
         },
         Storage::FileSystem::{
-            BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS,
-            FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_SHARE_DELETE, FILE_SHARE_READ,
-            FILE_SHARE_WRITE, GetFileInformationByHandle,
+            BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+            FILE_GENERIC_READ, FILE_ID_INFO, FILE_NAME_NORMALIZED, FILE_SHARE_DELETE,
+            FILE_SHARE_READ, FILE_SHARE_WRITE, FileIdInfo, GetFileInformationByHandle,
+            GetFileInformationByHandleEx, GetFinalPathNameByHandleW, VOLUME_NAME_NONE,
         },
         System::IO::IO_STATUS_BLOCK,
     },
@@ -47,6 +48,14 @@ pub(super) fn directory(path: &Path) -> io::Result<File> {
 }
 
 pub(super) fn child(parent: &File, name: &OsStr, kind: OpenKind) -> io::Result<File> {
+    let file = open_relative(parent, name, kind)?;
+    if !final_name(&file)?.eq_ignore_ascii_case(name) {
+        return Err(io::ErrorKind::NotFound.into());
+    }
+    Ok(file)
+}
+
+fn open_relative(parent: &File, name: &OsStr, kind: OpenKind) -> io::Result<File> {
     let mut text: Vec<_> = name.encode_wide().collect();
     if text.iter().any(|unit| [0, u16::from(b':')].contains(unit)) {
         return Err(io::ErrorKind::InvalidInput.into());
@@ -104,30 +113,79 @@ pub(super) fn child(parent: &File, name: &OsStr, kind: OpenKind) -> io::Result<F
     Ok(unsafe { File::from_raw_handle(handle) })
 }
 
-pub(super) fn linked(metadata: &Metadata) -> bool {
-    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+fn final_name(file: &File) -> io::Result<OsString> {
+    let mut path = vec![0; 260];
+    loop {
+        let capacity = u32::try_from(path.len()).map_err(|_overflow| io::ErrorKind::InvalidData)?;
+        let length = unsafe {
+            GetFinalPathNameByHandleW(
+                file.as_raw_handle(),
+                path.as_mut_ptr(),
+                capacity,
+                FILE_NAME_NORMALIZED | VOLUME_NAME_NONE,
+            )
+        };
+        let length = usize::try_from(length).map_err(|_overflow| io::ErrorKind::InvalidData)?;
+        if length == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if length < path.len() {
+            path.truncate(length);
+            break;
+        }
+        path.resize(length, 0);
+    }
+    let name = path
+        .rsplit(|unit| *unit == u16::from(b'\\'))
+        .next()
+        .unwrap_or_default();
+    Ok(OsString::from_wide(name))
+}
+
+#[derive(PartialEq, Eq)]
+enum Identity {
+    Full { volume: u64, file: [u8; 16] },
+    Indexed([u32; 3]),
 }
 
 pub(super) fn same(first: &File, second: &File) -> io::Result<bool> {
-    fn identity(file: &File) -> io::Result<[u32; 3]> {
-        let mut info = BY_HANDLE_FILE_INFORMATION::default();
-        if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &raw mut info) } == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok([
-            info.dwVolumeSerialNumber,
-            info.nFileIndexHigh,
-            info.nFileIndexLow,
-        ])
-    }
     Ok(identity(first)? == identity(second)?)
+}
+
+fn identity(file: &File) -> io::Result<Identity> {
+    let mut full = FILE_ID_INFO::default();
+    let size =
+        u32::try_from(size_of::<FILE_ID_INFO>()).map_err(|_overflow| io::ErrorKind::InvalidData)?;
+    let read = unsafe {
+        GetFileInformationByHandleEx(
+            file.as_raw_handle(),
+            FileIdInfo,
+            (&raw mut full).cast(),
+            size,
+        )
+    };
+    if read != 0 {
+        return Ok(Identity::Full {
+            volume: full.VolumeSerialNumber,
+            file: full.FileId.Identifier,
+        });
+    }
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &raw mut info) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(Identity::Indexed([
+        info.dwVolumeSerialNumber,
+        info.nFileIndexHigh,
+        info.nFileIndexLow,
+    ]))
 }
 
 #[repr(align(8))]
 struct DirectoryBuffer([u8; 16 << 10]);
 
 pub(super) fn visit(directory: &File, mut visit: impl FnMut(OsString)) -> io::Result<()> {
-    let directory = child(directory, OsStr::new(""), OpenKind::Directory)?;
+    let directory = open_relative(directory, OsStr::new(""), OpenKind::Directory)?;
     let mut buffer = DirectoryBuffer([0; 16 << 10]);
     let capacity =
         u32::try_from(buffer.0.len()).map_err(|_overflow| io::ErrorKind::InvalidInput)?;

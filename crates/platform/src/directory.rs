@@ -25,8 +25,7 @@ pub struct ReadDirectory(File);
 impl ReadDirectory {
     pub fn open(path: &Path) -> io::Result<Self> {
         let file = native::directory(path)?;
-        let metadata = file.metadata()?;
-        if !metadata.is_dir() || native::linked(&metadata) {
+        if !file.metadata()?.is_dir() {
             return Err(io::Error::other("not a plain directory"));
         }
         Ok(Self(file))
@@ -85,9 +84,6 @@ impl ReadDirectory {
         }
         let file = native::child(&self.0, name, kind)?;
         let metadata = file.metadata()?;
-        if native::linked(&metadata) {
-            return Err(io::Error::other("linked entry"));
-        }
         Ok((file, metadata))
     }
 }
@@ -117,72 +113,4 @@ pub fn open_lock(path: &Path) -> io::Result<File> {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::fs;
-
-    use super::*;
-
-    #[test]
-    fn reads_keep_the_open_directory_across_a_rename() -> anyhow::Result<()> {
-        use std::io::Read as _;
-
-        let root = tempfile::tempdir()?;
-        let original = root.path().join("original");
-        fs::create_dir(&original)?;
-        fs::write(original.join("public.txt"), "original")?;
-        let opened = ReadDirectory::open(&original)?;
-        fs::rename(&original, root.path().join("renamed"))?;
-        fs::create_dir(&original)?;
-        fs::write(original.join("public.txt"), "replacement")?;
-        fs::write(original.join("new.txt"), "replacement")?;
-        assert!(!opened.is_at(&original)?);
-        let mut entries = Vec::new();
-        for _ in 0..2 {
-            opened.visit(|name| {
-                if name != "." && name != ".." {
-                    entries.push(name);
-                }
-            })?;
-        }
-        assert_eq!(entries, vec![OsString::from("public.txt"); 2]);
-        let (mut file, _) = opened.file(Path::new("public.txt"))?;
-        let mut text = String::new();
-        file.read_to_string(&mut text)?;
-        assert_eq!(text, "original");
-        Ok(())
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn only_stable_reads_exclude_writers() -> anyhow::Result<()> {
-        let root = tempfile::tempdir()?;
-        let name = Path::new("content");
-        let path = root.path().join(name);
-        let writer = File::create_new(&path)?;
-        let directory = ReadDirectory::open(root.path())?;
-        assert!(directory.file(name).is_ok());
-        assert!(directory.stable_file(name).is_err());
-        drop(writer);
-
-        let (reading, _) = directory.stable_file(name)?;
-        assert!(fs::OpenOptions::new().write(true).open(&path).is_err());
-        drop(reading);
-        assert!(fs::OpenOptions::new().write(true).open(&path).is_ok());
-        Ok(())
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_fifo_is_refused_without_waiting_for_a_writer() -> anyhow::Result<()> {
-        use std::{ffi::CString, os::unix::ffi::OsStrExt as _};
-
-        let root = tempfile::tempdir()?;
-        let fifo = CString::new(root.path().join("fifo").as_os_str().as_bytes())?;
-        if unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) } != 0 {
-            return Err(io::Error::last_os_error().into());
-        }
-        let directory = ReadDirectory::open(root.path())?;
-        assert!(directory.file(Path::new("fifo")).is_err());
-        Ok(())
-    }
-}
+mod tests;

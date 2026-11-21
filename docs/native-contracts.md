@@ -143,12 +143,28 @@ Owner: `crates/platform/src/directory.rs`.
 
 A Show directory handle keeps every relative open anchored to the selected directory. Unix uses
 `openat` with `O_NOFOLLOW` and `O_NONBLOCK` for child entries and validates the resulting descriptor
-before reading. Windows opens a single child name with `NtOpenFile` relative to its parent handle,
-rejects reparse points and alternate data streams, and transfers the handle to `File` only after a
-successful open. Unix uses `fdopendir` on an independent directory open, and Windows uses an empty
-relative name with `NtOpenFile` and `NtQueryDirectoryFile`, so listing owns its cursor. Readers
-validate size, type, and bytes through the same handle. Ordinary reads permit concurrent editing on
-Windows. Movie reads exclude writers while a validated prefix is in use.
+before reading. Linux opens directories with `O_PATH`, so a directory its owner may search but not
+list still opens; macOS opens them for reading, which needs list permission. Windows opens a single
+child name with `NtOpenFile` relative to its parent handle, refuses alternate data streams, and
+transfers the handle to `File` only after a successful open. The opened entry's normalized long name
+must equal the requested name apart from ASCII case, so an 8.3 short name cannot reach a hidden
+entry. Name-surrogate reparse points (symbolic links, junctions and mount points) are neither files
+nor directories, so both platforms refuse them by type; other reparse points, such as cloud
+placeholders, open as their file or directory. Unix uses `fdopendir` on an independent directory
+open, and Windows uses an empty relative name with `NtOpenFile` and `NtQueryDirectoryFile`, so
+listing owns its cursor. Readers validate size, type, and bytes through the same handle. Identity
+compares device and inode on Unix, and on Windows the volume's 128-bit file ID, or the 64-bit file
+index where a file system has no 128-bit ID.
+
+Windows handles share read and delete, so they never refuse a rename or delete of their own entry;
+directory handles and ordinary reads also share write, so editing continues while a Show is read.
+Movie reads exclude writers while a validated prefix is in use. NTFS refuses to rename or move any
+directory above an open directory handle, so a root an MCP server holds for its session pins its
+ancestors until the server exits.
+
+`open_lock` gives Unix lease files mode 0600, refuses links and multiply linked files, and narrows
+an older file's mode. Narrowing cannot revoke a descriptor another user opened before it, and macOS
+ACL entries the file inherited from its folder still apply.
 
 ## Linux desktop and transfer ownership
 
