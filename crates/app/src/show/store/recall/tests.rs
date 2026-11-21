@@ -217,18 +217,34 @@ fn recall_agrees_with_cleanup_on_every_keep_marker_without_reading_it() -> anyho
         assert_eq!(kept, Some(show.pinned));
         Ok(show.pinned)
     };
-    let marker = directory.join(PIN);
-    fs::create_dir(&marker)?;
-    assert!(recalled(&directory)? && super::super::pinned(&directory)?);
-    fs::remove_dir(&marker)?;
-    let differently_cased = directory.join(".PINNED");
-    fs::write(&differently_cased, b"")?;
-    assert_eq!(recalled(&directory)?, super::super::pinned(&directory)?);
-    fs::remove_file(&differently_cased)?;
-    #[cfg(unix)]
+    let agreed = || -> anyhow::Result<bool> {
+        let kept = super::super::pinned(&directory)?;
+        assert_eq!(recalled(&directory)?, kept);
+        Ok(kept)
+    };
+    for name in [PIN, ".PINNED"] {
+        let marker = directory.join(name);
+        fs::create_dir(&marker)?;
+        assert!(agreed()? || name != PIN, "{name} folder");
+        fs::remove_dir(&marker)?;
+        fs::write(&marker, b"")?;
+        assert!(agreed()? || name != PIN, "{name} file");
+        fs::remove_file(&marker)?;
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(root.path().join("absent"), &marker)?;
+            assert!(agreed()? || name != PIN, "{name} link");
+            fs::remove_file(&marker)?;
+        }
+    }
+    #[cfg(target_os = "linux")]
     {
-        std::os::unix::fs::symlink(root.path().join("absent"), &marker)?;
-        assert!(recalled(&directory)? && super::super::pinned(&directory)?);
+        use std::os::unix::fs::PermissionsExt as _;
+        std::os::unix::fs::symlink(root.path().join("absent"), directory.join(PIN))?;
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o300))?;
+        let searched = recalled(&directory);
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
+        assert!(searched?, "A Keep link in a folder that cannot be listed");
     }
     Ok(())
 }

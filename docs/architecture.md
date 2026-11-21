@@ -619,17 +619,17 @@ module unless a test file is named.
 - **Show store**: [show/store.rs](../crates/app/src/show/store.rs) names, writes, and expires
   bundles, and [store/recall.rs](../crates/app/src/show/store/recall.rs) reads a saved one back; it
   also discovers and inspects saved Shows without changing them. It reports Keep from the presence
-  of a `.pinned` entry of any type, as cleanup does, and never reads the marker. After reading, it
-  attaches a managed ID, and with it a retention date, only when the directory handle that was read
-  is still the Shows folder's entry of the same name; CLI inspection, listing, `show wait`, and MCP
-  all read Shows through it. [store/export.rs](../crates/app/src/show/store/export.rs) streams a
-  format-owned inventory into a new ZIP, preserves the edited summary, and adds a relative-path
-  guide. It excludes audio and retention markers, bounds input to 2 GiB, reports failed staging
-  cleanup, and publishes with `persist_noclobber` after flush. The CLI and review window use the
-  same exporter; accepted GUI ZIP exports use the app's
-  [edit owner](../crates/app/src/show/edits.rs), so closing review cannot cancel them.
-  [export/tests.rs](../crates/app/src/show/store/export/tests.rs) checks portability, source
-  retrieval after moving, exclusions, links, size limits, and failure cleanup.
+  of a `.pinned` entry of any type, as cleanup does, without opening the marker or listing the
+  folder. After reading, it attaches a managed ID, and with it a retention date, only when the
+  directory handle that was read is still the Shows folder's entry of the same name; CLI inspection,
+  listing, `show wait`, and MCP all read Shows through it.
+  [store/export.rs](../crates/app/src/show/store/export.rs) streams a format-owned inventory into a
+  new ZIP, preserves the edited summary, and adds a relative-path guide. It excludes audio and
+  retention markers, bounds input to 2 GiB, reports failed staging cleanup, and publishes with
+  `persist_noclobber` after flush. The CLI and review window use the same exporter; accepted GUI ZIP
+  exports use the app's [edit owner](../crates/app/src/show/edits.rs), so closing review cannot
+  cancel them. [export/tests.rs](../crates/app/src/show/store/export/tests.rs) checks portability,
+  source retrieval after moving, exclusions, links, size limits, and failure cleanup.
   [store/video.rs](../crates/app/src/show/store/video.rs) composes a separate MP4 through local
   FFmpeg. It copies the validated source prefix into private staging, checks decoded frame count,
   paints annotations at 30 Hz output ticks using each source frame's geometry, and aligns original
@@ -658,15 +658,16 @@ module unless a test file is named.
   [address.rs](../crates/app/src/show/store/address.rs) resolves exact IDs independently from paths;
   moved or linked bundles never advertise a managed ID.
   [retention.rs](../crates/app/src/show/store/retention.rs) owns Keep changes and an OS file lock
-  shared with cleanup across app and CLI processes. Cleanup holds it from the final pin check
-  through renaming an expired Show out of the visible library, then removes files without the lock.
-  Explicit deletion validates a managed directory under the same lock, including kept or damaged
-  Shows. It first discards associated recovery data only after bounded reciprocal publication
-  markers agree and checkpoint ownership is available. Missing checkpoints need no cleanup; damaged
-  or active ownership refuses deletion. The bundle is renamed without replacing an existing cleanup
-  directory, then its files are removed outside the lock. A cleanup failure reports the hidden state
-  and remains retryable; exported copies and unrelated checkpoints are untouched. Hidden expired
-  directories survive interrupted deletion for the next cleanup pass. Its
+  shared with cleanup across app and CLI processes. Keep leaves a marker of any type in place, and
+  Allow expiry removes a marker file, link, or empty folder. Cleanup holds it from the final pin
+  check through renaming an expired Show out of the visible library, then removes files without the
+  lock. Explicit deletion validates a managed directory under the same lock, including kept or
+  damaged Shows. It first discards associated recovery data only after bounded reciprocal
+  publication markers agree and checkpoint ownership is available. Missing checkpoints need no
+  cleanup; damaged or active ownership refuses deletion. The bundle is renamed without replacing an
+  existing cleanup directory, then its files are removed outside the lock. A cleanup failure reports
+  the hidden state and remains retryable; exported copies and unrelated checkpoints are untouched.
+  Hidden expired directories survive interrupted deletion for the next cleanup pass. Its
   [tests](../crates/app/src/show/store/retention/tests.rs) exercise ordering, original expiry dates,
   interrupted deletion, moved bundles, links, and preserved edits.
   [checkpoint.rs](../crates/app/src/show/store/checkpoint.rs) owns private live logs and exclusive

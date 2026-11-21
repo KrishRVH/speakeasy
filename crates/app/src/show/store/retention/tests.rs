@@ -117,6 +117,34 @@ fn identity_and_mutation_do_not_follow_moved_missing_or_non_show_folders() -> an
     Ok(())
 }
 
+#[test]
+fn allowing_expiry_removes_a_keep_marker_of_any_type() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let directory = show(root.path(), SystemTime::now())?;
+    let marker = directory.join(store::PIN);
+    let allowed = || -> anyhow::Result<()> {
+        assert_eq!(set_kept(root.path(), &directory, true)?, Retention::Kept);
+        assert_ne!(set_kept(root.path(), &directory, false)?, Retention::Kept);
+        assert!(fs::symlink_metadata(&marker).is_err());
+        Ok(())
+    };
+    fs::create_dir(&marker)?;
+    allowed()?;
+    #[cfg(windows)]
+    {
+        let target = tempfile::tempdir()?;
+        let linked = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&marker)
+            .arg(target.path())
+            .output()?;
+        anyhow::ensure!(linked.status.success(), "mklink could not link the marker");
+        allowed()?;
+        assert!(target.path().is_dir());
+    }
+    Ok(())
+}
+
 #[cfg(unix)]
 #[test]
 fn linked_folders_are_refused_and_linked_pins_never_change_their_target() -> anyhow::Result<()> {

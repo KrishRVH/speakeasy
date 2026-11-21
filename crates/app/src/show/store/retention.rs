@@ -115,17 +115,33 @@ pub(crate) fn set_kept(parent: &Path, directory: &Path, kept: bool) -> io::Resul
         ))
     })?;
     let pin = directory.join(PIN);
-    if kept {
+    if !kept {
+        remove_marker(&pin)?;
+    } else if !pinned(directory)? {
         match File::create_new(pin) {
             Ok(file) => file.sync_all()?,
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {},
             Err(error) => return Err(error),
         }
-    } else {
-        remove_if_present(&pin)?;
     }
     super::sync_directory(directory)?;
     Ok(Retention::of(id.as_str(), pinned(directory)?))
+}
+
+fn remove_marker(pin: &Path) -> io::Result<()> {
+    let Some(marker) = found(fs::symlink_metadata(pin))? else {
+        return Ok(());
+    };
+    #[cfg(windows)]
+    let linked_folder = std::os::windows::fs::FileTypeExt::is_symlink_dir(&marker.file_type());
+    #[cfg(not(windows))]
+    let linked_folder = false;
+    if marker.is_dir() || linked_folder {
+        found(fs::remove_dir(pin))?;
+    } else {
+        remove_if_present(pin)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

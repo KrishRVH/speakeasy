@@ -1,4 +1,5 @@
 use std::{
+    ffi::OsStr,
     fmt,
     fs::{self, File},
     io::{self, Read as _},
@@ -94,7 +95,7 @@ impl Entry {
         files: &ReadDirectory,
         managed: Option<&Path>,
     ) -> Self {
-        let pinned = kept(files);
+        let pinned = files.contains(OsStr::new(PIN));
         let show = read(files, pinned.as_ref().copied());
         let id = managed.and_then(|parent| managed_id(parent, &directory, files));
         Self {
@@ -198,16 +199,6 @@ fn read(
 fn managed_id(parent: &Path, directory: &Path, files: &ReadDirectory) -> Option<ShowId> {
     let id = directory.file_name()?.to_str().and_then(ShowId::parse)?;
     files.is_at(&parent.join(id.as_str())).ok()?.then_some(id)
-}
-
-fn kept(directory: &ReadDirectory) -> io::Result<bool> {
-    let unopened = match found(directory.file(Path::new(PIN))) {
-        Ok(marker) => return Ok(marker.is_some()),
-        Err(error) => error,
-    };
-    let mut listed = false;
-    directory.visit(|name| listed |= name == PIN)?;
-    if listed { Ok(true) } else { Err(unopened) }
 }
 
 pub(in crate::show::store) fn open_directory(directory: &Path) -> io::Result<ReadDirectory> {
