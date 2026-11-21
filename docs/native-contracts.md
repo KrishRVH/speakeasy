@@ -316,18 +316,22 @@ composition-time window geometry or detect every move-away-and-back.
 Mac `Source` may cross threads because its retained ScreenCaptureKit filter is immutable and lacks
 thread affinity; no AppKit object is moved with it. The filter excludes the whole application,
 including subsequently opened app windows. Fixed-region streams retain the native stream, output and
-private serial queue until stop acknowledgement and queue drainage. A failed start detaches the
-output and drains the queue directly. For a started stream, only successful stop, the exact
-documented already-stopped domain/code, or the actual did-stop signal establishes cessation; other
-stop errors do not. Each stop waits at most five seconds for its completion or the did-stop signal,
-whichever comes first. An unconfirmed stop is reported and retried after 0.1, 0.4, 1 and 2 seconds.
-If none confirms, capture reports that it may still be running and asks the user to quit, and the
-stream, output and queue stay retained for the life of the process, since releasing them could leave
-capture calling freed objects; the closed frame lane makes the output discard every sample. A stream
-dropped before confirming cessation requests stop once more first. Failure notification precedes
-potentially blocking cleanup. Callback samples are borrowed only during the call; copied bounded
-BGRA leaves the callback. Native image buffers stay locked through reads. The stream's bounded
-host-clock calibration and display-geometry checks precede frame admission.
+private serial queue until stop acknowledgement and queue drainage. Start waits for its completion,
+the did-stop signal, or a stop request. A failed start or a did-stop signal detaches the output and
+drains the queue directly; a start interrupted by a stop request counts as running until a stop
+confirms. For a started stream, only successful stop, the exact documented already-stopped
+domain/code, or the actual did-stop signal establishes cessation; other stop errors do not. A
+confirming stop completion closes the did-stop signal's lane, so a confirmation that arrives after
+its attempt stopped waiting still confirms every later attempt. Each stop waits at most five seconds
+for its completion or the did-stop signal, whichever comes first. An unconfirmed stop is reported
+and retried after 0.1, 0.4, 1 and 2 seconds. If none confirms, capture reports that it may still be
+running and asks the user to quit, and the stream, output and queue stay retained for the life of
+the process, since releasing them could leave capture calling freed objects; the closed frame lane
+makes the output discard every sample. A stream dropped before confirming cessation requests stop
+once more first. Failure notification precedes potentially blocking cleanup. Callback samples are
+borrowed only during the call; copied bounded BGRA leaves the callback. Native image buffers stay
+locked through reads. The stream's bounded host-clock calibration and display-geometry checks
+precede frame admission.
 
 A screen Show's window watch lists windows on its own stoppable thread every frame interval and
 sends only changed layouts over a bounded lane, dropping a change the lane cannot take until the

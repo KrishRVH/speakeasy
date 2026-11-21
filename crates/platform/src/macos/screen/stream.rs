@@ -72,11 +72,13 @@ pub(super) fn capture(
         interval.max(INTERVAL)
     };
     let mut stream = Stream::new(&source, target.part(), cadence)?;
-    let outcome = stream.start().and_then(|()| {
-        record(
+    let outcome = match stream.start(stopping) {
+        Ok(Started::Running) => record(
             target, interval, events, stopping, deadline, geometry, &stream, &mut movie,
-        )
-    });
+        ),
+        Ok(Started::Cancelled) => Ok(()),
+        Err(failure) => Err(failure),
+    };
     if let Err(failure) = outcome {
         report(events, failure);
     }
@@ -184,7 +186,13 @@ struct Stream {
     frames: Receiver<Frame>,
     failures: Receiver<Failure>,
     stopped: Receiver<Infallible>,
+    confirm: Sender<Infallible>,
     running: bool,
+}
+
+enum Started {
+    Running,
+    Cancelled,
 }
 
 impl Stream {
@@ -200,8 +208,8 @@ impl Stream {
         };
         let (frames, received) = async_channel::bounded(2);
         let (failures, failed) = async_channel::bounded(1);
-        let (stopped, terminated) = async_channel::bounded(1);
-        let output = output::Output::new(part, size, frames, failures, stopped)?;
+        let (confirm, stopped) = async_channel::bounded(1);
+        let output = output::Output::new(part, size, frames, failures, confirm.clone())?;
         let queue = DispatchQueue::new("speakeasy.screen", None);
 
         let native = unsafe {
@@ -226,22 +234,26 @@ impl Stream {
             queue,
             frames: received,
             failures: failed,
-            stopped: terminated,
+            stopped,
+            confirm,
             running: false,
         })
     }
 
-    fn start(&mut self) -> Result<(), Failure> {
-        let (completion, reply) = completed(Operation::Start);
+    fn start(&mut self, stopping: &Receiver<Infallible>) -> Result<Started, Failure> {
+        let runtime = runtime::Builder::new_current_thread()
+            .build()
+            .map_err(|_runtime_error| Failure::Unstarted)?;
+        let (completion, reply) = completed(Operation::Start, None);
 
         unsafe {
             self.native
                 .startCaptureWithCompletionHandler(Some(&completion));
         }
         drop(completion);
-        reply.recv_blocking().unwrap_or(Err(Failure::Unstarted))?;
-        self.running = true;
-        Ok(())
+        let started = runtime.block_on(starting(&reply, &self.stopped, stopping));
+        self.running = started.is_ok();
+        started
     }
 
     fn stop(&mut self) -> Result<(), Failure> {
@@ -249,14 +261,18 @@ impl Stream {
             self.running = false;
             return Ok(());
         }
-        let (completion, reply) = completed(Operation::Stop);
+        let runtime = runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .map_err(|_runtime_error| Failure::Stalled)?;
+        let (completion, reply) = completed(Operation::Stop, Some(self.confirm.clone()));
 
         unsafe {
             self.native
                 .stopCaptureWithCompletionHandler(Some(&completion));
         }
         drop(completion);
-        let result = acknowledged(&reply, &self.stopped);
+        let result = runtime.block_on(acknowledged(&reply, &self.stopped, PATIENCE));
         self.running = result.is_err();
         result
     }
@@ -294,39 +310,61 @@ enum Operation {
     Stop,
 }
 
-fn completed(operation: Operation) -> (Completion, Receiver<Result<(), Failure>>) {
+fn completed(
+    operation: Operation,
+    confirm: Option<Sender<Infallible>>,
+) -> (Completion, Receiver<Result<(), Failure>>) {
     let (sent, reply) = async_channel::bounded(1);
     let block = RcBlock::new(move |error: *mut NSError| {
         let error = unsafe { error.as_ref() };
         let result = panic::catch_unwind(AssertUnwindSafe(|| completion_result(error, operation)))
             .unwrap_or(Err(Failure::Stalled));
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "There is one completion; a departed owner cannot receive its result"
-        )]
-        let _ = sent.try_send(result);
+        deliver(result, confirm.as_ref(), &sent);
     });
     (block, reply)
 }
 
-fn acknowledged(
+fn deliver(
+    result: Result<(), Failure>,
+    confirm: Option<&Sender<Infallible>>,
+    reply: &Sender<Result<(), Failure>>,
+) {
+    if result.is_ok()
+        && let Some(confirm) = confirm
+    {
+        confirm.close();
+    }
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "There is one completion; an attempt that stopped waiting still sees a confirmed stop through the closed lane"
+    )]
+    let _ = reply.try_send(result);
+}
+
+async fn starting(
     reply: &Receiver<Result<(), Failure>>,
     stopped: &Receiver<Infallible>,
+    stopping: &Receiver<Infallible>,
+) -> Result<Started, Failure> {
+    tokio::select! {
+        biased;
+        result = reply.recv() => result.unwrap_or(Err(Failure::Unstarted)).map(|()| Started::Running),
+        _ = stopped.recv() => Err(Failure::Unstarted),
+        _ = stopping.recv() => Ok(Started::Cancelled),
+    }
+}
+
+async fn acknowledged(
+    reply: &Receiver<Result<(), Failure>>,
+    stopped: &Receiver<Infallible>,
+    patience: Duration,
 ) -> Result<(), Failure> {
-    let waited = runtime::Builder::new_current_thread()
-        .enable_time()
-        .build()
-        .map_err(|_runtime_error| Failure::Stalled)
-        .and_then(|runtime| {
-            runtime.block_on(async {
-                tokio::select! {
-                    biased;
-                    _ = stopped.recv() => Ok(()),
-                    result = reply.recv() => result.unwrap_or(Err(Failure::Stalled)),
-                    () = tokio::time::sleep(PATIENCE) => Err(Failure::Stalled),
-                }
-            })
-        });
+    let waited = tokio::select! {
+        biased;
+        _ = stopped.recv() => Ok(()),
+        result = reply.recv() => result.unwrap_or(Err(Failure::Stalled)),
+        () = tokio::time::sleep(patience) => Err(Failure::Stalled),
+    };
     if stopped.is_closed() { Ok(()) } else { waited }
 }
 
