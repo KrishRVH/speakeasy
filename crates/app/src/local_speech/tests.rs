@@ -32,12 +32,12 @@ fn parakeet_words_keep_their_times_and_punctuation() -> anyhow::Result<()> {
 }
 
 #[test]
-fn whisper_tokens_join_into_words_without_control_tokens() -> anyhow::Result<()> {
-    let reply = r#"{"text":" Ask yourself.","segments":[{"words":[
-        {"word":"[_BEG_]","start":0.0,"end":0.0},
-        {"word":" Ask","start":0.10,"end":0.30},
-        {"word":" your","start":0.30,"end":0.40},
-        {"word":"self.","start":0.40,"end":0.62}]}]}"#;
+fn whisper_tokens_join_into_words_across_wrapped_segments() -> anyhow::Result<()> {
+    let reply = r#"{"text":" Ask yourself.","segments":[
+        {"words":[{"word":"[_BEG_]","start":0.0,"end":0.0},
+                  {"word":" Ask","start":0.10,"end":0.30},
+                  {"word":" your","start":0.30,"end":0.40}]},
+        {"words":[{"word":"self.","start":0.40,"end":0.62}]}]}"#;
     assert_eq!(
         narration(reply)?,
         timed(&[(100, 300, "Ask"), (300, 620, "yourself.")])
@@ -926,14 +926,14 @@ async fn abandoned_and_failed_streams_probe_the_owned_engine_before_reuse() -> a
 }
 
 #[test]
-fn whisper_tokens_preserve_whitespace_and_segment_boundaries() -> anyhow::Result<()> {
+fn whisper_tokens_break_words_only_at_whitespace() -> anyhow::Result<()> {
     let body = r#"{"text":"Hello world. Next part.","segments":[
         {"words":[{"word":"Hello","start":0,"end":0.1},
                   {"word":" ","start":0.1,"end":0.2},
                   {"word":"wor","start":0.2,"end":0.3},
                   {"word":"ld. ","start":0.3,"end":0.4},
                   {"word":"Next","start":0.4,"end":0.5}]},
-        {"words":[{"word":"part.","start":0.5,"end":0.6}]}]}"#;
+        {"words":[{"word":" part.","start":0.5,"end":0.6}]}]}"#;
     assert_eq!(
         narration(body)?,
         timed(&[

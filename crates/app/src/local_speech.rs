@@ -404,7 +404,7 @@ struct Heard {
 impl Timed {
     fn into_narration(self) -> Narration {
         let heard: Vec<Heard> = if self.words.is_empty() {
-            joined(self.segments)
+            joined(self.segments.into_iter().flat_map(|segment| segment.words))
         } else {
             self.words
                 .into_iter()
@@ -448,32 +448,30 @@ impl Token {
     }
 }
 
-fn joined(segments: Vec<TimedSegment>) -> Vec<Heard> {
+fn joined(tokens: impl Iterator<Item = Token>) -> Vec<Heard> {
     let mut words: Vec<Heard> = Vec::new();
-    for segment in segments {
-        let mut boundary = true;
-        for token in segment.words {
-            let text = token.word.trim();
-            if text.is_empty() {
-                boundary = true;
-                continue;
-            }
-            if text.starts_with("[_") {
-                continue;
-            }
-            let ends_word = token.word.ends_with(char::is_whitespace);
-            match words.last_mut() {
-                Some(word) if !boundary && !token.word.starts_with(char::is_whitespace) => {
-                    word.span = word
-                        .span
-                        .zip(token.span())
-                        .map(|(whole, piece)| whole.union(piece));
-                    word.text.push_str(text);
-                },
-                _ => words.push(token.into_heard()),
-            }
-            boundary = ends_word;
+    let mut boundary = true;
+    for token in tokens {
+        let text = token.word.trim();
+        if text.is_empty() {
+            boundary = true;
+            continue;
         }
+        if text.starts_with("[_") {
+            continue;
+        }
+        let ends_word = token.word.ends_with(char::is_whitespace);
+        match words.last_mut() {
+            Some(word) if !boundary && !token.word.starts_with(char::is_whitespace) => {
+                word.span = word
+                    .span
+                    .zip(token.span())
+                    .map(|(whole, piece)| whole.union(piece));
+                word.text.push_str(text);
+            },
+            _ => words.push(token.into_heard()),
+        }
+        boundary = ends_word;
     }
     words
 }
