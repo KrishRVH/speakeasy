@@ -1,7 +1,11 @@
+#[cfg(any(target_os = "macos", test))]
+mod libproc;
+
 #[cfg(target_os = "linux")]
 use std::fs;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::Ipv6Addr;
+use std::net::{IpAddr, Ipv4Addr};
 #[cfg(unix)]
 use std::{io, mem::MaybeUninit};
 #[cfg(target_os = "windows")]
@@ -9,6 +13,11 @@ use std::{
     io,
     os::windows::io::{AsRawHandle, BorrowedHandle, OwnedHandle},
     ptr::null,
+};
+#[cfg(target_os = "macos")]
+use std::{
+    net::{SocketAddr, TcpStream},
+    time::Duration,
 };
 
 use anyhow::Context as _;
@@ -32,7 +41,6 @@ use windows_sys::Win32::{
 #[cfg(target_os = "windows")]
 use crate::windows::{ok_or_last_error, take_handle};
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LoopbackListener {
     Missing,
@@ -63,7 +71,26 @@ fn classify<L: PartialEq>(
     anyhow::bail!("The listeners on the port kept changing")
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "macos", test))]
+fn classify_reachable(
+    mut held: impl FnMut() -> io::Result<bool>,
+    mut reachable: impl FnMut() -> io::Result<bool>,
+) -> anyhow::Result<LoopbackListener> {
+    const SIGHTINGS: usize = 2;
+    if held()? {
+        return Ok(LoopbackListener::Owned);
+    }
+    for _ in 0..SIGHTINGS {
+        if !reachable()? {
+            return Ok(LoopbackListener::Missing);
+        }
+        if held()? {
+            return Ok(LoopbackListener::Owned);
+        }
+    }
+    Ok(LoopbackListener::Foreign)
+}
+
 fn reaches_loopback(address: IpAddr) -> bool {
     match address.to_canonical() {
         IpAddr::V4(address) => address == Ipv4Addr::LOCALHOST || address.is_unspecified(),
@@ -354,6 +381,36 @@ impl ProcessGroup {
             }
         }
         Ok(inodes)
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl ProcessGroup {
+    pub fn loopback_listener(&self, port: u16) -> anyhow::Result<LoopbackListener> {
+        classify_reachable(|| self.holds(port), || accepts_connections(port))
+    }
+
+    fn holds(&self, port: u16) -> io::Result<bool> {
+        self.leader
+            .filter(|&leader| unreaped(leader))
+            .map_or(Ok(false), |leader| libproc::group_listens(leader, port))
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn accepts_connections(port: u16) -> io::Result<bool> {
+    const PATIENCE: Duration = Duration::from_millis(50);
+    match TcpStream::connect_timeout(&SocketAddr::from((Ipv4Addr::LOCALHOST, port)), PATIENCE) {
+        Ok(_) => Ok(true),
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::ConnectionRefused | io::ErrorKind::TimedOut
+            ) =>
+        {
+            Ok(false)
+        },
+        Err(error) => Err(error),
     }
 }
 

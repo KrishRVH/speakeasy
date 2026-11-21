@@ -141,7 +141,7 @@ on drop. Linux holds nothing.
 
 ## Child process containment
 
-Owner: `crates/platform/src/process.rs`.
+Owners: `crates/platform/src/process.rs`, `process/libproc.rs`.
 
 Termination authority originates only from a freshly spawned child. Windows attaches its process
 handle to a private kill-on-close job immediately after spawn; listener PID lookups only test
@@ -150,6 +150,19 @@ owner polls for exit with `waitid(WNOWAIT)` and terminates the group before reap
 same check verifies that the leader is still this process's unreaped child; consuming the stored
 leader before signaling prevents a second signal after PID reuse. Listener table parsing and `/proc`
 inspection remain read-only membership evidence.
+
+On macOS, libproc supplies that evidence; it inspects only processes of Speakeasy's own account,
+which include the group. `proc_listpgrppids` and `proc_pidinfo(PROC_PIDLISTFDS)` receive a buffer of
+`pid_t` or `proc_fdinfo` entries with its exact byte length, write at most that many bytes, and
+report what they wrote, as entries or bytes; a full buffer is listed again with a larger one, one
+still full at 4096 entries fails the check, and a listing failure reads as no entries.
+`proc_pidfdinfo(PROC_PIDFDSOCKETINFO)` fills a zeroed `socket_fdinfo` transcribed from xnu's
+`sys/proc_info.h`. `const` assertions pin its 792-byte size and the offsets of the fields read, the
+kernel refuses a buffer smaller than its own record, and the record is read only after the call
+reports writing exactly its size. Any failure other than the descriptor or the process going away
+fails the check rather than reading as a listener the group does not hold. Every field is an
+integer, so zeroed or written bytes are a valid record, and the protocol union read as its TCP
+variant is used only when `soi_kind` names TCP.
 
 ## Show directory handles
 

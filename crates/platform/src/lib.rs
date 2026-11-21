@@ -36,8 +36,6 @@ pub use self::linux::{
 use self::macos as native;
 #[cfg(target_os = "macos")]
 pub use self::macos::StatusItem;
-#[cfg(any(target_os = "windows", target_os = "linux"))]
-pub use self::process::LoopbackListener;
 #[cfg(target_os = "windows")]
 use self::windows as native;
 #[cfg(target_os = "windows")]
@@ -59,7 +57,7 @@ pub use self::{
     movie::{MovieControl, MovieEvent, MovieFrame, MovieTarget, read_movie_frame},
     owned_thread::{OwnedThread, StoppableThread},
     permissions::{Permission, Permissions},
-    process::ProcessGroup,
+    process::{LoopbackListener, ProcessGroup},
     screen::{
         Display, Frame, Part, PlacedWindow, PointerMonitor, PointerSample, Scope, ScreenCapture,
         ScreenEvent, Target, Unstopped, WindowGone, WindowLayer, WindowLayout, WindowWatch,

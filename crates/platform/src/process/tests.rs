@@ -1,12 +1,8 @@
-#[cfg(any(target_os = "linux", target_os = "windows"))]
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
 use anyhow::Context as _;
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
-use super::LoopbackListener;
-use super::ProcessGroup;
+use super::{LoopbackListener, ProcessGroup};
 
 #[cfg(unix)]
 #[test]
@@ -75,7 +71,7 @@ fn a_group_led_by_a_process_this_one_never_spawned_is_never_signaled() -> anyhow
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
 fn only_listeners_held_inside_the_group_count() -> anyhow::Result<()> {
     use std::{
@@ -110,7 +106,7 @@ fn only_listeners_held_inside_the_group_count() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
 fn listeners_held_by_members_other_than_the_leader_count() -> anyhow::Result<()> {
     use std::{
@@ -208,6 +204,43 @@ fn only_listeners_that_outlive_the_ownership_scan_are_foreign() {
             },
         );
         assert_eq!(classified.ok(), expected, "{listings:?}");
+    }
+}
+
+#[test]
+fn only_a_listener_reached_twice_outside_the_group_is_foreign() {
+    use super::classify_reachable;
+
+    for (held, reached, expected) in [
+        (vec![true], vec![], LoopbackListener::Owned),
+        (vec![false], vec![false], LoopbackListener::Missing),
+        (vec![false, true], vec![true], LoopbackListener::Owned),
+        (
+            vec![false, false],
+            vec![true, false],
+            LoopbackListener::Missing,
+        ),
+        (
+            vec![false, false, true],
+            vec![true, true],
+            LoopbackListener::Owned,
+        ),
+        (
+            vec![false, false, false],
+            vec![true, true],
+            LoopbackListener::Foreign,
+        ),
+    ] {
+        let (mut checks, mut connects) = (held.clone().into_iter(), reached.clone().into_iter());
+        let classified = classify_reachable(
+            || Ok(checks.next().expect("Checked the group too often")),
+            || Ok(connects.next().expect("Connected too often")),
+        );
+        assert_eq!(classified.ok(), Some(expected), "{held:?} {reached:?}");
+        assert!(
+            checks.next().is_none() && connects.next().is_none(),
+            "Stopped early: {held:?} {reached:?}"
+        );
     }
 }
 
