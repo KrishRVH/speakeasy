@@ -138,7 +138,7 @@ fn check_managed_withdrawal(cx: &mut App) -> anyhow::Result<()> {
     connection
         .change_window_attributes(
             root,
-            &ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_NOTIFY),
+            &ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_REDIRECT),
         )?
         .check()?;
 

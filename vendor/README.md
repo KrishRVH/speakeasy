@@ -79,8 +79,11 @@ app liveness for `AsyncApp`, and `App::shutdown` ordering.
   shape, as Wayland's input region already does; upstream X11 ignores it. The X11 pill passes
   through every click; `idle_native_pill_starts_unmapped_and_can_show_and_hide` fails without this.
 - `src/linux/x11/window.rs` implements `PlatformWindow::set_visible` with MapWindow and UnmapWindow
-  on GPUI's own connection; managed windows also send the ICCCM withdrawal event to the root.
-  `idle_native_pill_starts_unmapped_and_can_show_and_hide` fails without this.
+  on GPUI's own connection; a managed window also sends the ICCCM withdrawal event to the root,
+  so a window manager forgets it even when it was already unmapped.
+  `idle_native_pill_starts_unmapped_and_can_show_and_hide` fails without the map and unmap, and
+  `native_pill_app_withdraws_a_managed_window_that_is_already_unmapped`, which listens on the root
+  as a window manager does, fails without the withdrawal event.
 - `src/linux/wayland/window.rs` implements `PlatformWindow::set_visible`. A toplevel or layer
   surface opened without `show` has no role objects until it is shown. Hiding one does as GTK and
   Qt do: it destroys its role objects, the decoration, toplevel, and xdg_surface or the layer

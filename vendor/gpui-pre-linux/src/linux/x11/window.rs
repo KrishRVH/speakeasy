@@ -265,6 +265,7 @@ pub struct X11WindowState {
     executor: ForegroundExecutor,
     atoms: XcbAtoms,
     x_root_window: xproto::Window,
+    // Speakeasy patch: hiding withdraws only a window the window manager manages.
     override_redirect: bool,
     x_screen_index: usize,
     visual_id: u32,
@@ -510,6 +511,7 @@ impl X11WindowState {
             id
         };
 
+        // Speakeasy patch: kept for hiding the window.
         let override_redirect = params.kind == WindowKind::PopUp;
         let win_aux = xproto::CreateWindowAux::new()
             // https://stackoverflow.com/questions/43218127/x11-xlib-xcb-creating-a-window-requires-border-pixel-if-specifying-colormap-wh
@@ -836,6 +838,7 @@ impl X11WindowState {
                 executor,
                 display,
                 x_root_window: visual_set.root,
+                // Speakeasy patch: kept for hiding the window.
                 override_redirect,
                 x_screen_index,
                 visual_id: visual.id,
