@@ -171,7 +171,7 @@ impl Settings {
             }))
     }
 
-    pub(super) fn dropdown(
+    fn dropdown(
         &self,
         ui: &Ui<'_>,
         menu: Menu,
@@ -337,7 +337,7 @@ impl Settings {
             .is_some_and(|permissions| permissions::blocked(permissions.microphone))
     }
 
-    pub(super) fn unreadable_banner(&self, ui: &Ui<'_>) -> Div {
+    fn unreadable_banner(&self, ui: &Ui<'_>) -> Div {
         let path = &ui.cx.global::<Services>().path;
         let file = path.file_name().map_or_else(
             || path.display().to_string(),
@@ -466,11 +466,7 @@ const fn microphone_remedy() -> &'static str {
     }
 }
 
-pub(super) fn setup_progress(
-    ui: &Ui<'_>,
-    progress: Progress,
-    detail: impl Into<SharedString>,
-) -> Div {
+fn setup_progress(ui: &Ui<'_>, progress: Progress, detail: impl Into<SharedString>) -> Div {
     let kit = ui.kit();
     div()
         .flex()
@@ -487,14 +483,14 @@ pub(super) fn setup_progress(
         )
 }
 
-pub(super) fn fraction(progress: Progress) -> f32 {
+fn fraction(progress: Progress) -> f32 {
     match progress {
         Progress::Step(_) => 0.0,
         Progress::Bytes { done, total, .. } => done as f32 / total.get() as f32,
     }
 }
 
-pub(super) fn progress_text(progress: Progress) -> String {
+fn progress_text(progress: Progress) -> String {
     match progress {
         Progress::Step(step) => format!("{step}…"),
         Progress::Bytes { step, done, total } => format!(
