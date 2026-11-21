@@ -20,7 +20,7 @@ const FLAGS: libc::c_int = libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK
 #[cfg(target_os = "linux")]
 const SEARCH: libc::c_int = libc::O_PATH | libc::O_DIRECTORY;
 #[cfg(target_os = "macos")]
-const SEARCH: libc::c_int = libc::O_RDONLY | libc::O_DIRECTORY;
+const SEARCH: libc::c_int = libc::O_SEARCH;
 
 pub(super) fn directory(path: &Path) -> io::Result<File> {
     OpenOptions::new()

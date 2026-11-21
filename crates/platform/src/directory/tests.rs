@@ -111,23 +111,48 @@ fn only_name_surrogate_reparse_points_are_refused() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
-#[test]
-fn a_searchable_directory_opens_without_list_permission() -> anyhow::Result<()> {
+#[cfg(unix)]
+fn allow_listing(directory: &Path, allowed: bool) -> anyhow::Result<()> {
     use std::os::unix::fs::PermissionsExt as _;
 
+    let mode = if allowed { 0o700 } else { 0o300 };
+    fs::set_permissions(directory, fs::Permissions::from_mode(mode))?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn allow_listing(directory: &Path, allowed: bool) -> anyhow::Result<()> {
+    let change: &[&str] = if allowed {
+        &["/remove:d", "*S-1-1-0"]
+    } else {
+        &["/deny", "*S-1-1-0:(RD)"]
+    };
+    let status = std::process::Command::new("icacls")
+        .arg(directory)
+        .args(change)
+        .stdout(std::process::Stdio::null())
+        .status()?;
+    anyhow::ensure!(
+        status.success(),
+        "icacls could not change listing permission"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_searchable_directory_opens_without_list_permission() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let inner = root.path().join("inner");
     fs::create_dir(&inner)?;
     fs::write(inner.join("public.txt"), "public")?;
-    fs::set_permissions(&inner, fs::Permissions::from_mode(0o300))?;
+    allow_listing(&inner, false)?;
     let directory = ReadDirectory::open(root.path())?;
     let opened = directory
         .child(OsStr::new("inner"))
         .map(|inner| read(&inner, "public.txt"));
     let rooted = ReadDirectory::open(&inner).map(|inner| read(&inner, "public.txt"));
     let listed = ReadDirectory::open(&inner).map(|inner| inner.visit(|_| {}).is_ok());
-    fs::set_permissions(&inner, fs::Permissions::from_mode(0o700))?;
+    allow_listing(&inner, true)?;
     assert_eq!(opened??, "public");
     assert_eq!(rooted??, "public");
     assert!(!listed?, "Listing a directory needs permission to read it");

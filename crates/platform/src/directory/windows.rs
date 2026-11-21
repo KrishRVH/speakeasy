@@ -28,9 +28,10 @@ use windows_sys::{
         },
         Storage::FileSystem::{
             BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-            FILE_GENERIC_READ, FILE_ID_INFO, FILE_NAME_NORMALIZED, FILE_SHARE_DELETE,
-            FILE_SHARE_READ, FILE_SHARE_WRITE, FileIdInfo, GetFileInformationByHandle,
-            GetFileInformationByHandleEx, GetFinalPathNameByHandleW, VOLUME_NAME_NONE,
+            FILE_GENERIC_READ, FILE_ID_INFO, FILE_LIST_DIRECTORY, FILE_NAME_NORMALIZED,
+            FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+            FILE_TRAVERSE, FileIdInfo, GetFileInformationByHandle, GetFileInformationByHandleEx,
+            GetFinalPathNameByHandleW, SYNCHRONIZE, VOLUME_NAME_NONE,
         },
         System::IO::IO_STATUS_BLOCK,
     },
@@ -39,23 +40,29 @@ use windows_sys::{
 use super::OpenKind;
 
 const SHARE: u32 = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+const SEARCH: u32 = FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE;
+const LIST: u32 = FILE_LIST_DIRECTORY | SYNCHRONIZE;
 
 pub(super) fn directory(path: &Path) -> io::Result<File> {
     OpenOptions::new()
-        .read(true)
+        .access_mode(SEARCH)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
         .open(path)
 }
 
 pub(super) fn child(parent: &File, name: &OsStr, kind: OpenKind) -> io::Result<File> {
-    let file = open_relative(parent, name, kind)?;
+    let access = match kind {
+        OpenKind::Directory => SEARCH,
+        OpenKind::File | OpenKind::StableFile => FILE_GENERIC_READ,
+    };
+    let file = open_relative(parent, name, kind, access)?;
     if !final_name(&file)?.eq_ignore_ascii_case(name) {
         return Err(io::ErrorKind::NotFound.into());
     }
     Ok(file)
 }
 
-fn open_relative(parent: &File, name: &OsStr, kind: OpenKind) -> io::Result<File> {
+fn open_relative(parent: &File, name: &OsStr, kind: OpenKind, access: u32) -> io::Result<File> {
     let mut text: Vec<_> = name.encode_wide().collect();
     if text.iter().any(|unit| [0, u16::from(b':')].contains(unit)) {
         return Err(io::ErrorKind::InvalidInput.into());
@@ -95,7 +102,7 @@ fn open_relative(parent: &File, name: &OsStr, kind: OpenKind) -> io::Result<File
     let result = unsafe {
         NtOpenFile(
             &raw mut handle,
-            FILE_GENERIC_READ,
+            access,
             &raw const attributes,
             &raw mut status,
             share,
@@ -185,7 +192,7 @@ fn identity(file: &File) -> io::Result<Identity> {
 struct DirectoryBuffer([u8; 16 << 10]);
 
 pub(super) fn visit(directory: &File, mut visit: impl FnMut(OsString)) -> io::Result<()> {
-    let directory = open_relative(directory, OsStr::new(""), OpenKind::Directory)?;
+    let directory = open_relative(directory, OsStr::new(""), OpenKind::Directory, LIST)?;
     let mut buffer = DirectoryBuffer([0; 16 << 10]);
     let capacity =
         u32::try_from(buffer.0.len()).map_err(|_overflow| io::ErrorKind::InvalidInput)?;
