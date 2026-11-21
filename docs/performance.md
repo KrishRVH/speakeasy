@@ -105,8 +105,7 @@ hardware alongside the results. Do not put private recordings in this fixture.
 SPEAKEASY_FIXTURE_CONFIG="$PWD/.scratch/public-speech/config.json" \
   SPEAKEASY_FIXTURE_CORPUS="$PWD/.scratch/public-speech/corpus.json" \
   SPEAKEASY_FIXTURE_SPEED=1 SPEAKEASY_FIXTURE_SEGMENT=1 \
-  cargo test -p speakeasy --release --locked runtime::fixture::profile_recording_dictation \
-  -- --exact --ignored --nocapture --test-threads=1
+  mise run profile:dictation
 ```
 
 Each case starts a fresh worker, warming it only where the app does, reports startup separately,
@@ -180,8 +179,8 @@ Pass explicit app and worker PIDs, reported separately. For example:
 ```sh
 mise exec -- python scripts/profile_linux.py --pid 1234 --pid 1235 --label idle-hidden \
   --seconds 30 --output artifacts/profiles/linux-idle.json
-cargo test -p speakeasy --release --locked profile_audio -- --ignored --nocapture --test-threads=1
-cargo test -p speakeasy --release --locked profile_ready_text_latency -- --ignored --nocapture
+mise run profile:audio
+mise run profile:latency
 ```
 
 ```powershell

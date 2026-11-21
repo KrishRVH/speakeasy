@@ -10,6 +10,9 @@ idiomatic_version_file_enable_tools = ["rust"]
 # Tasks that pipe this list run under bash with pipefail, which /bin/sh lacks on older dash: without
 # it a git failure hands the markdown tool an empty list, and it passes.
 md_files = '''git ls-files -z --cached --others --exclude-standard -- '*.md' ':(exclude)vendor/' '''
+# Linux owned-window checks need a private X11 display, and GPUI chooses Wayland whenever
+# WAYLAND_DISPLAY is set; Windows and macOS use the native desktop.
+private_display = "{% if os() == 'linux' %}env -u WAYLAND_DISPLAY xvfb-run -a {% endif %}"
 
 [env]
 UV_PYTHON_PREFERENCE = "only-system"
@@ -248,3 +251,118 @@ foreach ($script in Get-ChildItem scripts/*.ps1) {
 [tasks.hygiene]
 description = "Check committed names, mise task references, workspace lint inheritance, and unsafe-code forbids"
 run = "python scripts/check_repository.py"
+
+# Opt-in native checks open owned windows, record an owned scene, or need the named system, so the
+# gate depends on none of them. The README's packaging and native checks say what each touches and
+# which variables name its fixtures. Windows tasks that quote arguments run in PowerShell, because
+# cmd.exe does not honor the quoting that Rust gives an argument.
+
+[tasks."native:rendering"]
+description = "Render an owned non-activating window through SVG frames, resizes, and show/hide"
+run = "{{vars.private_display}}cargo run --locked -p speakeasy --example check_native_rendering -- --native-gui"
+
+[tasks."native:review"]
+description = "Check synthetic Show review in an owned window on Windows or Linux"
+run = "{{vars.private_display}}cargo test --locked -p speakeasy native_show_review_ -- --ignored --test-threads=1"
+
+# Each filter runs in its own process, which owns one GPUI application.
+[tasks."native:settings"]
+description = "Check Settings IME, saves, pickers, and onboarding in owned windows on Windows or Linux"
+run = [
+  "{{vars.private_display}}cargo test --locked -p speakeasy native_phrase_editor_ -- --ignored --test-threads=1",
+  "{{vars.private_display}}cargo test --locked -p speakeasy native_settings_picker_ -- --ignored --test-threads=1",
+]
+
+[tasks."linux:demo"]
+description = "Build the release app and check its Settings, Shows, and pill on a private Xvfb display"
+run = ["cargo build --release --locked -p speakeasy", "python scripts/check_demo_linux.py target/release/speakeasy"]
+
+[tasks."windows:accessibility"]
+description = "Build the app test executable and check its static Settings fixture through UI Automation"
+shell = "pwsh -NoProfile -Command"
+run = """
+$built = cargo test --locked -p speakeasy --bin speakeasy --no-run --message-format=json
+if ($LASTEXITCODE -ne 0) { throw 'The app test executable did not build.' }
+$test = $built | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.reason -eq 'compiler-artifact' -and $_.target.name -eq 'speakeasy' -and $_.profile.test -and $_.executable } | Select-Object -Last 1
+if (-not $test) { throw 'Cargo reported no app test executable.' }
+./scripts/check-demo-windows.ps1 -Executable $test.executable -StaticAccessibility
+"""
+
+[tasks."windows:clipboard"]
+description = "Check paste on a private window station, whose clipboard is never the desktop's"
+shell = "pwsh -NoProfile -Command"
+run = "cargo nextest run --workspace --lib --bins --tests --all-features --locked --run-ignored only -E 'package(speakeasy-platform) & test(copied_text_stays_private)'"
+
+[tasks."windows:geometry"]
+description = "Move and hide an owned window and check its tracked bounds without sampling input"
+run = "cargo test --locked -p speakeasy-platform target_geometry_tracks_an_owned_window_without_sampling_input -- --ignored --test-threads=1"
+
+[tasks."windows:capture"]
+description = "Record only an owned, blacked-out scene under still backpressure until the session deadline"
+run = "cargo test --locked -p speakeasy-platform a_movie_survives_still_backpressure_and_closes_at_the_session_deadline -- --ignored --test-threads=1"
+
+[tasks."windows:movie:encode"]
+description = "Encode synthetic movies and geometry into SPEAKEASY_MOVIE_PROBE_DIRECTORY and check their timing"
+run = [
+  "cargo test --locked -p speakeasy-platform encode_synthetic_movie_fragments --release -- --ignored --test-threads=1",
+  "cargo test --locked -p speakeasy-platform windows::movie::tests::timing:: --release -- --ignored --test-threads=1",
+  "cargo test --locked -p speakeasy-platform a_cancelled_active_movie_releases_its_file_without_a_new_frame --release -- --ignored --test-threads=1",
+  "cargo test --locked -p speakeasy-platform receipts_describe_presented_layouts_and_exclude_superseded_inputs --release -- --ignored --test-threads=1",
+]
+
+[tasks."movie:prefixes"]
+description = "Validate the synthetic movies in SPEAKEASY_MOVIE_FIXTURES and write their prefixes to SPEAKEASY_MOVIE_PREFIX_OUT"
+run = "cargo test --locked -p speakeasy-show --test movie_native -- --ignored --nocapture"
+
+[tasks."windows:movie:read"]
+description = "Seek and export the recovered movie prefixes in SPEAKEASY_MOVIE_READ_DIRECTORY"
+run = [
+  "cargo test --locked -p speakeasy-platform recovered_movie_seeks_ --release -- --ignored --test-threads=1",
+  "cargo test --locked -p speakeasy native_video_export_ -- --ignored --test-threads=1",
+]
+
+[tasks."windows:movie:review"]
+description = "Scrub and step the recovered movie prefixes in an owned Show review window"
+run = "cargo test --locked -p speakeasy native_show_video_review_ -- --ignored --test-threads=1"
+
+[tasks."windows:movie:crops"]
+description = "Check mark crops and annotated exports against the geometry in SPEAKEASY_MOVIE_GEOMETRY_DIRECTORY"
+run = [
+  "cargo test --locked -p speakeasy native_mark_crops_ -- --ignored --test-threads=1",
+  "cargo test --locked -p speakeasy native_annotated_video_exports_ -- --ignored --test-threads=1",
+]
+
+[tasks."windows:movie:colors"]
+description = "Encode the synthetic color clips the Mac reader checks into SPEAKEASY_MOVIE_PROBE_DIRECTORY"
+run = "cargo test --locked -p speakeasy-platform native_movie_color_interoperability -- --ignored --nocapture --test-threads=1"
+
+[tasks."windows:movie:from-mac"]
+description = "Check the colors and timestamps of the synthetic Mac movies in SPEAKEASY_MAC_MOVIE_DIRECTORY"
+run = "cargo test --locked -p speakeasy-platform native_mac_movies_preserve_colors_and_timestamps -- --ignored --test-threads=1"
+
+[tasks."macos:movie:encode"]
+description = "Encode synthetic H.264 fragments into SPEAKEASY_MAC_MOVIE_DIRECTORY and check cancellation"
+run = [
+  "cargo test --locked -p speakeasy-platform native_mac_movie_encoding -- --ignored --nocapture --test-threads=1",
+  "cargo test --locked -p speakeasy-platform movie::recording::tests::a_cancelled_active_movie_releases_its_file_without_a_new_frame -- --ignored --nocapture --test-threads=1",
+]
+
+[tasks."macos:movie:from-windows"]
+description = "Check the colors of the synthetic Windows clips in SPEAKEASY_WINDOWS_MOVIE_DIRECTORY"
+run = "cargo test --locked -p speakeasy-platform native_windows_movie_preserves_colors_on_macos -- --ignored --nocapture --test-threads=1"
+
+[tasks."macos:capture"]
+description = "Capture owned synthetic windows from the screen into memory; needs Screen Recording permission"
+run = "cargo run --locked -p speakeasy-platform --example mac_capture -- --owned-screen"
+
+[tasks."profile:dictation"]
+description = "Replay public fixture speech through the session owner with real inference and report its scores"
+run = "cargo test -p speakeasy --release --locked runtime::fixture::profile_recording_dictation -- --exact --ignored --nocapture --test-threads=1"
+
+[tasks."profile:audio"]
+description = "Profile synthetic audio sealing and the capture pipeline in a release build"
+run = "cargo test -p speakeasy --release --locked profile_audio -- --ignored --nocapture --test-threads=1"
+
+[tasks."profile:latency"]
+description = "Report the owner's reply-to-insertion latency with fake devices in a release build"
+run = "cargo test -p speakeasy --release --locked profile_ready_text_latency -- --ignored --nocapture"

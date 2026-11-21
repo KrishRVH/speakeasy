@@ -908,7 +908,7 @@ mise run standards:check
 
 The pinned toolchain and lockfiles make local checks reproducible. `mise run standards` applies safe
 formatters and autofixes; `mise run fmt`, `mise run lint`, and `mise run test` format, lint, or test
-every language; and `mise tasks` lists the focused checks.
+every language; and `mise tasks` lists the focused checks, including the opt-in native checks below.
 
 Default tests drive the real session owner with mocked microphone, inference, and insertion, and a
 paused clock exercises gesture deadlines and the five-minute cap.
@@ -982,18 +982,18 @@ every ordering of events against both within the bounds
 - `scripts/check-demo-windows.ps1 -Executable <speakeasy.exe>` checks that the demo pill stays
   non-activating and passes clicks through, and that closing Shows keeps Settings open. It also
   checks Settings through Windows UI Automation with synthetic Unicode input: roles, selection,
-  switches, invocation, focus, input limits, bounds, hide/minimize, and retired providers. Build the
-  app test executable with `cargo test --locked -p speakeasy --bin speakeasy --no-run`, then pass
-  its path to the same script with `-StaticAccessibility` to check nonactivating and normal reopen
-  without animation or unrelated redraws, stale field edits and text ranges, and the provider after
-  window destruction. It also checks that scrolling text into view keeps selection and focus, that
-  retained ranges survive field resizing, and that a reveal requested before a resize is painted
-  lands in the resized layout. `scripts/check-tray-windows.ps1 -Executable <speakeasy.exe>` checks
-  minimize, close, relaunch, and configuration preservation with owned `--demo-tray` windows.
+  switches, invocation, focus, input limits, bounds, hide/minimize, and retired providers.
+  `mise run windows:accessibility` builds the app test executable and passes its path to the same
+  script with `-StaticAccessibility` to check nonactivating and normal reopen without animation or
+  unrelated redraws, stale field edits and text ranges, and the provider after window destruction.
+  It also checks that scrolling text into view keeps selection and focus, that retained ranges
+  survive field resizing, and that a reveal requested before a resize is painted lands in the
+  resized layout. `scripts/check-tray-windows.ps1 -Executable <speakeasy.exe>` checks minimize,
+  close, relaunch, and configuration preservation with owned `--demo-tray` windows.
   `mise run ps:syntax` parses the Windows scripts on a native PowerShell host.
-- On Linux, `mise exec -- python scripts/check_demo_linux.py target/release/speakeasy` opens a
-  private Xvfb display, checks rendered Settings and Shows, and checks that the preview shows and
-  then hides the pill. It needs Xvfb, x11-utils, and a Vulkan driver.
+- On Linux, `mise run linux:demo` builds the release app and runs `scripts/check_demo_linux.py` on
+  it. The script opens a private Xvfb display, checks rendered Settings and Shows, and checks that
+  the preview shows and then hides the pill. It needs Xvfb, x11-utils, and a Vulkan driver.
   `bash scripts/check-rendering-linux.sh` runs, in an Ubuntu 26.04 Docker container with stock Mesa,
   the opt-in `native_pill_` tests of the pill's window hints, input shape, visibility, and
   reopening, the Show review and Settings acceptance tests below, the native rendering example, and
@@ -1001,83 +1001,71 @@ every ordering of events against both within the bounds
   that `package-linux.sh` builds instead.
   [Linux implementation](docs/linux-implementation.md#setup-and-distribution) explains the Mesa
   requirement.
-- `cargo run --locked -p speakeasy --example check_native_rendering -- --native-gui` opens an owned
-  non-activating window, renders an embedded SVG with alternating path and pathless frames, resizes,
-  and repeats show/hide. It runs on the process main thread for AppKit. Linux needs a private
-  display, such as `xvfb-run -a`, and on a layer-shell Wayland desktop `WAYLAND_DISPLAY` unset, as
-  for every Linux owned-window check below; Windows and Mac use their native desktop. It accesses no
-  microphone, global hook, or clipboard.
-- `cargo test --locked -p speakeasy native_show_review_ -- --ignored --test-threads=1` on Windows,
-  or with `xvfb-run -a` on Linux, checks synthetic Show navigation, damage, edited summaries,
-  expiry, ZIP export, visual-copy requests through a fake, and image cleanup on close. Linux also
-  checks the owned window's rendered frame pixels. It uses no microphone, global input, screen
-  capture, or clipboard.
-- The same command with `native_phrase_editor_` checks Settings IME composition and save draining;
-  with `native_settings_picker_` it checks language and page navigation, focus restoration,
-  permission refresh using fake observations, private practice cleanup, and the simulated onboarding
-  journey, including Skip, Replay, and recognition before completion. Run each filter separately so
-  each process owns one GPUI application.
+- `mise run native:rendering` opens an owned non-activating window, renders an embedded SVG with
+  alternating path and pathless frames, resizes, and repeats show/hide. It runs on the process main
+  thread for AppKit. On Linux, this task and every Linux owned-window task below run on a private
+  `xvfb-run -a` display with `WAYLAND_DISPLAY` unset, so that GPUI cannot choose a layer-shell
+  Wayland desktop; Windows and Mac use their native desktop. It accesses no microphone, global hook,
+  or clipboard.
+- `mise run native:review`, on Windows or Linux, checks synthetic Show navigation, damage, edited
+  summaries, expiry, ZIP export, visual-copy requests through a fake, and image cleanup on close.
+  Linux also checks the owned window's rendered frame pixels. It uses no microphone, global input,
+  screen capture, or clipboard.
+- `mise run native:settings`, on Windows or Linux, checks Settings IME composition and save
+  draining, then language and page navigation, focus restoration, permission refresh using fake
+  observations, private practice cleanup, and the simulated onboarding journey, including Skip,
+  Replay, and recognition before completion. Each check runs in its own process, which owns one GPUI
+  application.
 - On macOS with FFmpeg installed, `bash scripts/check-movie-macos.sh` generates synthetic silent
   movies and checks native frame timestamps, pixels, cancellation, file ownership, and a seek near
   the five-minute limit. It accesses no microphone, screen, input, or clipboard. The Check
-  workflow's optional `movie` input also encodes a synthetic color-and-motion clip on Windows and
-  normalizes its fragment headers into the published format and checks the retained prefix through
-  the Mac reader, including HD neutral midtones, without accessing live devices. With `movie`,
-  `movie_fixture_run` reuses the synthetic Windows artifact from a specified run for a focused Mac
-  check; it skips the normal native matrix.
+  workflow's optional `movie` input also encodes a synthetic color-and-motion clip on Windows with
+  `mise run windows:movie:colors`, normalizes its fragment headers into the published format, and
+  checks the retained prefix through the Mac reader with `mise run macos:movie:from-windows`,
+  including HD neutral midtones, without accessing live devices. With `movie`, `movie_fixture_run`
+  reuses the synthetic Windows artifact from a specified run for a focused Mac check; it skips the
+  normal native matrix.
 - On macOS, set `SPEAKEASY_MAC_MOVIE_DIRECTORY` to a new artifact directory and run
-  `cargo test --locked -p speakeasy-platform native_mac_movie_encoding -- --ignored --test-threads=1`.
-  It checks native H.264 fragments, held and irregular timing, resized content, colors, bounded
-  output, cancellation, and file closure using generated pixels. The Check workflow's `movie` input
-  includes this check. On Windows, `native_mac_movies_preserve_colors_and_timestamps` reads those
-  same fixtures from `SPEAKEASY_MAC_MOVIE_DIRECTORY`.
-- `cargo run --locked -p speakeasy-platform --example mac_capture -- --owned-screen` explicitly opts
-  into Mac screen capture on a host with one active display. Two owned processes show a changing
-  synthetic window and an overlapping excluded window. It checks their pixels in memory,
-  presentation timestamps, and stop/restart; it writes no pixels and accesses no microphone,
-  clipboard, or input hooks. Set both `movie=true` and `screen=true` in the Check workflow to run it
-  on the self-hosted Mac mini. Screen Recording permission is required.
+  `mise run macos:movie:encode`. It checks native H.264 fragments, held and irregular timing,
+  resized content, colors, bounded output, cancellation, and file closure using generated pixels.
+  The Check workflow's `movie` input includes this check. On Windows,
+  `mise run windows:movie:from-mac` reads those same fixtures from `SPEAKEASY_MAC_MOVIE_DIRECTORY`.
+- `mise run macos:capture` explicitly opts into Mac screen capture on a host with one active
+  display. Two owned processes show a changing synthetic window and an overlapping excluded window.
+  It checks their pixels in memory, presentation timestamps, and stop/restart; it writes no pixels
+  and accesses no microphone, clipboard, or input hooks. Set both `movie=true` and `screen=true` in
+  the Check workflow to run it on the self-hosted Mac mini. Screen Recording permission is required.
 - On Windows, set `SPEAKEASY_MOVIE_PROBE_DIRECTORY` to an empty artifact directory and run
-  `cargo test --locked -p speakeasy-platform encode_synthetic_movie_fragments --release -- --ignored --test-threads=1`.
-  It exercises the native movie adapter with generated pixels, checks motion and quiet-tail timing
-  through the native reader, and forces storage failure. The `windows::movie::tests::timing::`
-  filter checks irregular capture timing, coalescing, quiet fragments before finalization,
-  cancellation during catch-up, and the surviving prefix after a stall. The separate
-  `a_cancelled_active_movie_releases_its_file_without_a_new_frame` filter, which the Check
-  workflow's `movie` input also runs on macOS, checks cancellation and file release. These checks
-  use generated pixels and access no microphone, screen, input, or clipboard.
-- The Windows platform filter `target_geometry_tracks_an_owned_window_without_sampling_input`, with
-  `--ignored --test-threads=1`, moves and hides an owned window, verifies current target bounds
-  against a fixed area, and reports geometry lookup timings. It accesses no microphone, screen
-  pixels, input, or clipboard.
-- The Windows platform filter
-  `a_movie_survives_still_backpressure_and_closes_at_the_session_deadline`, with the same opt-in
-  arguments, captures only an owned, blacked-out scene into a temporary movie. It changes that scene
-  after filling the still queue and checks later video submissions, the original deadline, and file
-  release. It accesses no microphone, input, or clipboard.
+  `mise run windows:movie:encode`. It exercises the native movie adapter with generated pixels,
+  checks motion and quiet-tail timing through the native reader, and forces storage failure. It then
+  checks irregular capture timing, coalescing, quiet fragments before finalization, cancellation
+  during catch-up, the surviving prefix after a stall, and, as the Check workflow's `movie` input
+  also does on macOS, cancellation and file release. Last, it writes `geometry.mp4` and
+  `geometry.csv` to the same directory: synthetic resized frames and the layouts they present. These
+  checks use generated pixels and access no microphone, screen, input, or clipboard.
+- On Windows, `mise run windows:geometry` moves and hides an owned window, verifies current target
+  bounds against a fixed area, and reports geometry lookup timings. It accesses no microphone,
+  screen pixels, input, or clipboard.
+- On Windows, `mise run windows:capture` captures only an owned, blacked-out scene into a temporary
+  movie. It changes that scene after filling the still queue and checks later video submissions, the
+  original deadline, and file release. It accesses no microphone, input, or clipboard.
 - On any host, set `SPEAKEASY_MOVIE_FIXTURES` to the synthetic codec probe directory and
-  `SPEAKEASY_MOVIE_PREFIX_OUT` to a new output directory, then run
-  `cargo test --locked -p speakeasy-show --test movie_native -- --ignored --nocapture`. It validates
-  native fragment timing and writes recovered prefixes for independent decoder checks. These
-  fixtures contain generated pixels only.
-- On Windows, set `SPEAKEASY_MOVIE_READ_DIRECTORY` to those recovered synthetic prefixes. Run
-  `cargo test --locked -p speakeasy-platform recovered_movie_seeks_ --release -- --ignored --test-threads=1`
-  and `cargo test --locked -p speakeasy native_video_export_ -- --ignored --test-threads=1`. They
-  check native seeks, pixel orientation, cancellation, file replacement, and command exports beyond
-  the annotation journal without microphone, screen, input, or clipboard access.
-- With the same Windows fixtures, run
-  `cargo test --locked -p speakeasy native_show_video_review_ -- --ignored --test-threads=1`. It
-  checks the owned review window's rapid seeks, scrubber, keyboard and narration navigation, exact
-  copied evidence retrieval, and cleanup on close. It injects events into that window without
-  installing hooks, recording the screen, or touching the clipboard.
-- The Windows platform filter `receipts_describe_presented_layouts_and_exclude_superseded_inputs`,
-  run like `encode_synthetic_movie_fragments`, writes `geometry.mp4` and `geometry.csv` to
-  `SPEAKEASY_MOVIE_PROBE_DIRECTORY`: synthetic resized frames and the layouts they present. Set
-  `SPEAKEASY_MOVIE_GEOMETRY_DIRECTORY` to that directory, keep `SPEAKEASY_MOVIE_READ_DIRECTORY`, and
-  run `cargo test --locked -p speakeasy native_mark_crops_ -- --ignored --test-threads=1`, then the
-  same command with `native_annotated_video_exports_`. They check that mark crops match the
-  presented pixels, that annotated exports match full-canvas crops, and that incompatible coordinate
-  spaces and uncovered samples are refused, using generated pixels only.
+  `SPEAKEASY_MOVIE_PREFIX_OUT` to a new output directory, then run `mise run movie:prefixes`. It
+  validates native fragment timing and writes recovered prefixes for independent decoder checks.
+  These fixtures contain generated pixels only.
+- On Windows, set `SPEAKEASY_MOVIE_READ_DIRECTORY` to those recovered synthetic prefixes and run
+  `mise run windows:movie:read`. It checks native seeks, pixel orientation, cancellation, file
+  replacement, and command exports beyond the annotation journal without microphone, screen, input,
+  or clipboard access.
+- With the same Windows fixtures, `mise run windows:movie:review` checks the owned review window's
+  rapid seeks, scrubber, keyboard and narration navigation, exact copied evidence retrieval, and
+  cleanup on close. It injects events into that window without installing hooks, recording the
+  screen, or touching the clipboard.
+- On Windows, set `SPEAKEASY_MOVIE_GEOMETRY_DIRECTORY` to the directory where `windows:movie:encode`
+  wrote `geometry.mp4` and `geometry.csv`, keep `SPEAKEASY_MOVIE_READ_DIRECTORY`, and run
+  `mise run windows:movie:crops`. It checks that mark crops match the presented pixels, that
+  annotated exports match full-canvas crops, and that incompatible coordinate spaces and uncovered
+  samples are refused, using generated pixels only.
 
 Live microphone, editor, and screen acceptance is tracked under
 [verification](docs/architecture.md#verification).
