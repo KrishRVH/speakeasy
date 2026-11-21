@@ -179,6 +179,34 @@ fn a_fresh_clipboard_owns_its_first_copy() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test]
+#[ignore = "Copies on a private Xvfb display it starts, never the current one"]
+fn an_owner_that_keeps_its_window_but_changes_its_text_no_longer_holds_the_copy()
+-> anyhow::Result<()> {
+    if !on_private_display(
+        "an_owner_that_keeps_its_window_but_changes_its_text_no_longer_holds_the_copy",
+    )? {
+        return Ok(());
+    }
+    let (events, _received) = async_channel::bounded(1);
+    let input = InputSender::new(events);
+    let permit = input.begin().context("Recording")?;
+    let mut clipboard = Clipboard::open()?;
+    let owner = clipboard
+        .set_text("fixture", &permit)?
+        .context("The fixture was not copied")?;
+    arboard::Clipboard::new()?.set_text("other")?;
+    ensure!(
+        clipboard.owner()? == owner,
+        "The new text took another owner window"
+    );
+    ensure!(
+        !clipboard.holds(owner, "fixture")?,
+        "An owner that kept its window but changed its text still held the copy"
+    );
+    Ok(())
+}
+
 fn on_private_display(test: &str) -> anyhow::Result<bool> {
     let private = std::env::var_os(PRIVATE_DISPLAY);
     if private.is_some() && private == std::env::var_os("DISPLAY") {

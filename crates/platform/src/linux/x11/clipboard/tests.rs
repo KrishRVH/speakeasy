@@ -188,30 +188,6 @@ async fn paste_needs_its_own_text_from_the_same_owner_after_looking_up_focus() -
     Ok(())
 }
 
-#[test]
-#[ignore = "Opt-in clipboard on a private X11 display, never the user's clipboard"]
-fn an_owner_that_keeps_its_window_but_changes_its_text_no_longer_holds_the_copy()
--> anyhow::Result<()> {
-    let (events, _received) = async_channel::bounded(1);
-    let input = InputSender::new(events);
-    let permit = input.begin().context("Recording")?;
-    let mut clipboard = Clipboard::open()?;
-    let owner = clipboard
-        .set_text("fixture", &permit)?
-        .context("The fixture was not copied")?;
-    arboard::Clipboard::new()?.set_text("other")?;
-    assert_eq!(
-        clipboard.owner()?,
-        owner,
-        "The new text took another owner window"
-    );
-    assert!(
-        !clipboard.holds(owner, "fixture")?,
-        "An owner that kept its window but changed its text still held the copy"
-    );
-    Ok(())
-}
-
 #[tokio::test]
 async fn a_panicking_clipboard_thread_answers_its_request_and_reports_why() -> anyhow::Result<()> {
     struct PanickingClipboard;
