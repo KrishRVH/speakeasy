@@ -203,3 +203,47 @@ async fn an_unchecked_connection_holds_later_shortcuts_only_for_its_grace() -> a
     ));
     Ok(())
 }
+
+fn hold_slot(arrivals: &mut Arrivals, presented: bool) {
+    let stage = if presented {
+        Stage::Reading(arrivals.reading.spawn(future::pending()))
+    } else {
+        Stage::Unverified(arrivals.verifying.spawn(future::pending()))
+    };
+    arrivals.order.push_back(Arrival {
+        accepted: Instant::now(),
+        stage,
+    });
+}
+
+#[tokio::test]
+async fn connections_still_sending_their_request_stay_within_the_bound() -> anyhow::Result<()> {
+    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
+    let mut arrivals = Arrivals::default();
+    hold_slot(&mut arrivals, false);
+    for _ in 1..MAX_HANDSHAKES {
+        hold_slot(&mut arrivals, true);
+    }
+    let _displacing = TcpStream::connect(listener.local_addr()?)?;
+    arrivals.begin(listener.accept().await?.0, 7);
+    assert_eq!(arrivals.order.len(), MAX_HANDSHAKES);
+    let unchecked: Vec<usize> = arrivals
+        .order
+        .iter()
+        .enumerate()
+        .filter(|(_, arrival)| matches!(arrival.stage, Stage::Unverified(_)))
+        .map(|(index, _)| index)
+        .collect();
+    assert_eq!(unchecked, [MAX_HANDSHAKES - 1]);
+    let mut full = Arrivals::default();
+    for _ in 0..MAX_HANDSHAKES {
+        hold_slot(&mut full, true);
+    }
+    let mut refused = TcpStream::connect(listener.local_addr()?)?;
+    full.begin(listener.accept().await?.0, 7);
+    assert_eq!(full.order.len(), MAX_HANDSHAKES);
+    assert!(full.verifying.is_empty());
+    refused.set_read_timeout(Some(PATIENCE))?;
+    assert_eq!(refused.read(&mut [0])?, 0);
+    Ok(())
+}

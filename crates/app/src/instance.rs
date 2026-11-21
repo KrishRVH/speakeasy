@@ -381,17 +381,21 @@ enum Next {
 
 impl Arrivals {
     fn begin(&mut self, mut stream: AsyncStream, nonce: u128) {
-        if self.unverified() >= MAX_HANDSHAKES
-            && let Some(oldest) = self
+        if self.unfinished() >= MAX_HANDSHAKES {
+            let Some(oldest) = self
                 .order
                 .iter()
                 .position(|arrival| matches!(arrival.stage, Stage::Unverified(_)))
-            && let Some(Arrival {
+            else {
+                return;
+            };
+            if let Some(Arrival {
                 stage: Stage::Unverified(task),
                 ..
             }) = self.order.remove(oldest)
-        {
-            task.abort();
+            {
+                task.abort();
+            }
         }
         let task = self.verifying.spawn(async move {
             let presented = tokio::time::timeout(IO_TIMEOUT, verify(&mut stream, nonce)).await;
@@ -474,10 +478,10 @@ impl Arrivals {
         self.order.remove(index);
     }
 
-    fn unverified(&self) -> usize {
+    fn unfinished(&self) -> usize {
         self.order
             .iter()
-            .filter(|arrival| matches!(arrival.stage, Stage::Unverified(_)))
+            .filter(|arrival| !matches!(arrival.stage, Stage::Admitted(_)))
             .count()
     }
 
