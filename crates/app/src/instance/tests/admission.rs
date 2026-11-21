@@ -66,7 +66,7 @@ fn shortcuts_reach_the_ui_in_connection_order() -> anyhow::Result<()> {
     let (mut toggle, nonce) = dial(&path)?;
     present(&mut toggle, nonce, &[])?;
     Instance::send(&path, Request::Cancel)?;
-    thread::sleep(IO_TIMEOUT / 4);
+    thread::sleep(IO_TIMEOUT / 10);
     assert!(
         requests.try_recv().is_err(),
         "A later shortcut overtook a caller still sending its request"
@@ -110,5 +110,18 @@ fn concurrent_shortcuts_beyond_the_waiting_limit_are_refused_and_never_delivered
         requests.try_recv().is_err(),
         "A refused shortcut was delivered"
     );
+    Ok(())
+}
+
+#[test]
+fn a_shortcut_whose_caller_left_before_its_acknowledgement_never_fires() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("settings.json");
+    let (_instance, requests) = Instance::acquire(&path)?.context("First owner missing")?;
+    let (mut departed, nonce) = dial(&path)?;
+    present(&mut departed, nonce, &[Request::Toggle as u8])?;
+    drop(departed);
+    Instance::send(&path, Request::Cancel)?;
+    assert_eq!(next_request(&requests)?, Request::Cancel);
     Ok(())
 }

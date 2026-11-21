@@ -378,6 +378,7 @@ impl Arrivals {
         let control = match outcome {
             Some((mut stream, Incoming::Shortcut(request))) => {
                 if self.admitted().saturating_add(mailbox) < MAX_UNDELIVERED
+                    && !departed(&stream)
                     && acknowledge(&mut stream).await
                     && let Some(arrival) = self.order.get_mut(position)
                 {
@@ -414,6 +415,10 @@ impl Arrivals {
     fn admitted(&self) -> usize {
         self.order.len().saturating_sub(self.handshakes())
     }
+}
+
+fn departed(stream: &AsyncStream) -> bool {
+    !matches!(stream.try_read(&mut [0]), Err(error) if error.kind() == io::ErrorKind::WouldBlock)
 }
 
 async fn acknowledge(stream: &mut AsyncStream) -> bool {
@@ -505,10 +510,8 @@ async fn serve_control(
 ) -> io::Result<()> {
     let reply = match command {
         Ok(command) => {
-            match stream.try_read(&mut [0]) {
-                Ok(_) => return Ok(()),
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {},
-                Err(error) => return Err(error),
+            if departed(&stream) {
+                return Ok(());
             }
             let (call, receipt) = Call::new(command);
             let deadline = call.deadline();
@@ -559,9 +562,17 @@ fn connect(port_file: &Path, request: &[u8]) -> anyhow::Result<TcpStream> {
     stream.set_write_timeout(Some(IO_TIMEOUT))?;
     stream.write_all(&[endpoint.nonce.to_le_bytes().as_slice(), request].concat())?;
     let mut reply = [0];
-    stream
-        .read_exact(&mut reply)
-        .context("Speakeasy did not answer; try the shortcut again")?;
+    if let Err(error) = stream.read_exact(&mut reply) {
+        let unconfirmed = matches!(
+            error.kind(),
+            io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+        );
+        return Err(error).context(if unconfirmed {
+            "Speakeasy did not confirm the request in time; check its state before trying again"
+        } else {
+            "Speakeasy did not answer; try the shortcut again"
+        });
+    }
     ensure!(
         reply == [ACKNOWLEDGED],
         "Speakeasy instance could not be verified"

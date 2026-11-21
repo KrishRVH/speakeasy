@@ -376,21 +376,23 @@ module unless a test file is named.
   secret-gated loopback commands. Shortcut opcodes 0–2 serve relaunch and Linux desktop bindings.
   Opcode 3 carries versioned JSON in a length-prefixed 4 KiB command frame; replies may use the full
   64 KiB frame. A caller sends the secret with its whole request and waits 100 ms for an
-  acknowledgement. An owned server thread authenticates up to 16 connections at once; a new
-  connection displaces the oldest unfinished one, and the server yields after each accept so a
-  fresh connection reads its request before later arrivals can displace it. Shortcuts reach the UI
+  acknowledgement; a closed connection means the request was refused, while a timeout leaves it
+  unconfirmed. An owned server thread authenticates up to 16 connections at once; a new connection
+  displaces the oldest unfinished one, and the server yields after each accept so a fresh connection
+  whose request has arrived reads it before later arrivals can displace it. Shortcuts reach the UI
   in connection order, each waiting for earlier connections to finish or time out. The server
-  acknowledges a shortcut only when it can hold it: at most two requests wait for a busy UI,
-  counting the one in its mailbox, and a shortcut beyond that is closed unacknowledged, so its
-  caller reports that Speakeasy did not answer and nothing fires later. A control frame is
-  acknowledged once read and always answered. The server owns up to eight separate control
-  receipts, each with a two-second deadline, except a print, which waits up to two minutes, and
-  answers further calls as busy. A control caller keeps its connection open until the reply; end
-  of input abandons the call, since the server cannot tell a half-closed caller from a departed one.
-  Shortcut cancel/toggle bindings remain responsive while a receipt waits; shutdown drains every
-  task. [control.rs](../crates/app/src/control.rs) rejects malformed commands without echoing
-  input. Unix instance, setup, and update leases use owner-only regular files and
-  tighten the permissions of previously created lock files.
+  acknowledges a shortcut only while its caller is connected and the server can hold it: at most two
+  requests wait for a busy UI, counting the one in its mailbox, and a shortcut beyond that is closed
+  unacknowledged, so nothing fires after its caller reports a refusal. A control frame is
+  acknowledged once its header arrives; an oversized one is refused without waiting for its body,
+  and any other is answered once read. The server owns up to eight separate control receipts, each
+  with a two-second deadline, except a print, which waits up to two minutes, and answers further
+  calls as busy. A control caller keeps its connection open until the reply; end of input abandons
+  the call, since the server cannot tell a half-closed caller from a departed one. Shortcut
+  cancel/toggle bindings remain responsive while a receipt waits; shutdown drains every task.
+  [control.rs](../crates/app/src/control.rs) rejects malformed commands without echoing input. Unix
+  instance, setup, and update leases use owner-only regular files and tighten the permissions of
+  previously created lock files.
   [owner/commands.rs](../crates/app/src/runtime/owner/commands.rs) admits actions only for live
   callers and acknowledges actual owner decisions. Stop/cancel tokens combine the runtime
   incarnation with the session ID and exclude Shows and practice. Style is acknowledged by its
