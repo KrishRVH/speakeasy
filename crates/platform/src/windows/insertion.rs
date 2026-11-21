@@ -49,7 +49,7 @@ const SAVED_BYTES: usize = 64 << 20;
 type SavedFormat = (u32, Zeroizing<Vec<u8>>);
 
 pub(crate) fn copy_text(text: &str) -> anyhow::Result<()> {
-    write_clipboard(open_clipboard()?, text, None, None)
+    write_clipboard(open_clipboard()?, None, || fill(text, None))
 }
 
 pub(crate) fn copy_content(
@@ -57,7 +57,16 @@ pub(crate) fn copy_content(
     authorized: impl FnOnce() -> bool,
 ) -> anyhow::Result<bool> {
     clipboard::copy_when(authorized, open_clipboard, |lease| {
-        write_clipboard(lease, &content.text, content.image.as_ref(), None)
+        let image = content
+            .image
+            .as_ref()
+            .map(|image| {
+                clipboard_win::raw::register_format("PNG")
+                    .map(|png| (image, png))
+                    .context("Cannot register the clipboard image format")
+            })
+            .transpose()?;
+        write_clipboard(lease, None, || fill(&content.text, image))
     })
 }
 
@@ -126,19 +135,11 @@ fn mark_private() -> anyhow::Result<()> {
 
 fn write_clipboard(
     _lease: clipboard_win::Clipboard,
-    text: &str,
-    image: Option<&clipboard::Image>,
     previous: Option<&[SavedFormat]>,
+    fill: impl FnOnce() -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
-    let image = image
-        .map(|image| {
-            clipboard_win::raw::register_format("PNG")
-                .map(|png| (image, png))
-                .context("Cannot register the clipboard image format")
-        })
-        .transpose()?;
     clipboard_win::raw::empty()?;
-    fill(text, image).map_err(|error| match roll_back(previous) {
+    fill().map_err(|error| match roll_back(previous) {
         Ok(()) => error,
         Err(_) => error
             .context("The clipboard may contain an incomplete copy; clear it before trying again"),
@@ -219,7 +220,7 @@ impl NativeInsert for Insert {
         text: &str,
         saved: Option<&Self::Contents>,
     ) -> anyhow::Result<Self::Mark> {
-        write_clipboard(lease, text, None, saved.map(Vec::as_slice))?;
+        write_clipboard(lease, saved.map(Vec::as_slice), || fill(text, None))?;
         Ok(clipboard_win::raw::seq_num())
     }
 

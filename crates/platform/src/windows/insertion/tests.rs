@@ -217,16 +217,16 @@ fn assert_a_failed_write_puts_back_what_it_replaced(insert: &mut Insert) -> anyh
     let saved = insert
         .save(&lease)
         .context("Ordinary text and HTML were not saved")?;
-    clipboard_win::raw::empty()?;
-    clipboard_win::raw::set_string_with("partial", clipboard_win::options::NoClear)?;
-    roll_back(Some(&saved))?;
-    drop(lease);
+    assert!(
+        write_clipboard(lease, Some(&saved), fail_partway).is_err(),
+        "A write that failed partway reported its copy placed"
+    );
     assert_previous(html, "A failed write")?;
 
-    let lease = insert.acquire()?;
-    clipboard_win::raw::set_string_with("partial", clipboard_win::options::NoClear)?;
-    roll_back(None)?;
-    drop(lease);
+    assert!(
+        write_clipboard(insert.acquire()?, None, fail_partway).is_err(),
+        "A write that failed partway reported its copy placed"
+    );
     let _clipboard = open_clipboard()?;
     assert_eq!(
         clipboard_win::raw::count_formats(),
@@ -236,16 +236,22 @@ fn assert_a_failed_write_puts_back_what_it_replaced(insert: &mut Insert) -> anyh
     Ok(())
 }
 
+fn fail_partway() -> anyhow::Result<()> {
+    mark_private()?;
+    clipboard_win::raw::set_string_with("partial", clipboard_win::options::NoClear)?;
+    anyhow::bail!("Fixture write failure")
+}
+
 fn assert_previous(html: NonZeroU32, source: &str) -> anyhow::Result<()> {
     let _clipboard = open_clipboard()?;
     let mut text = Vec::new();
     clipboard_win::raw::get_string(&mut text)
         .with_context(|| format!("{source} lost the replaced text"))?;
-    assert_eq!(text, b"previous", "{source} lost the replaced text");
+    assert!(text == b"previous", "{source} lost the replaced text");
     let mut markup = Vec::new();
     clipboard_win::raw::get_vec(html.get(), &mut markup)?;
-    assert_eq!(
-        markup, b"<b>previous</b>",
+    assert!(
+        markup == b"<b>previous</b>",
         "{source} lost the replaced HTML"
     );
     Ok(())
@@ -319,18 +325,7 @@ fn assert_restores_only_what_it_replaced(insert: &mut Insert) -> anyhow::Result<
         .context("Ordinary text and HTML were not saved")?;
     let mark = insert.write(lease, TEXT, Some(&saved))?;
     insert.restore(Some(saved), &mark)?;
-    {
-        let _clipboard = open_clipboard()?;
-        let mut text = Vec::new();
-        clipboard_win::raw::get_string(&mut text)?;
-        assert_eq!(text, b"previous", "The replaced text did not return");
-        let mut markup = Vec::new();
-        clipboard_win::raw::get_vec(html.get(), &mut markup)?;
-        assert_eq!(
-            markup, b"<b>previous</b>",
-            "The replaced HTML did not return"
-        );
-    }
+    assert_previous(html, "A restore")?;
 
     let lease = insert.acquire()?;
     let saved = insert
@@ -397,8 +392,8 @@ fn assert_private_image() -> anyhow::Result<()> {
     ] {
         let mut bytes = Vec::new();
         clipboard_win::raw::get_vec(format, &mut bytes)?;
-        assert_eq!(
-            &bytes, expected,
+        assert!(
+            &bytes == expected,
             "The native clipboard lost a visual representation"
         );
     }
@@ -416,9 +411,8 @@ fn assert_private_image() -> anyhow::Result<()> {
         .iter()
         .map(|pixel| &pixel[..3])
         .collect();
-    assert_eq!(
-        colors,
-        [&[9, 8, 7][..], &[12, 11, 10], &[3, 2, 1], &[6, 5, 4]],
+    assert!(
+        colors == [&[9, 8, 7][..], &[12, 11, 10], &[3, 2, 1], &[6, 5, 4]],
         "Native bitmap conversion changed colors or orientation"
     );
     Ok(())
@@ -428,8 +422,8 @@ fn assert_private_text(source: &str) -> anyhow::Result<()> {
     let _clipboard = open_clipboard()?;
     let mut text = Vec::new();
     clipboard_win::raw::get_string(&mut text)?;
-    assert_eq!(
-        text, b"fixture\r\ntext",
+    assert!(
+        text == b"fixture\r\ntext",
         "The clipboard lost {source} or its Windows line endings"
     );
     for name in PRIVATE_FORMATS {
@@ -438,7 +432,7 @@ fn assert_private_text(source: &str) -> anyhow::Result<()> {
         let mut value = [u8::MAX; 4];
         clipboard_win::raw::get(format.get(), &mut value)
             .with_context(|| format!("{name} is missing from {source}"))?;
-        assert_eq!(value, [0; 4], "{name} lets {source} into history");
+        assert!(value == [0; 4], "{name} lets {source} into history");
     }
     Ok(())
 }
