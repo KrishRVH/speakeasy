@@ -907,7 +907,8 @@ mise run standards:check
 ```
 
 The pinned toolchain and lockfiles make local checks reproducible. `mise run standards` applies safe
-formatters and autofixes, and `mise tasks` lists the focused checks.
+formatters and autofixes; `mise run fmt`, `mise run lint`, and `mise run test` format, lint, or test
+every language; and `mise tasks` lists the focused checks.
 
 Default tests drive the real session owner with mocked microphone, inference, and insertion, and a
 paused clock exercises gesture deadlines and the five-minute cap.
