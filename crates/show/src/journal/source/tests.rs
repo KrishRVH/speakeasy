@@ -3,9 +3,12 @@ use std::time::Duration;
 use proptest::{prelude::*, sample::Index};
 
 use super::*;
-use crate::journal::{
-    record::framed,
-    tests::{damaged, incompressible},
+use crate::{
+    Ending, Framing, Size, Take, TakeEvent,
+    journal::{
+        record::framed,
+        tests::{damaged, incompressible},
+    },
 };
 
 fn encode(journal: &Journal, duration: Moment) -> Vec<u8> {
@@ -85,10 +88,9 @@ fn source_preserves_retained_frames_after_thinning_and_geometry_changes() {
     assert_eq!(served.image, journal.frame_at(between).unwrap());
     assert!(
         source
-            .frame(
-                duration.saturating_add(std::time::Duration::from_millis(1)),
-                |range| read(&bytes, range)
-            )
+            .frame(duration.saturating_add(Duration::from_millis(1)), |range| {
+                read(&bytes, range)
+            })
             .is_err()
     );
 }
@@ -297,13 +299,13 @@ fn crop_geometry_checks_intermediate_samples_without_reading_pixels() {
 #[test]
 fn arrivals_at_the_time_limit_end_after_their_last_frame_with_a_readable_source() {
     let take = || {
-        crate::Take::new(
+        Take::new(
             1 << 20,
-            crate::Size {
+            Size {
                 width: 20.0,
                 height: 20.0,
             },
-            crate::Framing::Chosen,
+            Framing::Chosen,
         )
     };
     let (mut live, mut replay) = (take(), take());
@@ -314,14 +316,14 @@ fn arrivals_at_the_time_limit_end_after_their_last_frame_with_a_readable_source(
             .arrive(last_moment, || Image::filled(20, 20, [value; 3]).ok())
             .unwrap();
         replay.apply(&arrival).unwrap();
-        if let crate::TakeEvent::Arrival {
+        if let TakeEvent::Arrival {
             entry: Some(entry), ..
         } = arrival
         {
             saved = Some(entry);
         }
     }
-    let unsampled = crate::TakeEvent::Arrival {
+    let unsampled = TakeEvent::Arrival {
         at: last_moment,
         entry: saved,
     };
@@ -329,17 +331,17 @@ fn arrivals_at_the_time_limit_end_after_their_last_frame_with_a_readable_source(
         replay.apply(&unsampled).is_err(),
         "Replay accepted a frame at the time limit, where live sampling records none"
     );
-    let early = crate::TakeEvent::End {
+    let early = TakeEvent::End {
         at: last_moment,
-        ending: crate::Ending::Finished,
+        ending: Ending::Finished,
     };
     assert!(
         replay.apply(&early).is_err(),
         "Replay accepted an ending before the last saved frame"
     );
-    let ending = live.end(last_moment, crate::Ending::Finished);
+    let ending = live.end(last_moment, Ending::Finished);
     assert!(
-        matches!(ending, crate::TakeEvent::End { at, .. } if at == DURATION_LIMIT),
+        matches!(ending, TakeEvent::End { at, .. } if at == DURATION_LIMIT),
         "{ending:?}"
     );
     replay.apply(&ending).unwrap();
