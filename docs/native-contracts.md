@@ -255,7 +255,9 @@ removal. A hold key acts only when pressed afresh during a hold, never on a repe
 down when the hold began does nothing. A swallowed hold key stays suppressed until its own release
 or a fresh press of it, which shows that the release went unseen, so a key held through a tap
 outage, lifecycle interrupt or missed chord release never repeats into the app. The Mac tap tells a
-fresh press from a repeat by the event's autorepeat field.
+fresh press from a repeat by the event's autorepeat field. Only a fresh press can be a quick
+application combination with a right modifier, so a swallowed key's repeat stays swallowed after
+that modifier's release.
 
 Mac F13 uses key code 105 and the event's autorepeat field. Its initial press and release establish
 the pre-event hold explicitly; unrelated events reconcile against HID-system physical key state. The

@@ -59,6 +59,11 @@ impl Chord {
         Decision::pass(interrupted.then_some(Action::Interrupt))
     }
 
+    fn application_shortcut(&mut self, key: HoldKey) -> Decision {
+        self.swallowing &= !key.bit();
+        self.other_key(true)
+    }
+
     fn interrupt(&mut self) -> bool {
         let held = self.hold == Hold::Held;
         if held {
@@ -548,8 +553,8 @@ impl Windows {
         let Some(hold_key) = Self::hold_key(key) else {
             return self.chord.other_key(down);
         };
-        if down && self.defers_to_applications(at) {
-            return self.chord.other_key(true);
+        if stroke == Stroke::Press && self.defers_to_applications(at) {
+            return self.chord.application_shortcut(hold_key);
         }
         self.chord.hold_key(hold_key, stroke)
     }
@@ -815,8 +820,8 @@ impl Mac {
                 self.taps.interrupt();
                 let stroke = Stroke::new(down, repeat);
                 match Self::hold_key(code) {
-                    Some(_) if down && self.defers_to_applications(at) => {
-                        self.chord.other_key(true)
+                    Some(key) if stroke == Stroke::Press && self.defers_to_applications(at) => {
+                        self.chord.application_shortcut(key)
                     },
                     Some(key) => self.chord.hold_key(key, stroke),
                     None if code == Self::ESCAPE => Decision::pass(down.then_some(Action::Escape)),

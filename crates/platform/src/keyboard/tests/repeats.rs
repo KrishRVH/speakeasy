@@ -101,6 +101,75 @@ fn a_key_already_down_when_a_hold_starts_never_acts_on_its_repeats() {
 }
 
 #[test]
+fn a_swallowed_key_stays_swallowed_when_the_alternative_shortcut_is_released_first() {
+    let start = now();
+    let later = start + APPLICATION_SHORTCUT;
+    let talking = Modifiers {
+        talk: true,
+        ..NO_MODIFIERS
+    };
+    for (shortcut, code) in [
+        (MacShortcut::RightOption, MAC_RIGHT_OPTION),
+        (MacShortcut::RightCommand, MAC_RIGHT_COMMAND),
+    ] {
+        let mut mac = Mac::new(shortcut);
+        assert!(
+            mac.observe(mac_modifier(code, true), keyboard_fn_up, start)
+                .starts()
+        );
+        let submit = mac.observe(key(MAC_RETURN, true, talking), keyboard_fn_up, later);
+        assert_eq!(delivered(&submit), [Action::Submit]);
+        assert!(submit.swallows());
+        assert_eq!(
+            delivered(&mac.observe(mac_modifier(code, false), keyboard_fn_up, later)),
+            [Action::Release]
+        );
+        let repeat = mac.observe(mac_repeat(MAC_RETURN, NO_MODIFIERS), keyboard_fn_up, later);
+        assert!(
+            repeat.swallows(),
+            "Return repeated into the app once the shortcut was released"
+        );
+        assert_eq!(delivered(&repeat), []);
+        assert!(
+            mac.observe(key(MAC_RETURN, false, NO_MODIFIERS), keyboard_fn_up, later)
+                .swallows()
+        );
+        assert!(
+            !mac.observe(key(MAC_RETURN, true, NO_MODIFIERS), keyboard_fn_up, later)
+                .swallows()
+        );
+    }
+
+    let right_control = held_for(WindowsShortcut::RightControl, &[RIGHT_CONTROL]);
+    let mut policy = Windows::new(WindowsShortcut::RightControl);
+    assert!(
+        policy
+            .observe(RIGHT_CONTROL, true, NONE_HELD, start)
+            .starts()
+    );
+    assert_eq!(
+        delivered(&policy.observe(RETURN, true, right_control, later)),
+        [Action::Submit]
+    );
+    assert_eq!(
+        delivered(&policy.observe(RIGHT_CONTROL, false, right_control, later)),
+        [Action::Release]
+    );
+    let again = later + APPLICATION_SHORTCUT;
+    assert!(
+        policy
+            .observe(RIGHT_CONTROL, true, NONE_HELD, again)
+            .starts()
+    );
+    let repeat = policy.observe(RETURN, true, right_control, again);
+    assert!(
+        repeat.swallows(),
+        "Return repeated into the app as a quick Right Ctrl shortcut"
+    );
+    assert_eq!(delivered(&repeat), []);
+}
+
+#[test]
 fn windows_takes_a_key_down_as_a_repeat_until_the_hook_sees_its_release() {
     let start = now();
     let at = |millis| start + Duration::from_millis(millis);
