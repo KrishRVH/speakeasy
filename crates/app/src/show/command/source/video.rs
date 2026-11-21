@@ -6,7 +6,7 @@ use speakeasy_show::{Annotations, Moment, Span, locate};
 
 use super::{Report, crop_mark, export};
 use crate::show::{
-    evidence::query::{self, Query},
+    evidence::query::Query,
     store::{movie, recall},
 };
 
@@ -34,21 +34,7 @@ pub(super) fn frame(
         .coverage
         .as_ref()
         .context("Movie has no published coverage")?;
-    let found = match focus {
-        Query::At(at) => {
-            let span = Span::at(*at);
-            query::Found {
-                kind: query::Kind::Time,
-                number: None,
-                occurrence: None,
-                matches: vec![span],
-                start_ms: Some(at.as_millis()),
-                end_ms: Some(at.as_millis()),
-                selected: Some(span),
-            }
-        },
-        _ => focus.resolve(&manifest)?,
-    };
+    let found = focus.resolve_in_video(&manifest)?;
     let at = found
         .selected
         .context("The phrase has several matches; choose --match N")?

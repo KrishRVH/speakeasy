@@ -12,7 +12,7 @@ pub(in crate::show) enum Query {
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(in crate::show) enum Kind {
+enum Kind {
     Time,
     Mark,
     Phrase,
@@ -21,13 +21,13 @@ pub(in crate::show) enum Kind {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(in crate::show) struct Found {
-    pub kind: Kind,
-    pub number: Option<usize>,
+    kind: Kind,
+    number: Option<usize>,
     #[serde(rename = "match")]
-    pub occurrence: Option<usize>,
+    occurrence: Option<usize>,
     pub matches: Vec<Span>,
-    pub start_ms: Option<u64>,
-    pub end_ms: Option<u64>,
+    start_ms: Option<u64>,
+    end_ms: Option<u64>,
     #[serde(skip)]
     pub selected: Option<Span>,
 }
@@ -71,6 +71,22 @@ impl Query {
             start_ms: selected.map(|span| span.start().as_millis()),
             end_ms: selected.map(|span| span.end().as_millis()),
             selected,
+        })
+    }
+
+    pub(in crate::show) fn resolve_in_video(&self, manifest: &Manifest) -> anyhow::Result<Found> {
+        let Self::At(at) = self else {
+            return self.resolve(manifest);
+        };
+        let span = Span::at(*at);
+        Ok(Found {
+            kind: Kind::Time,
+            number: None,
+            occurrence: None,
+            matches: vec![span],
+            start_ms: Some(at.as_millis()),
+            end_ms: Some(at.as_millis()),
+            selected: Some(span),
         })
     }
 }

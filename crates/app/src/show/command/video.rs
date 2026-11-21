@@ -91,14 +91,10 @@ impl Request {
 }
 
 fn widened(manifest: &Manifest, focus: &Query, around: Duration) -> anyhow::Result<Span> {
-    let span = if let Query::At(at) = focus {
-        Span::at(*at)
-    } else {
-        focus
-            .resolve(manifest)?
-            .selected
-            .context("Several phrases match; select one with --match K before exporting")?
-    };
+    let span = focus
+        .resolve_in_video(manifest)?
+        .selected
+        .context("Several phrases match; select one with --match K before exporting")?;
     Ok(Span::new(
         span.start().saturating_sub(around),
         span.end().saturating_add(around),
