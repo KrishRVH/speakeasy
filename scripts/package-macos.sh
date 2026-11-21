@@ -33,10 +33,13 @@ fi
 staging=$(mktemp -d artifacts/.macos-package.XXXXXX)
 outputs=(Speakeasy.app speakeasy-macos.zip speakeasy-macos.dmg)
 publishing=
-# An output leaves staging only through its rename into artifacts, so an exit during publication
-# takes back exactly the outputs missing from staging. Signals exit through this trap too.
+# An output leaves staging only through its rename into artifacts. Only a run that exits 0 keeps
+# what it published; any other exit once publication starts takes back exactly the outputs missing
+# from staging. Signals exit through this trap too, and it ignores them while it cleans up.
 discard() {
-  if [[ -n "$publishing" ]]; then
+  local status=$?
+  trap '' HUP INT PIPE TERM
+  if [[ $status -ne 0 && -n "$publishing" ]]; then
     for output in "${outputs[@]}"; do
       if [[ ! -e "$staging/$output" ]]; then
         rm -rf -- "artifacts/$output"
@@ -48,6 +51,7 @@ discard() {
 trap discard EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
+trap 'exit 141' PIPE
 trap 'exit 143' TERM
 # Submits one archive and stops unless Apple accepts it, naming the submission to check.
 notarize() {
@@ -116,5 +120,4 @@ publishing=yes
 for output in "${outputs[@]}"; do
   mv "$staging/$output" artifacts/
 done
-publishing=
 echo "Built artifacts/Speakeasy.app"

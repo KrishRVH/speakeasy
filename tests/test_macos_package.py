@@ -1,6 +1,7 @@
 """Distribution fails closed around notarization; command stubs never sign or upload a binary."""
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -22,7 +23,11 @@ def seed_stale_outputs(artifacts: Path) -> None:
 
 
 def package(
-    tmp_path: Path, signing: dict[str, str], *, interrupt_after: str | None = None
+    tmp_path: Path,
+    signing: dict[str, str],
+    *,
+    interrupt_after: str | None = None,
+    closed_stdout: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], list[list[str]]]:
     for name in (
         "scripts/package-macos.sh",
@@ -96,14 +101,23 @@ sys.exit(moved)
 """)
         mv.chmod(0o755)
     environment = {"PATH": f"{tools}:{Path(sys.executable).parent}:/usr/bin:/bin", **signing}
-    result = subprocess.run(
-        ["bash", "scripts/package-macos.sh"],
-        cwd=tmp_path,
-        env=environment,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    output = subprocess.PIPE
+    if closed_stdout:
+        reader, output = os.pipe()
+        os.close(reader)
+    try:
+        result = subprocess.run(
+            ["bash", "scripts/package-macos.sh"],
+            cwd=tmp_path,
+            env=environment,
+            check=False,
+            stdout=output,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    finally:
+        if closed_stdout:
+            os.close(output)
     commands = [json.loads(line) for line in (tmp_path / "commands.jsonl").read_text().splitlines()]
     return result, commands
 
@@ -238,4 +252,13 @@ def test_an_interrupted_publication_takes_back_every_renamed_output(
     assert result.returncode != 0
     left = [name for name in OUTPUTS if (artifacts / name).exists()]
     assert not left, f"An interrupt after {interrupted_after} left {left} published"
+    assert not list(artifacts.glob(".macos-package.*"))
+
+
+def test_a_run_that_cannot_report_success_takes_back_its_outputs(tmp_path: Path) -> None:
+    artifacts = tmp_path / "artifacts"
+    result, _ = package(tmp_path, {}, closed_stdout=True)
+    assert result.returncode != 0
+    left = [name for name in OUTPUTS if (artifacts / name).exists()]
+    assert not left, f"A run that failed to report success left {left} published"
     assert not list(artifacts.glob(".macos-package.*"))
