@@ -222,7 +222,14 @@ fn insert<N: NativeInsert>(
             if !permit.active() {
                 return Ok((Inserted::Cancelled, None));
             }
-            let written = (native.write(lease, text)?, contents);
+            let written = match native.write(lease, text) {
+                Ok(mark) => (mark, contents),
+                Err(error) => {
+                    let failed = (native.mark(), contents);
+                    restore_now(native, Some(failed));
+                    return Err(error);
+                },
+            };
             if !permit.active() {
                 restore_now(native, Some(written));
                 return Ok((Inserted::Cancelled, None));

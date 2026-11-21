@@ -126,6 +126,7 @@ impl NativeInsert for Fake {
         self.reach(Step::Write);
         self.texts.push(text.to_owned());
         self.clipboard = WRITTEN;
+        self.fail_at(Step::Write)?;
         Ok(self.clipboard)
     }
 
@@ -409,7 +410,7 @@ fn cancellation_after_the_write_reports_cancelled_even_when_the_restore_fails() 
 
 #[test]
 fn a_failed_restore_keeps_the_error_that_stopped_the_paste() -> anyhow::Result<()> {
-    for failed in [Step::Holds, Step::PasteKeys] {
+    for failed in [Step::Write, Step::Holds, Step::PasteKeys] {
         for fails in [vec![failed], vec![failed, Step::Restore]] {
             let mut native = Fake {
                 clipboard: 1,
