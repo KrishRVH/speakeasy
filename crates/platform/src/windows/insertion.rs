@@ -336,15 +336,15 @@ fn bears_dictation_marks() -> bool {
         clipboard_win::raw::get(format, &mut value).is_ok_and(|read| read == value.len())
             && value == [0; 4]
     };
-    private
-        .into_iter()
-        .all(|format| format.is_some_and(excludes))
-        && clipboard_win::raw::is_format_avail(clipboard_win::formats::CF_UNICODETEXT)
+    clipboard_win::raw::is_format_avail(clipboard_win::formats::CF_UNICODETEXT)
         && fully_listed(clipboard_win::raw::EnumFormats::new()).is_some_and(|formats| {
             formats
                 .iter()
                 .all(|format| TEXT_FORMATS.contains(format) || private.contains(&Some(*format)))
         })
+        && private
+            .into_iter()
+            .all(|format| format.is_some_and(excludes))
 }
 
 fn still_down(sent: &[INPUT]) -> Vec<INPUT> {
