@@ -9,6 +9,7 @@ enum Event {
     Lock,
     Show,
     Toggle,
+    Submit,
     Escape,
     Interrupt,
     Cancel,
@@ -26,6 +27,7 @@ impl Event {
         Self::Lock,
         Self::Show,
         Self::Toggle,
+        Self::Submit,
         Self::Escape,
         Self::Interrupt,
         Self::Cancel,
@@ -48,6 +50,9 @@ impl Event {
             Self::Show => gesture.show(),
             Self::Toggle => {
                 gesture.toggle(now);
+            },
+            Self::Submit => {
+                gesture.submit();
             },
             Self::Escape => {
                 gesture.escape();
@@ -94,14 +99,17 @@ proptest! {
     #[test]
     fn arbitrary_event_sequences_never_restart_or_overrun_capture_and_keep_a_saving_show(
         events in prop::collection::vec(
-            (prop::sample::select(Event::ALL), 0_u32..600_000),
+            (
+                prop::sample::select(Event::ALL),
+                prop_oneof![9 => 0_u64..400, 1 => 0_u64..600_000],
+            ),
             0..128,
         )
     ) {
         let mut gesture = Gesture::default();
         let mut now = Moment::default();
         for (event, elapsed) in events {
-            now = now.after(nanos(Duration::from_millis(u64::from(elapsed))));
+            now = now.after(nanos(Duration::from_millis(elapsed)));
             let saving = gesture.phase == Phase::Saving;
             let before = capture_start(&gesture);
             event.apply(&mut gesture, now);
