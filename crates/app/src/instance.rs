@@ -124,7 +124,7 @@ impl Instance {
         };
         let mut frame = vec![CONTROL];
         if write_frame(&mut frame, &bytes).is_err() {
-            return Reply::refused("The control command exceeds its size limit.");
+            return Reply::refused(control::OVERSIZED);
         }
         let mut stream = match connect(&path.with_file_name(PORT_FILE), &frame) {
             Ok(stream) => stream,
@@ -527,11 +527,7 @@ async fn read_request(stream: &mut AsyncStream) -> io::Result<Option<Incoming>> 
         let length = stream.read_u16().await?;
         stream.write_all(&[ACKNOWLEDGED]).await?;
         if usize::from(length) > control::MAX_BYTES {
-            write_reply(
-                stream,
-                Reply::refused("The control command exceeds its size limit."),
-            )
-            .await?;
+            write_reply(stream, Reply::refused(control::OVERSIZED)).await?;
             stream.shutdown().await?;
             tokio::io::copy(&mut stream.take(u64::from(length)), &mut tokio::io::sink()).await?;
             return Ok(None);

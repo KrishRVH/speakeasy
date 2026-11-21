@@ -15,6 +15,7 @@ use crate::{config::presets::validate_name, paths, transcript::style::Style};
 const VERSION: u8 = 1;
 pub(crate) const MAX_BYTES: usize = 4096;
 pub(crate) const MAX_REPLY_BYTES: usize = 65_535;
+pub(crate) const OVERSIZED: &str = "The control command exceeds its size limit.";
 const TIMEOUT: Duration = Duration::from_secs(2);
 const PRINT_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -295,7 +296,7 @@ impl Command {
         })
         .map_err(|_error| "Cannot encode the control command.")?;
         if bytes.len() > MAX_BYTES {
-            return Err("The control command exceeds its size limit.");
+            return Err(OVERSIZED);
         }
         Ok(bytes)
     }
