@@ -133,6 +133,7 @@ struct Board {
     held: Cell<Held>,
     failing_writes: Cell<u8>,
     copies_during: Option<Phase>,
+    copies_left: Cell<u8>,
 }
 
 impl Board {
@@ -146,7 +147,13 @@ impl Board {
             held: Cell::new(Held::Previous),
             failing_writes: Cell::new(failing_writes),
             copies_during,
+            copies_left: Cell::new(1),
         }
+    }
+
+    fn copying_every_time(self) -> Self {
+        self.copies_left.set(u8::MAX);
+        self
     }
 
     fn change(&self, held: Held) -> isize {
@@ -156,7 +163,9 @@ impl Board {
     }
 
     fn copies_during(&self, phase: Phase) {
-        if self.copies_during == Some(phase) {
+        let left = self.copies_left.get();
+        if self.copies_during == Some(phase) && left > 0 {
+            self.copies_left.set(left.saturating_sub(1));
             self.change(Held::Newer);
         }
     }
@@ -221,10 +230,15 @@ fn a_failed_pasteboard_write_puts_back_only_what_no_one_has_replaced() {
 }
 
 #[test]
-fn a_pasteboard_snapshot_that_changed_while_it_was_read_is_dropped() {
+fn a_pasteboard_snapshot_that_changed_while_it_was_read_is_taken_again() {
     assert_eq!(save(&Board::new(0, None)), Some(Held::Previous));
     assert_eq!(
         save(&Board::new(0, Some(Phase::Snapshot))),
+        Some(Held::Newer),
+        "A copy made during the snapshot was not the one saved for restoring"
+    );
+    assert_eq!(
+        save(&Board::new(0, Some(Phase::Snapshot)).copying_every_time()),
         None,
         "A snapshot outlived by a newer copy would be restored over it"
     );

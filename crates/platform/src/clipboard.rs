@@ -100,6 +100,9 @@ pub(crate) fn snapshot<Kind, Data>(
 }
 
 #[cfg(any(target_os = "macos", test))]
+const SNAPSHOT_ATTEMPTS: usize = 3;
+
+#[cfg(any(target_os = "macos", test))]
 pub(crate) const CONCEALED_TYPE: &str = "org.nspasteboard.ConcealedType";
 
 #[cfg(any(target_os = "macos", test))]
@@ -129,8 +132,13 @@ pub(crate) trait Pasteboard {
 
 #[cfg(any(target_os = "macos", test))]
 pub(crate) fn save<P: Pasteboard>(board: &P) -> Option<P::Saved> {
-    let before = board.change_count();
-    board.snapshot().filter(|_| board.change_count() == before)
+    (0..SNAPSHOT_ATTEMPTS)
+        .find_map(|_| {
+            let before = board.change_count();
+            let saved = board.snapshot();
+            (board.change_count() == before).then_some(saved)
+        })
+        .flatten()
 }
 
 #[cfg(any(target_os = "macos", test))]
