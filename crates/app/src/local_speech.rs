@@ -604,15 +604,35 @@ async fn healthy(
 }
 
 async fn succeeds(mut connection: TcpStream, port: u16, route: &str) -> std::io::Result<bool> {
+    const HEAD_LIMIT: u64 = 8 * 1024;
     let request =
         format!("GET {route} HTTP/1.1\r\nHost: {LOOPBACK}:{port}\r\nConnection: close\r\n\r\n");
     connection.write_all(request.as_bytes()).await?;
-    let mut status_line = [0; 12];
-    connection.read_exact(&mut status_line).await?;
-    Ok(matches!(
-        status_line.split_first_chunk::<9>(),
-        Some((b"HTTP/1.1 " | b"HTTP/1.0 ", [b'2', _, _]))
-    ))
+    let mut head = Vec::new();
+    let mut reply = connection.take(HEAD_LIMIT);
+    while reply.read_buf(&mut head).await? > 0 {
+        if let Some(end) = head.windows(4).position(|window| window == b"\r\n\r\n") {
+            return Ok(head.get(..end).is_some_and(answers_success));
+        }
+    }
+    Ok(false)
+}
+
+fn answers_success(head: &[u8]) -> bool {
+    let line = head.split(|&byte| byte == b'\n').next().unwrap_or_default();
+    let line = line.strip_suffix(b"\r").unwrap_or(line);
+    let Some(status) = line
+        .strip_prefix(b"HTTP/1.1 ")
+        .or_else(|| line.strip_prefix(b"HTTP/1.0 "))
+    else {
+        return false;
+    };
+    match status {
+        [b'2', tens, ones, reason @ ..] => {
+            tens.is_ascii_digit() && ones.is_ascii_digit() && matches!(reason, [] | [b' ', ..])
+        },
+        _ => false,
+    }
 }
 
 async fn unless_cancelled<T>(

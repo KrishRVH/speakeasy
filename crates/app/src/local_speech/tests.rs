@@ -234,28 +234,73 @@ fn engine_secrets_are_unrelated_128_bit_tokens() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn health_probes_ask_the_engine_route_and_read_its_status() -> anyhow::Result<()> {
+async fn only_a_complete_success_head_proves_the_engine_healthy() -> anyhow::Result<()> {
     use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 
     let listener = tokio::net::TcpListener::bind((LOOPBACK, 0)).await?;
     let port = listener.local_addr()?.port();
-    for (status, ready) in [("200 OK", true), ("503 Service Unavailable", false)] {
+    let oversized = format!("HTTP/1.1 200 OK\r\nX-Padding: {}\r\n\r\n", "a".repeat(9000));
+    for (reply, ready) in [
+        ("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n", true),
+        ("HTTP/1.0 204\r\n\r\n", true),
+        ("HTTP/1.1 200", false),
+        ("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n", false),
+        (
+            "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n",
+            false,
+        ),
+        ("HTTP/1.1 2000 OK\r\n\r\n", false),
+        ("HTTP/1.1 2x0 OK\r\n\r\n", false),
+        ("HTTP/2 200\r\n\r\n", false),
+        (oversized.as_str(), false),
+    ] {
         let engine = async {
             let mut stream = BufReader::new(listener.accept().await?.0);
             let mut request = String::new();
             while stream.read_line(&mut request).await? > 2 {}
-            let reply = format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\n\r\n");
             stream.write_all(reply.as_bytes()).await?;
             anyhow::Ok(request)
         };
         let (probed, request) = tokio::join!(healthy(port, "/key/health", || Ok(true)), engine);
-        assert_eq!(probed?, ready, "{status}");
+        assert_eq!(probed?, ready, "{reply:.40}");
         assert_eq!(
             request?,
             format!(
                 "GET /key/health HTTP/1.1\r\nHost: {LOOPBACK}:{port}\r\nConnection: close\r\n\r\n"
             )
         );
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn startup_probes_each_engine_at_its_own_health_route() -> anyhow::Result<()> {
+    use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
+
+    for protocol in [Protocol::Whisper, Protocol::Nemo, Protocol::Nemotron] {
+        let (_directory, mut speech, listener) = shell_engine("read -r _").await?;
+        speech.protocol = protocol;
+        let expected = match protocol {
+            Protocol::Whisper => format!("GET /{}/health HTTP/1.1\r\n", speech.secret),
+            Protocol::Nemo | Protocol::Nemotron => "GET /ready HTTP/1.1\r\n".to_owned(),
+        };
+        let engine = async {
+            let mut stream = BufReader::new(listener.accept().await?.0);
+            let mut request_line = String::new();
+            stream.read_line(&mut request_line).await?;
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                .await?;
+            anyhow::Ok(request_line)
+        };
+        let (served, request_line) = timeout(crate::testing::PATIENCE, async {
+            tokio::join!(speech.wait_until_serving(), engine)
+        })
+        .await?;
+        speech.stop().await;
+        served?;
+        assert_eq!(request_line?, expected);
     }
     Ok(())
 }
