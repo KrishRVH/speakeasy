@@ -74,8 +74,9 @@ Manual copy skips the modifier wait. Wayland serves bounded, asynchronous clipbo
 receiving input and cancellation, and a failed transfer fails only that paste; clipboard calls
 through Xwayland run on a serialized, owned worker. Portal signals count only from the portal's
 current bus name; a malformed shortcut or transfer signal is skipped, and a malformed ownership
-change counts as lost ownership. A committed clipboard selection remains available until ownership
-changes or the service retires.
+change counts as lost ownership. A committed clipboard selection remains available until another
+copy replaces it, ownership changes, or the service retires; a copy the portal refuses leaves it in
+place.
 
 Settings' **Insert text by** control offers **Paste (Ctrl+V)**, **Paste (Ctrl+Shift+V)** for
 terminals, **Type (keeps clipboard)**, and **Copy for manual paste**. The `text_delivery` setting

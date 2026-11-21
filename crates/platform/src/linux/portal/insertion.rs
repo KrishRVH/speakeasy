@@ -213,6 +213,14 @@ impl<'a> Insertions<'a> {
                 }
                 confirm_selection(self.selecting, permit).boxed_local()
             },
+            Ok(Prepared::SelectionRefused(error)) => {
+                request.reply.send(if permit.active() {
+                    Err(error)
+                } else {
+                    Ok(Inserted::Cancelled)
+                });
+                return Ok(());
+            },
             Ok(Prepared::Copied { owner }) => {
                 prepare_x11_paste(self.worker, owner, request.text.clone(), permit).boxed_local()
             },
@@ -342,6 +350,7 @@ type Preparation<'a> = LocalBoxFuture<'a, anyhow::Result<Prepared>>;
 
 enum Prepared {
     SelectionSet,
+    SelectionRefused(anyhow::Error),
     Copied { owner: Window },
     NotCopied,
     Ownership { owned: bool },
@@ -363,12 +372,18 @@ async fn set_selection(
         return Ok(Prepared::NotCopied);
     }
     let mime_types = Options::from([("mime_types", Value::from(PLAIN_TEXT.to_vec()))]);
-    tokio::time::timeout(
+    match tokio::time::timeout(
         SELECTION_TIMEOUT,
         clipboard.call::<_, _, ()>("SetSelection", &(session, mime_types)),
     )
-    .await??;
-    Ok(Prepared::SelectionSet)
+    .await?
+    {
+        Ok(()) => Ok(Prepared::SelectionSet),
+        Err(refused @ zbus::Error::MethodError(..)) => {
+            Ok(Prepared::SelectionRefused(refused.into()))
+        },
+        Err(error) => Err(error.into()),
+    }
 }
 
 async fn copy_with_x11(

@@ -409,6 +409,39 @@ fn private_bus_cancelled_selections_refuse_transfers_by_closing_them_empty() -> 
 }
 
 #[test]
+fn private_bus_a_refused_selection_keeps_serving_the_previous_copy() -> anyhow::Result<()> {
+    on_private_bus(async |bus| {
+        let mut portal = FakePortal::start(&bus).await?;
+        let client = Client::start(&bus).await?;
+        client.copy(&mut portal, "alpha").await?;
+
+        let (_, answer) = client.paste("bravo").await?;
+        let selecting = portal.expect("SetSelection").await?;
+        portal
+            .connection
+            .reply_error(
+                &selecting.header(),
+                "org.freedesktop.portal.Error.Failed",
+                &("Refused",),
+            )
+            .await?;
+        assert!(
+            tokio::time::timeout(PATIENCE, answer.recv())
+                .await??
+                .is_err(),
+            "A refused selection reported success"
+        );
+        portal.transfer(1).await?;
+        assert_eq!(
+            portal.served(1).await?,
+            (b"alpha".to_vec(), true),
+            "A refused SetSelection discarded the copy the clipboard still holds"
+        );
+        Ok(())
+    })
+}
+
+#[test]
 fn private_bus_only_the_portal_signals_and_malformed_ones_are_skipped() -> anyhow::Result<()> {
     on_private_bus(async |bus| {
         let mut portal = FakePortal::start(&bus).await?;
