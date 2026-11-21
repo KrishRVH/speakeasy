@@ -46,7 +46,7 @@ discard() {
       fi
     done
   fi
-  rm -rf -- "$staging"
+  rm -rf -- "$staging" || true
 }
 trap discard EXIT
 trap 'exit 129' HUP
