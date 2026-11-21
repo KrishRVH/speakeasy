@@ -995,21 +995,34 @@ while loopback clients need no system CA bundle. Direct constructors and `Defaul
 and can panic. Clippy catches the named constructors but cannot name those `Default`
 implementations.
 
-The speech worker listens on loopback only. On Linux and Windows, Speakeasy declares the worker
-ready only after a health probe answers with a complete success header. Each probe and subsequent
-request first checks that the worker's own process group, a job object on Windows, holds every
-listener a connection to its loopback port can reach, wildcard and IPv6 dual-stack listeners
-included. A listener that closes during the check is looked up again rather than called foreign, so
-an engine that crashes then reports its exit. The probe checks again once its connection is
-established and writes nothing unless the group still holds the port; the worker binds once, so that
-connection reached it. Requests connect through reqwest after their check, which leaves a moment in
-which a worker that just died could hand its port, and one request, to another program. macOS has no
-listener lookup, so each probe and request there checks only that the worker still runs. Each worker
-gets a fresh random key. The NeMo engine receives it in its owner-only environment, but
-whisper-server accepts its route only on the command line, so on Linux other local accounts can read
-it through `/proc` unless `/proc` is mounted with `hidepid`. That route is the only guard on
-Whisper's `/inference` and model-loading `/load` requests, so prefer Parakeet on shared Linux
-machines; automatic setup installs it.
+The speech worker listens on loopback only. Speakeasy declares the worker ready only after a health
+probe answers with a complete success header. On Linux and Windows, each probe, streaming
+connection, and request first checks that the worker's own process group, a job object on Windows,
+holds every listener a connection to its loopback port can reach: wildcard, IPv6 dual-stack, and
+v4-mapped listeners included. Neither system's table shows whether an IPv6 wildcard listener is
+IPv6-only, so such a listener counts as foreign even though 127.0.0.1 cannot reach it, and startup
+asks the user to try again on a new port. A listener that closes during the check is looked up again
+rather than called foreign, so an engine that crashes then reports its exit. The probe and the
+streaming connection check again once connected and write nothing unless the group still holds every
+listener.
+
+These checks read listening sockets, not the end of the connection that carries the data, so two
+windows remain. whisper-server's HTTP library binds with `SO_REUSEPORT`, or `SO_REUSEADDR` where the
+system lacks it. Windows then lets a program of another account bind the same port; Linux allows
+that only to the same account. A program sharing the port can accept a connection, close its
+listener before the second check, and receive the probe's key or the stream's key and audio.
+Requests go through reqwest, checked only before reqwest connects, so a program that takes the port
+of a worker that just exited, or shares it, can receive one request with its recording, hints, and
+key. Closing both needs each exchange on a connection whose server end the check matched to the
+group: the established row's socket inode on Linux, the connection row's owning process on Windows,
+and a libproc lookup on macOS. reqwest cannot send on a connection it did not open. macOS has no
+listener lookup, so each probe and request there checks only that the worker still runs, and a
+program that binds the port before whisper-server finishes loading its model receives the health
+probe. Each worker gets a fresh random key. The NeMo engine receives it in its owner-only
+environment, but whisper-server accepts its route only on the command line, so on Linux other local
+accounts can read it through `/proc` unless `/proc` is mounted with `hidepid`. That route is the
+only guard on Whisper's `/inference` and model-loading `/load` requests, so prefer Parakeet on
+shared Linux machines; automatic setup installs it.
 
 On macOS both engines start with `GGML_METAL_TENSOR_DISABLE=1`. ggml turns its Metal tensor kernels
 on by itself for M5-class GPUs, and there they return "no speech" or garbage text.
