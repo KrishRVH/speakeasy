@@ -148,32 +148,32 @@ impl Reading {
         at: Duration,
         cancelled: impl Fn() -> bool,
     ) -> anyhow::Result<Option<Sample>> {
+        let Self { file, movie } = self;
+        let retained = movie.prefix.duration();
         anyhow::ensure!(
-            at <= self.movie.prefix.duration(),
+            at <= retained,
             "Requested time is outside the retained video coverage"
         );
         let through = Moment::from_millis(
-            self.movie
+            movie
                 .metadata
                 .coverage
                 .as_ref()
                 .context("Movie has no published coverage")?
                 .annotations_through_ms,
         );
-        let prefix = &self.movie.prefix;
-        let Some(frame) = speakeasy_platform::read_movie_frame(self.file, prefix, at, cancelled)?
+        let Some(frame) = speakeasy_platform::read_movie_frame(file, &movie.prefix, at, cancelled)?
         else {
             return Ok(None);
         };
         anyhow::ensure!(
-            frame.at < self.movie.prefix.duration(),
+            frame.at < retained,
             "Decoded video sample exceeds its retained coverage"
         );
-        let viewport = geometry::viewport(&self.movie, frame.at);
         Ok(Some(Sample {
-            at: Duration::from_millis(self.movie.metadata.origin_ms).saturating_add(frame.at),
+            at: Duration::from_millis(movie.metadata.origin_ms).saturating_add(frame.at),
             image: frame.image,
-            viewport,
+            viewport: geometry::viewport(&movie, frame.at),
             through,
         }))
     }
