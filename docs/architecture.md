@@ -705,41 +705,41 @@ module unless a test file is named.
   most the rest of one five-minute recording at the device rate until that flush ends. Capture
   reports its outcome and closes the microphone before the final audio flush, which then waits up to
   five seconds for credits. Cancellation after Finish, as when Quit retires a finished Show's
-  microphone, still collects the remaining samples and writes that flush; a discarded checkpoint
-  stops its keeper, which ends a waiting flush unwritten. Only ordinary stop writes an audio end
-  record; a disconnected or stalled microphone, including one whose fatal error races the stop,
-  leaves a recoverable prefix. [Audio checkpointing](../crates/app/src/audio/checkpoint.rs)
-  preserves cue boundaries before and after promotion, so recovery seals through the same speech
-  gate and trimming. Narration is atomically written and synced while audio remains recoverable.
-  Successful transcription copies a valid voice prefix into the staged bundle before checkpoint
-  retirement, and the saved Show says when that voice lacks its end record, as after a final flush
-  that missed its deadline; audio too damaged to read is left out of voice rather than blocking the
-  frames and narration. Publication binds durable checkpoint and bundle markers before rename; the
-  marker distinguishes narrated publication so a crash before checkpoint deletion cannot offer
-  duplicate recovery. Publication and cleanup retire a checkpoint only after syncing the Shows
-  folder that holds its bundle, so recovery files never outlive a rename the disk may lose. A
-  retry's marker also names the pending bundle it supersedes, which stays the checkpoint's owner for
-  recovery and deletion until the new bundle lands. If checkpoint storage never opens, in-memory
-  footage remains publishable. A lost checkpoint completion stops publication; an unknown checkpoint
-  state cannot become an apparently complete bundle. Untranscribed audio or saved narration keeps a
-  published checkpoint visible as Narration pending; publication keeps one for retry only when its
-  audio is not damaged and its frame log replays a frame; one with neither retires, and a retry
-  whose kept audio holds no speech retires it and says so, and the Shows window rereads its library
-  after any failed recovery so a retired row stops offering Retry; a retry whose transcription
-  yields no words saves no copy and stays. Saved narration that cannot be read fails recovery and
-  stays; damaged narration falls back to the kept audio. Kept audio that cannot be read then fails
-  recovery with access advice, and only audio that is absent, damaged, or holds no speech leaves the
-  retry listed for explicit discard. A silent microphone's audio holds nothing to retry or export,
-  so its checkpoint records that disposition and retires without keeping voice; recovery treats
-  complete, all-zero audio of any length without saved narration the same way. Unfinished
-  cancellation records discard when its keeper receives it, before the native movie lease closes, so
-  a kill during teardown cannot return cancelled footage; an emergency drop leaves the checkpoint
-  recoverable; private audio, narration, frame, and movie files are removed before the lock, so
-  blocked deletion remains available to cleanup. Audio retains the original seven-day expiry
-  regardless of a saved bundle's Keep marker. Discovery isolates damaged checkpoints so healthy
-  entries remain visible and saved bundles still expire. A pending checkpoint whose audio is damaged
-  or unreadable stays listed as a problem, and `show discard` still removes it by ID or path; only
-  an empty or partly written audio header counts as no audio.
+  microphone, still collects the remaining samples, reads microphone errors after quiescence as
+  ordinary stop does, and writes that flush; a discarded checkpoint stops its keeper, which ends a
+  waiting flush unwritten. Only ordinary stop writes an audio end record; a disconnected or stalled
+  microphone, including one whose fatal error races the stop, leaves a recoverable prefix.
+  [Audio checkpointing](../crates/app/src/audio/checkpoint.rs) preserves cue boundaries before and
+  after promotion, so recovery seals through the same speech gate and trimming. Narration is
+  atomically written and synced while audio remains recoverable. Successful transcription copies a
+  valid voice prefix into the staged bundle before checkpoint retirement, and the saved Show says
+  when that voice lacks its end record, as after a final flush that missed its deadline; audio too
+  damaged to read is left out of voice rather than blocking the frames and narration. Publication
+  binds durable checkpoint and bundle markers before rename; the marker distinguishes narrated
+  publication so a crash before checkpoint deletion cannot offer duplicate recovery. Publication and
+  cleanup retire a checkpoint only after syncing the Shows folder that holds its bundle, so recovery
+  files never outlive a rename the disk may lose. A retry's marker also names the pending bundle it
+  supersedes, which stays the checkpoint's owner for recovery and deletion until the new bundle
+  lands. If checkpoint storage never opens, in-memory footage remains publishable. A lost checkpoint
+  completion stops publication; an unknown checkpoint state cannot become an apparently complete
+  bundle. Untranscribed audio or saved narration keeps a published checkpoint visible as Narration
+  pending; publication keeps one for retry only when its audio is not damaged and its frame log
+  replays a frame; one with neither retires, and a retry whose kept audio holds no speech retires it
+  and says so, and the Shows window rereads its library after any failed recovery so a retired row
+  stops offering Retry; a retry whose transcription yields no words saves no copy and stays. Saved
+  narration that cannot be read fails recovery and stays; damaged narration falls back to the kept
+  audio. Kept audio that cannot be read then fails recovery with access advice, and only audio that
+  is absent, damaged, or holds no speech leaves the retry listed for explicit discard. A silent
+  microphone's audio holds nothing to retry or export, so its checkpoint records that disposition
+  and retires without keeping voice; recovery treats complete, all-zero audio of any length without
+  saved narration the same way. Unfinished cancellation records discard when its keeper receives it,
+  before the native movie lease closes, so a kill during teardown cannot return cancelled footage;
+  an emergency drop leaves the checkpoint recoverable; private audio, narration, frame, and movie
+  files are removed before the lock, so blocked deletion remains available to cleanup. Audio retains
+  the original seven-day expiry regardless of a saved bundle's Keep marker. Discovery isolates
+  damaged checkpoints so healthy entries remain visible and saved bundles still expire. A pending
+  checkpoint whose audio is damaged or unreadable stays listed as a problem, and `show discard`
+  still removes it by ID or path; only an empty or partly written audio header counts as no audio.
   [checkpoint/tests.rs](../crates/app/src/show/store/checkpoint/tests.rs) exercises damaged
   siblings, expiry, lock ownership, and durable discard/publication markers.
   [journal/log.rs](../crates/show/src/journal/log.rs) shares live/replay admission, thinning, and

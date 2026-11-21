@@ -606,6 +606,13 @@ async fn a_disconnected_microphone_keeps_its_final_samples_without_an_audio_endi
 
 #[tokio::test]
 async fn a_finished_show_keeps_its_final_samples_when_quit_cancels_capture() -> anyhow::Result<()> {
+    for error in [None, Some(cpal::ErrorKind::DeviceNotAvailable)] {
+        finish_then_quit(error).await?;
+    }
+    Ok(())
+}
+
+async fn finish_then_quit(error: Option<cpal::ErrorKind>) -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let parent = root.path().to_owned();
     let Kept {
@@ -630,7 +637,8 @@ async fn a_finished_show_keeps_its_final_samples_when_quit_cancels_capture() -> 
     let control = Control::default();
     control.finish();
     control.cancel();
-    let captured = recorder(&samples, None)?.record(SessionId::FIRST, &events, &control, &requests);
+    let captured =
+        recorder(&samples, error)?.record(SessionId::FIRST, &events, &control, &requests);
     let mut tail = captured
         .tail
         .context("Quit after Finish skipped the finished Show's audio tail")?;
@@ -643,10 +651,14 @@ async fn a_finished_show_keeps_its_final_samples_when_quit_cancels_capture() -> 
     let audio = checkpoint.audio()?.context("Fixture audio is missing")?;
     assert_eq!(
         audio.pcm.len(),
-        samples.len() * 2,
+        samples.len().saturating_mul(2),
         "Quit after Finish dropped samples still waiting in the ring"
     );
-    assert!(audio.complete);
+    assert_eq!(
+        audio.complete,
+        error.is_none(),
+        "Quit after Finish misjudged whether the microphone failed"
+    );
     Ok(())
 }
 

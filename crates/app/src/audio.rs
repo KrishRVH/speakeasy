@@ -459,11 +459,12 @@ impl<D> Recorder<D> {
                 profile.polled();
             }
             if abandoned(control, events) {
-                if control.finished() {
-                    control.quiesce();
-                    self.sounded |= consume_pcm(&mut self.ring, &mut self.pcm, &mut meter);
+                if !control.finished() {
+                    return Ok(None);
                 }
-                return Ok(None);
+                let lost = self.stop(control, None);
+                self.sounded |= consume_pcm(&mut self.ring, &mut self.pcm, &mut meter);
+                return Ok(lost);
             }
             if requests.whole.try_recv().is_ok() {
                 self.recognition = Recognition::Whole;
