@@ -304,57 +304,59 @@ async fn damaged_audio_does_not_block_saving_intact_frames_and_narration() -> an
 #[tokio::test]
 async fn digital_silence_recovered_after_a_failed_save_stays_silent_without_voice()
 -> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let interrupted = with_pcm(root.path(), &[0; 16_000], AudioEnding::Complete)
-        .await?
-        .interrupted()?;
-    let unwritable = interrupted.directory().join("narration.json");
-    fs::create_dir(&unwritable)?;
-    let checkpoint = interrupted.lock()?;
-    let captured = narrated(
-        Footage::from(checkpoint.replay()?),
-        Narration::default(),
-        Some(NarrationLoss::AudioSilent),
-    );
-    let (_input, active) = permit();
-    assert!(
-        publish_with(
+    for bytes in [16_000, 1_600] {
+        let root = tempfile::tempdir()?;
+        let interrupted = with_pcm(root.path(), &vec![0; bytes], AudioEnding::Complete)
+            .await?
+            .interrupted()?;
+        let unwritable = interrupted.directory().join("narration.json");
+        fs::create_dir(&unwritable)?;
+        let checkpoint = interrupted.lock()?;
+        let captured = narrated(
+            Footage::from(checkpoint.replay()?),
+            Narration::default(),
+            Some(NarrationLoss::AudioSilent),
+        );
+        let (_input, active) = permit();
+        assert!(
+            publish_with(
+                Handoff::default(),
+                captured,
+                Origin::Live {
+                    checkpoint: Some(checkpoint)
+                },
+                &active,
+                || bail!("Synthetic save failure"),
+                uncopied,
+            )
+            .is_err()
+        );
+        fs::remove_dir(&unwritable)?;
+        let reopened = reopen_with(interrupted)?;
+        assert_eq!(
+            reopened.footage.recording.narration_lost,
+            Some(NarrationLoss::AudioSilent),
+            "Recovered digital silence lost its silence notice"
+        );
+        let (_input, active) = permit();
+        let Published::Recovered { show, .. } = publish_with(
             Handoff::default(),
-            captured,
-            Origin::Live {
-                checkpoint: Some(checkpoint)
+            reopened.footage,
+            Origin::Recovered {
+                checkpoint: reopened.checkpoint,
+                pending: reopened.pending,
             },
             &active,
-            || bail!("Synthetic save failure"),
+            || Ok(root.path().to_owned()),
             uncopied,
-        )
-        .is_err()
-    );
-    fs::remove_dir(&unwritable)?;
-    let reopened = reopen_with(interrupted)?;
-    assert_eq!(
-        reopened.footage.recording.narration_lost,
-        Some(NarrationLoss::AudioSilent),
-        "Recovered digital silence lost its silence notice"
-    );
-    let (_input, active) = permit();
-    let Published::Recovered { show, .. } = publish_with(
-        Handoff::default(),
-        reopened.footage,
-        Origin::Recovered {
-            checkpoint: reopened.checkpoint,
-            pending: reopened.pending,
-        },
-        &active,
-        || Ok(root.path().to_owned()),
-        uncopied,
-    )?
-    else {
-        bail!("Silent Show was not recovered");
-    };
-    assert!(matches!(
-        saved_voice(show.directory())?.status(),
-        store::voice::Status::Absent
-    ));
+        )?
+        else {
+            bail!("Silent Show was not recovered");
+        };
+        assert!(matches!(
+            saved_voice(show.directory())?.status(),
+            store::voice::Status::Absent
+        ));
+    }
     Ok(())
 }

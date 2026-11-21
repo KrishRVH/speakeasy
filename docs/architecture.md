@@ -723,7 +723,7 @@ module unless a test file is named.
   read fails recovery and stays; damaged narration falls back to the kept audio, and a retry with
   neither stays listed for explicit discard. A silent microphone's audio holds
   nothing to retry or export, so its checkpoint records that disposition and retires without keeping
-  voice; recovery treats complete, all-zero audio without saved narration the same way. Unfinished cancellation
+  voice; recovery treats complete, all-zero audio of any length without saved narration the same way. Unfinished cancellation
   records discard when its keeper receives it, before the native movie lease closes, so a kill
   during teardown cannot return cancelled footage; an emergency drop leaves the checkpoint
   recoverable; private audio, narration, frame, and movie files are removed

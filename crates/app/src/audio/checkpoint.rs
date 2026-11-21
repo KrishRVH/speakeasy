@@ -118,8 +118,7 @@ pub(crate) fn seal_kept(audio: &KeptAudio) -> anyhow::Result<Option<Sealed>> {
 }
 
 pub(crate) fn silent_kept(audio: &KeptAudio) -> bool {
-    audio.pcm.iter().all(|&byte| byte == 0)
-        && Pcm16::from_kept(&audio.pcm).long_enough(audio.rate.get())
+    !audio.pcm.is_empty() && audio.pcm.iter().all(|&byte| byte == 0)
 }
 
 #[cfg(test)]
