@@ -189,6 +189,14 @@ impl Roots {
     }
 
     pub(super) fn list(&self, cursor: Option<&str>) -> Result<Listing, &'static str> {
+        self.list_with(cursor, &|directory, each| directory.visit(each))
+    }
+
+    pub(super) fn list_with(
+        &self,
+        cursor: Option<&str>,
+        visit: Visit<'_>,
+    ) -> Result<Listing, &'static str> {
         let after = cursor.map(PathBuf::from);
         if let Some(after) = &after
             && (after.as_os_str().len() > PATH_LIMIT
@@ -208,7 +216,9 @@ impl Roots {
         let mut unavailable_roots = Vec::new();
         for configured in &self.roots {
             let listed = self.check(&configured.directory).and_then(|root| {
-                gather(&root, reached.len(), after.as_deref(), &mut rows)?;
+                for row in gather(&root, reached.len(), after.as_deref(), visit)? {
+                    retain(&mut rows, row, after.as_deref());
+                }
                 reached.push(root);
                 Ok(())
             });
@@ -262,45 +272,48 @@ impl Roots {
     }
 }
 
+pub(super) type Visit<'a> = &'a dyn Fn(&ReadDirectory, &mut dyn FnMut(OsString)) -> io::Result<()>;
+
 fn gather(
     root: &Folder,
     index: usize,
     after: Option<&Path>,
-    rows: &mut Vec<Row>,
-) -> Result<(), &'static str> {
+    visit: Visit<'_>,
+) -> Result<Vec<Row>, &'static str> {
     const UNLISTED: &str = "Cannot list an MCP root";
+    let mut rows = Vec::new();
     let mut keep = |path, name| {
         let row = Row {
             path,
             root: index,
             name,
         };
-        retain(rows, row, after);
+        retain(&mut rows, row, after);
     };
     if holds_show(&root.files).map_err(|_private| UNLISTED)? {
         keep(root.path.clone(), None);
-        return Ok(());
+        return Ok(rows);
     }
-    root.files
-        .visit(|name| {
-            if !visible(&name) {
-                return;
-            }
-            let listed = match root.files.child(&name) {
-                Ok(files) => {
-                    name.to_str().and_then(ShowId::parse).is_some()
-                        || holds_show(&files).unwrap_or(true)
-                },
-                Err(error) => !matches!(
-                    error.kind(),
-                    io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
-                ),
-            };
-            if listed {
-                keep(root.path.join(&name), Some(name));
-            }
-        })
-        .map_err(|_private| UNLISTED)
+    visit(&root.files, &mut |name| {
+        if !visible(&name) {
+            return;
+        }
+        let listed = match root.files.child(&name) {
+            Ok(files) => {
+                name.to_str().and_then(ShowId::parse).is_some()
+                    || holds_show(&files).unwrap_or(true)
+            },
+            Err(error) => !matches!(
+                error.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+            ),
+        };
+        if listed {
+            keep(root.path.join(&name), Some(name));
+        }
+    })
+    .map_err(|_private| UNLISTED)?;
+    Ok(rows)
 }
 
 fn holds_show(directory: &ReadDirectory) -> io::Result<bool> {

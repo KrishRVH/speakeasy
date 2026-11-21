@@ -171,6 +171,45 @@ fn symlinked_bundles_and_symlinked_roots_are_refused() -> anyhow::Result<()> {
 }
 
 #[test]
+fn a_root_that_fails_partway_through_listing_lends_no_show_to_the_next_root() -> anyhow::Result<()>
+{
+    let temp = tempfile::tempdir()?;
+    let failing = temp.path().join("failing");
+    let healthy = temp.path().join("healthy");
+    fixture(&failing, "kept")?;
+    let mut manifest = fixture_manifest();
+    manifest["duration"] = serde_json::json!(2000);
+    fs::write(
+        fixture(&healthy, "kept")?.join(Manifest::FILE),
+        serde_json::to_vec(&manifest)?,
+    )?;
+    let roots =
+        Roots::open(&[failing.clone(), healthy.clone()], None).map_err(anyhow::Error::msg)?;
+    let listing = roots
+        .list_with(None, &|directory, each| {
+            directory.visit(each)?;
+            if directory.is_at(&failing)? {
+                return Err(std::io::Error::other("synthetic enumeration failure"));
+            }
+            Ok(())
+        })
+        .map_err(anyhow::Error::msg)?;
+    let listing = serde_json::to_value(listing)?;
+    let rows = listing["shows"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{listing}");
+    assert_eq!(
+        rows[0]["directory"],
+        healthy.canonicalize()?.join("kept").to_str().unwrap()
+    );
+    assert_eq!(rows[0]["durationMs"], 2000);
+    assert_eq!(
+        listing["unavailableRoots"][0]["file"],
+        failing.canonicalize()?.to_str().unwrap()
+    );
+    Ok(())
+}
+
+#[test]
 fn listing_is_bounded_and_a_cursor_does_not_skip_the_next_show() -> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;
     for index in 0..102 {

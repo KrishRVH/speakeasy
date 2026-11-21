@@ -467,12 +467,12 @@ module unless a test file is named.
   page's rows, then opens and reads one row at a time relative to the root handle that enumerated
   it. A folder that cannot be opened, or whose manifest is present or cannot be checked but cannot
   be read, is listed as damaged; a root that no configured root can still reach, or that cannot be
-  searched or listed, is named in `unavailableRoots` while the others still list. A bare folder name
-  resolves through the same reachable root as the listing. It serves the 2026-07-28 stateless
-  protocol and the 2025-11-25 initialized protocol used by current external clients. No tool
-  exports, sends, or reads ordinary dictation. Initialization instructions are the disclosure
-  followed by the embedded skill's reading guide without its front matter. Setup resolves the
-  durable installed launcher and only prints client stanzas, adding one for an agent in WSL that
+  searched or fully listed, is named in `unavailableRoots` without any of its rows while the others
+  still list. A bare folder name resolves through the same reachable root as the listing. It serves
+  the 2026-07-28 stateless protocol and the 2025-11-25 initialized protocol used by current external
+  clients. No tool exports, sends, or reads ordinary dictation. Initialization instructions are the
+  disclosure followed by the embedded skill's reading guide without its front matter. Setup resolves
+  the durable installed launcher and only prints client stanzas, adding one for an agent in WSL that
   runs the Windows command through interop with Windows roots, or a note when interop, drive
   mounting, or a lettered drive is missing.
 - **Show recording and publication**: [show.rs](../crates/app/src/show.rs),
