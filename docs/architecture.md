@@ -364,7 +364,8 @@ module unless a test file is named.
   local setup, dictation permissions, private practice, and completion. Saved model configuration
   that passed its file check unlocks permission assistance even when native shortcut access
   prevents the runtime from starting; settings whose engine or model failed that check at startup
-  or Resume offer automatic setup instead of reporting local speech ready.
+  or Resume offer automatic setup instead of reporting local speech ready. Setup that leaves the
+  saved speech paths unchanged checks them again, since no save follows.
   A nonblank private result unlocks completion; leaving practice clears its receipt and text. The
   guide never asks for Show permissions or claims to verify external text delivery. Skip and Finish
   write an empty marker, the selected settings file's name plus `.onboarded`, beside it on an owned

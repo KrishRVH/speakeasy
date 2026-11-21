@@ -1,16 +1,85 @@
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use anyhow::ensure;
 use gpui::{AsyncApp, WindowHandle};
+use speakeasy_core::machine::Phase;
 
 use super::{Action, Step};
-use crate::shell::{
-    LaunchMode, Services,
-    settings::{
-        Action as SettingsAction, SaveQueue, Settings,
-        native_interaction::{draw, key},
+use crate::{
+    config::Config,
+    shell::{
+        LaunchMode, Services,
+        settings::{
+            Action as SettingsAction, SaveQueue, Settings,
+            native_interaction::{draw, key},
+        },
     },
 };
+
+#[expect(
+    clippy::future_not_send,
+    reason = "Native acceptance waits on GPUI's UI-thread executor"
+)]
+pub(in crate::shell::settings) async fn setup_rechecks_unchanged_settings(
+    settings: WindowHandle<Settings>,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let (original, before) = settings.update(cx, |view, _, cx| {
+        let original = view.config.clone();
+        let missing = Config {
+            engine_executable: directory.path().join("engine"),
+            model: directory.path().join("model.gguf"),
+            ..original.clone()
+        };
+        let path = cx.global::<Services>().path.clone();
+        let services = cx.global_mut::<Services>();
+        let before = (
+            services.config.clone(),
+            services.output.borrow().clone(),
+            services.checked,
+        );
+        services.mode = LaunchMode::Live;
+        services.config.clone_from(&missing);
+        services.checked = false;
+        services
+            .output
+            .send_modify(|snapshot| snapshot.phase = Phase::Idle);
+        view.saves = SaveQueue::new(path, missing.clone());
+        view.config = missing;
+        view.adopt_setup(cx);
+        (original, before)
+    })?;
+    let began = Instant::now();
+    let mut checked = false;
+    while began.elapsed() < Duration::from_secs(5) {
+        if cx.update(|cx| cx.global::<Services>().output.borrow().phase == Phase::Error) {
+            checked = true;
+            break;
+        }
+        cx.background_executor()
+            .timer(Duration::from_millis(10))
+            .await;
+    }
+    settings.update(cx, |view, _, cx| {
+        let path = cx.global::<Services>().path.clone();
+        let services = cx.global_mut::<Services>();
+        services.mode = LaunchMode::DemoTray;
+        services.config = before.0;
+        services.output.send_modify(|snapshot| *snapshot = before.1);
+        services.checked = before.2;
+        view.saves = SaveQueue::new(path, original.clone());
+        view.config = original;
+    })?;
+    ensure!(
+        checked,
+        "Setup that kept the saved speech paths did not check them again"
+    );
+    Ok(())
+}
 
 pub(in crate::shell::settings) fn exercise(
     settings: WindowHandle<Settings>,

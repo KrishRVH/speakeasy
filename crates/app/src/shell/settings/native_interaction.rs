@@ -61,6 +61,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                 })?;
                 cx.update(|cx| cx.global_mut::<Services>().settings = Some(settings));
                 onboarding::native_tests::exercise(settings, cx)?;
+                onboarding::native_tests::setup_rechecks_unchanged_settings(settings, cx).await?;
                 presets::native_tests::exercise(settings, cx)?;
                 presets::native_tests::applying::exercise(settings, cx).await?;
                 settings.update(cx, |view, _, cx| {

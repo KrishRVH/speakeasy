@@ -655,8 +655,7 @@ impl Settings {
         match outcome {
             Some(Ok(installed)) => {
                 installed.apply_to(&mut self.config);
-                self.own_engine = false;
-                self.edited(cx);
+                self.adopt_setup(cx);
             },
             Some(Err(error)) => self.notice = Some(Notice::Problem(error.to_string().into())),
             None => {
@@ -666,6 +665,19 @@ impl Settings {
             },
         }
         cx.notify();
+    }
+
+    fn adopt_setup(&mut self, cx: &mut Context<'_, Self>) {
+        let unchanged = !self.saves.needs_save(&self.config);
+        self.own_engine = false;
+        self.edited(cx);
+        if unchanged {
+            cx.update_global::<Services, _>(|services, cx| {
+                if !services.speech_checked() {
+                    services.resume(cx);
+                }
+            });
+        }
     }
 
     fn request_setup_stop(&self) {
