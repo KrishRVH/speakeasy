@@ -67,7 +67,7 @@ use self::{
     exclusion::{Exclusions, exclude_always},
     readback::{Readback, device_for},
 };
-use super::{BASE_DPI, is_key_down, is_own_window, modifiers, ok_or_last_error};
+use super::{BASE_DPI, is_key_down, is_own_window, ok_or_last_error};
 use crate::{
     NativeWindow,
     movie::recording as movie,
@@ -288,7 +288,7 @@ pub(crate) fn pointer(target: Target, shortcut: crate::Shortcut) -> Option<Point
         at,
         position: display.bounds().normalize([x, y].map(f64::from))?,
         part,
-        drawing: modifiers(shortcut.windows).draws(),
+        drawing: shortcut.windows.modifiers(is_key_down).draws(),
         pressed: primary_button_down(),
     })
 }

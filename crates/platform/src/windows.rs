@@ -49,7 +49,6 @@ pub(crate) use self::{
     input::{Monitor, start},
     insertion::{copy_content, copy_text},
 };
-use crate::keyboard::Modifiers;
 
 const OWN_INPUT: usize = 0x5350_4541;
 
@@ -57,10 +56,6 @@ const BASE_DPI: u32 = 96;
 
 fn is_key_down(key: VIRTUAL_KEY) -> bool {
     unsafe { GetAsyncKeyState(i32::from(key)) < 0 }
-}
-
-fn modifiers(shortcut: crate::WindowsShortcut) -> Modifiers {
-    shortcut.modifiers(is_key_down)
 }
 
 pub(crate) fn reduced_motion() -> bool {

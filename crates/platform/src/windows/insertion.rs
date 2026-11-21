@@ -17,7 +17,7 @@ use windows_sys::Win32::{
 };
 use zeroize::Zeroizing;
 
-use super::{modifiers, press, release, send_input, synthetic_key, type_unit, window_process};
+use super::{is_key_down, press, release, send_input, synthetic_key, type_unit, window_process};
 use crate::{
     ClipboardContent, Inserted,
     clipboard::{self, Screen},
@@ -313,7 +313,7 @@ impl NativeInsert for Insert {
     }
 
     fn shortcut_released(&mut self) -> bool {
-        !modifiers(self.shortcut).any()
+        !self.shortcut.modifiers(is_key_down).any()
     }
 
     fn send(&mut self, keys: Keys) -> anyhow::Result<Inserted> {
