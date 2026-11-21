@@ -62,15 +62,16 @@ async fn a_torn_end_recovers_a_prefix_and_expiry_uses_the_original_stamp() -> an
     let root = tempfile::tempdir()?;
     let now = SystemTime::now();
     let checkpoint = capture(root.path(), now).await?;
-    let file = OpenOptions::new()
-        .write(true)
-        .open(checkpoint.directory.join(LOG))?;
-    file.set_len(file.metadata()?.len().saturating_sub(1))?;
+    {
+        let file = OpenOptions::new()
+            .write(true)
+            .open(checkpoint.directory.join(LOG))?;
+        file.set_len(file.metadata()?.len().saturating_sub(1))?;
+    }
     let take = checkpoint.replay()?;
     assert!(!take.ended());
     assert_eq!(take.finish().0.duration.as_millis(), 100);
     let path = checkpoint.directory.clone();
-    drop(file);
     drop(checkpoint);
     let later = now + std::time::Duration::from_hours(192);
     assert_eq!(list(root.path(), later).shows, []);
