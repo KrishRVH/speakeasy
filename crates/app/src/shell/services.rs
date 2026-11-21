@@ -539,7 +539,7 @@ impl Services {
         self.validate(cx);
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
     pub(super) fn run_fake_owner(&mut self) -> anyhow::Result<()> {
         let preset = self.preset_name().map(str::to_owned);
         self.output

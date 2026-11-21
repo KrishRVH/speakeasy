@@ -62,7 +62,7 @@ impl Choices {
         unsettled
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
     pub(super) const fn is_applying(&self) -> bool {
         self.applying
     }
