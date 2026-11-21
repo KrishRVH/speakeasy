@@ -561,7 +561,7 @@ fn disconnected(id: SessionId) -> CaptureEvent {
 
 fn footage() -> Box<Footage> {
     let frame = Image::from_bgra(2, 2, vec![128; 16]).expect("A 2×2 frame");
-    let mut journal = Journal::new();
+    let mut journal = Journal::default();
     journal
         .admit()
         .expect("An empty journal admits a frame")

@@ -15,7 +15,7 @@ mod offers;
 mod source;
 
 fn source_bytes(duration: Moment) -> anyhow::Result<Vec<u8>> {
-    let mut journal = Journal::new();
+    let mut journal = Journal::default();
     journal
         .admit()
         .context("Synthetic frame was not admitted")?

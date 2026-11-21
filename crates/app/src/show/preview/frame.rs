@@ -146,7 +146,7 @@ mod tests {
         let bgra = [7, 20, 190, 255].repeat(70 * 65);
         let image = Image::from_bgra(70, 65, bgra.clone())?;
         std::fs::write(directory.path().join("frame.png"), image.encode_png()?)?;
-        let mut journal = Journal::new();
+        let mut journal = Journal::default();
         journal
             .admit()
             .unwrap()

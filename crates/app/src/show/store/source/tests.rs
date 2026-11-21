@@ -6,7 +6,7 @@ use super::*;
 fn optional_source_roundtrips_without_modifying_earlier_exports() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     assert!(!present(root.path())?);
-    let mut journal = Journal::new();
+    let mut journal = Journal::default();
     for (at, color) in [(200, 30), (900, 90)] {
         journal.admit().unwrap().record(
             Moment::from_millis(at),

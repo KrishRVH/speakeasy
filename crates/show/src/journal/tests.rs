@@ -68,7 +68,7 @@ fn a_still_screen_costs_almost_nothing_and_changes_cost_their_tiles() {
             [240, 240, 240, 255]
         }
     };
-    let mut journal = Journal::new();
+    let mut journal = Journal::default();
     admitted(&mut journal).record(Moment::START, frame(640, 360, text));
     let first = journal.bytes();
     for millis in (200..=2_000).step_by(200) {
@@ -94,7 +94,7 @@ fn a_still_screen_costs_almost_nothing_and_changes_cost_their_tiles() {
 
 #[test]
 fn any_recorded_moment_is_rebuilt_exactly() {
-    let mut journal = Journal::new();
+    let mut journal = Journal::default();
     let frames: Vec<Image> = [0, 7, 7, 30]
         .into_iter()
         .map(|shift| frame(130, 70, gradient(shift)))
@@ -120,13 +120,13 @@ fn any_recorded_moment_is_rebuilt_exactly() {
         journal.frame_at(Moment::from_millis(150)).as_ref(),
         frames.get(1)
     );
-    assert_eq!(Journal::new().frame_at(Moment::START), None);
+    assert_eq!(Journal::default().frame_at(Moment::START), None);
 }
 
 #[test]
 fn a_sealed_journal_records_its_next_frame_whole_and_rebuilds_both_sides() {
     let before = frame(64, 64, gradient(3));
-    let mut journal = Journal::new();
+    let mut journal = Journal::default();
     admitted(&mut journal).record(Moment::START, before.clone());
     let whole = journal.bytes();
     let mut journal = journal.sealed();
@@ -162,7 +162,7 @@ fn each_thinning_halves_how_often_arrivals_are_admitted() {
 
 #[test]
 fn debugging_a_journal_never_prints_its_frames() {
-    let mut journal = Journal::new();
+    let mut journal = Journal::default();
     admitted(&mut journal).record(Moment::START, quadrants([0; 4], true));
     let one = format!("{journal:?}");
     for shade in 1_u8..20 {
@@ -179,7 +179,7 @@ proptest! {
         changes in prop::collection::vec((0_u8..4, small()), 1..24),
         rounds in 1_usize..4,
     ) {
-        let mut journal = Journal::new();
+        let mut journal = Journal::default();
         let mut recorded = Vec::new();
         let mut shade = [0_u8; 4];
         for (index, (quadrant, small)) in changes.into_iter().enumerate() {
@@ -276,7 +276,7 @@ proptest! {
             [value, value.wrapping_mul(3), seed, 255]
         };
         let image = frame(width, height, noise);
-        let mut journal = Journal::new();
+        let mut journal = Journal::default();
         admitted(&mut journal).record(Moment::from_millis(5), image.clone());
         prop_assert_eq!(journal.frame_at(Moment::from_millis(5)), Some(image));
     }

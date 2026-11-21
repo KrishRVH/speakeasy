@@ -97,7 +97,7 @@ fn source_preserves_retained_frames_after_thinning_and_geometry_changes() {
 
 #[test]
 fn indexing_never_reads_pixels_and_a_frame_never_loads_the_entire_source() {
-    let mut journal = Journal::new();
+    let mut journal = Journal::default();
     for n in 0..4_u8 {
         journal.admit().unwrap().record(
             Moment::from_millis(u64::from(n) * 200),
@@ -220,7 +220,7 @@ proptest! {
 #[test]
 fn replacing_a_source_with_same_sized_evidence_cannot_reuse_an_old_timestamp() {
     let source_at = |at| {
-        let mut journal = Journal::new();
+        let mut journal = Journal::default();
         journal.admit().unwrap().record(
             Moment::from_millis(at),
             Image::filled(2, 2, [9; 3]).unwrap(),
@@ -241,7 +241,7 @@ fn replacing_a_source_with_same_sized_evidence_cannot_reuse_an_old_timestamp() {
 #[test]
 fn tiles_that_deflate_expands_remain_readable() {
     let image = incompressible();
-    let mut journal = Journal::new();
+    let mut journal = Journal::default();
     journal
         .admit()
         .unwrap()
@@ -263,7 +263,7 @@ fn tiles_that_deflate_expands_remain_readable() {
 
 #[test]
 fn writing_rejects_a_tile_that_a_reader_cannot_accept() {
-    let mut journal = Journal::new();
+    let mut journal = Journal::default();
     journal
         .admit()
         .unwrap()
@@ -278,7 +278,7 @@ fn writing_rejects_a_tile_that_a_reader_cannot_accept() {
 
 #[test]
 fn crop_geometry_checks_intermediate_samples_without_reading_pixels() {
-    let mut journal = Journal::new();
+    let mut journal = Journal::default();
     for (at, width) in [(100, 100), (1000, 200), (2000, 100)] {
         journal.admit().unwrap().record(
             Moment::from_millis(at),

@@ -15,7 +15,7 @@ pub(super) fn fixture(parent: &Path, name: &str) -> anyhow::Result<PathBuf> {
     }
     fs::write(directory.join("show.json"), encoded)?;
     fs::write(directory.join("summary.md"), "PRIVATE_EDITED_SUMMARY")?;
-    let mut journal = Journal::new();
+    let mut journal = Journal::default();
     journal.admit().unwrap().record(
         Moment::from_millis(100),
         Image::from_bgra(2, 2, [20, 40, 60, 255].repeat(4))?,

@@ -64,7 +64,7 @@ fn source_commands_report_samples_preserve_files_and_handle_closed_pipes() -> an
             "keyframes":[{"index":1,"at":100,"reason":"middle","event":"PRIVATE_EVENT","marks":[0,0]}]
         }))?,
     )?;
-    let mut journal = Journal::new();
+    let mut journal = Journal::default();
     journal.admit().unwrap().record(
         Moment::from_millis(100),
         Image::from_bgra(2, 2, [123, 123, 123, 255].repeat(4))?,
@@ -134,7 +134,7 @@ fn phrase_windows_require_an_explicit_match_and_export_honest_samples() -> anyho
             "keyframes":[{"index":1,"at":2500,"reason":"mark","event":"PRIVATE_EVENT","marks":[0,1]}]
         }))?,
     )?;
-    let mut journal = Journal::new();
+    let mut journal = Journal::default();
     for at in [100, 1200, 2000, 3200] {
         journal.admit().unwrap().record(
             Moment::from_millis(at),
@@ -209,7 +209,7 @@ fn phrase_windows_require_an_explicit_match_and_export_honest_samples() -> anyho
     let mut manifest: serde_json::Value = serde_json::from_slice(&fs::read(&manifest_path)?)?;
     manifest["marks"][0]["span"] = serde_json::json!([1500, 3000]);
     fs::write(manifest_path, serde_json::to_vec(&manifest)?)?;
-    let mut resized = Journal::new();
+    let mut resized = Journal::default();
     for (at, width) in [(1000, 100), (2000, 200), (3000, 100)] {
         resized.admit().unwrap().record(
             Moment::from_millis(at),

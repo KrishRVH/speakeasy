@@ -121,7 +121,7 @@ struct Rehearsal {
 impl Rehearsal {
     fn new(width: u32, height: u32) -> Self {
         Self {
-            journal: Journal::new(),
+            journal: Journal::default(),
             tracker: Tracker::new(Size {
                 width: width as f32,
                 height: height as f32,

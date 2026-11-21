@@ -212,7 +212,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         .read_with(cx, |view, _| view.library.selected().cloned())?
         .context("The loaded preview selected a Show")?
         .directory;
-    let mut journal = speakeasy_show::Journal::new();
+    let mut journal = speakeasy_show::Journal::default();
     for at in [100, 700, 1_500, 19_000] {
         journal
             .admit()

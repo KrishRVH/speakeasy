@@ -29,7 +29,7 @@ fn fixture(parent: &Path) -> anyhow::Result<PathBuf> {
     {
         fs::write(directory.join(name), image.encode_png()?)?;
     }
-    let mut journal = Journal::new();
+    let mut journal = Journal::default();
     journal
         .admit()
         .unwrap()
@@ -276,7 +276,7 @@ fn source_damage_and_oversized_images_fail_without_publishing_partial_archives()
     assert!(write(&directory, &destination).is_err());
     assert!(!destination.exists());
     fs::remove_file(directory.join(source::FILE))?;
-    let mut other = Journal::new();
+    let mut other = Journal::default();
     other.admit().unwrap().record(
         Moment::from_millis(200),
         Image::from_bgra(2, 2, vec![20; 16])?,

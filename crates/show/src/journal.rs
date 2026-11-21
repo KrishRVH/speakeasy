@@ -87,11 +87,6 @@ impl fmt::Debug for Journal {
 
 impl Journal {
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    #[must_use]
     pub(crate) const fn with_budget(budget: usize) -> Self {
         Self {
             samples: Vec::new(),

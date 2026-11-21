@@ -189,7 +189,7 @@ fn stamps_name_utc_moments_in_order() {
 }
 
 fn bundle() -> anyhow::Result<Bundle> {
-    let mut journal = Journal::new();
+    let mut journal = Journal::default();
     let frame = Image::from_bgra(32, 20, vec![255; 2_560])?;
     journal
         .admit()
