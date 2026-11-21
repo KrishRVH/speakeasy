@@ -458,5 +458,23 @@ async fn running(
         reported && chosen.recv().await?.result == Disposition::Ok,
         "A preset whose save failed kept dictation off the saved settings"
     );
+
+    let stopped = cx.update(|cx| {
+        cx.global::<Services>()
+            .runtime()
+            .map(crate::runtime::Runtime::request_stop)
+    });
+    ensure!(stopped.is_some(), "The fake owner was already gone");
+    let mut english = cx.update(|cx| cx.global::<Services>().config.clone());
+    english.language = "en".into();
+    let used = cx
+        .update(|cx| {
+            cx.update_global::<Services, _>(|services, cx| services.use_preset(english, cx))
+        })
+        .map_err(anyhow::Error::msg)?;
+    ensure!(
+        used.recv().await?.is_ok(),
+        "Use refused a preset because the owner had stopped on its own"
+    );
     Ok(())
 }

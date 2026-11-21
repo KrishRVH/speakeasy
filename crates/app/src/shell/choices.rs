@@ -290,7 +290,7 @@ impl Services {
         cx: &App,
     ) -> Result<Admission, &'static str> {
         let config = result.map_err(|_unavailable| USE_UNAVAILABLE)?;
-        let Some(runtime) = self.runtime() else {
+        let Some(runtime) = self.live_runtime() else {
             self.forget_preset(cx);
             return Ok(Admission::Ready(config));
         };
