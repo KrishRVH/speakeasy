@@ -1,8 +1,12 @@
 use std::time::Duration;
 
 #[cfg(target_os = "windows")]
-use windows_sys::Win32::UI::WindowsAndMessaging::{
-    SPI_GETFILTERKEYS, SPI_GETKEYBOARDDELAY, SPI_GETKEYBOARDSPEED, SystemParametersInfoW,
+use windows_sys::Win32::UI::{
+    Accessibility::FILTERKEYS,
+    WindowsAndMessaging::{
+        FKF_FILTERKEYSON, SPI_GETFILTERKEYS, SPI_GETKEYBOARDDELAY, SPI_GETKEYBOARDSPEED,
+        SystemParametersInfoW,
+    },
 };
 
 const FILTER_KEYS_LONGEST: Duration = Duration::from_secs(20);
@@ -87,31 +91,17 @@ pub(super) fn read() -> Repeat {
 }
 
 #[cfg(target_os = "windows")]
-#[repr(C)]
-struct NativeFilterKeys {
-    size: u32,
-    flags: u32,
-    wait: u32,
-    delay: u32,
-    repeat: u32,
-    bounce: u32,
-}
-
-#[cfg(target_os = "windows")]
-const FILTER_KEYS_ON: u32 = 1;
-
-#[cfg(target_os = "windows")]
 fn settings() -> (Option<u32>, Option<u32>, Option<FilterKeys>) {
     let mut delay = 0_i32;
     let mut speed = 0_u32;
-    let size = u32::try_from(size_of::<NativeFilterKeys>()).unwrap_or_default();
-    let mut filter = NativeFilterKeys {
-        size,
-        flags: 0,
-        wait: 0,
-        delay: 0,
-        repeat: 0,
-        bounce: 0,
+    let size = u32::try_from(size_of::<FILTERKEYS>()).unwrap_or_default();
+    let mut filter = FILTERKEYS {
+        cbSize: size,
+        dwFlags: 0,
+        iWaitMSec: 0,
+        iDelayMSec: 0,
+        iRepeatMSec: 0,
+        iBounceMSec: 0,
     };
     let [read_delay, read_speed, read_filter] = unsafe {
         [
@@ -127,11 +117,11 @@ fn settings() -> (Option<u32>, Option<u32>, Option<FilterKeys>) {
             .and_then(|delay| u32::try_from(delay).ok()),
         read_speed.then_some(speed),
         read_filter.then_some(FilterKeys {
-            on: filter.flags & FILTER_KEYS_ON != 0,
-            wait: filter.wait,
-            delay: filter.delay,
-            repeat: filter.repeat,
-            bounce: filter.bounce,
+            on: filter.dwFlags & FKF_FILTERKEYSON != 0,
+            wait: filter.iWaitMSec,
+            delay: filter.iDelayMSec,
+            repeat: filter.iRepeatMSec,
+            bounce: filter.iBounceMSec,
         }),
     )
 }

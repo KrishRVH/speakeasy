@@ -212,7 +212,9 @@ module unless a test file is named.
   or Wayland. [keyboard/tests.rs](../crates/platform/src/keyboard/tests.rs) checks the pure key
   decisions on every host; owned-window and private-Xvfb checks are opt-in, and the hooks need
   native acceptance. Mac F13 uses key events and physical key-state reconciliation; Fn and the right
-  modifiers use modifier events. Only right modifiers defer quick application combinations.
+  modifiers use modifier events. Windows F13 presumes a lost release only from silence beyond the
+  user's repeat settings, which
+  [keyboard/typematic.rs](../crates/platform/src/keyboard/typematic.rs) reads. Only right modifiers defer quick application combinations.
   Insertion waits for the configured shortcut through the same native adapter that rechecks it
   before delivery; selecting F13 never reserves it for another shortcut setting.
 - **Pill and motion**: [pill.rs](../crates/app/src/pill.rs) and [pill/](../crates/app/src/pill),
