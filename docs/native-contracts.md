@@ -228,15 +228,17 @@ polls, at most `SIGNAL_BACKLOG` messages at a time, so transfer requests cannot 
 insertion. The portal clipboard serves bytes only after the permit commits to paste or manual copy.
 Selection loss invalidates its transfer payloads. Writes and reporting have deadlines. An X11 copy
 that waits for released keys watches XFixes selection-owner notifications during the wait and
-refuses to overwrite any copy made meanwhile, even one from an app that keeps its owner window. X11
-clipboard serving and insertion have separate owners; before committing paste, the X11 paste
-confirms that the clipboard still holds the dictated text from the same owner and only then samples
-focus, layout, and held modifiers, because a clipboard manager can take seconds to answer that read.
-It then reads the owner window once more, one server round trip, immediately before committing:
-Speakeasy's own window owns the dictated text, so a copy made during those queries changes the owner
-and refuses the paste. A content check that fails or errors never leaves the clipboard for manual
-paste, and Escape during a check that errors reports cancellation rather than the error. The last
-check and XTEST submission are not one atomic server transaction.
+refuses to overwrite any copy made meanwhile, even one from an app that keeps its owner window. An X
+server without XFixes degrades only that wait, which then compares the owner window before and after
+it and so misses a new copy from an app that keeps its owner window. X11 clipboard serving and
+insertion have separate owners; before committing paste, the X11 paste confirms that the clipboard
+still holds the dictated text from the same owner and only then samples focus, layout, and held
+modifiers, because a clipboard manager can take seconds to answer that read. It then reads the owner
+window once more, one server round trip, immediately before committing: Speakeasy's own window owns
+the dictated text, so a copy made during those queries changes the owner and refuses the paste. A
+content check that fails or errors never leaves the clipboard for manual paste, and Escape during a
+check that errors reports cancellation rather than the error. The last check and XTEST submission
+are not one atomic server transaction.
 
 ## Linux realtime opt-out
 

@@ -3,10 +3,10 @@ use std::panic::{self, AssertUnwindSafe};
 use anyhow::Context as _;
 use async_channel::{Receiver, Sender};
 use x11rb::{
-    connection::Connection as _,
+    connection::{Connection as _, RequestConnection as _},
     protocol::{
         Event,
-        xfixes::{ConnectionExt as _, SelectionEventMask},
+        xfixes::{self, ConnectionExt as _, SelectionEventMask},
         xproto::{Atom, ConnectionExt as _, Window},
     },
     xcb_ffi::XCBConnection,
@@ -216,18 +216,33 @@ pub(super) struct Clipboard {
     native: Option<arboard::Clipboard>,
     root: Window,
     selection: Atom,
+    owner_watch: OwnerWatch,
+}
+
+enum OwnerWatch {
+    Notifications,
+    OwnerWindow,
 }
 
 impl Clipboard {
     pub(super) fn open() -> anyhow::Result<Self> {
         let (connection, root) = connect_with_root()?;
-        connection.xfixes_query_version(5, 0)?.reply()?;
+        let owner_watch = if connection
+            .extension_information(xfixes::X11_EXTENSION_NAME)?
+            .is_some()
+            && connection.xfixes_query_version(5, 0)?.reply().is_ok()
+        {
+            OwnerWatch::Notifications
+        } else {
+            OwnerWatch::OwnerWindow
+        };
         let selection = intern(&connection, b"CLIPBOARD")?;
         Ok(Self {
             connection,
             native: None,
             root,
             selection,
+            owner_watch,
         })
     }
 
@@ -235,17 +250,26 @@ impl Clipboard {
         &self,
         during: impl FnOnce(&Self) -> anyhow::Result<T>,
     ) -> anyhow::Result<(T, bool)> {
-        self.watch_owner(
-            SelectionEventMask::SET_SELECTION_OWNER
-                | SelectionEventMask::SELECTION_WINDOW_DESTROY
-                | SelectionEventMask::SELECTION_CLIENT_CLOSE,
-        )?;
-        self.owner_changed()?;
-        let during = during(self);
-        let stopped = self.watch_owner(SelectionEventMask::default());
-        let changed = self.owner_changed()?;
-        stopped?;
-        Ok((during?, changed))
+        match self.owner_watch {
+            OwnerWatch::Notifications => {
+                self.watch_owner(
+                    SelectionEventMask::SET_SELECTION_OWNER
+                        | SelectionEventMask::SELECTION_WINDOW_DESTROY
+                        | SelectionEventMask::SELECTION_CLIENT_CLOSE,
+                )?;
+                self.owner_changed()?;
+                let during = during(self);
+                let stopped = self.watch_owner(SelectionEventMask::default());
+                let changed = self.owner_changed()?;
+                stopped?;
+                Ok((during?, changed))
+            },
+            OwnerWatch::OwnerWindow => {
+                let before = self.owner()?;
+                let during = during(self)?;
+                Ok((during, self.owner()? != before))
+            },
+        }
     }
 
     fn watch_owner(&self, changes: SelectionEventMask) -> anyhow::Result<()> {

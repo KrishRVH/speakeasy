@@ -6,9 +6,9 @@ use std::{
 
 use anyhow::{Context as _, bail, ensure};
 use x11rb::{
-    connection::Connection as _,
+    connection::{Connection as _, RequestConnection as _},
     protocol::{
-        Event,
+        Event, xfixes,
         xproto::{self, ConnectionExt as _},
         xtest::ConnectionExt as _,
     },
@@ -28,7 +28,10 @@ const PRIVATE_DISPLAY: &str = "SPEAKEASY_TEST_PRIVATE_DISPLAY";
 #[tokio::test]
 #[ignore = "Injects XTEST keys and remaps a key on a private Xvfb display it starts, never the current one"]
 async fn a_keyboard_switch_keeps_shortcuts_and_a_remap_stops_them() -> anyhow::Result<()> {
-    if !on_private_display("a_keyboard_switch_keeps_shortcuts_and_a_remap_stops_them")? {
+    if !on_private_display(
+        "a_keyboard_switch_keeps_shortcuts_and_a_remap_stops_them",
+        &[],
+    )? {
         return Ok(());
     }
     let (events, received) = async_channel::bounded(8);
@@ -104,7 +107,10 @@ async fn a_keyboard_switch_keeps_shortcuts_and_a_remap_stops_them() -> anyhow::R
 #[tokio::test]
 #[ignore = "Grabs a key on a private Xvfb display it starts, never the current one"]
 async fn a_shortcut_another_app_holds_stops_input_naming_the_shortcut() -> anyhow::Result<()> {
-    if !on_private_display("a_shortcut_another_app_holds_stops_input_naming_the_shortcut")? {
+    if !on_private_display(
+        "a_shortcut_another_app_holds_stops_input_naming_the_shortcut",
+        &[],
+    )? {
         return Ok(());
     }
     let (connection, root) = connect_with_root()?;
@@ -142,7 +148,7 @@ async fn a_shortcut_another_app_holds_stops_input_naming_the_shortcut() -> anyho
 #[test]
 #[ignore = "Writes the clipboard of a private Xvfb display it starts, never the current one"]
 fn a_fresh_clipboard_owns_its_first_copy() -> anyhow::Result<()> {
-    if !on_private_display("a_fresh_clipboard_owns_its_first_copy")? {
+    if !on_private_display("a_fresh_clipboard_owns_its_first_copy", &[])? {
         return Ok(());
     }
     let (connection, other) = selection_owner()?;
@@ -169,6 +175,7 @@ fn an_owner_that_keeps_its_window_but_changes_its_text_no_longer_holds_the_copy(
 -> anyhow::Result<()> {
     if !on_private_display(
         "an_owner_that_keeps_its_window_but_changes_its_text_no_longer_holds_the_copy",
+        &[],
     )? {
         return Ok(());
     }
@@ -197,6 +204,7 @@ fn a_copy_while_the_shortcut_is_held_counts_even_from_the_same_owner_window() ->
 {
     if !on_private_display(
         "a_copy_while_the_shortcut_is_held_counts_even_from_the_same_owner_window",
+        &[],
     )? {
         return Ok(());
     }
@@ -222,6 +230,40 @@ fn a_copy_while_the_shortcut_is_held_counts_even_from_the_same_owner_window() ->
     Ok(())
 }
 
+#[test]
+#[ignore = "Takes the clipboard of a private Xvfb display without XFixes it starts, never the current one"]
+fn without_xfixes_the_clipboard_opens_and_the_release_wait_compares_owner_windows()
+-> anyhow::Result<()> {
+    if !on_private_display(
+        "without_xfixes_the_clipboard_opens_and_the_release_wait_compares_owner_windows",
+        &["-extension", "XFIXES"],
+    )? {
+        return Ok(());
+    }
+    let (connection, owner) = selection_owner()?;
+    ensure!(
+        connection
+            .extension_information(xfixes::X11_EXTENSION_NAME)?
+            .is_none(),
+        "The private display still offers XFixes"
+    );
+    let selection = intern(&connection, b"CLIPBOARD")?;
+    let clipboard = Clipboard::open().context("The clipboard needed XFixes to open")?;
+    let ((), quiet) = clipboard.watching_owner(|_| Ok(()))?;
+    ensure!(!quiet, "An untouched clipboard counted as changed");
+    let ((), copied) = clipboard.watching_owner(|_| {
+        connection
+            .set_selection_owner(owner, selection, x11rb::CURRENT_TIME)?
+            .check()?;
+        Ok(())
+    })?;
+    ensure!(
+        copied,
+        "A copy from another window went unseen without XFixes"
+    );
+    Ok(())
+}
+
 fn selection_owner() -> anyhow::Result<(XCBConnection, xproto::Window)> {
     let (connection, root) = connect_with_root()?;
     let window = connection.generate_id()?;
@@ -243,12 +285,12 @@ fn selection_owner() -> anyhow::Result<(XCBConnection, xproto::Window)> {
     Ok((connection, window))
 }
 
-fn on_private_display(test: &str) -> anyhow::Result<bool> {
+fn on_private_display(test: &str, server_options: &[&str]) -> anyhow::Result<bool> {
     let private = std::env::var_os(PRIVATE_DISPLAY);
     if private.is_some() && private == std::env::var_os("DISPLAY") {
         return Ok(true);
     }
-    let server = PrivateServer::start()?;
+    let server = PrivateServer::start(server_options)?;
     let module = module_path!()
         .split_once("::")
         .map_or(module_path!(), |(_, module)| module);
@@ -274,7 +316,7 @@ struct PrivateServer {
 }
 
 impl PrivateServer {
-    fn start() -> anyhow::Result<Self> {
+    fn start(options: &[&str]) -> anyhow::Result<Self> {
         let first = (std::process::id() % 20_000).saturating_add(100);
         for number in (first..).take(8) {
             let display = format!(":{number}");
@@ -289,6 +331,7 @@ impl PrivateServer {
                         "-nolisten",
                         "unix",
                     ])
+                    .args(options)
                     .stdin(Stdio::null())
                     .stdout(Stdio::piped())
                     .stderr(Stdio::null())
