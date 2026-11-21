@@ -123,8 +123,7 @@ pub(super) fn group_listens(leader: libc::pid_t, port: u16) -> io::Result<bool> 
 #[cfg(target_os = "macos")]
 fn members(leader: libc::pid_t) -> io::Result<Vec<libc::pid_t>> {
     listed(0, |members, bytes| {
-        let count = unsafe { libc::proc_listpgrppids(leader, members.as_mut_ptr().cast(), bytes) };
-        usize::try_from(count).unwrap_or(0)
+        reported(unsafe { libc::proc_listpgrppids(leader, members.as_mut_ptr().cast(), bytes) })
     })
 }
 
@@ -134,7 +133,7 @@ fn descriptors(pid: libc::pid_t) -> io::Result<Vec<libc::proc_fdinfo>> {
         proc_fd: 0,
         proc_fdtype: 0,
     };
-    listed(unused, |descriptors, bytes| {
+    let listing = listed(unused, |descriptors, bytes| {
         let written = unsafe {
             libc::proc_pidinfo(
                 pid,
@@ -144,19 +143,31 @@ fn descriptors(pid: libc::pid_t) -> io::Result<Vec<libc::proc_fdinfo>> {
                 bytes,
             )
         };
-        usize::try_from(written / libc::PROC_PIDLISTFD_SIZE).unwrap_or(0)
-    })
+        reported(written / libc::PROC_PIDLISTFD_SIZE)
+    });
+    match listing {
+        Err(error) if error.raw_os_error() == Some(libc::ESRCH) => Ok(Vec::new()),
+        listing => listing,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn reported(entries: c_int) -> io::Result<usize> {
+    usize::try_from(entries)
+        .ok()
+        .filter(|&entries| entries > 0)
+        .ok_or_else(io::Error::last_os_error)
 }
 
 #[cfg(target_os = "macos")]
 fn listed<T: Copy>(
     unused: T,
-    mut fill: impl FnMut(&mut [T], c_int) -> usize,
+    mut fill: impl FnMut(&mut [T], c_int) -> io::Result<usize>,
 ) -> io::Result<Vec<T>> {
     for capacity in [64, 512, 4096] {
         let mut entries = vec![unused; capacity];
         let bytes = c_int::try_from(size_of_val(entries.as_slice())).map_err(io::Error::other)?;
-        let filled = fill(&mut entries, bytes);
+        let filled = fill(&mut entries, bytes)?;
         if filled < capacity {
             entries.truncate(filled);
             return Ok(entries);
@@ -261,5 +272,39 @@ mod tests {
             .map(|(id, ..)| id)
             .collect();
         assert_eq!(counted, [1, 2, 6, 7, 10]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn only_a_member_that_has_exited_reads_as_holding_no_descriptors() -> anyhow::Result<()> {
+        use std::{
+            io,
+            process::Command,
+            thread,
+            time::{Duration, Instant},
+        };
+
+        use super::{descriptors, group_listens};
+
+        const LAUNCHD: libc::pid_t = 1;
+        let mut exited = Command::new("true").spawn()?;
+        let zombie = libc::pid_t::try_from(exited.id())?;
+        let deadline = Instant::now().checked_add(Duration::from_secs(5)).unwrap();
+        while !super::super::leader_exited(zombie)? {
+            anyhow::ensure!(Instant::now() < deadline, "The child never exited");
+            thread::sleep(Duration::from_millis(5));
+        }
+        let unreaped = descriptors(zombie).map(|listed| listed.len());
+        exited.wait()?;
+        assert_eq!(unreaped?, 0);
+        let privileged = descriptors(LAUNCHD).is_ok_and(|listed| !listed.is_empty());
+        if !privileged {
+            assert_eq!(
+                group_listens(LAUNCHD, 1).map_err(|error| error.kind()),
+                Err(io::ErrorKind::PermissionDenied),
+                "Another account's descriptors are unverified, not absent"
+            );
+        }
+        Ok(())
     }
 }
