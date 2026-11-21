@@ -93,7 +93,13 @@ fn prefixes() -> anyhow::Result<[PathBuf; 3]> {
 fn seek(path: &Path, ms: u64, cancelled: &dyn Fn() -> bool) -> anyhow::Result<Option<MovieFrame>> {
     let mut file = File::open(path)?;
     let prefix = crate::movie::tests::prefix(&mut file)?;
-    crate::read_movie_frame(file, &prefix, Duration::from_millis(ms), cancelled)
+    crate::read_movie_frame(
+        file,
+        &prefix,
+        Duration::from_millis(ms),
+        Duration::MAX,
+        cancelled,
+    )
 }
 
 fn check_orientation(pixels: &[u8]) {

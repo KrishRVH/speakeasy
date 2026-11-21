@@ -185,6 +185,7 @@ async fn a_stalled_writer_reports_the_held_prefix_even_without_a_new_capture() -
         Instant::now()
             .checked_add(Duration::from_secs(300))
             .unwrap(),
+        Duration::MAX,
     );
     let (_stop, stopping) = async_channel::bounded(1);
     let native = crate::OwnedThread::spawn("synthetic movie stall", move || {

@@ -69,7 +69,10 @@ pub(super) fn verify(directory: &Path) -> anyhow::Result<()> {
             Duration::from_nanos(u64::try_from(index)?.checked_mul(1_000_000_000).unwrap() / 30);
         assert_eq!(sample.at, expected);
         let frame =
-            crate::read_movie_frame(File::open(&path)?, &prefix, expected, || false)?.unwrap();
+            crate::read_movie_frame(File::open(&path)?, &prefix, expected, Duration::MAX, || {
+                false
+            })?
+            .unwrap();
         assert_eq!(frame.at, expected);
         if index < 6 {
             crate::movie::tests::check_colors(&frame, usize::from(index == 2));

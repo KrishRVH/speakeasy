@@ -22,7 +22,7 @@ fn a_movie_survives_still_backpressure_and_closes_at_the_session_deadline() -> a
     let path = directory.path().join("owned.mp4");
     let started = Instant::now();
     let deadline = started.checked_add(Duration::from_secs(4)).unwrap();
-    let (control, movie) = crate::MovieControl::new(path.clone(), deadline);
+    let (control, movie) = crate::MovieControl::new(path.clone(), deadline, Duration::MAX);
     let (outgoing, frames) = async_channel::bounded(1);
     let capture = ScreenCapture::start(
         target,

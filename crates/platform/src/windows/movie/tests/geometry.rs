@@ -123,6 +123,7 @@ async fn rejected_and_cancelled_geometry_never_submit_the_unacknowledged_layout(
         let (control, target) = crate::MovieControl::new(
             path.clone(),
             Instant::now().checked_add(crate::PATIENCE).unwrap(),
+            Duration::MAX,
         );
         let (_stop, stopping) = async_channel::bounded(1);
         let native = crate::OwnedThread::spawn("synthetic geometry acceptance", move || {

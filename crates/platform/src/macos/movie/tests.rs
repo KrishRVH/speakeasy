@@ -39,7 +39,7 @@ fn read(
     assert!(!prefix.truncated());
     let sample = prefix.samples()[index];
     let descriptor = file.as_raw_fd();
-    let frame = crate::read_movie_frame(file, &prefix, sample.at, cancelled)?;
+    let frame = crate::read_movie_frame(file, &prefix, sample.at, Duration::MAX, cancelled)?;
     assert_released(descriptor, &metadata);
     Ok(frame)
 }
@@ -109,7 +109,10 @@ fn native_movie_reads_its_open_file_after_the_path_is_replaced() -> anyhow::Resu
     let (file, prefix) = validated(&original)?;
     std::fs::rename(&original, private.path().join("retained.mp4"))?;
     std::fs::copy(fixtures.join("other.mp4"), &original)?;
-    let frame = crate::read_movie_frame(file, &prefix, prefix.samples()[1].at, || false)?
+    let frame =
+        crate::read_movie_frame(file, &prefix, prefix.samples()[1].at, Duration::MAX, || {
+            false
+        })?
         .context("Synthetic replaced-path read cancelled")?;
     check_colors(&frame, 1);
     Ok(())

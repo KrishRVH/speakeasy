@@ -2,7 +2,7 @@ use std::{ops::ControlFlow, path::Path, time::Duration};
 
 use anyhow::ensure;
 
-use super::{RECORDING_LIMIT, canvas::Canvas};
+use super::canvas::Canvas;
 use crate::Frame;
 
 pub(crate) const FRAME_LIMIT: u32 = 9_000;
@@ -98,10 +98,8 @@ impl<C: Codec> Encoder<C> {
     ) -> anyhow::Result<ControlFlow<()>> {
         let at = C::CLOCK.quantize(at);
         ensure!(
-            at <= RECORDING_LIMIT
-                && self
-                    .capture
-                    .map_or_else(|| at.is_zero(), |previous| at >= previous),
+            self.capture
+                .map_or_else(|| at.is_zero(), |previous| at >= previous),
             "Movie capture time is invalid"
         );
 

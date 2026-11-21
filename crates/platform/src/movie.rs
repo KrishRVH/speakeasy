@@ -17,8 +17,6 @@ use async_channel::{Receiver, Sender};
 use speakeasy_show::{MAX_FRAME_EDGE, MoviePrefix};
 use tokio::sync::oneshot;
 
-pub(crate) const RECORDING_LIMIT: Duration = Duration::from_secs(300);
-
 #[derive(Debug)]
 pub struct MovieFrame {
     pub at: Duration,
@@ -29,6 +27,7 @@ pub fn read_movie_frame(
     file: File,
     prefix: &MoviePrefix,
     at: Duration,
+    limit: Duration,
     cancelled: impl Fn() -> bool,
 ) -> anyhow::Result<Option<MovieFrame>> {
     anyhow::ensure!(
@@ -37,7 +36,7 @@ pub fn read_movie_frame(
         "Movie changed; refresh the Show before reading it"
     );
     anyhow::ensure!(
-        is_canvas(prefix.size()) && at <= prefix.duration() && at <= RECORDING_LIMIT,
+        is_canvas(prefix.size()) && at <= prefix.duration() && at <= limit,
         "Movie frame request is out of range"
     );
     if cancelled() {
@@ -96,6 +95,14 @@ pub struct MovieTarget {
     cancelled: Receiver<Infallible>,
     events: Sender<MovieEvent>,
     deadline: Instant,
+    #[cfg_attr(
+        not(any(test, target_os = "windows", target_os = "macos")),
+        expect(
+            dead_code,
+            reason = "Linux records no Show movie, so nothing reads its limit"
+        )
+    )]
+    limit: Duration,
 }
 
 impl fmt::Debug for MovieTarget {
@@ -106,7 +113,7 @@ impl fmt::Debug for MovieTarget {
 
 impl MovieControl {
     #[must_use]
-    pub fn new(path: PathBuf, deadline: Instant) -> (Self, MovieTarget) {
+    pub fn new(path: PathBuf, deadline: Instant, limit: Duration) -> (Self, MovieTarget) {
         let (cancel, cancelled) = async_channel::bounded(1);
         let (outgoing, events) = async_channel::bounded(2);
         (
@@ -116,6 +123,7 @@ impl MovieControl {
                 cancelled,
                 events: outgoing,
                 deadline,
+                limit,
             },
         )
     }
@@ -154,6 +162,11 @@ impl MovieTarget {
     #[must_use]
     pub const fn deadline(&self) -> Instant {
         self.deadline
+    }
+
+    #[cfg(any(test, target_os = "windows", target_os = "macos"))]
+    pub(crate) const fn limit(&self) -> Duration {
+        self.limit
     }
 
     #[cfg(any(test, target_os = "windows", target_os = "macos"))]
@@ -370,7 +383,11 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn the_session_deadline_cancels_an_unused_target_without_releasing_its_lease() {
-        let (control, target) = MovieControl::new(PathBuf::from("synthetic.mp4"), Instant::now());
+        let (control, target) = MovieControl::new(
+            PathBuf::from("synthetic.mp4"),
+            Instant::now(),
+            Duration::MAX,
+        );
         acknowledges_only_once_the_lease_drops(control, target).await;
     }
 
@@ -379,6 +396,7 @@ pub(crate) mod tests {
         let (control, target) = MovieControl::new(
             PathBuf::from("synthetic.mp4"),
             Instant::now().checked_add(crate::PATIENCE).unwrap(),
+            Duration::MAX,
         );
         control.request_stop();
         acknowledges_only_once_the_lease_drops(control, target).await;
@@ -392,6 +410,7 @@ pub(crate) mod tests {
             let (control, target) = MovieControl::new(
                 PathBuf::from("synthetic.mp4"),
                 Instant::now().checked_add(crate::PATIENCE).unwrap(),
+                Duration::MAX,
             );
             let (stop, stopping) = async_channel::bounded(1);
             let native = crate::OwnedThread::spawn("synthetic movie handshake", move || {

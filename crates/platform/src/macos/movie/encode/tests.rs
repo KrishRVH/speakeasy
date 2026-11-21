@@ -55,9 +55,14 @@ fn native_mac_movie_encoding() -> anyhow::Result<()> {
         );
         for index in [count - 1, 0] {
             let file = File::open(&path)?;
-            let frame =
-                crate::read_movie_frame(file, &prefix, prefix.samples()[index].at, || false)?
-                    .context("Synthetic movie was cancelled")?;
+            let frame = crate::read_movie_frame(
+                file,
+                &prefix,
+                prefix.samples()[index].at,
+                Duration::MAX,
+                || false,
+            )?
+            .context("Synthetic movie was cancelled")?;
             assert_eq!(frame.at, prefix.samples()[index].at);
             crate::movie::tests::check_colors(&frame, picture.pattern(index));
         }

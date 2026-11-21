@@ -426,7 +426,8 @@ newly captured image use the previous canvas; quiet periods repeat already captu
 quantizes to 100 ns and Mac keeps nanoseconds while native samples retain their rational 30 Hz
 timing. Per-advance catch-up, total sample, canvas and disk bounds remain independent. Coverage
 records an accepted sample before a later checkpoint error can occur. A held image never claims a
-new capture time.
+new capture time. The caller passes the recording limit with the session deadline; no capture time
+or frame read passes that limit.
 
 Begin/geometry acknowledgements observe both checkpoint cancellation and capture stop. The
 non-cloneable target drops after the native encoder and its actual file handles. A recording that

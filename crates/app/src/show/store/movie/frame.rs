@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use serde::Serialize;
+use speakeasy_core::gesture::RECORDING_LIMIT;
 use speakeasy_platform::BgraImage;
 use speakeasy_show::{
     AnnotationReport, Annotations, Image, Moment, PixelRect, Rect, Typeface, VideoViewport,
@@ -162,7 +163,13 @@ impl Reading {
                 .context("Movie has no published coverage")?
                 .annotations_through_ms,
         );
-        let Some(frame) = speakeasy_platform::read_movie_frame(file, &movie.prefix, at, cancelled)?
+        let Some(frame) = speakeasy_platform::read_movie_frame(
+            file,
+            &movie.prefix,
+            at,
+            RECORDING_LIMIT,
+            cancelled,
+        )?
         else {
             return Ok(None);
         };

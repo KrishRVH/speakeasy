@@ -17,7 +17,7 @@ impl Writing {
         let deadline = started
             .checked_add(RECORDING_LIMIT)
             .context("Movie deadline is out of range")?;
-        let (control, target) = MovieControl::new(directory.join(FILE), deadline);
+        let (control, target) = MovieControl::new(directory.join(FILE), deadline, RECORDING_LIMIT);
         Ok((
             Self {
                 control,

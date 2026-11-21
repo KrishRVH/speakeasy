@@ -11,7 +11,6 @@ use std::{
 use async_channel::Receiver;
 
 use super::{
-    RECORDING_LIMIT,
     canvas::Canvas,
     encode::{Codec, Encoder, End, Observer},
 };
@@ -183,7 +182,7 @@ impl<C: Codec> Recording<C> {
     ) -> anyhow::Result<ControlFlow<()>> {
         let at = frame.at.saturating_duration_since(self.first);
         anyhow::ensure!(
-            frame.at < self.target.deadline() && at <= RECORDING_LIMIT,
+            frame.at < self.target.deadline() && at <= self.target.limit(),
             "The Show movie reached its recording limit"
         );
         if self

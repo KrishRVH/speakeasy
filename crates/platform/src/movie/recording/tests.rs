@@ -71,6 +71,7 @@ fn control() -> (MovieControl, MovieTarget) {
         Instant::now()
             .checked_add(INTERVAL.saturating_mul(150))
             .unwrap(),
+        Duration::MAX,
     )
 }
 
@@ -151,6 +152,7 @@ async fn a_cancelled_active_movie_releases_its_file_without_a_new_frame() -> any
         Instant::now()
             .checked_add(INTERVAL.saturating_mul(150))
             .unwrap(),
+        Duration::MAX,
     );
     let (_stop, stopping) = async_channel::bounded(1);
     let (submitted, wrote) = async_channel::bounded(1);
