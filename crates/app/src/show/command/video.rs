@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::Context as _;
-use speakeasy_show::Span;
+use speakeasy_show::{Moment, Span};
 
 use super::{AROUND, output};
 use crate::show::{
@@ -98,12 +98,23 @@ impl Request {
 }
 
 fn widened(directory: &Path, focus: &Query, around: Duration) -> anyhow::Result<Span> {
+    let show = recall::Entry::open(directory)?.show?;
     let span = if let Query::At(at) = focus {
+        let end = show
+            .movie
+            .and_then(|movie| movie.metadata.coverage)
+            .map_or(Moment::START, |coverage| {
+                Moment::from_millis(coverage.end_ms)
+            })
+            .max(show.manifest.recording().duration);
+        anyhow::ensure!(
+            at.saturating_sub(around) < end,
+            "The requested time is past this Show's end at {end}; choose an earlier --at time"
+        );
         Span::at(*at)
     } else {
-        let manifest = recall::Entry::open(directory)?.show?.manifest;
         focus
-            .resolve(&manifest)?
+            .resolve(&show.manifest)?
             .selected
             .context("Several phrases match; select one with --match K before exporting")?
     };
