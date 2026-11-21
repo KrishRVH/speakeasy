@@ -432,5 +432,31 @@ async fn running(
         );
         anyhow::Ok(())
     })??;
+
+    let directory = path.parent().context("The settings file has a directory")?;
+    let writable = (
+        fs::metadata(directory)?.permissions(),
+        fs::metadata(path)?.permissions(),
+    );
+    for locked in [directory, path] {
+        let mut permissions = fs::metadata(locked)?.permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(locked, permissions)?;
+    }
+    let failed = using(settings, 2, cx).await;
+    fs::set_permissions(path, writable.1)?;
+    fs::set_permissions(directory, writable.0)?;
+    failed?;
+    let reported = settings.read_with(cx, |view, _| {
+        view.notice.as_ref().is_some_and(Notice::is_problem)
+    })?;
+    let (call, chosen) = Call::new(Command::Preset {
+        name: "French".into(),
+    });
+    cx.update(|cx| cx.update_global::<Services, _>(|services, cx| services.control(call, cx)));
+    ensure!(
+        reported && chosen.recv().await?.result == Disposition::Ok,
+        "A preset whose save failed kept dictation off the saved settings"
+    );
     Ok(())
 }

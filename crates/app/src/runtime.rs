@@ -359,12 +359,16 @@ impl<Host> Runtime<Host> {
     }
 
     pub(crate) fn configure(&self, config: ValidConfig) {
-        if self.configuration.borrow().change_to(&config) < Change::Session {
+        self.restore(config.into_inner());
+    }
+
+    pub(crate) fn restore(&self, saved: Config) {
+        if self.configuration.borrow().change_to(&saved) < Change::Session {
             return;
         }
 
         self.input.cancel();
-        self.configuration.send_replace(config.into_inner());
+        self.configuration.send_replace(saved);
     }
 
     pub(crate) fn adopt(&self, config: ValidConfig) -> Receiver<Adopted> {

@@ -719,6 +719,7 @@ impl Settings {
             })
         });
         if error.is_some() {
+            cx.update_global::<Services, _>(|services, _| services.restore_owner());
             let restored = cx.global::<Services>().config.clone();
             if restored.presets != self.config.presets {
                 self.menus.dismiss_presets();

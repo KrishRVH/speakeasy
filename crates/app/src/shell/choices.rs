@@ -264,18 +264,24 @@ impl Services {
                 Ok(Admission::Ready(config)) => Ok(config),
                 Ok(Admission::Waiting(config, receipt)) => {
                     let adopted = receipt.recv().await.unwrap_or(Err(UNACKNOWLEDGED));
-                    cx.update_global::<Self, _>(|services, _| services.confirm_use(&config, adopted))
-                        .map(|()| config)
+                    cx.update_global::<Self, _>(|services, _| {
+                        services.confirm_use(&config, adopted)
+                    })
+                    .map(|()| config)
                 },
                 Err(reason) => Err(reason),
             };
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "Settings closed, so nobody waits to save the preset or explain its refusal"
-            )]
-            let _ = answer.try_send(outcome);
+            if answer.try_send(outcome).is_err() {
+                cx.update_global::<Self, _>(|services, _| services.restore_owner());
+            }
         }));
         Ok(used)
+    }
+
+    pub(super) fn restore_owner(&self) {
+        if let Some(runtime) = self.runtime() {
+            runtime.restore(self.config.clone());
+        }
     }
 
     fn admit_use(
