@@ -519,7 +519,7 @@ pub(super) async fn fired_restart(cx: &mut AsyncApp) -> anyhow::Result<()> {
             stopped
         })
     });
-    let restarted = converged(cx, "A restart the owner signalled was lost", &rebound).await;
+    let restarted = converged(cx, "A restart the owner signaled was lost", &rebound).await;
     relaunch(&saved, cx).await?;
     ensure!(stopped, "The idle owner did not stop for its restart");
     restarted
