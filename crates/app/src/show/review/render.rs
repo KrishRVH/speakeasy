@@ -15,7 +15,7 @@ use super::{
 };
 use crate::{
     controls::{
-        CONTROL_TEXT, DETAIL_LINE, DETAIL_TEXT, Kit, PANEL_CORNER, TITLE_TEXT, Tone, Weight,
+        CONTROL_TEXT, DETAIL_LINE, DETAIL_TEXT, Focus, Kit, PANEL_CORNER, TITLE_TEXT, Tone, Weight,
     },
     icons,
     show::{
@@ -1219,9 +1219,15 @@ fn pressable(
     enabled: bool,
     cx: &Context<'_, Review>,
 ) -> Stateful<Div> {
-    kit.pressable(id(action), label, role, false, press(action, enabled, cx))
-        .border_1()
-        .border_color(alpha(palette.lamp, 0.0))
+    kit.pressable(
+        id(action),
+        label,
+        role,
+        Focus::Tint,
+        press(action, enabled, cx),
+    )
+    .border_1()
+    .border_color(alpha(palette.lamp, 0.0))
 }
 
 fn command(

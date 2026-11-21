@@ -1,5 +1,5 @@
 use gpui::{
-    Anchor, AnyElement, App, BoxShadow, ClickEvent, Div, ElementId, FontWeight, Pixels, Rgba,
+    Anchor, AnyElement, App, BoxShadow, ClickEvent, Div, ElementId, FontWeight, Pixels, Rgba, Role,
     SharedString, Stateful, Window, anchored, deferred, div, point, prelude::*, px, relative, rgb,
     svg,
 };
@@ -29,6 +29,13 @@ pub(crate) enum Weight {
     Quiet,
     Destroy,
     ConfirmDestroy,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum Focus {
+    Ring,
+    Tint,
+    Halo,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -92,11 +99,15 @@ impl<'a> Kit<'a> {
             Weight::Destroy => (clear, alpha(palette.warn, 0.55), palette.warn),
             Weight::ConfirmDestroy => (rgb(palette.warn), rgb(palette.warn), palette.room),
         };
-        let filled = matches!(
+        let focus = if matches!(
             weight,
             Weight::Primary | Weight::Secondary | Weight::ConfirmDestroy
-        );
-        self.pressable(id, label.clone(), gpui::Role::Button, filled, on_click)
+        ) {
+            Focus::Ring
+        } else {
+            Focus::Tint
+        };
+        self.pressable(id, label.clone(), Role::Button, focus, on_click)
             .h(HEIGHT)
             .px(px(14.0))
             .justify_center()
@@ -130,7 +141,7 @@ impl<'a> Kit<'a> {
     ) -> Stateful<Div> {
         let palette = self.palette;
         let word = word.into();
-        self.pressable(id, word.clone(), gpui::Role::Button, false, Some(on_click))
+        self.pressable(id, word.clone(), Role::Button, Focus::Tint, Some(on_click))
             .aria_toggled(picked.into())
             .px(px(3.0))
             .rounded(px(4.0))
@@ -154,7 +165,7 @@ impl<'a> Kit<'a> {
     ) -> Stateful<Div> {
         let palette = self.palette;
         let enabled = on_click.is_some();
-        self.pressable(id, label.into(), gpui::Role::Button, false, on_click)
+        self.pressable(id, label.into(), Role::Button, Focus::Tint, on_click)
             .size(HEIGHT)
             .justify_center()
             .rounded(CORNER)
@@ -175,7 +186,7 @@ impl<'a> Kit<'a> {
     ) -> Stateful<Div> {
         let palette = self.palette;
         let enabled = on_click.is_some();
-        self.pressable(id, label.into(), gpui::Role::Switch, true, on_click)
+        self.pressable(id, label.into(), Role::Switch, Focus::Ring, on_click)
             .aria_toggled(on.into())
             .relative()
             .w(px(40.0))
@@ -215,8 +226,8 @@ impl<'a> Kit<'a> {
         self.pressable(
             id,
             format!("{label}: {value}").into(),
-            gpui::Role::Button,
-            true,
+            Role::Button,
+            Focus::Ring,
             Some(on_click),
         )
         .w(px(200.0))
@@ -254,7 +265,7 @@ impl<'a> Kit<'a> {
         let palette = self.palette;
         div()
             .id(id)
-            .role(gpui::Role::ListBox)
+            .role(Role::ListBox)
             .aria_label(label)
             .occlude()
             .min_w(px(200.0))
@@ -290,7 +301,7 @@ impl<'a> Kit<'a> {
     ) -> Stateful<Div> {
         let palette = self.palette;
         let label = label.into();
-        self.entry(id, label.clone(), gpui::Role::ListBoxOption, highlighted)
+        self.entry(id, label.clone(), Role::ListBoxOption, highlighted)
             .aria_selected(highlighted)
             .on_click(on_click)
             .child(
@@ -324,7 +335,7 @@ impl<'a> Kit<'a> {
         on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Stateful<Div> {
         let label = label.into();
-        self.entry(id, label.clone(), gpui::Role::MenuItem, highlighted)
+        self.entry(id, label.clone(), Role::MenuItem, highlighted)
             .px(px(10.0))
             .when(destructive, |entry| {
                 entry.text_color(rgb(self.palette.warn))
@@ -337,7 +348,7 @@ impl<'a> Kit<'a> {
         self,
         id: impl Into<ElementId>,
         label: SharedString,
-        role: gpui::Role,
+        role: Role,
         highlighted: bool,
     ) -> Stateful<Div> {
         let palette = self.palette;
@@ -360,7 +371,7 @@ impl<'a> Kit<'a> {
     pub(crate) fn tab_bar(self, id: impl Into<ElementId>, label: &'static str) -> Stateful<Div> {
         div()
             .id(id)
-            .role(gpui::Role::TabList)
+            .role(Role::TabList)
             .aria_label(label)
             .flex()
             .items_end()
@@ -378,7 +389,7 @@ impl<'a> Kit<'a> {
     ) -> Stateful<Div> {
         let palette = self.palette;
         let label = label.into();
-        self.pressable(id, label.clone(), gpui::Role::Tab, false, Some(on_click))
+        self.pressable(id, label.clone(), Role::Tab, Focus::Tint, Some(on_click))
             .aria_selected(selected)
             .flex_col()
             .h(px(40.0))
@@ -412,7 +423,7 @@ impl<'a> Kit<'a> {
     pub(crate) fn segmented(self, id: impl Into<ElementId>, label: &'static str) -> Stateful<Div> {
         div()
             .id(id)
-            .role(gpui::Role::TabList)
+            .role(Role::TabList)
             .aria_label(label)
             .flex()
             .flex_none()
@@ -434,7 +445,7 @@ impl<'a> Kit<'a> {
         let palette = self.palette;
         let enabled = on_click.is_some();
         let label = label.into();
-        self.pressable(id, label.clone(), gpui::Role::Tab, false, on_click)
+        self.pressable(id, label.clone(), Role::Tab, Focus::Tint, on_click)
             .aria_selected(selected)
             .h(px(26.0))
             .px(px(12.0))
@@ -465,7 +476,7 @@ impl<'a> Kit<'a> {
         on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Stateful<Div> {
         let palette = self.palette;
-        self.pressable(id, label.into(), gpui::Role::Button, false, Some(on_click))
+        self.pressable(id, label.into(), Role::Button, Focus::Tint, Some(on_click))
             .h(HEIGHT)
             .pl(px(4.0))
             .pr(px(8.0))
@@ -492,7 +503,7 @@ impl<'a> Kit<'a> {
     pub(crate) fn heading(self, text: &'static str) -> Stateful<Div> {
         div()
             .id(text)
-            .role(gpui::Role::Heading)
+            .role(Role::Heading)
             .aria_label(text)
             .px(px(2.0))
             .text_size(CONTROL_TEXT)
@@ -669,7 +680,7 @@ impl<'a> Kit<'a> {
     ) -> Stateful<Div> {
         let palette = self.palette;
         let enabled = on_click.is_some();
-        self.pressable(id, label.into(), gpui::Role::RadioButton, false, on_click)
+        self.pressable(id, label.into(), Role::RadioButton, Focus::Tint, on_click)
             .aria_toggled(chosen.into())
             .w_full()
             .items_start()
@@ -775,12 +786,11 @@ impl<'a> Kit<'a> {
         on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Stateful<Div> {
         let palette = self.palette;
-        let keyboard = self.keyboard;
         self.pressable(
             id,
             format!("Theme: {name}").into(),
-            gpui::Role::RadioButton,
-            true,
+            Role::RadioButton,
+            Focus::Halo,
             Some(on_click),
         )
         .aria_toggled(chosen.into())
@@ -795,26 +805,6 @@ impl<'a> Kit<'a> {
         })
         .when(!chosen, |swatch| {
             swatch.hover(move |style| style.border_color(palette.edge()))
-        })
-        .when(keyboard, |swatch| {
-            swatch.focus(move |style| {
-                style.shadow(vec![
-                    BoxShadow {
-                        color: alpha(palette.lamp, 0.6).into(),
-                        offset: point(px(0.0), px(0.0)),
-                        blur_radius: px(0.0),
-                        spread_radius: px(4.0),
-                        inset: false,
-                    },
-                    BoxShadow {
-                        color: rgb(palette.panel).into(),
-                        offset: point(px(0.0), px(0.0)),
-                        blur_radius: px(0.0),
-                        spread_radius: px(2.0),
-                        inset: false,
-                    },
-                ])
-            })
         })
         .child(
             div()
@@ -834,12 +824,13 @@ impl<'a> Kit<'a> {
         self,
         id: impl Into<ElementId>,
         label: SharedString,
-        role: gpui::Role,
-        filled: bool,
+        role: Role,
+        focus: Focus,
         on_click: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
     ) -> Stateful<Div> {
         let enabled = on_click.is_some();
         let lamp = self.palette.lamp;
+        let panel = self.palette.panel;
         div()
             .id(id)
             .role(role)
@@ -852,13 +843,10 @@ impl<'a> Kit<'a> {
             .items_center()
             .when(!enabled, |control| control.opacity(DISABLED))
             .when(self.keyboard, |control| {
-                control.focus(move |style| {
-                    let style = style.border_color(rgb(lamp));
-                    if filled {
-                        style.shadow(ring(lamp))
-                    } else {
-                        style.bg(alpha(lamp, 0.1))
-                    }
+                control.focus(move |style| match focus {
+                    Focus::Ring => style.border_color(rgb(lamp)).shadow(ring(lamp)),
+                    Focus::Tint => style.border_color(rgb(lamp)).bg(alpha(lamp, 0.1)),
+                    Focus::Halo => style.shadow(halo(lamp, panel)),
                 })
             })
             .when_some(on_click, |control, on_click| {
@@ -907,6 +895,25 @@ pub(crate) fn facet(color: u32, size: f32) -> gpui::Svg {
 
 pub(crate) fn hollow(color: u32, size: f32) -> gpui::Svg {
     icon(JEWEL_HOLLOW, size, color)
+}
+
+fn halo(lamp: u32, panel: u32) -> Vec<BoxShadow> {
+    vec![
+        BoxShadow {
+            color: alpha(lamp, 0.6).into(),
+            offset: point(px(0.0), px(0.0)),
+            blur_radius: px(0.0),
+            spread_radius: px(4.0),
+            inset: false,
+        },
+        BoxShadow {
+            color: rgb(panel).into(),
+            offset: point(px(0.0), px(0.0)),
+            blur_radius: px(0.0),
+            spread_radius: px(2.0),
+            inset: false,
+        },
+    ]
 }
 
 pub(crate) fn ring(color: u32) -> Vec<BoxShadow> {
