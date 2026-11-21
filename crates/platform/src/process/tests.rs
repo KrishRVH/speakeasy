@@ -264,9 +264,15 @@ fn every_listener_a_loopback_connection_reaches_counts() {
             "0A",
             9,
         ),
+        (
+            Ipv4Addr::UNSPECIFIED.to_ipv6_mapped().into(),
+            PORT,
+            "0A",
+            10,
+        ),
     ]);
     assert_eq!(super::loopback_listeners(&ipv4, PORT), [1, 2]);
-    assert_eq!(super::loopback_listeners(&ipv6, PORT), [6, 7]);
+    assert_eq!(super::loopback_listeners(&ipv6, PORT), [6, 7, 10]);
 }
 
 #[cfg(target_os = "windows")]
@@ -297,6 +303,7 @@ fn every_listener_a_loopback_connection_reaches_counts() {
         (Ipv6Addr::UNSPECIFIED, PORT, 21),
         (Ipv4Addr::LOCALHOST.to_ipv6_mapped(), PORT, 22),
         (Ipv6Addr::LOCALHOST, PORT, 23),
+        (Ipv4Addr::UNSPECIFIED.to_ipv6_mapped(), PORT, 24),
     ]
     .into_iter()
     .flat_map(|(address, local, owner)| -> [u32; IPV6_ROW_WORDS] {
@@ -313,10 +320,10 @@ fn every_listener_a_loopback_connection_reaches_counts() {
     );
     assert_eq!(
         listener_owners(
-            &std::iter::once(3).chain(ipv6).collect::<Vec<_>>(),
+            &std::iter::once(4).chain(ipv6).collect::<Vec<_>>(),
             PORT,
             ipv6_row
         ),
-        [21, 22]
+        [21, 22, 24]
     );
 }

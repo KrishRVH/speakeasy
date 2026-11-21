@@ -65,11 +65,9 @@ fn classify<L: PartialEq>(
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 fn reaches_loopback(address: IpAddr) -> bool {
-    match address {
+    match address.to_canonical() {
         IpAddr::V4(address) => address == Ipv4Addr::LOCALHOST || address.is_unspecified(),
-        IpAddr::V6(address) => {
-            address.is_unspecified() || address.to_ipv4_mapped() == Some(Ipv4Addr::LOCALHOST)
-        },
+        IpAddr::V6(address) => address.is_unspecified(),
     }
 }
 
