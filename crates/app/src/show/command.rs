@@ -262,14 +262,15 @@ impl Command {
             },
             Self::Inspect { directory, json } => {
                 let directory = locate(&directory)?;
-                let entry = recall::Entry::open(&directory)
+                let parent = store::directory().ok();
+                let entry = recall::Entry::open(&directory, parent.as_deref())
                     .with_context(|| format!("Cannot open Show {}", directory.display()))?;
-                inspect(&entry, store::directory().ok().as_deref(), json, out)?;
+                inspect(&entry, json, out)?;
             },
             Self::Wait { patience, json } => {
                 let parent = store::directory()?;
                 let entry = wait::next_saved(&parent, patience)?;
-                inspect(&entry, Some(&parent), json, out)?;
+                inspect(&entry, json, out)?;
             },
             Self::Keep {
                 directory,
@@ -366,13 +367,8 @@ fn matching(focus: Option<Query>, occurrence: Option<usize>) -> anyhow::Result<O
     }
 }
 
-fn inspect(
-    entry: &recall::Entry,
-    parent: Option<&Path>,
-    json: bool,
-    out: &mut impl io::Write,
-) -> anyhow::Result<()> {
-    output::inspect(entry, parent, json, out)?;
+fn inspect(entry: &recall::Entry, json: bool, out: &mut impl io::Write) -> anyhow::Result<()> {
+    output::inspect(entry, json, out)?;
     anyhow::ensure!(
         entry.health() == recall::Health::Ok,
         "The Show is damaged or unsupported; inspection lists the problems."

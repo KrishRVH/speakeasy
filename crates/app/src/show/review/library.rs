@@ -189,7 +189,7 @@ impl Detail {
     }
 
     pub(super) fn open(directory: &Path, mode: Mode) -> io::Result<Self> {
-        let entry = Entry::open(directory)?;
+        let entry = Entry::open(directory, None)?;
         let summary = summary(directory);
         let mut warnings = Vec::new();
         let mut frames = Vec::new();

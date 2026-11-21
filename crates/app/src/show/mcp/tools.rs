@@ -119,7 +119,7 @@ fn read_folder(
     query: Option<&Query>,
     with_narration: bool,
 ) -> Result<Vec<Value>, String> {
-    let entry = recall::Entry::read_from(folder.path, &folder.files);
+    let entry = recall::Entry::read_from(folder.path, &folder.files, roots.managed());
     let manifest = manifest_of(&entry)?;
     let summary = recall::summary_from(&folder.files)
         .map_err(|_private| "Cannot read that Show's edited summary")?;
@@ -128,10 +128,7 @@ fn read_folder(
         .transpose()
         .map_err(|safe| safe.to_string())?;
     let content = ReadEvidence {
-        show: Inspection::of(
-            &entry,
-            roots.managed_parent(&entry.directory, &folder.files),
-        ),
+        show: Inspection::of(&entry),
         summary: excerpt(&summary),
         narration: with_narration.then(|| narration(manifest)),
         location: found,
@@ -198,7 +195,7 @@ fn image(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
         _ => return Err("Choose exactly one sheet, keyframe, time, mark or phrase".to_owned()),
     };
     let folder = roots.resolve(&request.show)?;
-    let entry = recall::Entry::read_from(folder.path.clone(), &folder.files);
+    let entry = recall::Entry::read_from(folder.path.clone(), &folder.files, None);
     let manifest = manifest_of(&entry)?;
     let directory = &folder.path;
     let (png, metadata) = match picture {

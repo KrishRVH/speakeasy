@@ -61,7 +61,7 @@ fn agent_prompt(
     directory: &Path,
     wsl: impl FnOnce() -> Option<Wsl>,
 ) -> anyhow::Result<Option<String>> {
-    let entry = match recall::Entry::open(directory) {
+    let entry = match recall::Entry::open(directory, None) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         entry => entry.context("Cannot open this Show")?,
     };

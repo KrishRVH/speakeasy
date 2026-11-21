@@ -11,7 +11,7 @@ use speakeasy_show::{Bundle, Manifest, Unreadable};
 
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
 use super::SavedShow;
-use super::{PIN, found, stamp};
+use super::{PIN, address::ShowId, found, stamp};
 
 pub(super) const SUMMARY_LIMIT: u64 = 1 << 20;
 
@@ -55,6 +55,7 @@ pub(crate) struct Entry {
     pub directory: PathBuf,
     pub show: Result<ReadShow, ReadError>,
     pinned: Option<bool>,
+    id: Option<ShowId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -78,19 +79,29 @@ impl Entry {
         self.pinned
     }
 
-    pub(crate) fn open(directory: &Path) -> io::Result<Self> {
-        let directory = std::path::absolute(directory)?;
-        let files = open_directory(&directory)?;
-        Ok(Self::read_from(directory, &files))
+    pub(crate) const fn id(&self) -> Option<&ShowId> {
+        self.id.as_ref()
     }
 
-    pub(in crate::show) fn read_from(directory: PathBuf, files: &ReadDirectory) -> Self {
+    pub(crate) fn open(directory: &Path, managed: Option<&Path>) -> io::Result<Self> {
+        let directory = std::path::absolute(directory)?;
+        let files = open_directory(&directory)?;
+        Ok(Self::read_from(directory, &files, managed))
+    }
+
+    pub(in crate::show) fn read_from(
+        directory: PathBuf,
+        files: &ReadDirectory,
+        managed: Option<&Path>,
+    ) -> Self {
         let pinned = kept(files);
         let show = read(files, pinned.as_ref().copied());
+        let id = managed.and_then(|parent| managed_id(parent, &directory, files));
         Self {
             directory,
             show,
             pinned: pinned.ok(),
+            id,
         }
     }
 
@@ -102,7 +113,7 @@ impl Entry {
 pub(crate) fn list(parent: &Path) -> io::Result<impl Iterator<Item = io::Result<Entry>>> {
     let paths = directories(parent)?;
     Ok(paths.into_iter().filter_map(|path| {
-        found(Entry::open(&path).and_then(|entry| {
+        found(Entry::open(&path, Some(parent)).and_then(|entry| {
             fs::metadata(&entry.directory)?;
             Ok(entry)
         }))
@@ -182,6 +193,11 @@ fn read(
         problems,
         movie,
     })
+}
+
+fn managed_id(parent: &Path, directory: &Path, files: &ReadDirectory) -> Option<ShowId> {
+    let id = directory.file_name()?.to_str().and_then(ShowId::parse)?;
+    files.is_at(&parent.join(id.as_str())).ok()?.then_some(id)
 }
 
 fn kept(directory: &ReadDirectory) -> io::Result<bool> {

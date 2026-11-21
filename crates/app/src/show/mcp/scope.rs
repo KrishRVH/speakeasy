@@ -124,13 +124,8 @@ impl Roots {
         })
     }
 
-    pub(super) fn managed_parent(&self, directory: &Path, files: &ReadDirectory) -> Option<&Path> {
-        let managed = self.managed.as_deref()?;
-        let name = directory.file_name()?;
-        files
-            .is_at(&managed.join(name))
-            .unwrap_or(false)
-            .then_some(managed)
+    pub(super) fn managed(&self) -> Option<&Path> {
+        self.managed.as_deref()
     }
 
     pub(super) fn resolve(&self, show: &str) -> Result<Folder, &'static str> {
@@ -262,11 +257,8 @@ impl Roots {
                 },
             },
         };
-        let entry = Entry::read_from(row.path, files);
-        Some(Overview::of(
-            &entry,
-            self.managed_parent(&entry.directory, files),
-        ))
+        let entry = Entry::read_from(row.path, files, self.managed());
+        Some(Overview::of(&entry))
     }
 }
 

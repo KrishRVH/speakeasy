@@ -98,7 +98,7 @@ impl Request {
 }
 
 fn widened(directory: &Path, focus: &Query, around: Duration) -> anyhow::Result<Span> {
-    let show = recall::Entry::open(directory)?.show?;
+    let show = recall::Entry::open(directory, None)?.show?;
     let span = if let Query::At(at) = focus {
         let end = show
             .movie

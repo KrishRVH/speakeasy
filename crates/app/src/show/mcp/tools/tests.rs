@@ -281,6 +281,9 @@ fn a_managed_id_belongs_to_the_directory_that_was_read() -> anyhow::Result<()> {
     assert_eq!(read["summary"]["text"], "PRIVATE_EDITED_SUMMARY");
     assert!(read["show"]["id"].is_null());
     assert!(read["show"]["expiresAt"].is_null());
+    let listing = serde_json::to_value(roots.list(None).map_err(anyhow::Error::msg)?)?;
+    assert_eq!(listing["shows"][0]["id"], name, "{listing}");
+    assert!(listing["shows"][0]["expiresAt"].is_string(), "{listing}");
     Ok(())
 }
 

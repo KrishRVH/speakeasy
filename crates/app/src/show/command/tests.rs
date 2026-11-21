@@ -146,42 +146,49 @@ fn portable_export_reports_only_metadata_and_preserves_the_saved_summary() -> an
     Ok(())
 }
 
+fn inspected(entry: &recall::Entry) -> anyhow::Result<Value> {
+    let mut printed = Vec::new();
+    output::inspect(entry, true, &mut printed)?;
+    Ok(serde_json::from_slice(&printed)?)
+}
+
+#[test]
+fn an_inspected_show_claims_its_managed_id_only_for_the_directory_it_read() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let managed = root.path().join("20261020T143205Z-2");
+    demo(Some(managed.clone()), &mut io::sink())?;
+    let original = speakeasy_platform::ReadDirectory::open(&managed)?;
+    fs::rename(&managed, root.path().join("moved"))?;
+    demo(Some(managed.clone()), &mut io::sink())?;
+    let value = inspected(&recall::Entry::read_from(
+        managed.clone(),
+        &original,
+        Some(root.path()),
+    ))?;
+    assert!(
+        value["id"].is_null() && value["expiresAt"].is_null(),
+        "{value}"
+    );
+    let value = inspected(&recall::Entry::open(&managed, Some(root.path()))?)?;
+    assert_eq!(value["id"], "20261020T143205Z-2");
+    Ok(())
+}
+
 #[test]
 fn metadata_reports_exact_managed_identity_and_expiry_without_claiming_moved_bundles()
 -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let managed = root.path().join("20261020T143205Z-2");
     demo(Some(managed.clone()), &mut io::sink())?;
-    let mut printed = Vec::new();
-    output::inspect(
-        &recall::Entry::open(&managed)?,
-        Some(root.path()),
-        true,
-        &mut printed,
-    )?;
-    let value: Value = serde_json::from_slice(&printed)?;
+    let value = inspected(&recall::Entry::open(&managed, Some(root.path()))?)?;
     assert_eq!(value["id"], "20261020T143205Z-2");
     assert_eq!(value["expiresAt"], "2026-10-27T14:32:06Z");
     assert_eq!(value["pinned"], false);
     let elsewhere = tempfile::tempdir()?;
-    printed.clear();
-    output::inspect(
-        &recall::Entry::open(&managed)?,
-        Some(elsewhere.path()),
-        true,
-        &mut printed,
-    )?;
-    let value: Value = serde_json::from_slice(&printed)?;
+    let value = inspected(&recall::Entry::open(&managed, Some(elsewhere.path()))?)?;
     assert!(value["id"].is_null() && value["expiresAt"].is_null());
     retention::set_kept(root.path(), &managed, true)?;
-    printed.clear();
-    output::inspect(
-        &recall::Entry::open(&managed)?,
-        Some(root.path()),
-        true,
-        &mut printed,
-    )?;
-    let value: Value = serde_json::from_slice(&printed)?;
+    let value = inspected(&recall::Entry::open(&managed, Some(root.path()))?)?;
     assert_eq!(value["pinned"], true);
     assert!(value["expiresAt"].is_null());
     Ok(())
@@ -214,7 +221,7 @@ fn a_demo_is_inspectable_and_output_never_contains_its_narration() -> anyhow::Re
         let output = String::from_utf8(output)?;
         let mut listing = Vec::new();
         output::list(
-            std::iter::once(recall::Entry::open(&directory)),
+            std::iter::once(recall::Entry::open(&directory, None)),
             Some(root.path()),
             json,
             &mut listing,

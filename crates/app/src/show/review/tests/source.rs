@@ -6,7 +6,7 @@ fn retained_frames_need_the_saved_shows_timeline_without_losing_keyframes_or_edi
     let root = Collection::Demo.load()?;
     let (rows, _) = list(&root.directory)?;
     let path = &rows[0].directory;
-    let duration = recall::Entry::open(path)?
+    let duration = recall::Entry::open(path, None)?
         .show?
         .manifest
         .recording()

@@ -91,7 +91,7 @@ fn archive_moves_with_edited_summary_images_and_retained_samples_but_no_extra_fi
     }
     fs::remove_dir_all(&directory)?;
     assert_eq!(
-        recall::Entry::open(&extracted)?.health(),
+        recall::Entry::open(&extracted, None)?.health(),
         recall::Health::Ok
     );
     let retained = source::inspect(&extracted)?;

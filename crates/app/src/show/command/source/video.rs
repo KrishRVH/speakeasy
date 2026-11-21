@@ -27,7 +27,7 @@ pub(super) fn frame(
     crop: Option<usize>,
     annotated: bool,
 ) -> anyhow::Result<Report> {
-    let manifest = recall::Entry::open(directory)?.show?.manifest;
+    let manifest = recall::Entry::open(directory, None)?.show?.manifest;
     let reading = movie::Reading::open(directory, manifest.recording().duration)?;
     let metadata = &reading.movie.metadata;
     let coverage = metadata

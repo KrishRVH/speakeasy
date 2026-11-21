@@ -49,13 +49,8 @@ pub(super) fn list(
     Ok(())
 }
 
-pub(super) fn inspect(
-    entry: &Entry,
-    parent: Option<&Path>,
-    as_json: bool,
-    out: &mut impl io::Write,
-) -> io::Result<()> {
-    let report = Inspection::of(entry, parent);
+pub(super) fn inspect(entry: &Entry, as_json: bool, out: &mut impl io::Write) -> io::Result<()> {
+    let report = Inspection::of(entry);
     if as_json {
         return json(&report, out);
     }

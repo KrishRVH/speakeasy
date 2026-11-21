@@ -10,7 +10,7 @@ use serde::Serialize;
 use speakeasy_show::{Bundle, Ending, Manifest, NarrationLoss, Reason, Rect};
 
 use super::store::{
-    address, checkpoint, movie,
+    checkpoint, movie,
     recall::{Entry, FileProblem, Health, ReadError, ReadShow},
     retention::Retention,
 };
@@ -85,7 +85,7 @@ impl Overview {
         }
     }
 
-    pub(super) fn of(entry: &Entry, parent: Option<&Path>) -> Self {
+    pub(super) fn of(entry: &Entry) -> Self {
         let file = |problem: &FileProblem| Problem {
             file: entry.file(&problem.name),
             reason: problem.reason.clone(),
@@ -99,11 +99,9 @@ impl Overview {
             }],
         };
         let show = entry.show.as_ref().ok();
-        let id =
-            parent.and_then(|parent| address::managed_id(parent, &entry.directory).ok().flatten());
-        let retention = id
-            .as_ref()
-            .and_then(|id| entry.pinned().map(|kept| Retention::of(id.as_str(), kept)));
+        let id = entry.id();
+        let retention =
+            id.and_then(|id| entry.pinned().map(|kept| Retention::of(id.as_str(), kept)));
         Self {
             id: id.map(|id| id.as_str().to_owned()),
             directory: entry.directory.clone(),
@@ -230,9 +228,9 @@ impl Detail {
 }
 
 impl Inspection {
-    pub(super) fn of(entry: &Entry, parent: Option<&Path>) -> Self {
+    pub(super) fn of(entry: &Entry) -> Self {
         Self {
-            overview: Overview::of(entry, parent),
+            overview: Overview::of(entry),
             detail: entry.show.as_ref().ok().map(|show| Detail::of(entry, show)),
         }
     }
@@ -242,7 +240,7 @@ pub(super) fn list(
     entries: impl Iterator<Item = io::Result<Entry>>,
     parent: Option<&Path>,
 ) -> io::Result<Vec<Overview>> {
-    let saved = entries.map(|entry| entry.map(|entry| Overview::of(&entry, parent)));
+    let saved = entries.map(|entry| entry.map(|entry| Overview::of(&entry)));
     let Some(shows) = parent else {
         return saved.collect();
     };

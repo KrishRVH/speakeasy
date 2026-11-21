@@ -14,7 +14,7 @@ fn recovered() -> anyhow::Result<(tempfile::TempDir, u64)> {
     }"#,
     )?;
     movie::tests::recovered_movie(directory.path(), Moment::from_millis(500))?;
-    let end = recall::Entry::open(directory.path())?
+    let end = recall::Entry::open(directory.path(), None)?
         .show?
         .movie
         .context("Missing recovered video")?

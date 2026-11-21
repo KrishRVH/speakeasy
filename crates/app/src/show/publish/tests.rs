@@ -776,7 +776,11 @@ fn a_show_saves_without_its_source_and_advertises_retrieval_only_with_source_and
             assert!(copied.contains(&format!("``{}``", command.display())));
         }
         assert_eq!(store::source::present(show.directory())?, source_ok);
-        assert!(store::recall::Entry::open(show.directory())?.show.is_ok());
+        assert!(
+            store::recall::Entry::open(show.directory(), None)?
+                .show
+                .is_ok()
+        );
         for entry in fs::read_dir(show.directory())? {
             assert!(!entry?.file_name().to_string_lossy().starts_with(".tmp"));
         }

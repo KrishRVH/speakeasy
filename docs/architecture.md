@@ -448,17 +448,16 @@ module unless a test file is named.
   retained directory handles, refuses links and hidden publication directories, bounds lines,
   content, and images, and reports actual source sample times. A listing keeps only the names of a
   page's rows, then opens and reads one row at a time relative to the root handle that enumerated
-  it. A folder that cannot be opened, or whose manifest is present or cannot be checked but cannot be
-  read, is listed as damaged; a root that no configured root can still reach, or that cannot be
-  searched or listed, is named in `unavailableRoots` while the others still list. A bare folder
-  name resolves through the same reachable root as the listing. A managed ID or retention date is reported only
-  when, after reading, the directory handle that was read is still the managed Shows parent's entry
-  of the same name. It serves the 2026-07-28 stateless protocol and the 2025-11-25 initialized
-  protocol used by current external clients. No tool exports, sends, or reads ordinary dictation.
-  Initialization instructions are the disclosure followed by the embedded skill's reading guide
-  without its front matter. Setup resolves the durable installed launcher and only prints client
-  stanzas, adding one for an agent in WSL that runs the Windows command through interop with Windows
-  roots, or a note when interop, drive mounting, or a lettered drive is missing.
+  it. A folder that cannot be opened, or whose manifest is present or cannot be checked but cannot
+  be read, is listed as damaged; a root that no configured root can still reach, or that cannot be
+  searched or listed, is named in `unavailableRoots` while the others still list. A bare folder name
+  resolves through the same reachable root as the listing. It serves the 2026-07-28 stateless
+  protocol and the 2025-11-25 initialized protocol used by current external clients. No tool
+  exports, sends, or reads ordinary dictation. Initialization instructions are the disclosure
+  followed by the embedded skill's reading guide without its front matter. Setup resolves the
+  durable installed launcher and only prints client stanzas, adding one for an agent in WSL that
+  runs the Windows command through interop with Windows roots, or a note when interop, drive
+  mounting, or a lettered drive is missing.
 - **Show recording and publication**: [show.rs](../crates/app/src/show.rs),
   [show/recorder.rs](../crates/app/src/show/recorder.rs),
   [show/publish.rs](../crates/app/src/show/publish.rs), and the session owner.
@@ -620,14 +619,17 @@ module unless a test file is named.
 - **Show store**: [show/store.rs](../crates/app/src/show/store.rs) names, writes, and expires
   bundles, and [store/recall.rs](../crates/app/src/show/store/recall.rs) reads a saved one back; it
   also discovers and inspects saved Shows without changing them. It reports Keep from the presence
-  of a `.pinned` entry of any type, as cleanup does, and never reads the marker.
-  [store/export.rs](../crates/app/src/show/store/export.rs) streams a format-owned inventory into a
-  new ZIP, preserves the edited summary, and adds a relative-path guide. It excludes audio and
-  retention markers, bounds input to 2 GiB, reports failed staging cleanup, and publishes with
-  `persist_noclobber` after flush. The CLI and review window use the same exporter; accepted GUI ZIP
-  exports use the app's [edit owner](../crates/app/src/show/edits.rs), so closing review cannot
-  cancel them. [export/tests.rs](../crates/app/src/show/store/export/tests.rs) checks portability,
-  source retrieval after moving, exclusions, links, size limits, and failure cleanup.
+  of a `.pinned` entry of any type, as cleanup does, and never reads the marker. After reading, it
+  attaches a managed ID, and with it a retention date, only when the directory handle that was read
+  is still the Shows folder's entry of the same name; CLI inspection, listing, `show wait`, and MCP
+  all read Shows through it. [store/export.rs](../crates/app/src/show/store/export.rs) streams a
+  format-owned inventory into a new ZIP, preserves the edited summary, and adds a relative-path
+  guide. It excludes audio and retention markers, bounds input to 2 GiB, reports failed staging
+  cleanup, and publishes with `persist_noclobber` after flush. The CLI and review window use the
+  same exporter; accepted GUI ZIP exports use the app's
+  [edit owner](../crates/app/src/show/edits.rs), so closing review cannot cancel them.
+  [export/tests.rs](../crates/app/src/show/store/export/tests.rs) checks portability, source
+  retrieval after moving, exclusions, links, size limits, and failure cleanup.
   [store/video.rs](../crates/app/src/show/store/video.rs) composes a separate MP4 through local
   FFmpeg. It copies the validated source prefix into private staging, checks decoded frame count,
   paints annotations at 30 Hz output ticks using each source frame's geometry, and aligns original

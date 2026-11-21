@@ -35,7 +35,7 @@ fn next_saved_polling(
             .filter(|directory| !known.contains(directory))
             .map(|directory| (saved_at(&directory), directory))
             .collect();
-        if let Some(entry) = first_saved(fresh)? {
+        if let Some(entry) = first_saved(parent, fresh)? {
             return Ok(entry);
         }
         let waited = started.elapsed();
@@ -49,16 +49,20 @@ fn next_saved_polling(
 }
 
 fn first_saved(
+    parent: &Path,
     mut newest_first: Vec<(Option<SystemTime>, PathBuf)>,
 ) -> anyhow::Result<Option<Entry>> {
     newest_first.sort_by_key(|&(saved, _)| saved);
     newest_first
         .into_iter()
-        .find_map(|(_, directory)| match Entry::open(&directory) {
-            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-            opened => {
-                Some(opened.with_context(|| format!("Cannot open Show {}", directory.display())))
-            },
+        .find_map(|(_, directory)| {
+            let opened = Entry::open(&directory, Some(parent));
+            match opened {
+                Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+                opened => Some(
+                    opened.with_context(|| format!("Cannot open Show {}", directory.display())),
+                ),
+            }
         })
         .transpose()
 }
@@ -183,14 +187,17 @@ mod tests {
         let root = tempfile::tempdir()?;
         let kept = save(root.path(), SystemTime::now())?;
         let saved = saved_at(&kept).context("The kept Show has no save time")?;
-        let found = first_saved(vec![
-            (None, root.path().join("removed before lookup")),
-            (Some(saved), kept.clone()),
-            (
-                Some(saved - Duration::from_secs(1)),
-                root.path().join("removed after lookup"),
-            ),
-        ])?
+        let found = first_saved(
+            root.path(),
+            vec![
+                (None, root.path().join("removed before lookup")),
+                (Some(saved), kept.clone()),
+                (
+                    Some(saved - Duration::from_secs(1)),
+                    root.path().join("removed after lookup"),
+                ),
+            ],
+        )?
         .context("The remaining Show was skipped")?;
         assert_eq!(found.directory, std::path::absolute(&kept)?);
         Ok(())

@@ -76,7 +76,7 @@ fn inspection_preserves_edits_and_a_moved_bundle_uses_its_current_directory() ->
         .collect::<io::Result<_>>()?;
     let moved = root.path().join("moved show");
     fs::rename(&directory, &moved)?;
-    let entry = Entry::open(&moved)?;
+    let entry = Entry::open(&moved, None)?;
     assert_eq!(entry.directory, std::path::absolute(&moved)?);
     assert!(entry.show?.problems.is_empty());
     assert!(list(root.path())?.next().is_none());
@@ -111,7 +111,7 @@ fn expiry_between_discovery_and_reading_removes_only_that_entry() -> anyhow::Res
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].directory, older);
     assert!(
-        Entry::open(&newer).is_err(),
+        Entry::open(&newer, None).is_err(),
         "Explicit inspection must not substitute another Show"
     );
     Ok(())
@@ -124,7 +124,7 @@ fn a_directory_in_place_of_the_manifest_is_damage() -> anyhow::Result<()> {
     fs::remove_file(directory.join(Manifest::FILE))?;
     fs::create_dir(directory.join(Manifest::FILE))?;
     assert!(matches!(
-        Entry::open(&directory)?.show,
+        Entry::open(&directory, None)?.show,
         Err(ReadError::File(_))
     ));
     Ok(())
@@ -138,14 +138,14 @@ fn oversized_manifests_and_summaries_are_bounded() -> anyhow::Result<()> {
         .write(true)
         .open(directory.join(Bundle::SUMMARY))?
         .set_len(SUMMARY_LIMIT + 1)?;
-    let show = Entry::open(&directory)?.show?;
+    let show = Entry::open(&directory, None)?.show?;
     assert_eq!(show.problems.len(), 1);
     assert_eq!(show.problems[0].name, Bundle::SUMMARY);
     fs::File::options()
         .write(true)
         .open(directory.join(Manifest::FILE))?
         .set_len(MANIFEST_LIMIT + 1)?;
-    let error = Entry::open(&directory)?.show.unwrap_err();
+    let error = Entry::open(&directory, None)?.show.unwrap_err();
     assert!(error.to_string().contains("too large"));
     Ok(())
 }
@@ -160,13 +160,13 @@ fn manifest_and_frame_links_are_not_followed() -> anyhow::Result<()> {
     fs::remove_dir_all(directory.join("frames"))?;
     symlink(other.join("frames"), directory.join("frames"))?;
     assert_eq!(
-        Entry::open(&directory)?.show?.problems[0].name,
+        Entry::open(&directory, None)?.show?.problems[0].name,
         "frames/frame-01.png"
     );
     fs::remove_file(directory.join(Manifest::FILE))?;
     symlink(other.join(Manifest::FILE), directory.join(Manifest::FILE))?;
     assert!(matches!(
-        Entry::open(&directory)?.show,
+        Entry::open(&directory, None)?.show,
         Err(ReadError::File(_))
     ));
     Ok(())
@@ -210,7 +210,7 @@ fn recall_agrees_with_cleanup_on_every_keep_marker_without_reading_it() -> anyho
     let root = tempfile::tempdir()?;
     let directory = write(root.path(), "20261020T143205Z")?;
     let recalled = |directory: &Path| -> anyhow::Result<bool> {
-        let entry = Entry::open(directory)?;
+        let entry = Entry::open(directory, None)?;
         let kept = entry.pinned();
         let show = entry.show?;
         assert!(show.problems.is_empty());

@@ -200,7 +200,7 @@ fn retained(
     around: Duration,
     output: Output,
 ) -> anyhow::Result<Report> {
-    let manifest = recall::Entry::open(directory)?.show?.manifest;
+    let manifest = recall::Entry::open(directory, None)?.show?.manifest;
     anyhow::ensure!(
         index.duration() == manifest.recording().duration,
         "Source and Show timelines differ; inspect the bundle before exporting"
