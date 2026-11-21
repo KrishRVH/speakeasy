@@ -1,12 +1,16 @@
-use std::{process::Command, ptr::null};
+use std::{
+    process::Command,
+    ptr::{null, null_mut},
+};
 
 use anyhow::ensure;
 use windows_sys::Win32::{
     Foundation::GENERIC_ALL,
     System::StationsAndDesktops::{
-        CreateDesktopW, CreateWindowStationW, SetProcessWindowStation, SetThreadDesktop,
+        CreateDesktopW, CreateWindowStationW, GetProcessWindowStation, GetUserObjectInformationW,
+        SetProcessWindowStation, SetThreadDesktop, UOI_FLAGS, USEROBJECTFLAGS,
     },
-    UI::Input::KeyboardAndMouse::KEYEVENTF_UNICODE,
+    UI::{Input::KeyboardAndMouse::KEYEVENTF_UNICODE, WindowsAndMessaging::WSF_VISIBLE},
 };
 
 use super::*;
@@ -159,11 +163,6 @@ fn copied_text_stays_private_and_a_copied_image_is_a_change() -> anyhow::Result<
         "The private window station check failed:\n{report}"
     );
 
-    let _clipboard = open_clipboard()?;
-    ensure!(
-        !clipboard_win::raw::is_format_avail(image_format()?.get()),
-        "The helper copied to the desktop's clipboard"
-    );
     Ok(())
 }
 
@@ -453,6 +452,7 @@ fn enter_private_station() -> anyhow::Result<()> {
     );
 
     ok_or_last_error(unsafe { SetProcessWindowStation(station) })?;
+    ensure_hidden_station()?;
     let name = to_wide("speakeasy-test");
 
     let desktop = unsafe { CreateDesktopW(name.as_ptr(), null(), null(), 0, GENERIC_ALL, null()) };
@@ -470,6 +470,28 @@ fn copy_without_text() -> anyhow::Result<()> {
     let format = image_format()?;
     let _clipboard = open_clipboard()?;
     clipboard_win::raw::set(format.get(), &[1, 2, 3])?;
+    Ok(())
+}
+
+fn ensure_hidden_station() -> anyhow::Result<()> {
+    let mut flags = USEROBJECTFLAGS {
+        fInherit: 0,
+        fReserved: 0,
+        dwFlags: 0,
+    };
+    ok_or_last_error(unsafe {
+        GetUserObjectInformationW(
+            GetProcessWindowStation(),
+            UOI_FLAGS,
+            (&raw mut flags).cast(),
+            u32::try_from(size_of::<USEROBJECTFLAGS>())?,
+            null_mut(),
+        )
+    })?;
+    ensure!(
+        flags.dwFlags & WSF_VISIBLE.cast_unsigned() == 0,
+        "The helper's window station is interactive, so its clipboard belongs to a person"
+    );
     Ok(())
 }
 

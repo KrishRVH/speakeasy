@@ -194,8 +194,12 @@ module unless a test file is named.
   orientation, transparency, bounds, failure reporting, and a newer recording during acquisition.
   [insertion/tests.rs](../crates/platform/src/insertion/tests.rs),
   [insertion/commit/tests.rs](../crates/platform/src/insertion/commit/tests.rs), and the input, X11,
-  portal, and EI modules test them; an opt-in test in windows/insertion.rs checks pasted and copied
-  text, images, and cancellation on a private window station's clipboard.
+  portal, and EI modules test them. An opt-in test in
+  [windows/insertion/tests.rs](../crates/platform/src/windows/insertion/tests.rs), which Windows CI
+  runs, checks pasted and copied text, images, failed writes, and cancellation on a hidden window
+  station's clipboard and refuses an interactive station, whose clipboard belongs to a person. A
+  standard account cannot create a named station, so the check uses its logon session's hidden
+  station, which other processes in that session may share.
 - **Shortcuts and desktop adapters**: [keyboard.rs](../crates/platform/src/keyboard.rs),
   [desktop.rs](../crates/platform/src/desktop.rs), [monitor.rs](../crates/platform/src/monitor.rs),
   [owned_thread.rs](../crates/platform/src/owned_thread.rs),
