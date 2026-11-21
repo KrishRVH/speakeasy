@@ -216,9 +216,12 @@ impl Paster {
             |cookie| Ok(cookie.check()?),
         );
         Ok(match submitted {
-            Ok(()) => Inserted::Sent,
-            Err(_) => Inserted::Copied(
+            Submission::Sent => Inserted::Sent,
+            Submission::NotSent => Inserted::Copied(
                 "Text copied, but automatic paste failed and was not retried. Paste it manually.",
+            ),
+            Submission::Uncertain => Inserted::Copied(
+                "Text copied. Automatic paste may have reached your editor; check it before pasting manually.",
             ),
         })
     }
@@ -276,12 +279,19 @@ fn authorize_paste<C>(
     })
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum Submission {
+    Sent,
+    NotSent,
+    Uncertain,
+}
+
 fn submit_paste<C>(
     chord: PasteChord<u8>,
     mut enqueue: impl FnMut(u8, u8) -> anyhow::Result<C>,
     synchronize: impl FnOnce() -> anyhow::Result<()>,
     mut check: impl FnMut(C) -> anyhow::Result<()>,
-) -> anyhow::Result<()> {
+) -> Submission {
     let mut cookies = Vec::with_capacity(6);
     let mut failed = false;
     for code in chord.presses() {
@@ -291,6 +301,11 @@ fn submit_paste<C>(
         };
         cookies.push(cookie);
     }
+    let pasted = if failed {
+        None
+    } else {
+        cookies.len().checked_sub(1)
+    };
 
     for code in chord.presses().rev() {
         match enqueue(xproto::KEY_RELEASE_EVENT, code) {
@@ -298,12 +313,24 @@ fn submit_paste<C>(
             Err(_) => failed = true,
         }
     }
-    synchronize()?;
-    for cookie in cookies {
-        failed |= check(cookie).is_err();
+    if synchronize().is_err() {
+        return if pasted.is_some() {
+            Submission::Uncertain
+        } else {
+            Submission::NotSent
+        };
     }
-    ensure!(!failed, "Input submission failed");
-    Ok(())
+    let mut accepted_paste = false;
+    for (position, cookie) in cookies.into_iter().enumerate() {
+        let accepted = check(cookie).is_ok();
+        failed |= !accepted;
+        accepted_paste |= accepted && pasted == Some(position);
+    }
+    match (failed, accepted_paste) {
+        (false, _) => Submission::Sent,
+        (true, true) => Submission::Uncertain,
+        (true, false) => Submission::NotSent,
+    }
 }
 
 #[cfg(test)]

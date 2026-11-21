@@ -1,4 +1,4 @@
-use std::{mem, sync::mpsc};
+use std::sync::mpsc;
 
 use anyhow::bail;
 use futures_util::FutureExt as _;
@@ -14,16 +14,21 @@ enum Step {
 }
 
 struct PasteTrace {
-    result: anyhow::Result<()>,
+    result: Submission,
     enqueued: Vec<(u8, u8, bool)>,
     checks: usize,
 }
 
-fn trace_paste(shift: Option<u8>, fail_at: Option<usize>, reject_first_check: bool) -> PasteTrace {
+fn trace_paste(
+    shift: Option<u8>,
+    fail_at: Option<usize>,
+    reject_check: Option<usize>,
+    synchronized: bool,
+) -> PasteTrace {
     let (log, steps) = mpsc::channel();
     let (enqueue_log, synchronize_log) = (log.clone(), log.clone());
     let mut positions = 0..;
-    let mut reject_check = reject_first_check;
+    let mut checked = 0..;
     let result = submit_paste(
         PasteChord {
             control: 1,
@@ -40,10 +45,14 @@ fn trace_paste(shift: Option<u8>, fail_at: Option<usize>, reject_first_check: bo
             ensure!(accepted, "Synthetic enqueue failure");
             Ok(())
         },
-        move || Ok(synchronize_log.send(Step::Synchronize)?),
+        move || {
+            synchronize_log.send(Step::Synchronize)?;
+            ensure!(synchronized, "Synthetic connection failure");
+            Ok(())
+        },
         move |()| {
             log.send(Step::Check)?;
-            ensure!(!mem::take(&mut reject_check), "Synthetic server rejection");
+            ensure!(checked.next() != reject_check, "Synthetic server rejection");
             Ok(())
         },
     );
@@ -82,8 +91,8 @@ fn trace_paste(shift: Option<u8>, fail_at: Option<usize>, reject_first_check: bo
 fn paste_checks_once_after_all_releases_and_preserves_error_cleanup() {
     let release = |code| (xproto::KEY_RELEASE_EVENT, code);
     for shift in [None, Some(2)] {
-        let trace = trace_paste(shift, None, false);
-        assert!(trace.result.is_ok());
+        let trace = trace_paste(shift, None, None, true);
+        assert_eq!(trace.result, Submission::Sent);
         assert_eq!(trace.checks, if shift.is_some() { 6 } else { 4 });
         assert_eq!(
             trace.enqueued.last().map(|&(kind, code, _)| (kind, code)),
@@ -91,8 +100,8 @@ fn paste_checks_once_after_all_releases_and_preserves_error_cleanup() {
         );
     }
     for fail_at in [None, Some(0), Some(2), Some(3)] {
-        let trace = trace_paste(Some(2), fail_at, true);
-        assert!(trace.result.is_err());
+        let trace = trace_paste(Some(2), fail_at, Some(0), true);
+        assert_ne!(trace.result, Submission::Sent);
         let accepted = trace
             .enqueued
             .iter()
@@ -135,6 +144,24 @@ fn paste_request(permit: &InsertPermit, own_focus: crate::OwnFocus) -> Insertion
         enter: crate::Enter::Withheld,
         own_focus,
         reply,
+    }
+}
+
+#[test]
+fn a_paste_tells_failure_before_its_v_press_from_uncertain_delivery_after_it() {
+    for (fail_at, reject_check, synchronized, expected) in [
+        (Some(2), None, true, Submission::NotSent),
+        (None, Some(2), true, Submission::NotSent),
+        (Some(0), None, false, Submission::NotSent),
+        (None, Some(3), true, Submission::Uncertain),
+        (Some(3), None, true, Submission::Uncertain),
+        (None, None, false, Submission::Uncertain),
+    ] {
+        assert_eq!(
+            trace_paste(Some(2), fail_at, reject_check, synchronized).result,
+            expected,
+            "Enqueue failure at {fail_at:?}, rejected check {reject_check:?}, synchronized {synchronized}"
+        );
     }
 }
 
