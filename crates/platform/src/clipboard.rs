@@ -70,6 +70,35 @@ pub fn copy_content(
     crate::native::copy_content(content, authorized)
 }
 
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+pub(crate) enum Screen {
+    Save,
+    #[cfg_attr(
+        all(target_os = "macos", not(test)),
+        expect(dead_code, reason = "A Mac pasteboard item is saved whole or refused")
+    )]
+    Skip,
+    Refuse,
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+pub(crate) fn snapshot<Kind, Data>(
+    kinds: impl IntoIterator<Item = Kind>,
+    screen: impl Fn(&Kind) -> Screen,
+    read: impl FnMut(Kind) -> Option<Data>,
+) -> Option<Vec<Data>> {
+    let mut saved = Vec::new();
+    for kind in kinds {
+        match screen(&kind) {
+            Screen::Save => saved.push(kind),
+            Screen::Skip => {},
+            Screen::Refuse => return None,
+        }
+    }
+    let saved = saved.into_iter().map(read).collect::<Option<Vec<_>>>()?;
+    (!saved.is_empty()).then_some(saved)
+}
+
 pub(crate) fn copy_when<L>(
     authorized: impl FnOnce() -> bool,
     acquire: impl FnOnce() -> anyhow::Result<L>,

@@ -69,6 +69,38 @@ fn a_new_recording_during_acquisition_prevents_the_copy_even_after_it_finishes()
 }
 
 #[test]
+fn a_snapshot_screens_every_kind_before_reading_any() {
+    let screen = |kind: &&str| match *kind {
+        "concealed" => Screen::Refuse,
+        "marker" => Screen::Skip,
+        _ => Screen::Save,
+    };
+    let mut read = Vec::new();
+    let concealed = snapshot(["text", "html", "concealed"], screen, |kind| {
+        read.push(kind);
+        Some(kind)
+    });
+    assert_eq!(concealed, None);
+    assert!(
+        read.is_empty(),
+        "A concealed copy was read before its last format was screened"
+    );
+
+    let saved = snapshot(["text", "marker", "html"], screen, |kind| {
+        read.push(kind);
+        Some(kind.len())
+    });
+    assert_eq!(saved, Some(vec![4, 4]));
+    assert_eq!(read, ["text", "html"], "A skipped format was read");
+
+    let unreadable = snapshot(["text", "html"], screen, |kind| {
+        (kind == "text").then_some(kind)
+    });
+    assert_eq!(unreadable, None, "A partial copy was kept to restore");
+    assert_eq!(snapshot(["marker"], screen, Some), None);
+}
+
+#[test]
 fn clipboard_refusal_is_not_reported_as_a_completed_copy() {
     let result = copy_when(
         || true,

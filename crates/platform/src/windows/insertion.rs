@@ -12,7 +12,11 @@ use windows_sys::Win32::UI::{
 use zeroize::Zeroizing;
 
 use super::{modifiers, press, release, send_input, type_unit, window_process};
-use crate::{ClipboardContent, Inserted, clipboard, insertion::NativeInsert};
+use crate::{
+    ClipboardContent, Inserted,
+    clipboard::{self, Screen},
+    insertion::NativeInsert,
+};
 
 const PRIVATE_FORMATS: [&str; 2] = ["CanIncludeInClipboardHistory", "CanUploadToCloudClipboard"];
 
@@ -53,28 +57,30 @@ pub(crate) fn copy_content(
 
 fn saved_formats() -> Option<Vec<SavedFormat>> {
     let concealed = clipboard_win::raw::register_format(CONCEALED)?.get();
-    let formats: Vec<_> = clipboard_win::raw::EnumFormats::new().collect();
-    if formats.iter().any(|format| {
-        *format == concealed || HANDLES.contains(format) || PRIVATE_AND_GDI.contains(format)
-    }) {
-        return None;
-    }
     let private =
         PRIVATE_FORMATS.map(|name| clipboard_win::raw::register_format(name).map(NonZeroU32::get));
     let mut size = 0_usize;
-    let mut saved = Vec::new();
-    for format in formats {
-        if SYNTHESIZED.contains(&format) || private.contains(&Some(format)) {
-            continue;
-        }
-        size = size
-            .checked_add(clipboard_win::raw::size(format)?.get())
-            .filter(|size| *size <= SAVED_BYTES)?;
-        let mut data = Zeroizing::new(Vec::new());
-        clipboard_win::raw::get_vec(format, &mut data).ok()?;
-        saved.push((format, data));
-    }
-    (!saved.is_empty()).then_some(saved)
+    clipboard::snapshot(
+        clipboard_win::raw::EnumFormats::new(),
+        |format| {
+            if *format == concealed || HANDLES.contains(format) || PRIVATE_AND_GDI.contains(format)
+            {
+                Screen::Refuse
+            } else if SYNTHESIZED.contains(format) || private.contains(&Some(*format)) {
+                Screen::Skip
+            } else {
+                Screen::Save
+            }
+        },
+        |format| {
+            size = size
+                .checked_add(clipboard_win::raw::size(format)?.get())
+                .filter(|size| *size <= SAVED_BYTES)?;
+            let mut data = Zeroizing::new(Vec::new());
+            clipboard_win::raw::get_vec(format, &mut data).ok()?;
+            Some((format, data))
+        },
+    )
 }
 
 fn restore_clipboard(

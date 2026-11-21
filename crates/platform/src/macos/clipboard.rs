@@ -8,6 +8,8 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSArray, NSData, NSString, ns_string};
 
+use crate::clipboard::{self, Screen};
+
 #[expect(
     clippy::disallowed_types,
     reason = "The insertion thread and explicit-copy worker each own native calls, including copies while input is stopped; this lease serializes their pasteboard transactions, not session state"
@@ -42,28 +44,32 @@ const SAVED_BYTES: usize = 64 << 20;
 
 pub(super) fn save(lease: &Lease) -> Option<Saved> {
     let items = lease.pasteboard.pasteboardItems()?;
-    let typed: Vec<_> = items.iter().map(|item| (item.types(), item)).collect();
-    if typed.iter().any(|(types, _)| {
-        types
-            .iter()
-            .any(|kind| kind.isEqualToString(ns_string!("org.nspasteboard.ConcealedType")))
-    }) {
-        return None;
-    }
     let mut size = 0_usize;
-    let mut saved = Vec::new();
-    for (types, item) in typed {
-        let mut kept = Vec::new();
-        for kind in &types {
-            let data = item.dataForType(&kind)?;
-            size = size
-                .checked_add(data.len())
-                .filter(|size| *size <= SAVED_BYTES)?;
-            kept.push((kind, data));
-        }
-        saved.push(kept);
-    }
-    (!saved.is_empty()).then_some(saved)
+    clipboard::snapshot(
+        items.iter().map(|item| (item.types(), item)),
+        |(types, _)| {
+            if types
+                .iter()
+                .any(|kind| kind.isEqualToString(ns_string!("org.nspasteboard.ConcealedType")))
+            {
+                Screen::Refuse
+            } else {
+                Screen::Save
+            }
+        },
+        |(types, item)| {
+            types
+                .iter()
+                .map(|kind| {
+                    let data = item.dataForType(&kind)?;
+                    size = size
+                        .checked_add(data.len())
+                        .filter(|size| *size <= SAVED_BYTES)?;
+                    Some((kind, data))
+                })
+                .collect()
+        },
+    )
 }
 
 pub(super) fn restore(lease: Lease, saved: Option<&Saved>, mark: isize) -> anyhow::Result<()> {
@@ -107,7 +113,7 @@ pub(crate) fn copy_content(
 ) -> anyhow::Result<bool> {
     objc2::rc::autoreleasepool(|_| {
         let item = item(&content.text, content.image.as_ref())?;
-        crate::clipboard::copy_when(
+        clipboard::copy_when(
             authorized,
             || Ok(acquire()),
             |lease| publish(lease, &[item]).map(|_| ()),
@@ -117,7 +123,7 @@ pub(crate) fn copy_content(
 
 fn item(
     text: &str,
-    image: Option<&crate::clipboard::Image>,
+    image: Option<&clipboard::Image>,
 ) -> anyhow::Result<Retained<NSPasteboardItem>> {
     let item = private_item()?;
     if let Some(image) = image {
