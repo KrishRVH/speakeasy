@@ -558,23 +558,20 @@ fn a_show_that_lost_its_narration_says_why_in_its_files() -> anyhow::Result<()> 
             Ok(())
         },
     )?;
-    assert!(matches!(
-        published,
-        Published::Saved {
-            preservation: Preservation {
-                narration_lost: Some(_),
-                ..
-            },
+    let Published::Saved {
+        show,
+        preservation: Preservation {
+            narration_lost: Some(_),
             ..
-        }
-    ));
+        },
+        ..
+    } = published
+    else {
+        bail!("The saved Show should report the narration loss");
+    };
     let summary = clipboard.context("The summary was copied")?;
     assert!(summary.contains("Audio capture stopped at 0:10 and the Show ended there"));
-    let directory = fs::read_dir(shows.path())?
-        .next()
-        .context("The bundle is in the Shows folder")??
-        .path();
-    let manifest = Manifest::parse(&fs::read(directory.join("show.json"))?)?;
+    let manifest = Manifest::parse(&fs::read(show.directory().join(Manifest::FILE))?)?;
     assert_eq!(manifest.recording().narration_lost, Some(lost));
     Ok(())
 }
