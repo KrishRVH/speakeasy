@@ -283,3 +283,61 @@ fn a_managed_id_belongs_to_the_directory_that_was_read() -> anyhow::Result<()> {
     assert!(read["show"]["expiresAt"].is_null());
     Ok(())
 }
+
+#[cfg(unix)]
+#[test]
+fn a_show_swapped_for_a_link_after_resolution_cannot_lead_reads_outside() -> anyhow::Result<()> {
+    use std::os::unix::fs::symlink;
+    let temp = tempfile::tempdir()?;
+    let root = temp.path().join("root");
+    let directory = fixture(&root, "exact")?;
+    let outside = fixture(temp.path(), "outside")?;
+    let mut manifest = fixture_manifest();
+    manifest["duration"] = json!(2000);
+    fs::write(outside.join("show.json"), serde_json::to_vec(&manifest)?)?;
+    fs::write(outside.join("summary.md"), "PRIVATE_OUTSIDE")?;
+    let roots = Roots::open(&[root], None).map_err(anyhow::Error::msg)?;
+    let folder = roots.resolve("exact").map_err(anyhow::Error::msg)?;
+    fs::rename(&directory, temp.path().join("original"))?;
+    symlink(&outside, &directory)?;
+    let read = read_folder(&roots, folder, None, false).map_err(anyhow::Error::msg)?;
+    let read: Value = serde_json::from_str(read[0]["text"].as_str().unwrap())?;
+    assert_eq!(read["summary"]["text"], "PRIVATE_EDITED_SUMMARY");
+    assert_eq!(read["show"]["durationMs"], 1000);
+    assert!(roots.resolve("exact").is_err());
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_fifo_in_place_of_a_show_file_is_refused_without_waiting_for_a_writer() -> anyhow::Result<()> {
+    use std::{process::Command, sync::mpsc, thread, time::Duration};
+    for (name, tool, arguments) in [
+        ("show.json", Tool::Read, json!({"show": "exact"})),
+        ("summary.md", Tool::Read, json!({"show": "exact"})),
+        (
+            "contact-sheet.png",
+            Tool::Image,
+            json!({"show": "exact", "sheet": 1}),
+        ),
+        (
+            "source.frames",
+            Tool::Image,
+            json!({"show": "exact", "at": "0.5"}),
+        ),
+    ] {
+        let root = tempfile::tempdir()?;
+        let file = fixture(root.path(), "exact")?.join(name);
+        fs::remove_file(&file)?;
+        assert!(Command::new("mkfifo").arg(&file).status()?.success());
+        let roots = Roots::open(&[root.path().to_owned()], None).map_err(anyhow::Error::msg)?;
+        let (sender, receiver) = mpsc::channel();
+        let reader = thread::spawn(move || sender.send(call(&roots, tool, arguments)));
+        let response = receiver
+            .recv_timeout(Duration::from_secs(10))
+            .map_err(|_blocked| anyhow::anyhow!("reading {name} waited for a writer"))?;
+        reader.join().unwrap()?;
+        assert_eq!(response["isError"], true, "{name}");
+    }
+    Ok(())
+}
