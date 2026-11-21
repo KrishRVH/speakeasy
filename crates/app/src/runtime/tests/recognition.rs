@@ -68,7 +68,7 @@ async fn pieces_clean_fillers_and_corrections_once_after_recording_stops() -> an
     let (id, events) = h.start().await?;
     for (number, text) in [(0, "Ready,"), (1, "um. cube"), (2, "control")] {
         events
-            .send(CaptureEvent::Piece(id, number, sealed()))
+            .send(CaptureEvent::Piece(id, number, piece()))
             .await?;
         h.transcribe_next_as(text).await?;
     }
@@ -104,7 +104,7 @@ async fn a_nonempty_tail_keeps_every_piece_and_cleans_across_the_final_boundary(
     let (id, events) = h.start().await?;
     for (number, text) in [(0, "Ready,"), (1, "um. cube")] {
         events
-            .send(CaptureEvent::Piece(id, number, sealed()))
+            .send(CaptureEvent::Piece(id, number, piece()))
             .await?;
         h.transcribe_next_as(text).await?;
         assert_eq!(receive(&requests).await?, *sealed().wav);
@@ -145,7 +145,7 @@ async fn a_failed_detached_piece_replaces_its_worker_while_idle() -> anyhow::Res
     let mut h = Harness::with_ports(config(), |_| {})?;
     receive(&h.loads).await?;
     let (id, events) = h.start().await?;
-    events.send(CaptureEvent::Piece(id, 0, sealed())).await?;
+    events.send(CaptureEvent::Piece(id, 0, piece())).await?;
     let (_, reply) = receive(&h.jobs).await?;
     h.input(Input::Cancel);
     h.phase(Phase::Cancelled).await?;
@@ -163,7 +163,7 @@ async fn changing_session_settings_during_a_piece_does_not_claim_model_loading()
     let config = config();
     let mut h = Harness::with_ports(config.clone(), |_| {})?;
     let (id, events) = h.start().await?;
-    events.send(CaptureEvent::Piece(id, 0, sealed())).await?;
+    events.send(CaptureEvent::Piece(id, 0, piece())).await?;
     let (_, reply) = receive(&h.jobs).await?;
     let mut changed = config;
     changed.remove_fillers = !changed.remove_fillers;
@@ -183,7 +183,7 @@ async fn stale_piece_success_and_failure_cannot_reach_the_next_session() -> anyh
         let mut h = Harness::with_ports(config(), |_| {})?;
         receive(&h.loads).await?;
         let (id, events) = h.start().await?;
-        events.send(CaptureEvent::Piece(id, 0, sealed())).await?;
+        events.send(CaptureEvent::Piece(id, 0, piece())).await?;
         let (_, reply) = receive(&h.jobs).await?;
         h.input(Input::Cancel);
         h.phase(Phase::Cancelled).await?;
@@ -223,7 +223,7 @@ async fn a_failed_piece_replaces_its_worker_but_waits_for_seal_to_fall_back() ->
     let mut h = Harness::with_ports(config(), |ports| ports.delayed_finish = true)?;
     receive(&h.loads).await?;
     let (id, events) = h.start().await?;
-    events.send(CaptureEvent::Piece(id, 0, sealed())).await?;
+    events.send(CaptureEvent::Piece(id, 0, piece())).await?;
     let (_, reply) = receive(&h.jobs).await?;
     assert!(reply.send(Err(anyhow!("Piece failed"))).is_ok());
     receive(&h.loads).await?;
@@ -246,7 +246,7 @@ async fn promotion_during_a_piece_uses_whole_show_narration() -> anyhow::Result<
     h.input(Input::Press);
     h.phase(Phase::Recording).await?;
     let (id, events) = receive(&h.captures).await?;
-    events.send(CaptureEvent::Piece(id, 0, sealed())).await?;
+    events.send(CaptureEvent::Piece(id, 0, piece())).await?;
     let (_, reply) = receive(&h.jobs).await?;
     h.input(Input::Show(Scope::Screen));
     receive(&h.shows).await?;

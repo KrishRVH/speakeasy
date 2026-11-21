@@ -12,8 +12,8 @@ use tokio::{sync::oneshot, task::JoinHandle, time::timeout};
 
 use super::{
     ports::{
-        Capturing, Footage, Listening, LiveAudio, Lost, MicrophoneSource, Pinning, Preservation,
-        Sealed, Speech, Unchosen,
+        Capturing, Footage, Listening, LiveAudio, Lost, MicrophoneSource, Piece, Pinning,
+        Preservation, Sealed, Speech, Unchosen,
     },
     *,
 };
@@ -546,6 +546,11 @@ fn sealed() -> Sealed {
         audible: SPOKEN,
         partition: None,
     }
+}
+
+fn piece() -> Piece {
+    let Sealed { wav, audible, .. } = sealed();
+    Piece { wav, audible }
 }
 
 fn disconnected(id: SessionId) -> CaptureEvent {

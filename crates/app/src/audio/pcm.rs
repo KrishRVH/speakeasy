@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use zeroize::Zeroizing;
 
 use super::speech::Audibility;
-use crate::runtime::ports::Sealed;
+use crate::runtime::ports::{Piece, Sealed};
 
 pub(super) const WAV_HEADER_BYTES: usize = 44;
 const SAMPLE_RATE_OFFSET: usize = 24;
@@ -103,13 +103,11 @@ impl Pcm16 {
         range: Range<usize>,
         speech: &Audibility,
         rate: u32,
-    ) -> anyhow::Result<Sealed> {
-        let audio = self.audio().get(range.clone()).context(MISPLACED_PIECE)?;
-        Ok(Sealed {
+    ) -> anyhow::Result<Piece> {
+        let audio = self.audio().get(range).context(MISPLACED_PIECE)?;
+        Ok(Piece {
             wav: encode(audio, rate)?,
-            trimmed: duration_of(range.start, rate),
             audible: duration_of(speech.audible(), rate),
-            partition: None,
         })
     }
 

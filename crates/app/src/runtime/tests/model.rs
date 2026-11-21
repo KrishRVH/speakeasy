@@ -430,6 +430,11 @@ fn spoken_by(id: SessionId, pieces: u32) -> Sealed {
     }
 }
 
+fn piece_by(id: SessionId) -> ports::Piece {
+    let Sealed { wav, audible, .. } = spoken_by(id, 0);
+    ports::Piece { wav, audible }
+}
+
 fn transcript_of(wav: &[u8]) -> anyhow::Result<String> {
     Ok(u64::from_le_bytes(wav.try_into()?).to_string())
 }
@@ -520,7 +525,7 @@ impl Model {
             Step::Advance(by) => tokio::time::advance(*by).await,
             Step::Piece => {
                 if let Some((id, events)) = &self.microphone {
-                    events.try_send(CaptureEvent::Piece(*id, self.pieces, spoken_by(*id, 0)))?;
+                    events.try_send(CaptureEvent::Piece(*id, self.pieces, piece_by(*id)))?;
                     self.pieces = self.pieces.checked_add(1).unwrap();
                 }
             },

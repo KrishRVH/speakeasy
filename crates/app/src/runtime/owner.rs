@@ -36,7 +36,7 @@ use super::{
     device::Device,
     native::{self, Clip, Delivered, Native},
     now,
-    ports::{CaptureEvent, MicrophoneSource, Ports, Published, ShowEvent},
+    ports::{CaptureEvent, MicrophoneSource, Piece, Ports, Published, ShowEvent},
     worker::Worker,
 };
 use crate::{
@@ -802,9 +802,17 @@ fn capture(event: CaptureEvent) -> Event<Native> {
         CaptureEvent::Ready(session, _) => (session, Capture::Ready),
         CaptureEvent::CheckpointLost(session) => (session, Capture::CheckpointLost),
         CaptureEvent::Level(session, level) => (session, Capture::Level(level)),
-        CaptureEvent::Piece(session, number, audio) => {
-            (session, Capture::Piece(number, Clip::heard(audio, None)))
-        },
+        CaptureEvent::Piece(session, number, Piece { wav, audible }) => (
+            session,
+            Capture::Piece(
+                number,
+                Clip {
+                    wav,
+                    language: None,
+                    audible,
+                },
+            ),
+        ),
         CaptureEvent::Finished(session, result) => {
             let finished = result
                 .map(|sealed| sealed.map(native::sealed))

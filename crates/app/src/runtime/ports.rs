@@ -32,7 +32,7 @@ pub(crate) enum CaptureEvent {
     Ready(SessionId, MicrophoneSource),
     CheckpointLost(SessionId),
     Level(SessionId, f32),
-    Piece(SessionId, u32, Sealed),
+    Piece(SessionId, u32, Piece),
     Finished(SessionId, anyhow::Result<Option<Sealed>>),
     Lost(SessionId, Sealed, Lost),
 }
@@ -53,6 +53,11 @@ pub(crate) struct Sealed {
     pub trimmed: Duration,
     pub audible: Duration,
     pub partition: Option<Partition>,
+}
+
+pub(crate) struct Piece {
+    pub wav: Zeroizing<Vec<u8>>,
+    pub audible: Duration,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
