@@ -85,7 +85,7 @@ impl Entry {
     }
 
     pub(in crate::show) fn read_from(directory: PathBuf, files: &ReadDirectory) -> Self {
-        let pinned = found(files.file(Path::new(PIN))).map(|file| file.is_some());
+        let pinned = kept(files);
         let show = read(files, pinned.as_ref().copied());
         Self {
             directory,
@@ -182,6 +182,16 @@ fn read(
         problems,
         movie,
     })
+}
+
+fn kept(directory: &ReadDirectory) -> io::Result<bool> {
+    let unopened = match found(directory.file(Path::new(PIN))) {
+        Ok(marker) => return Ok(marker.is_some()),
+        Err(error) => error,
+    };
+    let mut listed = false;
+    directory.visit(|name| listed |= name == PIN)?;
+    if listed { Ok(true) } else { Err(unopened) }
 }
 
 pub(in crate::show::store) fn open_directory(directory: &Path) -> io::Result<ReadDirectory> {

@@ -581,7 +581,8 @@ module unless a test file is named.
   references and exercise generated manifest mutations and sheet sizes.
 - **Show store**: [show/store.rs](../crates/app/src/show/store.rs) names, writes, and expires
   bundles, and [store/recall.rs](../crates/app/src/show/store/recall.rs) reads a saved one back; it
-  also discovers and inspects saved Shows without changing them.
+  also discovers and inspects saved Shows without changing them. It reports Keep from the presence
+  of a `.pinned` entry of any type, as cleanup does, and never reads the marker.
   [store/export.rs](../crates/app/src/show/store/export.rs) streams a format-owned inventory into a
   new ZIP, preserves the edited summary, and adds a relative-path guide. It excludes audio and
   retention markers, bounds input to 2 GiB, reports failed staging cleanup, and publishes with
@@ -611,7 +612,7 @@ module unless a test file is named.
   when the Show is kept. Moving the folder does not reset its voice deadline.
   [store/tests.rs](../crates/app/src/show/store/tests.rs) checks publication, expiry, and edited or
   linked summaries; [recall/tests.rs](../crates/app/src/show/store/recall/tests.rs) checks
-  discovery, read limits, damage, links, and moved bundles.
+  discovery, read limits, damage, links, Keep markers, and moved bundles.
   [age.rs](../crates/app/src/show/store/age.rs) parses the folder timestamp for review and
   property-checks it against naming and expiry boundaries.
   [address.rs](../crates/app/src/show/store/address.rs) resolves exact IDs independently from paths;

@@ -204,3 +204,31 @@ fn an_emptied_summary_is_valid_and_an_undecodable_one_fails_privately() -> anyho
     );
     Ok(())
 }
+
+#[test]
+fn recall_agrees_with_cleanup_on_every_keep_marker_without_reading_it() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let directory = write(root.path(), "20261020T143205Z")?;
+    let recalled = |directory: &Path| -> anyhow::Result<bool> {
+        let entry = Entry::open(directory)?;
+        let kept = entry.pinned();
+        let show = entry.show?;
+        assert!(show.problems.is_empty());
+        assert_eq!(kept, Some(show.pinned));
+        Ok(show.pinned)
+    };
+    let marker = directory.join(PIN);
+    fs::create_dir(&marker)?;
+    assert!(recalled(&directory)? && super::super::pinned(&directory)?);
+    fs::remove_dir(&marker)?;
+    let differently_cased = directory.join(".PINNED");
+    fs::write(&differently_cased, b"")?;
+    assert_eq!(recalled(&directory)?, super::super::pinned(&directory)?);
+    fs::remove_file(&differently_cased)?;
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(root.path().join("absent"), &marker)?;
+        assert!(recalled(&directory)? && super::super::pinned(&directory)?);
+    }
+    Ok(())
+}
