@@ -40,8 +40,8 @@ function Invoke-Cleanup([scriptblock]$Action, [Collections.Generic.List[Manageme
 }
 function Complete-Cleanup($Failure, [Collections.Generic.List[Management.Automation.ErrorRecord]]$Failures, [string]$Fixture) {
     if (!$Failures.Count) { return }
-    if ($null -eq $Failure) { throw $Failures[0] }
     $Failures | ForEach-Object { Write-Warning "$Fixture cleanup failed: $_" }
+    if ($null -eq $Failure) { throw "$Fixture cleanup failed; the warnings above name each failure." }
 }
 function Invoke-Setup {
     $process = Start-Process -FilePath $Installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$app`"" -Wait -PassThru
@@ -316,7 +316,7 @@ try {
         if (Test-Path (Join-Path $app 'unins000.exe')) { Invoke-Uninstall }
     } $cleanup
     Invoke-Cleanup {
-        Remove-ItemProperty -Path $runKey -Name 'Speakeasy' -ErrorAction SilentlyContinue
+        if ($null -ne (Get-SignInCommand)) { Remove-ItemProperty -Path $runKey -Name 'Speakeasy' }
     } $cleanup
     # The guard admitted only a fresh data directory and no sign-in entry; every fixture is ours.
     foreach ($fixture in $data, $work) {
