@@ -308,12 +308,27 @@ fn arrivals_at_the_time_limit_end_after_their_last_frame_with_a_readable_source(
     };
     let (mut live, mut replay) = (take(), take());
     let last_moment = DURATION_LIMIT.saturating_sub(Duration::from_millis(1));
+    let mut saved = None;
     for value in [0, 100, 200] {
         let arrival = live
             .arrive(last_moment, || Image::filled(20, 20, [value; 3]).ok())
             .unwrap();
         replay.apply(&arrival).unwrap();
+        if let crate::TakeEvent::Arrival {
+            entry: Some(entry), ..
+        } = arrival
+        {
+            saved = Some(entry);
+        }
     }
+    let unsampled = crate::TakeEvent::Arrival {
+        at: last_moment,
+        entry: saved,
+    };
+    assert!(
+        replay.apply(&unsampled).is_err(),
+        "Replay accepted a frame at the time limit, where live sampling records none"
+    );
     let early = crate::TakeEvent::End {
         at: last_moment,
         ending: crate::Ending::Finished,

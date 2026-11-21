@@ -255,8 +255,11 @@ impl Journal {
     }
 
     fn restore(&mut self, at: Moment, entry: Option<&Entry>) -> Result<(), SourceError> {
-        if let Some(entry) = entry.filter(|_| self.has_time()) {
-            require(self.admits(), "checkpoint frame disagrees with sampling")?;
+        if let Some(entry) = entry {
+            require(
+                self.admits() && self.has_time(),
+                "checkpoint frame disagrees with sampling",
+            )?;
             require(
                 entry.reset
                     || self.segments.last().is_some_and(|segment| {
