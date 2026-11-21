@@ -55,10 +55,12 @@ run = "cargo fmt --all --check"
 # resource build and macOS GPUI build do, so they stay with native checks.
 [tasks."rust:lint"]
 description = "Run Clippy on the workspace, and on the platform crate for Windows and macOS"
-run = [
-  "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
-  "cargo clippy -p speakeasy-platform --all-targets --all-features --locked --target x86_64-pc-windows-msvc --target aarch64-apple-darwin -- -D warnings",
-]
+depends = ["rust:lint:host"]
+run = "cargo clippy -p speakeasy-platform --all-targets --all-features --locked --target x86_64-pc-windows-msvc --target aarch64-apple-darwin -- -D warnings"
+
+[tasks."rust:lint:host"]
+description = "Run Clippy on the workspace for the host target"
+run = "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings"
 
 [tasks."rust:doc"]
 description = "Build the workspace docs with warnings denied"

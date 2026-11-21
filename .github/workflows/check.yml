@@ -61,7 +61,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: check-${{ matrix.system }}
-      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - run: mise run rust:lint:host
       - name: Check macOS movie playback
         if: runner.os == 'macOS' && inputs.movie
         timeout-minutes: 10
@@ -75,7 +75,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Path artifacts/movie -Force | Out-Null
           $env:SPEAKEASY_MOVIE_PROBE_DIRECTORY = Join-Path $PWD 'artifacts/movie'
-          cargo test --locked -p speakeasy-platform native_movie_color_interoperability -- --ignored --nocapture --test-threads=1
+          mise run windows:movie:colors
           if ($LASTEXITCODE -ne 0) { throw 'Native movie color acceptance failed.' }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: runner.os == 'Windows' && inputs.movie
@@ -90,7 +90,7 @@ jobs:
         shell: pwsh
         timeout-minutes: 5
         run: |
-          cargo nextest run --workspace --lib --bins --tests --all-features --locked --run-ignored only -E 'package(speakeasy-platform) & test(copied_text_stays_private)'
+          mise run windows:clipboard
           if ($LASTEXITCODE -ne 0) { throw 'The private window station clipboard check failed.' }
       - name: Build the Windows installer for acceptance
         if: runner.os == 'Windows' && inputs.installer
@@ -135,7 +135,10 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: check-macos-15
-      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      # The action installs only Rust here; installing the gate's other tools would slow the job.
+      - run: mise run rust:lint:host
+        env:
+          MISE_TASK_RUN_AUTO_INSTALL: false
       - name: Check owned Mac quit and update cleanup
         timeout-minutes: 10
         run: bash scripts/check-update-macos.sh
@@ -169,18 +172,17 @@ jobs:
         timeout-minutes: 5
         run: |
           export SPEAKEASY_WINDOWS_MOVIE_DIRECTORY="$PWD/artifacts/movie"
-          cargo test --locked -p speakeasy-platform native_windows_movie_preserves_colors_on_macos -- --ignored --nocapture --test-threads=1
+          mise run macos:movie:from-windows
       - name: Check native Mac movie encoding
         timeout-minutes: 5
         run: |
           export SPEAKEASY_MAC_MOVIE_DIRECTORY="$PWD/artifacts/mac-movie"
-          cargo test --locked -p speakeasy-platform native_mac_movie_encoding -- --ignored --nocapture --test-threads=1
-          cargo test --locked -p speakeasy-platform movie::recording::tests::a_cancelled_active_movie_releases_its_file_without_a_new_frame -- --ignored --nocapture --test-threads=1
+          mise run macos:movie:encode
           cargo test --locked -p speakeasy-platform macos::screen::stream:: -- --nocapture --test-threads=1
       - name: Check owned Mac screen capture
         if: ${{ inputs.screen }}
         timeout-minutes: 2
-        run: cargo run --locked -p speakeasy-platform --example mac_capture -- --owned-screen
+        run: mise run macos:capture
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
