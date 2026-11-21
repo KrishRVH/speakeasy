@@ -2,8 +2,8 @@ mod output;
 
 use std::{
     convert::Infallible,
+    mem,
     panic::{self, AssertUnwindSafe},
-    sync::mpsc,
     thread,
     time::{Duration, Instant},
 };
@@ -27,6 +27,13 @@ use crate::{
     movie::recording::{INTERVAL, Movie},
     screen::geometry::Bounds,
 };
+
+const STOP_PAUSES: [Duration; 4] = [
+    Duration::from_millis(100),
+    Duration::from_millis(400),
+    Duration::from_secs(1),
+    Duration::from_secs(2),
+];
 
 pub(super) fn capture(
     target: Target,
@@ -74,19 +81,17 @@ pub(super) fn capture(
         report(events, failure);
     }
     let ended = Instant::now();
-    match stream.stop() {
-        Ok(()) => {
-            drop(stream);
-            movie.stop(ended);
-        },
-        Err(failure) => {
-            if outcome.is_ok() {
-                report(events, failure);
-            }
-            movie.stop(ended);
-            drop(stream);
-        },
+    if let Err(failure) = stream.stop() {
+        if outcome.is_ok() {
+            report(events, failure);
+        }
+        movie.stop(ended);
+        if retry_stop(|| stream.stop(), thread::sleep).is_err() {
+            report(events, Failure::Unstopped);
+        }
     }
+    drop(stream);
+    movie.stop(ended);
     Ok(())
 }
 
@@ -234,7 +239,7 @@ impl Stream {
                 .startCaptureWithCompletionHandler(Some(&completion));
         }
         drop(completion);
-        reply.recv().unwrap_or(Err(Failure::Unstarted))?;
+        reply.recv_blocking().unwrap_or(Err(Failure::Unstarted))?;
         self.running = true;
         Ok(())
     }
@@ -251,20 +256,21 @@ impl Stream {
                 .stopCaptureWithCompletionHandler(Some(&completion));
         }
         drop(completion);
-        let result = reply.recv().unwrap_or(Err(Failure::Stalled));
-        if result.is_ok() || self.stopped.is_closed() {
-            self.running = false;
-        }
+        let result = acknowledged(&reply, &self.stopped);
+        self.running = result.is_err();
         result
     }
 }
 
 impl Drop for Stream {
     fn drop(&mut self) {
-        while self.running {
-            if self.stop().is_err() {
-                thread::sleep(Duration::from_millis(100));
-            }
+        if self.running && self.stop().is_err() {
+            #[expect(
+                clippy::mem_forget,
+                reason = "ScreenCaptureKit never confirmed that this stream stopped; releasing its stream, output or queue could leave capture calling freed objects, so they stay retained for the process's life while the closed frame lane makes the output discard every sample"
+            )]
+            mem::forget((self.native.clone(), self.output.clone(), self.queue.clone()));
+            return;
         }
         #[expect(
             clippy::let_underscore_must_use,
@@ -288,8 +294,8 @@ enum Operation {
     Stop,
 }
 
-fn completed(operation: Operation) -> (Completion, mpsc::Receiver<Result<(), Failure>>) {
-    let (sent, reply) = mpsc::sync_channel(1);
+fn completed(operation: Operation) -> (Completion, Receiver<Result<(), Failure>>) {
+    let (sent, reply) = async_channel::bounded(1);
     let block = RcBlock::new(move |error: *mut NSError| {
         let error = unsafe { error.as_ref() };
         let result = panic::catch_unwind(AssertUnwindSafe(|| completion_result(error, operation)))
@@ -298,9 +304,43 @@ fn completed(operation: Operation) -> (Completion, mpsc::Receiver<Result<(), Fai
             clippy::let_underscore_must_use,
             reason = "There is one completion; a departed owner cannot receive its result"
         )]
-        let _ = sent.send(result);
+        let _ = sent.try_send(result);
     });
     (block, reply)
+}
+
+fn acknowledged(
+    reply: &Receiver<Result<(), Failure>>,
+    stopped: &Receiver<Infallible>,
+) -> Result<(), Failure> {
+    let waited = runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .map_err(|_runtime_error| Failure::Stalled)
+        .and_then(|runtime| {
+            runtime.block_on(async {
+                tokio::select! {
+                    biased;
+                    _ = stopped.recv() => Ok(()),
+                    result = reply.recv() => result.unwrap_or(Err(Failure::Stalled)),
+                    () = tokio::time::sleep(PATIENCE) => Err(Failure::Stalled),
+                }
+            })
+        });
+    if stopped.is_closed() { Ok(()) } else { waited }
+}
+
+fn retry_stop(
+    mut stop: impl FnMut() -> Result<(), Failure>,
+    mut pause: impl FnMut(Duration),
+) -> Result<(), Failure> {
+    for wait in STOP_PAUSES {
+        pause(wait);
+        if stop().is_ok() {
+            return Ok(());
+        }
+    }
+    Err(Failure::Unstopped)
 }
 
 fn completion_result(error: Option<&NSError>, operation: Operation) -> Result<(), Failure> {
