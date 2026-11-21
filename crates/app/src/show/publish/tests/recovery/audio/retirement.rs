@@ -283,6 +283,96 @@ async fn a_saved_show_keeps_its_recovery_until_its_folder_is_synced() -> anyhow:
 }
 
 #[tokio::test]
+async fn a_saved_show_promises_no_retry_that_its_checkpoint_cannot_replay() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let parent = root.path().to_owned();
+    let crate::show::Kept {
+        keeper,
+        mut frames,
+        mut audio,
+    } = crate::show::Keeper::start(move || Ok(parent), SystemTime::now())?;
+    let surface = Size {
+        width: 80.0,
+        height: 60.0,
+    };
+    assert!(frames.begin(1 << 20, surface, speakeasy_show::Framing::Automatic));
+    assert!(frames.close().await);
+    let speech = crate::audio::fixture::square_wave(3000)
+        .take(8_000)
+        .flat_map(i16::to_le_bytes)
+        .collect::<Vec<_>>();
+    assert!(audio.begin(8_000, Duration::ZERO, "en".into()));
+    assert!(audio.finish(&speech, &[], AudioEnding::Complete));
+    let checkpoint = keeper
+        .close()
+        .await?
+        .context("Fixture checkpoint is missing")?;
+    let mut take = Take::new(1 << 20, surface, speakeasy_show::Framing::Automatic);
+    take.arrive(Moment::from_millis(100), || {
+        Some(desktop(80, 60, 0, 0, false))
+    })?;
+    take.end(Moment::from_millis(1_000), Ending::Finished);
+    let captured = narrated(
+        Footage::from(take),
+        Narration::default(),
+        Some(NarrationLoss::NotTranscribed),
+    );
+    let (_input, active) = permit();
+    let Published::Saved { preservation, .. } = publish_with(
+        Handoff::default(),
+        captured,
+        Origin::Live {
+            checkpoint: Some(checkpoint),
+        },
+        &active,
+        || Ok(root.path().to_owned()),
+        |_| Ok(()),
+    )?
+    else {
+        bail!("Synthetic Show was not saved");
+    };
+    assert!(
+        !preservation.audio_kept,
+        "A retry was promised without frames to replay"
+    );
+    assert_eq!(recoverable(root.path()), []);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_saved_show_promises_no_retry_from_damaged_audio() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let interrupted = with_audio(root.path()).await?.interrupted()?;
+    fs::write(interrupted.directory().join("audio.log"), DAMAGED)?;
+    let checkpoint = interrupted.lock()?;
+    let captured = narrated(
+        Footage::from(checkpoint.replay()?),
+        Narration::default(),
+        Some(NarrationLoss::NotTranscribed),
+    );
+    let (_input, active) = permit();
+    let Published::Saved { preservation, .. } = publish_with(
+        Handoff::default(),
+        captured,
+        Origin::Live {
+            checkpoint: Some(checkpoint),
+        },
+        &active,
+        || Ok(root.path().to_owned()),
+        |_| Ok(()),
+    )?
+    else {
+        bail!("Synthetic Show was not saved");
+    };
+    assert!(
+        !preservation.audio_kept,
+        "Damaged audio was promised a retry"
+    );
+    assert!(!interrupted.directory().exists());
+    Ok(())
+}
+
+#[tokio::test]
 async fn damaged_audio_does_not_block_saving_intact_frames_and_narration() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let interrupted = with_audio(root.path()).await?.interrupted()?;

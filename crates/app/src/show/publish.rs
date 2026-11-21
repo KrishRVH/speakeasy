@@ -154,8 +154,8 @@ fn publish_with(
             "Narration could not be transcribed. The saved Show is unchanged; its audio remains available in Shows until its original expiry."
         );
     }
-    let audio_kept = completion == Completion::Pending
-        && checkpoint.is_some_and(|checkpoint| checkpoint.has_audio().unwrap_or(true));
+    let audio_kept =
+        completion == Completion::Pending && checkpoint.is_some_and(Checkpoint::keeps_retry);
     let result = persist(handoff, footage, checkpoint, completion, permit, parent);
     match result {
         Ok(Some(Persisted {

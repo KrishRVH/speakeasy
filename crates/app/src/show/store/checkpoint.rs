@@ -2,6 +2,7 @@ pub(in crate::show::store) mod audio;
 mod keeper;
 
 use std::{
+    fmt,
     fs::{self, File, OpenOptions},
     io::{self, Read as _, Write as _},
     iter,
@@ -376,9 +377,24 @@ impl Checkpoint {
     }
 
     pub(crate) fn replay(&self) -> anyhow::Result<Take> {
+        self.read_take(Extent::Whole)
+    }
+
+    pub(in crate::show) fn keeps_retry(&self) -> bool {
+        let audio = self
+            .has_audio()
+            .unwrap_or_else(|error| !error.is::<audio::Damaged>());
+        audio
+            && match self.read_take(Extent::FirstFrame) {
+                Ok(_) => true,
+                Err(error) => !error.is::<NoFrames>(),
+            }
+    }
+
+    fn read_take(&self, extent: Extent) -> anyhow::Result<Take> {
         let directory = recall::open_directory(&self.directory)?;
         let opened = recall::open_file(&directory, LOG, FILE_LIMIT);
-        let mut reader = io::BufReader::new(found(opened)?.context(NO_FRAMES)?);
+        let mut reader = io::BufReader::new(found(opened)?.ok_or(NoFrames)?);
         let mut header = [0; log::HEADER_BYTES];
         reader
             .read_exact(&mut header)
@@ -408,11 +424,14 @@ impl Checkpoint {
             let Ok(event) = log::decode(&record) else {
                 break;
             };
-            if take.apply(&event).is_err() || take.ended() {
+            if take.apply(&event).is_err()
+                || take.ended()
+                || matches!(extent, Extent::FirstFrame) && !take.journal().is_empty()
+            {
                 break;
             }
         }
-        anyhow::ensure!(!take.journal().is_empty(), NO_FRAMES);
+        anyhow::ensure!(!take.journal().is_empty(), NoFrames);
         Ok(take)
     }
 
@@ -660,6 +679,23 @@ fn lock(directory: &Path) -> io::Result<Option<Checkpoint>> {
         Err(fs::TryLockError::Error(error)) => Err(error),
     }
 }
+
+#[derive(Clone, Copy)]
+enum Extent {
+    Whole,
+    FirstFrame,
+}
+
+#[derive(Debug)]
+struct NoFrames;
+
+impl fmt::Display for NoFrames {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        out.write_str(NO_FRAMES)
+    }
+}
+
+impl std::error::Error for NoFrames {}
 
 #[cfg_attr(test, derive(Debug, PartialEq))]
 pub(crate) enum SavedNarration {
