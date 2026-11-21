@@ -189,8 +189,12 @@ async fn paste_needs_its_own_text_from_the_same_owner_after_looking_up_focus() -
 }
 
 #[test]
-fn escape_during_the_checks_after_a_copy_withdraws_it() -> anyhow::Result<()> {
-    struct Escaping(InsertPermit);
+fn escape_during_the_checks_after_a_copy_withdraws_it_even_when_a_check_fails() -> anyhow::Result<()>
+{
+    struct Escaping {
+        permit: InsertPermit,
+        fails: bool,
+    }
 
     impl ClipboardAccess for Escaping {
         fn external_target(&self, _: HostSession) -> anyhow::Result<bool> {
@@ -206,20 +210,28 @@ fn escape_during_the_checks_after_a_copy_withdraws_it() -> anyhow::Result<()> {
         }
 
         fn holds_text(&mut self, _: &str) -> anyhow::Result<bool> {
-            self.0.revoke();
+            self.permit.revoke();
+            if self.fails {
+                bail!("Synthetic owner loss");
+            }
             Ok(true)
         }
     }
 
     let (events, _received) = async_channel::bounded(1);
     let input = InputSender::new(events);
-    let permit = input.begin().context("Recording")?;
-    let mut clipboard = Escaping(permit.clone());
-    assert_eq!(
-        clipboard.set_text("fixture", &permit)?,
-        None,
-        "A copy cancelled while its content was checked still reported its owner"
-    );
+    for fails in [false, true] {
+        let permit = input.begin().context("Recording")?;
+        let mut clipboard = Escaping {
+            permit: permit.clone(),
+            fails,
+        };
+        let copied = clipboard.set_text("fixture", &permit);
+        assert!(
+            matches!(copied, Ok(None)),
+            "A copy cancelled while its content was checked ended {copied:?} (failing check: {fails})"
+        );
+    }
     Ok(())
 }
 

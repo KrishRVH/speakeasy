@@ -195,11 +195,15 @@ pub(in crate::linux) trait ClipboardAccess {
     fn holds_text(&mut self, text: &str) -> anyhow::Result<bool>;
 
     fn set_text(&mut self, text: &str, permit: &InsertPermit) -> anyhow::Result<Option<Window>> {
-        if !self.write_text(text, permit)? || !self.holds_text(text)? {
-            return Ok(None);
-        }
-        let owner = self.owner()?;
-        Ok((self.holds(owner, text)? && permit.active()).then_some(owner))
+        let mut checked = || -> anyhow::Result<Option<Window>> {
+            if !self.write_text(text, permit)? || !self.holds_text(text)? {
+                return Ok(None);
+            }
+            let owner = self.owner()?;
+            Ok(self.holds(owner, text)?.then_some(owner))
+        };
+        let checked = checked();
+        if permit.active() { checked } else { Ok(None) }
     }
 
     fn holds(&mut self, owner: Window, text: &str) -> anyhow::Result<bool> {

@@ -232,8 +232,9 @@ refuses to overwrite any copy made meanwhile, even one from an app that keeps it
 clipboard serving and insertion have separate owners; before committing paste, the X11 paste
 confirms that the clipboard still holds the dictated text from the same owner and only then samples
 focus, layout, and held modifiers, because a clipboard manager can take seconds to answer that read.
-A content check that fails or errors never leaves the clipboard for manual paste. That check and
-XTEST submission are not one atomic server transaction.
+A content check that fails or errors never leaves the clipboard for manual paste, and Escape during
+a check that errors reports cancellation rather than the error. That check and XTEST submission are
+not one atomic server transaction.
 
 ## Linux realtime opt-out
 

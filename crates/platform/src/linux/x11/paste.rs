@@ -260,24 +260,41 @@ fn authorize_paste<C>(
     first_layout: impl FnOnce(&C) -> bool,
     modifiers_held: impl FnOnce(&C) -> anyhow::Result<bool>,
 ) -> anyhow::Result<ControlFlow<Inserted>> {
+    let refusal = paste_refusal(
+        request,
+        clipboard,
+        holds_text,
+        external_target,
+        first_layout,
+        modifiers_held,
+    );
+    if !request.permit.active() {
+        return Ok(ControlFlow::Break(Inserted::Cancelled));
+    }
+    Ok(match refusal? {
+        Some(outcome) => ControlFlow::Break(outcome),
+        None if request.permit.commit() => ControlFlow::Continue(()),
+        None => ControlFlow::Break(Inserted::Cancelled),
+    })
+}
+
+fn paste_refusal<C>(
+    request: &Insertion,
+    clipboard: &mut C,
+    holds_text: impl FnOnce(&mut C) -> anyhow::Result<bool>,
+    external_target: impl FnOnce(&C) -> bool,
+    first_layout: impl FnOnce(&C) -> bool,
+    modifiers_held: impl FnOnce(&C) -> anyhow::Result<bool>,
+) -> anyhow::Result<Option<Inserted>> {
     if !holds_text(clipboard)? {
-        return Ok(ControlFlow::Break(CLIPBOARD_CHANGED));
+        return Ok(Some(CLIPBOARD_CHANGED));
     }
     let external = external_target(clipboard);
     if !first_layout(clipboard) {
-        return Ok(ControlFlow::Break(SECOND_LAYOUT));
+        return Ok(Some(SECOND_LAYOUT));
     }
     let released = !modifiers_held(clipboard)?;
-    if let Some(outcome) =
-        Delivery::Paste.preflight(external && !request.own_focus.held(), released)
-    {
-        return Ok(ControlFlow::Break(outcome));
-    }
-    Ok(if request.permit.commit() {
-        ControlFlow::Continue(())
-    } else {
-        ControlFlow::Break(Inserted::Cancelled)
-    })
+    Ok(Delivery::Paste.preflight(external && !request.own_focus.held(), released))
 }
 
 #[derive(Debug, PartialEq, Eq)]

@@ -261,6 +261,30 @@ fn a_failed_or_unreadable_clipboard_check_never_reports_a_copy() -> anyhow::Resu
 }
 
 #[test]
+fn escape_during_a_failing_paste_check_reports_cancellation() -> anyhow::Result<()> {
+    let (events, _received) = async_channel::bounded(1);
+    let input = InputSender::new(events);
+    let permit = input.begin().context("Recording")?;
+    let request = paste_request(&permit, crate::FocusReport::default().subscribe());
+    let checked = authorize_paste(
+        &request,
+        &mut (),
+        |()| {
+            permit.revoke();
+            bail!("Synthetic owner loss")
+        },
+        |()| false,
+        |()| true,
+        |()| Ok(false),
+    );
+    assert!(
+        matches!(checked, Ok(ControlFlow::Break(Inserted::Cancelled))),
+        "A paste cancelled during a failing clipboard check ended {checked:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn a_copy_escaped_before_its_outcome_reports_cancellation_and_a_kept_one_commits()
 -> anyhow::Result<()> {
     let (events, _received) = async_channel::bounded(1);
