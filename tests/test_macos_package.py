@@ -44,9 +44,17 @@ def package(
     tools = tmp_path / "tools"
     tools.mkdir()
     script = """#!/usr/bin/env python3
-import json, os, sys, shutil
+import fcntl, json, os, sys, shutil
 from pathlib import Path
 name = Path(sys.argv[0]).name
+if name != "uname":
+    with open("artifacts/.package-macos.lock", "a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            pass
+        else:
+            Path("unlocked").write_text(name)
 with open("commands.jsonl", "a") as log:
     log.write(json.dumps([name, *sys.argv[1:]]) + "\\n")
 with open("published.jsonl", "a") as log:
@@ -110,6 +118,7 @@ def test_archive_appears_only_after_signature_and_distribution_acceptance(
     published: list[list[str]] = [json.loads(line) for line in log]
     early = [entry for entry in published if entry[0] != "uname" and entry[1:]]
     assert not early, f"Outputs were visible while tools still ran: {early}"
+    assert not (tmp_path / "unlocked").exists(), "A build tool ran without the package lock"
     assert (artifacts / "Speakeasy.app/Contents/MacOS/speakeasy").is_file()
     assert not (artifacts / "Speakeasy.app/Contents/stale").exists()
     assert (artifacts / "speakeasy-macos.zip").read_text() == "synthetic archive"
