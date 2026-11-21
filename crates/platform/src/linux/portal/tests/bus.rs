@@ -362,6 +362,53 @@ fn on_private_bus(test: impl AsyncFnOnce(Bus) -> anyhow::Result<()>) -> anyhow::
 }
 
 #[test]
+fn private_bus_cancelled_selections_refuse_transfers_by_closing_them_empty() -> anyhow::Result<()> {
+    on_private_bus(async |bus| {
+        let mut portal = FakePortal::start(&bus).await?;
+        let client = Client::start(&bus).await?;
+        client.copy(&mut portal, "alpha").await?;
+        portal.transfer(1).await?;
+        assert_eq!(portal.served(1).await?, (b"alpha".to_vec(), true));
+
+        let (_, answer) = client.paste("bravo").await?;
+        let selecting = portal.expect("SetSelection").await?;
+        client.input.deliver(Input::Cancel);
+        portal.own().await?;
+        portal.reply(&selecting).await?;
+        assert!(
+            matches!(
+                tokio::time::timeout(PATIENCE, answer.recv()).await??,
+                Ok(Inserted::Cancelled)
+            ),
+            "Cancelling during SetSelection did not cancel the paste"
+        );
+        portal.transfer(2).await?;
+        assert_eq!(
+            portal.served(2).await?,
+            (Vec::new(), false),
+            "A selection replaced by a cancelled paste still served the previous copy"
+        );
+
+        let (_, answer) = client.paste("charlie").await?;
+        portal.select().await?;
+        client.focus().await?;
+        client.input.deliver(Input::Cancel);
+        client.release_focus()?;
+        assert!(
+            matches!(
+                tokio::time::timeout(PATIENCE, answer.recv()).await??,
+                Ok(Inserted::Cancelled)
+            ),
+            "Cancelling during preparation did not cancel the paste"
+        );
+        portal.transfer(3).await?;
+        assert_eq!(portal.served(3).await?, (Vec::new(), false));
+        assert!(client.alive());
+        Ok(())
+    })
+}
+
+#[test]
 fn private_bus_only_the_portal_signals_and_malformed_ones_are_skipped() -> anyhow::Result<()> {
     on_private_bus(async |bus| {
         let mut portal = FakePortal::start(&bus).await?;
@@ -417,6 +464,79 @@ fn private_bus_only_the_portal_signals_and_malformed_ones_are_skipped() -> anyho
             client.alive(),
             "A malformed portal signal stopped the service"
         );
+        Ok(())
+    })
+}
+
+#[test]
+fn private_bus_a_transfer_flood_while_transfers_are_full_refuses_without_stalling_a_paste()
+-> anyhow::Result<()> {
+    on_private_bus(async |bus| {
+        let mut portal = FakePortal::start(&bus).await?;
+        let client = Client::start(&bus).await?;
+        client.copy(&mut portal, "alpha").await?;
+        for serial in 1..=4 {
+            portal.transfer(serial).await?;
+            portal.expect("SelectionWrite").await?;
+        }
+        let flood = u32::try_from(2 * SIGNAL_BACKLOG)?;
+        for serial in 5..flood.saturating_add(5) {
+            portal.transfer(serial).await?;
+        }
+
+        let (_, answer) = client.paste("bravo").await?;
+        let mut refusals = Vec::new();
+        let mut reports = Vec::new();
+        let copied = loop {
+            tokio::select! {
+                copied = tokio::time::timeout(PATIENCE, answer.recv()) => break copied???,
+                entered = client.focused.recv() => {
+                    entered?;
+                    client.release_focus()?;
+                },
+                call = portal.call() => {
+                    let call = call?;
+                    match call.header().member().map(MemberName::as_str) {
+                        Some("SetSelection") => {
+                            portal.own().await?;
+                            portal.reply(&call).await?;
+                        },
+                        Some("SelectionWrite") => refusals.push(portal.pipe(&call).await?),
+                        Some("SelectionWriteDone") => {
+                            reports.push(call.body().deserialize::<(OwnedObjectPath, u32, bool)>()?);
+                        },
+                        other => bail!("The client called {other:?}"),
+                    }
+                },
+            }
+        };
+        assert_eq!(copied, COPIED_FOR_MANUAL_PASTE);
+        while let Ok(call) = tokio::time::timeout(Duration::from_millis(500), portal.call()).await {
+            let call = call?;
+            match call.header().member().map(MemberName::as_str) {
+                Some("SelectionWrite") => refusals.push(portal.pipe(&call).await?),
+                Some("SelectionWriteDone") => {
+                    reports.push(call.body().deserialize::<(OwnedObjectPath, u32, bool)>()?);
+                },
+                other => bail!("The client called {other:?}"),
+            }
+        }
+        assert!(!refusals.is_empty(), "No flooded transfer was refused");
+        for refusal in refusals {
+            assert!(
+                read_all(refusal).await?.is_empty(),
+                "A refused transfer wrote data"
+            );
+        }
+        assert!(
+            reports.iter().all(|(_, _, success)| !success),
+            "A refused or invalidated transfer reported success"
+        );
+        assert!(
+            (1..=4).all(|serial| reports.iter().any(|(_, reported, _)| *reported == serial)),
+            "A transfer of the replaced copy was never reported"
+        );
+        assert!(client.alive(), "The flood stopped the service");
         Ok(())
     })
 }

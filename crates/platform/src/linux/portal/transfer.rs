@@ -76,6 +76,22 @@ pub(super) async fn transfer(
     let _ = tokio::time::timeout(TRANSFER_TIMEOUT, done(success)).await;
 }
 
+pub(super) async fn refuse(
+    write: impl Future<Output = anyhow::Result<OwnedFd>>,
+    done: impl AsyncFnOnce(bool) -> anyhow::Result<()>,
+) {
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "Dropping the descriptor ends the reader's transfer empty; a refused or unanswered write leaves only the failure report"
+    )]
+    let _ = tokio::time::timeout(TRANSFER_TIMEOUT, write).await;
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "A report the portal refuses or never answers fails only this transfer; the session monitor reports a lost portal"
+    )]
+    let _ = tokio::time::timeout(TRANSFER_TIMEOUT, done(false)).await;
+}
+
 async fn write_payload(
     write: impl Future<Output = anyhow::Result<OwnedFd>>,
     text: &str,

@@ -14,8 +14,9 @@ use zbus::{
 };
 
 use super::{
-    CLIPBOARD_DISCONNECTED, Notice, Options, SelectionHandoff, deadline, or_pending,
-    transfer::{Selection, Transfers, transfer},
+    CLIPBOARD_DISCONNECTED, Notice, Options, SIGNAL_BACKLOG, SelectionHandoff, deadline,
+    or_pending,
+    transfer::{Selection, Transfers, refuse, transfer},
 };
 use crate::{
     Delivery, InputSender, InsertPermit, Inserted, LinuxPaste,
@@ -33,6 +34,7 @@ const SELECTION_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub(super) struct Insertions<'a> {
     transfers: Transfers<'a>,
+    refusals: Transfers<'a>,
     in_flight: Option<InFlight<'a>>,
     sender: Option<ei::Sender>,
     clipboard_session: Option<OwnedObjectPath>,
@@ -57,6 +59,7 @@ impl<'a> Insertions<'a> {
     ) -> Self {
         Self {
             transfers: Transfers::new(),
+            refusals: Transfers::new(),
             in_flight: None,
             sender,
             clipboard_session,
@@ -102,10 +105,6 @@ impl<'a> Insertions<'a> {
                     self.apply(notice.context("Desktop monitoring stopped")?);
                 },
                 prepared = prepared => self.advance_preparation(prepared)?,
-                _ = self.transfers.next(), if !self.transfers.is_empty() => {},
-                event = or_pending(transfer_requests.as_mut().map(|stream| stream.next())) => {
-                    self.serve_transfer(&event.context(CLIPBOARD_DISCONNECTED)??).await?;
-                },
                 request = requests.recv(), if idle => match request {
                     Ok(request) => {
                         self.in_flight = Some(InFlight {
@@ -114,6 +113,11 @@ impl<'a> Insertions<'a> {
                         });
                     },
                     Err(_) => break,
+                },
+                _ = self.transfers.next(), if !self.transfers.is_empty() => {},
+                _ = self.refusals.next(), if !self.refusals.is_empty() => {},
+                event = or_pending(transfer_requests.as_mut().map(|stream| stream.next())) => {
+                    self.serve_transfer(&event.context(CLIPBOARD_DISCONNECTED)??);
                 },
                 readable = readable => readable?.clear_ready(),
                 () = modifier_wait => {},
@@ -270,17 +274,13 @@ impl<'a> Insertions<'a> {
         Ok(())
     }
 
-    #[expect(
-        clippy::future_not_send,
-        reason = "The desktop thread keeps the native sender and its transfer futures on one LocalSet"
-    )]
-    async fn serve_transfer(&self, event: &Message) -> anyhow::Result<()> {
+    fn serve_transfer(&self, event: &Message) {
         let Ok((path, mime, serial)) = event.body().deserialize::<(OwnedObjectPath, String, u32)>()
         else {
-            return Ok(());
+            return;
         };
         if self.clipboard_session.as_ref() != Some(&path) {
-            return Ok(());
+            return;
         }
         let payload = self
             .selection
@@ -288,14 +288,6 @@ impl<'a> Insertions<'a> {
             .filter(|_| self.accepts_transfers() && PLAIN_TEXT.contains(&mime.as_str()))
             .map(Selection::payload);
         let clipboard = self.clipboard;
-        let Some(payload) = payload else {
-            tokio::time::timeout(
-                SELECTION_TIMEOUT,
-                clipboard.call_noreply("SelectionWriteDone", &(path, serial, false)),
-            )
-            .await??;
-            return Ok(());
-        };
         let session = path.clone();
         let write = async move {
             let fd: zbus::zvariant::OwnedFd =
@@ -308,9 +300,15 @@ impl<'a> Insertions<'a> {
                 .await?;
             Ok(())
         };
-        self.transfers
-            .push(transfer(write, done, payload).boxed_local());
-        Ok(())
+        match payload {
+            Some(payload) => self
+                .transfers
+                .push(transfer(write, done, payload).boxed_local()),
+            None if self.refusals.len() < SIGNAL_BACKLOG => {
+                self.refusals.push(refuse(write, done).boxed_local());
+            },
+            None => {},
+        }
     }
 
     fn cancel_all(self) {
