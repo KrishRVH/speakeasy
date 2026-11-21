@@ -49,13 +49,15 @@ proptest! {
 }
 
 #[test]
-fn trailing_space_after_punctuation_still_ends_a_sentence() {
-    let Narration::Words(words) = words(&[(0, " Done. "), (400, "Next.")]) else {
-        panic!("The fixture is timed");
-    };
-    let rows = timed_clauses(&words);
-    assert_eq!(
-        rows.iter().map(|row| row.text.as_str()).collect::<Vec<_>>(),
-        ["Done.", "Next."]
-    );
+fn space_after_punctuation_or_before_a_closing_quote_still_ends_a_sentence() {
+    for done in [" Done. ", "“Done. ” "] {
+        let Narration::Words(words) = words(&[(0, done), (400, "Next")]) else {
+            panic!("The fixture is timed");
+        };
+        let rows = timed_clauses(&words);
+        assert_eq!(
+            rows.iter().map(|row| row.text.as_str()).collect::<Vec<_>>(),
+            [done.trim(), "Next"]
+        );
+    }
 }
