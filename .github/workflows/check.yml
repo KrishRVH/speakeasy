@@ -51,6 +51,7 @@ jobs:
           - system: macos
             runner: [speakeasy-mac-mini]
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
@@ -112,6 +113,7 @@ jobs:
     if: ${{ inputs.installer }}
     needs: native
     runs-on: windows-2025
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -126,6 +128,7 @@ jobs:
   mac-updates:
     if: ${{ inputs.mac_updates }}
     runs-on: macos-15
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
@@ -149,6 +152,7 @@ jobs:
       != '') }}
     needs: native
     runs-on: speakeasy-mac-mini
+    timeout-minutes: 30
     permissions:
       contents: read
       actions: read

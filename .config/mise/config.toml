@@ -31,7 +31,7 @@ shfmt = "3.14.1"
 # Static Linux build keeps the local gate usable on glibc 2.35.
 lychee = { version = "0.24.2", libc = "musl" }
 typos = "1.52.2"
-actionlint = "1.7.12"
+jactionlint = "2.6.0"
 
 # A dependency change is when a crate can bring a license packaging cannot cite, so the check runs
 # here rather than in every gate; its notices cover all three packaged targets at once.
@@ -236,7 +236,7 @@ depends = ["rust:standards:check", "py:standards:check", "shell:standards:check"
 
 [tasks."ci:lint"]
 description = "Lint the GitHub Actions workflows"
-run = "actionlint"
+run = "jactionlint --strict-exit"
 
 [tasks."ps:syntax"]
 description = "Parse Windows scripts on a native PowerShell host"

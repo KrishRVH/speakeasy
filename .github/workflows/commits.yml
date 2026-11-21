@@ -1,12 +1,13 @@
 name: Commits
+# Check cancels its run when a newer push lands, so subjects are checked here, where each push keeps
+# its own run over exactly the commits it carried.
+# jactionlint ignore=concurrency-limits
 on:
   push:
     branches: [main]
 
 permissions: {}
 
-# Check cancels its run when a newer push lands, so subjects are checked here, where each push keeps
-# its own run over exactly the commits it carried.
 jobs:
   subjects:
     runs-on: ubuntu-latest
