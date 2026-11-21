@@ -147,8 +147,9 @@ module unless a test file is named.
   full scale; [runtime/tests/cues.rs](../crates/app/src/runtime/tests/cues.rs) checks which moments
   sound and when the output is held.
 - **Local speech**: [local_speech.rs](../crates/app/src/local_speech.rs),
-  [child.rs](../crates/app/src/child.rs), [http.rs](../crates/app/src/http.rs), and
-  [platform/src/process.rs](../crates/platform/src/process.rs) start, query, and reap engines.
+  [child.rs](../crates/app/src/child.rs), [http.rs](../crates/app/src/http.rs),
+  [platform/src/process.rs](../crates/platform/src/process.rs), and its macOS socket reader
+  [process/libproc.rs](../crates/platform/src/process/libproc.rs) start, query, and reap engines.
   Whisper word-timing requests ask whisper-server to wrap long segments only between words
   (`split_on_word`), so every segment starts a new word and a token without a leading space joins
   the word before it. [local_speech/tests.rs](../crates/app/src/local_speech/tests.rs) drives
@@ -1077,33 +1078,39 @@ and can panic. Clippy catches the named constructors but cannot name those `Defa
 implementations.
 
 The speech worker listens on loopback only. Speakeasy declares the worker ready only after a health
-probe answers with a well-formed success header. On Linux and Windows, each probe, streaming
-connection, and request first checks that the worker's own process group, a job object on Windows,
-holds every listener a connection to its loopback port can reach: wildcard, IPv6 dual-stack, and
-v4-mapped listeners included. Neither system's table shows whether an IPv6 wildcard listener is
-IPv6-only, so such a listener counts as foreign even though 127.0.0.1 cannot reach it, and startup
-asks the user to try again on a new port. A listener that closes during the check is looked up again
-rather than called foreign, so an engine that crashes then reports its exit. The probe and the
-streaming connection check again once connected and write nothing unless the group still holds every
-listener.
+probe answers with a well-formed success header. Each probe, streaming connection, and request first
+checks the worker's loopback port against the worker's own process group, a job object on Windows.
+On Linux and Windows the group must hold every listener a connection to the port can reach:
+wildcard, IPv6 dual-stack, and v4-mapped listeners included. Neither system's table shows whether an
+IPv6 wildcard listener is IPv6-only, so such a listener counts as foreign even though 127.0.0.1
+cannot reach it, and startup asks the user to try again on a new port. A listener that closes during
+the check is looked up again rather than called foreign, so an engine that crashes then reports its
+exit. On macOS, libproc must find a group member holding a TCP listener on the port that accepts
+IPv4 at 127.0.0.1 or a wildcard. An IPv6-only listener never counts, because its flags show that
+127.0.0.1 cannot reach it. Without such a member, a bare connection to 127.0.0.1 that sends nothing
+tells a missing listener from a foreign one, and a connection unanswered within 50 ms counts as
+missing. The port counts as foreign only when two such connections each reach a listener while
+libproc finds none in the group before and after each, so one listener that closes during the check
+never reads as foreign. The probe and the streaming connection check again once connected and write
+nothing unless the check still passes.
 
 These checks read listening sockets, not the end of the connection that carries the data, so two
 windows remain. whisper-server's HTTP library binds with `SO_REUSEPORT`, or `SO_REUSEADDR` where the
-system lacks it. Windows then lets a program of another account bind the same port; Linux allows
-that only to the same account. A program sharing the port can accept a connection, close its
-listener before the second check, and receive the probe's key or the stream's key and audio.
-Requests go through reqwest, checked only before reqwest connects, so a program that takes the port
-of a worker that just exited, or shares it, can receive one request with its recording, hints, and
-key. Closing both needs each exchange on a connection whose server end the check matched to the
-group: the established row's socket inode on Linux, the connection row's owning process on Windows,
-and a libproc lookup on macOS. reqwest cannot send on a connection it did not open. macOS has no
-listener lookup, so each probe and request there checks only that the worker still runs, and a
-program that binds the port before whisper-server finishes loading its model receives the health
-probe. Each worker gets a fresh random key. The NeMo engine receives it in its owner-only
-environment, but whisper-server accepts its route only on the command line, so on Linux other local
-accounts can read it through `/proc` unless `/proc` is mounted with `hidepid`. That route is the
-only guard on Whisper's `/inference` and model-loading `/load` requests, so prefer Parakeet on
-shared Linux machines; automatic setup installs it.
+system lacks it. Windows then lets a program of another account bind the same port; Linux and macOS
+allow that only to the same account. A program sharing the port can accept a connection, close its
+listener before the second check, and receive the probe's key or the stream's key and audio; on
+macOS, whose check sees only the group's listener, it need not close it. Requests go through
+reqwest, checked only before reqwest connects, so a program that takes the port of a worker that
+just exited, or shares it, can receive one request with its recording, hints, and key. Closing both
+needs each exchange on a connection whose server end the check matched to the group: the established
+row's socket inode on Linux, the connection row's owning process on Windows, and the established
+socket's libproc entry on macOS. reqwest cannot send on a connection it did not open, and an HTTP
+client that can would be a new direct dependency, which Speakeasy does not take. Each worker gets a
+fresh random key. The NeMo engine receives it in its owner-only environment, but whisper-server
+accepts its route only on the command line, so on Linux other local accounts can read it through
+`/proc` unless `/proc` is mounted with `hidepid`. That route is the only guard on Whisper's
+`/inference` and model-loading `/load` requests, so prefer Parakeet on shared Linux machines;
+automatic setup installs it.
 
 On macOS both engines start with `GGML_METAL_TENSOR_DISABLE=1`. ggml turns its Metal tensor kernels
 on by itself for M5-class GPUs, and there they return "no speech" or garbage text.

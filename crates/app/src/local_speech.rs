@@ -10,9 +10,7 @@ use std::{
 use anyhow::{Context as _, anyhow, bail, ensure};
 use reqwest::{Client, RequestBuilder, multipart};
 use serde::{Deserialize, de::DeserializeOwned};
-#[cfg(not(target_os = "macos"))]
-use speakeasy_platform::LoopbackListener;
-use speakeasy_platform::ProcessGroup;
+use speakeasy_platform::{LoopbackListener, ProcessGroup};
 use speakeasy_show::{Moment, Narration, Span, Word};
 use tokio::{
     io::{AsyncReadExt as _, AsyncWriteExt as _},
@@ -42,7 +40,6 @@ const INFERENCE_TIMEOUT: Duration = Duration::from_mins(30);
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const PARAKEET_RATES: RangeInclusive<u32> = 8_000..=96_000;
 const STOPPED: &str = "Transcription stopped. Check the selected model and engine, then try again.";
-#[cfg(not(target_os = "macos"))]
 const TAKEN: &str = "Another program took the speech engine's port. Try again.";
 
 const EXIT_GRACE: Duration = Duration::from_millis(500);
@@ -138,25 +135,19 @@ impl LocalSpeech {
                 self.group.terminate();
                 bail!(startup_exit(self.child.wait().await?));
             }
-            #[cfg(not(target_os = "macos"))]
-            let holds_port = || self.holds_port();
-            #[cfg(target_os = "macos")]
-            let holds_port = || Ok(true);
-            if healthy(self.port, &health, holds_port).await? {
+            if healthy(self.port, &health, || self.holds_port()).await? {
                 return Ok(());
             }
             sleep(HEALTH_POLL).await;
         }
     }
 
-    #[cfg(not(target_os = "macos"))]
     fn listener(&self) -> anyhow::Result<LoopbackListener> {
         self.group
             .loopback_listener(self.port)
             .context("Cannot verify the speech engine's process. Try again.")
     }
 
-    #[cfg(not(target_os = "macos"))]
     fn holds_port(&self) -> anyhow::Result<bool> {
         match self.listener()? {
             LoopbackListener::Missing => Ok(false),
@@ -190,7 +181,6 @@ impl LocalSpeech {
         if !matches!(self.leader_exited(), Ok(false)) {
             return Err(self.terminate_with_cause().await);
         }
-        #[cfg(not(target_os = "macos"))]
         ensure!(
             self.listener()
                 .is_ok_and(|listener| listener == LoopbackListener::Owned),

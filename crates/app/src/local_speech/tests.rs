@@ -284,7 +284,7 @@ async fn only_a_complete_success_head_proves_the_engine_healthy() -> anyhow::Res
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 #[tokio::test]
 async fn startup_probes_each_engine_at_its_own_health_route() -> anyhow::Result<()> {
     use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
@@ -379,7 +379,7 @@ async fn a_truncated_reply_is_a_broken_connection() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 fn fake_engine(script: &str) -> anyhow::Result<(tempfile::TempDir, Config)> {
     use std::os::unix::fs::PermissionsExt as _;
     let directory = tempfile::tempdir()?;
@@ -438,9 +438,11 @@ async fn startup_cancellation_reaps_the_owned_process() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 #[tokio::test]
 async fn a_program_that_takes_the_released_port_never_becomes_the_engine() -> anyhow::Result<()> {
+    use tokio::io::AsyncReadExt as _;
+
     let (directory, config) = fake_engine(concat!(
         "#!/bin/sh\n",
         "while [ \"$#\" -gt 0 ]; do\n",
@@ -458,9 +460,13 @@ async fn a_program_that_takes_the_released_port_never_becomes_the_engine() -> an
     .await?;
     let squatter = tokio::net::TcpListener::bind((LOOPBACK, port)).await?;
     let started = timeout(crate::testing::PATIENCE, start).await??;
+    let mut received = Vec::new();
+    while let Ok(accepted) = timeout(HEALTH_TIMEOUT, squatter.accept()).await {
+        accepted?.0.read_to_end(&mut received).await?;
+    }
     assert!(
-        timeout(HEALTH_TIMEOUT, squatter.accept()).await.is_err(),
-        "Startup contacted a listener outside the speech engine's group"
+        received.is_empty(),
+        "Startup wrote to a listener outside the speech engine's group"
     );
     let error = started
         .err()
@@ -472,7 +478,7 @@ async fn a_program_that_takes_the_released_port_never_becomes_the_engine() -> an
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 #[tokio::test]
 async fn audio_never_reaches_a_program_that_took_a_ready_engines_port() -> anyhow::Result<()> {
     let squatter = tokio::net::TcpListener::bind((LOOPBACK, 0)).await?;
@@ -630,7 +636,7 @@ async fn crashing_engine(
     Ok((directory, speech, network))
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 async fn shell_engine(
     script: &str,
 ) -> anyhow::Result<(tempfile::TempDir, LocalSpeech, tokio::net::TcpListener)> {
@@ -916,7 +922,7 @@ async fn answer_silence(stream: tokio::net::TcpStream) -> anyhow::Result<Vec<u8>
     Ok(body)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 async fn fixture_number<T: std::str::FromStr>(path: &Path) -> T {
     loop {
         if let Ok(text) = tokio::fs::read_to_string(path).await
