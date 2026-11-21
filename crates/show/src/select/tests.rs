@@ -2,7 +2,7 @@ use proptest::prelude::*;
 
 use super::*;
 use crate::{
-    InkPoint, Narration, Point, Size, Stroke,
+    InkPoint, Narration, Pin, Point, Size, Stroke,
     recording::tests::words,
     signature::tests::{signature, with_patch},
 };
@@ -555,6 +555,75 @@ fn groups_close_at_a_click_or_too_much_ink() {
     )
     .unwrap();
     assert_eq!(marked(&shown), [0..2, 2..3]);
+}
+
+#[test]
+fn overlapping_marks_group_by_the_span_of_the_whole_group_and_the_screen_it_shows() {
+    let at = Moment::from_millis;
+    let held_until = |end| {
+        Stroke::new(vec![
+            InkPoint {
+                point: Point::new(0.3, 0.5),
+                at: at(1_000),
+            },
+            InkPoint {
+                point: Point::new(0.7, 0.5),
+                at: at(end),
+            },
+        ])
+        .unwrap()
+    };
+    let pinned = |times: [u64; 2]| {
+        times
+            .map(|millis| Pin {
+                at: at(millis),
+                point: Point::new(0.5, 0.5),
+            })
+            .to_vec()
+    };
+    let groups = |recording: &Recording, samples: &[Sample]| -> Vec<Vec<usize>> {
+        marked(&select(recording, samples).unwrap())
+            .into_iter()
+            .filter(|marks| !marks.is_empty())
+            .map(Iterator::collect)
+            .collect()
+    };
+
+    let clicked_while_drawing = Recording {
+        pins: pinned([1_040, 3_500]),
+        ..recording(
+            vec![held_until(3_000)],
+            vec![click(2_000)],
+            Narration::default(),
+        )
+    };
+    assert_eq!(
+        groups(&clicked_while_drawing, &samples(250, 10_000, |_| 128)),
+        [[0, 1, 2]],
+        "A click inside the group's span closed it"
+    );
+
+    let patched = |at_millis, left: f32| Sample {
+        at: at(at_millis),
+        signature: with_patch(128, 72, [left, 31.0, left + 6.0, 37.0]),
+    };
+    let settling = [
+        patched(1_040, 30.0),
+        patched(2_000, 40.0),
+        Sample {
+            at: at(5_000),
+            signature: signature(40),
+        },
+    ];
+    let drawn_while_settling = Recording {
+        pins: pinned([1_040, 2_000]),
+        ..recording(vec![held_until(5_000)], Vec::new(), Narration::default())
+    };
+    assert_eq!(
+        groups(&drawn_while_settling, &settling),
+        [[0, 1, 2]],
+        "Each mark's screen matches the one the group shows, yet they split"
+    );
 }
 
 #[test]
