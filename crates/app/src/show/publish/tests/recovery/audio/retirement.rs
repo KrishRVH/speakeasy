@@ -138,16 +138,39 @@ async fn an_unreadable_saved_narration_fails_its_retry_without_erasing_it() -> a
 #[tokio::test]
 async fn a_damaged_saved_narration_without_speech_stays_for_explicit_discard() -> anyhow::Result<()>
 {
-    let root = tempfile::tempdir()?;
-    let pending = failed_retry_with_short_audio(root.path()).await?;
-    fs::write(pending.directory().join("narration.json"), b"{")?;
-    let Err(error) = reopen_with(interrupted(root.path())?) else {
-        bail!("A damaged narration was recovered");
-    };
-    assert!(format!("{error:#}").contains("damaged"), "{error:#}");
-    let survivor = interrupted(root.path()).context("A damaged narration retired its retry")?;
-    survivor.lock()?.discard()?;
-    assert!(!pending.directory().exists());
+    for damaged in [b"{".as_slice(), b""] {
+        let root = tempfile::tempdir()?;
+        let pending = failed_retry_with_short_audio(root.path()).await?;
+        fs::write(pending.directory().join("narration.json"), damaged)?;
+        let Err(error) = reopen_with(interrupted(root.path())?) else {
+            bail!("A damaged narration was recovered");
+        };
+        assert!(format!("{error:#}").contains("damaged"), "{error:#}");
+        let survivor = interrupted(root.path()).context("A damaged narration retired its retry")?;
+        survivor.lock()?.discard()?;
+        assert!(!pending.directory().exists());
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_retry_reads_kept_speech_past_an_empty_or_wordless_saved_narration() -> anyhow::Result<()>
+{
+    for wordless in [true, false] {
+        let root = tempfile::tempdir()?;
+        let (_show, pending) = pending_show(root.path()).await?;
+        if wordless {
+            pending.lock()?.narrate(&Narration::default(), None)?;
+        } else {
+            fs::write(pending.directory().join("narration.json"), b"")?;
+        }
+        let reopened = reopen_with(interrupted(root.path())?)
+            .context("A saved narration without words blocked its retry")?;
+        assert!(
+            reopened.speech.is_some(),
+            "A saved narration without words hid the kept speech"
+        );
+    }
     Ok(())
 }
 

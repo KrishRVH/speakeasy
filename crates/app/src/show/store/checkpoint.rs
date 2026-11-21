@@ -263,7 +263,7 @@ impl Checkpoint {
         let bytes = match read {
             Ok(Some(bytes)) => zeroize::Zeroizing::new(bytes),
             Ok(None) => return Ok(SavedNarration::Absent),
-            Err(error) if error.kind() == io::ErrorKind::FileTooLarge => {
+            Err(error) if error.kind() == io::ErrorKind::FileTooLarge || recall::empty(&error) => {
                 return Ok(SavedNarration::Damaged);
             },
             Err(error) => return Err(error),

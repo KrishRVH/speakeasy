@@ -727,12 +727,13 @@ module unless a test file is named.
   replays a frame; one with neither retires, and a retry whose kept audio holds no speech retires it
   and says so, and the Shows window rereads its library after any failed recovery so a retired row
   stops offering Retry; a retry whose transcription yields no words saves no copy and stays. Saved
-  narration that cannot be read fails recovery and stays; damaged narration falls back to the kept
-  audio. Kept audio that cannot be read then fails recovery with access advice, and only audio that
-  is absent, damaged, or holds no speech leaves the retry listed for explicit discard. A silent
-  microphone's audio holds nothing to retry or export, so its checkpoint records that disposition
-  and retires without keeping voice; recovery treats complete, all-zero audio of any length without
-  saved narration the same way. Unfinished cancellation records discard when its keeper receives it,
+  narration that cannot be read fails recovery and stays; damaged narration, including an empty
+  file, falls back to the kept audio, as does a retry's saved narration without words. Kept audio
+  that cannot be read then fails recovery with access advice, and only audio that is absent,
+  damaged, or holds no speech leaves the retry listed for explicit discard. A silent microphone's
+  audio holds nothing to retry or export, so its checkpoint records that disposition and retires
+  without keeping voice; recovery treats complete, all-zero audio of any length without saved
+  narration the same way. Unfinished cancellation records discard when its keeper receives it,
   before the native movie lease closes, so a kill during teardown cannot return cancelled footage;
   an emergency drop leaves the checkpoint recoverable; private audio, narration, frame, and movie
   files are removed before the lock, so blocked deletion remains available to cleanup. Audio retains

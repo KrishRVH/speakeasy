@@ -234,7 +234,12 @@ fn reopen_with(interrupted: Interrupted) -> anyhow::Result<Reopened> {
     let recording = &mut footage.recording;
     let mut speech = None;
 
-    let saved = checkpoint.narration().context(UNREADABLE_NARRATION)?;
+    let saved = match checkpoint.narration().context(UNREADABLE_NARRATION)? {
+        SavedNarration::Saved(narration, _) if pending && !heard(&narration) => {
+            SavedNarration::Absent
+        },
+        saved => saved,
+    };
     let damaged = matches!(saved, SavedNarration::Damaged);
     match saved {
         SavedNarration::Saved(narration, loss) => {

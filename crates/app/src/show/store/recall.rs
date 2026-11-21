@@ -215,7 +215,7 @@ pub(super) fn open_file(directory: &ReadDirectory, name: &str, limit: u64) -> io
         return Err(too_large());
     }
     if metadata.len() == 0 && name != Bundle::SUMMARY {
-        return Err(io::Error::other("file is empty"));
+        return Err(io::Error::other(Empty));
     }
     Ok(file)
 }
@@ -248,6 +248,21 @@ pub(super) fn read_bounded(file: File, limit: u64) -> io::Result<Vec<u8>> {
 fn too_large() -> io::Error {
     io::Error::new(io::ErrorKind::FileTooLarge, "file is too large")
 }
+
+pub(in crate::show::store) fn empty(error: &io::Error) -> bool {
+    matches!(error.get_ref(), Some(inner) if inner.is::<Empty>())
+}
+
+#[derive(Debug)]
+struct Empty;
+
+impl fmt::Display for Empty {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        out.write_str("file is empty")
+    }
+}
+
+impl std::error::Error for Empty {}
 
 pub(crate) fn summary(directory: &Path) -> io::Result<String> {
     summary_from(&open_directory(directory)?)
