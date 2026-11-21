@@ -460,11 +460,11 @@ fn assert_private_text(source: &str) -> anyhow::Result<()> {
 
 fn enter_private_station() -> anyhow::Result<()> {
     let station = unsafe { CreateWindowStationW(null(), 0, GENERIC_ALL, null()) };
-    ensure!(
-        !station.is_null(),
-        "Cannot create a window station: {}",
-        std::io::Error::last_os_error()
-    );
+    if station.is_null() {
+        let refused = std::io::Error::last_os_error();
+        return ensure_hidden_station()
+            .with_context(|| format!("Cannot create a window station: {refused}"));
+    }
 
     ok_or_last_error(unsafe { SetProcessWindowStation(station) })?;
     ensure_hidden_station()?;
