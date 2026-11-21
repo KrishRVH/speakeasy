@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 4ae497792c89cec9d5cf4a903f36eafe772e1f5bdb9fd354435032bdb393c98d # shrinks to clicks = [(0.0, 0.0)], width = 126.41541, height = 100.0
+cc 306893b8d7509552599607ce5f3e1eed26ee30afdb84e34fc3feca4c1ea2c199 # shrinks to clicks = [(0.0, 0.0)], width = 100.0, height = 2986.0771

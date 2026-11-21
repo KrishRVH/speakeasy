@@ -101,6 +101,11 @@ fn without_input_the_front_window_is_framed_and_a_nearly_full_window_keeps_the_f
         plan.within.encloses(plan.crop) && plan.within.top > 0.0,
         "{plan:?}"
     );
+    let context = 2.0 * CONTEXT * (SCREEN.width * SCREEN.height).sqrt();
+    assert!(
+        (plan.crop.height() * SCREEN.height - context).abs() < 0.5,
+        "A click near the window's top lost context: {plan:?}"
+    );
 }
 
 #[test]

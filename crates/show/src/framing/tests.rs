@@ -137,6 +137,9 @@ proptest! {
             prop_assert!(crop.height() * height >= LEAST_HEIGHT.min(height) - 0.01, "{:?}", crop);
             prop_assert!(crop.width().max(crop.height()) >= MOST_ZOOM.recip() - 1e-5, "{:?}", crop);
             prop_assert!(within(crop, Rect::at(point)), "{:?} {:?}", crop, point);
+            let context = 2.0 * CONTEXT * (width * height).sqrt();
+            prop_assert!(crop.width() >= (context / width).min(1.0) - 1e-4, "{:?} {:?}", crop, point);
+            prop_assert!(crop.height() >= (context / height).min(1.0) - 1e-4, "{:?} {:?}", crop, point);
         }
     }
 

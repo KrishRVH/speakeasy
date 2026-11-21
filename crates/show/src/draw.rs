@@ -564,6 +564,31 @@ mod tests {
     }
 
     #[test]
+    fn only_what_lies_inside_the_view_crowds_a_badge_corner() {
+        let drawn = |occupied, focus| Drawn {
+            occupied,
+            focus,
+            extent: None,
+        };
+        let lower_right = Rect::from([0.5, 0.5, 1.0, 1.0]);
+        assert!(
+            matches!(
+                drawn(vec![Point::new(0.05, 0.05)], None).corner(lower_right),
+                Corner::Left
+            ),
+            "Ink above and left of the view crowded its left corner"
+        );
+        let lower_left = Rect::from([0.0, 0.5, 0.5, 1.0]);
+        assert!(
+            matches!(
+                drawn(vec![Point::new(0.05, 0.55)], Some(Point::new(0.4, 0.3))).corner(lower_left),
+                Corner::Right
+            ),
+            "A click above the view crowded its right corner"
+        );
+    }
+
+    #[test]
     fn a_click_mark_leaves_what_was_clicked_legible() {
         let mut painted = false;
         for ((offset, dark), (_, light)) in clicked([0; 3]).into_iter().zip(clicked([255; 3])) {

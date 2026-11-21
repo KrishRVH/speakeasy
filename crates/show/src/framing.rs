@@ -394,7 +394,6 @@ impl Screen {
     }
 
     fn finish_within(self, rect: Rect, bounds: Rect) -> Rect {
-        let rect = rect.intersection(bounds);
         let center = rect.center();
         let mut width = (rect.width().max(1e-4) * self.width).max(LEAST_WIDTH.min(self.width));
         let mut height = (rect.height().max(1e-4) * self.height).max(LEAST_HEIGHT.min(self.height));
