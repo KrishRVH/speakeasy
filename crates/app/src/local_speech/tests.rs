@@ -169,6 +169,13 @@ fn server_arguments_match_each_engine() {
         model: "model.nemo".into(),
         ..Config::default()
     };
+    assert!(
+        server_command(&nemo, 8080)
+            .as_std()
+            .get_envs()
+            .any(|(name, value)| name == "NEMO_SPEECH_HTTP_API_KEY" && value.is_none()),
+        "NeMo inherited an API key the requests do not send"
+    );
     assert_eq!(
         arguments(&nemo),
         [

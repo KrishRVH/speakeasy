@@ -450,7 +450,8 @@ fn server_command(config: &Config, port: u16) -> Command {
                     "--threads",
                     "1",
                     "--asr.batching.enabled=false",
-                ]);
+                ])
+                .env_remove("NEMO_SPEECH_HTTP_API_KEY");
         },
         Engine::Whisper => {
             command.arg("--model").arg(&config.model).args([

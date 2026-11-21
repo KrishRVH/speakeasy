@@ -354,8 +354,8 @@ module unless a test file is named.
   preparation. Discovery uses system TLS and connect and read deadlines; only a numeric release
   version forms a repository link. [install.rs](../crates/app/src/updates/install.rs) checks the
   release's `update.json` against its Ed25519 signature and the key the build embeds, then downloads
-  the installer it names and refuses bytes beyond its size or with another SHA-256. Each preparation
-  first clears installers staged by earlier ones.
+  the release's installer and refuses bytes beyond the signed size or with another SHA-256. Each
+  preparation first clears installers staged by earlier ones.
   [settings/updates.rs](../crates/app/src/shell/settings/updates.rs) owns the operation and requires
   separate installation consent. Shutdown hands the installer to main only after work and saves
   drain; main releases the instance and exits GPUI before launching it. The installer waits for that
@@ -1080,8 +1080,10 @@ implementations.
 The speech worker listens on loopback, on a port Speakeasy finds free just before starting it.
 Speakeasy trusts that port: it sends the engine no key and does not check which process holds the
 listener. The worker is ready once its health route, `/health` on whisper-server and `/ready` on
-NeMo, answers with success. Each request first checks that the engine is still running, so an engine
-that crashed reports the remedy its exit names rather than a lost connection.
+NeMo, answers with success. NeMo starts without an inherited `NEMO_SPEECH_HTTP_API_KEY`, since
+requests carry no key. Each HTTP request first checks that the engine is still running, so an engine
+that crashed reports the remedy its exit names rather than a lost connection; a failed stream
+reaches that check through its fallback probe.
 
 On macOS both engines start with `GGML_METAL_TENSOR_DISABLE=1`. ggml turns its Metal tensor kernels
 on by itself for M5-class GPUs, and there they return "no speech" or garbage text.
