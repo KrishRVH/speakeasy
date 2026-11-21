@@ -559,9 +559,7 @@ impl insertion::NativeInsert for Insert {
     }
 
     fn holds(&mut self, text: &str, mark: &isize) -> anyhow::Result<bool> {
-        Ok(change_count() == *mark
-            && insertion::holds_text(arboard::Clipboard::new()?.get_text(), text)?
-            && change_count() == *mark)
+        Ok(clipboard::holds(&clipboard::acquire(), text, *mark))
     }
 
     fn paste_keys(&mut self) -> anyhow::Result<Vec<CGEvent>> {

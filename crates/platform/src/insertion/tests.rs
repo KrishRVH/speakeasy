@@ -102,7 +102,7 @@ fn utf16_chunks_count_code_units_and_keep_surrogate_pairs_whole() {
     assert_eq!(utf16_chunks("", 16).count(), 0);
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 #[test]
 fn a_clipboard_that_now_holds_no_text_reads_as_changed_not_failed() -> anyhow::Result<()> {
     assert!(super::holds_text(Ok("fixture".into()), "fixture")?);

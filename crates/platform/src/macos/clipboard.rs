@@ -48,10 +48,7 @@ pub(super) fn save(lease: &Lease) -> Option<Saved> {
     clipboard::snapshot(
         items.iter().map(|item| (item.types(), item)),
         |(types, _)| {
-            if types
-                .iter()
-                .any(|kind| kind.isEqualToString(ns_string!("org.nspasteboard.ConcealedType")))
-            {
+            if concealed(types) {
                 Screen::Refuse
             } else {
                 Screen::Save
@@ -72,29 +69,57 @@ pub(super) fn save(lease: &Lease) -> Option<Saved> {
     )
 }
 
+pub(super) fn holds(lease: &Lease, text: &str, mark: isize) -> bool {
+    let unchanged = || lease.pasteboard.changeCount() == mark;
+    let string = unsafe { NSPasteboardTypeString };
+    unchanged()
+        && lease
+            .pasteboard
+            .pasteboardItems()
+            .filter(|items| items.count() == 1)
+            .and_then(|items| items.firstObject())
+            .is_some_and(|item| {
+                !concealed(&item.types())
+                    && item
+                        .stringForType(string)
+                        .is_some_and(|held| held.isEqualToString(&NSString::from_str(text)))
+            })
+        && unchanged()
+}
+
+fn concealed(types: &NSArray<NSString>) -> bool {
+    types
+        .iter()
+        .any(|kind| kind.isEqualToString(ns_string!("org.nspasteboard.ConcealedType")))
+}
+
 pub(super) fn restore(lease: Lease, saved: Option<&Saved>, mark: isize) -> anyhow::Result<()> {
+    let items = saved
+        .map(|saved| {
+            saved
+                .iter()
+                .map(|kept| {
+                    let item = private_item()?;
+                    for (kind, data) in kept {
+                        ensure!(
+                            item.setData_forType(data, kind),
+                            "Cannot prepare the previous clipboard"
+                        );
+                    }
+                    Ok(item)
+                })
+                .collect::<anyhow::Result<Vec<_>>>()
+        })
+        .transpose()?;
     if lease.pasteboard.changeCount() != mark {
         return Ok(());
     }
-    let Some(saved) = saved else {
+    let Some(items) = items else {
         lease
             .pasteboard
             .prepareForNewContentsWithOptions(NSPasteboardContentsOptions::CurrentHostOnly);
         return Ok(());
     };
-    let items = saved
-        .iter()
-        .map(|kept| {
-            let item = private_item()?;
-            for (kind, data) in kept {
-                ensure!(
-                    item.setData_forType(data, kind),
-                    "Cannot prepare the previous clipboard"
-                );
-            }
-            Ok(item)
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
     publish(lease, &items).map(|_| ())
 }
 
