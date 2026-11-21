@@ -180,7 +180,10 @@ impl Take {
             },
             TakeEvent::End { at, ending } => {
                 valid_time(*at)?;
-                require(*at >= self.latest, "checkpoint ending precedes its events")?;
+                require(
+                    *at >= self.through(),
+                    "checkpoint ending precedes its events",
+                )?;
                 self.latest = *at;
                 self.ending = Some(*ending);
             },

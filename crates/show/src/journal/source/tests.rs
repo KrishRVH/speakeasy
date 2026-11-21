@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use proptest::{prelude::*, sample::Index};
 
 use super::*;
@@ -293,33 +295,43 @@ fn crop_geometry_checks_intermediate_samples_without_reading_pixels() {
 }
 
 #[test]
-fn arrivals_at_the_time_limit_keep_a_readable_source() {
-    let mut live = crate::Take::new(
-        1 << 20,
-        crate::Size {
-            width: 20.0,
-            height: 20.0,
-        },
-        crate::Framing::Chosen,
-    );
-    let mut replay = crate::Take::new(
-        1 << 20,
-        crate::Size {
-            width: 20.0,
-            height: 20.0,
-        },
-        crate::Framing::Chosen,
-    );
+fn arrivals_at_the_time_limit_end_after_their_last_frame_with_a_readable_source() {
+    let take = || {
+        crate::Take::new(
+            1 << 20,
+            crate::Size {
+                width: 20.0,
+                height: 20.0,
+            },
+            crate::Framing::Chosen,
+        )
+    };
+    let (mut live, mut replay) = (take(), take());
+    let last_moment = DURATION_LIMIT.saturating_sub(Duration::from_millis(1));
     for value in [0, 100, 200] {
         let arrival = live
-            .arrive(DURATION_LIMIT, || Image::filled(20, 20, [value; 3]).ok())
+            .arrive(last_moment, || Image::filled(20, 20, [value; 3]).ok())
             .unwrap();
         replay.apply(&arrival).unwrap();
     }
+    let early = crate::TakeEvent::End {
+        at: last_moment,
+        ending: crate::Ending::Finished,
+    };
+    assert!(
+        replay.apply(&early).is_err(),
+        "Replay accepted an ending before the last saved frame"
+    );
+    let ending = live.end(last_moment, crate::Ending::Finished);
+    assert!(
+        matches!(ending, crate::TakeEvent::End { at, .. } if at == DURATION_LIMIT),
+        "{ending:?}"
+    );
+    replay.apply(&ending).unwrap();
     for take in [live, replay] {
         let (recording, journal) = take.finish();
         assert_eq!(recording.duration, DURATION_LIMIT);
         let source = open(&encode(&journal, recording.duration)).unwrap();
-        assert_eq!(source.moments(), [DURATION_LIMIT]);
+        assert_eq!(source.moments(), [last_moment, DURATION_LIMIT]);
     }
 }
