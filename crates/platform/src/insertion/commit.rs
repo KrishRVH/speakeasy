@@ -231,14 +231,14 @@ fn insert<N: NativeInsert>(
         !own_focus.held() && native.external_focus(),
         native.shortcut_released(),
     );
+    let changed = clipboard
+        .as_ref()
+        .is_some_and(|(mark, _)| native.mark() != *mark);
     if !permit.active() {
         restore_now(native, clipboard);
         return Ok((Inserted::Cancelled, None));
     }
-    if clipboard
-        .as_ref()
-        .is_some_and(|(mark, _)| native.mark() != *mark)
-    {
+    if changed {
         return Ok((CLIPBOARD_CHANGED_BEFORE_PASTE, None));
     }
     if let Some(outcome) = preflight {

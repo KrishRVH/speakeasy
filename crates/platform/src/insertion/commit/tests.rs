@@ -395,25 +395,30 @@ fn cancellation_restores_the_snapshot_only_while_the_dictation_owns_the_clipboar
 #[test]
 fn cancellation_after_the_write_reports_cancelled_even_when_the_restore_fails() -> anyhow::Result<()>
 {
-    for revoked_at in [Step::Write, Step::Holds, Step::ShortcutReleased, Step::Mark] {
-        for fails in [vec![], vec![Step::Restore]] {
-            let permit = permit()?;
-            let mut native = Fake {
-                clipboard: 1,
-                revokes_at: Some((revoked_at, permit.clone())),
-                fails,
-                ..Fake::new()
-            };
-            let (outcome, saved) =
-                insert(&mut native, "text", &permit, Delivery::Paste, &unfocused())
-                    .with_context(|| format!("Escape at {revoked_at:?} failed"))?;
-            assert_eq!(outcome, Inserted::Cancelled, "Escape at {revoked_at:?}");
-            assert!(saved.is_none() && !native.sent());
-            assert!(
-                native.steps.contains(&Step::Restore),
-                "Escape at {revoked_at:?} left the cancelled text on the clipboard"
-            );
-            assert_eq!(native.clipboard == 1, native.fails.is_empty());
+    for external_focus in [EXTERNAL_FOCUS, OWN_FOCUS] {
+        for revoked_at in [Step::Write, Step::Holds, Step::ShortcutReleased, Step::Mark] {
+            for fails in [vec![], vec![Step::Restore]] {
+                let permit = permit()?;
+                let mut native = Fake {
+                    clipboard: 1,
+                    external_focus,
+                    revokes_at: Some((revoked_at, permit.clone())),
+                    fails,
+                    ..Fake::new()
+                };
+                let escape =
+                    format!("Escape at {revoked_at:?} with focus outside: {external_focus}");
+                let (outcome, saved) =
+                    insert(&mut native, "text", &permit, Delivery::Paste, &unfocused())
+                        .with_context(|| format!("{escape} failed"))?;
+                assert_eq!(outcome, Inserted::Cancelled, "{escape}");
+                assert!(saved.is_none() && !native.sent());
+                assert!(
+                    native.steps.contains(&Step::Restore),
+                    "{escape} left the cancelled text on the clipboard"
+                );
+                assert_eq!(native.clipboard == 1, native.fails.is_empty());
+            }
         }
     }
     Ok(())

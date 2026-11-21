@@ -64,17 +64,18 @@ failure once the dictated text is confirmed; a cancellation that finds another c
 fails, restores nothing. These restores are best effort, so the dictation still reports its
 cancellation or the original error. A revocation that meets a failing clipboard call reports the
 cancellation, and a paste left to the user reports the text copied only while the clipboard number
-is unchanged. A write that fails partway puts the snapshot back, or clears its partial copy when
-there is none, before it releases its lease; macOS rebuilds the snapshot first and puts it back only
-while the change count its clearing produced still stands. One that fails before touching the
-clipboard leaves it alone. The paste restores nothing after a failed write, so it never writes under
-a number another copy may own. Windows and macOS inspect every clipboard format or item type for
-concealed content before reading any payload; Windows saves nothing when its format listing ends in
-an error, and macOS saves nothing when its change count moved while it read the items. The
-dictated-text check reads text only from a clipboard that bears no concealment mark: macOS reads the
-one item whose types it has just inspected, and Windows also requires the dictation's private marks.
-The thread serves the next request only after the restore, which therefore snapshots the restored
-copy. The snapshot lives only on the insertion thread and is dropped after the restore.
+is unchanged and the permit outlived that last check; a revocation during it restores the snapshot.
+A write that fails partway puts the snapshot back, or clears its partial copy when there is none,
+before it releases its lease; macOS rebuilds the snapshot first and puts it back only while the
+change count its clearing produced still stands. One that fails before touching the clipboard leaves
+it alone. The paste restores nothing after a failed write, so it never writes under a number another
+copy may own. Windows and macOS inspect every clipboard format or item type for concealed content
+before reading any payload; Windows saves nothing when its format listing ends in an error, and
+macOS saves nothing when its change count moved while it read the items. The dictated-text check
+reads text only from a clipboard that bears no concealment mark: macOS reads the one item whose
+types it has just inspected, and Windows also requires the dictation's private marks. The thread
+serves the next request only after the restore, which therefore snapshots the restored copy. The
+snapshot lives only on the insertion thread and is dropped after the restore.
 
 `MonitorControl` serializes publishing a live run-loop handle, readiness and stop. Stop-before-start
 remains effective; retirement removes the handle before a later stop can wake it. This lock cannot
