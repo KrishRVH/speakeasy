@@ -494,6 +494,40 @@ async fn running(
         "A tray preset chosen just before Use overtook it"
     );
 
+    let (call, acknowledging) = Call::new(Command::Preset {
+        name: "French".into(),
+    });
+    let mut armed = true;
+    let observation = cx.update(|cx| {
+        cx.observe_global::<Services>(move |cx| {
+            if !armed || !cx.global::<Services>().choices.is_applying() {
+                return;
+            }
+            armed = false;
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "The acceptance reads the Use outcome from Settings; a closed window already failed it"
+            )]
+            let _ = settings.update(cx, |view, window, cx| {
+                view.edit_preset(Edit::Use(0), window, cx);
+            });
+        })
+    });
+    cx.update(|cx| cx.update_global::<Services, _>(|services, cx| services.control(call, cx)));
+    let answered = acknowledging.recv().await;
+    until(cx, "Use did not finish", |cx| {
+        settings.read_with(cx, |view, _| view.using.is_none())
+    })
+    .await?;
+    drop(observation);
+    let refused = settings.update(cx, |view, _, _| {
+        view.notice.take().is_some_and(|notice| notice.is_problem())
+    })?;
+    ensure!(
+        answered.is_ok() && !refused && preset_name(cx).is_none() && snapshot(cx).preset.is_none(),
+        "A tray preset awaiting the owner's answer kept a later Use from replacing it"
+    );
+
     let (call, chosen) = Call::new(Command::Preset {
         name: "French".into(),
     });

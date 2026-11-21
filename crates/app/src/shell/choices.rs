@@ -51,6 +51,21 @@ impl Choices {
         self.task = None;
         self.applying = false;
     }
+
+    fn supersede(&mut self) -> bool {
+        let acknowledging = self.applying.then(|| self.task.take()).flatten();
+        let unsettled = acknowledging.is_some();
+        if let Some(acknowledging) = acknowledging {
+            acknowledging.detach();
+        }
+        self.cancel();
+        unsettled
+    }
+
+    #[cfg(test)]
+    pub(super) const fn is_applying(&self) -> bool {
+        self.applying
+    }
 }
 
 impl Services {
@@ -247,19 +262,19 @@ impl Services {
         candidate: Config,
         cx: &App,
     ) -> Result<Receiver<Used>, &'static str> {
-        if self.choices.applying || self.output.borrow().phase.is_active() {
+        if self.output.borrow().phase.is_active() {
             return Err(USE_BUSY);
         }
         let path = self.path.clone();
-        self.choices.cancel();
+        let unsettled = self.choices.supersede();
         let (answer, used) = async_channel::bounded(1);
         let validation = cx
             .background_executor()
             .spawn(async move { candidate.validated(&path) });
         self.choices.task = Some(cx.spawn(async move |cx| {
             let result = validation.await;
-            let admission =
-                cx.update_global::<Self, _>(|services, cx| services.admit_use(result, cx));
+            let admission = cx
+                .update_global::<Self, _>(|services, cx| services.admit_use(result, unsettled, cx));
             let outcome = match admission {
                 Ok(Admission::Ready(config)) => Ok(config),
                 Ok(Admission::Waiting(config, receipt)) => {
@@ -294,6 +309,7 @@ impl Services {
     fn admit_use(
         &mut self,
         result: anyhow::Result<ValidConfig>,
+        unsettled: bool,
         cx: &App,
     ) -> Result<Admission, &'static str> {
         let config = result.map_err(|_unavailable| USE_UNAVAILABLE)?;
@@ -304,7 +320,10 @@ impl Services {
             self.forget_preset(cx);
             return Ok(Admission::Ready(config));
         };
-        if self.preset_name().is_none() && self.config.change_to(&config) < Change::Session {
+        if !unsettled
+            && self.preset_name().is_none()
+            && self.config.change_to(&config) < Change::Session
+        {
             return Ok(Admission::Ready(config));
         }
         let receipt = runtime.adopt(config.clone());
