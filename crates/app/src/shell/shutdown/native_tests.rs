@@ -1,4 +1,4 @@
-use std::{fs, sync::mpsc};
+use std::sync::mpsc;
 
 use anyhow::Context as _;
 use tokio::sync::watch;
