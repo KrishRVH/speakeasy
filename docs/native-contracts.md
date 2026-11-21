@@ -323,9 +323,9 @@ records an accepted sample before a later checkpoint error can occur. A held ima
 new capture time.
 
 Begin/geometry acknowledgements observe both checkpoint cancellation and capture stop. The
-non-cloneable target drops after the native encoder and its actual file handles. Finalization
-failure reports partial video; it cannot erase committed coverage or unlock/delete checkpoint
-storage while callbacks retain file access.
+non-cloneable target drops after the native encoder and its actual file handles. A recording that
+failed drops its codec without finalizing it. Finalization failure reports partial video; it cannot
+erase committed coverage or unlock/delete checkpoint storage while callbacks retain file access.
 
 ## Windows codec and verified-file decoder
 
@@ -376,8 +376,10 @@ latched before releasing that lock. Each appended sample owns an independent CVP
 allocation threshold is based on actual buffer size. Writable pixel slices are exclusive and bounded
 by the native allocation while locked. CMSampleBuffer/format results follow Create ownership and
 retain their dependencies. Finalization requires a writing writer and waits for its native
-completion. Drop cancels a writer still writing before closing the sink. The checkpoint lease
-outlives those resources.
+completion. A writer that fails asynchronously between that status check and the finalization call
+still makes AVFoundation raise an Objective-C exception, which aborts the process; catching it needs
+objc2's `exception` feature, whose helper crate the build does not include. Drop cancels a writer
+still writing before closing the sink. The checkpoint lease outlives those resources.
 
 ## GPUI and vendored adapters
 

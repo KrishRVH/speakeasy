@@ -2,7 +2,7 @@
 pub(crate) mod canvas;
 #[cfg(any(test, target_os = "windows", target_os = "macos"))]
 pub(crate) mod encode;
-#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[cfg(any(test, target_os = "windows", target_os = "macos"))]
 pub(crate) mod recording;
 
 use std::{
@@ -156,7 +156,7 @@ impl MovieTarget {
         self.deadline
     }
 
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    #[cfg(any(test, target_os = "windows", target_os = "macos"))]
     pub(crate) fn begin(
         &self,
         at: Instant,
@@ -177,7 +177,7 @@ impl MovieTarget {
         self.accepted(answer, stopping).unwrap_or(false)
     }
 
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    #[cfg(any(test, target_os = "windows", target_os = "macos"))]
     pub(crate) fn geometry(
         &self,
         sample: u32,
@@ -200,7 +200,7 @@ impl MovieTarget {
         self.accepted(answer, stopping)
     }
 
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    #[cfg(any(test, target_os = "windows", target_os = "macos"))]
     fn accepted(
         &self,
         answer: oneshot::Receiver<bool>,
@@ -227,7 +227,7 @@ impl MovieTarget {
         Ok(true)
     }
 
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    #[cfg(any(test, target_os = "windows", target_os = "macos"))]
     pub(crate) fn finish(&self, last: Instant, through: Instant, frames: u32, finalized: bool) {
         #[expect(
             clippy::let_underscore_must_use,

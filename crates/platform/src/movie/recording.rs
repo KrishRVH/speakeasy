@@ -13,28 +13,26 @@ use async_channel::Receiver;
 use super::{
     RECORDING_LIMIT,
     canvas::Canvas,
-    encode::{self, End, Observer},
+    encode::{Codec, Encoder, End, Observer},
 };
 #[cfg(target_os = "macos")]
-use crate::macos::movie::encode::Codec;
+use crate::macos::movie::encode::Codec as Native;
 #[cfg(target_os = "windows")]
-use crate::windows::movie::encoder::Codec;
+use crate::windows::movie::encoder::Codec as Native;
 use crate::{Frame, MovieTarget, Part};
-
-type Encoder = encode::Encoder<Codec>;
 
 pub(crate) const INTERVAL: Duration = Duration::from_nanos(33_333_334);
 
 const FILE_LIMIT: u64 = 384 << 20;
 
-pub(crate) enum Movie {
+pub(crate) enum Movie<C: Codec> {
     Pending(MovieTarget),
-    Active(Box<Recording>),
+    Active(Box<Recording<C>>),
     Stopped,
 }
 
-pub(crate) struct Recording {
-    encoder: Option<Encoder>,
+pub(crate) struct Recording<C: Codec> {
+    encoder: Option<Encoder<C>>,
     first: Instant,
     received_at: Option<Instant>,
     ending: Ending,
@@ -64,11 +62,14 @@ impl Observer for Publication<'_> {
     }
 }
 
-impl Movie {
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+impl Movie<Native> {
     pub(crate) fn new(target: Option<MovieTarget>) -> Self {
         target.map_or(Self::Stopped, Self::Pending)
     }
+}
 
+impl<C: Codec> Movie<C> {
     pub(crate) const fn wants_frames(&self) -> bool {
         !matches!(self, Self::Stopped)
     }
@@ -155,7 +156,7 @@ impl Movie {
     }
 }
 
-impl Recording {
+impl<C: Codec> Recording<C> {
     fn begin(
         target: MovieTarget,
         frame: &Frame,
@@ -218,7 +219,7 @@ impl Recording {
     }
 }
 
-impl Drop for Recording {
+impl<C: Codec> Drop for Recording<C> {
     fn drop(&mut self) {
         let coverage = self.encoder.as_ref().and_then(Encoder::coverage);
         let last = coverage
@@ -235,11 +236,9 @@ impl Drop for Recording {
             .unwrap_or(self.first)
             .max(presented)
             .min(self.target.deadline());
-        let finalized = self
-            .encoder
-            .take()
-            .is_some_and(|encoder| encoder.finish().is_ok())
-            && !matches!(self.ending, Ending::Failed);
+        let finalized = self.encoder.take().is_some_and(|encoder| {
+            !matches!(self.ending, Ending::Failed) && encoder.finish().is_ok()
+        });
         self.target.finish(
             last,
             through,

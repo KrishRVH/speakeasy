@@ -23,6 +23,7 @@ use tokio::runtime;
 use super::{Failure, PATIENCE, Source, display_bounds, refused};
 use crate::{
     Frame, Part, ScreenEvent, Target,
+    macos::movie::encode::Codec,
     movie::recording::{INTERVAL, Movie},
     screen::geometry::Bounds,
 };
@@ -101,7 +102,7 @@ fn record(
     deadline: Option<Instant>,
     geometry: Geometry,
     stream: &Stream,
-    movie: &mut Movie,
+    movie: &mut Movie<Codec>,
 ) -> Result<(), Failure> {
     let started = Instant::now();
     let mut last_frame = None;
