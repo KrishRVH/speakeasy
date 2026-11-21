@@ -669,41 +669,83 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn paste_readiness_names_the_root_blocker_first() {
-        let chord = PasteChord {
-            control: 29,
-            shift: None,
-            v: 47,
-        };
-        let mut paste = KeymapPaste {
+    const CHORD: PasteChord<u32> = PasteChord {
+        control: 29,
+        shift: None,
+        v: 47,
+    };
+
+    fn held_keymap() -> KeymapPaste {
+        KeymapPaste {
             layouts: PasteLayouts {
                 blockers: 1,
-                chords: vec![Some(chord), None],
+                chords: vec![Some(CHORD), None],
             },
-            group: 0,
-            active_mask: 0,
-        };
+            group: 1,
+            active_mask: 1,
+        }
+    }
+
+    #[test]
+    fn paste_readiness_names_the_root_blocker_first() {
+        let mut paste = held_keymap();
         assert_eq!(
             paste_readiness(false, Some(&paste)),
-            Err(PasteBlocked::NoKeyboard)
+            Err(PasteBlocked::NoKeyboard),
+            "A paused keyboard was reported as held keys or a missing paste key"
         );
         assert_eq!(
             paste_readiness(true, None),
             Err(PasteBlocked::NoKeyboardState),
             "An unreadable keymap read as held shortcut keys"
         );
-        assert_eq!(paste_readiness(true, Some(&paste)), Ok(chord));
-        paste.active_mask = 1;
         assert_eq!(
             paste_readiness(true, Some(&paste)),
-            Err(PasteBlocked::ShortcutKeys)
+            Err(PasteBlocked::ShortcutKeys),
+            "Held keys were reported as a missing paste key"
         );
         paste.active_mask = 0;
-        paste.group = 1;
         assert_eq!(
             paste_readiness(true, Some(&paste)),
             Err(PasteBlocked::NoPasteKeys)
+        );
+        paste.group = 0;
+        assert_eq!(paste_readiness(true, Some(&paste)), Ok(CHORD));
+    }
+
+    #[test]
+    fn pausing_lifts_the_keyboard_modifiers_and_resuming_keeps_the_reported_ones() {
+        unsafe extern "C" fn keep(device: *mut EiDevice) -> *mut EiDevice {
+            device
+        }
+        let mut keyboard = Keyboard {
+            device: Device {
+                handle: Ref {
+                    raw: NonNull::dangling(),
+                    unref: keep,
+                },
+                resumed: false,
+            },
+            paste: Some(KeymapPaste {
+                group: 0,
+                ..held_keymap()
+            }),
+        };
+        let readiness =
+            |keyboard: &Keyboard| paste_readiness(keyboard.device.resumed, keyboard.paste.as_ref());
+        keyboard.set_resumed(true);
+        assert_eq!(
+            readiness(&keyboard),
+            Err(PasteBlocked::ShortcutKeys),
+            "Resuming forgot the modifiers the compositor reported"
+        );
+        keyboard.set_resumed(false);
+        assert_eq!(readiness(&keyboard), Err(PasteBlocked::NoKeyboard));
+        keyboard.set_resumed(true);
+        assert_eq!(
+            readiness(&keyboard),
+            Ok(CHORD),
+            "Modifiers held when the keyboard paused still blocked paste after it resumed"
         );
     }
 
