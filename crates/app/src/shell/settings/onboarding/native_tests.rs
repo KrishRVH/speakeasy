@@ -57,11 +57,11 @@ pub(in crate::shell::settings) async fn setup_rechecks_unchanged_settings(
         let before = (
             services.config.clone(),
             services.output.borrow().clone(),
-            services.checked,
+            services.speech_checked,
         );
         services.mode = LaunchMode::Live;
         services.config.clone_from(&missing);
-        services.checked = true;
+        services.speech_checked = true;
         services
             .output
             .send_modify(|snapshot| snapshot.phase = Phase::Idle);
@@ -72,7 +72,7 @@ pub(in crate::shell::settings) async fn setup_rechecks_unchanged_settings(
     })?;
     let resumed = failed_check(cx).await?;
     let unready = settings.update(cx, |view, _, cx| {
-        let unready = !cx.global::<Services>().speech_checked()
+        let unready = !cx.global::<Services>().speech_checked
             && view.onboarding_next(Step::Prepare, cx) == Step::Prepare;
         cx.global::<Services>()
             .output
@@ -87,7 +87,7 @@ pub(in crate::shell::settings) async fn setup_rechecks_unchanged_settings(
         services.mode = LaunchMode::DemoTray;
         services.config = before.0;
         services.output.send_modify(|snapshot| *snapshot = before.1);
-        services.checked = before.2;
+        services.speech_checked = before.2;
         view.saves = SaveQueue::new(path, original.clone());
         view.config = original;
     })?;
@@ -123,9 +123,9 @@ pub(in crate::shell::settings) fn exercise(
         view.saves = SaveQueue::new(path, original.clone());
         let failed = view.onboarding_primary(Step::Prepare, cx);
         let failed_next = view.onboarding_next(Step::Prepare, cx);
-        cx.global_mut::<Services>().checked = true;
+        cx.global_mut::<Services>().speech_checked = true;
         let checked_next = view.onboarding_next(Step::Prepare, cx);
-        cx.global_mut::<Services>().checked = false;
+        cx.global_mut::<Services>().speech_checked = false;
         cx.global_mut::<Services>().mode = LaunchMode::DemoTray;
         ensure!(
             primary.1 == Some(SettingsAction::Setup) && next == Step::Prepare,

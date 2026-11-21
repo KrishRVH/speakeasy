@@ -674,7 +674,7 @@ impl Settings {
         self.edited(cx);
         if unchanged {
             cx.update_global::<Services, _>(|services, cx| {
-                if !services.speech_checked() {
+                if !services.speech_checked {
                     services.resume(cx);
                 }
             });

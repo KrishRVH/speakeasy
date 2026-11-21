@@ -183,7 +183,7 @@ impl Settings {
                 let mut loaded = self.config.clone();
                 resolved.load(&mut loaded);
                 if self.saving.is_none() && !self.saves.needs_save(&loaded) {
-                    cx.update_global::<Services, _>(|services, _| services.checked = true);
+                    cx.update_global::<Services, _>(|services, _| services.speech_checked = true);
                 }
                 self.load_preset(&resolved, cx);
             },

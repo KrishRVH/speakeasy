@@ -91,7 +91,7 @@ fn marker(settings: &Path) -> PathBuf {
 }
 
 pub(super) fn speech_failed(cx: &App) -> bool {
-    !is_demo(cx) && !cx.global::<Services>().speech_checked()
+    !is_demo(cx) && !cx.global::<Services>().speech_checked
 }
 
 impl Settings {

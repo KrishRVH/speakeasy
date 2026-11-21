@@ -263,7 +263,7 @@ async fn resolved(
     cx.update(|cx| {
         cx.update_global::<Services, _>(|services, _| {
             services.config = library.clone();
-            services.checked = false;
+            services.speech_checked = false;
             services.choices.selected = None;
             services
                 .output
@@ -277,7 +277,7 @@ async fn resolved(
     })?;
     using(settings, 2, cx).await?;
     ensure!(
-        cx.update(|cx| cx.global::<Services>().speech_checked()),
+        cx.update(|cx| cx.global::<Services>().speech_checked),
         "A preset that resolved to the saved speech settings left them unchecked"
     );
     ensure!(
