@@ -8,7 +8,7 @@ const NAMING: &[&str] = &[
     "a", "an", "the", "another", "leading", "trailing", "double", "single", "extra",
 ];
 
-const STOPS: [char; 3] = ['.', '!', '?'];
+const STOPS: [char; 4] = ['.', '!', '?', '…'];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Symbols {
@@ -142,13 +142,17 @@ fn closed_later(open: char, after: &[&str]) -> bool {
 }
 
 fn matches_command(spoken: &[&str], words: &[&str]) -> bool {
-    spoken.split_last().is_some_and(|(_, prefix)| {
-        prefix.iter().all(|token| !trailing(token).contains(STOPS))
-            && spoken
-                .iter()
-                .zip(words)
-                .all(|(token, word)| bare(token).eq_ignore_ascii_case(word))
-    })
+    !spoken.is_empty()
+        && spoken
+            .iter()
+            .zip(words)
+            .all(|(token, word)| bare(token).eq_ignore_ascii_case(word))
+        && spoken
+            .iter()
+            .zip(spoken.iter().skip(1))
+            .all(|(before, after)| {
+                before.ends_with(char::is_alphanumeric) && after.starts_with(char::is_alphanumeric)
+            })
 }
 
 fn bare(token: &str) -> &str {
@@ -294,7 +298,12 @@ mod tests {
         for heard in [
             "Hello. Underscore world",
             "Look forward. Slash prices",
+            "We move forward, slash prices.",
+            "We move forward… Slash the budget.",
+            "Move forward (slash prices) today.",
+            "Hello… Underscore world",
             "It is open. Quote me close quote",
+            "It is open, quote me close quote",
             "Say open quote hello and close. Quote this other sentence.",
             "A new line of products.",
             "Open the bracket drawer.",

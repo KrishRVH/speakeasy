@@ -148,12 +148,12 @@ module unless a test file is named.
   in `Config::fillers` ([config.rs](../crates/app/src/config.rs)). `for_dictation` composes filler
   removal, phrase corrections, spoken symbols, and the session's output style for insertion and
   paired replay. [symbols.rs](../crates/app/src/transcript/symbols.rs) writes symbols only in Prose,
-  after corrections. A spoken line break must stand between punctuation or the text's ends.
-  Multiword commands and joining symbols respect sentence boundaries.
-  [vocabulary.rs](../crates/app/src/transcript/vocabulary.rs) validates and compiles per-request
-  phrase corrections after filler removal, preserving timed-word spans. Its tests cover word
-  boundaries, non-chaining replacements, duplicate validation, and timing. Whisper invents subtitle
-  credits such as “Thank you.” from near-silence, and
+  after corrections. A spoken line break must stand between punctuation or the text's ends. A
+  multiword command's words stand together without punctuation between them, and joining symbols
+  respect sentence boundaries. [vocabulary.rs](../crates/app/src/transcript/vocabulary.rs) validates
+  and compiles per-request phrase corrections after filler removal, preserving timed-word spans. Its
+  tests cover word boundaries, non-chaining replacements, duplicate validation, and timing. Whisper
+  invents subtitle credits such as “Thank you.” from near-silence, and
   [credits.rs](../crates/app/src/transcript/credits.rs) lists the ones it is known to invent. The
   worker drops a Whisper transcript or Show narration that is exactly one of them when its recording
   held under one second of audible time. The comparison reads letters and digits only, ignoring
