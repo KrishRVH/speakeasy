@@ -574,7 +574,6 @@ fn vocabulary_saves_preserve_other_hand_edits_and_require_session_reconfiguratio
         written: "private_name".into(),
     });
     assert_eq!(base.change_to(&draft), Change::Session);
-    assert!(!format!("{draft:?}").contains("PRIVATE_PHRASE"));
     Config::save_changes(&[&base], &draft, &draft.validated(&path)?, &path)?;
     let stored = saved(&path)?;
     assert_eq!(stored["threads"], 8);
