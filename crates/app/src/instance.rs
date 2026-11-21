@@ -33,6 +33,7 @@ const MAX_HANDSHAKES: usize = 16;
 const MAX_UNDELIVERED: usize = 2;
 const MAX_CONTROL_CALLS: usize = 8;
 const IO_TIMEOUT: Duration = Duration::from_millis(100);
+const ORDER_GRACE: Duration = Duration::from_millis(20);
 const ACCEPT_RETRY: Duration = Duration::from_millis(10);
 const REVEAL_ATTEMPTS: u32 = 25;
 const REVEAL_RETRY: Duration = Duration::from_millis(20);
@@ -278,6 +279,7 @@ async fn accept_connections<F>(
     let mut arrivals = Arrivals::default();
     let mut controls = JoinSet::new();
     loop {
+        let next = arrivals.next(Instant::now());
         tokio::select! {
             biased;
             () = requests.closed() => break,
@@ -288,14 +290,19 @@ async fn accept_connections<F>(
                 )]
                 let _ = completed;
             },
-            delivered = deliver(arrivals.next_shortcut(), requests) => {
-                if delivered.is_err() {
-                    break;
-                }
-                arrivals.delivered();
+            Some(presented) = arrivals.verifying.join_next_with_id(), if !arrivals.verifying.is_empty() => {
+                arrivals.verified(presented);
             },
-            Some(joined) = arrivals.tasks.join_next_with_id(), if !arrivals.tasks.is_empty() => {
-                let Some((stream, command)) = arrivals.finish(joined, requests.len()).await else {
+            delivered = deliver(next, requests) => {
+                let Ok(delivered) = delivered else {
+                    break;
+                };
+                if let Some(index) = delivered {
+                    arrivals.delivered(index);
+                }
+            },
+            Some(read) = arrivals.reading.join_next_with_id(), if !arrivals.reading.is_empty() => {
+                let Some((stream, command)) = arrivals.finish(read, requests.len()).await else {
                     continue;
                 };
                 if controls.len() >= MAX_CONTROL_CALLS {
@@ -327,47 +334,95 @@ async fn accept_connections<F>(
             },
         }
     }
-    arrivals.tasks.shutdown().await;
+    arrivals.shutdown().await;
     controls.shutdown().await;
 }
 
 async fn deliver(
-    next: Option<Request>,
+    next: Next,
     requests: &Sender<Event>,
-) -> Result<(), async_channel::SendError<Event>> {
+) -> Result<Option<usize>, async_channel::SendError<Event>> {
     match next {
-        Some(request) => requests.send(Event::Shortcut(request)).await,
-        None => future::pending().await,
+        Next::Deliver(index, request) => requests
+            .send(Event::Shortcut(request))
+            .await
+            .map(|()| Some(index)),
+        Next::HoldUntil(until) => {
+            tokio::time::sleep_until(until.into()).await;
+            Ok(None)
+        },
+        Next::Hold => future::pending().await,
     }
 }
 
 #[derive(Default)]
 struct Arrivals {
-    tasks: JoinSet<Option<(AsyncStream, Incoming)>>,
+    verifying: JoinSet<Option<AsyncStream>>,
+    reading: JoinSet<Option<(AsyncStream, Incoming)>>,
     order: VecDeque<Arrival>,
 }
 
-enum Arrival {
-    Handshake(AbortHandle),
+struct Arrival {
+    accepted: Instant,
+    stage: Stage,
+}
+
+enum Stage {
+    Unverified(AbortHandle),
+    Reading(AbortHandle),
     Admitted(Request),
+}
+
+enum Next {
+    Deliver(usize, Request),
+    HoldUntil(Instant),
+    Hold,
 }
 
 impl Arrivals {
     fn begin(&mut self, mut stream: AsyncStream, nonce: u128) {
-        if self.handshakes() >= MAX_HANDSHAKES
+        if self.unverified() >= MAX_HANDSHAKES
             && let Some(oldest) = self
                 .order
                 .iter()
-                .position(|arrival| matches!(arrival, Arrival::Handshake(_)))
-            && let Some(Arrival::Handshake(task)) = self.order.remove(oldest)
+                .position(|arrival| matches!(arrival.stage, Stage::Unverified(_)))
+            && let Some(Arrival {
+                stage: Stage::Unverified(task),
+                ..
+            }) = self.order.remove(oldest)
         {
             task.abort();
         }
-        let task = self.tasks.spawn(async move {
-            let request = handshake(&mut stream, nonce).await.ok().flatten()?;
-            Some((stream, request))
+        let task = self.verifying.spawn(async move {
+            let presented = tokio::time::timeout(IO_TIMEOUT, verify(&mut stream, nonce)).await;
+            matches!(presented, Ok(Ok(true))).then_some(stream)
         });
-        self.order.push_back(Arrival::Handshake(task));
+        self.order.push_back(Arrival {
+            accepted: Instant::now(),
+            stage: Stage::Unverified(task),
+        });
+    }
+
+    fn verified(&mut self, joined: Result<(Id, Option<AsyncStream>), JoinError>) {
+        let (id, outcome) = joined.unwrap_or_else(|error| (error.id(), None));
+        let Some(position) = self.order.iter().position(
+            |arrival| matches!(&arrival.stage, Stage::Unverified(task) if task.id() == id),
+        ) else {
+            return;
+        };
+        let (Some(mut stream), Some(arrival)) = (outcome, self.order.get_mut(position)) else {
+            self.order.remove(position);
+            return;
+        };
+        let accepted = arrival.accepted;
+        arrival.stage = Stage::Reading(self.reading.spawn(async move {
+            let remaining = IO_TIMEOUT.saturating_sub(accepted.elapsed());
+            let incoming = tokio::time::timeout(remaining, read_request(&mut stream))
+                .await
+                .ok()?
+                .ok()??;
+            Some((stream, incoming))
+        }));
     }
 
     async fn finish(
@@ -376,10 +431,9 @@ impl Arrivals {
         mailbox: usize,
     ) -> Option<(AsyncStream, Result<Command, &'static str>)> {
         let (id, outcome) = joined.unwrap_or_else(|error| (error.id(), None));
-        let position = self
-            .order
-            .iter()
-            .position(|arrival| matches!(arrival, Arrival::Handshake(task) if task.id() == id))?;
+        let position = self.order.iter().position(
+            |arrival| matches!(&arrival.stage, Stage::Reading(task) if task.id() == id),
+        )?;
         let control = match outcome {
             Some((mut stream, Incoming::Shortcut(request))) => {
                 if self.admitted().saturating_add(mailbox) < MAX_UNDELIVERED
@@ -387,7 +441,7 @@ impl Arrivals {
                     && acknowledge(&mut stream).await
                     && let Some(arrival) = self.order.get_mut(position)
                 {
-                    *arrival = Arrival::Admitted(request);
+                    arrival.stage = Stage::Admitted(request);
                     return None;
                 }
                 None
@@ -399,26 +453,44 @@ impl Arrivals {
         control
     }
 
-    fn next_shortcut(&self) -> Option<Request> {
-        match self.order.front() {
-            Some(&Arrival::Admitted(request)) => Some(request),
-            _ => None,
+    fn next(&self, now: Instant) -> Next {
+        for (index, arrival) in self.order.iter().enumerate() {
+            match arrival.stage {
+                Stage::Admitted(request) => return Next::Deliver(index, request),
+                Stage::Reading(_) => return Next::Hold,
+                Stage::Unverified(_) => {
+                    if let Some(until) = arrival.accepted.checked_add(ORDER_GRACE)
+                        && until > now
+                    {
+                        return Next::HoldUntil(until);
+                    }
+                },
+            }
         }
+        Next::Hold
     }
 
-    fn delivered(&mut self) {
-        self.order.pop_front();
+    fn delivered(&mut self, index: usize) {
+        self.order.remove(index);
     }
 
-    fn handshakes(&self) -> usize {
+    fn unverified(&self) -> usize {
         self.order
             .iter()
-            .filter(|arrival| matches!(arrival, Arrival::Handshake(_)))
+            .filter(|arrival| matches!(arrival.stage, Stage::Unverified(_)))
             .count()
     }
 
     fn admitted(&self) -> usize {
-        self.order.len().saturating_sub(self.handshakes())
+        self.order
+            .iter()
+            .filter(|arrival| matches!(arrival.stage, Stage::Admitted(_)))
+            .count()
+    }
+
+    async fn shutdown(&mut self) {
+        self.verifying.shutdown().await;
+        self.reading.shutdown().await;
     }
 }
 
@@ -438,38 +510,33 @@ enum Incoming {
     Control(Result<Command, &'static str>),
 }
 
-async fn handshake(stream: &mut AsyncStream, nonce: u128) -> io::Result<Option<Incoming>> {
+async fn verify(stream: &mut AsyncStream, nonce: u128) -> io::Result<bool> {
     stream.set_nodelay(true)?;
-    let read = async {
-        let mut presented = [0; size_of::<u128>()];
-        stream.read_exact(&mut presented).await?;
-        if u128::from_le_bytes(presented) != nonce {
+    let mut presented = [0; size_of::<u128>()];
+    stream.read_exact(&mut presented).await?;
+    Ok(u128::from_le_bytes(presented) == nonce)
+}
+
+async fn read_request(stream: &mut AsyncStream) -> io::Result<Option<Incoming>> {
+    let byte = stream.read_u8().await?;
+    if byte == CONTROL {
+        let length = stream.read_u16().await?;
+        stream.write_all(&[ACKNOWLEDGED]).await?;
+        if usize::from(length) > control::MAX_BYTES {
+            write_reply(
+                stream,
+                Reply::refused("The control command exceeds its size limit."),
+            )
+            .await?;
+            stream.shutdown().await?;
+            tokio::io::copy(&mut stream.take(u64::from(length)), &mut tokio::io::sink()).await?;
             return Ok(None);
         }
-        let byte = stream.read_u8().await?;
-        if byte == CONTROL {
-            let length = stream.read_u16().await?;
-            stream.write_all(&[ACKNOWLEDGED]).await?;
-            if usize::from(length) > control::MAX_BYTES {
-                write_reply(
-                    stream,
-                    Reply::refused("The control command exceeds its size limit."),
-                )
-                .await?;
-                stream.shutdown().await?;
-                tokio::io::copy(&mut stream.take(u64::from(length)), &mut tokio::io::sink())
-                    .await?;
-                return Ok(None);
-            }
-            let mut bytes = vec![0; usize::from(length)];
-            stream.read_exact(&mut bytes).await?;
-            return Ok(Some(Incoming::Control(Command::decode(&bytes))));
-        }
-        Ok(Request::from_byte(byte).map(Incoming::Shortcut))
-    };
-    tokio::time::timeout(IO_TIMEOUT, read)
-        .await
-        .map_err(|_elapsed| io::ErrorKind::TimedOut)?
+        let mut bytes = vec![0; usize::from(length)];
+        stream.read_exact(&mut bytes).await?;
+        return Ok(Some(Incoming::Control(Command::decode(&bytes))));
+    }
+    Ok(Request::from_byte(byte).map(Incoming::Shortcut))
 }
 
 struct ReplyDeadline<'stream> {

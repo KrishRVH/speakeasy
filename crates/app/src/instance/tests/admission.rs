@@ -13,16 +13,24 @@ fn acknowledged(mut stream: &TcpStream) -> io::Result<bool> {
 }
 
 #[test]
-fn a_flood_of_idle_connections_never_locks_out_a_shortcut() -> anyhow::Result<()> {
+fn a_flood_of_idle_connections_neither_locks_out_nor_holds_back_shortcuts() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
     let (_instance, requests) = Instance::acquire(&path)?.context("First owner missing")?;
     let idle = (0..MAX_HANDSHAKES * 4)
         .map(|_| dial(&path))
         .collect::<anyhow::Result<Vec<_>>>()?;
-    Instance::send(&path, Request::Toggle)?;
+    for request in [Request::Toggle, Request::Cancel] {
+        Instance::send(&path, request)?;
+    }
     assert_eq!(next_request(&requests)?, Request::Toggle);
-    drop(idle);
+    assert_eq!(next_request(&requests)?, Request::Cancel);
+    let mut latest: &TcpStream = &idle.last().context("No idle connection")?.0;
+    latest.set_nonblocking(true)?;
+    assert!(
+        matches!(latest.read(&mut [0]), Err(error) if error.kind() == io::ErrorKind::WouldBlock),
+        "Shortcuts waited for idle connections to time out"
+    );
     Ok(())
 }
 
