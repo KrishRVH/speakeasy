@@ -157,7 +157,7 @@ impl Settings {
             )
             .children(unused)
             .child(
-                kit.group(vec![
+                kit.group([
                     div()
                         .flex()
                         .flex_col()

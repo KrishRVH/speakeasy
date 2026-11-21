@@ -382,7 +382,7 @@ pub(super) async fn printed_after_failure(
     path: &Path,
     cx: &mut AsyncApp,
 ) -> anyhow::Result<()> {
-    let saved = cx.update(|cx| cx.global::<Services>().config.clone());
+    let saved = saved(cx);
     reset_view(settings, path, &saved, cx)?;
     let saved_at = cx.update(|cx| cx.global::<Services>().config_epoch());
     settings.update(cx, |view, window, cx| {
@@ -460,7 +460,7 @@ pub(super) async fn choice_after_overtaken_save(
     path: &Path,
     cx: &mut AsyncApp,
 ) -> anyhow::Result<()> {
-    let saved = cx.update(|cx| cx.global::<Services>().config.clone());
+    let saved = saved(cx);
     reset_view(settings, path, &saved, cx)?;
     let french = Config {
         language: "fr".into(),
@@ -510,9 +510,9 @@ pub(super) async fn fired_restart(cx: &mut AsyncApp) -> anyhow::Result<()> {
         cx.update_global::<Services, _>(|services, cx| {
             services.config = rebound.clone();
             services.restart_when_idle(cx);
-            let waited = std::time::Instant::now();
+            let waited = Instant::now();
             while services.is_running() && waited.elapsed() < PATIENCE {
-                std::thread::sleep(std::time::Duration::from_millis(1));
+                std::thread::sleep(Duration::from_millis(1));
             }
             let stopped = !services.is_running();
             services.restart_when_idle(cx);

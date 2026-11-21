@@ -87,10 +87,7 @@ impl SaveQueue {
         }
         let (overtaken, next) = match queued {
             Some(draft) => (result.ok().map(Box::new), self.start(draft)),
-            None => (
-                None,
-                self.finished(result.map(|saved| SaveOutcome::Saved(Box::new(saved)))),
-            ),
+            None => (None, self.finished(result)),
         };
         Written {
             overtaken,
@@ -113,9 +110,12 @@ impl SaveQueue {
         }
     }
 
-    fn finished(&self, outcome: anyhow::Result<SaveOutcome>) -> SaveProgress {
+    fn finished(&self, result: anyhow::Result<SavedConfig>) -> SaveProgress {
         SaveProgress::Finished {
-            outcome: outcome.unwrap_or_else(|error| SaveOutcome::Failed(format!("{error:#}"))),
+            outcome: result.map_or_else(
+                |error| SaveOutcome::Failed(format!("{error:#}")),
+                |saved| SaveOutcome::Saved(Box::new(saved)),
+            ),
             epoch: self.epoch,
         }
     }

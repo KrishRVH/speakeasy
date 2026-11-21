@@ -755,7 +755,9 @@ impl<P: Payload> Machine<P> {
                     .notice
                     .take_if(|notice| matches!(notice, Notice::NarrationLost(_)));
                 self.configure(config, outcome, env);
-                self.notice = lost.or_else(|| self.notice.take());
+                if lost.is_some() {
+                    self.notice = lost;
+                }
                 None
             },
             Event::Control { call, command } => return self.control(now, call, command, env),

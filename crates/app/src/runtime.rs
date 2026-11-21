@@ -372,14 +372,12 @@ impl<Host> Runtime<Host> {
 
     pub(crate) fn configure(&mut self, config: ValidConfig) {
         let config = config.into_inner();
-        let read = reads_differently(&self.baseline, &config);
-        let changed = self.baseline.change_to(&config) >= Change::Session;
-        self.baseline.clone_from(&config);
-        if read {
+        if reads_differently(&self.baseline, &config) {
+            self.baseline.clone_from(&config);
             self.input.cancel();
             self.direct(Directive::Apply(Box::new(config)));
-        } else if changed {
-            self.direct(Directive::Revert(Box::new(config)));
+        } else {
+            self.revert(config);
         }
     }
 
@@ -648,7 +646,7 @@ impl Adopting {
     fn answer(self, adopted: Adopted) {
         #[expect(
             clippy::let_underscore_must_use,
-            reason = "Services stops waiting for a preset that a newer choice replaced"
+            reason = "Services stops waiting for a Use only when Quit cancels its preset tasks"
         )]
         let _ = self.0.try_send(adopted);
     }

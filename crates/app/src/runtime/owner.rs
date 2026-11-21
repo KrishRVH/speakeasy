@@ -249,8 +249,8 @@ impl<P: Ports> Owner<P> {
                 Event::Stop
             },
             Wake::Command(directive) => {
-                let idle = self.machine.is_idle() && self.machine.practice().is_none();
-                return world.direct(directive, idle);
+                let settled = self.machine.is_idle() && self.machine.practice().is_none();
+                return world.direct(directive, settled);
             },
             Wake::Capture(event) => {
                 if let CaptureEvent::Ready(session, source) = &event {

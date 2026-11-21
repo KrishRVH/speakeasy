@@ -581,7 +581,7 @@ impl Services {
 
     fn restart(&mut self, cx: &App) {
         self.restarting = None;
-        if self.lifecycle.active().is_none() || self.lifecycle.is_pausing() {
+        if self.lifecycle.active().is_none() {
             return;
         }
         self.pause(cx);

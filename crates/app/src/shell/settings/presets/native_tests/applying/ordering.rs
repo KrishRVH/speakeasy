@@ -1,9 +1,5 @@
 use super::*;
 
-fn saved(cx: &AsyncApp) -> Config {
-    cx.update(|cx| cx.global::<Services>().config.clone())
-}
-
 #[expect(
     clippy::future_not_send,
     reason = "Native acceptance drives Services and a fake owner on GPUI's UI thread"

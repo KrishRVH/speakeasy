@@ -17,7 +17,7 @@ const REPLACED: &str =
 const USE_UNACKNOWLEDGED: &str =
     "Dictation stopped before the preset was applied. Use it again once dictation runs.";
 
-const USE_BUSY: &str = "Finish the current session or preset selection before using a preset.";
+const USE_BUSY: &str = "Finish the current session before using a preset.";
 
 pub(super) const USE_OVERTAKEN: &str = "Speech settings changed before the preset was ready, so it was not used. Use it again to apply it.";
 
@@ -35,7 +35,7 @@ impl Applied {
     pub(super) fn load(self) -> ValidConfig {
         #[expect(
             clippy::let_underscore_must_use,
-            reason = "Services stops waiting for Settings once it has rolled the Use back"
+            reason = "Services stops waiting for Settings only when Quit cancels its preset tasks"
         )]
         let _ = self.loaded.try_send(());
         self.config
@@ -112,7 +112,7 @@ impl Choices {
         honored
     }
 
-    const fn is_settled(&self) -> bool {
+    pub(super) const fn is_settled(&self) -> bool {
         self.waiting == 0
     }
 
@@ -122,11 +122,6 @@ impl Choices {
 
     fn release(&mut self, choice: u64) {
         self.tasks.retain(|(held, _)| *held != choice);
-    }
-
-    #[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
-    pub(super) const fn awaits_owner(&self) -> bool {
-        !self.is_settled()
     }
 
     #[cfg(all(test, any(target_os = "linux", target_os = "windows")))]

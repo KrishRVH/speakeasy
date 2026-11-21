@@ -128,7 +128,7 @@ fn a_pause_after_save_keeps_dictation_off_unless_resumed() {
 }
 
 #[test]
-fn settings_saved_after_a_fresh_start_enable_dictation_as_on_a_new_install() {
+fn settings_saved_after_a_reset_enable_dictation_as_on_a_new_install() {
     let mut lifecycle = Lifecycle::<(), ()>::default();
     assert!(!lifecycle.pause());
     assert!(!lifecycle.save_may_enable(lifecycle.epoch(), |()| false));

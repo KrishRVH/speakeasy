@@ -6,6 +6,15 @@ use crate::{
     transcript::style::Case,
 };
 
+async fn finish_in(h: &mut Harness, language: &str) -> anyhow::Result<()> {
+    h.input(Input::Toggle);
+    let (heard, reply) = receive(&h.jobs).await?;
+    assert_eq!(heard, language);
+    answer(reply, "Fixture.")?;
+    receive(&h.pasted).await?;
+    h.phase(Phase::Done).await
+}
+
 async fn control(h: &Harness, command: Command) -> anyhow::Result<Reply> {
     let (call, receipt) = Call::new(command);
     h.runtime.control(call);

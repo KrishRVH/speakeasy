@@ -9,7 +9,7 @@ use crate::{
 };
 
 impl<P: Ports> World<P> {
-    pub(super) fn direct(&mut self, directive: Directive, idle: bool) -> Option<Event<Native>> {
+    pub(super) fn direct(&mut self, directive: Directive, settled: bool) -> Option<Event<Native>> {
         match directive {
             Directive::Control(call)
                 if matches!(
@@ -46,7 +46,7 @@ impl<P: Ports> World<P> {
                 session: SessionId::new(session),
                 changed: self.baseline.change_to(&baseline) >= Change::Session,
             }),
-            Directive::Adopt { config, answer } if idle && answer.is_live() => {
+            Directive::Adopt { config, answer } if settled && answer.is_live() => {
                 answer.answer(Ok(()));
                 self.baseline.clone_from(&config);
                 Some(Event::Configure(*config))

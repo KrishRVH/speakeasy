@@ -3,15 +3,6 @@ use speakeasy_platform::{MacShortcut, WindowsShortcut};
 use super::*;
 use crate::config::Change;
 
-async fn finish_in(h: &mut Harness, language: &str) -> anyhow::Result<()> {
-    h.input(Input::Toggle);
-    let (heard, reply) = receive(&h.jobs).await?;
-    assert_eq!(heard, language);
-    answer(reply, "Fixture.")?;
-    receive(&h.pasted).await?;
-    h.phase(Phase::Done).await
-}
-
 fn rebind(config: &Config) -> Config {
     let mut linux = config.linux.clone();
     linux.external_shortcut = !linux.external_shortcut;

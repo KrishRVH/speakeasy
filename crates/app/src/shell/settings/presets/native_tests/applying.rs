@@ -463,6 +463,10 @@ async fn still_showing(cx: &AsyncApp) -> bool {
     after.show && after.phase == Phase::Recording
 }
 
+fn saved(cx: &AsyncApp) -> Config {
+    cx.update(|cx| cx.global::<Services>().config.clone())
+}
+
 #[expect(
     clippy::future_not_send,
     reason = "Native acceptance retires a fake owner on GPUI's UI thread"
@@ -723,7 +727,7 @@ async fn stale_use(
     let mut armed = Some(input.clone());
     let observation = cx.update(|cx| {
         cx.observe_global::<Services>(move |cx| {
-            if cx.global::<Services>().choices.awaits_owner() {
+            if !cx.global::<Services>().choices.is_settled() {
                 adopting = true;
                 return;
             }
@@ -790,7 +794,7 @@ async fn unavailable(cx: &AsyncApp) -> anyhow::Result<()> {
     let mut armed = Some(tried);
     let observation = cx.update(|cx| {
         cx.observe_global::<Services>(move |cx| {
-            if !cx.global::<Services>().choices.awaits_owner() {
+            if cx.global::<Services>().choices.is_settled() {
                 return;
             }
             let Some(tried) = armed.take() else {
@@ -879,7 +883,7 @@ async fn running(
     let mut armed = true;
     let observation = cx.update(|cx| {
         cx.observe_global::<Services>(move |cx| {
-            if !armed || !cx.global::<Services>().choices.awaits_owner() {
+            if !armed || cx.global::<Services>().choices.is_settled() {
                 return;
             }
             armed = false;

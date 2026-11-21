@@ -21,15 +21,6 @@ async fn choose(
     receive(&receipt).await
 }
 
-async fn finish_in(h: &mut Harness, language: &str) -> anyhow::Result<()> {
-    h.input(Input::Toggle);
-    let (heard, reply) = receive(&h.jobs).await?;
-    assert_eq!(heard, language);
-    answer(reply, "Fixture.")?;
-    receive(&h.pasted).await?;
-    h.phase(Phase::Done).await
-}
-
 #[tokio::test(start_paused = true)]
 async fn a_preset_applies_only_while_idle_and_reloads_only_for_engine_choices() -> anyhow::Result<()>
 {

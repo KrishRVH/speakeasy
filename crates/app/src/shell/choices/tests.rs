@@ -24,23 +24,11 @@ fn only_the_newest_accepted_request_survives_and_a_rollback_outranks_it() {
         "An older answer replaced the newer request the owner accepted after it"
     );
     let late = choices.forward();
-    choices.supersede();
+    choices.forget();
     assert!(
         !choices.answer(late, true),
         "A request sent before a rollback outlived it"
     );
-}
-
-#[test]
-fn a_cleared_choice_stays_cleared_when_its_answer_arrives_later() {
-    let mut choices = Choices::default();
-    let tray = choices.forward();
-    choices.forget();
-    assert!(
-        !choices.answer(tray, true),
-        "An answer that arrived after Reset or a paused Use revived the choice they cleared"
-    );
-    assert!(choices.selected.is_none());
 }
 
 #[test]
