@@ -9,54 +9,36 @@ use std::{
 };
 
 fn main() -> ExitCode {
-    let mut args = env::args_os().skip(1);
-    let Some(first) = args.next() else {
-        return help();
-    };
-    match first.to_str() {
-        Some("--help" | "-h") => help(),
-        Some("show" | "--version") => relay(first, args, Route::Utility),
-        Some("status" | "dictation" | "paste-last" | "style" | "preset") => {
-            relay(first, args, Route::Control)
-        },
-        _ => fail(
+    let mut args = env::args_os().skip(1).peekable();
+    match args.peek().map(|first| first.to_str()) {
+        None | Some(Some("--help" | "-h")) => help(),
+        Some(Some(
+            "show" | "--version" | "status" | "dictation" | "paste-last" | "style" | "preset",
+        )) => relay(args),
+        Some(_) => fail(
             "Use show, status, dictation, paste-last, style, preset, --version, or --help. Start \
              the desktop app with speakeasy.",
-            2,
         ),
     }
 }
 
-enum Route {
-    Utility,
-    Control,
-}
-
-fn relay(first: OsString, rest: impl Iterator<Item = OsString>, route: Route) -> ExitCode {
-    let unavailable = match route {
-        Route::Utility => 1,
-        Route::Control => 2,
-    };
+fn relay(args: impl Iterator<Item = OsString>) -> ExitCode {
     let sibling = match env::current_exe() {
         Ok(exe) => exe.with_file_name(format!("speakeasy{}", env::consts::EXE_SUFFIX)),
-        Err(error) => return fail(format!("Cannot locate Speakeasy: {error}"), unavailable),
+        Err(error) => return fail(format!("Cannot locate Speakeasy: {error}")),
     };
-    match Command::new(&sibling).arg(first).args(rest).status() {
-        Ok(status) => match status.code().and_then(|code| u8::try_from(code).ok()) {
-            Some(code) if matches!(route, Route::Utility) || code <= 2 => ExitCode::from(code),
-            _ => fail(
-                format!("Speakeasy stopped unexpectedly ({status})."),
-                unavailable,
+    match Command::new(&sibling).args(args).status() {
+        Ok(status) => status
+            .code()
+            .and_then(|code| u8::try_from(code).ok())
+            .map_or_else(
+                || fail(format!("Speakeasy stopped unexpectedly ({status}).")),
+                ExitCode::from,
             ),
-        },
-        Err(error) if error.kind() == io::ErrorKind::NotFound => fail(
-            format!(
-                "speakeasy-cli needs {} beside it; extract the whole package again.",
-                sibling.display()
-            ),
-            unavailable,
-        ),
-        Err(error) => fail(format!("Cannot start Speakeasy: {error}"), unavailable),
+        Err(error) => fail(format!(
+            "Cannot start {}: {error}. Run speakeasy-cli from the folder that holds Speakeasy.",
+            sibling.display()
+        )),
     }
 }
 
@@ -77,15 +59,15 @@ fn help() -> ExitCode {
          show --help lists the Show commands. Start the desktop app with speakeasy."
     ) {
         Ok(()) => ExitCode::SUCCESS,
-        Err(error) => fail(format!("Cannot write help: {error}"), 1),
+        Err(error) => fail(format!("Cannot write help: {error}")),
     }
 }
 
-fn fail(message: impl Display, status: u8) -> ExitCode {
+fn fail(message: impl Display) -> ExitCode {
     #[expect(
         clippy::let_underscore_must_use,
         reason = "stderr is the last channel left to report a failed command"
     )]
     let _ = writeln!(io::stderr().lock(), "speakeasy-cli: {message}");
-    ExitCode::from(status)
+    ExitCode::from(2)
 }
