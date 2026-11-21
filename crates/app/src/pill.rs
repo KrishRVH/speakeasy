@@ -784,11 +784,11 @@ fn draw_hint_until(
     snapshot: &Snapshot,
     now: Instant,
     until: Option<Instant>,
-    secure_input_until: Option<Instant>,
+    notices_until: Option<Instant>,
 ) -> Option<Instant> {
     let until = until.filter(|_| snapshot.session == previous.session);
     if until.is_none() && snapshot.show && snapshot.phase == Phase::Recording {
-        secure_input_until
+        notices_until
             .map_or(now, |notice| notice.max(now))
             .checked_add(DRAW_HINT_FOR)
     } else {
