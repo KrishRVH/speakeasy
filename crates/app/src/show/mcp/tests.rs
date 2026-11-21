@@ -295,6 +295,129 @@ fn a_replaced_or_moved_root_neither_mixes_folders_nor_hides_other_roots() -> any
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+fn a_root_that_cannot_be_searched_is_unavailable_rather_than_a_damaged_show() -> anyhow::Result<()>
+{
+    use std::os::unix::fs::PermissionsExt as _;
+    let temp = tempfile::tempdir()?;
+    let root = temp.path().join("root");
+    fixture(&root, "inside")?;
+    let root = root.canonicalize()?;
+    let roots = Roots::open(slice::from_ref(&root), None).map_err(anyhow::Error::msg)?;
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o600))?;
+    let listing = roots.list(None);
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o700))?;
+    let listing = listing.map_err(anyhow::Error::msg)?;
+    let unavailable: Vec<_> = listing
+        .unavailable_roots
+        .iter()
+        .map(|root| &root.file)
+        .collect();
+    assert_eq!(unavailable, [&root]);
+    assert!(
+        listing.shows.is_empty(),
+        "{}",
+        serde_json::to_value(&listing.shows)?
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_full_page_lists_within_a_small_descriptor_limit() -> anyhow::Result<()> {
+    let work = tempfile::tempdir()?;
+    for index in 0..150 {
+        let directory = work.path().join(format!("root/show-{index:03}"));
+        fs::create_dir_all(&directory)?;
+        fs::write(directory.join(Manifest::FILE), b"broken manifest")?;
+    }
+    let output = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(
+            "ulimit -n 64 && exec \"$0\" --exact show::mcp::tests::listing_child_fixture --ignored",
+        )
+        .arg(std::env::current_exe()?)
+        .env("SPEAKEASY_MCP_TEST_ROOT", work.path())
+        .stdin(std::process::Stdio::null())
+        .output()?;
+    let report = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{report}");
+    assert!(work.path().join("listed").exists(), "{report}");
+    Ok(())
+}
+
+#[test]
+#[ignore = "Subprocess helper for the descriptor limit test; does nothing unless that test spawns it"]
+fn listing_child_fixture() -> anyhow::Result<()> {
+    let Some(work) = std::env::var_os("SPEAKEASY_MCP_TEST_ROOT").map(PathBuf::from) else {
+        return Ok(());
+    };
+    let roots = Roots::open(&[work.join("root")], None).map_err(anyhow::Error::msg)?;
+    let listing = roots.list(None).map_err(anyhow::Error::msg)?;
+    let damaged = listing
+        .shows
+        .iter()
+        .filter(|show| {
+            show.problems
+                .iter()
+                .any(|problem| problem.file == show.directory)
+        })
+        .count();
+    anyhow::ensure!(
+        listing.shows.len() == scope::PAGE && listing.truncated && damaged == 0,
+        "listed {} Shows, {damaged} unopened, truncated {}",
+        listing.shows.len(),
+        listing.truncated
+    );
+    fs::write(work.join("listed"), b"")?;
+    Ok(())
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[test]
+fn a_show_folder_that_cannot_be_opened_is_listed_with_that_problem() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let sealed = fixture(temp.path(), "sealed")?.canonicalize()?;
+    let roots = Roots::open(&[temp.path().to_owned()], None).map_err(anyhow::Error::msg)?;
+    seal(&sealed, true)?;
+    let listing = roots.list(None);
+    seal(&sealed, false)?;
+    let listing = serde_json::to_value(listing.map_err(anyhow::Error::msg)?)?;
+    let rows = listing["shows"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{listing}");
+    assert_eq!(rows[0]["directory"], json!(sealed));
+    assert_eq!(rows[0]["status"], "damaged");
+    assert_eq!(rows[0]["problems"][0]["file"], json!(sealed));
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn seal(directory: &Path, sealed: bool) -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+    let mode = if sealed { 0o000 } else { 0o700 };
+    fs::set_permissions(directory, fs::Permissions::from_mode(mode))?;
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn seal(directory: &Path, sealed: bool) -> anyhow::Result<()> {
+    let change = if sealed {
+        ["/deny", "*S-1-1-0:(R)"]
+    } else {
+        ["/remove:d", "*S-1-1-0"]
+    };
+    let output = std::process::Command::new("icacls")
+        .arg(directory)
+        .args(change)
+        .output()?;
+    anyhow::ensure!(
+        output.status.success(),
+        "icacls could not change the test folder"
+    );
+    Ok(())
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn setup_uses_the_resolved_appimage_launcher_without_resolving_the_mount_again()

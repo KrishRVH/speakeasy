@@ -1,5 +1,5 @@
 use std::{
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     io,
     path::{Component, Path, PathBuf},
 };
@@ -34,6 +34,12 @@ pub(super) struct Listing {
     pub unavailable_roots: Vec<Problem>,
     pub truncated: bool,
     pub next_cursor: Option<String>,
+}
+
+struct Row {
+    path: PathBuf,
+    root: usize,
+    name: Option<OsString>,
 }
 
 struct Root {
@@ -150,7 +156,8 @@ impl Roots {
         let mut found: Option<Folder> = None;
         for configured in &self.roots {
             let root = &configured.directory;
-            let candidate = if root.file_name() == path.file_name() && holds_show(&configured.files)
+            let candidate = if root.file_name() == path.file_name()
+                && matches!(holds_show(&configured.files), Ok(true))
             {
                 root.clone()
             } else {
@@ -196,12 +203,15 @@ impl Roots {
         {
             return Err("Invalid Show list cursor");
         }
-        let mut found = Vec::new();
+        let mut reached = Vec::new();
+        let mut rows = Vec::new();
         let mut unavailable_roots = Vec::new();
         for configured in &self.roots {
-            let listed = self
-                .check(&configured.directory)
-                .and_then(|root| gather(root, after.as_deref(), &mut found));
+            let listed = self.check(&configured.directory).and_then(|root| {
+                gather(&root, reached.len(), after.as_deref(), &mut rows)?;
+                reached.push(root);
+                Ok(())
+            });
             if let Err(reason) = listed {
                 unavailable_roots.push(Problem {
                     file: configured.directory.clone(),
@@ -209,21 +219,17 @@ impl Roots {
                 });
             }
         }
-        let next_cursor = if found.len() > PAGE {
-            found.truncate(PAGE);
-            found
-                .last()
-                .and_then(|folder| folder.path.to_str())
+        let next_cursor = if rows.len() > PAGE {
+            rows.truncate(PAGE);
+            rows.last()
+                .and_then(|row| row.path.to_str())
                 .map(str::to_owned)
         } else {
             None
         };
-        let shows = found
+        let shows = rows
             .into_iter()
-            .map(|folder| {
-                let entry = Entry::read_from(folder.path, &folder.files);
-                Overview::of(&entry, self.managed_parent(&entry.directory, &folder.files))
-            })
+            .filter_map(|row| self.overview(row, &reached))
             .collect();
         Ok(Listing {
             shows,
@@ -232,11 +238,50 @@ impl Roots {
             next_cursor,
         })
     }
+
+    fn overview(&self, row: Row, reached: &[Folder]) -> Option<Overview> {
+        let root = reached.get(row.root)?;
+        let child;
+        let files = match &row.name {
+            None => &root.files,
+            Some(name) => match root.files.child(name) {
+                Ok(opened) => {
+                    child = opened;
+                    &child
+                },
+                Err(_private) => {
+                    return Some(Overview::damaged(
+                        row.path,
+                        "Cannot open this folder".to_owned(),
+                    ));
+                },
+            },
+        };
+        let entry = Entry::read_from(row.path, files);
+        Some(Overview::of(
+            &entry,
+            self.managed_parent(&entry.directory, files),
+        ))
+    }
 }
 
-fn gather(root: Folder, after: Option<&Path>, found: &mut Vec<Folder>) -> Result<(), &'static str> {
-    if holds_show(&root.files) {
-        retain(found, root, after);
+fn gather(
+    root: &Folder,
+    index: usize,
+    after: Option<&Path>,
+    rows: &mut Vec<Row>,
+) -> Result<(), &'static str> {
+    const UNLISTED: &str = "Cannot list an MCP root";
+    let mut keep = |path, name| {
+        let row = Row {
+            path,
+            root: index,
+            name,
+        };
+        retain(rows, row, after);
+    };
+    if holds_show(&root.files).map_err(|_private| UNLISTED)? {
+        keep(root.path.clone(), None);
         return Ok(());
     }
     root.files
@@ -244,33 +289,37 @@ fn gather(root: Folder, after: Option<&Path>, found: &mut Vec<Folder>) -> Result
             if !visible(&name) {
                 return;
             }
-            let Ok(files) = root.files.child(&name) else {
-                return;
+            let listed = match root.files.child(&name) {
+                Ok(files) => {
+                    name.to_str().and_then(ShowId::parse).is_some()
+                        || holds_show(&files).unwrap_or(true)
+                },
+                Err(error) => !matches!(
+                    error.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+                ),
             };
-            if name.to_str().and_then(ShowId::parse).is_some() || holds_show(&files) {
-                let path = root.path.join(&name);
-                retain(found, Folder { path, files }, after);
+            if listed {
+                keep(root.path.join(&name), Some(name));
             }
         })
-        .map_err(|_private| "Cannot list an MCP root")
+        .map_err(|_private| UNLISTED)
 }
 
-fn holds_show(directory: &ReadDirectory) -> bool {
-    !directory
-        .file(Path::new(Manifest::FILE))
-        .is_err_and(|error| error.kind() == io::ErrorKind::NotFound)
+fn holds_show(directory: &ReadDirectory) -> io::Result<bool> {
+    directory.contains(OsStr::new(Manifest::FILE))
 }
 
 fn visible(name: &OsStr) -> bool {
     name.to_str().is_some_and(|name| !name.starts_with('.'))
 }
 
-fn retain(found: &mut Vec<Folder>, folder: Folder, after: Option<&Path>) {
-    if after.is_none_or(|after| folder.path.as_path() > after)
-        && folder.path.to_str().is_some()
-        && let Err(position) = found.binary_search_by(|kept| kept.path.cmp(&folder.path))
+fn retain(rows: &mut Vec<Row>, row: Row, after: Option<&Path>) {
+    if after.is_none_or(|after| row.path.as_path() > after)
+        && row.path.to_str().is_some()
+        && let Err(position) = rows.binary_search_by(|kept| kept.path.cmp(&row.path))
     {
-        found.insert(position, folder);
-        found.truncate(PAGE.saturating_add(1));
+        rows.insert(position, row);
+        rows.truncate(PAGE.saturating_add(1));
     }
 }

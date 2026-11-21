@@ -63,7 +63,33 @@ pub(super) fn child(parent: &File, name: &OsStr, kind: OpenKind) -> io::Result<F
     Ok(file)
 }
 
+pub(super) fn lookup(parent: &File, name: &OsStr) -> io::Result<()> {
+    open_at(
+        parent,
+        name,
+        FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+        SHARE,
+        FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+    )
+    .map(drop)
+}
+
 fn open_relative(parent: &File, name: &OsStr, kind: OpenKind, access: u32) -> io::Result<File> {
+    let options = FILE_OPEN_REPARSE_POINT
+        | FILE_SYNCHRONOUS_IO_NONALERT
+        | if matches!(kind, OpenKind::Directory) {
+            FILE_DIRECTORY_FILE
+        } else {
+            FILE_NON_DIRECTORY_FILE
+        };
+    let share = match kind {
+        OpenKind::Directory | OpenKind::File => SHARE,
+        OpenKind::StableFile => FILE_SHARE_READ | FILE_SHARE_DELETE,
+    };
+    open_at(parent, name, access, share, options)
+}
+
+fn open_at(parent: &File, name: &OsStr, access: u32, share: u32, options: u32) -> io::Result<File> {
     let mut text: Vec<_> = name.encode_wide().collect();
     if text.iter().any(|unit| [0, u16::from(b':')].contains(unit)) {
         return Err(io::ErrorKind::InvalidInput.into());
@@ -89,17 +115,6 @@ fn open_relative(parent: &File, name: &OsStr, kind: OpenKind, access: u32) -> io
     };
     let mut status = IO_STATUS_BLOCK::default();
     let mut handle = ptr::null_mut();
-    let flags = FILE_OPEN_REPARSE_POINT
-        | FILE_SYNCHRONOUS_IO_NONALERT
-        | if matches!(kind, OpenKind::Directory) {
-            FILE_DIRECTORY_FILE
-        } else {
-            FILE_NON_DIRECTORY_FILE
-        };
-    let share = match kind {
-        OpenKind::Directory | OpenKind::File => SHARE,
-        OpenKind::StableFile => FILE_SHARE_READ | FILE_SHARE_DELETE,
-    };
     let result = unsafe {
         NtOpenFile(
             &raw mut handle,
@@ -107,7 +122,7 @@ fn open_relative(parent: &File, name: &OsStr, kind: OpenKind, access: u32) -> io
             &raw const attributes,
             &raw mut status,
             share,
-            flags,
+            options,
         )
     };
     if result < 0 {

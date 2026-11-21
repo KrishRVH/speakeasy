@@ -68,6 +68,23 @@ pub(super) struct Problem {
 }
 
 impl Overview {
+    pub(super) fn damaged(directory: PathBuf, reason: String) -> Self {
+        Self {
+            id: None,
+            directory: directory.clone(),
+            status: Status::Damaged,
+            expires_at: None,
+            pinned: None,
+            duration_ms: None,
+            keyframes: None,
+            marks: None,
+            problems: vec![Problem {
+                file: directory,
+                reason,
+            }],
+        }
+    }
+
     pub(super) fn of(entry: &Entry, parent: Option<&Path>) -> Self {
         let file = |problem: &FileProblem| Problem {
             file: entry.file(&problem.name),
@@ -245,19 +262,9 @@ pub(super) fn list(
         marks: None,
         problems: Vec::new(),
     });
-    let unreadable = found.problems.into_iter().map(|problem| Overview {
-        id: None,
-        directory: problem.directory.clone(),
-        status: Status::Damaged,
-        expires_at: None,
-        pinned: None,
-        duration_ms: None,
-        keyframes: None,
-        marks: None,
-        problems: vec![Problem {
-            file: problem.directory,
-            reason: problem.message,
-        }],
-    });
+    let unreadable = found
+        .problems
+        .into_iter()
+        .map(|problem| Overview::damaged(problem.directory, problem.message));
     interrupted.chain(unreadable).map(Ok).chain(saved).collect()
 }

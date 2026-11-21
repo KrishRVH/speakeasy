@@ -36,6 +36,31 @@ fn reads_keep_the_open_directory_across_a_rename() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test]
+fn presence_counts_every_entry_type_without_following_links() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir(root.path().join("folder"))?;
+    fs::write(root.path().join("file"), "")?;
+    let directory = ReadDirectory::open(root.path())?;
+    assert!(directory.contains(OsStr::new("folder"))?);
+    assert!(directory.contains(OsStr::new("file"))?);
+    assert!(!directory.contains(OsStr::new("missing"))?);
+    for invalid in ["", ".", "..", "folder/file"] {
+        assert!(
+            directory.contains(OsStr::new(invalid)).is_err(),
+            "{invalid}"
+        );
+    }
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(root.path().join("missing"), root.path().join("dangling"))?;
+        assert!(directory.contains(OsStr::new("dangling"))?);
+    }
+    #[cfg(windows)]
+    assert!(directory.contains(OsStr::new("FOLDER"))?);
+    Ok(())
+}
+
 #[cfg(target_os = "windows")]
 #[test]
 fn only_stable_reads_exclude_writers() -> anyhow::Result<()> {
@@ -108,6 +133,7 @@ fn only_name_surrogate_reparse_points_are_refused() -> anyhow::Result<()> {
         "inside"
     );
     assert!(directory.file(Path::new("link.txt")).is_err());
+    assert!(directory.contains(OsStr::new("link.txt"))?);
     Ok(())
 }
 
@@ -152,9 +178,11 @@ fn a_searchable_directory_opens_without_list_permission() -> anyhow::Result<()> 
         .map(|inner| read(&inner, "public.txt"));
     let rooted = ReadDirectory::open(&inner).map(|inner| read(&inner, "public.txt"));
     let listed = ReadDirectory::open(&inner).map(|inner| inner.visit(|_| {}).is_ok());
+    let present = ReadDirectory::open(&inner).map(|inner| inner.contains(OsStr::new("public.txt")));
     allow_listing(&inner, true)?;
     assert_eq!(opened??, "public");
     assert_eq!(rooted??, "public");
+    assert!(present??);
     assert!(!listed?, "Listing a directory needs permission to read it");
     Ok(())
 }

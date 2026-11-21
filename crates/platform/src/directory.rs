@@ -26,7 +26,7 @@ impl ReadDirectory {
     pub fn open(path: &Path) -> io::Result<Self> {
         let file = native::directory(path)?;
         if !file.metadata()?.is_dir() {
-            return Err(io::Error::other("not a plain directory"));
+            return Err(not_a_directory());
         }
         Ok(Self(file))
     }
@@ -34,9 +34,18 @@ impl ReadDirectory {
     pub fn child(&self, name: &OsStr) -> io::Result<Self> {
         let (file, metadata) = self.open_child(name, OpenKind::Directory)?;
         if !metadata.is_dir() {
-            return Err(io::Error::other("not a plain directory"));
+            return Err(not_a_directory());
         }
         Ok(Self(file))
+    }
+
+    pub fn contains(&self, name: &OsStr) -> io::Result<bool> {
+        entry_name(name)?;
+        match native::lookup(&self.0, name) {
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error),
+        }
     }
 
     pub fn file(&self, name: &Path) -> io::Result<(File, Metadata)> {
@@ -78,14 +87,24 @@ impl ReadDirectory {
     }
 
     fn open_child(&self, name: &OsStr, kind: OpenKind) -> io::Result<(File, Metadata)> {
-        if !matches!(Path::new(name).components().next(), Some(Component::Normal(part)) if part == name)
-        {
-            return Err(io::ErrorKind::InvalidInput.into());
-        }
+        entry_name(name)?;
         let file = native::child(&self.0, name, kind)?;
         let metadata = file.metadata()?;
         Ok((file, metadata))
     }
+}
+
+fn entry_name(name: &OsStr) -> io::Result<()> {
+    if matches!(Path::new(name).components().next(), Some(Component::Normal(part)) if part == name)
+    {
+        Ok(())
+    } else {
+        Err(io::ErrorKind::InvalidInput.into())
+    }
+}
+
+fn not_a_directory() -> io::Error {
+    io::Error::new(io::ErrorKind::NotADirectory, "not a plain directory")
 }
 
 pub fn open_lock(path: &Path) -> io::Result<File> {
