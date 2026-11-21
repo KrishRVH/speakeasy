@@ -85,6 +85,13 @@ jobs:
           if-no-files-found: error
           retention-days: 1
       - run: mise run rust:test
+      - name: Check paste on a private window station
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          cargo nextest run --workspace --lib --bins --tests --all-features --locked --run-ignored only -E 'package(speakeasy-platform) & test(copied_text_stays_private)'
+          if ($LASTEXITCODE -ne 0) { throw 'The private window station clipboard check failed.' }
       - name: Build the Windows installer for acceptance
         if: runner.os == 'Windows' && inputs.installer
         shell: pwsh
