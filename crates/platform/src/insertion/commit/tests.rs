@@ -514,6 +514,53 @@ fn a_failed_restore_keeps_the_error_that_stopped_the_paste() -> anyhow::Result<(
 }
 
 #[test]
+fn a_cancelled_paste_reports_cancelled_even_when_its_native_call_fails() -> anyhow::Result<()> {
+    for failed in [Step::Write, Step::Holds, Step::PasteKeys] {
+        let permit = permit()?;
+        let mut native = Fake {
+            clipboard: 1,
+            revokes_at: Some((failed, permit.clone())),
+            write_fails: (failed == Step::Write).then_some(WriteFailure::Partway),
+            fails: vec![failed],
+            ..Fake::new()
+        };
+        let (outcome, saved) = insert(&mut native, "text", &permit, Delivery::Paste, &unfocused())
+            .with_context(|| format!("Escape during a failed {failed:?} reported the failure"))?;
+        assert_eq!(outcome, Inserted::Cancelled, "{failed:?}");
+        assert!(saved.is_none() && !native.sent());
+        let kept = if failed == Step::Holds { WRITTEN } else { 1 };
+        assert_eq!(
+            native.clipboard, kept,
+            "Escape during a failed {failed:?} left the wrong copy"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_fallback_never_claims_the_text_is_copied_after_the_clipboard_changed() -> anyhow::Result<()> {
+    for (external_focus, released, changed_at) in [
+        (OWN_FOCUS, RELEASED, Step::ExternalFocus),
+        (EXTERNAL_FOCUS, !RELEASED, Step::ShortcutReleased),
+    ] {
+        let permit = permit()?;
+        let mut native = Fake {
+            external_focus,
+            releases: VecDeque::from([released]),
+            changes_clipboard_at: Some(changed_at),
+            ..Fake::new()
+        };
+        assert_eq!(
+            insert(&mut native, "text", &permit, Delivery::Paste, &unfocused())?.0,
+            CLIPBOARD_CHANGED_BEFORE_PASTE,
+            "Another copy during the {changed_at:?} check"
+        );
+        assert!(!native.sent());
+    }
+    Ok(())
+}
+
+#[test]
 fn a_clipboard_that_lost_the_text_is_never_pasted() -> anyhow::Result<()> {
     let permit = permit()?;
     let mut native = Fake {

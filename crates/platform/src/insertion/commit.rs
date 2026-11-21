@@ -217,38 +217,15 @@ fn insert<N: NativeInsert>(
     if !permit.active() {
         return Ok((Inserted::Cancelled, None));
     }
-    let (keys, clipboard) = match delivery {
-        Delivery::Paste => {
-            let lease = native.acquire()?;
-            if !permit.active() {
-                return Ok((Inserted::Cancelled, None));
-            }
-            let contents = native.save(&lease);
-            if !permit.active() {
-                return Ok((Inserted::Cancelled, None));
-            }
-            let written = (native.write(lease, text, contents.as_ref())?, contents);
-            if !native.holds(text, &written.0)? {
-                let outcome = if permit.active() {
-                    CLIPBOARD_CHANGED
-                } else {
-                    Inserted::Cancelled
-                };
-                return Ok((outcome, None));
-            }
-            if !permit.active() {
-                restore_now(native, Some(written));
-                return Ok((Inserted::Cancelled, None));
-            }
-            match native.paste_keys() {
-                Ok(keys) => (keys, Some(written)),
-                Err(error) => {
-                    restore_now(native, Some(written));
-                    return Err(error);
-                },
-            }
-        },
-        Delivery::Direct => (native.text_keys(text)?, None),
+    let staged = match delivery {
+        Delivery::Paste => stage_paste(native, text, permit),
+        Delivery::Direct => native.text_keys(text).map(|keys| Staged::Keys(keys, None)),
+    };
+    let (keys, clipboard) = match staged {
+        Ok(Staged::Keys(keys, clipboard)) => (keys, clipboard),
+        Ok(Staged::Settled(inserted)) => return Ok((inserted, None)),
+        Err(_) if !permit.active() => return Ok((Inserted::Cancelled, None)),
+        Err(error) => return Err(error),
     };
     let preflight = delivery.preflight(
         !own_focus.held() && native.external_focus(),
@@ -258,14 +235,14 @@ fn insert<N: NativeInsert>(
         restore_now(native, clipboard);
         return Ok((Inserted::Cancelled, None));
     }
-    if let Some(outcome) = preflight {
-        return Ok((outcome, None));
-    }
     if clipboard
         .as_ref()
         .is_some_and(|(mark, _)| native.mark() != *mark)
     {
         return Ok((CLIPBOARD_CHANGED_BEFORE_PASTE, None));
+    }
+    if let Some(outcome) = preflight {
+        return Ok((outcome, None));
     }
     if !permit.commit() {
         restore_now(native, clipboard);
@@ -283,7 +260,51 @@ fn insert<N: NativeInsert>(
     Ok((inserted, saved))
 }
 
-fn restore_now<N: NativeInsert>(native: &mut N, clipboard: Option<(N::Mark, Option<N::Contents>)>) {
+type Written<N> = (
+    <N as NativeInsert>::Mark,
+    Option<<N as NativeInsert>::Contents>,
+);
+
+enum Staged<N: NativeInsert> {
+    Keys(N::Keys, Option<Written<N>>),
+    Settled(Inserted),
+}
+
+fn stage_paste<N: NativeInsert>(
+    native: &mut N,
+    text: &str,
+    permit: &InsertPermit,
+) -> anyhow::Result<Staged<N>> {
+    let lease = native.acquire()?;
+    if !permit.active() {
+        return Ok(Staged::Settled(Inserted::Cancelled));
+    }
+    let contents = native.save(&lease);
+    if !permit.active() {
+        return Ok(Staged::Settled(Inserted::Cancelled));
+    }
+    let written = (native.write(lease, text, contents.as_ref())?, contents);
+    if !native.holds(text, &written.0)? {
+        return Ok(Staged::Settled(if permit.active() {
+            CLIPBOARD_CHANGED
+        } else {
+            Inserted::Cancelled
+        }));
+    }
+    if !permit.active() {
+        restore_now(native, Some(written));
+        return Ok(Staged::Settled(Inserted::Cancelled));
+    }
+    match native.paste_keys() {
+        Ok(keys) => Ok(Staged::Keys(keys, Some(written))),
+        Err(error) => {
+            restore_now(native, Some(written));
+            Err(error)
+        },
+    }
+}
+
+fn restore_now<N: NativeInsert>(native: &mut N, clipboard: Option<Written<N>>) {
     if let Some((mark, contents)) = clipboard {
         #[expect(
             clippy::let_underscore_must_use,
