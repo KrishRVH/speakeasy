@@ -184,6 +184,33 @@ async fn a_show_whose_audio_stopped_keeps_its_checkpoint_when_revoked() -> anyho
 }
 
 #[tokio::test]
+async fn quit_honours_a_cancel_queued_before_a_microphone_loss() -> anyhow::Result<()> {
+    for cancel in [Input::Cancel, Input::Escape] {
+        let root = tempfile::tempdir()?;
+        let mut h = Harness::with_ports(Config::default(), |ports| {
+            ports.checkpoint_root = Some(root.path().to_owned());
+            ports.screen_report = ScreenReport::Withheld;
+        })?;
+        let (id, microphone) = start_show_listening(&mut h).await?;
+        receive(&h.shows).await?;
+        let escape = matches!(cancel, Input::Escape);
+        h.input(cancel);
+        microphone.try_send(disconnected(id))?;
+        h.runtime.request_stop();
+        h.close().await?;
+        let listing = show::checkpoint::list(root.path(), SystemTime::now());
+        assert!(listing.problems.is_empty());
+        assert_eq!(
+            listing.shows.len(),
+            0,
+            "Quit kept a Show whose {} was queued before its microphone loss",
+            if escape { "held Escape" } else { "Cancel" }
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn quit_queued_behind_a_microphone_ending_keeps_the_show_checkpoint() -> anyhow::Result<()> {
     for lost in [true, false] {
         let root = tempfile::tempdir()?;

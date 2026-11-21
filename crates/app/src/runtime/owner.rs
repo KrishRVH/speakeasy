@@ -291,7 +291,15 @@ impl<P: Ports> Owner<P> {
         }
     }
 
-    fn settle_captures(&mut self) -> ControlFlow<()> {
+    fn settle(&mut self) -> ControlFlow<()> {
+        for _ in 0..self.world.inputs.len() {
+            let Ok(input) = self.world.inputs.try_recv() else {
+                break;
+            };
+            if matches!(input, Input::Escape | Input::Cancel) {
+                self.apply(Wake::Input(Ok(input)))?;
+            }
+        }
         for _ in 0..self.world.captures.len() {
             let Ok(event) = self.world.captures.try_recv() else {
                 break;
@@ -765,7 +773,7 @@ pub(super) async fn run<P: Ports>(wiring: Wiring<P>) {
     owner.present();
     loop {
         let wake = owner.wait().await;
-        if matches!(wake, Wake::Stop) && owner.settle_captures().is_break() {
+        if matches!(wake, Wake::Stop) && owner.settle().is_break() {
             break;
         }
         if owner.apply(wake).is_break() {
