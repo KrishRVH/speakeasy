@@ -2,6 +2,7 @@ use super::*;
 
 const F13: u32 = 0x7C;
 const LETTER_C: u32 = 0x43;
+const LETTER_V: u32 = 0x56;
 
 fn right_control_holding(at: Instant) -> Windows {
     let mut policy = Windows::new(WindowsShortcut::RightControl);
@@ -106,20 +107,10 @@ fn a_hold_key_after_f13_falls_quiet_ends_the_hold_instead_of_acting() {
         assert!(!typed.swallows());
     }
 
-    let mut policy = f13_held_since(at, &[500, 533]);
-    policy.observe(LEFT_SHIFT, true, NONE_HELD, at(600));
-    let typed = policy.observe(LETTER_S, true, NONE_HELD, at(2_500));
-    assert_eq!(
-        delivered(&typed),
-        [Action::Release],
-        "Shift stopped F13's repeats, so its release could have gone unseen"
-    );
-    assert!(!typed.swallows());
-
     let steady: Vec<u64> = (0..300).map(|n| 500 + n * 33).collect();
     for (repeats, show_at) in [
         (&[][..], 1_200),
-        (&[500, 533, 566][..], 1_900),
+        (&[500, 533, 566][..], 1_700),
         (&steady[..], 10_400),
     ] {
         let mut policy = f13_held_since(at, repeats);
@@ -134,15 +125,77 @@ fn a_hold_key_after_f13_falls_quiet_ends_the_hold_instead_of_acting() {
 }
 
 #[test]
-fn slow_windows_f13_repeats_never_split_a_dictation() {
+fn an_f13_show_keeps_its_hold_keys_however_long_it_runs() {
     let start = now();
     let at = |millis| start + Duration::from_millis(millis);
-    let mut policy = f13_held_since(at, &[3_000, 6_000, 20_000]);
-    let show = policy.observe(LETTER_S, true, NONE_HELD, at(20_500));
-    assert_eq!(delivered(&show), [Action::Show(Scope::Screen)]);
+    for (key, action) in [
+        (SPACE, Action::Lock),
+        (RETURN, Action::Submit),
+        (LETTER_V, Action::PasteLast),
+    ] {
+        let mut policy = f13_held_since(at, &[500, 533]);
+        let show = policy.observe(LETTER_S, true, NONE_HELD, at(600));
+        assert_eq!(delivered(&show), [Action::Show(Scope::Screen)]);
+        let later = policy.observe(key, true, NONE_HELD, at(3_600));
+        assert_eq!(
+            delivered(&later),
+            [action],
+            "S stopped F13's repeats, so their silence 3 s later is no lost release"
+        );
+        assert!(later.swallows());
+    }
+}
+
+#[test]
+fn a_shift_tap_during_an_f13_hold_keeps_its_later_hold_keys() {
+    let start = now();
+    let at = |millis| start + Duration::from_millis(millis);
+    for shift in [LEFT_SHIFT, RIGHT_SHIFT] {
+        let mut policy = f13_held_since(at, &[500, 533]);
+        policy.observe(shift, true, NONE_HELD, at(600));
+        policy.observe(shift, false, NONE_HELD, at(700));
+        let show = policy.observe(LETTER_S, true, NONE_HELD, at(2_500));
+        assert_eq!(
+            delivered(&show),
+            [Action::Show(Scope::Screen)],
+            "Shift stopped F13's repeats, so their silence is no lost release"
+        );
+        assert!(show.swallows());
+    }
+}
+
+#[test]
+fn f13_silence_counts_as_a_lost_release_only_beyond_the_repeat_settings() {
+    let start = now();
+    let at = |millis| start + Duration::from_millis(millis);
+    let repeat_keys = || typematic::Repeat::After {
+        delay: Duration::from_secs(3),
+        period: Duration::from_secs(3),
+    };
+    let mut policy = f13_held_since(at, &[3_000, 6_000]).repeating(repeat_keys);
+    let show = policy.observe(LETTER_S, true, NONE_HELD, at(9_000));
     assert_eq!(
-        delivered(&policy.observe(F13, false, NONE_HELD, at(21_000))),
+        delivered(&show),
+        [Action::Show(Scope::Screen)],
+        "RepeatKeys repeating every 3 s keeps a 3 s silence within the hold"
+    );
+    assert_eq!(
+        delivered(&policy.observe(F13, false, NONE_HELD, at(9_500))),
         [Action::Release]
+    );
+
+    let mut policy = f13_held_since(at, &[]).repeating(|| typematic::Repeat::Never);
+    assert_eq!(
+        delivered(&policy.observe(LETTER_S, true, NONE_HELD, at(30_000))),
+        [Action::Show(Scope::Screen)],
+        "Without repeat, F13's silence never shows a lost release"
+    );
+
+    let mut policy = f13_held_since(at, &[3_000, 6_000]);
+    assert_eq!(
+        delivered(&policy.observe(LETTER_S, true, NONE_HELD, at(9_000))),
+        [Action::Release],
+        "Under Windows' default repeat, 3 s of silence shows a lost release"
     );
 }
 

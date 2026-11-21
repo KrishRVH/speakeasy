@@ -281,12 +281,19 @@ so the Windows policy remembers each key whose press it saw and takes another ke
 key's release as a repeat. It forgets those keys at a lifecycle interrupt and when reconciliation
 finds a chord release the hook missed, since either shows the hook lost sight of the keyboard;
 otherwise a key whose release went unseen loses its next press to that rule. Nothing reports a
-swallowed F13's physical state, so an unseen F13 release keeps the hold until the next F13 release,
-and a hold key acts only within 1.5 s of F13's last press or repeat, beyond the 1 s slowest standard
-repeat delay. A hold key pressed later presumes the release went unseen: the hold ends and the key
-reaches the app, which also ends a still-held F13 hold whose repeats are slower than that or were
-stopped by another key. A hold key pressed sooner after an unseen release still acts. F13 modifies
-no other key, so the insertion worker's release wait and preflight do not wait for it.
+swallowed F13's physical state, so an unseen F13 release keeps the hold until the next F13 release.
+While F13 is the last key to go down, its repeats keep arriving, so a hold key pressed after a
+longer silence than the repeat settings allow presumes the release went unseen: the hold ends and
+the key reaches the app. The limit is twice the longer of the repeat delay and interval, plus 250
+ms. The hook reads those settings with `SystemParametersInfoW` whenever it judges such a silence:
+the keyboard delay and speed, or FilterKeys' acceptance wait plus repeat delay, and its repeat
+interval, when FilterKeys is on without BounceKeys. FilterKeys without repeat never presumes a
+release, and an unreadable FilterKeys setting counts as its 20 s maximum. The read fills
+caller-owned values and sends no messages, so it cannot re-enter the hook. Windows autorepeat
+repeats only the most recent key and does not resume an earlier one, so any other key-down, a Show
+key or a Shift tap included, makes F13's silence expected until F13 is heard again. A hold key
+pressed within the limit after an unseen release, or after another key went down, still acts. F13
+modifies no other key, so the insertion worker's release wait and preflight do not wait for it.
 
 `StatusItem` is created, updated and removed on the main thread. It takes the item's button at
 creation, removing the item again if AppKit offers none, and holds that main-thread-only button, so

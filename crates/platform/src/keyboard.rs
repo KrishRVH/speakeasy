@@ -11,9 +11,6 @@ const SHIFT_TAP_GAP: Duration = Duration::from_millis(400);
 
 const APPLICATION_SHORTCUT: Duration = Duration::from_millis(250);
 
-#[cfg(any(target_os = "windows", test))]
-const F13_QUIET_LIMIT: Duration = Duration::from_millis(1_500);
-
 #[derive(Default)]
 struct Chord {
     hold: Hold,
@@ -389,6 +386,30 @@ pub(super) struct Windows {
     taps: ShiftTaps,
     keys: HeldKeys,
     f13_heard: Option<Instant>,
+    repeat: RepeatSettings,
+}
+
+#[cfg(any(target_os = "windows", test))]
+mod typematic;
+
+#[cfg(any(target_os = "windows", test))]
+struct RepeatSettings(fn() -> typematic::Repeat);
+
+#[cfg(all(target_os = "windows", not(test)))]
+impl Default for RepeatSettings {
+    fn default() -> Self {
+        Self(typematic::read)
+    }
+}
+
+#[cfg(test)]
+impl Default for RepeatSettings {
+    fn default() -> Self {
+        Self(|| typematic::Repeat::After {
+            delay: Duration::from_millis(500),
+            period: Duration::from_millis(33),
+        })
+    }
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -493,6 +514,8 @@ impl Windows {
         }
         if key == Self::F13 {
             self.f13_heard = (stroke != Stroke::Release).then_some(at);
+        } else if down {
+            self.f13_heard = None;
         }
         self.decide(key, stroke, physical, at)
             .after_missed_release(missed_release)
@@ -500,9 +523,19 @@ impl Windows {
 
     fn f13_fell_quiet(&self, at: Instant) -> bool {
         self.chord.hold == Hold::Held
-            && self
-                .f13_heard
-                .is_some_and(|heard| at.saturating_duration_since(heard) > F13_QUIET_LIMIT)
+            && self.f13_heard.is_some_and(|heard| {
+                (self.repeat.0)()
+                    .quiet_limit()
+                    .is_some_and(|limit| at.saturating_duration_since(heard) > limit)
+            })
+    }
+
+    #[cfg(test)]
+    fn repeating(self, read: fn() -> typematic::Repeat) -> Self {
+        Self {
+            repeat: RepeatSettings(read),
+            ..self
+        }
     }
 
     fn forget_f13(&mut self) {
