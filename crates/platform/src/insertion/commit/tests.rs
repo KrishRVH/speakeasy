@@ -39,7 +39,13 @@ enum Keys {
 
 const WRITTEN: u8 = 200;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
+enum WriteFailure {
+    BeforeClearing,
+    Partway,
+}
+
+#[derive(Clone, Copy, Debug)]
 enum SnapshotAccess {
     Available,
     Unavailable,
@@ -60,6 +66,7 @@ struct Fake {
     texts: Vec<String>,
     return_fails: bool,
     fails: Vec<Step>,
+    write_fails: Option<WriteFailure>,
 }
 
 impl Fake {
@@ -79,6 +86,7 @@ impl Fake {
             texts: Vec::new(),
             return_fails: false,
             fails: Vec::new(),
+            write_fails: None,
         }
     }
 
@@ -122,12 +130,21 @@ impl NativeInsert for Fake {
         matches!(self.snapshot, SnapshotAccess::Available).then_some(self.clipboard)
     }
 
-    fn write(&mut self, (): (), text: &str) -> anyhow::Result<u8> {
+    fn write(&mut self, (): (), text: &str, saved: Option<&u8>) -> anyhow::Result<u8> {
         self.reach(Step::Write);
         self.texts.push(text.to_owned());
-        self.clipboard = WRITTEN;
-        self.fail_at(Step::Write)?;
-        Ok(self.clipboard)
+        match self.write_fails {
+            None => {
+                self.clipboard = WRITTEN;
+                Ok(WRITTEN)
+            },
+            Some(failure) => {
+                if matches!(failure, WriteFailure::Partway) {
+                    self.clipboard = saved.copied().unwrap_or_default();
+                }
+                anyhow::bail!("Fixture write failure")
+            },
+        }
     }
 
     fn restore(&mut self, contents: Option<u8>, mark: &u8) -> anyhow::Result<()> {
@@ -409,8 +426,44 @@ fn cancellation_after_the_write_reports_cancelled_even_when_the_restore_fails() 
 }
 
 #[test]
+fn a_failed_write_restores_nothing_after_releasing_its_lease() -> anyhow::Result<()> {
+    for snapshot in [SnapshotAccess::Available, SnapshotAccess::Unavailable] {
+        for failure in [WriteFailure::BeforeClearing, WriteFailure::Partway] {
+            let mut native = Fake {
+                clipboard: 1,
+                snapshot,
+                changes_clipboard_at: Some(Step::Mark),
+                write_fails: Some(failure),
+                ..Fake::new()
+            };
+            let error = insert(
+                &mut native,
+                "text",
+                &permit()?,
+                Delivery::Paste,
+                &unfocused(),
+            )
+            .err()
+            .context("A failed write reported an outcome")?;
+            assert_eq!(error.to_string(), "Fixture write failure");
+            assert_eq!(
+                native.steps,
+                [Step::Acquire, Step::Save, Step::Write],
+                "{failure:?} with {snapshot:?} reached past the failed write"
+            );
+            let kept = match (failure, snapshot) {
+                (WriteFailure::Partway, SnapshotAccess::Unavailable) => 0,
+                _ => 1,
+            };
+            assert_eq!(native.clipboard, kept, "{failure:?} with {snapshot:?}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn a_failed_restore_keeps_the_error_that_stopped_the_paste() -> anyhow::Result<()> {
-    for failed in [Step::Write, Step::Holds, Step::PasteKeys] {
+    for failed in [Step::Holds, Step::PasteKeys] {
         for fails in [vec![failed], vec![failed, Step::Restore]] {
             let mut native = Fake {
                 clipboard: 1,

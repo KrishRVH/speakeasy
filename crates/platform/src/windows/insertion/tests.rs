@@ -135,7 +135,7 @@ fn check_on_a_private_window_station() -> anyhow::Result<()> {
         typed: crate::insertion::KeyCount::default(),
     };
     let lease = insert.acquire()?;
-    let written = insert.write(lease, TEXT)?;
+    let written = insert.write(lease, TEXT, None)?;
     assert_eq!(
         written,
         insert.mark(),
@@ -159,7 +159,50 @@ fn check_on_a_private_window_station() -> anyhow::Result<()> {
         "A copy with no text must read as a change even under its own mark"
     );
     assert_an_interrupted_listing_is_refused()?;
+    assert_a_failed_write_puts_back_what_it_replaced(&mut insert)?;
     assert_restores_only_what_it_replaced(&mut insert)
+}
+
+fn assert_a_failed_write_puts_back_what_it_replaced(insert: &mut Insert) -> anyhow::Result<()> {
+    let html = clipboard_win::raw::register_format("HTML Format")
+        .context("Cannot register a clipboard format")?;
+    copy_previous(html, false)?;
+    let lease = insert.acquire()?;
+    let saved = insert
+        .save(&lease)
+        .context("Ordinary text and HTML were not saved")?;
+    clipboard_win::raw::empty()?;
+    clipboard_win::raw::set_string_with("partial", clipboard_win::options::NoClear)?;
+    roll_back(Some(&saved))?;
+    drop(lease);
+    assert_previous(html, "A failed write")?;
+
+    let lease = insert.acquire()?;
+    clipboard_win::raw::set_string_with("partial", clipboard_win::options::NoClear)?;
+    roll_back(None)?;
+    drop(lease);
+    let _clipboard = open_clipboard()?;
+    assert_eq!(
+        clipboard_win::raw::count_formats(),
+        Some(0),
+        "A failed write with nothing to put back left part of its copy"
+    );
+    Ok(())
+}
+
+fn assert_previous(html: NonZeroU32, source: &str) -> anyhow::Result<()> {
+    let _clipboard = open_clipboard()?;
+    let mut text = Vec::new();
+    clipboard_win::raw::get_string(&mut text)
+        .with_context(|| format!("{source} lost the replaced text"))?;
+    assert_eq!(text, b"previous", "{source} lost the replaced text");
+    let mut markup = Vec::new();
+    clipboard_win::raw::get_vec(html.get(), &mut markup)?;
+    assert_eq!(
+        markup, b"<b>previous</b>",
+        "{source} lost the replaced HTML"
+    );
+    Ok(())
 }
 
 fn assert_an_interrupted_listing_is_refused() -> anyhow::Result<()> {
@@ -194,7 +237,7 @@ fn assert_restores_only_what_it_replaced(insert: &mut Insert) -> anyhow::Result<
     let saved = insert
         .save(&lease)
         .context("Ordinary text and HTML were not saved")?;
-    let mark = insert.write(lease, TEXT)?;
+    let mark = insert.write(lease, TEXT, Some(&saved))?;
     insert.restore(Some(saved), &mark)?;
     {
         let _clipboard = open_clipboard()?;
@@ -213,7 +256,7 @@ fn assert_restores_only_what_it_replaced(insert: &mut Insert) -> anyhow::Result<
     let saved = insert
         .save(&lease)
         .context("The previous copy was not saved")?;
-    let mark = insert.write(lease, TEXT)?;
+    let mark = insert.write(lease, TEXT, Some(&saved))?;
     copy_without_text()?;
     insert.restore(Some(saved), &mark)?;
     {

@@ -1,6 +1,6 @@
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use anyhow::ensure;
+use anyhow::{anyhow, ensure};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use objc2_app_kit::{
     NSPasteboard, NSPasteboardContentsOptions, NSPasteboardItem, NSPasteboardTypePNG,
@@ -30,12 +30,12 @@ pub(super) fn acquire() -> Lease {
 }
 
 pub(crate) fn copy_text(text: &str) -> anyhow::Result<()> {
-    objc2::rc::autoreleasepool(|_| write(acquire(), text).map(|_| ()))
+    objc2::rc::autoreleasepool(|_| write(acquire(), text, None).map(|_| ()))
 }
 
-pub(super) fn write(lease: Lease, text: &str) -> anyhow::Result<isize> {
+pub(super) fn write(lease: Lease, text: &str, previous: Option<&Saved>) -> anyhow::Result<isize> {
     let item = item(text, None)?;
-    publish(lease, &[item])
+    publish(&lease, &[item], previous)
 }
 
 pub(super) type Saved = Vec<Vec<(Retained<NSString>, Retained<NSData>)>>;
@@ -94,23 +94,7 @@ fn concealed(types: &NSArray<NSString>) -> bool {
 }
 
 pub(super) fn restore(lease: Lease, saved: Option<&Saved>, mark: isize) -> anyhow::Result<()> {
-    let items = saved
-        .map(|saved| {
-            saved
-                .iter()
-                .map(|kept| {
-                    let item = private_item()?;
-                    for (kind, data) in kept {
-                        ensure!(
-                            item.setData_forType(data, kind),
-                            "Cannot prepare the previous clipboard"
-                        );
-                    }
-                    Ok(item)
-                })
-                .collect::<anyhow::Result<Vec<_>>>()
-        })
-        .transpose()?;
+    let items = saved.map(items_from).transpose()?;
     if lease.pasteboard.changeCount() != mark {
         return Ok(());
     }
@@ -120,7 +104,23 @@ pub(super) fn restore(lease: Lease, saved: Option<&Saved>, mark: isize) -> anyho
             .prepareForNewContentsWithOptions(NSPasteboardContentsOptions::CurrentHostOnly);
         return Ok(());
     };
-    publish(lease, &items).map(|_| ())
+    publish(&lease, &items, None).map(|_| ())
+}
+
+fn items_from(saved: &Saved) -> anyhow::Result<Vec<Retained<NSPasteboardItem>>> {
+    saved
+        .iter()
+        .map(|kept| {
+            let item = private_item()?;
+            for (kind, data) in kept {
+                ensure!(
+                    item.setData_forType(data, kind),
+                    "Cannot prepare the previous clipboard"
+                );
+            }
+            Ok(item)
+        })
+        .collect()
 }
 
 fn private_item() -> anyhow::Result<Retained<NSPasteboardItem>> {
@@ -141,7 +141,7 @@ pub(crate) fn copy_content(
         clipboard::copy_when(
             authorized,
             || Ok(acquire()),
-            |lease| publish(lease, &[item]).map(|_| ()),
+            |lease| publish(&lease, &[item], None).map(|_| ()),
         )
     })
 }
@@ -167,18 +167,30 @@ fn item(
     Ok(item)
 }
 
-fn publish(lease: Lease, items: &[Retained<NSPasteboardItem>]) -> anyhow::Result<isize> {
+fn publish(
+    lease: &Lease,
+    items: &[Retained<NSPasteboardItem>],
+    previous: Option<&Saved>,
+) -> anyhow::Result<isize> {
     let writers: Vec<&ProtocolObject<dyn NSPasteboardWriting>> = items
         .iter()
         .map(|item| ProtocolObject::from_ref(&**item))
         .collect();
     let items = NSArray::from_slice(&writers);
-    lease
+    let cleared = lease
         .pasteboard
         .prepareForNewContentsWithOptions(NSPasteboardContentsOptions::CurrentHostOnly);
-    ensure!(
-        lease.pasteboard.writeObjects(&items),
-        "Cannot place the complete copy on the clipboard"
-    );
-    Ok(lease.pasteboard.changeCount())
+    if lease.pasteboard.writeObjects(&items) {
+        return Ok(lease.pasteboard.changeCount());
+    }
+    if let Some(previous) = previous
+        && lease.pasteboard.changeCount() == cleared
+    {
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "Putting the previous copy back is best effort; the failed write is the error to report"
+        )]
+        let _ = items_from(previous).and_then(|items| publish(lease, &items, None));
+    }
+    Err(anyhow!("Cannot place the complete copy on the clipboard"))
 }

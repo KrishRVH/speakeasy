@@ -173,7 +173,12 @@ pub(crate) trait NativeInsert {
 
     fn save(&mut self, lease: &Self::Lease) -> Option<Self::Contents>;
 
-    fn write(&mut self, lease: Self::Lease, text: &str) -> anyhow::Result<Self::Mark>;
+    fn write(
+        &mut self,
+        lease: Self::Lease,
+        text: &str,
+        saved: Option<&Self::Contents>,
+    ) -> anyhow::Result<Self::Mark>;
 
     fn restore(
         &mut self,
@@ -222,14 +227,7 @@ fn insert<N: NativeInsert>(
             if !permit.active() {
                 return Ok((Inserted::Cancelled, None));
             }
-            let written = match native.write(lease, text) {
-                Ok(mark) => (mark, contents),
-                Err(error) => {
-                    let failed = (native.mark(), contents);
-                    restore_now(native, Some(failed));
-                    return Err(error);
-                },
-            };
+            let written = (native.write(lease, text, contents.as_ref())?, contents);
             if !permit.active() {
                 restore_now(native, Some(written));
                 return Ok((Inserted::Cancelled, None));

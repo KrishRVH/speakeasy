@@ -49,7 +49,7 @@ const SAVED_BYTES: usize = 64 << 20;
 type SavedFormat = (u32, Zeroizing<Vec<u8>>);
 
 pub(crate) fn copy_text(text: &str) -> anyhow::Result<()> {
-    write_clipboard(open_clipboard()?, text, None)
+    write_clipboard(open_clipboard()?, text, None, None)
 }
 
 pub(crate) fn copy_content(
@@ -57,7 +57,7 @@ pub(crate) fn copy_content(
     authorized: impl FnOnce() -> bool,
 ) -> anyhow::Result<bool> {
     clipboard::copy_when(authorized, open_clipboard, |lease| {
-        write_clipboard(lease, &content.text, content.image.as_ref())
+        write_clipboard(lease, &content.text, content.image.as_ref(), None)
     })
 }
 
@@ -104,11 +104,13 @@ fn restore_clipboard(
         return Ok(());
     }
     clipboard_win::raw::empty()?;
-    if let Some(saved) = saved {
-        mark_private()?;
-        for (format, data) in saved {
-            clipboard_win::raw::set_without_clear(*format, data)?;
-        }
+    saved.map_or(Ok(()), put_back)
+}
+
+fn put_back(saved: &[SavedFormat]) -> anyhow::Result<()> {
+    mark_private()?;
+    for (format, data) in saved {
+        clipboard_win::raw::set_without_clear(*format, data)?;
     }
     Ok(())
 }
@@ -126,6 +128,7 @@ fn write_clipboard(
     _lease: clipboard_win::Clipboard,
     text: &str,
     image: Option<&clipboard::Image>,
+    previous: Option<&[SavedFormat]>,
 ) -> anyhow::Result<()> {
     let image = image
         .map(|image| {
@@ -134,23 +137,35 @@ fn write_clipboard(
                 .context("Cannot register the clipboard image format")
         })
         .transpose()?;
-    let write = || -> anyhow::Result<()> {
-        clipboard_win::raw::empty()?;
-        mark_private()?;
-        if let Some((image, png)) = image {
-            clipboard_win::raw::set_without_clear(png.get(), &image.png)?;
-            clipboard_win::raw::set_without_clear(clipboard_win::formats::CF_DIBV5, &image.dib)?;
-        }
-        clipboard_win::raw::set_string_with(
-            &windows_line_endings(text),
-            clipboard_win::options::NoClear,
-        )?;
-        Ok(())
-    };
-    write().map_err(|error| match clipboard_win::raw::empty() {
+    clipboard_win::raw::empty()?;
+    fill(text, image).map_err(|error| match roll_back(previous) {
         Ok(()) => error,
         Err(_) => error
             .context("The clipboard may contain an incomplete copy; clear it before trying again"),
+    })
+}
+
+fn fill(text: &str, image: Option<(&clipboard::Image, NonZeroU32)>) -> anyhow::Result<()> {
+    mark_private()?;
+    if let Some((image, png)) = image {
+        clipboard_win::raw::set_without_clear(png.get(), &image.png)?;
+        clipboard_win::raw::set_without_clear(clipboard_win::formats::CF_DIBV5, &image.dib)?;
+    }
+    clipboard_win::raw::set_string_with(
+        &windows_line_endings(text),
+        clipboard_win::options::NoClear,
+    )?;
+    Ok(())
+}
+
+fn roll_back(previous: Option<&[SavedFormat]>) -> anyhow::Result<()> {
+    clipboard_win::raw::empty()?;
+    previous.map_or(Ok(()), put_back).inspect_err(|_| {
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "A previous copy that could not return whole is cleared instead, best effort, and the caller reports the incomplete copy"
+        )]
+        let _ = clipboard_win::raw::empty();
     })
 }
 
@@ -180,8 +195,13 @@ impl NativeInsert for Insert {
         saved_formats()
     }
 
-    fn write(&mut self, lease: clipboard_win::Clipboard, text: &str) -> anyhow::Result<Self::Mark> {
-        write_clipboard(lease, text, None)?;
+    fn write(
+        &mut self,
+        lease: clipboard_win::Clipboard,
+        text: &str,
+        saved: Option<&Self::Contents>,
+    ) -> anyhow::Result<Self::Mark> {
+        write_clipboard(lease, text, None, saved.map(Vec::as_slice))?;
         Ok(clipboard_win::raw::seq_num())
     }
 

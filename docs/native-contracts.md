@@ -59,14 +59,17 @@ write records the sequence number or change count once its copy is complete, on 
 clipboard closes, because closing advances the number. The restore reopens the clipboard, prepares
 the whole snapshot, and writes only if that number is still unchanged. Cancellation before
 submission restores the same snapshot immediately or clears the dictated copy when no snapshot was
-available, as does a write that fails partway, under the number read once it has failed, or a
-failure after the write; these restores are best effort, so the dictation still reports its
-cancellation or the original error. Windows and macOS inspect every clipboard format or item type
-for concealed content before reading any payload, and Windows saves nothing when its format listing
-ends in an error; macOS checks that the pasteboard still holds the dictated text by reading the one
-item whose types it has just inspected. The thread serves the next request only after the restore,
-which therefore snapshots the restored copy. The snapshot lives only on the insertion thread and is
-dropped after the restore.
+available, as does a failure after the write; these restores are best effort, so the dictation still
+reports its cancellation or the original error. A write that fails partway puts the snapshot back,
+or clears its partial copy when there is none, before it releases its lease, on macOS only while the
+change count its clearing produced still stands; one that fails before touching the clipboard leaves
+it alone. The paste restores nothing after a failed write, so it never writes under a number another
+copy may own. Windows and macOS inspect every clipboard format or item type for concealed content
+before reading any payload, and Windows saves nothing when its format listing ends in an error;
+macOS checks that the pasteboard still holds the dictated text by reading the one item whose types
+it has just inspected. The thread serves the next request only after the restore, which therefore
+snapshots the restored copy. The snapshot lives only on the insertion thread and is dropped after
+the restore.
 
 `MonitorControl` serializes publishing a live run-loop handle, readiness and stop. Stop-before-start
 remains effective; retirement removes the handle before a later stop can wake it. This lock cannot

@@ -188,8 +188,9 @@ module unless a test file is named.
   from the displayed BGRA pixels and checks copy authorization after native acquisition.
   [macos/clipboard.rs](../crates/platform/src/macos/clipboard.rs) serializes native writes with a
   process-local lease because AppKit has no exclusive clipboard lease; one pasteboard item carries
-  every format. Windows holds its native lease through every format and removes partial writes on
-  failure. [clipboard/tests.rs](../crates/platform/src/clipboard/tests.rs) checks image channels,
+  every format. Windows holds its native lease through every format; a write that fails partway puts
+  back what a dictation replaced, or removes its partial copy, before releasing the lease.
+  [clipboard/tests.rs](../crates/platform/src/clipboard/tests.rs) checks image channels,
   orientation, transparency, bounds, failure reporting, and a newer recording during acquisition.
   [insertion/tests.rs](../crates/platform/src/insertion/tests.rs),
   [insertion/commit/tests.rs](../crates/platform/src/insertion/commit/tests.rs), and the input, X11,

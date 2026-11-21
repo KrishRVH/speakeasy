@@ -566,8 +566,13 @@ impl insertion::NativeInsert for Insert {
         clipboard::save(lease)
     }
 
-    fn write(&mut self, lease: clipboard::Lease, text: &str) -> anyhow::Result<Self::Mark> {
-        clipboard::write(lease, text)
+    fn write(
+        &mut self,
+        lease: clipboard::Lease,
+        text: &str,
+        saved: Option<&clipboard::Saved>,
+    ) -> anyhow::Result<Self::Mark> {
+        clipboard::write(lease, text, saved)
     }
 
     fn restore(&mut self, contents: Option<clipboard::Saved>, mark: &isize) -> anyhow::Result<()> {
