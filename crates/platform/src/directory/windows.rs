@@ -23,8 +23,9 @@ use windows_sys::{
     },
     Win32::{
         Foundation::{
-            NTSTATUS, OBJ_CASE_INSENSITIVE, OBJ_DONT_REPARSE, RtlNtStatusToDosError,
-            STATUS_NO_MORE_FILES, STATUS_NO_SUCH_FILE, UNICODE_STRING,
+            ERROR_INVALID_FUNCTION, ERROR_INVALID_PARAMETER, ERROR_NOT_SUPPORTED, NTSTATUS,
+            OBJ_CASE_INSENSITIVE, OBJ_DONT_REPARSE, RtlNtStatusToDosError, STATUS_NO_MORE_FILES,
+            STATUS_NO_SUCH_FILE, UNICODE_STRING,
         },
         Storage::FileSystem::{
             BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
@@ -160,6 +161,32 @@ pub(super) fn same(first: &File, second: &File) -> io::Result<bool> {
 }
 
 fn identity(file: &File) -> io::Result<Identity> {
+    or_indexed(full_identity(file), || indexed_identity(file))
+}
+
+fn or_indexed(
+    full: io::Result<Identity>,
+    indexed: impl FnOnce() -> io::Result<Identity>,
+) -> io::Result<Identity> {
+    match full {
+        Err(error)
+            if error
+                .raw_os_error()
+                .and_then(|code| u32::try_from(code).ok())
+                .is_some_and(|code| {
+                    matches!(
+                        code,
+                        ERROR_INVALID_PARAMETER | ERROR_NOT_SUPPORTED | ERROR_INVALID_FUNCTION
+                    )
+                }) =>
+        {
+            indexed()
+        },
+        full => full,
+    }
+}
+
+fn full_identity(file: &File) -> io::Result<Identity> {
     let mut full = FILE_ID_INFO::default();
     let size =
         u32::try_from(size_of::<FILE_ID_INFO>()).map_err(|_overflow| io::ErrorKind::InvalidData)?;
@@ -171,12 +198,16 @@ fn identity(file: &File) -> io::Result<Identity> {
             size,
         )
     };
-    if read != 0 {
-        return Ok(Identity::Full {
-            volume: full.VolumeSerialNumber,
-            file: full.FileId.Identifier,
-        });
+    if read == 0 {
+        return Err(io::Error::last_os_error());
     }
+    Ok(Identity::Full {
+        volume: full.VolumeSerialNumber,
+        file: full.FileId.Identifier,
+    })
+}
+
+fn indexed_identity(file: &File) -> io::Result<Identity> {
     let mut info = BY_HANDLE_FILE_INFORMATION::default();
     if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &raw mut info) } == 0 {
         return Err(io::Error::last_os_error());
@@ -271,4 +302,35 @@ fn field(entry: &[u8], offset: usize) -> io::Result<usize> {
 fn status_error(status: NTSTATUS) -> io::Error {
     let code = unsafe { RtlNtStatusToDosError(status) };
     io::Error::from_raw_os_error(code.cast_signed())
+}
+
+#[cfg(test)]
+mod tests {
+    use windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED;
+
+    use super::*;
+
+    fn failed(code: u32) -> io::Result<Identity> {
+        Err(io::Error::from_raw_os_error(code.cast_signed()))
+    }
+
+    #[test]
+    fn only_a_file_system_without_full_ids_falls_back_to_the_file_index() {
+        let indexed = || Ok(Identity::Indexed([1, 2, 3]));
+        for code in [
+            ERROR_INVALID_PARAMETER,
+            ERROR_NOT_SUPPORTED,
+            ERROR_INVALID_FUNCTION,
+        ] {
+            assert!(matches!(
+                or_indexed(failed(code), indexed),
+                Ok(Identity::Indexed(_))
+            ));
+        }
+        let denied = or_indexed(failed(ERROR_ACCESS_DENIED), indexed);
+        assert!(
+            denied.is_err_and(|error| error.raw_os_error() == Some(ERROR_ACCESS_DENIED.cast_signed())),
+            "A failed 128-bit query fell back to an index that may not be unique"
+        );
+    }
 }

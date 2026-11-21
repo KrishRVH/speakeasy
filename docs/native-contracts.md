@@ -156,8 +156,9 @@ refuse them by type; other reparse points, such as cloud placeholders, open as t
 directory. Unix uses `fdopendir` on an independent directory open, and Windows uses an empty
 relative name with `NtOpenFile` and `NtQueryDirectoryFile`, so listing owns its cursor. Readers
 validate size, type, and bytes through the same handle. Identity compares device and inode on Unix,
-and on Windows the volume's 128-bit file ID, or the 64-bit file index where a file system has no
-128-bit ID.
+and on Windows the volume's 128-bit file ID. Only a file system that refuses that query as
+unsupported falls back to the 64-bit file index; any other failure is returned, since the index need
+not be unique on ReFS.
 
 Windows handles share read and delete, so they never refuse a rename or delete of their own entry;
 directory handles and ordinary reads also share write, so editing continues while a Show is read.
