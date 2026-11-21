@@ -74,58 +74,62 @@ url_api = "https://api.github.com/repos/rhysd/actionlint/releases/assets/3849249
 provenance = "github-attestations"
 
 [[tools.bun]]
-version = "1.4.4"
+version = "1.4.5"
 backend = "core:bun"
-specifiers = ["1.4.4"]
+specifiers = ["1.4.5"]
 
 [tools.bun."platforms.linux-arm64"]
-checksum = "sha256:baa6bb36f51d6e58561e02bbea825038a9df454f673d6d776e8bbf86f8c7850e"
-url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-linux-aarch64.zip"
+checksum = "sha256:18656a3bf0ea5641f5796ae4213b75255579a70a0fded2f337933785568cdf84"
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.5/bun-linux-aarch64.zip"
 
 [tools.bun."platforms.linux-arm64-musl"]
-checksum = "sha256:57f01b02ac7113c61c935f28f38c2eab849e3c970dab21f8b640a87b1ef65009"
-url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-linux-aarch64-musl.zip"
+checksum = "sha256:d655765d3a0c0fdf707e27c7aa1a4f2c84f1bbc1f759db7e6e3d3c5be414396c"
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.5/bun-linux-aarch64-musl.zip"
 
 [tools.bun."platforms.linux-x64"]
-checksum = "sha256:bf8ccbfb2b0b80159e0f9a6d15c55317add8077534dbc6130a3edb52fccb395c"
-url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-linux-x64.zip"
+checksum = "sha256:94559b3b528995a49452f9f2404cec74f2efd7d06e0a000a8cd214b02c3666eb"
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.5/bun-linux-x64.zip"
 
 [tools.bun."platforms.linux-x64-baseline"]
-checksum = "sha256:e0446eb55995772eb9894bebae9a6be368d985a8b9271ee124486f9946eedd76"
-url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-linux-x64-baseline.zip"
+checksum = "sha256:dcb23a18a1c2fff12d57bcef696dbbb42eb67fde29f43816ecb595459a24c463"
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.5/bun-linux-x64-baseline.zip"
 
 [tools.bun."platforms.linux-x64-musl"]
-checksum = "sha256:a5a8ccc5e74dcb883fe974f125a7bdb3b41e5195ed1b870e73f17effd3eb2b2d"
-url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-linux-x64-musl.zip"
+checksum = "sha256:9b6bdba1fa0914b6adfe48e4438212e2c106d9199b77ba642a9b8a3968a49a59"
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.5/bun-linux-x64-musl.zip"
 
 [tools.bun."platforms.linux-x64-musl-baseline"]
-checksum = "sha256:6e9c37098b293920aed28bfb51ab240e26d23bfdd9bbfecb3ad428ac166549bc"
-url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-linux-x64-musl-baseline.zip"
+checksum = "sha256:96fb94108eed872ff623ed39007d6b5699a83a5d0086fcfba84921c18145e3e6"
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.5/bun-linux-x64-musl-baseline.zip"
 
 [tools.bun."platforms.macos-arm64"]
-checksum = "sha256:c240d7f0ccb90c263a849fcdb09b7ee62630d921348ed6aafda86b9d577bc510"
-url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-darwin-aarch64.zip"
+checksum = "sha256:b5d6bc2e13caf14e57c89661e89efd073ff16165b41bfe43882616410609cd10"
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.5/bun-darwin-aarch64.zip"
 
 [tools.bun."platforms.macos-x64"]
-checksum = "sha256:50a3491f73abc2fe81673171a85762d3bc2cc1680ccecadd983de99adf77977e"
-url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-darwin-x64.zip"
+checksum = "sha256:a4972e778cce4b6a194d7d289f326aa61576d71d80b7a53e9da2f3739566e5fd"
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.5/bun-darwin-x64.zip"
 
 [tools.bun."platforms.macos-x64-baseline"]
-checksum = "sha256:d4a155adfbfd09155eb3ba05c9e3a544f39297d7a68616d3c7759f67ab5c47dc"
-url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-darwin-x64-baseline.zip"
+checksum = "sha256:fb0121739a7e80e7511b6bfe4d2116422b48ba18a013acadef0c425348e95891"
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.5/bun-darwin-x64-baseline.zip"
 
 [tools.bun."platforms.windows-x64"]
-checksum = "sha256:cd2c0fccc78f3ede1f50ca827a15f063eda13d4d150a3d0674f4f6e323d864a5"
-url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-windows-x64.zip"
+checksum = "sha256:815ab45ec7f549abf87e6869584b506eab088e24225683957b7e150b47d6de30"
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.5/bun-windows-x64.zip"
 
 [tools.bun."platforms.windows-x64-baseline"]
-checksum = "sha256:0f20ce6674d4f2dbcc8c5d59fdf99f7ba45f8c3b367e0f5781cbfa30a1c78d99"
-url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-windows-x64-baseline.zip"
+checksum = "sha256:3c081c73865e7a3453a9d514cc2ba3d699880621bcf67bb17241ff5194cb1d4b"
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.5/bun-windows-x64-baseline.zip"
 
 [[tools."github:EmbarkStudios/cargo-about"]]
 version = "0.9.3"
 backend = "github:EmbarkStudios/cargo-about"
 specifiers = ["0.9.3"]
+unsupported_platforms = [
+    "macos-x64",
+    "macos-x64-baseline",
+]
 
 [tools."github:EmbarkStudios/cargo-about"."platforms.linux-arm64"]
 checksum = "sha256:eb4d9ff6ebd2518152a8308729431a04b3836e71d2bd5ead7aea69f91a71162e"
@@ -182,137 +186,148 @@ url = "https://github.com/EmbarkStudios/cargo-about/releases/download/0.9.3/carg
 url_api = "https://api.github.com/repos/EmbarkStudios/cargo-about/releases/assets/677833098"
 
 [[tools."github:bnjbvr/cargo-machete"]]
-version = "0.9.2"
+version = "0.10.1"
 backend = "github:bnjbvr/cargo-machete"
-specifiers = ["0.9.2"]
+specifiers = ["0.10.1"]
 
 [tools."github:bnjbvr/cargo-machete"."platforms.linux-arm64"]
-checksum = "sha256:6f96c3e6026a5bdd241b6ae600c6fb86c9197c6e189a894f91371baa01fd10f5"
-url = "https://github.com/bnjbvr/cargo-machete/releases/download/v0.9.2/cargo-machete-v0.9.2-aarch64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/bnjbvr/cargo-machete/releases/assets/397130991"
+checksum = "sha256:32271da65eee1b52af60aad7ed34c0466d05b58988fbaeadda510bcef5765282"
+checksum_source = "mise-versions"
+url = "https://github.com/bnjbvr/cargo-machete/releases/download/v0.10.1/cargo-machete-v0.10.1-aarch64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/bnjbvr/cargo-machete/releases/assets/752025911"
 
 [tools."github:bnjbvr/cargo-machete"."platforms.linux-arm64-musl"]
-checksum = "sha256:6f96c3e6026a5bdd241b6ae600c6fb86c9197c6e189a894f91371baa01fd10f5"
-url = "https://github.com/bnjbvr/cargo-machete/releases/download/v0.9.2/cargo-machete-v0.9.2-aarch64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/bnjbvr/cargo-machete/releases/assets/397130991"
+checksum = "sha256:32271da65eee1b52af60aad7ed34c0466d05b58988fbaeadda510bcef5765282"
+checksum_source = "mise-versions"
+url = "https://github.com/bnjbvr/cargo-machete/releases/download/v0.10.1/cargo-machete-v0.10.1-aarch64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/bnjbvr/cargo-machete/releases/assets/752025911"
 
 [tools."github:bnjbvr/cargo-machete"."platforms.linux-x64"]
-checksum = "sha256:48200087f54c55aabcd4db4af1e25742b49846c02a1b1bfa134711945b35b2e9"
-url = "https://github.com/bnjbvr/cargo-machete/releases/download/v0.9.2/cargo-machete-v0.9.2-x86_64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/bnjbvr/cargo-machete/releases/assets/397131172"
+checksum = "sha256:785d381985140ffa172246d82089adeb7f2eb9c774d961c48f77a4494023afb5"
+checksum_source = "mise-versions"
+url = "https://github.com/bnjbvr/cargo-machete/releases/download/v0.10.1/cargo-machete-v0.10.1-x86_64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/bnjbvr/cargo-machete/releases/assets/752025688"
 
 [tools."github:bnjbvr/cargo-machete"."platforms.linux-x64-baseline"]
-checksum = "sha256:48200087f54c55aabcd4db4af1e25742b49846c02a1b1bfa134711945b35b2e9"
-url = "https://github.com/bnjbvr/cargo-machete/releases/download/v0.9.2/cargo-machete-v0.9.2-x86_64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/bnjbvr/cargo-machete/releases/assets/397131172"
+checksum = "sha256:785d381985140ffa172246d82089adeb7f2eb9c774d961c48f77a4494023afb5"
+checksum_source = "mise-versions"
+url = "https://github.com/bnjbvr/cargo-machete/releases/download/v0.10.1/cargo-machete-v0.10.1-x86_64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/bnjbvr/cargo-machete/releases/assets/752025688"
 
 [tools."github:bnjbvr/cargo-machete"."platforms.linux-x64-musl"]
-checksum = "sha256:48200087f54c55aabcd4db4af1e25742b49846c02a1b1bfa134711945b35b2e9"
-url = "https://github.com/bnjbvr/cargo-machete/releases/download/v0.9.2/cargo-machete-v0.9.2-x86_64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/bnjbvr/cargo-machete/releases/assets/397131172"
+checksum = "sha256:785d381985140ffa172246d82089adeb7f2eb9c774d961c48f77a4494023afb5"
+checksum_source = "mise-versions"
+url = "https://github.com/bnjbvr/cargo-machete/releases/download/v0.10.1/cargo-machete-v0.10.1-x86_64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/bnjbvr/cargo-machete/releases/assets/752025688"
 
 [tools."github:bnjbvr/cargo-machete"."platforms.linux-x64-musl-baseline"]
-checksum = "sha256:48200087f54c55aabcd4db4af1e25742b49846c02a1b1bfa134711945b35b2e9"
-url = "https://github.com/bnjbvr/cargo-machete/releases/download/v0.9.2/cargo-machete-v0.9.2-x86_64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/bnjbvr/cargo-machete/releases/assets/397131172"
+checksum = "sha256:785d381985140ffa172246d82089adeb7f2eb9c774d961c48f77a4494023afb5"
+checksum_source = "mise-versions"
+url = "https://github.com/bnjbvr/cargo-machete/releases/download/v0.10.1/cargo-machete-v0.10.1-x86_64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/bnjbvr/cargo-machete/releases/assets/752025688"
 
 [tools."github:bnjbvr/cargo-machete"."platforms.macos-arm64"]
-checksum = "sha256:63e28fee386d82d33f2d12406c857f98e2d4697f3f7df7f71f34dff07fca0fde"
-url = "https://github.com/bnjbvr/cargo-machete/releases/download/v0.9.2/cargo-machete-v0.9.2-aarch64-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/bnjbvr/cargo-machete/releases/assets/397131114"
+checksum = "sha256:0659860970e26179d730d1a2e99fc6513e41fea122ad5451d7ae43234fc1ebab"
+checksum_source = "mise-versions"
+url = "https://github.com/bnjbvr/cargo-machete/releases/download/v0.10.1/cargo-machete-v0.10.1-aarch64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/bnjbvr/cargo-machete/releases/assets/752038849"
 
 [tools."github:bnjbvr/cargo-machete"."platforms.macos-x64"]
-checksum = "sha256:3e8cb936c9b820f84d047a2b5be8b229b2be67bf2467014885376a6faffdcac3"
-url = "https://github.com/bnjbvr/cargo-machete/releases/download/v0.9.2/cargo-machete-v0.9.2-x86_64-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/bnjbvr/cargo-machete/releases/assets/397131140"
+checksum = "sha256:19c7384d636a27032ff0b4695b67e79b75a366e5c0573b220bd12bc71b59b435"
+checksum_source = "mise-versions"
+url = "https://github.com/bnjbvr/cargo-machete/releases/download/v0.10.1/cargo-machete-v0.10.1-x86_64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/bnjbvr/cargo-machete/releases/assets/752039360"
 
 [tools."github:bnjbvr/cargo-machete"."platforms.macos-x64-baseline"]
-checksum = "sha256:3e8cb936c9b820f84d047a2b5be8b229b2be67bf2467014885376a6faffdcac3"
-url = "https://github.com/bnjbvr/cargo-machete/releases/download/v0.9.2/cargo-machete-v0.9.2-x86_64-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/bnjbvr/cargo-machete/releases/assets/397131140"
+checksum = "sha256:19c7384d636a27032ff0b4695b67e79b75a366e5c0573b220bd12bc71b59b435"
+checksum_source = "mise-versions"
+url = "https://github.com/bnjbvr/cargo-machete/releases/download/v0.10.1/cargo-machete-v0.10.1-x86_64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/bnjbvr/cargo-machete/releases/assets/752039360"
 
 [tools."github:bnjbvr/cargo-machete"."platforms.windows-x64"]
-checksum = "sha256:996120ac70afe405c58fce508a476f25bb71032c6fb8013aa0123bba36429c76"
-url = "https://github.com/bnjbvr/cargo-machete/releases/download/v0.9.2/cargo-machete-v0.9.2-x86_64-pc-windows-msvc.tar.gz"
-url_api = "https://api.github.com/repos/bnjbvr/cargo-machete/releases/assets/397131414"
+checksum = "sha256:64bd4ceae7680af1d1468cc1edbe09c9bea6221f4f525231c8213666eb01fa5a"
+checksum_source = "mise-versions"
+url = "https://github.com/bnjbvr/cargo-machete/releases/download/v0.10.1/cargo-machete-v0.10.1-x86_64-pc-windows-msvc.tar.gz"
+url_api = "https://api.github.com/repos/bnjbvr/cargo-machete/releases/assets/752026034"
 
 [tools."github:bnjbvr/cargo-machete"."platforms.windows-x64-baseline"]
-checksum = "sha256:996120ac70afe405c58fce508a476f25bb71032c6fb8013aa0123bba36429c76"
-url = "https://github.com/bnjbvr/cargo-machete/releases/download/v0.9.2/cargo-machete-v0.9.2-x86_64-pc-windows-msvc.tar.gz"
-url_api = "https://api.github.com/repos/bnjbvr/cargo-machete/releases/assets/397131414"
+checksum = "sha256:64bd4ceae7680af1d1468cc1edbe09c9bea6221f4f525231c8213666eb01fa5a"
+checksum_source = "mise-versions"
+url = "https://github.com/bnjbvr/cargo-machete/releases/download/v0.10.1/cargo-machete-v0.10.1-x86_64-pc-windows-msvc.tar.gz"
+url_api = "https://api.github.com/repos/bnjbvr/cargo-machete/releases/assets/752026034"
 
 [[tools."github:nextest-rs/nextest"]]
-version = "0.9.151"
+version = "0.9.152"
 backend = "github:nextest-rs/nextest"
-specifiers = ["0.9.151"]
+specifiers = ["0.9.152"]
 
 [tools."github:nextest-rs/nextest".options]
 version_prefix = "cargo-nextest-"
 
 [tools."github:nextest-rs/nextest"."platforms.linux-arm64"]
-checksum = "sha256:3e35e8f6913af92558ba09d7155f74e35dd1f0024ef3cd891637433ae4eacbdd"
-url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.151/cargo-nextest-0.9.151-aarch64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/703601411"
+checksum = "sha256:ca1f81a5b86533eb45ab97e0064aa88e925e53aab9a698ca6331a7cad1f85f07"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.152/cargo-nextest-0.9.152-aarch64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/745394722"
 provenance = "github-attestations"
 
 [tools."github:nextest-rs/nextest"."platforms.linux-arm64-musl"]
-checksum = "sha256:a9ee2d53cf0711d879f068c0ff814b6fe3af3f9be8799f8ab484e47571087160"
-url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.151/cargo-nextest-0.9.151-aarch64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/703602367"
+checksum = "sha256:f168dbfe9c9c3a4b247cf10d9c260f3dac90a1373f5c4b1bfd3b0b8ac8d77095"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.152/cargo-nextest-0.9.152-aarch64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/745392954"
 provenance = "github-attestations"
 
 [tools."github:nextest-rs/nextest"."platforms.linux-x64"]
-checksum = "sha256:1d4ce302b820c41f4b89c5fb9bce45f0f0c94882c1cf08fc360caf08be6e7df4"
-url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.151/cargo-nextest-0.9.151-x86_64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/703600788"
+checksum = "sha256:d039b43c3e0958441b6ad0a39c8884d018b3d2e8fb9928f209074b1100b5e17a"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.152/cargo-nextest-0.9.152-x86_64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/745393873"
 provenance = "github-attestations"
 
 [tools."github:nextest-rs/nextest"."platforms.linux-x64-baseline"]
-checksum = "sha256:1d4ce302b820c41f4b89c5fb9bce45f0f0c94882c1cf08fc360caf08be6e7df4"
-url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.151/cargo-nextest-0.9.151-x86_64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/703600788"
+checksum = "sha256:d039b43c3e0958441b6ad0a39c8884d018b3d2e8fb9928f209074b1100b5e17a"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.152/cargo-nextest-0.9.152-x86_64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/745393873"
 provenance = "github-attestations"
 
 [tools."github:nextest-rs/nextest"."platforms.linux-x64-musl"]
-checksum = "sha256:6b284d6fde9670dfb6ee10ea9d9abbc85f95643d3f592472d420d82e257b3a6c"
-url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.151/cargo-nextest-0.9.151-x86_64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/703602745"
+checksum = "sha256:521c5f790ed07ee69d0a88403d9d86a8c8ab27977f12fc73f22aa4e7e14a0f71"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.152/cargo-nextest-0.9.152-x86_64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/745393828"
 provenance = "github-attestations"
 
 [tools."github:nextest-rs/nextest"."platforms.linux-x64-musl-baseline"]
-checksum = "sha256:6b284d6fde9670dfb6ee10ea9d9abbc85f95643d3f592472d420d82e257b3a6c"
-url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.151/cargo-nextest-0.9.151-x86_64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/703602745"
+checksum = "sha256:521c5f790ed07ee69d0a88403d9d86a8c8ab27977f12fc73f22aa4e7e14a0f71"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.152/cargo-nextest-0.9.152-x86_64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/745393828"
 provenance = "github-attestations"
 
 [tools."github:nextest-rs/nextest"."platforms.macos-arm64"]
-checksum = "sha256:d1d7d025d4bfc9fb154cd76aea3949bd78534829a0589abefa6e5dd4edb135dd"
-url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.151/cargo-nextest-0.9.151-universal-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/703616437"
+checksum = "sha256:2fadf57df4243e691f088ee3bff4f4ab9af16da0c95a1db84b5cb1685e098a76"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.152/cargo-nextest-0.9.152-universal-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/745423352"
 provenance = "github-attestations"
 
 [tools."github:nextest-rs/nextest"."platforms.macos-x64"]
-checksum = "sha256:d1d7d025d4bfc9fb154cd76aea3949bd78534829a0589abefa6e5dd4edb135dd"
-url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.151/cargo-nextest-0.9.151-universal-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/703616437"
+checksum = "sha256:2fadf57df4243e691f088ee3bff4f4ab9af16da0c95a1db84b5cb1685e098a76"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.152/cargo-nextest-0.9.152-universal-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/745423352"
 provenance = "github-attestations"
 
 [tools."github:nextest-rs/nextest"."platforms.macos-x64-baseline"]
-checksum = "sha256:d1d7d025d4bfc9fb154cd76aea3949bd78534829a0589abefa6e5dd4edb135dd"
-url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.151/cargo-nextest-0.9.151-universal-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/703616437"
+checksum = "sha256:2fadf57df4243e691f088ee3bff4f4ab9af16da0c95a1db84b5cb1685e098a76"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.152/cargo-nextest-0.9.152-universal-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/745423352"
 provenance = "github-attestations"
 
 [tools."github:nextest-rs/nextest"."platforms.windows-x64"]
-checksum = "sha256:ba35ee0ce14ace65cd8c7aaa9613adb7d2644b0fe3866e85131eb4c269786efb"
-url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.151/cargo-nextest-0.9.151-x86_64-pc-windows-msvc.zip"
-url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/703606896"
+checksum = "sha256:cc6bf4b6a7ac18e462cd6c9bae67e26921b888249c2988c6acabf3df387ed9d6"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.152/cargo-nextest-0.9.152-x86_64-pc-windows-msvc.zip"
+url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/745407477"
 provenance = "github-attestations"
 
 [tools."github:nextest-rs/nextest"."platforms.windows-x64-baseline"]
-checksum = "sha256:ba35ee0ce14ace65cd8c7aaa9613adb7d2644b0fe3866e85131eb4c269786efb"
-url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.151/cargo-nextest-0.9.151-x86_64-pc-windows-msvc.zip"
-url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/703606896"
+checksum = "sha256:cc6bf4b6a7ac18e462cd6c9bae67e26921b888249c2988c6acabf3df387ed9d6"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.152/cargo-nextest-0.9.152-x86_64-pc-windows-msvc.zip"
+url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/745407477"
 provenance = "github-attestations"
 
 [[tools.lychee]]
@@ -569,143 +584,143 @@ url = "https://github.com/mvdan/sh/releases/download/v3.14.1/shfmt_v3.14.1_windo
 url_api = "https://api.github.com/repos/mvdan/sh/releases/assets/547320827"
 
 [[tools.typos]]
-version = "1.52.0"
+version = "1.52.2"
 backend = "aqua:crate-ci/typos"
-specifiers = ["1.52.0"]
+specifiers = ["1.52.2"]
 
 [tools.typos."platforms.linux-arm64"]
-checksum = "sha256:63b7d4478d467a61fe47cdb3162f720c6797856e61a04f7e125d1cdc282488b8"
+checksum = "sha256:f2f54b567f5f4688f000f1bf85c585ee22cce3b55befc9418bcdd4c5adc16595"
 checksum_source = "mise-versions"
-url = "https://github.com/crate-ci/typos/releases/download/v1.52.0/typos-v1.52.0-aarch64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/crate-ci/typos/releases/assets/703151522"
+url = "https://github.com/crate-ci/typos/releases/download/v1.52.2/typos-v1.52.2-aarch64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/crate-ci/typos/releases/assets/733786825"
 
 [tools.typos."platforms.linux-arm64-musl"]
-checksum = "sha256:63b7d4478d467a61fe47cdb3162f720c6797856e61a04f7e125d1cdc282488b8"
+checksum = "sha256:f2f54b567f5f4688f000f1bf85c585ee22cce3b55befc9418bcdd4c5adc16595"
 checksum_source = "mise-versions"
-url = "https://github.com/crate-ci/typos/releases/download/v1.52.0/typos-v1.52.0-aarch64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/crate-ci/typos/releases/assets/703151522"
+url = "https://github.com/crate-ci/typos/releases/download/v1.52.2/typos-v1.52.2-aarch64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/crate-ci/typos/releases/assets/733786825"
 
 [tools.typos."platforms.linux-x64"]
-checksum = "sha256:6155d4114f9a0f5b8f6d4fda96266c9d5f6add71df80da7f684ee5e72eb14588"
+checksum = "sha256:3b13d1291281d39d01822e54035636487a7a0f228e70097899b1e33aeb0e7e93"
 checksum_source = "mise-versions"
-url = "https://github.com/crate-ci/typos/releases/download/v1.52.0/typos-v1.52.0-x86_64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/crate-ci/typos/releases/assets/703158772"
+url = "https://github.com/crate-ci/typos/releases/download/v1.52.2/typos-v1.52.2-x86_64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/crate-ci/typos/releases/assets/733787189"
 
 [tools.typos."platforms.linux-x64-baseline"]
-checksum = "sha256:6155d4114f9a0f5b8f6d4fda96266c9d5f6add71df80da7f684ee5e72eb14588"
+checksum = "sha256:3b13d1291281d39d01822e54035636487a7a0f228e70097899b1e33aeb0e7e93"
 checksum_source = "mise-versions"
-url = "https://github.com/crate-ci/typos/releases/download/v1.52.0/typos-v1.52.0-x86_64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/crate-ci/typos/releases/assets/703158772"
+url = "https://github.com/crate-ci/typos/releases/download/v1.52.2/typos-v1.52.2-x86_64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/crate-ci/typos/releases/assets/733787189"
 
 [tools.typos."platforms.linux-x64-musl"]
-checksum = "sha256:6155d4114f9a0f5b8f6d4fda96266c9d5f6add71df80da7f684ee5e72eb14588"
+checksum = "sha256:3b13d1291281d39d01822e54035636487a7a0f228e70097899b1e33aeb0e7e93"
 checksum_source = "mise-versions"
-url = "https://github.com/crate-ci/typos/releases/download/v1.52.0/typos-v1.52.0-x86_64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/crate-ci/typos/releases/assets/703158772"
+url = "https://github.com/crate-ci/typos/releases/download/v1.52.2/typos-v1.52.2-x86_64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/crate-ci/typos/releases/assets/733787189"
 
 [tools.typos."platforms.linux-x64-musl-baseline"]
-checksum = "sha256:6155d4114f9a0f5b8f6d4fda96266c9d5f6add71df80da7f684ee5e72eb14588"
+checksum = "sha256:3b13d1291281d39d01822e54035636487a7a0f228e70097899b1e33aeb0e7e93"
 checksum_source = "mise-versions"
-url = "https://github.com/crate-ci/typos/releases/download/v1.52.0/typos-v1.52.0-x86_64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/crate-ci/typos/releases/assets/703158772"
+url = "https://github.com/crate-ci/typos/releases/download/v1.52.2/typos-v1.52.2-x86_64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/crate-ci/typos/releases/assets/733787189"
 
 [tools.typos."platforms.macos-arm64"]
-checksum = "sha256:90724dd2905cb1ce033343c71ed60e52fe898674f882803e3110cd228e09e1c5"
+checksum = "sha256:b8e7b8b81f28cc808fd763b6d935536e15ba1ef72613bbb6d628b58a891da7ef"
 checksum_source = "mise-versions"
-url = "https://github.com/crate-ci/typos/releases/download/v1.52.0/typos-v1.52.0-aarch64-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/crate-ci/typos/releases/assets/703166489"
+url = "https://github.com/crate-ci/typos/releases/download/v1.52.2/typos-v1.52.2-aarch64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/crate-ci/typos/releases/assets/733789873"
 
 [tools.typos."platforms.macos-x64"]
-checksum = "sha256:8de057f425909b02c0184892539755d70ecc3244c4b214ae9382cedd691127e0"
+checksum = "sha256:2c1e5cd3be644005d27543d7d83a32dbba36eb285bc12678818709938a63a988"
 checksum_source = "mise-versions"
-url = "https://github.com/crate-ci/typos/releases/download/v1.52.0/typos-v1.52.0-x86_64-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/crate-ci/typos/releases/assets/703158123"
+url = "https://github.com/crate-ci/typos/releases/download/v1.52.2/typos-v1.52.2-x86_64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/crate-ci/typos/releases/assets/733789561"
 
 [tools.typos."platforms.macos-x64-baseline"]
-checksum = "sha256:8de057f425909b02c0184892539755d70ecc3244c4b214ae9382cedd691127e0"
+checksum = "sha256:2c1e5cd3be644005d27543d7d83a32dbba36eb285bc12678818709938a63a988"
 checksum_source = "mise-versions"
-url = "https://github.com/crate-ci/typos/releases/download/v1.52.0/typos-v1.52.0-x86_64-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/crate-ci/typos/releases/assets/703158123"
+url = "https://github.com/crate-ci/typos/releases/download/v1.52.2/typos-v1.52.2-x86_64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/crate-ci/typos/releases/assets/733789561"
 
 [tools.typos."platforms.windows-x64"]
-checksum = "sha256:7da6eb1932ad86921420a7198dbc9e62a10bcd995144704dc19b81d3fb802182"
+checksum = "sha256:ab79036832cea0f2a21aa947731d39512250cc0f7a6a2f6add26262738a8cc11"
 checksum_source = "mise-versions"
-url = "https://github.com/crate-ci/typos/releases/download/v1.52.0/typos-v1.52.0-x86_64-pc-windows-msvc.zip"
-url_api = "https://api.github.com/repos/crate-ci/typos/releases/assets/703159242"
+url = "https://github.com/crate-ci/typos/releases/download/v1.52.2/typos-v1.52.2-x86_64-pc-windows-msvc.zip"
+url_api = "https://api.github.com/repos/crate-ci/typos/releases/assets/733790297"
 
 [tools.typos."platforms.windows-x64-baseline"]
-checksum = "sha256:7da6eb1932ad86921420a7198dbc9e62a10bcd995144704dc19b81d3fb802182"
+checksum = "sha256:ab79036832cea0f2a21aa947731d39512250cc0f7a6a2f6add26262738a8cc11"
 checksum_source = "mise-versions"
-url = "https://github.com/crate-ci/typos/releases/download/v1.52.0/typos-v1.52.0-x86_64-pc-windows-msvc.zip"
-url_api = "https://api.github.com/repos/crate-ci/typos/releases/assets/703159242"
+url = "https://github.com/crate-ci/typos/releases/download/v1.52.2/typos-v1.52.2-x86_64-pc-windows-msvc.zip"
+url_api = "https://api.github.com/repos/crate-ci/typos/releases/assets/733790297"
 
 [[tools.uv]]
-version = "0.13.7"
+version = "0.13.9"
 backend = "aqua:astral-sh/uv"
-specifiers = ["0.13.7"]
+specifiers = ["0.13.9"]
 
 [tools.uv."platforms.linux-arm64"]
-checksum = "sha256:71279f8d3c67241e807b9d8db872d1bf541579fb9f08b7d1eb1682196d1e57dc"
-url = "https://github.com/astral-sh/uv/releases/download/0.13.7/uv-aarch64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/704009469"
+checksum = "sha256:0797542018e541a9288855df555c8077eed06f7a47d206362030480e8ecc9f3d"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.9/uv-aarch64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/758513657"
 provenance = "github-attestations"
 
 [tools.uv."platforms.linux-arm64-musl"]
-checksum = "sha256:2d3ec076a0c4c0e8250bb6418c44080828b544f1a3be0b6e46adf9fb6923de45"
-url = "https://github.com/astral-sh/uv/releases/download/0.13.7/uv-aarch64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/704009487"
+checksum = "sha256:37fbb7c5bc66cf99c12aa881949d216181e201dec449772c4329e56487d61179"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.9/uv-aarch64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/758513671"
 provenance = "github-attestations"
 
 [tools.uv."platforms.linux-x64"]
-checksum = "sha256:c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83"
-url = "https://github.com/astral-sh/uv/releases/download/0.13.7/uv-x86_64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/704009823"
+checksum = "sha256:a7fbaff2b9a271d85c1bdb540941090fd1ce011797b4abeb48e4dcd39c2471d5"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.9/uv-x86_64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/758513954"
 provenance = "github-attestations"
 
 [tools.uv."platforms.linux-x64-baseline"]
-checksum = "sha256:c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83"
-url = "https://github.com/astral-sh/uv/releases/download/0.13.7/uv-x86_64-unknown-linux-gnu.tar.gz"
-url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/704009823"
+checksum = "sha256:a7fbaff2b9a271d85c1bdb540941090fd1ce011797b4abeb48e4dcd39c2471d5"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.9/uv-x86_64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/758513954"
 provenance = "github-attestations"
 
 [tools.uv."platforms.linux-x64-musl"]
-checksum = "sha256:287491da03f2a785c70fa75b13e1f849918c2f2b5415fe84876b8214eeb792f9"
-url = "https://github.com/astral-sh/uv/releases/download/0.13.7/uv-x86_64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/704009859"
+checksum = "sha256:58ccf5f1792b8a5a88d01bc910ea131a8b3db4a319a17ad5fad75e0845a3e271"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.9/uv-x86_64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/758513984"
 provenance = "github-attestations"
 
 [tools.uv."platforms.linux-x64-musl-baseline"]
-checksum = "sha256:287491da03f2a785c70fa75b13e1f849918c2f2b5415fe84876b8214eeb792f9"
-url = "https://github.com/astral-sh/uv/releases/download/0.13.7/uv-x86_64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/704009859"
+checksum = "sha256:58ccf5f1792b8a5a88d01bc910ea131a8b3db4a319a17ad5fad75e0845a3e271"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.9/uv-x86_64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/758513984"
 provenance = "github-attestations"
 
 [tools.uv."platforms.macos-arm64"]
-checksum = "sha256:81b811b57e4624df7ed3aac148e0359100d9962f3d9dce00aec533dc2e086731"
-url = "https://github.com/astral-sh/uv/releases/download/0.13.7/uv-aarch64-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/704009442"
+checksum = "sha256:5aeca67f2283f75235de40d0bd9c0a5bbc5fce23b6d48b3bf9fa1b2db08382ca"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.9/uv-aarch64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/758513631"
 provenance = "github-attestations"
 
 [tools.uv."platforms.macos-x64"]
-checksum = "sha256:20c47e4c1f630b8abaff8c291fa9b9aa300fef92c4fbff95adf198b55287cda7"
-url = "https://github.com/astral-sh/uv/releases/download/0.13.7/uv-x86_64-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/704009775"
+checksum = "sha256:617a3211261b0fc739562f0071aa34e9739797c510208ede8e2977c30903d041"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.9/uv-x86_64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/758513912"
 provenance = "github-attestations"
 
 [tools.uv."platforms.macos-x64-baseline"]
-checksum = "sha256:20c47e4c1f630b8abaff8c291fa9b9aa300fef92c4fbff95adf198b55287cda7"
-url = "https://github.com/astral-sh/uv/releases/download/0.13.7/uv-x86_64-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/704009775"
+checksum = "sha256:617a3211261b0fc739562f0071aa34e9739797c510208ede8e2977c30903d041"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.9/uv-x86_64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/758513912"
 provenance = "github-attestations"
 
 [tools.uv."platforms.windows-x64"]
-checksum = "sha256:0cdc5b38fe5a8168ed6a25814f5ba43c21d313dd3187314fccb37b7cec46e021"
-url = "https://github.com/astral-sh/uv/releases/download/0.13.7/uv-x86_64-pc-windows-msvc.zip"
-url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/704009796"
+checksum = "sha256:edd61f7f5728a56cc62455386661860bdfc7bab65872f39b0c25bdcc1d8e1beb"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.9/uv-x86_64-pc-windows-msvc.zip"
+url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/758513940"
 provenance = "github-attestations"
 
 [tools.uv."platforms.windows-x64-baseline"]
-checksum = "sha256:0cdc5b38fe5a8168ed6a25814f5ba43c21d313dd3187314fccb37b7cec46e021"
-url = "https://github.com/astral-sh/uv/releases/download/0.13.7/uv-x86_64-pc-windows-msvc.zip"
-url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/704009796"
+checksum = "sha256:edd61f7f5728a56cc62455386661860bdfc7bab65872f39b0c25bdcc1d8e1beb"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.9/uv-x86_64-pc-windows-msvc.zip"
+url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/758513940"
 provenance = "github-attestations"
