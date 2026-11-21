@@ -135,12 +135,6 @@ impl<P: Payload> Show<P> {
         }
     }
 
-    fn conclude(&mut self) {
-        if self.disposition == Disposition::Unfinished {
-            self.disposition = Disposition::Finished;
-        }
-    }
-
     fn close_producers(&mut self) {
         self.audio = None;
         self.frames = None;
@@ -328,8 +322,10 @@ impl<P: Payload> Session<P> {
     }
 
     fn conclude(&mut self) {
-        if let Some(show) = self.show_mut() {
-            show.conclude();
+        if let Some(show) = self.show_mut()
+            && show.disposition == Disposition::Unfinished
+        {
+            show.disposition = Disposition::Finished;
         }
     }
 
@@ -641,26 +637,26 @@ impl<P: Payload> Session<P> {
     }
 
     pub(super) fn take_caller(&mut self) -> Option<P::Call> {
-        match &mut self.purpose {
-            Purpose::Dictation(handoff @ Handoff::Print(_)) => {
-                match mem::replace(handoff, Handoff::Capture) {
-                    Handoff::Print(call) => Some(call),
-                    Handoff::Insert(_) | Handoff::Capture => None,
-                }
+        let Purpose::Dictation(handoff) = &mut self.purpose else {
+            return None;
+        };
+        match mem::replace(handoff, Handoff::Capture) {
+            Handoff::Print(call) => Some(call),
+            other => {
+                *handoff = other;
+                None
             },
-            Purpose::Dictation(Handoff::Insert(_) | Handoff::Capture)
-            | Purpose::Replay
-            | Purpose::Practice(_)
-            | Purpose::Show(_) => None,
         }
     }
 
     pub(super) fn insert(&mut self, text: P::Heard, config: &P::Config, env: &mut impl Env<P>) {
-        let dictation = self.is_dictation().then(|| text.clone());
-        let handoff = match &mut self.purpose {
-            Purpose::Dictation(handoff) => mem::replace(handoff, Handoff::Insert(Enter::Withheld)),
+        let (handoff, dictation) = match &mut self.purpose {
+            Purpose::Dictation(handoff) => (
+                mem::replace(handoff, Handoff::Insert(Enter::Withheld)),
+                Some(text.clone()),
+            ),
             Purpose::Replay | Purpose::Practice(_) | Purpose::Show(_) => {
-                Handoff::Insert(Enter::Withheld)
+                (Handoff::Insert(Enter::Withheld), None)
             },
         };
         self.recognition = Recognition::new(self.id);

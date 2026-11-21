@@ -33,7 +33,7 @@ impl Moment {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug)]
 pub struct Timing {
     tap: u64,
     double_tap: u64,
@@ -79,7 +79,7 @@ pub(crate) enum Action {
     Cancel,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Gesture {
     phase: Phase,
     down: bool,
@@ -277,7 +277,7 @@ impl Gesture {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Phase {
     #[default]
     Idle,

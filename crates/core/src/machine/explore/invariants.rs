@@ -1,5 +1,5 @@
 use super::{
-    super::{Capture, Device, Event, Machine, Outcome, Payload, Worker, session::Session},
+    super::{Capture, Device, Event, Machine, Outcome, Worker, session::Session},
     Abstract,
     canonical::STALE,
     oracle::{Effect, Query},
@@ -62,10 +62,7 @@ pub(super) fn state(machine: &Machine<Abstract>, settled: bool) -> Result<(), St
     if machine.remembered.is_some_and(|id| id > machine.latest.id) {
         return Err("A remembered Show belongs to a session that never started".into());
     }
-    if settled
-        && machine.cues_held
-            != (Abstract::settings(&machine.config).play_sounds && session.is_some())
-    {
+    if settled && machine.cues_held != (machine.settings().play_sounds && session.is_some()) {
         return Err("Held cues disagree with the session and sound settings".into());
     }
     Ok(())

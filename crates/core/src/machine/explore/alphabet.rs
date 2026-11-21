@@ -19,18 +19,22 @@ pub(super) enum Step {
 }
 
 pub(super) const CONFIGS: [Settings; 3] = [
-    config(true, RecognitionMode::Segmented, false),
-    config(false, RecognitionMode::Streaming, false),
-    config(false, RecognitionMode::Whole, true),
-];
-
-const fn config(play_sounds: bool, recognition: RecognitionMode, probe: bool) -> Settings {
     Settings {
-        play_sounds,
-        recognition,
-        probe,
-    }
-}
+        play_sounds: true,
+        recognition: RecognitionMode::Segmented,
+        probe: false,
+    },
+    Settings {
+        play_sounds: false,
+        recognition: RecognitionMode::Streaming,
+        probe: false,
+    },
+    Settings {
+        play_sounds: false,
+        recognition: RecognitionMode::Whole,
+        probe: true,
+    },
+];
 
 pub(super) fn steps(
     machine: &Machine<Abstract>,

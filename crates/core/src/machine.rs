@@ -1416,7 +1416,7 @@ impl<P: Payload> Machine<P> {
         token: Option<SessionId>,
         env: &mut impl Env<P>,
     ) -> ControlFlow<Halt> {
-        if token.is_none() || self.control_session() != token {
+        if !self.controls(token) {
             env.respond(call, Err(Refusal::NotActive));
             return ControlFlow::Continue(());
         }
@@ -1658,9 +1658,7 @@ impl<P: Payload> Machine<P> {
                     }
                 }
             },
-            Command::Stop(token) | Command::Cancel(token)
-                if token.is_none() || self.control_session() != token =>
-            {
+            Command::Stop(token) | Command::Cancel(token) if !self.controls(token) => {
                 Err(Refusal::NotActive)
             },
             Command::Stop(_) => {
@@ -1725,6 +1723,10 @@ impl<P: Payload> Machine<P> {
             .filter(|session| session.is_dictation())
             .map(|session| session.id)
     }
+
+    fn controls(&self, token: Option<SessionId>) -> bool {
+        token.is_some() && self.control_session() == token
+    }
 }
 
 fn close<P: Payload>(session: &mut Session<P>, env: &mut impl Env<P>) {
@@ -1745,7 +1747,7 @@ fn saved_anyway<P: Payload>(
         return None;
     };
     remembered
-        .is_none_or(|later| later < session)
+        .is_none_or(|remembered| remembered < session)
         .then_some(shown)
 }
 
