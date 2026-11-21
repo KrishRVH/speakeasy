@@ -58,6 +58,7 @@ click-through.
 | Hands-free       | Grille, lock symbol, and elapsed timer beside the slot.                                                            |
 | Show recording   | Hands-free layout with a red screen mark for the lock; “Hold Shift to draw” replaces the timer for three seconds.  |
 | Secure input     | A live jewel and a note that Escape, Space, Return, V, S, W, and A won’t reach Speakeasy, for five seconds.        |
+| Default mic      | A live jewel and a note that the chosen microphone isn’t connected and the default records, for four seconds.      |
 | Final 30 seconds | Remaining time in the attention color; the recording limit stays in the session owner.                             |
 | Stopping         | The lid stays open until capture stops; the grille settles.                                                        |
 | Processing       | The lid partly closes; a lamp highlight sweeps the opening after 250 ms.                                           |

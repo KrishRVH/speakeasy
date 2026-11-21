@@ -84,11 +84,11 @@ dropped after the restore.
 remains effective; retirement removes the handle before a later stop can wake it. This lock cannot
 become owner-only state because a blocked native run loop does not receive ordinary owner messages.
 
-The WSL lookup thread is the one app thread nothing joins: its single lookup can block in the
-Windows redirector for as long as WSL takes to start, or indefinitely on a wedged share. Handles ask
-it over a channel, each question carrying its own one-slot reply lane, and a caller that stops
-waiting drops that lane, so a late answer is discarded. The thread ends once every handle is gone
-and the lookup has returned; process exit ends one still blocked.
+Nothing joins the WSL lookup thread: its single lookup can block in the Windows redirector for as
+long as WSL takes to start, or indefinitely on a wedged share. Handles ask it over a channel, each
+question carrying its own one-slot reply lane, and a caller that stops waiting drops that lane, so a
+late answer is discarded. The thread ends once every handle is gone and the lookup has returned;
+process exit ends one still blocked.
 
 The instance listener owns its current-thread Tokio executor and bounded set of control tasks for
 receipt/disconnect waits. Shutdown aborts and drains those tasks before the server thread joins;
@@ -100,7 +100,7 @@ dropped on the acquiring thread.
 
 Owners: `crates/platform/src/windows.rs`, `windows/input.rs`, `windows/insertion.rs`,
 `windows/dialog.rs`, `windows/presentation.rs`, `windows/login.rs`, `windows/installation.rs`,
-`windows/registry.rs`, `wsl.rs`; the test-only `windows/fixture.rs`.
+`windows/registry.rs`, `windows/awake.rs`, `awake.rs`, `wsl.rs`; the test-only `windows/fixture.rs`.
 
 `take_handle` accepts only a fresh unowned kernel-object handle from an API that reports failure
 with null and requires `CloseHandle`; it is not an adopter for pseudo-handles, window handles, or
@@ -271,7 +271,8 @@ PipeWire release needs another opt-out.
 ## Mac event tap and AppKit ownership
 
 Owners: `crates/platform/src/macos.rs`, `macos/clipboard.rs`, `macos/status_item.rs`, `monitor.rs`,
-`permissions.rs`.
+`permissions.rs`; `keyboard.rs` holds the hold-key and F13 policy this tap shares with the Windows
+hook, and `keyboard/typematic.rs` reads the Windows repeat settings.
 
 AppKit window/view operations require the main thread. The platform wrapper retains the NSWindow and
 is not Send. Core Foundation Create-rule results are adopted once; Get-rule references remain

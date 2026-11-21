@@ -469,7 +469,8 @@ module unless a test file is named.
   commands and version requests to the sibling app, with inherited handles, arguments, and working
   directory, and waits for its exit. [cli.rs](../crates/app/tests/cli.rs) checks the process
   boundary without opening devices or the app. Help and refused launch options never spawn a child.
-  [check-package.sh](../scripts/check-package.sh) launches every release package before upload.
+  [check-package.sh](../scripts/check-package.sh) launches every release package before upload
+  except the Windows installer, which `check-installer.ps1` covers.
 - **Agent evidence**: [show/evidence.rs](../crates/app/src/show/evidence.rs) shares inspection and
   temporal queries between CLI and [show/mcp.rs](../crates/app/src/show/mcp.rs). MCP exposes three
   read-only tools within explicit launch roots. It opens directories and regular files relative to
@@ -480,8 +481,8 @@ module unless a test file is named.
   be read, is listed as damaged; a root that no configured root can still reach, or that cannot be
   searched or fully listed, is named in `unavailableRoots` without any of its rows while the others
   still list. A bare folder name resolves through the same reachable root as the listing. It serves
-  the 2026-07-28 stateless protocol and the 2025-11-25 initialized protocol used by current external
-  clients. No tool exports, sends, or reads ordinary dictation. Initialization instructions are the
+  the 2026-07-28 stateless protocol and the 2025-11-25 initialized protocol that external clients
+  use. No tool exports, sends, or reads ordinary dictation. Initialization instructions are the
   disclosure followed by the embedded skill's reading guide without its front matter. Setup resolves
   the durable installed launcher and only prints client stanzas, adding one for an agent in WSL that
   runs the Windows command through interop with Windows roots, or a note when interop, drive
@@ -1136,8 +1137,8 @@ and marks a ticket for an ended session stale. At every state and transition,
 - an earlier Show never replaces a later remembered one.
 
 A failure prints the path of events that reached it. `mise run rust:test` explores five events deep,
-and `mise run rust:explore` explores to a fixed point: 1,501,516 states and 136,347,970 transitions
-in under a minute on 32 threads, with about 1 GB of memory at its peak.
+and `mise run rust:explore` explores to a fixed point: about 1.6 million states and 150 million
+transitions in under a minute on 32 threads, with about 1 GB of memory at its peak.
 
 The explored space has bounds. Timing scales to a one-tick tap, two-tick double tap, and three-tick
 limit. Three settings cover sounds on and off, each recognition mode, and GPU probing. A state with
