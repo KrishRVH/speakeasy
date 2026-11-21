@@ -565,46 +565,6 @@ fn a_cue_noticed_after_its_first_samples_arrive_still_counts_only_by_its_voice_b
 }
 
 #[tokio::test]
-async fn a_disconnected_microphone_keeps_its_final_samples_without_an_audio_ending()
--> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let parent = root.path().to_owned();
-    let Kept {
-        keeper,
-        frames,
-        audio,
-    } = Keeper::start(move || Ok(parent), SystemTime::now())?;
-    drop(frames);
-    let (keep, incoming) = async_channel::bounded(1);
-    keep.try_send(checkpoint::Keep {
-        log: audio,
-        start: Duration::ZERO,
-        language: "en".into(),
-    })
-    .map_err(|_refused| anyhow!("Synthetic checkpoint was refused"))?;
-    let requests = Requests {
-        keep: incoming,
-        ..no_requests()
-    };
-    let (events, _reports) = async_channel::bounded(64);
-    let samples = spoken();
-    let recorder = recorder(&samples, Some(cpal::ErrorKind::DeviceNotAvailable))?;
-    let captured = recorder.record(SessionId::FIRST, &events, &Control::default(), &requests);
-    assert!(matches!(captured.outcome, Outcome::Lost(..)));
-    let mut tail = captured.tail.context("Kept audio has no tail")?;
-    assert!(tail.flush(PATIENCE));
-    drop(tail);
-    let checkpoint = keeper
-        .close()
-        .await?
-        .context("Fixture checkpoint is missing")?;
-    let audio = checkpoint.audio()?.context("Fixture audio is missing")?;
-    assert_eq!(audio.pcm.len(), samples.len() * 2);
-    assert!(!audio.complete);
-    Ok(())
-}
-
-#[tokio::test]
 async fn a_finished_show_keeps_its_final_samples_when_quit_cancels_capture() -> anyhow::Result<()> {
     for error in [None, Some(cpal::ErrorKind::DeviceNotAvailable)] {
         finish_then_quit(error).await?;

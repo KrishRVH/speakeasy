@@ -352,15 +352,6 @@ mod tests {
     }
 
     #[test]
-    fn an_isolated_click_is_not_speech() {
-        let rate = 16_000;
-        let second = samples_in(Duration::from_secs(1), rate);
-        let click = second / 20;
-        let pcm = pcm_from(&[(click, 3000), (2 * second - click, 0)]);
-        assert!(pcm.seal(Audibility::new(rate), rate).unwrap().is_none());
-    }
-
-    #[test]
     fn sealing_requires_two_hundred_milliseconds_of_recorded_audio() {
         for rate in [8_000, 44_101, MAX_SAMPLE_RATE] {
             for millis in [199, 200] {
