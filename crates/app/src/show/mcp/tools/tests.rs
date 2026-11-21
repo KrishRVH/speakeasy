@@ -210,10 +210,17 @@ fn invalid_selectors_unknown_properties_damage_and_oversize_do_not_leak_content(
         call(&roots, Tool::Image, json!({"show": "exact", "sheet": 1}))["isError"],
         true
     );
+    let summary = fs::read(directory.join("summary.md"))?;
     fs::write(directory.join("summary.md"), [0xFF, 0xFE])?;
     assert_eq!(
         call(&roots, Tool::Read, json!({"show": "exact"}))["isError"],
         true
+    );
+    fs::write(directory.join("summary.md"), summary)?;
+    assert_eq!(
+        call(&roots, Tool::Read, json!({"show": "exact"}))["isError"],
+        false,
+        "The restored summary did not let the read reach the manifest"
     );
     fs::write(directory.join("show.json"), b"PRIVATE_BAD_MANIFEST")?;
     let response = call(&roots, Tool::Read, json!({"show": "exact"}));
