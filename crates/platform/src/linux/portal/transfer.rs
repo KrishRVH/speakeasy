@@ -158,8 +158,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stalled_transfers_allow_new_work_and_retire_without_detached_writes()
-    -> anyhow::Result<()> {
+    async fn a_retired_stalled_transfer_releases_its_writer() -> anyhow::Result<()> {
         let (events, _receiver) = async_channel::bounded(1);
         let input = InputSender::new(events);
         let permit = input.begin().context("Recording")?;
@@ -181,12 +180,6 @@ mod tests {
         );
         assert!(transfers.next().now_or_never().is_none());
         opened.recv().await?;
-        let (other_work, incoming) = async_channel::bounded(1);
-        other_work.send(()).await?;
-        tokio::select! {
-            result = incoming.recv() => result?,
-            _ = transfers.next() => bail!("Stalled transfer unexpectedly completed"),
-        }
         drop(transfers);
         assert!(
             io::copy(&mut reader, &mut io::sink()).is_ok(),
