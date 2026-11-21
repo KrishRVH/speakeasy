@@ -699,7 +699,9 @@ module unless a test file is named.
   unwind. The independent movie lane durably saves the original-session origin before accepting
   capture; frame or audio failure cannot release its lock. The frame lane queues at most 512
   events/64 MiB and its log caps at 1 GiB/200,000 events. The audio lane queues at most 64 events/8
-  MiB and its checksummed PCM log caps at 128 MiB; a backlog stays in capture's existing PCM buffer.
+  MiB and its checksummed PCM log caps at 128 MiB. While capture runs, a backlog stays in its existing
+  PCM buffer; ending copies the unsent remainder once into the final flush, which holds at most the
+  rest of one five-minute recording at the device rate until that flush ends.
   Capture reports its outcome and closes the microphone before the final audio flush, which then
   waits up to five seconds for credits. Cancellation after Finish, as when Quit retires a finished
   Show's microphone, still collects the remaining samples and writes that flush; a discarded checkpoint stops its keeper, which ends a waiting
