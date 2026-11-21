@@ -467,15 +467,16 @@ module unless a test file is named.
   admits actions only for live callers and acknowledges actual owner decisions. Stop/cancel tokens
   combine the runtime incarnation with the session ID and exclude Shows and practice. Style is
   acknowledged by its Services owner without inventing a session-status observation; ordinary status
-  is observed by the session owner. A lost receipt is unknown, never proof of refusal. Capture and
-  print are refused before the machine unless `print_to_scripts` is on; changing it is a session
-  change, so turning it off ends a running capture. A capture (`dictation start --print`) marks its
-  session's handoff; a print stores its call in that session, which answers it with the text in
-  place of insertion or refuses it when the session ends without text, so one session answers one
-  print at most. Show promotion leaves these private dictations in their original session.
-  [tests/printing.rs](../crates/app/src/runtime/tests/printing.rs) covers that handoff.
-  [tests/control.rs](../crates/app/src/runtime/tests/control.rs) covers stale authority, busy
-  admission, per-session style, and preset adoption.
+  is observed by the session owner. A lost receipt is unknown, never proof of refusal, except for a
+  preset: the owner applies one and answers in the same step, so a lost preset receipt means it was
+  never applied. Capture and print are refused before the machine unless `print_to_scripts` is on;
+  changing it is a session change, so turning it off ends a running capture. A capture
+  (`dictation start --print`) marks its session's handoff; a print stores its call in that session,
+  which answers it with the text in place of insertion or refuses it when the session ends without
+  text, so one session answers one print at most. Show promotion leaves these private dictations in
+  their original session. [tests/printing.rs](../crates/app/src/runtime/tests/printing.rs) covers
+  that handoff. [tests/control.rs](../crates/app/src/runtime/tests/control.rs) covers stale
+  authority, busy admission, per-session style, and preset adoption.
 - **Command line**: [main.rs](../crates/app/src/main.rs) parses options and routes what they ask
   for, and [show/command.rs](../crates/app/src/show/command.rs) parses `show` commands. Its
   [output.rs](../crates/app/src/show/command/output.rs) projects metadata without private text,
