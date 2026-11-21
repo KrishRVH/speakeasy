@@ -14,7 +14,7 @@ use zbus::{
 };
 
 use super::{
-    CLIPBOARD_DISCONNECTED, Notice, Options, Remote, SelectionHandoff, deadline, or_pending,
+    CLIPBOARD_DISCONNECTED, Notice, Options, SelectionHandoff, deadline, or_pending,
     transfer::{Selection, Transfers, transfer},
 };
 use crate::{
@@ -34,7 +34,8 @@ const SELECTION_TIMEOUT: Duration = Duration::from_secs(2);
 pub(super) struct Insertions<'a> {
     transfers: Transfers<'a>,
     in_flight: Option<InFlight<'a>>,
-    remote: Option<Remote>,
+    sender: Option<ei::Sender>,
+    clipboard_session: Option<OwnedObjectPath>,
     selection: Option<Selection>,
     forfeited: Option<InsertPermit>,
     notices: &'a Receiver<Notice>,
@@ -46,7 +47,8 @@ pub(super) struct Insertions<'a> {
 
 impl<'a> Insertions<'a> {
     pub(super) fn new(
-        remote: Option<Remote>,
+        sender: Option<ei::Sender>,
+        clipboard_session: Option<OwnedObjectPath>,
         notices: &'a Receiver<Notice>,
         selecting: &'a Sender<SelectionHandoff>,
         worker: &'a x11::ClipboardWorker,
@@ -56,7 +58,8 @@ impl<'a> Insertions<'a> {
         Self {
             transfers: Transfers::new(),
             in_flight: None,
-            remote,
+            sender,
+            clipboard_session,
             selection: None,
             forfeited: None,
             notices,
@@ -88,9 +91,9 @@ impl<'a> Insertions<'a> {
                     .and_then(|in_flight| in_flight.phase.preparation()),
             );
             let readable = or_pending(
-                self.remote
+                self.sender
                     .as_ref()
-                    .map(|remote| remote.sender.readiness().readable()),
+                    .map(|sender| sender.readiness().readable()),
             );
             tokio::select! {
                 biased;
@@ -120,13 +123,9 @@ impl<'a> Insertions<'a> {
         Ok(())
     }
 
-    fn clipboard_session(&self) -> Option<&OwnedObjectPath> {
-        self.remote.as_ref()?.clipboard_session.as_ref()
-    }
-
     fn dispatch(&mut self) -> anyhow::Result<()> {
-        match &mut self.remote {
-            Some(remote) => remote.sender.dispatch(),
+        match &mut self.sender {
+            Some(sender) => sender.dispatch(),
             None => Ok(()),
         }
     }
@@ -170,10 +169,7 @@ impl<'a> Insertions<'a> {
             !request.permit.active()
                 || self.paste == LinuxPaste::Manual
                 || request.delivery == Delivery::Direct
-                || self
-                    .remote
-                    .as_ref()
-                    .is_some_and(|remote| remote.sender.can_paste())
+                || self.sender.as_ref().is_some_and(ei::Sender::can_paste)
                 || started.elapsed() >= MODIFIER_WAIT
         }) else {
             return Ok(());
@@ -183,7 +179,7 @@ impl<'a> Insertions<'a> {
             return Ok(());
         }
         let permit = request.permit.clone();
-        let phase = match (request.delivery, self.clipboard_session()) {
+        let phase = match (request.delivery, &self.clipboard_session) {
             (Delivery::Direct, _) => {
                 Phase::Preparing(query_focus(self.worker, permit, Route::Direct).boxed_local())
             },
@@ -253,7 +249,7 @@ impl<'a> Insertions<'a> {
     fn finish(&mut self, request: Insertion, external: bool, route: Route) -> anyhow::Result<()> {
         self.apply_queued_notices();
         self.dispatch()?;
-        let sender = self.remote.as_mut().map(|remote| &mut remote.sender);
+        let sender = self.sender.as_mut();
         let outcome = match route {
             Route::Direct => insert_direct(sender, &request, external),
             Route::X11Paste { owned } | Route::PortalPaste { owned } => finish_paste(
@@ -280,7 +276,7 @@ impl<'a> Insertions<'a> {
     )]
     async fn serve_transfer(&self, event: &Message) -> anyhow::Result<()> {
         let (path, mime, serial): (OwnedObjectPath, String, u32) = event.body().deserialize()?;
-        if self.clipboard_session() != Some(&path) {
+        if self.clipboard_session.as_ref() != Some(&path) {
             return Ok(());
         }
         let payload = self

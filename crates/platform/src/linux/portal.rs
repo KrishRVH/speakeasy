@@ -194,13 +194,10 @@ impl Portal {
 
 struct Bound {
     shortcut_session: Option<OwnedObjectPath>,
-    remote: Option<Remote>,
-    labels: ShortcutLabels,
-}
-
-struct Remote {
-    sender: ei::Sender,
+    sender: Option<ei::Sender>,
     clipboard_session: Option<OwnedObjectPath>,
+    labels: ShortcutLabels,
+    paste: LinuxPaste,
 }
 
 struct Notice {
@@ -390,7 +387,10 @@ pub(super) async fn run(
         Err(revoked) = revocation(&mut changes, &session_root) => Some(Err(revoked)),
     };
     let outcome = match bound {
-        Some(Ok(bound)) => serve(&portal, bound, changes, input, options, requests, stopping).await,
+        Some(Ok(bound)) => match x11::ClipboardWorker::start(input.clone()) {
+            Ok(worker) => serve(&portal, bound, changes, worker, input, requests, stopping).await,
+            Err(error) => Err(error),
+        },
         Some(Err(error)) => Err(error),
         None => Ok(()),
     };
@@ -409,14 +409,19 @@ async fn bind(portal: &mut Portal, options: &DesktopOptions) -> anyhow::Result<B
         let (session, labels) = bind_shortcuts(portal, options).await?;
         (Some(session), labels)
     };
-    let remote = match automatic {
-        Some((libei, keys)) => Some(start_remote_desktop(portal, libei, keys).await?),
-        None => None,
+    let (sender, clipboard_session) = match automatic {
+        Some((libei, keys)) => {
+            let (sender, clipboard_session) = start_remote_desktop(portal, libei, keys).await?;
+            (Some(sender), clipboard_session)
+        },
+        None => (None, None),
     };
     Ok(Bound {
         shortcut_session,
-        remote,
+        sender,
+        clipboard_session,
         labels,
+        paste: options.paste,
     })
 }
 
@@ -476,7 +481,7 @@ async fn start_remote_desktop(
     portal: &mut Portal,
     libei: ei::Api,
     keys: PasteKeys,
-) -> anyhow::Result<Remote> {
+) -> anyhow::Result<(ei::Sender, Option<OwnedObjectPath>)> {
     let tokens = TokenStore::open();
     let session = portal.create_session(REMOTE).await?;
     let (handle, mut devices) = portal.request_options();
@@ -531,10 +536,10 @@ async fn start_remote_desktop(
         .await?
         .call("ConnectToEIS", &(&session, Options::new()))
         .await?;
-    Ok(Remote {
-        sender: ei::Sender::connect(libei, descriptor.into(), keys)?,
-        clipboard_session: clipboard_shared.then_some(session),
-    })
+    Ok((
+        ei::Sender::connect(libei, descriptor.into(), keys)?,
+        clipboard_shared.then_some(session),
+    ))
 }
 
 async fn request_clipboard(portal: &Portal, session: &OwnedObjectPath) -> anyhow::Result<bool> {
@@ -557,24 +562,23 @@ async fn serve(
     portal: &Portal,
     bound: Bound,
     changes: DesktopChanges,
+    worker: x11::ClipboardWorker,
     input: &InputSender,
-    options: &DesktopOptions,
     requests: Receiver<Insertion>,
     stopping: &Receiver<Infallible>,
 ) -> anyhow::Result<()> {
     let Bound {
         shortcut_session,
-        remote,
+        sender,
+        clipboard_session,
         labels,
+        paste,
     } = bound;
     let shortcuts = match &shortcut_session {
         Some(session) => Some(session_signals(&portal.connection, SHORTCUTS, None, session).await?),
         None => None,
     };
     let clipboard = portal.proxy(CLIPBOARD).await?;
-    let clipboard_session = remote
-        .as_ref()
-        .and_then(|remote| remote.clipboard_session.clone());
     let (transfer_requests, owners) = match &clipboard_session {
         Some(session) => (
             Some(
@@ -613,7 +617,7 @@ async fn serve(
             selections,
             notify,
             ownership: SelectionOwnership {
-                session: clipboard_session,
+                session: clipboard_session.clone(),
                 monitored: None,
                 owned: false,
             },
@@ -623,7 +627,6 @@ async fn serve(
         .watch(),
     );
 
-    let worker = x11::ClipboardWorker::start(input.clone())?;
     tokio::select! {
         biased;
         () = stop_requested(stopping, input) => return Ok(()),
@@ -631,12 +634,13 @@ async fn serve(
     }
     input.deliver(labels.into_desktop_ready());
     Insertions::new(
-        remote,
+        sender,
+        clipboard_session,
         &notices,
         &selecting,
         &worker,
         &clipboard,
-        options.paste,
+        paste,
     )
     .serve(transfer_requests, requests, input, stopping)
     .await
