@@ -152,6 +152,27 @@ async fn a_damaged_saved_narration_without_speech_stays_for_explicit_discard() -
 }
 
 #[tokio::test]
+async fn a_retry_that_hears_no_words_keeps_its_retry_without_a_duplicate() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let (show, pending) = pending_show(root.path()).await?;
+    for unheard in [Narration::default(), Narration::Text(" … ".into())] {
+        let Err(error) = retry(root.path(), unheard, || Ok(root.path().to_owned())) else {
+            bail!("A retry without words was announced as a narrated copy");
+        };
+        assert!(format!("{error:#}").contains("could not be transcribed"));
+    }
+    let saved: Vec<_> = fs::read_dir(root.path())?
+        .filter_map(Result::ok)
+        .filter(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
+        .map(|entry| entry.path())
+        .collect();
+    assert_eq!(saved, [show.directory().to_owned()]);
+    assert!(!pending.directory().join("narration.json").exists());
+    assert!(interrupted(root.path())?.narration_pending());
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_pending_show_whose_audio_lost_every_sample_retires_its_retry() -> anyhow::Result<()> {
     for content in [b"".as_slice(), b"SPKAUD01"] {
         let root = tempfile::tempdir()?;

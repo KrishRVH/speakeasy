@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::{Context as _, anyhow};
 use speakeasy_platform::InsertPermit;
-use speakeasy_show::{Framing, NarrationLoss, Typeface, compose, select};
+use speakeasy_show::{Framing, Narration, NarrationLoss, Typeface, compose, select};
 
 use super::{
     Checkpoint, Checkpointing, Interrupted, SavedShow,
@@ -134,7 +134,10 @@ fn publish_with(
         Some(NarrationLoss::Incomplete | NarrationLoss::AudioSilent) | None => Completion::Narrated,
     };
     let checkpoint = origin.checkpoint();
+    let unheard = matches!(origin, Origin::Recovered { pending: true, .. })
+        && (completion == Completion::Pending || !heard(&footage.recording.narration));
     if completion == Completion::Narrated
+        && !unheard
         && let Some(checkpoint) = checkpoint
     {
         #[expect(
@@ -146,9 +149,7 @@ fn publish_with(
     if !permit.active() {
         return Ok(Published::Cancelled);
     }
-    if matches!(origin, Origin::Recovered { pending: true, .. })
-        && completion == Completion::Pending
-    {
+    if unheard {
         anyhow::bail!(
             "Narration could not be transcribed. The saved Show is unchanged; its audio remains available in Shows until its original expiry."
         );
@@ -259,6 +260,15 @@ fn reopen_with(interrupted: Interrupted) -> anyhow::Result<Reopened> {
         speech,
         pending,
     })
+}
+
+fn heard(narration: &Narration) -> bool {
+    match narration {
+        Narration::Words(words) => words
+            .iter()
+            .any(|word| word.text.chars().any(char::is_alphanumeric)),
+        Narration::Text(text) => text.chars().any(char::is_alphanumeric),
+    }
 }
 
 fn remove_published(checkpoint: Checkpoint) {
