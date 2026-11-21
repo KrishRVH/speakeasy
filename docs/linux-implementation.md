@@ -67,16 +67,14 @@ the EIS modifier events as
 key from the advertised layout. Shortcut deactivation alone is insufficient. A paused EI keyboard or
 a keymap Speakeasy cannot read yields an explicit manual-paste result. X11 automatic paste requires
 the first keyboard layout with an unshifted V key; other layouts receive manual-paste guidance.
-Clipboard writes are followed by ownership, content, and cancellation checks; cleanup never restores a stale
-clipboard payload. Submitted synthetic keys receive release cleanup even after partial failure. X11
-queues each paste and its releases before one server synchronization and checks every submission.
-Manual copy skips the modifier wait. Wayland serves bounded, asynchronous clipboard transfers while
-receiving input and cancellation, and a failed transfer fails only that paste; clipboard calls
-through Xwayland run on a serialized, owned worker. Portal signals count only from the portal's
-current bus name; a malformed shortcut or transfer signal is skipped, and a malformed ownership
-change counts as lost ownership. A committed clipboard selection remains available until another
-copy replaces it, ownership changes, or the service retires; a copy the portal refuses leaves it in
-place.
+Clipboard writes are followed by ownership, content, and cancellation checks; cleanup never restores
+a stale clipboard payload. Submitted synthetic keys receive release cleanup even after partial
+failure. X11 queues each paste and its releases before one server synchronization and checks every
+submission. Manual copy skips the modifier wait. Wayland serves bounded, asynchronous clipboard
+transfers while receiving input and cancellation, and a failed transfer fails only that paste;
+clipboard calls through Xwayland run on a serialized, owned worker. A committed clipboard selection
+remains available until another copy replaces it, ownership changes, or the service retires; a copy
+the portal refuses leaves it in place.
 
 Settings' **Insert text by** control offers **Paste (Ctrl+V)**, **Paste (Ctrl+Shift+V)** for
 terminals, **Type (keeps clipboard)**, and **Copy for manual paste**. The `text_delivery` setting
@@ -123,8 +121,8 @@ socket. Opt-in X11 input tests start their own Xvfb display, then check there th
 a keyboard switch, which X announces as a mapping change, that an actual remap stops them, that a
 chord another client already grabs stops them with an error naming the shortcut, and that a first
 copy owns the clipboard. Virtual-desktop checks do not establish compositor, desktop input, or
-editor compatibility. Default portal clipboard tests need `dbus-daemon`: they serve a fake portal
-on a private bus, never the session bus or the user's clipboard.
+editor compatibility. Default portal clipboard tests need `dbus-daemon`: they serve a fake portal on
+a private bus, never the session bus or the user's clipboard.
 
 The StatusNotifier/DBusMenu adapter reuses shared tray states and menu policy, with subscriptions
 limited to relevant host changes. [Tray and Settings](interaction-design.md#tray-and-settings)

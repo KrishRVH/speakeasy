@@ -187,12 +187,20 @@ signals can arrive out of order with those events and never reset the modifier s
 ends the service even though later dispatch calls may succeed.
 
 Portal transfer descriptors are owned, set nonblocking before AsyncFd registration and retained
-until the transfer future drops. Session-scoped signal streams keep draining while transfers are
-full, and excess requests receive a failed acknowledgement. The portal clipboard serves bytes only
+until the transfer future drops. Portal signal match rules name the portal's unique bus name rather
+than its well-known one, so zbus also drops a signal another client addresses straight to
+Speakeasy's connection; a malformed shortcut or transfer signal is skipped, and a malformed
+ownership change counts as lost ownership. Session-scoped signal streams keep draining while
+transfers are full. A transfer Speakeasy declines, for a full transfer set, a selection still being
+set, another MIME type, or no current committed copy, still gets SelectionWrite: its descriptor
+closes empty and SelectionWriteDone reports failure, since Mutter ends a transfer only when its
+descriptor closes. Refusals run beside the insertion loop, at most `SIGNAL_BACKLOG` at once; a
+request past that bound waits for the portal's own timeout. The portal clipboard serves bytes only
 after the permit commits to paste or manual copy. Selection loss invalidates its transfer payloads.
-Writes and reporting have deadlines. X11 clipboard serving and insertion have separate owners;
-selection ownership is rechecked after blocking focus/modifier queries and before committing paste.
-That query and XTEST submission are not one atomic server transaction.
+Writes and reporting have deadlines. X11 clipboard serving and insertion have separate owners; after
+blocking focus/modifier queries and before committing paste, the X11 paste confirms that the
+clipboard still holds the dictated text from the same owner. That check and XTEST submission are not
+one atomic server transaction.
 
 ## Linux realtime opt-out
 
