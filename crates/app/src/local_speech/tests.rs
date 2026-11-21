@@ -278,7 +278,11 @@ async fn only_a_complete_success_head_proves_the_engine_healthy() -> anyhow::Res
 async fn startup_probes_each_engine_at_its_own_health_route() -> anyhow::Result<()> {
     use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 
-    for protocol in [Protocol::Whisper, Protocol::Nemo, Protocol::Nemotron] {
+    for (protocol, name) in [
+        (Protocol::Whisper, "Whisper"),
+        (Protocol::Nemo, "NeMo"),
+        (Protocol::Nemotron, "Nemotron"),
+    ] {
         let (_directory, mut speech, listener) = shell_engine("read -r _").await?;
         speech.protocol = protocol;
         let expected = match protocol {
@@ -300,7 +304,11 @@ async fn startup_probes_each_engine_at_its_own_health_route() -> anyhow::Result<
         .await?;
         speech.stop().await;
         served?;
-        assert_eq!(request_line?, expected);
+        let request_line = request_line?;
+        assert!(
+            request_line == expected,
+            "Startup probed the {name} engine at another route"
+        );
     }
     Ok(())
 }
