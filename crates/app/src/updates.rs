@@ -10,7 +10,6 @@ use crate::http::{Trust, client_builder};
 
 const RELEASE: &str = "https://api.github.com/repos/KrishRVH/speakeasy/releases/latest";
 const FAILED: &str = "Cannot check for updates. Check your connection and try again.";
-const MAX_REPLY: usize = 2 * 1024 * 1024;
 
 #[cfg(any(target_os = "windows", test))]
 mod install;
@@ -22,19 +21,13 @@ pub(crate) struct Version([u32; 3]);
 
 impl Version {
     fn parse(text: &str) -> Option<Self> {
-        let mut parts = text.split('.');
-        let mut numbers = [0; 3];
-        for number in &mut numbers {
-            let part = parts.next()?;
-            if part.is_empty()
-                || !part.bytes().all(|byte| byte.is_ascii_digit())
-                || (part.len() > 1 && part.starts_with('0'))
-            {
-                return None;
-            }
-            *number = part.parse().ok()?;
-        }
-        parts.next().is_none().then_some(Self(numbers))
+        let mut parts = text.split('.').map(str::parse::<u32>);
+        let version = Self([
+            parts.next()?.ok()?,
+            parts.next()?.ok()?,
+            parts.next()?.ok()?,
+        ]);
+        parts.next().is_none().then_some(version)
     }
 
     pub(crate) fn release_url(self) -> String {
@@ -118,34 +111,23 @@ impl Check {
 
 async fn check() -> anyhow::Result<Option<Version>> {
     let client = client(client_builder(Trust::System)?)?;
-    let body = fetch(&client, RELEASE, MAX_REPLY).await?;
+    let body = fetch(&client, RELEASE).await?;
     newer(&body, env!("CARGO_PKG_VERSION"))
 }
 
 fn client(builder: reqwest::ClientBuilder) -> anyhow::Result<Client> {
     builder
         .user_agent("Speakeasy")
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(15))
+        .connect_timeout(Duration::from_secs(10))
+        .read_timeout(Duration::from_secs(30))
         .build()
         .context(FAILED)
 }
 
-async fn fetch(client: &Client, url: &str, limit: usize) -> anyhow::Result<Vec<u8>> {
-    let mut response = client.get(url).send().await.context(FAILED)?;
+async fn fetch(client: &Client, url: &str) -> anyhow::Result<Vec<u8>> {
+    let response = client.get(url).send().await.context(FAILED)?;
     ensure!(response.status().is_success(), FAILED);
-    ensure!(
-        response
-            .content_length()
-            .is_none_or(|size| size <= limit as u64),
-        FAILED
-    );
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.context(FAILED)? {
-        ensure!(chunk.len() <= limit.saturating_sub(bytes.len()), FAILED);
-        bytes.extend_from_slice(&chunk);
-    }
-    Ok(bytes)
+    Ok(response.bytes().await.context(FAILED)?.to_vec())
 }
 
 fn newer(body: &[u8], installed: &str) -> anyhow::Result<Option<Version>> {

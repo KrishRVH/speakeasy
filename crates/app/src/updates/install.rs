@@ -1,25 +1,20 @@
 use std::{
-    fs::{File, OpenOptions},
-    io::{Read as _, Write as _},
+    fs::{self, File},
+    io::Write as _,
     path::Path,
-    time::Duration,
 };
 
 use anyhow::{Context as _, ensure};
-use reqwest::{Client, Url};
+use reqwest::Client;
 use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
 use tokio::sync::watch;
 
+use super::Job;
 #[cfg(target_os = "windows")]
-use super::fetch;
-use super::{Job, Version};
-use crate::{
-    http::{Trust, client_builder},
-    progress::Progress,
-};
+use super::{Version, client, fetch};
+use crate::progress::Progress;
 
-mod cache;
 #[cfg(target_os = "windows")]
 mod handoff;
 mod manifest;
@@ -36,13 +31,6 @@ const INVALID_FILE: &str = "The downloaded installer does not match the authenti
 #[cfg(target_os = "windows")]
 pub(crate) type Download = Job<Installer>;
 
-struct Payload {
-    file: File,
-    directory: TempDir,
-    version: Version,
-    _lease: File,
-}
-
 #[cfg(target_os = "windows")]
 impl Download {
     pub(crate) fn available() -> bool {
@@ -54,79 +42,29 @@ impl Download {
         configuration: std::path::PathBuf,
     ) -> anyhow::Result<(Self, watch::Receiver<Progress>)> {
         let key = manifest::key()?;
-        let installed = Version::parse(env!("CARGO_PKG_VERSION")).context(INVALID_FILE)?;
-        ensure!(
-            version > installed,
-            "This release is not newer than the installed version."
-        );
         let root = crate::paths::data_root()?;
         let (progress, observed) = watch::channel(Progress::Step("Authenticating update"));
         let operation = Self::spawn("update-download", move || async move {
             let target = handoff::Target::current(configuration)?;
-            let client = client(client_builder(Trust::System)?.https_only(true))?;
-            let metadata = fetch(
-                &client,
-                &asset_url(version, "update.json"),
-                manifest::MAX_MANIFEST,
-            )
-            .await
-            .context(DOWNLOAD_FAILED)?;
-            let signature = fetch(
-                &client,
-                &asset_url(version, "update.json.sig"),
-                manifest::SIGNATURE_LENGTH,
-            )
-            .await
-            .context(DOWNLOAD_FAILED)?;
-            let artifact = manifest::verify(&metadata, &signature, &key, version, installed)?;
-            let payload = download(
-                &client,
-                &asset_url(artifact.version, manifest::NAME),
-                &artifact,
-                &root,
-                &progress,
-            )
-            .await?;
-            Ok(Some(Installer::new(payload, target)))
+            let client = client(crate::http::client_builder(crate::http::Trust::System)?)?;
+            let metadata = fetch(&client, &asset_url(version, "update.json"))
+                .await
+                .context(DOWNLOAD_FAILED)?;
+            let signature = fetch(&client, &asset_url(version, "update.json.sig"))
+                .await
+                .context(DOWNLOAD_FAILED)?;
+            let artifact = manifest::verify(&metadata, &signature, &key)?;
+            let url = asset_url(version, manifest::NAME);
+            let staged = download(&client, &url, &artifact, &root, &progress).await?;
+            Ok(Some(Installer::new(staged, version, target)))
         })?;
         Ok((operation, observed))
     }
 }
 
+#[cfg(target_os = "windows")]
 fn asset_url(version: Version, name: &str) -> String {
     format!("https://github.com/KrishRVH/speakeasy/releases/download/v{version}/{name}")
-}
-
-fn client(builder: reqwest::ClientBuilder) -> anyhow::Result<Client> {
-    builder
-        .user_agent("Speakeasy")
-        .connect_timeout(Duration::from_secs(10))
-        .read_timeout(Duration::from_secs(30))
-        .timeout(Duration::from_secs(600))
-        .redirect(reqwest::redirect::Policy::custom(|attempt| {
-            if attempt.previous().len() < 4 && trusted_redirect(attempt.url()) {
-                attempt.follow()
-            } else {
-                attempt.error("Update download redirected outside its release hosts")
-            }
-        }))
-        .build()
-        .context(DOWNLOAD_FAILED)
-}
-
-fn trusted_redirect(url: &Url) -> bool {
-    url.scheme() == "https"
-        && url.username().is_empty()
-        && url.password().is_none()
-        && url.port_or_known_default() == Some(443)
-        && matches!(
-            url.host_str(),
-            Some(
-                "github.com"
-                    | "release-assets.githubusercontent.com"
-                    | "objects.githubusercontent.com"
-            )
-        )
 }
 
 async fn download(
@@ -135,85 +73,37 @@ async fn download(
     artifact: &manifest::Artifact,
     root: &Path,
     progress: &watch::Sender<Progress>,
-) -> anyhow::Result<Payload> {
-    let lease = cache::acquire(root)?;
+) -> anyhow::Result<TempDir> {
+    let cache = root.join("updates");
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "An installer still running from an earlier update keeps its copy; the next update clears it"
+    )]
+    let _ = fs::remove_dir_all(&cache);
+    fs::create_dir_all(&cache).context(DOWNLOAD_FAILED)?;
     let directory = tempfile::Builder::new()
         .prefix("release-")
-        .tempdir_in(root.join("updates"))
+        .tempdir_in(&cache)
         .context(DOWNLOAD_FAILED)?;
-    let path = directory.path().join(manifest::NAME);
-    let mut file = File::create_new(&path).context(DOWNLOAD_FAILED)?;
+    let mut file =
+        File::create_new(directory.path().join(manifest::NAME)).context(DOWNLOAD_FAILED)?;
     let mut response = client.get(url).send().await.context(DOWNLOAD_FAILED)?;
-    ensure!(
-        response.status() == reqwest::StatusCode::OK,
-        DOWNLOAD_FAILED
-    );
-    ensure!(
-        response
-            .content_length()
-            .is_none_or(|size| size == artifact.size),
-        INVALID_FILE
-    );
+    ensure!(response.status().is_success(), DOWNLOAD_FAILED);
     let step = "Downloading update";
+    let mut hash = Sha256::new();
     let mut done = 0_u64;
     progress.send_replace(Progress::bytes(step, done, artifact.size));
     while let Some(chunk) = response.chunk().await.context(DOWNLOAD_FAILED)? {
-        let length = u64::try_from(chunk.len()).context(INVALID_FILE)?;
-        ensure!(length <= artifact.size.saturating_sub(done), INVALID_FILE);
+        done = done.saturating_add(chunk.len() as u64);
+        ensure!(done <= artifact.size, INVALID_FILE);
+        hash.update(&chunk);
         file.write_all(&chunk).context(DOWNLOAD_FAILED)?;
-        done = done.saturating_add(length);
         progress.send_replace(Progress::bytes(step, done, artifact.size));
-        tokio::task::yield_now().await;
-    }
-    ensure!(done == artifact.size, INVALID_FILE);
-    file.sync_all().context(DOWNLOAD_FAILED)?;
-    drop(file);
-    let mut file = open_for_verification(&path)?;
-    let metadata = file.metadata().context(DOWNLOAD_FAILED)?;
-    ensure!(
-        metadata.is_file() && metadata.len() == artifact.size,
-        INVALID_FILE
-    );
-    let step = "Verifying update";
-    let mut hash = Sha256::new();
-    let mut hashed = 0_u64;
-    progress.send_replace(Progress::bytes(step, hashed, artifact.size));
-    let mut buffer = vec![0; 1024 * 1024];
-    loop {
-        let read = file.read(&mut buffer).context(DOWNLOAD_FAILED)?;
-        if read == 0 {
-            break;
-        }
-        let length = u64::try_from(read).context(INVALID_FILE)?;
-        hashed = hashed
-            .checked_add(length)
-            .filter(|&total| total <= artifact.size)
-            .context(INVALID_FILE)?;
-        hash.update(buffer.get(..read).context(INVALID_FILE)?);
-        progress.send_replace(Progress::bytes(step, hashed, artifact.size));
         tokio::task::yield_now().await;
     }
     ensure!(
         <[u8; 32]>::from(hash.finalize()) == artifact.sha256,
         INVALID_FILE
     );
-    Ok(Payload {
-        file,
-        directory,
-        version: artifact.version,
-        _lease: lease,
-    })
-}
-
-fn open_for_verification(path: &Path) -> anyhow::Result<File> {
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::fs::OpenOptionsExt as _;
-
-        const FILE_SHARE_READ: u32 = 0x1;
-        options.share_mode(FILE_SHARE_READ);
-    }
-    options.open(path).context(DOWNLOAD_FAILED)
+    Ok(directory)
 }

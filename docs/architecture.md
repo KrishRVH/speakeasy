@@ -351,18 +351,17 @@ module unless a test file is named.
   that separate observation on window activation. The native interaction test uses fake observations
   to check permission changes without disturbing settings.
 - **Updates**: [updates.rs](../crates/app/src/updates.rs) owns cancellable discovery and Windows
-  preparation. Discovery uses system TLS, a deadline, no redirects, and bounded input; only a
-  numeric release version forms a repository link.
-  [install.rs](../crates/app/src/updates/install.rs) authenticates signed metadata before a bounded
-  download, restricts HTTPS redirects to release hosts, and retains a verified file that Windows
-  cannot write or replace. The per-user cache lease excludes other preparations; later explicit
-  preparation reclaims only abandoned known files.
+  preparation. Discovery uses system TLS and connect and read deadlines; only a numeric release
+  version forms a repository link. [install.rs](../crates/app/src/updates/install.rs) checks the
+  release's `update.json` against its Ed25519 signature and the key the build embeds, then
+  downloads the installer it names and refuses bytes beyond its size or with another SHA-256. Each
+  preparation first clears installers staged by earlier ones.
   [settings/updates.rs](../crates/app/src/shell/settings/updates.rs) owns the operation and requires
   separate installation consent. Shutdown hands the installer to main only after work and saves
   drain; main releases the instance and exits GPUI before launching it. The installer waits for that
   process to exit, protects both running images, and relaunches only after success. Tests beside
-  discovery and preparation cover hostile metadata, signatures, replay, byte caps, corruption,
-  cancellation, and cache/file lifetime. Owned-window
+  discovery and preparation cover version comparison, signatures, a mismatched installer, and
+  cancellation. Owned-window
   [shutdown tests](../crates/app/src/shell/shutdown/native_tests.rs) hold an accepted Show write to
   check graceful handoff and forced teardown. `scripts/check-installer.ps1` exercises installation
   on CI runners without Speakeasy state. [Build and verify](../README.md#build-and-verify) owns

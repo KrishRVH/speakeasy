@@ -114,10 +114,6 @@ fn handoff(quit: Quit) -> anyhow::Result<()> {
                 "explicit acceptance survives a subsequent ordinary Quit"
             );
             assert!(path.is_file());
-            assert!(
-                fs::remove_file(&path).is_err(),
-                "handoff retains the verified file lease"
-            );
             drop(received);
             assert!(!path.exists());
         },

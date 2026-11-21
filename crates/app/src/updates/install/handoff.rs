@@ -4,8 +4,9 @@ use std::{
 };
 
 use anyhow::{Context as _, ensure};
+use tempfile::TempDir;
 
-use super::{Payload, Version, manifest};
+use super::{Version, manifest};
 
 const MANUAL: &str = "This copy is portable or its Windows installation has moved. Open the release page to update it manually.";
 
@@ -21,10 +22,6 @@ impl Target {
         let executable = std::env::current_exe()?.canonicalize().context(MANUAL)?;
         ensure!(executable.parent() == Some(directory.as_path()), MANUAL);
         ensure!(directory.join("unins000.exe").is_file(), MANUAL);
-        ensure!(
-            configuration.is_absolute(),
-            "The settings path is not absolute. Reopen Speakeasy before updating."
-        );
         Ok(Self {
             directory: registered,
             configuration,
@@ -33,7 +30,8 @@ impl Target {
 }
 
 pub(crate) struct Installer {
-    payload: Payload,
+    staged: TempDir,
+    version: Version,
     target: Target,
 }
 
@@ -44,40 +42,34 @@ impl Installer {
         configuration: PathBuf,
     ) -> anyhow::Result<(Self, PathBuf)> {
         let cache = root.join("updates");
-        let lease = super::cache::acquire(root)?;
-        let directory = tempfile::Builder::new()
+        std::fs::create_dir_all(&cache)?;
+        let staged = tempfile::Builder::new()
             .prefix("release-")
             .tempdir_in(&cache)?;
-        let path = directory.path().join(manifest::NAME);
-        std::fs::write(&path, b"Synthetic authority receipt; never executed.")?;
-        let file = super::open_for_verification(&path)?;
-        Ok((
-            Self::new(
-                Payload {
-                    file,
-                    directory,
-                    version: Version::parse("1.2.3").expect("fixture version"),
-                    _lease: lease,
-                },
-                Target {
-                    directory: root.join("app"),
-                    configuration,
-                },
-            ),
-            path,
-        ))
+        let path = staged.path().join(manifest::NAME);
+        std::fs::write(&path, b"Synthetic installer; never executed.")?;
+        let target = Target {
+            directory: root.join("app"),
+            configuration,
+        };
+        let version = Version::parse("1.2.3").expect("fixture version");
+        Ok((Self::new(staged, version, target), path))
     }
 
-    pub(super) const fn new(payload: Payload, target: Target) -> Self {
-        Self { payload, target }
+    pub(super) const fn new(staged: TempDir, version: Version, target: Target) -> Self {
+        Self {
+            staged,
+            version,
+            target,
+        }
     }
 
     pub(crate) const fn version(&self) -> Version {
-        self.payload.version
+        self.version
     }
 
     pub(crate) fn launch(self) -> anyhow::Result<()> {
-        let mut command = Command::new(self.payload.directory.path().join(manifest::NAME));
+        let mut command = Command::new(self.staged.path().join(manifest::NAME));
         command
             .arg("/SILENT")
             .arg("/NORESTART")
@@ -95,10 +87,9 @@ impl Installer {
             .context("Cannot start the verified installer. Reopen Speakeasy and try again.")?;
         #[expect(
             clippy::let_underscore_must_use,
-            reason = "The installer owns the staged bytes after handoff; a later update operation removes the cache"
+            reason = "The installer owns the staged bytes after handoff; the next update clears the cache"
         )]
-        let _ = self.payload.directory.keep();
-        drop(self.payload.file);
+        let _ = self.staged.keep();
         drop(child);
         Ok(())
     }

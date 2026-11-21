@@ -603,7 +603,7 @@ version's official download page; checking never installs or runs an update.
 
 Windows builds with a configured update signing key also offer **Download**. It works for an
 installed copy; a portable or moved copy reports that it updates from the release page. The download
-verifies the signed version and installer bytes before offering **Install and restart**. Finish or
+checks the installer against the release's signed metadata before offering **Install and restart**. Finish or
 cancel recording first; installation waits for pending work and settings saves to finish. It
 preserves the installation folder and selected settings file. Downloading and installing always
 require separate actions. Builds without an embedded signing key offer the release page only.
