@@ -10,6 +10,7 @@ use speakeasy_platform::Input;
 
 use super::*;
 use crate::{
+    config::Engine,
     control::{Call, Command, Disposition},
     shell::{LaunchMode, choices::Selected, save::SaveQueue},
 };
@@ -286,6 +287,35 @@ async fn resolved(
         );
         anyhow::Ok(())
     })??;
+
+    let switched = settings.update(cx, |view, window, cx| {
+        view.edit_preset(Edit::Use(1), window, cx);
+        let other = if view.config.engine == Engine::Whisper {
+            Engine::Nemo
+        } else {
+            Engine::Whisper
+        };
+        view.act(Action::Engine(other), window, cx);
+        view.config.clone()
+    })?;
+    until(cx, "Use did not finish", |cx| {
+        settings.read_with(cx, |view, _| view.using.is_none())
+    })
+    .await?;
+    let (kept, warned) = settings.update(cx, |view, _, cx| {
+        let outcome = (
+            view.config == switched,
+            view.notice.take().is_some_and(|notice| notice.is_problem()),
+        );
+        view.config = library.clone();
+        view.saves = SaveQueue::new(path.to_owned(), library.clone());
+        cx.notify();
+        outcome
+    })?;
+    ensure!(
+        kept && warned && Config::read(path)?.language == edited.language,
+        "A preset whose check finished after an engine switch replaced the newer draft"
+    );
     fs::write(path, serde_json::to_vec_pretty(library)?)?;
     Ok(())
 }

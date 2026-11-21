@@ -21,6 +21,8 @@ use crate::{
     theme::Theme,
 };
 
+const USE_OVERTAKEN: &str = "Speech settings changed before the preset was ready, so it was not used. Use it again to apply it.";
+
 pub(super) struct Editor {
     name: Entity<TextField>,
     naming: bool,
@@ -141,20 +143,33 @@ impl Settings {
             self.load_preset(&preset, cx);
             return;
         }
+        let started = self.config.clone();
         match cx.update_global::<Services, _>(|services, cx| services.use_preset(selected, cx)) {
             Ok(used) => {
                 self.using = Some(cx.spawn(async move |this, cx| {
                     let used = used.recv().await.ok();
-                    this.update_if_alive(cx, |view, cx| view.finish_use(&preset, used, cx));
+                    this.update_if_alive(cx, |view, cx| {
+                        view.finish_use(&preset, &started, used, cx);
+                    });
                 }));
             },
             Err(reason) => self.notice = Some(Notice::Problem(reason.into())),
         }
     }
 
-    fn finish_use(&mut self, preset: &Preset, used: Option<Used>, cx: &mut Context<'_, Self>) {
+    fn finish_use(
+        &mut self,
+        preset: &Preset,
+        started: &Config,
+        used: Option<Used>,
+        cx: &mut Context<'_, Self>,
+    ) {
         self.using = None;
         match used {
+            Some(Ok(_)) if !presets::same_choices(started, &self.config) => {
+                cx.update_global::<Services, _>(|services, _| services.restore_owner());
+                self.notice = Some(Notice::Problem(USE_OVERTAKEN.into()));
+            },
             Some(Ok(config)) => {
                 let resolved = Preset::capture(preset.name(), &config)
                     .unwrap_or_else(|_unchanged| preset.clone());
