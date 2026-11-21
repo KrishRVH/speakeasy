@@ -663,3 +663,42 @@ async fn a_lost_microphone_reports_before_waiting_on_its_backlogged_checkpoint()
     assert!(!audio.complete);
     Ok(())
 }
+
+#[test]
+fn a_microphone_error_published_while_capture_stops_is_reported_as_lost() -> anyhow::Result<()> {
+    let (_producer, ring) = RingBuffer::new(1);
+    let (errors, stream_errors) = async_channel::bounded(1);
+    let recorder = Recorder::new(
+        (),
+        ring,
+        stream_errors,
+        Instant::now(),
+        16_000,
+        RecognitionMode::Whole,
+    );
+    let control = Arc::new(Control::default());
+    let (held, holding) = std::sync::mpsc::channel();
+    let (proceed, proceeding) = std::sync::mpsc::channel();
+    let callback = thread::spawn({
+        let control = Arc::clone(&control);
+        move || -> anyhow::Result<()> {
+            let publishing = control.publishing();
+            held.send(())?;
+            proceeding.recv()?;
+            errors.try_send(cpal::ErrorKind::DeviceNotAvailable.into())?;
+            drop(publishing);
+            Ok(())
+        }
+    });
+    holding.recv()?;
+    proceed.send(())?;
+    let lost = recorder.stop(&control, None);
+    callback
+        .join()
+        .map_err(|_panic| anyhow!("Error callback fixture panicked"))??;
+    assert!(
+        lost.is_some(),
+        "A fatal error published before quiescence ended capture as complete"
+    );
+    Ok(())
+}

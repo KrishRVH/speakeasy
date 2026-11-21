@@ -667,7 +667,7 @@ module unless a test file is named.
   Capture reports its outcome and closes the microphone before the final audio flush, which then
   waits up to five seconds for credits; a discarded checkpoint stops its keeper, which ends a waiting
   flush unwritten. Only ordinary stop writes an audio end record; a disconnected or stalled
-  microphone leaves a recoverable prefix.
+  microphone, including one whose fatal error races the stop, leaves a recoverable prefix.
   [Audio checkpointing](../crates/app/src/audio/checkpoint.rs) preserves cue boundaries before and
   after promotion, so recovery seals through the same speech gate and trimming. Narration is
   atomically written and synced while audio remains recoverable. Successful transcription copies a

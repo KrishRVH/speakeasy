@@ -436,6 +436,12 @@ impl<D> Recorder<D> {
         }
     }
 
+    fn stop(&self, control: &Control, lost: Option<Lost>) -> Option<Lost> {
+        control.finish();
+        control.quiesce();
+        lost.or_else(|| self.errors.try_recv().ok().map(Lost::from))
+    }
+
     fn drain(
         &mut self,
         id: SessionId,
@@ -466,10 +472,11 @@ impl<D> Recorder<D> {
                 || control.mode() == Mode::Finishing
                 || self.started.elapsed() >= RECORDING_LIMIT
                 || self.pcm.room() == 0;
-            if stopping {
-                control.finish();
-                control.quiesce();
-            }
+            let lost = if stopping {
+                self.stop(control, lost)
+            } else {
+                lost
+            };
             let heard = self.pcm.samples();
             self.sounded |= consume_pcm(&mut self.ring, &mut self.pcm, &mut meter);
             if self.pcm.samples() > heard {
