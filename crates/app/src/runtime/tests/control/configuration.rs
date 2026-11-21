@@ -98,3 +98,43 @@ async fn a_rollback_after_a_show_keeps_the_failure_that_cost_its_narration() -> 
     );
     h.close().await
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_restart_waits_for_the_session_then_stops_the_owner() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    h.ready().await?;
+    h.start().await?;
+    let (restart, restarted) = async_channel::bounded(1);
+    h.runtime.restart_when_idle(restart);
+    let exited = h.exited();
+    assert!(
+        still_pending(restarted.recv()).await,
+        "A restart stopped the owner during a session"
+    );
+    h.finish_as("Fixture.").await?;
+    receive(&h.pasted).await?;
+    receive(&restarted).await?;
+    timeout(PATIENCE, exited).await?;
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_newer_save_withdraws_a_waiting_restart() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    h.ready().await?;
+    h.start().await?;
+    let (restart, restarted) = async_channel::bounded(1);
+    h.runtime.restart_when_idle(restart);
+    h.runtime.configure(ValidConfig::assume(Config {
+        language: "fr".into(),
+        ..h.runtime.baseline.clone()
+    }));
+    assert!(
+        timeout(PATIENCE, restarted.recv()).await?.is_err(),
+        "A save sent after a restart request left the owner waiting to restart"
+    );
+    h.start().await?;
+    h.finish_as("Fixture.").await?;
+    receive(&h.pasted).await?;
+    h.close().await
+}

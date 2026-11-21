@@ -54,12 +54,18 @@ impl<P: Ports> World<P> {
             Directive::Revert(config) => {
                 self.baseline = *config;
                 self.reverting = true;
+                self.restart = None;
                 None
             },
             Directive::Apply(config) => {
                 self.baseline.clone_from(&config);
                 self.reverting = false;
+                self.restart = None;
                 Some(Event::Configure(*config))
+            },
+            Directive::Restart(restart) => {
+                self.restart = Some(restart);
+                None
             },
             Directive::Adopt { answer, .. } => {
                 answer.answer(Err(refusal(Refusal::PresetBusy)));

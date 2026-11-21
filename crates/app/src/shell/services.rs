@@ -63,7 +63,7 @@ enum Restart {
 #[derive(Clone, Copy)]
 pub(super) enum Landing {
     Saved,
-    Retained,
+    Overtaken,
 }
 
 type Purged = Result<(), String>;
@@ -157,6 +157,7 @@ pub(crate) struct Services {
     lifecycle: Lifecycle<Owners, Restart>,
     retirement: Option<Task<()>>,
     validation: Option<Task<()>>,
+    restarting: Option<(async_channel::Sender<()>, Task<()>)>,
     pub(super) quit: Option<Task<()>>,
     #[cfg(target_os = "windows")]
     pub(super) installation: Option<Installation>,
@@ -214,6 +215,7 @@ impl Services {
             lifecycle: Lifecycle::default(),
             retirement: None,
             validation: None,
+            restarting: None,
             quit: None,
             #[cfg(target_os = "windows")]
             installation: None,
@@ -429,7 +431,10 @@ impl Services {
 
         self.reset_choice_for(&config);
         if self.lifecycle.active().is_some_and(|owners| {
-            !owners.runtime.is_running() || owners.launched.change_to(&config) == Change::Desktop
+            !owners.runtime.is_running()
+                || (matches!(landing, Landing::Saved)
+                    && owners.launched.change_to(&config) == Change::Desktop
+                    && owners.runtime.baseline().change_to(&config) == Change::Desktop)
         }) {
             self.pause(cx);
         }
@@ -442,10 +447,11 @@ impl Services {
         if let Some(runtime) = self.runtime_mut() {
             match landing {
                 Landing::Saved => runtime.configure(config),
-                Landing::Retained => {
+                Landing::Overtaken => {
                     runtime.revert(config.into_inner());
                 },
             }
+            self.restart_when_idle(cx);
             return Ok(());
         }
         let config = self
@@ -538,7 +544,9 @@ impl Services {
         {
             self.land(config, landing, cx)
         } else {
-            self.reset_choice_for(&config);
+            if !superseded {
+                self.reset_choice_for(&config);
+            }
             self.config = config.into_inner();
             self.speech_checked = true;
             Ok(())
@@ -549,6 +557,35 @@ impl Services {
             return adopted.and(registered);
         }
         adopted
+    }
+
+    pub(super) fn restart_when_idle(&mut self, cx: &App) {
+        let Some(owners) = self
+            .lifecycle
+            .active()
+            .filter(|owners| owners.launched.change_to(&self.config) == Change::Desktop)
+        else {
+            return;
+        };
+        let (restart, _) = self.restarting.get_or_insert_with(|| {
+            let (restart, restarted) = async_channel::bounded(1);
+            let waiting = cx.spawn(async move |cx| {
+                if restarted.recv().await.is_ok() {
+                    cx.update_global::<Self, _>(|services, cx| services.restart(cx));
+                }
+            });
+            (restart, waiting)
+        });
+        owners.runtime.restart_when_idle(restart.clone());
+    }
+
+    fn restart(&mut self, cx: &App) {
+        self.restarting = None;
+        if self.lifecycle.active().is_none() || self.lifecycle.is_pausing() {
+            return;
+        }
+        self.pause(cx);
+        self.lifecycle.queue(Restart::Validate);
     }
 
     pub(super) fn resume(&mut self, cx: &App) {
@@ -665,8 +702,8 @@ impl Services {
             return;
         }
         self.show_copies.cancel();
-        self.choices.cancel();
         self.validation = None;
+        self.restarting = None;
         let started = self.lifecycle.pause();
         announce(
             &self.output,
@@ -721,6 +758,7 @@ impl Services {
             },
             done,
         };
+        self.choices.outdate();
         self.choices.forget();
         self.admitted = None;
         self.pause(cx);
@@ -817,6 +855,7 @@ impl Services {
         self.choices.cancel();
         self.show_previews.cancel();
         self.validation = None;
+        self.restarting = None;
         self.requests = None;
         self.visibility = None;
 

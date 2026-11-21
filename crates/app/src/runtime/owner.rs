@@ -31,8 +31,8 @@ use tokio::{
 use zeroize::Zeroizing;
 
 use super::{
-    Directive, Meter, PracticeEvent, Recovery, RecoveryResult, Report, Snapshot, SnapshotEpoch,
-    Wiring,
+    Directive, Meter, PracticeEvent, Recovery, RecoveryResult, Report, Restarting, Snapshot,
+    SnapshotEpoch, Wiring,
     device::Device,
     native::{self, Clip, Delivered, Native},
     now,
@@ -59,6 +59,7 @@ enum Wake {
     Input(Result<Input, RecvError>),
     Report(Report),
     Revert,
+    Restart,
     Command(Directive),
     Capture(CaptureEvent),
     Show(ShowEvent),
@@ -109,6 +110,7 @@ struct World<P: Ports> {
     default_microphone: Option<SessionId>,
     awake: Option<(Keep, Option<P::Awake>)>,
     reverting: bool,
+    restart: Option<Restarting>,
 }
 
 impl<P: Ports> Owner<P> {
@@ -170,6 +172,7 @@ impl<P: Ports> Owner<P> {
             default_microphone: None,
             awake: None,
             reverting: false,
+            restart: None,
         };
         let machine = Machine::new(
             Timing::DICTATION,
@@ -190,7 +193,9 @@ impl<P: Ports> Owner<P> {
             Some(sleep_until(at.into()))
         }));
         let idle = self.machine.is_idle();
-        let revert = world.reverting && idle && self.machine.practice().is_none();
+        let settled = idle && self.machine.practice().is_none();
+        let revert = world.reverting && settled;
+        let restart = world.restart.is_some() && settled;
         let practice_closed = or_pending(self.machine.practice().map(mpsc::Sender::closed));
         let delivered = or_pending(world.delivery.as_mut());
 
@@ -198,6 +203,7 @@ impl<P: Ports> Owner<P> {
             biased;
             _ = world.stopping.recv() => Wake::Stop,
             () = ready(()), if revert => Wake::Revert,
+            () = ready(()), if restart => Wake::Restart,
             () = practice_closed => Wake::EndPractice,
             Ok(practice) = world.practices.recv() => Wake::Practice(practice),
             Ok(command) = world.commands.recv() => Wake::Command(command),
@@ -235,6 +241,12 @@ impl<P: Ports> Owner<P> {
             Wake::Revert => {
                 world.reverting = false;
                 Event::Revert(world.baseline.clone())
+            },
+            Wake::Restart => {
+                if let Some(restart) = world.restart.take() {
+                    restart.restart();
+                }
+                Event::Stop
             },
             Wake::Command(directive) => {
                 let idle = self.machine.is_idle() && self.machine.practice().is_none();

@@ -12,11 +12,11 @@ use speakeasy_platform::{Input, InputSender, Scope};
 
 use super::*;
 use crate::{
-    config::Engine,
+    config::{Change, Engine},
     control::{Call, Command, Disposition},
     shell::{
         LaunchMode,
-        choices::Selected,
+        choices::{Applied, Selected},
         save::SaveQueue,
         services::{Landing, Launch},
     },
@@ -150,6 +150,8 @@ pub(in crate::shell::settings) async fn exercise(
         rechecked(&library, cx).await?;
         rebound(&library, cx).await?;
         rollback::rolled_back(settings, &library, cx).await?;
+        rollback::rolled_back_rebinding(settings, &library, cx).await?;
+        rollback::rebound_then_failed(settings, &library, cx).await?;
         cx.update(|cx| {
             cx.update_global::<Services, _>(|services, _| {
                 services.config = library.clone();
@@ -361,7 +363,10 @@ async fn redrafted(
             })
         })
         .map_err(anyhow::Error::msg)?;
-    used.recv().await?.map_err(anyhow::Error::msg)?;
+    used.recv()
+        .await?
+        .map(Applied::load)
+        .map_err(anyhow::Error::msg)?;
     settings.update(cx, |view, _, cx| {
         view.saves = SaveQueue::new(path.to_owned(), library.clone());
         view.config = german.clone();
@@ -412,7 +417,10 @@ async fn use_paused(
             })
         })
         .map_err(anyhow::Error::msg)?;
-    used.recv().await?.map_err(anyhow::Error::msg)
+    used.recv()
+        .await?
+        .map(Applied::load)
+        .map_err(anyhow::Error::msg)
 }
 
 #[expect(
@@ -480,6 +488,34 @@ async fn retire(library: &Config, cx: &mut AsyncApp) -> anyhow::Result<()> {
         });
     });
     Ok(())
+}
+
+#[expect(
+    clippy::future_not_send,
+    reason = "Native acceptance drives Services and a fake owner on GPUI's UI thread"
+)]
+async fn relaunch(saved: &Config, cx: &mut AsyncApp) -> anyhow::Result<()> {
+    cx.update(|cx| cx.update_global::<Services, _>(|services, cx| services.pause(cx)));
+    until(cx, "The fake owner did not retire", |cx| {
+        Ok(cx.update(|cx| {
+            let services = cx.global::<Services>();
+            services.runtime().is_none() && services.service_state() != ServiceState::Pausing
+        }))
+    })
+    .await?;
+    cx.update(|cx| {
+        cx.update_global::<Services, _>(|services, _| {
+            services.config = saved.clone();
+            services.admitted = None;
+            services.choices.selected = None;
+            services.launch = Launch::Desktop;
+            services.run_fake_owner()
+        })
+    })?;
+    until(cx, "The fake owner did not load its model", |cx| {
+        Ok(snapshot(cx).model == ModelState::Ready)
+    })
+    .await
 }
 
 fn rebind(config: &Config) -> Config {
@@ -746,49 +782,43 @@ async fn stale_use(
     clippy::future_not_send,
     reason = "Native acceptance drives Services and a fake owner on GPUI's UI thread"
 )]
-async fn unavailable(settings: WindowHandle<Settings>, cx: &AsyncApp) -> anyhow::Result<()> {
-    let directory = tempfile::tempdir()?;
-    let missing = settings.read_with(cx, |view, _| Config {
-        model: directory.path().join("missing.gguf"),
-        ..view.config.clone()
-    })?;
+async fn unavailable(cx: &AsyncApp) -> anyhow::Result<()> {
     let (call, acknowledging) = Call::new(Command::Preset {
         name: "French".into(),
     });
     let (tried, attempt) = std::sync::mpsc::channel();
-    let mut armed = Some((missing, tried));
+    let mut armed = Some(tried);
     let observation = cx.update(|cx| {
         cx.observe_global::<Services>(move |cx| {
             if !cx.global::<Services>().choices.awaits_owner() {
                 return;
             }
-            let Some((missing, tried)) = armed.take() else {
+            let Some(tried) = armed.take() else {
                 return;
             };
-            let used = cx.update_global::<Services, _>(|services, cx| {
-                services.use_preset(missing, |_| true, cx)
+            let refused = cx.update_global::<Services, _>(|services, _| {
+                let choice = services.choices.choose();
+                services
+                    .admit_use(choice, Err(anyhow::anyhow!("The model is missing.")), true)
+                    .is_err()
             });
             #[expect(
                 clippy::let_underscore_must_use,
                 reason = "The acceptance fails below when the attempt never arrives"
             )]
-            let _ = tried.send(used);
+            let _ = tried.send(refused);
         })
     });
     cx.update(|cx| cx.update_global::<Services, _>(|services, cx| services.control(call, cx)));
     let answered = acknowledging.recv().await?;
-    let used = attempt
-        .recv_timeout(PATIENCE)?
-        .map_err(anyhow::Error::msg)?
-        .recv()
-        .await?;
+    let refused = attempt.recv_timeout(PATIENCE)?;
     drop(observation);
     settle(cx).await;
     ensure!(
         answered.result == Disposition::Ok
-            && used.is_err()
+            && refused
             && preset_name(cx).as_deref() == Some("French"),
-        "An unavailable Use erased a tray preset the owner had accepted"
+        "An unavailable Use checked while a tray preset awaited the owner erased it"
     );
     Ok(())
 }
@@ -808,7 +838,17 @@ async fn running(
     .await?;
     stale_use(settings, path, cx).await?;
     rollback::waited_out(settings, path, cx).await?;
-    rollback::retained(settings, path, cx).await?;
+    rollback::overtaken(settings, path, cx).await?;
+    rollback::overtaken_rebinding(settings, path, cx).await?;
+    rollback::printed_after_failure(settings, path, cx).await?;
+    rollback::older_theme_after_use(settings, path, cx).await?;
+    rollback::choice_after_overtaken_save(settings, path, cx).await?;
+    ordering::resumed_after_use(cx).await?;
+    ordering::tray_after_use(cx).await?;
+    ordering::cancelled_choices(cx).await?;
+    ordering::dropped_use(cx).await?;
+    ordering::refused_after_leaving(cx).await?;
+    rollback::fired_restart(cx).await?;
 
     let overtaken = settings.update(cx, |view, window, cx| {
         let (call, receipt) = Call::new(Command::Preset {
@@ -831,7 +871,7 @@ async fn running(
         preset_name(cx).is_none() && snapshot(cx).preset.is_none(),
         "A tray preset chosen just before Use overtook it"
     );
-    unavailable(settings, cx).await?;
+    unavailable(cx).await?;
 
     let (call, acknowledging) = Call::new(Command::Preset {
         name: "French".into(),
@@ -1023,4 +1063,5 @@ async fn running(
     Ok(())
 }
 
+mod ordering;
 mod rollback;

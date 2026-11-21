@@ -1,4 +1,4 @@
-use async_channel::Receiver;
+use async_channel::{Receiver, Sender};
 use gpui::{App, Task};
 
 use super::Services;
@@ -9,13 +9,13 @@ use crate::{
 };
 
 const UNACKNOWLEDGED: &str =
-    "Preset selection stopped before acknowledging. Read status before choosing again.";
+    "Dictation stopped before the preset was applied. Choose it again once dictation runs.";
 
 const REPLACED: &str =
     "Newer settings replaced the preset before it was confirmed. Choose it again.";
 
 const USE_UNACKNOWLEDGED: &str =
-    "Dictation stopped before the preset was applied. Resume, then use it again.";
+    "Dictation stopped before the preset was applied. Use it again once dictation runs.";
 
 const USE_BUSY: &str = "Finish the current session or preset selection before using a preset.";
 
@@ -24,9 +24,25 @@ pub(super) const USE_OVERTAKEN: &str = "Speech settings changed before the prese
 const USE_UNAVAILABLE: &str =
     "This preset's engine or model is unavailable. Choose them again, then update this preset.";
 
-pub(super) type Used = Result<ValidConfig, &'static str>;
+pub(super) type Used = Result<Applied, &'static str>;
 
-enum Admission {
+pub(super) struct Applied {
+    config: ValidConfig,
+    loaded: Sender<()>,
+}
+
+impl Applied {
+    pub(super) fn load(self) -> ValidConfig {
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "Services stops waiting for Settings once it has rolled the Use back"
+        )]
+        let _ = self.loaded.try_send(());
+        self.config
+    }
+}
+
+pub(super) enum Admission {
     Ready(ValidConfig),
     Waiting(ValidConfig, u64, Receiver<Adopted>),
 }
@@ -37,7 +53,7 @@ pub(super) struct Selected {
 }
 
 struct Selection {
-    request: u64,
+    choice: u64,
     session: u64,
     preset: Preset,
     baseline: Config,
@@ -46,38 +62,49 @@ struct Selection {
 #[derive(Default)]
 pub(super) struct Choices {
     pub selected: Option<Selected>,
+    chosen: u64,
     sent: u64,
-    answered: u64,
     honored: u64,
-    choosing: Option<Task<()>>,
-    using: Option<Task<()>>,
+    waiting: u64,
+    tasks: Vec<(u64, Task<()>)>,
 }
 
 impl Choices {
     pub(super) fn cancel(&mut self) {
-        self.choosing = None;
-        self.using = None;
+        self.tasks.clear();
     }
 
     pub(super) fn forget(&mut self) {
-        self.cancel();
         self.supersede();
         self.selected = None;
     }
 
     pub(super) fn supersede(&mut self) {
-        let request = self.request();
-        self.answered = request;
-        self.honored = request;
+        self.sent = self.sent.wrapping_add(1);
+        self.honored = self.sent;
     }
 
-    fn request(&mut self) -> u64 {
+    pub(super) fn choose(&mut self) -> u64 {
+        self.outdate();
+        self.chosen
+    }
+
+    pub(super) const fn outdate(&mut self) {
+        self.chosen = self.chosen.wrapping_add(1);
+    }
+
+    const fn is_newest(&self, choice: u64) -> bool {
+        self.chosen == choice
+    }
+
+    fn forward(&mut self) -> u64 {
         self.sent = self.sent.wrapping_add(1);
+        self.waiting = self.waiting.saturating_add(1);
         self.sent
     }
 
     fn answer(&mut self, request: u64, accepted: bool) -> bool {
-        self.answered = self.answered.max(request);
+        self.waiting = self.waiting.saturating_sub(1);
         let honored = accepted && request > self.honored;
         if honored {
             self.honored = request;
@@ -86,12 +113,25 @@ impl Choices {
     }
 
     const fn is_settled(&self) -> bool {
-        self.answered == self.sent
+        self.waiting == 0
+    }
+
+    fn hold(&mut self, choice: u64, task: Task<()>) {
+        self.tasks.push((choice, task));
+    }
+
+    fn release(&mut self, choice: u64) {
+        self.tasks.retain(|(held, _)| *held != choice);
     }
 
     #[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
     pub(super) const fn awaits_owner(&self) -> bool {
-        !self.is_settled() && self.choosing.is_none()
+        !self.is_settled()
+    }
+
+    #[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
+    pub(super) const fn is_idle(&self) -> bool {
+        self.tasks.is_empty()
     }
 }
 
@@ -113,7 +153,7 @@ impl Services {
 
         let (call, receipt) = Call::new(Command::Preset { name });
         cx.update_global::<Self, _>(|services, cx| services.control(call, cx));
-        let sent = cx.global::<Self>().choices.sent;
+        let chosen = cx.global::<Self>().choices.chosen;
         cx.spawn(async move |cx| {
             let Ok(reply) = receipt.recv().await else {
                 return;
@@ -123,7 +163,7 @@ impl Services {
             };
             cx.update(|cx| {
                 let services = cx.global::<Self>();
-                if services.choices.sent == sent {
+                if services.choices.chosen == chosen {
                     services.report(crate::runtime::Report::Failed(reason));
                 }
             });
@@ -181,9 +221,9 @@ impl Services {
         preset.load(&mut candidate);
         let path = self.path.clone();
         let session = self.output.borrow().session;
-        let request = self.choices.request();
+        let choice = self.choices.choose();
         let selection = Selection {
-            request,
+            choice,
             session,
             preset,
             baseline,
@@ -191,30 +231,27 @@ impl Services {
         let validation = cx
             .background_executor()
             .spawn(async move { candidate.validated(&path) });
-        self.choices.choosing = Some(cx.spawn(async move |cx| {
+        let choosing = cx.spawn(async move |cx| {
             let result = validation.await;
             let admission = cx.update_global::<Self, _>(|services, _| {
                 services.admit_preset(selection, result, &call)
             });
-            let (selected, receipt) = match admission {
-                Ok(admission) => admission,
-                Err(reason) => {
+            let reply = match admission {
+                Ok((request, selected, receipt)) => {
+                    let reply = receipt
+                        .recv()
+                        .await
+                        .unwrap_or_else(|_| Reply::refused(UNACKNOWLEDGED));
                     cx.update_global::<Self, _>(|services, _| {
-                        services.choices.answer(request, false)
-                    });
-                    call.respond(Reply::refused(reason));
-                    return;
+                        services.confirm_preset(request, selected, reply)
+                    })
                 },
+                Err(reason) => Reply::refused(reason),
             };
-            let reply = receipt
-                .recv()
-                .await
-                .unwrap_or_else(|_| Reply::unknown(UNACKNOWLEDGED));
-            let reply = cx.update_global::<Self, _>(|services, _| {
-                services.confirm_preset(request, selected, reply)
-            });
             call.respond(reply);
-        }));
+            cx.update_global::<Self, _>(|services, _| services.choices.release(choice));
+        });
+        self.choices.hold(choice, choosing);
     }
 
     fn admit_preset(
@@ -222,14 +259,14 @@ impl Services {
         selection: Selection,
         result: anyhow::Result<ValidConfig>,
         caller: &Call,
-    ) -> Result<(Selected, Receiver<Reply>), &'static str> {
+    ) -> Result<(u64, Selected, Receiver<Reply>), &'static str> {
         let Selection {
-            request,
+            choice,
             session,
             preset,
             baseline,
         } = selection;
-        if !caller.is_live() || self.choices.sent != request {
+        if !caller.is_live() || !self.choices.is_newest(choice) {
             return Err("Preset selection expired or was replaced. Choose it again.");
         }
         let config = result.map_err(
@@ -246,10 +283,7 @@ impl Services {
             session,
             call,
         );
-        if let Some(acknowledging) = self.choices.choosing.take() {
-            acknowledging.detach();
-        }
-        Ok((Selected { preset, config }, receipt))
+        Ok((self.choices.forward(), Selected { preset, config }, receipt))
     }
 
     fn confirm_preset(&mut self, request: u64, selected: Selected, reply: Reply) -> Reply {
@@ -291,16 +325,17 @@ impl Services {
         if self.output.borrow().phase.is_active() {
             return Err(USE_BUSY);
         }
+        let choice = self.choices.choose();
         let path = self.path.clone();
         let (answer, used) = async_channel::bounded(1);
         let validation = cx
             .background_executor()
             .spawn(async move { candidate.validated(&path) });
-        self.choices.using = Some(cx.spawn(async move |cx| {
+        let using = cx.spawn(async move |cx| {
             let result = validation.await;
             let admission = cx.update_global::<Self, _>(|services, cx| {
                 let current = current(cx);
-                services.admit_use(result, current)
+                services.admit_use(choice, result, current)
             });
             let outcome = match admission {
                 Ok(Admission::Ready(config)) => Ok(config),
@@ -313,10 +348,30 @@ impl Services {
                 },
                 Err(reason) => Err(reason),
             };
-            if answer.try_send(outcome).is_err() {
-                cx.update_global::<Self, _>(|services, _| services.restore_owner());
-            }
-        }));
+            let loaded = match outcome {
+                Ok(config) => {
+                    let (loaded, acknowledged) = async_channel::bounded(1);
+                    let sent = answer.try_send(Ok(Applied { config, loaded })).is_ok();
+                    drop(answer);
+                    sent && acknowledged.recv().await.is_ok()
+                },
+                Err(reason) => {
+                    #[expect(
+                        clippy::let_underscore_must_use,
+                        reason = "A refused Use left the owner to newer requests, so a caller that left needs nothing undone"
+                    )]
+                    let _ = answer.try_send(Err(reason));
+                    true
+                },
+            };
+            cx.update_global::<Self, _>(|services, cx| {
+                if !loaded {
+                    services.restore_owner(cx);
+                }
+                services.choices.release(choice);
+            });
+        });
+        self.choices.hold(choice, using);
         Ok(used)
     }
 
@@ -326,24 +381,25 @@ impl Services {
         }
     }
 
-    pub(super) fn restore_owner(&mut self) {
+    pub(super) fn restore_owner(&mut self, cx: &App) {
         self.admitted = None;
         let saved = self.config.clone();
         if self
             .runtime_mut()
             .is_some_and(|runtime| runtime.revert(saved))
         {
-            self.choices.supersede();
-            self.choices.selected = None;
+            self.choices.forget();
         }
+        self.restart_when_idle(cx);
     }
 
-    fn admit_use(
+    pub(super) fn admit_use(
         &mut self,
+        choice: u64,
         result: anyhow::Result<ValidConfig>,
         current: bool,
     ) -> Result<Admission, &'static str> {
-        if !current {
+        if !current || !self.choices.is_newest(choice) {
             return Err(USE_OVERTAKEN);
         }
         let config = result.map_err(|_unavailable| USE_UNAVAILABLE)?;
@@ -361,7 +417,7 @@ impl Services {
             return Ok(Admission::Ready(config));
         }
         let receipt = runtime.adopt(config.clone());
-        Ok(Admission::Waiting(config, self.choices.request(), receipt))
+        Ok(Admission::Waiting(config, self.choices.forward(), receipt))
     }
 
     fn confirm_use(&mut self, request: u64, config: &ValidConfig, adopted: Adopted) -> Adopted {
@@ -372,6 +428,7 @@ impl Services {
         }
         self.choices.selected = None;
         self.output.send_modify(|snapshot| snapshot.preset = None);
+        self.admitted = Some(Config::clone(config));
         if let Some(runtime) = self.runtime_mut() {
             runtime.settle(config.clone());
         }

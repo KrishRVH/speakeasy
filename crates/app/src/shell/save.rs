@@ -33,16 +33,18 @@ pub(super) enum SaveProgress {
 
 pub(super) enum SaveOutcome {
     Saved(Box<SavedConfig>),
-    Failed {
-        error: String,
-        kept: Option<Box<SavedConfig>>,
-    },
+    Failed(String),
+}
+
+pub(super) struct Written {
+    pub(super) overtaken: Option<Box<SavedConfig>>,
+    pub(super) epoch: ConfigEpoch,
+    pub(super) next: SaveProgress,
 }
 
 pub(super) struct SaveQueue {
     path: PathBuf,
     writing: Option<Running>,
-    kept: Option<SavedConfig>,
     held: [Config; 2],
     opened: Option<Config>,
     epoch: ConfigEpoch,
@@ -54,7 +56,6 @@ impl SaveQueue {
         Self {
             path,
             writing: None,
-            kept: None,
             held: [held.clone(), held],
             opened: Some(draft),
             epoch: ConfigEpoch::default(),
@@ -78,29 +79,23 @@ impl SaveQueue {
         Some(self.start(draft))
     }
 
-    pub(super) fn finish(&mut self, result: anyhow::Result<SavedConfig>) -> SaveProgress {
+    pub(super) fn finish(&mut self, result: anyhow::Result<SavedConfig>) -> Written {
         let queued = self.writing.take().and_then(|running| running.queued);
         if let Ok(saved) = &result {
             self.held = saved.held();
             self.opened = None;
         }
-        if let Some(next) = queued {
-            if let Ok(saved) = result {
-                self.kept = Some(saved);
-            }
-            return self.start(next);
-        }
-        let kept = self.kept.take();
-        let outcome = match result {
-            Ok(saved) => SaveOutcome::Saved(Box::new(saved)),
-            Err(error) => SaveOutcome::Failed {
-                error: format!("{error:#}"),
-                kept: kept.map(Box::new),
-            },
+        let (overtaken, next) = match queued {
+            Some(draft) => (result.ok().map(Box::new), self.start(draft)),
+            None => (
+                None,
+                self.finished(result.map(|saved| SaveOutcome::Saved(Box::new(saved)))),
+            ),
         };
-        SaveProgress::Finished {
-            outcome,
+        Written {
+            overtaken,
             epoch: self.epoch,
+            next,
         }
     }
 
@@ -114,7 +109,14 @@ impl SaveQueue {
                 });
                 SaveProgress::Writing(running.work.result.clone())
             },
-            Err(error) => self.finish(Err(error)),
+            Err(error) => self.finished(Err(error)),
+        }
+    }
+
+    fn finished(&self, outcome: anyhow::Result<SaveOutcome>) -> SaveProgress {
+        SaveProgress::Finished {
+            outcome: outcome.unwrap_or_else(|error| SaveOutcome::Failed(format!("{error:#}"))),
+            epoch: self.epoch,
         }
     }
 

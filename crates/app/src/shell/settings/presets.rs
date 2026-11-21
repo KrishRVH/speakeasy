@@ -11,7 +11,7 @@ use super::{
 };
 use crate::{
     config::{
-        Config,
+        Change, Config,
         presets::{self, LIMIT, Preset},
     },
     controls::{Weight, icon},
@@ -145,8 +145,10 @@ impl Settings {
         let view = cx.entity().downgrade();
         let drafted = started.clone();
         let current = move |cx: &App| {
-            view.read_with(cx, |view, _| presets::same_choices(&drafted, &view.config))
-                .unwrap_or(false)
+            view.read_with(cx, |view, _| {
+                drafted.change_to(&view.config) < Change::Session
+            })
+            .unwrap_or(false)
         };
         match cx
             .update_global::<Services, _>(|services, cx| services.use_preset(selected, current, cx))
@@ -172,19 +174,27 @@ impl Settings {
     ) {
         self.using = None;
         match used {
-            Some(Ok(_)) if !presets::same_choices(started, &self.config) => {
-                cx.update_global::<Services, _>(|services, _| services.restore_owner());
+            Some(Ok(applied)) if !presets::same_choices(started, &self.config) => {
+                applied.load();
+                cx.update_global::<Services, _>(|services, cx| services.restore_owner(cx));
                 self.notice = Some(Notice::Problem(USE_OVERTAKEN.into()));
             },
-            Some(Ok(config)) => {
+            Some(Ok(applied)) => {
+                let config = applied.load();
                 let resolved = Preset::capture(preset.name(), &config)
                     .unwrap_or_else(|_unchanged| preset.clone());
                 self.presets.resolved = Some((preset.clone(), resolved.clone()));
                 let mut loaded = self.config.clone();
                 resolved.load(&mut loaded);
-                if self.saving.is_none() && !self.saves.needs_save(&loaded) {
-                    cx.update_global::<Services, _>(|services, _| services.speech_checked = true);
-                }
+                let settled = self.saving.is_none() && !self.saves.needs_save(&loaded);
+                cx.update_global::<Services, _>(|services, cx| {
+                    if settled {
+                        services.speech_checked = true;
+                        services.restore_owner(cx);
+                    } else {
+                        services.follow_draft(&loaded);
+                    }
+                });
                 self.load_preset(&resolved, cx);
             },
             Some(Err(reason)) => self.notice = Some(Notice::Problem(reason.into())),

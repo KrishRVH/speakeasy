@@ -22,7 +22,7 @@ use updates::Update;
 
 use super::{
     Services, demo, request_quit,
-    save::{SaveOutcome, SaveProgress, SaveQueue, SavedConfig},
+    save::{SaveOutcome, SaveProgress, SaveQueue, SavedConfig, Written},
     services::Landing,
     window::choose_file,
 };
@@ -709,11 +709,47 @@ impl Settings {
                 ))
             });
             this.update_if_alive(cx, |view, cx| {
-                let progress = view.saves.finish(completed);
-                view.advance_save(progress, cx);
+                let Written {
+                    overtaken,
+                    epoch,
+                    next,
+                } = view.saves.finish(completed);
+                if let Some(saved) = overtaken {
+                    view.land_overtaken(saved, epoch, cx);
+                }
+                view.advance_save(next, cx);
                 cx.notify();
             });
         })
+    }
+
+    fn land_save(
+        &mut self,
+        saved: Box<SavedConfig>,
+        epoch: ConfigEpoch,
+        landing: Landing,
+        cx: &mut Context<'_, Self>,
+    ) -> anyhow::Result<()> {
+        saved.update_draft(&mut self.config);
+        let SavedConfig {
+            submitted,
+            validated,
+        } = *saved;
+        cx.update_global::<Services, _>(|services, cx| {
+            services.adopt_saved(&submitted, validated, epoch, landing, cx)
+        })
+    }
+
+    fn land_overtaken(
+        &mut self,
+        saved: Box<SavedConfig>,
+        epoch: ConfigEpoch,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if let Err(error) = self.land_save(saved, epoch, Landing::Overtaken, cx) {
+            self.notice = Some(Notice::Problem(error.to_string().into()));
+        }
+        present_appearance(cx);
     }
 
     fn finish_save(
@@ -722,22 +758,14 @@ impl Settings {
         epoch: ConfigEpoch,
         cx: &mut Context<'_, Self>,
     ) {
-        let (saved, error, landing) = match outcome {
-            SaveOutcome::Saved(saved) => (Some(saved), None, Landing::Saved),
-            SaveOutcome::Failed { error, kept } => (kept, Some(error), Landing::Retained),
+        let (applied, error) = match outcome {
+            SaveOutcome::Saved(saved) => {
+                (Some(self.land_save(saved, epoch, Landing::Saved, cx)), None)
+            },
+            SaveOutcome::Failed(error) => (None, Some(error)),
         };
-        let applied = saved.map(|saved| {
-            saved.update_draft(&mut self.config);
-            let SavedConfig {
-                submitted,
-                validated,
-            } = *saved;
-            cx.update_global::<Services, _>(|services, cx| {
-                services.adopt_saved(&submitted, validated, epoch, landing, cx)
-            })
-        });
         if error.is_some() {
-            cx.update_global::<Services, _>(|services, _| services.restore_owner());
+            cx.update_global::<Services, _>(|services, cx| services.restore_owner(cx));
             let restored = cx.global::<Services>().config.clone();
             if restored.presets != self.config.presets {
                 self.menus.dismiss_presets();

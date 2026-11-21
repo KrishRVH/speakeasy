@@ -405,6 +405,10 @@ impl<Host> Runtime<Host> {
         self.baseline = config.into_inner();
     }
 
+    pub(crate) fn restart_when_idle(&self, restart: Sender<()>) {
+        self.direct(Directive::Restart(Restarting(restart)));
+    }
+
     pub(crate) fn control(&self, call: Call) {
         self.direct(Directive::Control(call));
     }
@@ -609,6 +613,7 @@ enum Directive {
     },
     Apply(Box<Config>),
     Revert(Box<Config>),
+    Restart(Restarting),
 }
 
 impl Directive {
@@ -616,8 +621,20 @@ impl Directive {
         match self {
             Self::Control(call) | Self::Preset { call, .. } => call.respond(Reply::refused(reason)),
             Self::Adopt { answer, .. } => answer.answer(Err(reason)),
-            Self::Apply(_) | Self::Revert(_) => (),
+            Self::Apply(_) | Self::Revert(_) | Self::Restart(_) => (),
         }
+    }
+}
+
+struct Restarting(Sender<()>);
+
+impl Restarting {
+    fn restart(self) {
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "Services stops waiting for a restart once it pauses or starts another owner"
+        )]
+        let _ = self.0.try_send(());
     }
 }
 

@@ -27,15 +27,28 @@ fn succeeded(progress: SaveProgress) -> anyhow::Result<Box<SavedConfig>> {
             ..
         } => Ok(saved),
         SaveProgress::Finished {
-            outcome: SaveOutcome::Failed { error, .. },
+            outcome: SaveOutcome::Failed(error),
             ..
         } => bail!("The save failed: {error}"),
         SaveProgress::Writing(_) => bail!("The save is still writing"),
     }
 }
 
+fn overtaken(written: Written) -> anyhow::Result<(Box<SavedConfig>, SaveProgress)> {
+    let Written {
+        overtaken: Some(saved),
+        next,
+        ..
+    } = written
+    else {
+        bail!("A write that finished behind a queued draft was not delivered");
+    };
+    Ok((saved, next))
+}
+
 #[tokio::test]
-async fn queued_save_applies_only_latest_successful_draft() -> anyhow::Result<()> {
+async fn each_queued_save_lands_in_order_and_repeated_saves_replace_the_queued_draft()
+-> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
     let config = valid_config(directory.path())?;
@@ -53,11 +66,12 @@ async fn queued_save_applies_only_latest_successful_draft() -> anyhow::Result<()
         "A save started while another was writing"
     );
     assert!(queue.submit(draft(16), epoch).is_none());
-    let latest = queue.finish(write_result(first).await?);
+    let (earlier, latest) = overtaken(queue.finish(write_result(first).await?))?;
+    assert_eq!(earlier.validated.threads, 4);
     let SaveProgress::Finished {
         outcome: SaveOutcome::Saved(saved),
         epoch: finished,
-    } = queue.finish(write_result(latest).await?)
+    } = queue.finish(write_result(latest).await?).next
     else {
         bail!("Latest save did not succeed");
     };
@@ -68,13 +82,11 @@ async fn queued_save_applies_only_latest_successful_draft() -> anyhow::Result<()
     assert_eq!(Config::read(&path)?.threads, 16);
     assert_eq!(finished, epoch);
     assert!(queue.is_idle());
-    assert!(queue.kept.is_none());
     Ok(())
 }
 
 #[tokio::test]
-async fn queued_failure_retains_previous_durable_save_and_reports_latest_error()
--> anyhow::Result<()> {
+async fn a_save_that_finishes_before_a_queued_failure_lands_first() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
     let first_epoch = ConfigEpoch::default();
@@ -91,22 +103,20 @@ async fn queued_failure_retains_previous_durable_save_and_reports_latest_error()
         queue.submit(Config::default(), queued_epoch).is_none(),
         "An unconfigured save started while another was writing"
     );
-    let queued = queue.finish(write_result(first).await?);
+    let (earlier, queued) = overtaken(queue.finish(write_result(first).await?))?;
+    assert_eq!(earlier.validated.threads, 4);
     let SaveProgress::Finished {
-        outcome: SaveOutcome::Failed { kept, .. },
+        outcome: SaveOutcome::Failed(_),
         epoch,
-    } = queue.finish(write_result(queued).await?)
+    } = queue.finish(write_result(queued).await?).next
     else {
         bail!("The queued failure was not reported");
     };
-    let kept = kept.context("Previous durable save was lost")?;
-    assert_eq!(kept.validated.threads, 4);
     assert_eq!(
         epoch, queued_epoch,
         "A drained queue reports the epoch of its latest request"
     );
     assert!(queue.is_idle());
-    assert!(queue.kept.is_none());
     Ok(())
 }
 
@@ -140,8 +150,8 @@ async fn a_revert_queued_behind_a_write_reaches_the_file() -> anyhow::Result<()>
         queue.needs_save(&iris),
         "Redoing the running write behind a queued revert had nothing to save"
     );
-    let revert = queue.finish(write_result(first).await?);
-    succeeded(queue.finish(write_result(revert).await?))?;
+    let revert = queue.finish(write_result(first).await?).next;
+    succeeded(queue.finish(write_result(revert).await?).next)?;
     assert_eq!(Config::read(&path)?.theme, original.theme);
     Ok(())
 }
@@ -168,8 +178,8 @@ async fn a_save_queued_behind_a_write_keeps_the_path_spellings_it_did_not_change
         .submit(draft(Theme::Iris), epoch)
         .context("The first save was queued")?;
     assert!(queue.submit(draft(Theme::Chrome), epoch).is_none());
-    let queued = queue.finish(write_result(first).await?);
-    succeeded(queue.finish(write_result(queued).await?))?;
+    let queued = queue.finish(write_result(first).await?).next;
+    succeeded(queue.finish(write_result(queued).await?).next)?;
     let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
     assert_eq!(
         saved,
@@ -238,7 +248,7 @@ async fn a_draft_needs_saving_until_the_file_holds_it_or_a_write_is_making_it() 
         !queue.needs_save(&edited),
         "A draft being written had edits"
     );
-    let saved = succeeded(queue.finish(write_result(write).await?))?;
+    let saved = succeeded(queue.finish(write_result(write).await?).next)?;
     assert!(
         !queue.needs_save(&edited),
         "The draft as submitted had edits"
@@ -263,9 +273,9 @@ async fn a_draft_needs_saving_until_the_file_holds_it_or_a_write_is_making_it() 
         "A revert made while a later write ran had nothing to save"
     );
     let SaveProgress::Finished {
-        outcome: SaveOutcome::Failed { .. },
+        outcome: SaveOutcome::Failed(_),
         ..
-    } = queue.finish(write_result(write).await?)
+    } = queue.finish(write_result(write).await?).next
     else {
         bail!("The failing save did not fail");
     };
