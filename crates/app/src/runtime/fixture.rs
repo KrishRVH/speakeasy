@@ -6,7 +6,7 @@ use speakeasy_show::Narration;
 use tokio::time::timeout;
 
 use super::{
-    ports::{Capturing, Listening, LiveAudio, Pinning, Sealed, Speech},
+    ports::{Capturing, Listening, LiveAudio, MicrophoneSource, Pinning, Sealed, Speech},
     *,
 };
 use crate::{
@@ -49,7 +49,7 @@ impl Ports for Fixture {
         false
     }
 
-    fn keep_awake(&self, _: speakeasy_platform::Keep) -> Option<Self::Awake> {
+    fn keep_awake(&self, _: Keep) -> Option<Self::Awake> {
         None
     }
 
@@ -61,10 +61,7 @@ impl Ports for Fixture {
         events: Sender<CaptureEvent>,
     ) -> anyhow::Result<FixtureDevice> {
         let Some(replay) = &self.replay else {
-            events.try_send(CaptureEvent::Ready(
-                id,
-                crate::runtime::ports::MicrophoneSource::Chosen,
-            ))?;
+            events.try_send(CaptureEvent::Ready(id, MicrophoneSource::Chosen))?;
             return Ok(FixtureDevice::Whole {
                 id,
                 wav: self.wav.clone(),

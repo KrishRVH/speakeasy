@@ -1005,10 +1005,7 @@ async fn the_default_microphone_is_named_only_for_the_session_that_fell_back() -
     let (id, events) = h.start().await?;
     assert!(!h.snapshot().default_microphone);
     events
-        .send(CaptureEvent::Ready(
-            id,
-            crate::runtime::ports::MicrophoneSource::Default,
-        ))
+        .send(CaptureEvent::Ready(id, MicrophoneSource::Default))
         .await?;
     h.observe(|snapshot| snapshot.default_microphone).await?;
     h.finish_as("Fallback words.").await?;
@@ -1023,10 +1020,7 @@ async fn the_default_microphone_is_named_only_for_the_session_that_fell_back() -
 async fn the_computer_stays_awake_until_the_words_are_delivered() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
     h.start().await?;
-    assert_eq!(
-        receive(&h.awake).await?,
-        Some(speakeasy_platform::Keep::System)
-    );
+    assert_eq!(receive(&h.awake).await?, Some(Keep::System));
     let reply = h.finish().await?;
     h.phase(Phase::Processing).await?;
     assert!(

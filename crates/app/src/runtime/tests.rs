@@ -12,8 +12,8 @@ use tokio::{sync::oneshot, task::JoinHandle, time::timeout};
 
 use super::{
     ports::{
-        Capturing, Footage, Listening, LiveAudio, Lost, Pinning, Preservation, Sealed, Speech,
-        Unchosen,
+        Capturing, Footage, Listening, LiveAudio, Lost, MicrophoneSource, Pinning, Preservation,
+        Sealed, Speech, Unchosen,
     },
     *,
 };
@@ -104,10 +104,10 @@ struct FakePorts {
     published: Sender<(Footage, Narration)>,
     loads: Sender<()>,
     sounds: Sender<Sound>,
-    awake: Sender<Option<speakeasy_platform::Keep>>,
+    awake: Sender<Option<Keep>>,
 }
 
-struct FakeAwake(Sender<Option<speakeasy_platform::Keep>>);
+struct FakeAwake(Sender<Option<Keep>>);
 
 impl Drop for FakeAwake {
     fn drop(&mut self) {
@@ -129,7 +129,7 @@ pub(crate) struct Reports {
     published: Receiver<(Footage, Narration)>,
     loads: Receiver<()>,
     sounds: Receiver<Sound>,
-    awake: Receiver<Option<speakeasy_platform::Keep>>,
+    awake: Receiver<Option<Keep>>,
 }
 
 pub(super) fn fake_runtime(
@@ -245,7 +245,7 @@ impl Ports for FakePorts {
         *self.screen_unstopped.borrow()
     }
 
-    fn keep_awake(&self, keep: speakeasy_platform::Keep) -> Option<Self::Awake> {
+    fn keep_awake(&self, keep: Keep) -> Option<Self::Awake> {
         self.awake
             .try_send(Some(keep))
             .expect("The awake report channel is unbounded");
@@ -266,10 +266,7 @@ impl Ports for FakePorts {
             segmentation.try_send(recognition == RecognitionMode::Segmented)?;
         }
         self.captures.try_send((id, events.clone()))?;
-        events.try_send(CaptureEvent::Ready(
-            id,
-            crate::runtime::ports::MicrophoneSource::Chosen,
-        ))?;
+        events.try_send(CaptureEvent::Ready(id, MicrophoneSource::Chosen))?;
         Ok(FakeMicrophone {
             id,
             events,
@@ -749,7 +746,7 @@ struct Harness<Host = OwnedTask> {
     published: Receiver<(Footage, Narration)>,
     loads: Receiver<()>,
     sounds: Receiver<Sound>,
-    awake: Receiver<Option<speakeasy_platform::Keep>>,
+    awake: Receiver<Option<Keep>>,
 }
 
 impl Harness {
