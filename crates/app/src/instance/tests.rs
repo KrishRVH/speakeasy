@@ -97,20 +97,28 @@ fn requests_without_the_secret_are_never_delivered() -> anyhow::Result<()> {
 fn a_secret_trickled_past_the_timeout_is_never_acknowledged() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
-    let (_instance, _requests) = Instance::acquire(&path)?.context("First owner missing")?;
+    let (_instance, requests) = Instance::acquire(&path)?.context("First owner missing")?;
     let (mut slow, nonce) = dial(&path)?;
     slow.set_nodelay(true)?;
     slow.set_read_timeout(Some(PATIENCE))?;
-    for byte in nonce.to_le_bytes() {
+    let secret = nonce.to_le_bytes();
+    let (last, leading) = secret.split_last().context("The secret is empty")?;
+    for &byte in leading {
         if slow.write_all(&[byte]).is_err() {
             break;
         }
         thread::sleep(Duration::from_millis(20));
     }
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "The server may already have closed the connection, which the read below reports"
+    )]
+    let _ = slow.write_all(&[*last, Request::Toggle as u8]);
     assert!(
         slow.read_exact(&mut [0]).is_err(),
         "A trickled secret held the server past its timeout"
     );
+    assert!(requests.try_recv().is_err());
     Ok(())
 }
 
