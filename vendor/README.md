@@ -85,7 +85,8 @@ app liveness for `AsyncApp`, and `App::shutdown` ordering.
   `native_pill_app_withdraws_a_managed_window_that_is_already_unmapped`, which listens on the root
   as a window manager and a taskbar do, fails without the withdrawal event or its
   SubstructureNotify mask.
-- `src/linux/wayland/window.rs` implements `PlatformWindow::set_visible`. A toplevel or layer
+- `src/linux/wayland/window.rs` and `src/linux/wayland/client.rs` implement
+  `PlatformWindow::set_visible`. A toplevel or layer
   surface opened without `show` has no role objects until it is shown. Hiding one does as GTK and
   Qt do: it destroys its role objects, the decoration, toplevel, and xdg_surface or the layer
   surface, and commits a null buffer, so the compositor keeps nothing of it and the client

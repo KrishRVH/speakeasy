@@ -778,8 +778,9 @@ module unless a test file is named.
   manifest with the same recording duration; a mismatch leaves keyframes and edits readable. Source
   exports require an explicit focus and new output path and never overwrite. Source writes use a
   temporary file; failure saves selected keyframes with a nonfatal notice.
-  [publish/tests/recovery.rs](../crates/app/src/show/publish/tests/recovery.rs) covers this
-  fallback, publication failure, revocation, original expiry, and duplicate recovery prevention.
+  [publish/tests.rs](../crates/app/src/show/publish/tests.rs) covers this fallback, and
+  [publish/tests/recovery.rs](../crates/app/src/show/publish/tests/recovery.rs) covers publication
+  failure, revocation, original expiry, and duplicate recovery prevention.
 - **Screen capture and overlay**: [platform/src/screen.rs](../crates/platform/src/screen.rs),
   [screen/geometry.rs](../crates/platform/src/screen/geometry.rs),
   [windows/screen.rs](../crates/platform/src/windows/screen.rs) with
