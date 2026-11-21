@@ -126,7 +126,7 @@ impl Settings {
             Step::Prepare if self.engine_work.is_pausing() => ("Pausing download…", None),
             Step::Prepare | Step::Practice if self.saving.is_some() => ("Saving…", None),
             Step::Prepare if !demo && (!self.config.speech_configured() || speech_failed(cx)) => (
-                "Set up automatically · 0.8 GB",
+                "Set up automatically · up to 0.8 GB",
                 (!self.engine_work.is_busy()).then_some(SettingsAction::Setup),
             ),
             Step::Permissions | Step::Practice if !running => {
