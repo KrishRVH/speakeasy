@@ -202,13 +202,14 @@ fn ends_clause(text: &str, clause_words: usize) -> bool {
     let text = text.trim_end_matches(|end: char| {
         end.is_whitespace() || matches!(end, '"' | '\'' | '”' | '’' | ')' | ']')
     });
-    text.ends_with(['.', '!', '?', ';', ':'])
+    text.ends_with(['.', '!', '?', ';', ':', '。', '！', '？', '；', '：'])
         || (clause_words >= COMMA_CLAUSE_WORDS && text.ends_with(','))
 }
 
 fn attaches(word: &str) -> bool {
-    word.starts_with([',', '.', '!', '?', ';', ':', '’', '\'', ')', ']', '”'])
-        && !word.chars().any(char::is_alphanumeric)
+    word.starts_with([
+        ',', '.', '!', '?', ';', ':', '’', '\'', '"', ')', ']', '”', '。', '！', '？', '；', '：',
+    ]) && !word.chars().any(char::is_alphanumeric)
 }
 
 fn append(text: &mut String, word: &str) {

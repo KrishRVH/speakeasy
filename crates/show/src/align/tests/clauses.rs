@@ -61,3 +61,28 @@ fn space_after_punctuation_or_before_a_closing_quote_still_ends_a_sentence() {
         );
     }
 }
+
+#[test]
+fn a_separately_timed_closing_quote_or_ideographic_full_stop_ends_its_sentence() {
+    for (fixture, expected) in [
+        (
+            &[(0, "Done."), (200, "\""), (400, "Next")][..],
+            ["Done.\"", "Next"],
+        ),
+        (&[(0, "完了。"), (400, "次")][..], ["完了。", "次"]),
+        (
+            &[(0, "完了"), (200, "。"), (400, "次")][..],
+            ["完了。", "次"],
+        ),
+    ] {
+        let Narration::Words(words) = words(fixture) else {
+            panic!("The fixture is timed");
+        };
+        let rows = timed_clauses(&words);
+        assert_eq!(
+            rows.iter().map(|row| row.text.as_str()).collect::<Vec<_>>(),
+            expected,
+            "Rows for {fixture:?}"
+        );
+    }
+}
