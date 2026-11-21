@@ -42,10 +42,6 @@ pub(super) type Saved = Vec<Vec<(Retained<NSString>, Retained<NSData>)>>;
 
 const SAVED_BYTES: usize = 64 << 20;
 
-pub(super) fn save(lease: &Lease) -> Option<Saved> {
-    clipboard::save(lease)
-}
-
 pub(super) fn holds(lease: &Lease, text: &str, mark: isize) -> bool {
     let unchanged = || lease.pasteboard.changeCount() == mark;
     let string = unsafe { NSPasteboardTypeString };
@@ -68,10 +64,6 @@ pub(super) fn holds(lease: &Lease, text: &str, mark: isize) -> bool {
 fn concealed(types: &NSArray<NSString>) -> bool {
     let concealed = NSString::from_str(CONCEALED_TYPE);
     types.iter().any(|kind| kind.isEqualToString(&concealed))
-}
-
-pub(super) fn restore(lease: Lease, saved: Option<&Saved>, mark: isize) -> anyhow::Result<()> {
-    clipboard::restore(&lease, saved, mark)
 }
 
 fn items_from(saved: &Saved) -> anyhow::Result<Vec<Retained<NSPasteboardItem>>> {

@@ -563,7 +563,7 @@ impl insertion::NativeInsert for Insert {
     }
 
     fn save(&mut self, lease: &clipboard::Lease) -> Option<clipboard::Saved> {
-        clipboard::save(lease)
+        crate::clipboard::save(lease)
     }
 
     fn write(
@@ -577,7 +577,7 @@ impl insertion::NativeInsert for Insert {
 
     fn restore(&mut self, contents: Option<clipboard::Saved>, mark: &isize) -> anyhow::Result<()> {
         objc2::rc::autoreleasepool(|_| {
-            clipboard::restore(clipboard::acquire(), contents.as_ref(), *mark)
+            crate::clipboard::restore(&clipboard::acquire(), contents.as_ref(), *mark)
         })
     }
 
