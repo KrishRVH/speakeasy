@@ -208,8 +208,17 @@ impl Tracker {
             }) = self.pointer
             && Rect::UNIT.contains(point)
         {
-            if self.ink.as_ref().is_some_and(|ink| !ink.deliberate) {
-                self.ink = None;
+            if self
+                .ink
+                .take_if(|ink| {
+                    !ink.deliberate
+                        && ink
+                            .points
+                            .first()
+                            .is_some_and(|first| first.at <= taps.end())
+                })
+                .is_some()
+            {
                 self.shift_down = None;
             }
             self.pins.push(Pin {
@@ -438,15 +447,17 @@ mod tests {
     }
 
     #[test]
-    fn accepting_a_pin_retires_its_pending_ink() {
-        let mut tracker = Tracker::new(SURFACE);
+    fn accepting_a_pin_retires_only_ink_begun_during_its_taps() {
         let at = Moment::from_millis;
-        tracker.observe(at(40), Point::new(0.5, 0.5), true, false);
-        assert!(tracker.pin(Span::new(at(10), at(50))));
-        tracker.observe(at(60), Point::new(0.55, 0.5), true, false);
-        tracker.observe(at(70), Point::new(0.6, 0.5), true, false);
-        let recording = tracker.finish(at(80));
-        assert_eq!(recording.strokes[0].span().start(), at(60));
+        for (inked, start) in [(40, 70), (60, 60)] {
+            let mut tracker = Tracker::new(SURFACE);
+            tracker.observe(at(inked), Point::new(0.5, 0.5), true, false);
+            assert!(tracker.pin(Span::new(at(10), at(50))));
+            tracker.observe(at(70), Point::new(0.508, 0.5), true, false);
+            tracker.observe(at(80), Point::new(0.55, 0.5), true, false);
+            let recording = tracker.finish(at(90));
+            assert_eq!(recording.strokes[0].span().start(), at(start), "{inked}");
+        }
     }
 
     #[test]
