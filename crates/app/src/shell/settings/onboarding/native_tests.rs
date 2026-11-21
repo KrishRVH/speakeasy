@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::ensure;
-use gpui::{AsyncApp, WindowHandle};
+use gpui::{AsyncApp, BorrowAppContext as _, WindowHandle};
 use speakeasy_core::machine::Phase;
 
 use super::{Action, Step};
@@ -18,6 +18,23 @@ use crate::{
         },
     },
 };
+
+#[expect(
+    clippy::future_not_send,
+    reason = "Native acceptance waits on GPUI's UI-thread executor"
+)]
+async fn failed_check(cx: &AsyncApp) -> anyhow::Result<bool> {
+    let began = Instant::now();
+    while began.elapsed() < Duration::from_secs(5) {
+        if cx.update(|cx| cx.global::<Services>().output.borrow().phase == Phase::Error) {
+            return Ok(true);
+        }
+        cx.background_executor()
+            .timer(Duration::from_millis(10))
+            .await;
+    }
+    Ok(false)
+}
 
 #[expect(
     clippy::future_not_send,
@@ -44,26 +61,26 @@ pub(in crate::shell::settings) async fn setup_rechecks_unchanged_settings(
         );
         services.mode = LaunchMode::Live;
         services.config.clone_from(&missing);
-        services.checked = false;
+        services.checked = true;
         services
             .output
             .send_modify(|snapshot| snapshot.phase = Phase::Idle);
         view.saves = SaveQueue::new(path, missing.clone());
         view.config = missing;
-        view.adopt_setup(cx);
+        cx.update_global::<Services, _>(|services, cx| services.resume(cx));
         (original, before)
     })?;
-    let began = Instant::now();
-    let mut checked = false;
-    while began.elapsed() < Duration::from_secs(5) {
-        if cx.update(|cx| cx.global::<Services>().output.borrow().phase == Phase::Error) {
-            checked = true;
-            break;
-        }
-        cx.background_executor()
-            .timer(Duration::from_millis(10))
-            .await;
-    }
+    let resumed = failed_check(cx).await?;
+    let unready = settings.update(cx, |view, _, cx| {
+        let unready = !cx.global::<Services>().speech_checked()
+            && view.onboarding_next(Step::Prepare, cx) == Step::Prepare;
+        cx.global::<Services>()
+            .output
+            .send_modify(|snapshot| snapshot.phase = Phase::Idle);
+        view.adopt_setup(cx);
+        unready
+    })?;
+    let rechecked = failed_check(cx).await?;
     settings.update(cx, |view, _, cx| {
         let path = cx.global::<Services>().path.clone();
         let services = cx.global_mut::<Services>();
@@ -75,7 +92,11 @@ pub(in crate::shell::settings) async fn setup_rechecks_unchanged_settings(
         view.config = original;
     })?;
     ensure!(
-        checked,
+        resumed && unready,
+        "A failed Resume check left setup treating the saved speech settings as ready"
+    );
+    ensure!(
+        rechecked,
         "Setup that kept the saved speech paths did not check them again"
     );
     Ok(())
