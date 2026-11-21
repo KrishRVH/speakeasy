@@ -8,7 +8,10 @@ const NAMING: &[&str] = &[
     "a", "an", "the", "another", "leading", "trailing", "double", "single", "extra",
 ];
 
-const STOPS: [char; 4] = ['.', '!', '?', '…'];
+const STOPS: &[char] = &[
+    '.', '!', '?', '…', '‼', '‽', '⁇', '⁈', '⁉', '。', '｡', '．', '！', '？', '؟', '۔', '।', '॥',
+    '։', '።', '፧', '။', '។',
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Symbols {
@@ -302,6 +305,12 @@ mod tests {
             "We move forward… Slash the budget.",
             "Move forward (slash prices) today.",
             "Hello… Underscore world",
+            "结束。 Underscore that point",
+            "太好了！ Underscore that point",
+            "真的吗？ Forward slash that",
+            "完了｡ Backslash here",
+            "हो गया। Underscore next",
+            "انتهى؟ Underscore next",
             "It is open. Quote me close quote",
             "It is open, quote me close quote",
             "Say open quote hello and close. Quote this other sentence.",
