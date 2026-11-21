@@ -126,6 +126,18 @@ fn paste_checks_once_after_all_releases_and_preserves_error_cleanup() {
     }
 }
 
+fn paste_request(permit: &InsertPermit, own_focus: crate::OwnFocus) -> Insertion {
+    let (reply, _answer) = Reply::channel();
+    Insertion {
+        text: "fixture".into(),
+        permit: permit.clone(),
+        delivery: Delivery::Paste,
+        enter: crate::Enter::Withheld,
+        own_focus,
+        reply,
+    }
+}
+
 #[test]
 fn focus_moving_to_speakeasy_during_the_last_clipboard_check_refuses_the_paste()
 -> anyhow::Result<()> {
@@ -133,27 +145,91 @@ fn focus_moving_to_speakeasy_during_the_last_clipboard_check_refuses_the_paste()
     let input = InputSender::new(events);
     let permit = input.begin().context("Recording")?;
     let report = crate::FocusReport::default();
-    let (reply, _answer) = Reply::channel();
-    let request = Insertion {
-        text: "fixture".into(),
-        permit: permit.clone(),
-        delivery: Delivery::Paste,
-        enter: crate::Enter::Withheld,
-        own_focus: report.subscribe(),
-        reply,
-    };
+    let request = paste_request(&permit, report.subscribe());
     let refused = authorize_paste(
         &request,
         &mut (),
-        |()| true,
-        |()| Ok(false),
         |()| {
             report.settle(7, true);
             Ok(true)
         },
+        |()| true,
+        |()| true,
+        |()| Ok(false),
     )?;
     assert_eq!(refused.break_value(), Delivery::Paste.check_focus(false));
     assert!(permit.commit(), "A refused paste spent its authority");
+    Ok(())
+}
+
+#[test]
+fn a_modifier_or_layout_change_during_the_last_clipboard_check_refuses_the_paste()
+-> anyhow::Result<()> {
+    let (events, _received) = async_channel::bounded(1);
+    let input = InputSender::new(events);
+    for layout in [false, true] {
+        let permit = input.begin().context("Recording")?;
+        let request = paste_request(&permit, crate::FocusReport::default().subscribe());
+        let mut desk = (false, false);
+        let refused = authorize_paste(
+            &request,
+            &mut desk,
+            |(pressed, switched)| {
+                *pressed = !layout;
+                *switched = layout;
+                Ok(true)
+            },
+            |_| true,
+            |&(_, switched)| !switched,
+            |&(pressed, _)| Ok(pressed),
+        )?;
+        assert_eq!(
+            refused.break_value(),
+            Some(if layout {
+                SECOND_LAYOUT
+            } else {
+                PASTE_AFTER_RELEASE
+            }),
+            "A change during the clipboard check went unseen (layout: {layout})"
+        );
+        assert!(permit.commit(), "A refused paste spent its authority");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_failed_or_unreadable_clipboard_check_never_reports_a_copy() -> anyhow::Result<()> {
+    let (events, _received) = async_channel::bounded(1);
+    let input = InputSender::new(events);
+    let permit = input.begin().context("Recording")?;
+    let report = crate::FocusReport::default();
+    report.settle(7, true);
+    let request = paste_request(&permit, report.subscribe());
+    let changed = authorize_paste(
+        &request,
+        &mut (),
+        |()| Ok(false),
+        |()| false,
+        |()| true,
+        |()| Ok(true),
+    )?;
+    assert_eq!(
+        changed.break_value(),
+        Some(CLIPBOARD_CHANGED),
+        "Another clipboard item was left for manual paste"
+    );
+    let unread = authorize_paste(
+        &request,
+        &mut (),
+        |()| bail!("Synthetic clipboard failure"),
+        |()| false,
+        |()| true,
+        |()| Ok(true),
+    );
+    assert!(
+        unread.is_err(),
+        "An unreadable clipboard was left for manual paste"
+    );
     Ok(())
 }
 

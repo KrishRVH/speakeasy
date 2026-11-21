@@ -225,9 +225,11 @@ desktop thread's single-threaded runtime a signal stream refills only between po
 `SIGNAL_BACKLOG` messages at a time, so transfer requests cannot hold off an insertion. The portal
 clipboard serves bytes only after the permit commits to paste or manual copy. Selection loss
 invalidates its transfer payloads. Writes and reporting have deadlines. X11 clipboard serving and
-insertion have separate owners; after blocking focus/modifier queries and before committing paste,
-the X11 paste confirms that the clipboard still holds the dictated text from the same owner. That
-check and XTEST submission are not one atomic server transaction.
+insertion have separate owners; before committing paste, the X11 paste confirms that the clipboard
+still holds the dictated text from the same owner and only then samples focus, layout, and held
+modifiers, because a clipboard manager can take seconds to answer that read. A content check that
+fails or errors never leaves the clipboard for manual paste. That check and XTEST submission are not
+one atomic server transaction.
 
 ## Linux realtime opt-out
 

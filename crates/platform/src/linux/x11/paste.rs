@@ -31,6 +31,10 @@ use crate::{
     },
 };
 
+const SECOND_LAYOUT: Inserted = Inserted::Copied(
+    "Text copied. Automatic paste needs your first keyboard layout; paste manually with the current layout.",
+);
+
 pub(super) struct InsertionWorker {
     _thread: OwnedThread,
     input: InputSender,
@@ -187,25 +191,18 @@ impl Paster {
         let Some(chord) =
             PasteChord::resolve(keys, |symbol| self.keyboard.unshifted_keycode(symbol))
         else {
-            return Ok(NO_PASTE_BINDING);
+            return Ok(settle_copy(&request.permit, NO_PASTE_BINDING));
         };
-        if !uses_first_layout(&self.clipboard.connection).unwrap_or(false) {
-            return Ok(Inserted::Copied(
-                "Text copied. Automatic paste needs your first keyboard layout; paste manually with the current layout.",
-            ));
-        }
-        if !self.clipboard.holds(owner, &request.text)? {
-            return Ok(CLIPBOARD_CHANGED);
-        }
         let keyboard = &self.keyboard;
         if let ControlFlow::Break(outcome) = authorize_paste(
             request,
             &mut self.clipboard,
-            |clipboard| clipboard.external_target(HostSession::X11).unwrap_or(false),
-            |clipboard| modifiers_held(clipboard, keyboard),
             |clipboard| clipboard.holds(owner, &request.text),
+            |clipboard| clipboard.external_target(HostSession::X11).unwrap_or(false),
+            |clipboard| uses_first_layout(&clipboard.connection).unwrap_or(false),
+            |clipboard| modifiers_held(clipboard, keyboard),
         )? {
-            return Ok(outcome);
+            return Ok(settle_copy(&request.permit, outcome));
         }
 
         let connection = &self.clipboard.connection;
@@ -254,20 +251,23 @@ fn modifiers_held(clipboard: &Clipboard, keyboard: &Keyboard) -> anyhow::Result<
 fn authorize_paste<C>(
     request: &Insertion,
     clipboard: &mut C,
-    external_target: impl FnOnce(&C) -> bool,
-    modifiers_held: impl FnOnce(&C) -> anyhow::Result<bool>,
     holds_text: impl FnOnce(&mut C) -> anyhow::Result<bool>,
+    external_target: impl FnOnce(&C) -> bool,
+    first_layout: impl FnOnce(&C) -> bool,
+    modifiers_held: impl FnOnce(&C) -> anyhow::Result<bool>,
 ) -> anyhow::Result<ControlFlow<Inserted>> {
+    if !holds_text(clipboard)? {
+        return Ok(ControlFlow::Break(CLIPBOARD_CHANGED));
+    }
     let external = external_target(clipboard);
+    if !first_layout(clipboard) {
+        return Ok(ControlFlow::Break(SECOND_LAYOUT));
+    }
     let released = !modifiers_held(clipboard)?;
-    let owned = holds_text(clipboard);
     if let Some(outcome) =
         Delivery::Paste.preflight(external && !request.own_focus.held(), released)
     {
         return Ok(ControlFlow::Break(outcome));
-    }
-    if !owned? {
-        return Ok(ControlFlow::Break(CLIPBOARD_CHANGED));
     }
     Ok(if request.permit.commit() {
         ControlFlow::Continue(())
