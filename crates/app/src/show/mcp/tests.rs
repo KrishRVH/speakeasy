@@ -166,7 +166,7 @@ fn symlinked_bundles_and_symlinked_roots_are_refused() -> anyhow::Result<()> {
     }
     let roots = Roots::open(&[root], None).map_err(anyhow::Error::msg)?;
     assert!(roots.resolve(linked.to_str().unwrap()).is_err());
-    assert!(roots.list(None).unwrap().0.is_empty());
+    assert!(roots.list(None).unwrap().shows.is_empty());
     Ok(())
 }
 
@@ -179,17 +179,17 @@ fn listing_is_bounded_and_a_cursor_does_not_skip_the_next_show() -> anyhow::Resu
         fs::write(directory.join(Manifest::FILE), b"broken manifest")?;
     }
     let roots = Roots::open(&[temp.path().to_owned()], None).map_err(anyhow::Error::msg)?;
-    let (first, cursor) = roots.list(None).map_err(anyhow::Error::msg)?;
-    assert_eq!(first.len(), 100);
-    let cursor = cursor.unwrap();
-    let (next, cursor) = roots.list(Some(&cursor)).map_err(anyhow::Error::msg)?;
-    assert_eq!(next.len(), 2);
-    assert!(cursor.is_none());
-    assert!(
-        first
+    let first = roots.list(None).map_err(anyhow::Error::msg)?;
+    assert_eq!(first.shows.len(), 100);
+    let cursor = first.next_cursor.unwrap();
+    let next = roots.list(Some(&cursor)).map_err(anyhow::Error::msg)?;
+    assert_eq!(next.shows.len(), 2);
+    assert!(next.next_cursor.is_none());
+    assert!(first.shows.iter().all(|first| {
+        next.shows
             .iter()
-            .all(|first| next.iter().all(|next| first.directory != next.directory))
-    );
+            .all(|next| first.directory != next.directory)
+    }));
     Ok(())
 }
 
@@ -235,7 +235,63 @@ fn internal_show_directories_are_neither_listed_nor_resolved() -> anyhow::Result
         assert!(roots.resolve(name).is_err());
         assert!(roots.resolve(hidden.to_str().unwrap()).is_err());
     }
-    assert!(roots.list(None).unwrap().0.is_empty());
+    assert!(roots.list(None).unwrap().shows.is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_show_whose_manifest_cannot_be_opened_is_listed_with_that_problem() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let single = fixture(temp.path(), "single")?.canonicalize()?;
+    let container = temp.path().join("container");
+    let nested = fixture(&container, "nested")?.canonicalize()?;
+    for directory in [&single, &nested] {
+        fs::remove_file(directory.join(Manifest::FILE))?;
+        fs::create_dir(directory.join(Manifest::FILE))?;
+    }
+    let roots = Roots::open(&[single.clone(), container], None).map_err(anyhow::Error::msg)?;
+    let listing = serde_json::to_value(roots.list(None).map_err(anyhow::Error::msg)?)?;
+    let rows = listing["shows"].as_array().unwrap();
+    assert_eq!(rows.len(), 2, "{listing}");
+    for (row, directory) in rows.iter().zip([&nested, &single]) {
+        assert_eq!(row["directory"], json!(directory));
+        assert_eq!(row["status"], "damaged");
+        assert_eq!(
+            row["problems"][0]["file"],
+            json!(directory.join(Manifest::FILE))
+        );
+    }
+    assert_eq!(
+        roots.resolve("single").map_err(anyhow::Error::msg)?.path,
+        single
+    );
+    Ok(())
+}
+
+#[test]
+fn a_replaced_or_moved_root_neither_mixes_folders_nor_hides_other_roots() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let parent = temp.path().join("parent");
+    let kept = fixture(&parent, "kept")?.canonicalize()?;
+    let nested = parent.join("nested");
+    fixture(&nested, "original")?;
+    let moved = temp.path().join("moved");
+    fs::create_dir(&moved)?;
+    let moved = moved.canonicalize()?;
+    let roots =
+        Roots::open(&[parent, nested.clone(), moved.clone()], None).map_err(anyhow::Error::msg)?;
+    fs::rename(&nested, temp.path().join("old nested"))?;
+    let replacement = fixture(&nested, "replacement")?.canonicalize()?;
+    fs::rename(&moved, temp.path().join("elsewhere"))?;
+    let listing = roots.list(None).map_err(anyhow::Error::msg)?;
+    let listed: Vec<_> = listing.shows.iter().map(|show| &show.directory).collect();
+    assert_eq!(listed, [&kept, &replacement]);
+    let unavailable: Vec<_> = listing
+        .unavailable_roots
+        .iter()
+        .map(|root| &root.file)
+        .collect();
+    assert_eq!(unavailable, [&moved]);
     Ok(())
 }
 

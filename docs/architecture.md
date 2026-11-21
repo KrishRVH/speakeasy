@@ -413,14 +413,17 @@ module unless a test file is named.
   temporal queries between CLI and [show/mcp.rs](../crates/app/src/show/mcp.rs). MCP exposes three
   read-only tools within explicit launch roots. It opens directories and regular files relative to
   retained directory handles, refuses links and hidden publication directories, bounds lines,
-  content, and images, and reports actual source sample times. A managed ID or retention date is
-  reported only when, after reading, the directory handle that was read is still the managed Shows
-  parent's entry of the same name. It serves the 2026-07-28 stateless protocol and the 2025-11-25
-  initialized protocol used by current external clients. No tool exports, sends, or reads ordinary
-  dictation. Initialization instructions are the disclosure followed by the embedded skill's reading
-  guide without its front matter. Setup resolves the durable installed launcher and only prints
-  client stanzas, adding one for an agent in WSL that runs the Windows command through interop with
-  Windows roots, or a note when interop, drive mounting, or a lettered drive is missing.
+  content, and images, and reports actual source sample times. A listing reads each row through the
+  handle that enumerated it. A folder whose manifest exists but cannot be opened is listed as
+  damaged; a root that no configured root can still reach, or that cannot be listed, is named in
+  `unavailableRoots` while the others still list. A managed ID or retention date is reported only
+  when, after reading, the directory handle that was read is still the managed Shows parent's entry
+  of the same name. It serves the 2026-07-28 stateless protocol and the 2025-11-25 initialized
+  protocol used by current external clients. No tool exports, sends, or reads ordinary dictation.
+  Initialization instructions are the disclosure followed by the embedded skill's reading guide
+  without its front matter. Setup resolves the durable installed launcher and only prints client
+  stanzas, adding one for an agent in WSL that runs the Windows command through interop with Windows
+  roots, or a note when interop, drive mounting, or a lettered drive is missing.
 - **Show recording and publication**: [show.rs](../crates/app/src/show.rs),
   [show/recorder.rs](../crates/app/src/show/recorder.rs),
   [show/publish.rs](../crates/app/src/show/publish.rs), and the session owner.

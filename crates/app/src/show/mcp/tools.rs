@@ -9,7 +9,7 @@ use super::{
 };
 use crate::show::{
     evidence::{
-        Inspection, Overview,
+        Inspection,
         query::{self, Found, Query},
     },
     store::{recall, source},
@@ -53,7 +53,7 @@ pub(super) fn definitions() -> Value {
     let phrase = json!({"type": "string", "minLength": 1, "maxLength": 2048, "description": "Phrase in recorded narration, requiring word timings; not edited summary text."});
     let annotations = json!({"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false});
     json!([
-        {"name": Tool::List.name(), "description": format!("List at most {PAGE} saved Shows inside launch-time roots, with metadata only and a continuation cursor. {DISCLOSURE}"),
+        {"name": Tool::List.name(), "description": format!("List at most {PAGE} saved Shows inside launch-time roots, with metadata only and a continuation cursor. Roots that cannot be listed are named in unavailableRoots. {DISCLOSURE}"),
          "inputSchema": {"type": "object", "properties": {"cursor": {"type": "string", "maxLength": PATH_LIMIT}}, "additionalProperties": false}, "annotations": annotations},
         {"name": Tool::Read.name(), "description": format!("Read one exact Show's edited summary and metadata. Optionally include bounded recorded narration and one time, mark, or phrase lookup. Multiple phrase matches remain ambiguous unless match is given. Text truncation and missing or untimed narration are disclosed. {DISCLOSURE}"),
          "inputSchema": {"type": "object", "properties": {"show": show, "narration": {"type": "boolean", "default": false}, "at": at, "mark": positive, "phrase": phrase, "match": positive}, "required": ["show"], "additionalProperties": false}, "annotations": annotations},
@@ -80,22 +80,9 @@ struct List {
     cursor: Option<String>,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Listed {
-    shows: Vec<Overview>,
-    truncated: bool,
-    next_cursor: Option<String>,
-}
-
 fn list(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
     let request: List = decode(arguments)?;
-    let (shows, cursor) = roots.list(request.cursor.as_deref())?;
-    Ok(vec![text(&Listed {
-        shows,
-        truncated: cursor.is_some(),
-        next_cursor: cursor,
-    })?])
+    Ok(vec![text(&roots.list(request.cursor.as_deref())?)?])
 }
 
 #[derive(Deserialize)]

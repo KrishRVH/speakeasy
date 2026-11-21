@@ -1,13 +1,15 @@
 use std::{
     ffi::OsStr,
+    io,
     path::{Component, Path, PathBuf},
 };
 
+use serde::Serialize;
 use speakeasy_platform::ReadDirectory;
 use speakeasy_show::Manifest;
 
 use crate::show::{
-    evidence::Overview,
+    evidence::{Overview, Problem},
     store::{address::ShowId, recall::Entry},
 };
 
@@ -23,6 +25,15 @@ pub(super) struct Roots {
 pub(super) struct Folder {
     pub path: PathBuf,
     pub files: ReadDirectory,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct Listing {
+    pub shows: Vec<Overview>,
+    pub unavailable_roots: Vec<Problem>,
+    pub truncated: bool,
+    pub next_cursor: Option<String>,
 }
 
 struct Root {
@@ -139,12 +150,12 @@ impl Roots {
         let mut found: Option<Folder> = None;
         for configured in &self.roots {
             let root = &configured.directory;
-            let candidate =
-                if root.file_name() == path.file_name() && has_manifest(&configured.files) {
-                    root.clone()
-                } else {
-                    root.join(path)
-                };
+            let candidate = if root.file_name() == path.file_name() && holds_show(&configured.files)
+            {
+                root.clone()
+            } else {
+                root.join(path)
+            };
             if let Ok(Some(directory)) = configured.translate(&candidate) {
                 if found
                     .as_ref()
@@ -170,10 +181,7 @@ impl Roots {
         Err(reason)
     }
 
-    pub(super) fn list(
-        &self,
-        cursor: Option<&str>,
-    ) -> Result<(Vec<Overview>, Option<String>), &'static str> {
+    pub(super) fn list(&self, cursor: Option<&str>) -> Result<Listing, &'static str> {
         let after = cursor.map(PathBuf::from);
         if let Some(after) = &after
             && (after.as_os_str().len() > PATH_LIMIT
@@ -188,68 +196,81 @@ impl Roots {
         {
             return Err("Invalid Show list cursor");
         }
-        let mut paths = Vec::new();
+        let mut found = Vec::new();
+        let mut unavailable_roots = Vec::new();
         for configured in &self.roots {
-            let root = &configured.directory;
-            self.check(root)?;
-            if has_manifest(&configured.files) {
-                retain(&mut paths, root.clone(), after.as_deref());
-                continue;
+            let listed = self
+                .check(&configured.directory)
+                .and_then(|root| gather(root, after.as_deref(), &mut found));
+            if let Err(reason) = listed {
+                unavailable_roots.push(Problem {
+                    file: configured.directory.clone(),
+                    reason: reason.to_owned(),
+                });
             }
-            configured
-                .files
-                .visit(|name| {
-                    if !visible(&name) {
-                        return;
-                    }
-                    let Ok(child) = configured.files.child(&name) else {
-                        return;
-                    };
-                    let path = root.join(&name);
-                    if name.to_str().and_then(ShowId::parse).is_some() || has_manifest(&child) {
-                        retain(&mut paths, path, after.as_deref());
-                    }
-                })
-                .map_err(|_private| "Cannot list an MCP root")?;
         }
-        let next = if paths.len() > PAGE {
-            paths.truncate(PAGE);
-            paths
+        let next_cursor = if found.len() > PAGE {
+            found.truncate(PAGE);
+            found
                 .last()
-                .and_then(|path| path.to_str())
+                .and_then(|folder| folder.path.to_str())
                 .map(str::to_owned)
         } else {
             None
         };
-        let rows = paths
+        let shows = found
             .into_iter()
-            .map(|path| {
-                let checked = self.check(&path)?;
-                let entry = Entry::read_from(checked.path, &checked.files);
-                Ok(Overview::of(
-                    &entry,
-                    self.managed_parent(&entry.directory, &checked.files),
-                ))
+            .map(|folder| {
+                let entry = Entry::read_from(folder.path, &folder.files);
+                Overview::of(&entry, self.managed_parent(&entry.directory, &folder.files))
             })
-            .collect::<Result<Vec<_>, &'static str>>()?;
-        Ok((rows, next))
+            .collect();
+        Ok(Listing {
+            shows,
+            unavailable_roots,
+            truncated: next_cursor.is_some(),
+            next_cursor,
+        })
     }
 }
 
-fn has_manifest(directory: &ReadDirectory) -> bool {
-    directory.file(Path::new(Manifest::FILE)).is_ok()
+fn gather(root: Folder, after: Option<&Path>, found: &mut Vec<Folder>) -> Result<(), &'static str> {
+    if holds_show(&root.files) {
+        retain(found, root, after);
+        return Ok(());
+    }
+    root.files
+        .visit(|name| {
+            if !visible(&name) {
+                return;
+            }
+            let Ok(files) = root.files.child(&name) else {
+                return;
+            };
+            if name.to_str().and_then(ShowId::parse).is_some() || holds_show(&files) {
+                let path = root.path.join(&name);
+                retain(found, Folder { path, files }, after);
+            }
+        })
+        .map_err(|_private| "Cannot list an MCP root")
+}
+
+fn holds_show(directory: &ReadDirectory) -> bool {
+    !directory
+        .file(Path::new(Manifest::FILE))
+        .is_err_and(|error| error.kind() == io::ErrorKind::NotFound)
 }
 
 fn visible(name: &OsStr) -> bool {
     name.to_str().is_some_and(|name| !name.starts_with('.'))
 }
 
-fn retain(paths: &mut Vec<PathBuf>, path: PathBuf, after: Option<&Path>) {
-    if after.is_none_or(|after| path.as_path() > after)
-        && path.to_str().is_some()
-        && let Err(position) = paths.binary_search(&path)
+fn retain(found: &mut Vec<Folder>, folder: Folder, after: Option<&Path>) {
+    if after.is_none_or(|after| folder.path.as_path() > after)
+        && folder.path.to_str().is_some()
+        && let Err(position) = found.binary_search_by(|kept| kept.path.cmp(&folder.path))
     {
-        paths.insert(position, path);
-        paths.truncate(PAGE.saturating_add(1));
+        found.insert(position, folder);
+        found.truncate(PAGE.saturating_add(1));
     }
 }
