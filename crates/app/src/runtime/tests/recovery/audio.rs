@@ -182,3 +182,37 @@ async fn a_show_whose_audio_stopped_keeps_its_checkpoint_when_revoked() -> anyho
     }
     Ok(())
 }
+
+#[tokio::test]
+async fn quit_queued_behind_a_microphone_ending_keeps_the_show_checkpoint() -> anyhow::Result<()> {
+    for lost in [true, false] {
+        let root = tempfile::tempdir()?;
+        let mut h = Harness::with_ports(Config::default(), |ports| {
+            ports.checkpoint_root = Some(root.path().to_owned());
+            ports.screen_report = ScreenReport::Withheld;
+        })?;
+        let (id, microphone) = start_show_listening(&mut h).await?;
+        receive(&h.shows).await?;
+        let ending = if lost {
+            disconnected(id)
+        } else {
+            CaptureEvent::Finished(id, Err(anyhow!("Microphone disconnected")))
+        };
+        microphone.try_send(ending)?;
+        h.runtime.request_stop();
+        h.close().await?;
+        let listing = show::checkpoint::list(root.path(), SystemTime::now());
+        assert!(listing.problems.is_empty());
+        assert_eq!(
+            listing.shows.len(),
+            1,
+            "Quit overtook a queued {} and discarded the Show",
+            if lost {
+                "microphone loss"
+            } else {
+                "audio stop"
+            }
+        );
+    }
+    Ok(())
+}

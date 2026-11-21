@@ -274,6 +274,35 @@ impl<P: Ports> Owner<P> {
         })
     }
 
+    fn apply(&mut self, wake: Wake) -> ControlFlow<()> {
+        let Some(event) = self.event(wake) else {
+            self.present();
+            return ControlFlow::Continue(());
+        };
+        let now = self.now();
+        match self.machine.step(now, event, &mut self.world) {
+            ControlFlow::Continue(()) => {
+                self.present();
+                ControlFlow::Continue(())
+            },
+            ControlFlow::Break(Halt::Failed) => {
+                self.present();
+                ControlFlow::Break(())
+            },
+            ControlFlow::Break(Halt::Stopped) => ControlFlow::Break(()),
+        }
+    }
+
+    fn settle_captures(&mut self) -> ControlFlow<()> {
+        for _ in 0..self.world.captures.len() {
+            let Ok(event) = self.world.captures.try_recv() else {
+                break;
+            };
+            self.apply(Wake::Capture(event))?;
+        }
+        ControlFlow::Continue(())
+    }
+
     fn now(&self) -> Now<Native> {
         let instant = now();
         Now {
@@ -738,18 +767,11 @@ pub(super) async fn run<P: Ports>(wiring: Wiring<P>) {
     owner.present();
     loop {
         let wake = owner.wait().await;
-        let Some(event) = owner.event(wake) else {
-            owner.present();
-            continue;
-        };
-        let now = owner.now();
-        match owner.machine.step(now, event, &mut owner.world) {
-            ControlFlow::Continue(()) => owner.present(),
-            ControlFlow::Break(Halt::Failed) => {
-                owner.present();
-                break;
-            },
-            ControlFlow::Break(Halt::Stopped) => break,
+        if matches!(wake, Wake::Stop) && owner.settle_captures().is_break() {
+            break;
+        }
+        if owner.apply(wake).is_break() {
+            break;
         }
     }
     owner.shutdown().await;
