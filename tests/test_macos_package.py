@@ -68,6 +68,8 @@ if name == "hdiutil":
     if os.environ.get("STUB_OCCUPY_APP"):
         Path("artifacts/Speakeasy.app/Contents").mkdir(parents=True)
         Path("artifacts/Speakeasy.app/Contents/occupied").write_text("another build")
+    if os.environ.get("STUB_OCCUPY_DMG"):
+        Path("artifacts/speakeasy-macos.dmg").mkdir()
 if name == os.environ.get("STUB_FAIL_TOOL") and sys.argv[-1].endswith(os.environ.get("STUB_FAIL_SUFFIX", "")):
     sys.exit(1)
 """.replace("OUTPUTS", repr(OUTPUTS))
@@ -188,6 +190,15 @@ def test_a_second_run_leaves_the_running_package_alone(tmp_path: Path) -> None:
     assert not any(command[0] == "cargo" for command in commands)
     assert (artifacts / "Speakeasy.app/Contents/stale").exists()
     assert all((artifacts / name).read_text() == "stale archive" for name in OUTPUTS[1:])
+
+
+def test_a_failed_disk_image_rename_takes_back_the_app_and_archive(tmp_path: Path) -> None:
+    artifacts = tmp_path / "artifacts"
+    result, _ = package(tmp_path, {"STUB_OCCUPY_DMG": "1"})
+    assert result.returncode != 0
+    assert not (artifacts / "Speakeasy.app").exists()
+    assert not (artifacts / "speakeasy-macos.zip").exists()
+    assert (artifacts / "speakeasy-macos.dmg").is_dir()
 
 
 def test_archives_stay_unpublished_when_the_app_cannot_be_replaced(tmp_path: Path) -> None:

@@ -94,7 +94,15 @@ if [[ -n "$signing_identity" ]]; then
   xcrun stapler validate "$staging/speakeasy-macos.dmg"
   spctl --assess --type open --context context:primary-signature "$staging/speakeasy-macos.dmg"
 fi
-# The app goes first, so a rename that fails publishes no archive.
+# The app goes first, so a rename that fails publishes no archive, and a failed archive rename
+# takes back what this run published.
 mv "$bundle" artifacts/
-mv "$staging/speakeasy-macos.zip" "$staging/speakeasy-macos.dmg" artifacts/
+published=(artifacts/Speakeasy.app)
+for archive in speakeasy-macos.zip speakeasy-macos.dmg; do
+  if ! mv "$staging/$archive" artifacts/; then
+    rm -rf -- "${published[@]}"
+    exit 1
+  fi
+  published+=("artifacts/$archive")
+done
 echo "Built artifacts/Speakeasy.app"
