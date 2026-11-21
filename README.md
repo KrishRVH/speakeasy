@@ -891,8 +891,8 @@ dictation in its style. A printed dictation pastes nothing; Paste last dictation
 Stopping it without `--print`, or finishing it with the shortcut, pastes nothing and says so.
 Printing a dictation started without `--print` is refused, as is printing one twice, and one that
 ends empty, cancelled, or failed refuses its caller. Keyboard dictations, Shows, practice, and
-earlier dictations can never be read back. These explicit commands work on all three platforms; Linux's desktop-binding `--toggle` and
-`--cancel` still require Desktop bindings.
+earlier dictations can never be read back. These explicit commands work on all three platforms;
+Linux's desktop-binding `--toggle` and `--cancel` still require Desktop bindings.
 
 ## Build and verify
 

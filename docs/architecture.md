@@ -436,28 +436,29 @@ module unless a test file is named.
   it; tray.rs's tests check that and when each menu entry acts.
   [shell/last_show.rs](../crates/app/src/shell/last_show.rs) copies or opens the last Show off the
   UI thread.
-- **Instance and relaunch**: [instance.rs](../crates/app/src/instance.rs) holds `instance.lock`
-  and writes the loopback port it listens on to `instance.port`. Each connection carries one JSON
+- **Instance and relaunch**: [instance.rs](../crates/app/src/instance.rs) holds `instance.lock` and
+  writes the loopback port it listens on to `instance.port`. Each connection carries one JSON
   message, and the caller half-closes it once sent. A shortcut (reveal, toggle, or cancel) serves
   relaunch and Linux desktop bindings and gets no reply; a relaunch that finds the lock held retries
   its reveal briefly while the owner starts. A control command waits for its owner's reply until its
   deadline, two seconds or two minutes for a print, and the caller reads unknown once the deadline
   passes or the owner drops the call. Each connection runs as its own task, so shortcut cancel and
   toggle stay responsive while a command waits. [control.rs](../crates/app/src/control.rs) parses
-  the script command line and defines the commands and their JSON reply. [owner/commands.rs](../crates/app/src/runtime/owner/commands.rs)
-  admits actions only for live callers and acknowledges actual owner decisions. Stop/cancel tokens
-  combine the runtime incarnation with the session ID and exclude Shows and practice. Style is
-  acknowledged by its Services owner without inventing a session-status observation; ordinary status
-  is observed by the session owner. A lost receipt is unknown, never proof of refusal, except for a
-  preset: the owner applies one and answers in the same step, so a lost preset receipt means it was
-  never applied. Capture and print are refused before the machine unless `print_to_scripts` is on;
-  changing it is a session change, so turning it off ends a running capture. A capture
-  (`dictation start --print`) marks its session's handoff; a print stores its call in that session,
-  which answers it with the text in place of insertion or refuses it when the session ends without
-  text, so one session answers one print at most. Show promotion leaves these private dictations in
-  their original session. [tests/printing.rs](../crates/app/src/runtime/tests/printing.rs) covers
-  that handoff. [tests/control.rs](../crates/app/src/runtime/tests/control.rs) covers stale
-  authority, busy admission, per-session style, and preset adoption.
+  the script command line and defines the commands and their JSON reply.
+  [owner/commands.rs](../crates/app/src/runtime/owner/commands.rs) admits actions only for live
+  callers and acknowledges actual owner decisions. Stop/cancel tokens combine the runtime
+  incarnation with the session ID and exclude Shows and practice. Style is acknowledged by its
+  Services owner without inventing a session-status observation; ordinary status is observed by the
+  session owner. A lost receipt is unknown, never proof of refusal, except for a preset: the owner
+  applies one and answers in the same step, so a lost preset receipt means it was never applied.
+  Capture and print are refused before the machine unless `print_to_scripts` is on; changing it is a
+  session change, so turning it off ends a running capture. A capture (`dictation start --print`)
+  marks its session's handoff; a print stores its call in that session, which answers it with the
+  text in place of insertion or refuses it when the session ends without text, so one session
+  answers one print at most. Show promotion leaves these private dictations in their original
+  session. [tests/printing.rs](../crates/app/src/runtime/tests/printing.rs) covers that handoff.
+  [tests/control.rs](../crates/app/src/runtime/tests/control.rs) covers stale authority, busy
+  admission, per-session style, and preset adoption.
 - **Command line**: [main.rs](../crates/app/src/main.rs) parses options and routes what they ask
   for, and [show/command.rs](../crates/app/src/show/command.rs) parses `show` commands. Its
   [output.rs](../crates/app/src/show/command/output.rs) projects metadata without private text,
