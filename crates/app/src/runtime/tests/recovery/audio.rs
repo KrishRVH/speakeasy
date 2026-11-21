@@ -184,7 +184,7 @@ async fn a_show_whose_audio_stopped_keeps_its_checkpoint_when_revoked() -> anyho
 }
 
 #[tokio::test]
-async fn quit_honours_a_cancel_queued_before_a_microphone_loss() -> anyhow::Result<()> {
+async fn quit_honors_a_cancel_queued_before_a_microphone_loss() -> anyhow::Result<()> {
     for cancel in [Input::Cancel, Input::Escape] {
         let root = tempfile::tempdir()?;
         let mut h = Harness::with_ports(Config::default(), |ports| {
