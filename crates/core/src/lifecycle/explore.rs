@@ -167,5 +167,5 @@ fn every_ordering_of_lifecycle_events_keeps_owners_until_they_retire() {
         }
         expanded += 1;
     }
-    eprintln!("{} lifecycle states", states.len());
+    assert_eq!(states.len(), 13, "The reachable lifecycle states changed");
 }
