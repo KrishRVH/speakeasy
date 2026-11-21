@@ -43,6 +43,9 @@ impl Edit {
     }
 
     pub(super) fn select(&mut self, offset: usize, extend: bool) {
+        if self.marked.is_some() {
+            return;
+        }
         self.cursor = self.floor_grapheme(offset);
         if !extend {
             self.anchor = self.cursor;
@@ -50,7 +53,10 @@ impl Edit {
     }
 
     pub(super) fn select_range(&mut self, Selection { anchor, focus }: Selection) -> bool {
-        if self.floor_grapheme(anchor) != anchor || self.floor_grapheme(focus) != focus {
+        if self.marked.is_some()
+            || self.floor_grapheme(anchor) != anchor
+            || self.floor_grapheme(focus) != focus
+        {
             return false;
         }
         self.anchor = anchor;
@@ -255,6 +261,25 @@ mod tests {
             assert!(edit.replace(None, "", Composition::Commit));
             assert_eq!(edit.text, "");
         }
+    }
+
+    #[test]
+    fn a_composition_keeps_its_caret_until_the_input_method_settles_it() {
+        let mut edit = Edit::default();
+        edit.set_text("ab".into());
+        edit.select(1, false);
+        assert!(edit.replace(None, "にほ", Composition::Mark(None)));
+        let composing = (edit.marked.clone(), edit.ends());
+        edit.select(0, false);
+        edit.step(Direction::Forward, true);
+        assert!(!edit.select_range(Selection {
+            anchor: 0,
+            focus: 0
+        }));
+        assert_eq!((edit.marked.clone(), edit.ends()), composing);
+        assert!(edit.replace(None, "にほん", Composition::Mark(None)));
+        assert!(edit.replace(None, "日本", Composition::Commit));
+        assert_eq!(edit.text, "a日本b");
     }
 
     #[test]

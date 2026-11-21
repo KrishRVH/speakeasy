@@ -240,8 +240,12 @@ module unless a test file is named.
   presets by position, and ignores those changes during model setup or file selection. The save
   queue applies used choices; library-only changes leave sessions running.
   [text_field.rs](../crates/app/src/shell/settings/text_field.rs) owns native selection and IME
-  composition. Focus loss, Tab, and a mouse selection commit the marked text before moving the
-  caret. Windows AltGr stays available for character input. The pure edit state tests Unicode
+  composition. Tab and GPUI focus loss commit the marked text. While a composition is marked, a
+  click or an accessible selection leaves the caret to the input method: macOS offers the click to
+  the input context first, X11 and Wayland end the composition before delivering a press, and
+  Windows keeps composing. X11 window focus loss resets XIM and deletes the marked text, so
+  switching windows on X11 discards an uncommitted composition. Only the bare primary modifier
+  edits, so Windows AltGr stays available for character input. The pure edit state tests Unicode
   boundaries, and [native_tests.rs](../crates/app/src/shell/settings/native_tests.rs) checks
   owned-window composition and save draining. The
   [native interaction test](../crates/app/src/shell/settings/native_interaction.rs) checks dropdown

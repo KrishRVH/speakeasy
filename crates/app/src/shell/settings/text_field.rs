@@ -8,7 +8,7 @@ use accessible::{Painted, Request};
 use edit::{Composition, Direction, Edit};
 use gpui::{
     AccessibleAction, App, Bounds, ClipboardItem, Context, ElementInputHandler, EntityInputHandler,
-    EventEmitter, FocusHandle, Focusable, KeyDownEvent, MouseButton, MouseDownEvent,
+    EventEmitter, FocusHandle, Focusable, KeyDownEvent, Modifiers, MouseButton, MouseDownEvent,
     MouseMoveEvent, Pixels, Point, ShapedLine, Subscription, TextRun, UTF16Selection,
     UnderlineStyle, WeakEntity, Window, accesskit::ActionData, canvas, div, fill, point,
     prelude::*, px, size,
@@ -33,7 +33,7 @@ pub(super) struct TextField {
     edit: Edit,
     viewport: Viewport,
     focus: FocusHandle,
-    blur: Option<Subscription>,
+    _blur: Subscription,
     theme: Theme,
     layout: Option<Layout>,
     selecting: bool,
@@ -71,14 +71,25 @@ pub(super) struct Submit;
 impl EventEmitter<Submit> for TextField {}
 
 impl TextField {
-    pub(super) fn new(label: &'static str, theme: Theme, cx: &Context<'_, Self>) -> Self {
+    pub(super) fn new(
+        label: &'static str,
+        theme: Theme,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> Self {
+        let focus = cx.focus_handle().tab_stop(true);
+        let blur = cx.on_blur(&focus, window, |field, window, cx| {
+            if field.edit.marked.is_some() {
+                field.unmark_text(window, cx);
+            }
+        });
         Self {
             label,
             placeholder: "",
             edit: Edit::default(),
             viewport: Viewport::default(),
-            focus: cx.focus_handle().tab_stop(true),
-            blur: None,
+            focus,
+            _blur: blur,
             theme,
             layout: None,
             selecting: false,
@@ -121,15 +132,7 @@ impl TextField {
             }
             return;
         }
-        let modifiers = key.modifiers;
-        let command = !modifiers.alt
-            && !modifiers.shift
-            && !modifiers.function
-            && if cfg!(target_os = "macos") {
-                modifiers.platform && !modifiers.control
-            } else {
-                modifiers.control && !modifiers.platform
-            };
+        let command = editing_shortcut(key.modifiers);
         match key.key.as_str() {
             "a" if command => {
                 self.edit.select(0, false);
@@ -188,7 +191,6 @@ impl TextField {
         cx: &mut Context<'_, Self>,
     ) {
         window.focus(&self.focus, cx);
-        self.edit.unmark();
         self.selecting = true;
         self.select_point(event.position, event.modifiers.shift);
         cx.notify();
@@ -233,7 +235,7 @@ impl TextField {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if self.edit.marked.is_some() || !self.edit.select_range(selection) {
+        if !self.edit.select_range(selection) {
             return;
         }
         self.viewport.reveal_caret();
@@ -414,6 +416,15 @@ impl EntityInputHandler for TextField {
     }
 }
 
+fn editing_shortcut(modifiers: Modifiers) -> bool {
+    let primary = if cfg!(target_os = "macos") {
+        modifiers.platform && !modifiers.control
+    } else {
+        modifiers.control && !modifiers.platform
+    };
+    primary && !modifiers.alt && !modifiers.shift && !modifiers.function
+}
+
 impl Focusable for TextField {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus.clone()
@@ -422,13 +433,6 @@ impl Focusable for TextField {
 
 impl Render for TextField {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        if self.blur.is_none() {
-            self.blur = Some(cx.on_blur(&self.focus, window, |field, window, cx| {
-                if field.edit.marked.is_some() {
-                    field.unmark_text(window, cx);
-                }
-            }));
-        }
         let palette = self.theme.palette();
         let field = cx.entity();
         let this = cx.weak_entity();
@@ -580,5 +584,30 @@ impl Render for TextField {
                 )
             })
             .overflow_hidden()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::Modifiers;
+
+    use super::editing_shortcut;
+
+    #[test]
+    fn only_the_bare_primary_modifier_edits_so_altgr_and_shifted_chords_type() {
+        let primary = if cfg!(target_os = "macos") {
+            Modifiers::command()
+        } else {
+            Modifiers::control()
+        };
+        assert!(editing_shortcut(primary));
+        for extra in [Modifiers::alt(), Modifiers::shift(), Modifiers::function()] {
+            assert!(!editing_shortcut(primary | extra));
+        }
+        assert!(!editing_shortcut(Modifiers::control() | Modifiers::alt()));
+        assert!(!editing_shortcut(
+            Modifiers::control() | Modifiers::command()
+        ));
+        assert!(!editing_shortcut(Modifiers::default()));
     }
 }

@@ -53,7 +53,7 @@ fn pick(picked: Option<std::ops::Range<usize>>, word: usize) -> std::ops::Range<
 }
 
 impl Editor {
-    pub(super) fn new(theme: Theme, window: &Window, cx: &mut Context<'_, Settings>) -> Self {
+    pub(super) fn new(theme: Theme, window: &mut Window, cx: &mut Context<'_, Settings>) -> Self {
         Self {
             addition: Pair::new(
                 ["e.g. speak easy", "e.g. Speakeasy"],
@@ -116,7 +116,7 @@ impl Pair {
         placeholders: [&'static str; 2],
         submit: Edit,
         theme: Theme,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<'_, Settings>,
     ) -> Self {
         let [heard, written] = placeholders;
@@ -166,10 +166,10 @@ fn field(
     placeholder: &'static str,
     submit: Edit,
     theme: Theme,
-    window: &Window,
+    window: &mut Window,
     cx: &mut Context<'_, Settings>,
 ) -> Entity<TextField> {
-    let field = cx.new(|cx| TextField::new(label, theme, cx).placeholder(placeholder));
+    let field = cx.new(|cx| TextField::new(label, theme, window, cx).placeholder(placeholder));
     cx.observe(&field, |_, _, cx| cx.notify()).detach();
     cx.subscribe_in(
         &field,

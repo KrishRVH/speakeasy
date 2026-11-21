@@ -32,9 +32,10 @@ pub(super) enum Edit {
 }
 
 impl Editor {
-    pub(super) fn new(theme: Theme, window: &Window, cx: &mut Context<'_, Settings>) -> Self {
-        let name =
-            cx.new(|cx| TextField::new("Preset name", theme, cx).placeholder("Name this preset"));
+    pub(super) fn new(theme: Theme, window: &mut Window, cx: &mut Context<'_, Settings>) -> Self {
+        let name = cx.new(|cx| {
+            TextField::new("Preset name", theme, window, cx).placeholder("Name this preset")
+        });
         cx.observe(&name, |_, _, cx| cx.notify()).detach();
         cx.subscribe_in(&name, window, |settings, _, _: &Submit, window, cx| {
             settings.edit_preset(Edit::Save, window, cx);

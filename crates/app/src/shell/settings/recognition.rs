@@ -30,9 +30,10 @@ impl Editor {
             .update(cx, |field, cx| field.set_text(String::new(), cx));
     }
 
-    pub(super) fn new(theme: Theme, window: &Window, cx: &mut Context<'_, Settings>) -> Self {
+    pub(super) fn new(theme: Theme, window: &mut Window, cx: &mut Context<'_, Settings>) -> Self {
         let field = cx.new(|cx| {
-            TextField::new("New recognition hint", theme, cx).placeholder("Add a name or term")
+            TextField::new("New recognition hint", theme, window, cx)
+                .placeholder("Add a name or term")
         });
         cx.observe(&field, |_, _, cx| cx.notify()).detach();
         cx.subscribe_in(&field, window, |settings, _, _: &Submit, window, cx| {

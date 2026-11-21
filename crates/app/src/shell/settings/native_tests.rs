@@ -1,7 +1,7 @@
 use anyhow::{Context as _, ensure};
 use gpui::{
-    AppContext as _, Bounds, EntityInputHandler as _, Focusable as _, WindowBounds, WindowOptions,
-    point, px, size,
+    AppContext as _, Bounds, EntityInputHandler as _, Focusable as _, Modifiers, MouseButton,
+    MouseDownEvent, MouseUpEvent, PlatformInput, WindowBounds, WindowOptions, point, px, size,
 };
 
 use super::{
@@ -41,8 +41,6 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                         .is_none(),
                     "The pending settings save started before the first finished"
                 );
-                let input = cx
-                    .new(|cx| text_field::TextField::new("Synthetic field", Theme::default(), cx));
                 let window = cx.open_window(
                     WindowOptions {
                         window_bounds: Some(WindowBounds::Windowed(Bounds::new(
@@ -51,7 +49,7 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                         ))),
                         ..Default::default()
                     },
-                    |_, _| input,
+                    synthetic_field,
                 )?;
                 let view = window.update(cx, |_, window, cx| {
                     cx.new(|cx| Settings {
@@ -106,24 +104,6 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                 );
                 window.update(cx, |field, window, cx| {
                     field.set_text("🦀 café ".into(), cx);
-                    let before = field
-                        .selected_text_range(false, window, cx)
-                        .context("No selection")?;
-                    field.key_down(
-                        &gpui::KeyDownEvent {
-                            keystroke: gpui::Keystroke::parse("ctrl-alt-a")?,
-                            is_held: false,
-                            prefer_character_input: true,
-                        },
-                        window,
-                        cx,
-                    );
-                    ensure!(
-                        field
-                            .selected_text_range(false, window, cx)
-                            .is_some_and(|after| after.range == before.range),
-                        "AltGr changed the selection"
-                    );
                     field.replace_and_mark_text_in_range(None, "日本", Some(1..2), window, cx);
                     let selection = field
                         .selected_text_range(false, window, cx)
@@ -172,6 +152,26 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                     let bounds = field.bounds_for_range(8..11, Bounds::default(), window, cx);
                     ensure!(bounds.is_some(), "The field did not shape its text");
                     field.focus_handle(cx).focus(window, cx);
+                    field.set_text("ab".into(), cx);
+                    anyhow::Ok(())
+                })??;
+                draw(window, cx)?;
+                let altgr = gpui::Keystroke {
+                    modifiers: Modifiers::control() | Modifiers::alt(),
+                    key: "a".into(),
+                    key_char: Some("æ".into()),
+                };
+                ensure!(
+                    cx.update_window(window.into(), |_, window, cx| {
+                        window.dispatch_keystroke(altgr, cx)
+                    })?,
+                    "AltGr+A reached neither the field nor its input handler"
+                );
+                window.update(cx, |field, window, cx| {
+                    ensure!(
+                        field.text() == "abæ",
+                        "AltGr+A selected or swallowed its character"
+                    );
                     field.replace_and_mark_text_in_range(None, "仮", None, window, cx);
                     field.key_down(
                         &gpui::KeyDownEvent {
@@ -186,6 +186,26 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                         field.marked_text_range(window, cx).is_none(),
                         "Tab left a marked range"
                     );
+                    ensure!(
+                        field.text() == "abæ仮",
+                        "Tab did not commit the composed text"
+                    );
+                    field.replace_and_mark_text_in_range(None, "にほ", None, window, cx);
+                    anyhow::Ok(())
+                })??;
+                draw(window, cx)?;
+                click(window.into(), cx)?;
+                window.update(cx, |field, window, cx| {
+                    ensure!(
+                        field.marked_text_range(window, cx).is_some(),
+                        "A click ended the composition without the input method"
+                    );
+                    field.replace_and_mark_text_in_range(None, "にほん", None, window, cx);
+                    field.replace_text_in_range(None, "日本", window, cx);
+                    ensure!(
+                        field.text() == "abæ仮日本",
+                        "A click during composition moved or duplicated the composed text"
+                    );
                     field.replace_and_mark_text_in_range(None, "名", None, window, cx);
                     anyhow::Ok(())
                 })??;
@@ -196,6 +216,10 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                     ensure!(
                         field.marked_text_range(window, cx).is_none(),
                         "Blur left a marked range"
+                    );
+                    ensure!(
+                        field.text() == "abæ仮日本名",
+                        "Blur did not commit the composed text"
                     );
                     window.remove_window();
                     anyhow::Ok(())
@@ -211,6 +235,36 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
     outcome
         .try_recv()
         .context("Phrase editor acceptance did not complete")?
+}
+
+fn synthetic_field(
+    window: &mut gpui::Window,
+    cx: &mut gpui::App,
+) -> gpui::Entity<text_field::TextField> {
+    cx.new(|cx| text_field::TextField::new("Synthetic field", Theme::default(), window, cx))
+}
+
+fn click(window: gpui::AnyWindowHandle, cx: &mut gpui::AsyncApp) -> anyhow::Result<()> {
+    let position = point(px(14.0), px(14.0));
+    let modifiers = Modifiers::default();
+    for input in [
+        PlatformInput::MouseDown(MouseDownEvent {
+            button: MouseButton::Left,
+            position,
+            modifiers,
+            click_count: 1,
+            first_mouse: false,
+        }),
+        PlatformInput::MouseUp(MouseUpEvent {
+            button: MouseButton::Left,
+            position,
+            modifiers,
+            click_count: 1,
+        }),
+    ] {
+        cx.update_window(window, |_, window, cx| window.dispatch_event(input, cx))?;
+    }
+    Ok(())
 }
 
 fn composition_keys(

@@ -65,7 +65,7 @@ fn native_accessibility_static_fixture() -> anyhow::Result<()> {
                     true
                 });
                 let field = cx.new(|cx| {
-                    let mut field = TextField::new("Synthetic field", Theme::default(), cx);
+                    let mut field = TextField::new("Synthetic field", Theme::default(), window, cx);
                     field.set_text("Synthetic private draft".into(), cx);
                     field
                 });
