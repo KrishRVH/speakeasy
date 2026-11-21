@@ -38,35 +38,12 @@ pub(super) async fn fetch(
     let name = download.file_name();
     let path = directory.join(name);
     if path.is_file() {
-        let size = fs::metadata(&path).map_err(file_error(directory))?.len();
-        if size != download.size
-            || !download.matches(
-                hash_file(&path, size, progress)
-                    .await
-                    .map_err(file_error(directory))?,
-            )
-        {
-            bail!(
-                "The installed download at {} does not match its published checksum. Move this file aside and try setup again.",
-                path.display()
-            );
-        }
         return Ok(path);
     }
     fs::create_dir_all(directory).map_err(file_error(directory))?;
     let partial = directory.join(format!("{name}.part"));
     let mut done = fs::metadata(&partial).map_or(0, |metadata| metadata.len());
-    if done == download.size {
-        let hash = hash_file(&partial, done, progress)
-            .await
-            .map_err(file_error(directory))?;
-        if download.matches(hash) {
-            fs::rename(&partial, &path).map_err(file_error(directory))?;
-            return Ok(path);
-        }
-        fs::remove_file(&partial).map_err(file_error(directory))?;
-        done = 0;
-    } else if done > download.size {
+    if done >= download.size {
         done = 0;
     }
     let mut request = client.get(download.url);
@@ -105,16 +82,12 @@ pub(super) async fn fetch(
         .context("The download stopped. Check your internet connection, then try again.")?
     {
         done = done.saturating_add(chunk.len() as u64);
-        if done > download.size {
-            break;
-        }
         hash.update(&chunk);
         file.write_all(&chunk).map_err(file_error(directory))?;
         progress.send_replace(Progress::bytes(step, done, download.size));
     }
-    file.sync_all().map_err(file_error(directory))?;
     drop(file);
-    if done != download.size || !download.matches(hash) {
+    if !download.matches(hash) {
         fs::remove_file(&partial).map_err(file_error(directory))?;
         bail!("A download did not match its published checksum. Try again.");
     }

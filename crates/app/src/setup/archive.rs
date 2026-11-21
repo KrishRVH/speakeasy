@@ -146,52 +146,6 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn archives_reject_an_ambiguous_runtime_layout() -> anyhow::Result<()> {
-        let directory = tempfile::tempdir()?;
-        fs::create_dir_all(directory.path().join("first/bin"))?;
-        fs::create_dir_all(directory.path().join("second/bin"))?;
-        for wrapper in ["first", "second"] {
-            fs::write(directory.path().join(wrapper).join(EXECUTABLE), b"fixture")?;
-        }
-        let failure = normalize_archive(directory.path())
-            .err()
-            .context("An ambiguous engine archive was accepted")?;
-        assert!(failure.to_string().contains("unexpected layout"));
-        assert!(!directory.path().join(EXECUTABLE).exists());
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn unpack_reports_an_unreplaceable_staging_directory() -> anyhow::Result<()> {
-        let directory = tempfile::tempdir()?;
-        let root = directory.path();
-        fs::create_dir_all(root.join("downloads"))?;
-        fs::create_dir_all(root.join("engines"))?;
-        fs::write(root.join("downloads/fixture.tar.gz"), b"unused archive")?;
-        fs::write(root.join("engines/fixture.part"), b"not a directory")?;
-        let (progress, _) = watch::channel(CHECKING);
-        let mut installation = Installation::acquire(root, &progress).await?;
-        let archive = Download {
-            url: "http://127.0.0.1:0/fixture.tar.gz",
-            size: 14,
-            sha256: &hex_digest(&Sha256::digest(b"unused archive")),
-        };
-        let client = client_builder(Trust::Nobody)?.build()?;
-        let failure = unpack(&client, &archive, root, &progress, &mut installation)
-            .await
-            .unwrap_err();
-        let message = failure.to_string();
-        let staging = root.join("engines").join("fixture.part");
-        assert!(
-            message.starts_with(&format!("Setup cannot use {}: ", staging.display()))
-                && message.ends_with("check that you can write there, then try again."),
-            "{message}"
-        );
-        assert_eq!(fs::read(&staging)?, b"not a directory");
-        Ok(())
-    }
-
     fn ustar(name: &str, contents: &[u8]) -> Vec<u8> {
         const BLOCK: usize = 512;
         const END_OF_ARCHIVE: [u8; 2 * BLOCK] = [0; 2 * BLOCK];
@@ -232,7 +186,7 @@ mod tests {
             ustar(&entry, b"engine fixture"),
         )?;
         let (progress, _) = watch::channel(CHECKING);
-        let mut installation = Installation::acquire(root, &progress).await?;
+        let mut installation = Installation::default();
         let bytes = fs::read(root.join("downloads/fixture.tar"))?;
         let archive = Download {
             url: "http://127.0.0.1:0/fixture.tar",

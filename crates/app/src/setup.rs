@@ -4,7 +4,6 @@ mod engine;
 
 use std::{
     convert::Infallible,
-    fs::{self, File},
     io,
     path::{Path, PathBuf},
     process::ExitStatus,
@@ -30,8 +29,6 @@ use crate::{
     models::Model,
     progress::Progress,
 };
-
-const LOCK: &str = "setup.lock";
 
 const PARAKEET: Download<'static> = Download {
     url: "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3/resolve/541d1f99c6b0c3cd0b11a95167540bb8edefd82b/parakeet-tdt-0.6b-v3.q8_0.gguf",
@@ -119,35 +116,20 @@ impl Setup {
         + Send
         + 'static,
     ) -> anyhow::Result<Self> {
-        Self::spawn(move |progress, cancelled| {
-            let runtime = match tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-            {
-                Ok(runtime) => runtime,
-                Err(error) => return Some(Err(error.into())),
-            };
-            runtime.block_on(Installation::run(
-                &root,
-                &progress,
-                &cancelled,
-                async |installation| work(&root, &progress, installation).await,
-            ))
-        })
-    }
-
-    fn spawn(
-        work: impl FnOnce(
-            watch::Sender<Progress>,
-            async_channel::Receiver<Infallible>,
-        ) -> Option<anyhow::Result<Installed>>
-        + Send
-        + 'static,
-    ) -> anyhow::Result<Self> {
         let (progress, updates) = watch::channel(CHECKING);
         let (finish, result) = async_channel::bounded(1);
         let thread = StoppableThread::spawn("setup", move |cancelled| {
-            if let Some(result) = work(progress, cancelled) {
+            let outcome = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(runtime) => runtime
+                    .block_on(Installation::run(&cancelled, async |installation| {
+                        work(&root, &progress, installation).await
+                    })),
+                Err(error) => Some(Err(error.into())),
+            };
+            if let Some(result) = outcome {
                 #[expect(
                     clippy::let_underscore_must_use,
                     reason = "A released owner no longer wants the result; native cleanup has already finished"
@@ -195,27 +177,17 @@ impl Setup {
     }
 }
 
+#[derive(Default)]
 struct Installation {
     child: Option<Child>,
-    _lock: File,
 }
 
 impl Installation {
     async fn run<T>(
-        root: &Path,
-        progress: &watch::Sender<Progress>,
         cancelled: &async_channel::Receiver<Infallible>,
         work: impl AsyncFnOnce(&mut Self) -> anyhow::Result<T>,
     ) -> Option<anyhow::Result<T>> {
-        let installation = tokio::select! {
-            biased;
-            _ = cancelled.recv() => return None,
-            installation = Self::acquire(root, progress) => installation,
-        };
-        let mut installation = match installation {
-            Ok(installation) => installation,
-            Err(error) => return Some(Err(error)),
-        };
+        let mut installation = Self::default();
         let result = tokio::select! {
             biased;
             _ = cancelled.recv() => None,
@@ -223,27 +195,6 @@ impl Installation {
         };
         installation.stop().await;
         result
-    }
-
-    async fn acquire(root: &Path, progress: &watch::Sender<Progress>) -> anyhow::Result<Self> {
-        fs::create_dir_all(root).map_err(file_error(root))?;
-        let lock = crate::paths::open_lock(&root.join(LOCK)).map_err(file_error(root))?;
-        loop {
-            match lock.try_lock() {
-                Ok(()) => {
-                    progress.send_replace(CHECKING);
-                    return Ok(Self {
-                        child: None,
-                        _lock: lock,
-                    });
-                },
-                Err(fs::TryLockError::WouldBlock) => {
-                    progress.send_replace(Progress::Step("Waiting for another setup to finish"));
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                },
-                Err(fs::TryLockError::Error(error)) => return Err(file_error(root)(error)),
-            }
-        }
     }
 
     async fn output(&mut self, command: &mut Command) -> anyhow::Result<(ExitStatus, Vec<u8>)> {

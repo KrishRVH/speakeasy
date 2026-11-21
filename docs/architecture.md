@@ -409,8 +409,9 @@ module unless a test file is named.
   and file tests cover blocked transitions and marker failures; the Settings native interaction test
   walks the simulated guide and checks text cleanup and preservation of edits.
 - **Setup**: [setup.rs](../crates/app/src/setup.rs) and [setup/](../crates/app/src/setup) choose,
-  download, verify, and unpack engines and report which managed models are already downloaded; a
-  full install is opt-in. Setup and update preparation report each step through
+  download, verify, and unpack engines and report which managed models are already downloaded. A
+  download resumes after a pause and is checked against its pinned SHA-256 before it takes its final
+  name, which later setups trust without hashing it again; a full install test is opt-in. Setup and update preparation report each step through
   [progress.rs](../crates/app/src/progress.rs), with a byte count only when the step's total is
   known.
 - **Reset**: [reset.rs](../crates/app/src/reset.rs) deletes the engines, models, downloads, and
@@ -1047,8 +1048,8 @@ Field order carries resource lifetime in these owners:
 - `Capture.signal` cancels before its thread joins; audio streams drop before their device and host
   handles. `Sounds.asks` closes before `_player` joins. `ScreenRecorder.finish` closes before its
   thread joins; a finish message seals footage, while channel closure cancels it.
-- `LocalSpeech.group` terminates the process group before `child` drops. Setup's emergency child
-  cleanup runs before its directory lock releases; the normal asynchronous path reaps the child.
+- `LocalSpeech.group` terminates the process group before `child` drops. Setup reaps its child
+  before reporting, cancelled or not.
 - `Instance::close` closes the request lane and awaits its server thread. Dropping the instance
   removes its port file before the lock releases, so an exiting instance cannot delete a successor's
   port file.

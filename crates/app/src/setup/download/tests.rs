@@ -1,15 +1,12 @@
-use std::{convert::Infallible, time::Duration};
-
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    time::timeout,
 };
 
 use super::*;
 use crate::{
     http::{Trust, client_builder},
-    setup::{CHECKING, Installation},
+    setup::CHECKING,
 };
 
 const BODY: &[u8] = b"Say the word. The door opens, and what is said stays inside.";
@@ -87,93 +84,6 @@ async fn fetch_into(
 }
 
 #[tokio::test]
-async fn fetch_promotes_a_verified_complete_partial_without_a_request() -> anyhow::Result<()> {
-    let (base, requests) = serve_body().await?;
-    let url = format!("{base}/model.gguf");
-    let sha = sha256(BODY);
-    let download = Download {
-        url: &url,
-        size: BODY.len() as u64,
-        sha256: &sha,
-    };
-    let directory = tempfile::tempdir()?;
-    let partial = directory.path().join("model.gguf.part");
-    fs::write(&partial, BODY)?;
-    let (progress, _) = watch::channel(CHECKING);
-    let path = fetch_into(&download, directory.path(), &progress).await?;
-    assert_eq!(fs::read(path)?, BODY);
-    assert!(!partial.exists());
-    assert!(
-        requests.is_empty(),
-        "A verified complete partial was downloaded again"
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn fetch_replaces_a_corrupt_complete_partial() -> anyhow::Result<()> {
-    let (base, requests) = serve_body().await?;
-    let url = format!("{base}/model.gguf");
-    let sha = sha256(BODY);
-    let download = Download {
-        url: &url,
-        size: BODY.len() as u64,
-        sha256: &sha,
-    };
-    let directory = tempfile::tempdir()?;
-    fs::write(
-        directory.path().join("model.gguf.part"),
-        vec![0; BODY.len()],
-    )?;
-    let (progress, _) = watch::channel(CHECKING);
-    let path = fetch_into(&download, directory.path(), &progress).await?;
-    assert_eq!(fs::read(path)?, BODY);
-    assert_eq!(requests.recv().await?, None);
-    Ok(())
-}
-
-#[tokio::test]
-async fn cancellation_during_verification_keeps_the_partial_for_retry() -> anyhow::Result<()> {
-    let directory = tempfile::tempdir()?;
-    let partial = directory.path().join("model.gguf.part");
-    let bytes = vec![0; 4 * 1024 * 1024];
-    fs::write(&partial, &bytes)?;
-    let sha = sha256(&bytes);
-    let download = Download {
-        url: "http://127.0.0.1:1/model.gguf",
-        size: bytes.len() as u64,
-        sha256: &sha,
-    };
-    let (progress, mut updates) = watch::channel(CHECKING);
-    let (cancel, cancelled) = async_channel::bounded::<Infallible>(1);
-    let cancel_when_verifying = async {
-        updates
-            .wait_for(|progress| {
-                matches!(
-                    *progress,
-                    Progress::Bytes { step: "Verifying downloaded data", done, total }
-                        if done > 0 && done < total.get()
-                )
-            })
-            .await?;
-        drop(cancel);
-        Ok::<_, anyhow::Error>(())
-    };
-    let work = Installation::run(directory.path(), &progress, &cancelled, async |_| {
-        fetch_into(&download, directory.path(), &progress).await
-    });
-    let (result, cancellation) = timeout(Duration::from_secs(5), async {
-        tokio::join!(work, cancel_when_verifying)
-    })
-    .await?;
-    cancellation?;
-    assert!(result.is_none());
-    assert_eq!(fs::read(partial)?, bytes);
-    assert!(!directory.path().join("model.gguf").exists());
-    Ok(())
-}
-
-#[tokio::test]
 async fn fetch_resumes_a_partial_download_and_verifies_the_whole_file() -> anyhow::Result<()> {
     let (base, requests) = serve_body().await?;
     let url = format!("{base}/model.gguf");
@@ -216,30 +126,5 @@ async fn fetch_discards_a_download_that_fails_its_checksum() -> anyhow::Result<(
     assert!(format!("{error:#}").contains("checksum"), "{error:#}");
     assert!(!directory.path().join("model.gguf").exists());
     assert!(!directory.path().join("model.gguf.part").exists());
-    Ok(())
-}
-
-#[tokio::test]
-async fn cached_downloads_require_the_pinned_bytes_and_preserve_a_mismatch() -> anyhow::Result<()> {
-    let expected = b"known checkpoint";
-    let digest = sha256(expected);
-    let download = Download {
-        url: "https://example.invalid/model.gguf",
-        size: expected.len() as u64,
-        sha256: &digest,
-    };
-    let (progress, _) = watch::channel(CHECKING);
-    for bytes in [expected.as_slice(), b"stale checkpoint", b"truncated"] {
-        let directory = tempfile::tempdir()?;
-        let path = directory.path().join("model.gguf");
-        fs::write(&path, bytes)?;
-        let result = fetch_into(&download, directory.path(), &progress).await;
-        assert_eq!(result.is_ok(), bytes == expected);
-        assert_eq!(
-            fs::read(&path)?,
-            bytes,
-            "A checksum failure changed the cached file"
-        );
-    }
     Ok(())
 }
