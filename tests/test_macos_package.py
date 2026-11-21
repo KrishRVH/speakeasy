@@ -22,7 +22,7 @@ def seed_stale_outputs(artifacts: Path) -> None:
 
 
 def package(
-    tmp_path: Path, signing: dict[str, str]
+    tmp_path: Path, signing: dict[str, str], *, interrupt_after: str | None = None
 ) -> tuple[subprocess.CompletedProcess[str], list[list[str]]]:
     for name in (
         "scripts/package-macos.sh",
@@ -85,6 +85,16 @@ if name == os.environ.get("STUB_FAIL_TOOL") and sys.argv[-1].endswith(os.environ
         stub = tools / name
         stub.write_text(script)
         stub.chmod(0o755)
+    if interrupt_after:
+        mv = tools / "mv"
+        mv.write_text(f"""#!/usr/bin/env python3
+import os, signal, subprocess, sys
+moved = subprocess.run(["/bin/mv", *sys.argv[1:]], check=False).returncode
+if moved == 0 and sys.argv[1].endswith("/{interrupt_after}"):
+    os.kill(os.getppid(), signal.SIGTERM)
+sys.exit(moved)
+""")
+        mv.chmod(0o755)
     environment = {"PATH": f"{tools}:{Path(sys.executable).parent}:/usr/bin:/bin", **signing}
     result = subprocess.run(
         ["bash", "scripts/package-macos.sh"],
@@ -217,3 +227,15 @@ def test_archives_stay_unpublished_when_the_app_cannot_be_replaced(tmp_path: Pat
     assert (artifacts / "Speakeasy.app/Contents/occupied").exists()
     assert not (artifacts / "speakeasy-macos.zip").exists()
     assert not (artifacts / "speakeasy-macos.dmg").exists()
+
+
+@pytest.mark.parametrize("interrupted_after", OUTPUTS)
+def test_an_interrupted_publication_takes_back_every_renamed_output(
+    tmp_path: Path, interrupted_after: str
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    result, _ = package(tmp_path, {}, interrupt_after=interrupted_after)
+    assert result.returncode != 0
+    left = [name for name in OUTPUTS if (artifacts / name).exists()]
+    assert not left, f"An interrupt after {interrupted_after} left {left} published"
+    assert not list(artifacts.glob(".macos-package.*"))

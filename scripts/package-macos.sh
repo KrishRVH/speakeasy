@@ -31,7 +31,24 @@ if [[ -n "$signing_identity" || -n "$notary_profile" ]]; then
   fi
 fi
 staging=$(mktemp -d artifacts/.macos-package.XXXXXX)
-trap 'rm -rf -- "$staging"' EXIT
+outputs=(Speakeasy.app speakeasy-macos.zip speakeasy-macos.dmg)
+publishing=
+# An output leaves staging only through its rename into artifacts, so an exit during publication
+# takes back exactly the outputs missing from staging. Signals exit through this trap too.
+discard() {
+  if [[ -n "$publishing" ]]; then
+    for output in "${outputs[@]}"; do
+      if [[ ! -e "$staging/$output" ]]; then
+        rm -rf -- "artifacts/$output"
+      fi
+    done
+  fi
+  rm -rf -- "$staging"
+}
+trap discard EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 # Submits one archive and stops unless Apple accepts it, naming the submission to check.
 notarize() {
   xcrun notarytool submit "$1" --keychain-profile "$notary_profile" --wait --output-format json > "$staging/notarization.json"
@@ -94,15 +111,10 @@ if [[ -n "$signing_identity" ]]; then
   xcrun stapler validate "$staging/speakeasy-macos.dmg"
   spctl --assess --type open --context context:primary-signature "$staging/speakeasy-macos.dmg"
 fi
-# The app goes first, so a rename that fails publishes no archive, and a failed archive rename
-# takes back what this run published.
-mv "$bundle" artifacts/
-published=(artifacts/Speakeasy.app)
-for archive in speakeasy-macos.zip speakeasy-macos.dmg; do
-  if ! mv "$staging/$archive" artifacts/; then
-    rm -rf -- "${published[@]}"
-    exit 1
-  fi
-  published+=("artifacts/$archive")
+# The app goes first, so an archive never appears without it.
+publishing=yes
+for output in "${outputs[@]}"; do
+  mv "$staging/$output" artifacts/
 done
+publishing=
 echo "Built artifacts/Speakeasy.app"
