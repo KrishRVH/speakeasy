@@ -287,11 +287,15 @@ impl Review {
     }
 
     fn refresh(&mut self, cx: &mut Context<'_, Self>) {
+        self.reload(None, cx);
+    }
+
+    fn reload(&mut self, explanation: Option<String>, cx: &mut Context<'_, Self>) {
         self.dismiss();
         if self.holds_listing() {
             return;
         }
-        self.notice = None;
+        self.notice.clone_from(&explanation);
         self.request = None;
         let collection = self.collection;
         let existing = self.root.clone();
@@ -315,7 +319,7 @@ impl Review {
                             Some(key) => view.open_selected(key, None, cx),
                             None => view.clear_selection(cx),
                         }
-                        view.notice = notice;
+                        view.notice = explanation.or(notice);
                     },
                     Err(error) => {
                         const REMEDY: &str = "Check that the folder is readable, then refresh.";
@@ -710,12 +714,10 @@ impl Review {
                         view.mode = Mode::Keyframes;
                         view.refresh(cx);
                     },
-                    Ok(_) => view.refresh(cx),
                     Err(error) if view.library.selected() == key.as_ref() => {
-                        view.notice = Some(error);
-                        cx.notify();
+                        view.reload(Some(error), cx);
                     },
-                    Err(_) => cx.notify(),
+                    Ok(_) | Err(_) => view.refresh(cx),
                 }
             });
         });

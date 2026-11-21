@@ -720,7 +720,8 @@ module unless a test file is named.
   unknown checkpoint state cannot become an apparently complete bundle. Untranscribed audio or saved
   narration keeps a published checkpoint visible as Narration pending; publication keeps one for
   retry only when its audio is not damaged and its frame log replays a frame; one with neither retires, and
-  a retry whose kept audio holds no speech retires it and says so; a retry whose transcription
+  a retry whose kept audio holds no speech retires it and says so, and the Shows window rereads its
+  library after any failed recovery so a retired row stops offering Retry; a retry whose transcription
   yields no words saves no copy and stays. Saved narration that cannot be
   read fails recovery and stays; damaged narration falls back to the kept audio, and a retry with
   neither stays listed for explicit discard. A silent microphone's audio holds

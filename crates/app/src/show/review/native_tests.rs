@@ -648,6 +648,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         !interrupted.directory().exists(),
         "Confirmed discard left its checkpoint"
     );
+    retired_recovery(window, &root, &recovering, cx).await?;
     window.update(cx, |view, _, cx| {
         view.act(Action::Show(view.library.offer(0)), cx);
     })?;
@@ -697,6 +698,72 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         "Closing review also closed another app window"
     );
     Ok(())
+}
+
+#[expect(
+    clippy::future_not_send,
+    reason = "Native review acceptance uses GPUI's UI-thread context"
+)]
+async fn retired_recovery(
+    window: WindowHandle<Review>,
+    root: &std::path::Path,
+    recovering: &std::sync::mpsc::Receiver<oneshot::Sender<Result<SavedShow, String>>>,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<()> {
+    const RETIRED: &str = "Synthetic retry heard no speech; its checkpoint was removed.";
+    let (checkpoint, writer) = crate::show::Keeper::fixture(
+        root,
+        SystemTime::now(),
+        1_000,
+        speakeasy_show::Size {
+            width: 80.0,
+            height: 60.0,
+        },
+        speakeasy_show::Framing::Automatic,
+    )?;
+    ensure!(writer.close().await, "Synthetic checkpoint did not close");
+    let interrupted = checkpoint
+        .close()
+        .await?
+        .context("Fixture checkpoint is missing")?
+        .interrupted()?;
+    window.update(cx, |view, _, cx| view.refresh(cx))?;
+    wait_for(window, |view| view.listing.is_none(), cx).await?;
+    window.update(cx, |view, _, cx| {
+        view.act(Action::Show(view.library.offer(0)), cx);
+        view.act(Action::Recover, cx);
+    })?;
+    let recovery = recovering
+        .try_recv()
+        .context("Recover did not request a recovery")?;
+    fs::remove_dir_all(interrupted.directory())?;
+    ensure!(
+        recovery.send(Err(RETIRED.into())).is_ok(),
+        "The review stopped waiting for its recovery"
+    );
+    wait_for(
+        window,
+        |view| view.write.is_none() && view.listing.is_none(),
+        cx,
+    )
+    .await?;
+    window.read_with(cx, |view, _| {
+        ensure!(
+            view.interrupted().is_none()
+                && view
+                    .library
+                    .rows
+                    .iter()
+                    .all(|row| matches!(row.kind, Kind::Saved)),
+            "A retired checkpoint still offered Retry"
+        );
+        ensure!(
+            view.notice.as_deref() == Some(RETIRED),
+            "The retirement lost its explanation: {:?}",
+            view.notice
+        );
+        anyhow::Ok(())
+    })?
 }
 
 fn key(
