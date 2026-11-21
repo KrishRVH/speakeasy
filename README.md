@@ -349,6 +349,19 @@ narrated copy without changing your earlier Show or edits. A failed retry keeps 
 creating another copy. **Discard audio** removes its recovery checkpoint and leaves the saved Show
 alone. Discard always requires confirmation.
 
+During an explicit Show, a private checkpoint records frames, pointer events, and audio on one
+background writer. Promotion to a Show includes the narration already buffered since the press.
+Recovery uses the last complete event; a crash, storage failure, or a full bounded write queue can
+leave a shorter recording. Recording continues in memory if checkpointing stops, with a local
+notice. Recognized narration and export voice are saved durably before the checkpoint is retired. A
+save failure leaves the checkpoint available for recovery; a copy failure leaves the saved bundle
+available in the library. Cancelling, quitting, pausing, changing settings, or losing access to
+desktop input during an unfinished recording discards its checkpoint. Once you finish a Show, those
+interruptions leave its checkpoint recoverable, including while capture stops, the checkpoint
+flushes, narration transcribes, or publication saves the bundle. Hidden incomplete saves are removed
+once they are at least an hour old. Cleanup hides expired Shows before deleting their files and
+retries interrupted deletions on its next pass.
+
 An agent on the same machine can inspect a Show without launching the app or opening the microphone.
 A summary names its Show's exact ID when Speakeasy saved it in the Shows folder; `show demo --out`
 writes a summary that names only its folder. When retained samples and a usable command are
@@ -413,6 +426,12 @@ cell. `--crop` focuses on a numbered mark with surrounding context, and refuses 
 surface resize. Reports include the requested window, carried-in sample, sampling gaps, actual
 times, and source crop pixels. Exports require new paths and preserve the saved bundle.
 
+`frames` reports retained timestamps, sampling stride, and the longest gap. `frame` requires an
+explicit focus (`--at`, `--mark`, or `--phrase`) and a new PNG path; it exports the image at or
+before the resolved time, or the first image when the request precedes capture. Its metadata reports
+both requested and actual times. It refuses times after the Show ends and never overwrites a file.
+These commands cannot retrieve discarded frames or retry lost narration.
+
 On Windows and macOS, `frame --video` retrieves a moment from `recording.mp4` by time, mark, or
 phrase. Times use the original recording's clock. The report distinguishes the requested time from
 the actual decoded sample and includes video coverage and the separate annotation horizon. Recovered
@@ -470,72 +489,16 @@ the Windows `speakeasy-cli.exe`, so roots and Show paths stay Windows paths, and
 unchanged. The server's initialization instructions carry the disclosure above and the reading guide
 that `speakeasy show skill` prints.
 
-Scripts can control a running desktop app. Only a dictation a script starts with `--print` returns
-its words, and only to `dictation stop TOKEN --print`:
-
-```sh
-speakeasy status
-speakeasy dictation start --style snake
-speakeasy dictation stop "TOKEN_FROM_START"
-speakeasy dictation start --print
-speakeasy dictation stop "TOKEN_FROM_START" --print
-speakeasy dictation cancel "TOKEN_FROM_START"
-speakeasy paste-last
-speakeasy style prose
-speakeasy preset "Coding"
-```
-
-Each command accepts `--config PATH` for that app instance and returns JSON. Exit 0 means the owner
-acknowledged the action, 1 means refused, and 2 means unavailable or uncertain; an acknowledgement
-does not prove transcription or insertion completed. Invalid arguments print an error instead of
-JSON and also exit 2. Start creates a hands-free ordinary dictation; stop and cancel require its
-exact session token, which expires with that session or app restart. Busy starts, stale tokens, and
-commands targeting Shows or private practice are refused. Read status after an uncertain result
-instead of blindly retrying. `style` changes the next-recording default; `dictation start --style`
-overrides only that recording.
-
-`dictation start --print` works only after you turn on **Scripts can read their dictations** in
-Settings, Dictation, Writing; until then it is refused. It records the same hands-free dictation,
-but its words never reach the focused app, and the pill says To script while it records. The switch
-records your consent; it is not a security boundary, because any program running as you can also
-change your settings. `dictation stop TOKEN --print` finishes it, waits up to two minutes for
-recognition, and returns the text as the reply's `text` field, cleaned up like any dictation in its
-style. A printed dictation pastes nothing; Paste last dictation can still paste it. Stopping it
-without `--print`, or finishing it with the shortcut, pastes nothing and says so. Printing a
-dictation started without `--print` is refused, as is printing one twice, and one that ends empty,
-cancelled, or failed refuses its caller. Keyboard dictations, Shows, practice, and earlier
-dictations can never be read back. Text over the 64 KiB reply limit is refused; paste it instead.
-These explicit commands work on all three platforms; Linux's desktop-binding `--toggle` and
-`--cancel` still require Desktop bindings.
-
 `show skill` prints the [agent reading guide](skills/speakeasy-show/SKILL.md) embedded in the
 installed binary. `show skill --install DIR` writes it to `DIR/speakeasy-show/SKILL.md` for an agent
 that loads skills from `DIR`; it leaves an identical copy alone and never overwrites an edited one.
 The guide explains the reading order, numbered references, private-file handling, and source-frame
-retrieval. `frames` reports retained timestamps, sampling stride, and the longest gap. `frame`
-requires an explicit focus (`--at`, `--mark`, or `--phrase`) and a new PNG path; it exports the
-image at or before the resolved time, or the first image when the request precedes capture. Its
-metadata reports both requested and actual times. It refuses times after the Show ends and never
-overwrites a file. These commands cannot retrieve discarded frames or retry lost narration.
-`speakeasy show --help` lists their options.
+retrieval. `speakeasy show --help` lists every Show command's options.
 
 `list` gives interrupted Shows distinct `interrupted:ID` identifiers and null duration/frame counts;
 it does not replay their logs. `speakeasy show discard "interrupted:ID" --json` permanently removes
 that explicit checkpoint; an exact checkpoint path from `list` also works. A saved Show ID cannot
 select an interrupted Show with the same timestamp. Recover through the native Shows window.
-
-During an explicit Show, a private checkpoint records frames, pointer events, and audio on one
-background writer. Promotion to a Show includes the narration already buffered since the press.
-Recovery uses the last complete event; a crash, storage failure, or a full bounded write queue can
-leave a shorter recording. Recording continues in memory if checkpointing stops, with a local
-notice. Recognized narration and export voice are saved durably before the checkpoint is retired. A
-save failure leaves the checkpoint available for recovery; a copy failure leaves the saved bundle
-available in the library. Cancelling, quitting, pausing, changing settings, or losing access to
-desktop input during an unfinished recording discards its checkpoint. Once you finish a Show, those
-interruptions leave its checkpoint recoverable, including while capture stops, the checkpoint
-flushes, narration transcribes, or publication saves the bundle. Hidden incomplete saves are removed
-once they are at least an hour old. Cleanup hides expired Shows before deleting their files and
-retries interrupted deletions on its next pass.
 
 ## What's said here stays here
 
@@ -890,6 +853,46 @@ the text as direct input, which never touches the clipboard but some editors rej
 pasted text stays on the clipboard; **Insert text by**, described above, chooses the method.
 Protected fields and elevated Windows apps may refuse either method, and no OS submission can
 confirm that an editor accepted the text.
+
+### Scripts
+
+Scripts can control a running desktop app. Only a dictation a script starts with `--print` returns
+its words, and only to `dictation stop TOKEN --print`:
+
+```sh
+speakeasy status
+speakeasy dictation start --style snake
+speakeasy dictation stop "TOKEN_FROM_START"
+speakeasy dictation start --print
+speakeasy dictation stop "TOKEN_FROM_START" --print
+speakeasy dictation cancel "TOKEN_FROM_START"
+speakeasy paste-last
+speakeasy style prose
+speakeasy preset "Coding"
+```
+
+Each command accepts `--config PATH` for that app instance and returns JSON. Exit 0 means the owner
+acknowledged the action, 1 means refused, and 2 means unavailable or uncertain; an acknowledgement
+does not prove transcription or insertion completed. Invalid arguments print an error instead of
+JSON and also exit 2. Start creates a hands-free ordinary dictation; stop and cancel require its
+exact session token, which expires with that session or app restart. Busy starts, stale tokens, and
+commands targeting Shows or private practice are refused. Read status after an uncertain result
+instead of blindly retrying. `style` changes the next-recording default; `dictation start --style`
+overrides only that recording.
+
+`dictation start --print` works only after you turn on **Scripts can read their dictations** in
+Settings, Dictation, Writing; until then it is refused. It records the same hands-free dictation,
+but its words never reach the focused app, and the pill says To script while it records. The switch
+records your consent; it is not a security boundary, because any program running as you can also
+change your settings. `dictation stop TOKEN --print` finishes it, waits up to two minutes for
+recognition, and returns the text as the reply's `text` field, cleaned up like any dictation in its
+style. A printed dictation pastes nothing; Paste last dictation can still paste it. Stopping it
+without `--print`, or finishing it with the shortcut, pastes nothing and says so. Printing a
+dictation started without `--print` is refused, as is printing one twice, and one that ends empty,
+cancelled, or failed refuses its caller. Keyboard dictations, Shows, practice, and earlier
+dictations can never be read back. Text over the 64 KiB reply limit is refused; paste it instead.
+These explicit commands work on all three platforms; Linux's desktop-binding `--toggle` and
+`--cancel` still require Desktop bindings.
 
 ## Build and verify
 
