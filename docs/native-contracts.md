@@ -216,12 +216,16 @@ previous copy can still confirm a replacement. A transfer Speakeasy declines, fo
 set, a paste replacing the selection, another MIME type, or no current committed copy, still gets
 SelectionWrite: its descriptor closes empty and SelectionWriteDone reports failure, since Mutter
 ends a transfer only when its descriptor closes. Refusals run beside the insertion loop, at most
-`SIGNAL_BACKLOG` at once; a request past that bound waits for the portal's own timeout. The portal
-clipboard serves bytes only after the permit commits to paste or manual copy. Selection loss
-invalidates its transfer payloads. Writes and reporting have deadlines. X11 clipboard serving and
-insertion have separate owners; after blocking focus/modifier queries and before committing paste,
-the X11 paste confirms that the clipboard still holds the dictated text from the same owner. That
-check and XTEST submission are not one atomic server transaction.
+`SIGNAL_BACKLOG` at once; later ones wait their turn in arrival order. A transfer whose selection
+was invalidated before it started still asks for its descriptor and closes it empty. The insertion
+loop polls method replies and new insertions ahead of transfer requests, and on the desktop thread's
+single-threaded runtime a signal stream refills only between polls, at most `SIGNAL_BACKLOG`
+messages at a time, so transfer requests cannot hold off an insertion. The portal clipboard serves
+bytes only after the permit commits to paste or manual copy. Selection loss invalidates its transfer
+payloads. Writes and reporting have deadlines. X11 clipboard serving and insertion have separate
+owners; after blocking focus/modifier queries and before committing paste, the X11 paste confirms
+that the clipboard still holds the dictated text from the same owner. That check and XTEST
+submission are not one atomic server transaction.
 
 ## Linux realtime opt-out
 

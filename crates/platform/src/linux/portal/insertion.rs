@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     convert::Infallible,
     os::fd::OwnedFd,
     time::{Duration, Instant},
@@ -36,6 +37,7 @@ const SELECTION_TIMEOUT: Duration = Duration::from_secs(2);
 pub(super) struct Insertions<'a> {
     transfers: Transfers<'a>,
     refusals: Transfers<'a>,
+    declined: VecDeque<(OwnedObjectPath, u32)>,
     in_flight: Option<InFlight<'a>>,
     sender: Option<ei::Sender>,
     clipboard_session: Option<OwnedObjectPath>,
@@ -61,6 +63,7 @@ impl<'a> Insertions<'a> {
         Self {
             transfers: Transfers::new(),
             refusals: Transfers::new(),
+            declined: VecDeque::new(),
             in_flight: None,
             sender,
             clipboard_session,
@@ -116,7 +119,7 @@ impl<'a> Insertions<'a> {
                     Err(_) => break,
                 },
                 _ = self.transfers.next(), if !self.transfers.is_empty() => {},
-                _ = self.refusals.next(), if !self.refusals.is_empty() => {},
+                _ = self.refusals.next(), if !self.refusals.is_empty() => self.refuse_declined(),
                 event = or_pending(transfer_requests.as_mut().map(|stream| stream.next())) => {
                     self.serve_transfer(&event.context(CLIPBOARD_DISCONNECTED)??);
                 },
@@ -267,7 +270,7 @@ impl<'a> Insertions<'a> {
         Ok(())
     }
 
-    fn serve_transfer(&self, event: &Message) {
+    fn serve_transfer(&mut self, event: &Message) {
         let Ok((path, mime, serial)) = event.body().deserialize::<(OwnedObjectPath, String, u32)>()
         else {
             return;
@@ -280,27 +283,28 @@ impl<'a> Insertions<'a> {
             .as_ref()
             .filter(|_| self.accepts_transfers() && PLAIN_TEXT.contains(&mime.as_str()))
             .map(Selection::payload);
-        let clipboard = self.clipboard;
-        let session = path.clone();
-        let write = async move {
-            let fd: zbus::zvariant::OwnedFd =
-                clipboard.call("SelectionWrite", &(session, serial)).await?;
-            Ok(OwnedFd::from(fd))
-        };
-        let done = async move |success: bool| {
-            clipboard
-                .call::<_, _, ()>("SelectionWriteDone", &(path, serial, success))
-                .await?;
-            Ok(())
-        };
         match payload {
-            Some(payload) => self
-                .transfers
-                .push(transfer(write, done, payload).boxed_local()),
-            None if self.refusals.len() < SIGNAL_BACKLOG => {
-                self.refusals.push(refuse(write, done).boxed_local());
+            Some(payload) => {
+                let (write, done) = transfer_calls(self.clipboard, path, serial);
+                self.transfers
+                    .push(transfer(write, done, payload).boxed_local());
             },
-            None => {},
+            None => self.decline(path, serial),
+        }
+    }
+
+    fn decline(&mut self, session: OwnedObjectPath, serial: u32) {
+        if self.refusals.len() < SIGNAL_BACKLOG {
+            let (write, done) = transfer_calls(self.clipboard, session, serial);
+            self.refusals.push(refuse(write, done).boxed_local());
+        } else {
+            self.declined.push_back((session, serial));
+        }
+    }
+
+    fn refuse_declined(&mut self) {
+        if let Some((session, serial)) = self.declined.pop_front() {
+            self.decline(session, serial);
         }
     }
 
@@ -364,6 +368,30 @@ async fn set_selection(
     Ok(Prepared::SelectionSet {
         replied: reply.recv_position(),
     })
+}
+
+fn transfer_calls(
+    clipboard: &Proxy<'static>,
+    session: OwnedObjectPath,
+    serial: u32,
+) -> (
+    impl Future<Output = anyhow::Result<OwnedFd>>,
+    impl AsyncFnOnce(bool) -> anyhow::Result<()>,
+) {
+    let requested = session.clone();
+    let write = async move {
+        let fd: zbus::zvariant::OwnedFd = clipboard
+            .call("SelectionWrite", &(requested, serial))
+            .await?;
+        Ok(OwnedFd::from(fd))
+    };
+    let done = async move |success: bool| {
+        clipboard
+            .call::<_, _, ()>("SelectionWriteDone", &(session, serial, success))
+            .await?;
+        Ok(())
+    };
+    (write, done)
 }
 
 async fn copy_with_x11(

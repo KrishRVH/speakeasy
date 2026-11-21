@@ -550,8 +550,45 @@ fn private_bus_only_the_portal_signals_and_malformed_ones_are_skipped() -> anyho
     })
 }
 
+#[derive(Default)]
+struct Ledger {
+    written: Vec<(u32, UnixStream)>,
+    reported: Vec<(u32, bool)>,
+}
+
+impl Ledger {
+    async fn answer(&mut self, portal: &FakePortal, call: &Message) -> anyhow::Result<()> {
+        match call.header().member().map(MemberName::as_str) {
+            Some("SetSelection") => {
+                portal.reply(call).await?;
+                portal.own().await?;
+            },
+            Some("SelectionWrite") => {
+                let (_, serial): (OwnedObjectPath, u32) = call.body().deserialize()?;
+                self.written.push((serial, portal.pipe(call).await?));
+            },
+            Some("SelectionWriteDone") => {
+                let (_, serial, success): (OwnedObjectPath, u32, bool) =
+                    call.body().deserialize()?;
+                self.reported.push((serial, success));
+                portal.reply(call).await?;
+            },
+            other => bail!("The client called {other:?}"),
+        }
+        Ok(())
+    }
+
+    async fn settle(&mut self, portal: &mut FakePortal, serials: usize) -> anyhow::Result<()> {
+        while self.reported.len() < serials {
+            let call = portal.call().await?;
+            self.answer(portal, &call).await?;
+        }
+        Ok(())
+    }
+}
+
 #[test]
-fn private_bus_a_transfer_flood_while_transfers_are_full_refuses_without_stalling_a_paste()
+fn private_bus_every_transfer_past_full_transfers_and_refusals_is_still_refused()
 -> anyhow::Result<()> {
     on_private_bus(async |bus| {
         let mut portal = FakePortal::start(&bus).await?;
@@ -561,14 +598,13 @@ fn private_bus_a_transfer_flood_while_transfers_are_full_refuses_without_stallin
             portal.transfer(serial).await?;
             portal.expect("SelectionWrite").await?;
         }
-        let flood = u32::try_from(2 * SIGNAL_BACKLOG)?;
-        for serial in 5..flood.saturating_add(5) {
+        let last = u32::try_from(2 * SIGNAL_BACKLOG)?.saturating_add(4);
+        for serial in 5..=last {
             portal.transfer(serial).await?;
         }
 
         let (_, answer) = client.paste("bravo").await?;
-        let mut refusals = Vec::new();
-        let mut reports = Vec::new();
+        let mut ledger = Ledger::default();
         let copied = loop {
             tokio::select! {
                 copied = tokio::time::timeout(PATIENCE, answer.recv()) => break copied???,
@@ -577,47 +613,36 @@ fn private_bus_a_transfer_flood_while_transfers_are_full_refuses_without_stallin
                     client.release_focus()?;
                 },
                 call = portal.call() => {
-                    let call = call?;
-                    match call.header().member().map(MemberName::as_str) {
-                        Some("SetSelection") => {
-                            portal.reply(&call).await?;
-                            portal.own().await?;
-                        },
-                        Some("SelectionWrite") => refusals.push(portal.pipe(&call).await?),
-                        Some("SelectionWriteDone") => {
-                            reports.push(call.body().deserialize::<(OwnedObjectPath, u32, bool)>()?);
-                        },
-                        other => bail!("The client called {other:?}"),
-                    }
+                    ledger.answer(&portal, &call?).await?;
                 },
             }
         };
         assert_eq!(copied, COPIED_FOR_MANUAL_PASTE);
-        while let Ok(call) = tokio::time::timeout(Duration::from_millis(500), portal.call()).await {
-            let call = call?;
-            match call.header().member().map(MemberName::as_str) {
-                Some("SelectionWrite") => refusals.push(portal.pipe(&call).await?),
-                Some("SelectionWriteDone") => {
-                    reports.push(call.body().deserialize::<(OwnedObjectPath, u32, bool)>()?);
-                },
-                other => bail!("The client called {other:?}"),
-            }
-        }
-        assert!(!refusals.is_empty(), "No flooded transfer was refused");
-        for refusal in refusals {
+        ledger.settle(&mut portal, usize::try_from(last)?).await?;
+        let mut reported: Vec<u32> = ledger.reported.iter().map(|(serial, _)| *serial).collect();
+        reported.sort_unstable();
+        assert_eq!(
+            reported,
+            (1..=last).collect::<Vec<_>>(),
+            "A transfer went unreported or was reported twice"
+        );
+        let mut written: Vec<u32> = ledger.written.iter().map(|(serial, _)| *serial).collect();
+        written.sort_unstable();
+        assert_eq!(
+            written,
+            (5..=last).collect::<Vec<_>>(),
+            "A transfer declined past the refusal limit never reached SelectionWrite"
+        );
+        assert!(
+            ledger.reported.iter().all(|(_, success)| !success),
+            "A refused or invalidated transfer reported success"
+        );
+        for (_, refusal) in ledger.written {
             assert!(
                 read_all(refusal).await?.is_empty(),
                 "A refused transfer wrote data"
             );
         }
-        assert!(
-            reports.iter().all(|(_, _, success)| !success),
-            "A refused or invalidated transfer reported success"
-        );
-        assert!(
-            (1..=4).all(|serial| reports.iter().any(|(_, reported, _)| *reported == serial)),
-            "A transfer of the replaced copy was never reported"
-        );
         assert!(client.alive(), "The flood stopped the service");
         Ok(())
     })

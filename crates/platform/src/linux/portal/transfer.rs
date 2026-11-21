@@ -64,10 +64,13 @@ pub(super) async fn transfer(
     done: impl AsyncFnOnce(bool) -> anyhow::Result<()>,
     payload: TransferPayload,
 ) {
-    let success = tokio::select! {
-        biased;
-        _ = payload.invalidated.recv() => false,
-        written = write_payload(write, &payload.text) => written.is_ok(),
+    let success = match tokio::time::timeout(TRANSFER_TIMEOUT, write).await {
+        Ok(Ok(fd)) => tokio::select! {
+            biased;
+            _ = payload.invalidated.recv() => false,
+            written = write_payload(fd, &payload.text) => written.is_ok(),
+        },
+        Ok(Err(_)) | Err(_) => false,
     };
     #[expect(
         clippy::let_underscore_must_use,
@@ -92,11 +95,7 @@ pub(super) async fn refuse(
     let _ = tokio::time::timeout(TRANSFER_TIMEOUT, done(false)).await;
 }
 
-async fn write_payload(
-    write: impl Future<Output = anyhow::Result<OwnedFd>>,
-    text: &str,
-) -> anyhow::Result<()> {
-    let fd = tokio::time::timeout(TRANSFER_TIMEOUT, write).await??;
+async fn write_payload(fd: OwnedFd, text: &str) -> anyhow::Result<()> {
     set_nonblocking(fd.as_fd())?;
 
     let pipe = unsafe { AsyncFd::register(File::from(fd)) }?;
@@ -211,7 +210,16 @@ mod tests {
         drop(selected);
         let (writer, mut reader) = UnixStream::pair()?;
         reader.set_read_timeout(Some(Duration::from_millis(100)))?;
-        assert!(!reported_success(async { Ok(OwnedFd::from(writer)) }, previous_payload).await?);
+        let (asked, requested) = async_channel::bounded(1);
+        let write = async move {
+            asked.try_send(())?;
+            Ok(OwnedFd::from(writer))
+        };
+        assert!(!reported_success(write, previous_payload).await?);
+        assert!(
+            requested.try_recv().is_ok(),
+            "An invalidated transfer never asked the portal for its descriptor"
+        );
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes)?;
         assert!(
