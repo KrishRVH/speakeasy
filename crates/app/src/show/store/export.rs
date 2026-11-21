@@ -1,10 +1,12 @@
 use std::{
+    fs::File,
     io::{self, Read as _, Seek, Write as _},
     path::{Path, PathBuf},
 };
 
 use anyhow::Context as _;
 use serde::Serialize;
+use speakeasy_platform::ReadDirectory;
 use speakeasy_show::{Bundle, Manifest, Source};
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
@@ -37,7 +39,7 @@ pub(crate) fn write(directory: &Path, destination: &Path) -> anyhow::Result<Expo
 }
 
 pub(super) struct Target {
-    pub show: PathBuf,
+    pub show: ReadDirectory,
     pub path: PathBuf,
     folder: PathBuf,
     kind: &'static str,
@@ -65,6 +67,7 @@ impl Target {
                 .starts_with(&show),
             "Choose an export location outside the original Show"
         );
+        let show = ReadDirectory::open(&show).context("Cannot open the Show to export")?;
         Ok(Self {
             show,
             path,
@@ -118,10 +121,10 @@ fn failed(staging: tempfile::NamedTempFile, error: anyhow::Error) -> anyhow::Err
 }
 
 fn archive(
-    directory: &Path,
+    directory: &ReadDirectory,
     writer: &mut (impl io::Write + Seek),
 ) -> anyhow::Result<(usize, bool)> {
-    let bytes = recall::read_file(directory, Manifest::FILE, recall::MANIFEST_LIMIT)
+    let bytes = recall::read_from(directory, Manifest::FILE, recall::MANIFEST_LIMIT)
         .context("Cannot export show.json")?;
     let manifest = Manifest::parse(&bytes)?;
     let mut archive = ZipWriter::new(writer);
@@ -141,28 +144,36 @@ fn archive(
                 recall::SUMMARY_LIMIT
             } else {
                 recall::IMAGE_LIMIT
-            };
-            let copied = copy(directory, &name, limit.min(remaining), &mut archive)
+            }
+            .min(remaining);
+            let copied = recall::open_file(directory, &name, limit)
+                .and_then(|file| copy(file, limit, &mut archive))
                 .with_context(|| format!("Cannot export {name}"))?;
             remaining = remaining.saturating_sub(copied);
         }
         files = files.saturating_add(1);
     }
-    let retained_frames = source::present(directory)?;
-    if retained_frames {
-        let index = source::inspect(directory).context("Cannot export damaged retained frames")?;
+    let retained = source::Reader::optional(directory)?;
+    let retained_frames = retained.is_some();
+    if let Some(mut reader) = retained {
+        let index = reader
+            .inspect()
+            .context("Cannot export damaged retained frames")?;
         anyhow::ensure!(
             index.duration() == manifest.recording().duration,
             "Source and Show timelines differ; inspect the bundle before exporting"
         );
         archive.start_file(source::FILE, options)?;
         let copied = copy(
-            directory,
-            source::FILE,
+            reader.into_file(),
             Source::FILE_LIMIT.min(remaining),
             &mut archive,
         )
         .context("Cannot export retained frames")?;
+        anyhow::ensure!(
+            copied == index.bytes(),
+            "Retained frames changed during export; try again"
+        );
         remaining = remaining.saturating_sub(copied);
         files = files.saturating_add(1);
     }
@@ -194,10 +205,9 @@ fn archive(
     Ok((files.saturating_add(1), retained_frames))
 }
 
-fn copy(directory: &Path, name: &str, limit: u64, out: &mut impl io::Write) -> io::Result<u64> {
-    let folder = recall::open_directory(directory)?;
-    let file = recall::open_file(&folder, name, limit)?;
+fn copy(mut file: File, limit: u64, out: &mut impl io::Write) -> io::Result<u64> {
     let expected = file.metadata()?.len();
+    file.rewind()?;
     let copied = io::copy(&mut file.take(limit.saturating_add(1)), out)?;
     if copied != expected || copied > limit {
         return Err(io::Error::other("file changed during export; try again"));

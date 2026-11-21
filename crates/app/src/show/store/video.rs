@@ -81,13 +81,13 @@ fn write_with(
 ) -> anyhow::Result<Exported> {
     let target = export::Target::new(directory, destination, "MP4")?;
     anyhow::ensure!(!cancelled(), CANCELLED);
-    let directory = target.show.as_path();
-    let manifest = Manifest::parse(&recall::read_file(
+    let directory = &target.show;
+    let manifest = Manifest::parse(&recall::read_from(
         directory,
         Manifest::FILE,
         recall::MANIFEST_LIMIT,
     )?)?;
-    let mut reading = movie::Reading::open(directory, manifest.recording().duration)?;
+    let mut reading = movie::Reading::required(directory, manifest.recording().duration)?;
     let voice = voice::read(directory, SystemTime::now())?;
     let audio = voice.audio();
     let timing = timeline::Timing::new(&reading.movie, options.span, audio)?;

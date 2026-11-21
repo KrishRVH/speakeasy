@@ -149,7 +149,7 @@ async fn damaged_audio_does_not_block_saving_intact_frames_and_narration() -> an
         None,
     )?;
     assert!(matches!(
-        store::voice::read(show.directory(), SystemTime::now())?.status(),
+        saved_voice(show.directory())?.status(),
         store::voice::Status::Absent
     ));
     assert_eq!(recoverable(root.path()), []);
@@ -208,7 +208,7 @@ async fn digital_silence_recovered_after_a_failed_save_stays_silent_without_voic
         bail!("Silent Show was not recovered");
     };
     assert!(matches!(
-        store::voice::read(show.directory(), SystemTime::now())?.status(),
+        saved_voice(show.directory())?.status(),
         store::voice::Status::Absent
     ));
     Ok(())

@@ -118,6 +118,93 @@ fn archive_moves_with_edited_summary_images_and_retained_samples_but_no_extra_fi
     Ok(())
 }
 
+struct Replacing<'a> {
+    archive: io::Cursor<Vec<u8>>,
+    after: &'a [u8],
+    replace: Option<Box<dyn FnOnce() -> anyhow::Result<()> + 'a>>,
+}
+
+fn replacing<'a>(
+    after: &'a str,
+    replace: impl FnOnce() -> anyhow::Result<()> + 'a,
+) -> Replacing<'a> {
+    Replacing {
+        archive: io::Cursor::new(Vec::new()),
+        after: after.as_bytes(),
+        replace: Some(Box::new(replace)),
+    }
+}
+
+impl io::Write for Replacing<'_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let written = self.archive.write(bytes)?;
+        if self
+            .archive
+            .get_ref()
+            .windows(self.after.len())
+            .any(|window| window == self.after)
+            && let Some(replace) = self.replace.take()
+        {
+            replace().map_err(io::Error::other)?;
+        }
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.archive.flush()
+    }
+}
+
+impl Seek for Replacing<'_> {
+    fn seek(&mut self, position: io::SeekFrom) -> io::Result<u64> {
+        self.archive.seek(position)
+    }
+}
+
+#[test]
+fn archive_members_come_from_the_show_it_opened_after_its_path_is_replaced() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let directory = fixture(root.path())?;
+    let opened = ReadDirectory::open(&directory.canonicalize()?)?;
+    let moved = root.path().join("moved");
+    let mut zip = replacing(Bundle::SUMMARY, || {
+        fs::rename(&directory, &moved)?;
+        fixture(root.path())?;
+        fs::write(directory.join(Bundle::SUMMARY), "REPLACEMENT_SUMMARY")?;
+        Ok(())
+    });
+    archive(&opened, &mut zip)?;
+    assert!(zip.replace.is_none());
+    let mut exported = ZipArchive::new(zip.archive)?;
+    for name in [Bundle::SUMMARY, source::FILE] {
+        let mut bytes = Vec::new();
+        exported.by_name(name)?.read_to_end(&mut bytes)?;
+        assert_eq!(bytes, fs::read(moved.join(name))?, "{name}");
+    }
+    Ok(())
+}
+
+#[test]
+fn retained_frames_that_grow_after_inspection_are_not_exported() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let directory = fixture(root.path())?;
+    let opened = ReadDirectory::open(&directory.canonicalize()?)?;
+    let mut zip = replacing(source::FILE, || {
+        fs::OpenOptions::new()
+            .append(true)
+            .open(directory.join(source::FILE))?
+            .write_all(b"appended")?;
+        Ok(())
+    });
+    let message = archive(&opened, &mut zip)
+        .err()
+        .context("Grown retained frames were exported")?
+        .to_string();
+    assert!(zip.replace.is_none());
+    assert!(message.contains("changed during export"), "{message}");
+    Ok(())
+}
+
 #[test]
 fn movie_exports_preserve_video_timing_and_relative_playback_links() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;

@@ -8,6 +8,7 @@ use std::{
 };
 
 use anyhow::{bail, ensure};
+use speakeasy_platform::ReadDirectory;
 use zeroize::Zeroizing;
 
 use super::{found, read_complete, recall};
@@ -128,8 +129,14 @@ pub(in crate::show::store) fn available(
     directory: &Path,
     name: &str,
 ) -> anyhow::Result<Option<File>> {
-    let folder = recall::open_directory(directory)?;
-    let Some((mut file, metadata)) = found(folder.file(Path::new(name)))? else {
+    available_from(&recall::open_directory(directory)?, name)
+}
+
+pub(in crate::show::store) fn available_from(
+    directory: &ReadDirectory,
+    name: &str,
+) -> anyhow::Result<Option<File>> {
+    let Some((mut file, metadata)) = found(directory.file(Path::new(name)))? else {
         return Ok(None);
     };
     ensure!(metadata.len() <= FILE_LIMIT, Damaged);

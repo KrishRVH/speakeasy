@@ -27,7 +27,7 @@ async fn durable_voiced_publication_retires_checkpoint_after_a_crash_before_disc
         store::checkpoint::list(root.path(), SystemTime::now()).shows,
         []
     );
-    let voice = store::voice::read(saved.show.directory(), SystemTime::now())?;
+    let voice = saved_voice(saved.show.directory())?;
     assert!(matches!(voice.status(), store::voice::Status::Available));
     assert_eq!(voice.audio().unwrap().pcm.len(), 16_000);
     store::sweep(root.path(), SystemTime::now())?;
@@ -185,7 +185,7 @@ async fn only_audio_that_may_hold_speech_is_kept_for_retry_or_as_voice() -> anyh
             usize::from(retry),
             "{lost:?}"
         );
-        let voice = store::voice::read(show.directory(), SystemTime::now())?;
+        let voice = saved_voice(show.directory())?;
         assert_eq!(
             matches!(voice.status(), store::voice::Status::Available),
             voiced,
@@ -249,7 +249,7 @@ async fn an_audio_file_without_samples_does_not_block_publication_or_become_voic
             Narration::Text("synthetic narration".into()),
             None,
         )?;
-        let voice = store::voice::read(show.directory(), SystemTime::now())?;
+        let voice = saved_voice(show.directory())?;
         assert!(matches!(voice.status(), store::voice::Status::Absent));
     }
     Ok(())
@@ -302,7 +302,7 @@ async fn failed_silent_show_recovery_preserves_the_silence_notice_without_voice(
         bail!("Silent Show was not recovered");
     };
     assert!(matches!(
-        store::voice::read(show.directory(), SystemTime::now())?.status(),
+        saved_voice(show.directory())?.status(),
         store::voice::Status::Absent
     ));
     Ok(())

@@ -49,6 +49,14 @@ impl Reader {
             .context("Source frames are unavailable for this Show")
     }
 
+    pub(super) fn optional(directory: &ReadDirectory) -> io::Result<Option<Self>> {
+        Ok(found(recall::open_file(directory, FILE, Source::FILE_LIMIT))?.map(Self))
+    }
+
+    pub(super) fn into_file(self) -> File {
+        self.0
+    }
+
     pub(in crate::show) fn inspect(&mut self) -> anyhow::Result<Source> {
         Source::read(self.0.metadata()?.len(), |range| {
             read_range(&mut self.0, range)

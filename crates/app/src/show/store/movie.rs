@@ -181,18 +181,18 @@ pub(crate) struct Reading {
 
 impl Reading {
     pub(crate) fn open(directory: &Path, annotations: Moment) -> anyhow::Result<Self> {
+        Self::required(&recall::open_directory(directory)?, annotations)
+    }
+
+    pub(in crate::show::store) fn required(
+        directory: &ReadDirectory,
+        annotations: Moment,
+    ) -> anyhow::Result<Self> {
         Self::optional(directory, annotations)?
             .context("This Show has no retained video; use its source frames instead")
     }
 
     pub(in crate::show::store) fn optional(
-        directory: &Path,
-        annotations: Moment,
-    ) -> anyhow::Result<Option<Self>> {
-        Self::optional_from(&recall::open_directory(directory)?, annotations)
-    }
-
-    fn optional_from(
         directory: &ReadDirectory,
         annotations: Moment,
     ) -> anyhow::Result<Option<Self>> {
@@ -385,7 +385,7 @@ pub(super) fn saved(
     directory: &ReadDirectory,
     annotations: Moment,
 ) -> anyhow::Result<Option<Inspected>> {
-    Ok(Reading::optional_from(directory, annotations)?.map(|reading| reading.movie))
+    Ok(Reading::optional(directory, annotations)?.map(|reading| reading.movie))
 }
 
 pub(in crate::show::store) fn retain(

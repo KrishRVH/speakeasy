@@ -628,7 +628,10 @@ module unless a test file is named.
   retention markers, bounds input to 2 GiB, reports failed staging cleanup, and publishes with
   `persist_noclobber` after flush. The CLI and review window use the same exporter; accepted GUI ZIP
   exports use the app's [edit owner](../crates/app/src/show/edits.rs), so closing review cannot
-  cancel them. [export/tests.rs](../crates/app/src/show/store/export/tests.rs) checks portability,
+  cancel them. ZIP and MP4 export open the Show once and read its manifest, files, retained frames,
+  video, and voice through that handle, so a folder put in its place during export contributes
+  nothing; ZIP export copies retained frames from the file it inspected and refuses them if they
+  changed. [export/tests.rs](../crates/app/src/show/store/export/tests.rs) checks portability,
   source retrieval after moving, exclusions, links, size limits, and failure cleanup.
   [store/video.rs](../crates/app/src/show/store/video.rs) composes a separate MP4 through local
   FFmpeg. It copies the validated source prefix into private staging, checks decoded frame count,

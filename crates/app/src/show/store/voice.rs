@@ -1,4 +1,5 @@
 use std::{
+    ffi::OsStr,
     fs::File,
     io::{self, Read as _, Write as _},
     path::Path,
@@ -7,11 +8,12 @@ use std::{
 
 use anyhow::Context as _;
 use serde::Serialize;
+use speakeasy_platform::ReadDirectory;
 
 use super::{
     KEPT_FOR, Staged,
     checkpoint::audio::{self, KeptAudio},
-    entry_exists, found, recall, remove_if_present, sync_directory,
+    found, recall, remove_if_present, sync_directory,
 };
 
 const FILE: &str = "voice.log";
@@ -87,8 +89,8 @@ pub(super) fn retain(
     Ok(())
 }
 
-fn deadline(directory: &Path) -> io::Result<Option<SystemTime>> {
-    let Some(bytes) = found(recall::read_file(directory, EXPIRY, 8))? else {
+fn deadline(directory: &ReadDirectory) -> io::Result<Option<SystemTime>> {
+    let Some(bytes) = found(recall::read_from(directory, EXPIRY, 8))? else {
         return Ok(None);
     };
     let bytes: [u8; 8] = bytes
@@ -100,12 +102,12 @@ fn deadline(directory: &Path) -> io::Result<Option<SystemTime>> {
         .ok_or_else(|| io::Error::other("Show voice expiry is out of range"))
 }
 
-pub(crate) fn read(directory: &Path, now: SystemTime) -> anyhow::Result<Voice> {
+pub(crate) fn read(directory: &ReadDirectory, now: SystemTime) -> anyhow::Result<Voice> {
     const DAMAGED: &str =
         "Cannot read this Show's voice; recover the original Show before exporting voice";
     let Some(expires) = deadline(directory)? else {
         anyhow::ensure!(
-            !entry_exists(&directory.join(FILE))?,
+            !directory.contains(OsStr::new(FILE))?,
             "Show voice has no expiry; recover the original Show before exporting voice"
         );
         return Ok(Voice::Absent);
@@ -113,15 +115,18 @@ pub(crate) fn read(directory: &Path, now: SystemTime) -> anyhow::Result<Voice> {
     if now >= expires {
         return Ok(Voice::Expired);
     }
-    match audio::available(directory, FILE).context(DAMAGED)? {
+    match audio::available_from(directory, FILE).context(DAMAGED)? {
         Some(file) => audio::read(file).map(Voice::Kept),
-        None if entry_exists(&directory.join(FILE))? => Ok(Voice::Absent),
+        None if directory.contains(OsStr::new(FILE))? => Ok(Voice::Absent),
         None => anyhow::bail!(DAMAGED),
     }
 }
 
 pub(super) fn expire(directory: &Path, now: SystemTime) -> io::Result<()> {
-    if deadline(directory)?.is_some_and(|expires| now >= expires) {
+    let Some(folder) = found(recall::open_directory(directory))? else {
+        return Ok(());
+    };
+    if deadline(&folder)?.is_some_and(|expires| now >= expires) {
         remove_if_present(&directory.join(FILE))?;
     }
     Ok(())
@@ -141,7 +146,8 @@ mod tests {
         fs::write(directory.path().join(FILE), b"expired private audio")?;
         fs::write(directory.path().join(EXPIRY), 100_u64.to_le_bytes())?;
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(100);
-        assert!(matches!(read(directory.path(), now)?, Voice::Expired));
+        let folder = ReadDirectory::open(directory.path())?;
+        assert!(matches!(read(&folder, now)?, Voice::Expired));
         expire(directory.path(), now)?;
         assert!(!directory.path().join(FILE).exists());
         assert!(directory.path().join(super::super::PIN).exists());
@@ -154,7 +160,10 @@ mod tests {
         fs::write(directory.path().join(FILE), b"SPKAUD01")?;
         fs::write(directory.path().join(EXPIRY), 100_u64.to_le_bytes())?;
         assert!(matches!(
-            read(directory.path(), SystemTime::UNIX_EPOCH)?,
+            read(
+                &ReadDirectory::open(directory.path())?,
+                SystemTime::UNIX_EPOCH
+            )?,
             Voice::Absent
         ));
         Ok(())
@@ -168,7 +177,7 @@ mod tests {
             directory.path().join("missing"),
             directory.path().join(FILE),
         )?;
-        let message = read(directory.path(), SystemTime::now())
+        let message = read(&ReadDirectory::open(directory.path())?, SystemTime::now())
             .err()
             .context("A dangling voice link was read as absent voice")?
             .to_string();
