@@ -254,6 +254,31 @@ foreach ($script in Get-ChildItem scripts/*.ps1) {
 description = "Check committed names, mise task references, workspace lint inheritance, and unsafe-code forbids"
 run = "python scripts/check_repository.py"
 
+[tasks."app:run"]
+description = "Run the app from source"
+run = "cargo run --locked -p speakeasy"
+
+[tasks."app:demo"]
+description = "Preview the app with simulated audio and a temporary synthetic Show library"
+run = "cargo run --locked -p speakeasy -- --demo"
+
+[tasks."app:demo-tray"]
+description = "Preview the tray and Settings hide-and-reopen with dictation disabled"
+run = "cargo run --locked -p speakeasy -- --demo-tray"
+
+[tasks."app:show-demo"]
+description = "Write a scripted Show bundle and print its summary"
+run = "cargo run --locked -p speakeasy -- show demo"
+
+[tasks."linux:install"]
+description = "Build the release app, link it as speakeasy on PATH, and install its desktop launcher"
+run = [
+  "cargo build --release --locked -p speakeasy",
+  "mkdir -p \"$HOME/.local/bin\"",
+  "ln -sf \"$PWD/target/release/speakeasy\" \"$HOME/.local/bin/speakeasy\"",
+  "install -Dm644 packaging/linux/io.github.krvh.speakeasy.desktop \"${XDG_DATA_HOME:-$HOME/.local/share}/applications/io.github.krvh.speakeasy.desktop\"",
+]
+
 # Opt-in native checks open owned windows, record an owned scene, or need the named system, so the
 # gate depends on none of them. The README's packaging and native checks say what each touches and
 # which variables name its fixtures. Windows tasks that quote arguments run in PowerShell, because

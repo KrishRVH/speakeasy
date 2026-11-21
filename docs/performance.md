@@ -177,7 +177,7 @@ Windows host; Linux fixture tests do not verify its runtime behavior.
 Pass explicit app and worker PIDs, reported separately. For example:
 
 ```sh
-mise exec -- python scripts/profile_linux.py --pid 1234 --pid 1235 --label idle-hidden \
+python scripts/profile_linux.py --pid 1234 --pid 1235 --label idle-hidden \
   --seconds 30 --output artifacts/profiles/linux-idle.json
 mise run profile:audio
 mise run profile:latency

@@ -625,24 +625,25 @@ resumes where it stopped.
 <br>
 
 Speakeasy targets Windows 11 x64, macOS 14+ on Apple silicon, and experimental Linux x86_64 builds
-with glibc 2.35 or later. Use the pinned nightly Rust toolchain in `rust-toolchain.toml`. Windows
-builds need the Visual Studio C++ Build Tools and the Windows SDK; macOS builds need the Xcode
-command line tools.
+with glibc 2.35 or later. `mise install` installs the pinned nightly Rust toolchain and the project
+tools. Windows builds need the Visual Studio C++ Build Tools and the Windows SDK; macOS builds need
+the Xcode command line tools.
 
 ```sh
-cargo run --locked -p speakeasy -- --demo     # simulated preview
-cargo run --locked -p speakeasy               # the app
-cargo run --locked -p speakeasy -- show demo  # a scripted Show bundle
+mise run app:demo       # simulated preview
+mise run app:run        # the app
+mise run app:show-demo  # a scripted Show bundle
 ```
 
-`--demo` uses simulated audio without the microphone, global shortcut, model, or clipboard. It
-previews hands-free, the countdown, submission, a Show with its ink on Windows and Mac, interrupted
-dismissal, cancellation, silence, copied text, and an error. `--demo-tray` adds the tray and the
-Settings hide-and-reopen behavior with dictation disabled. Both modes use a temporary synthetic Show
-library and leave saved Shows alone. `--demo` opens that library automatically; `--demo-tray` opens
-it through Shows. `show demo` writes a scripted Show bundle and prints its summary. Linux has
-experimental desktop support; see the Linux instructions below. Linux builds need `pkg-config` and
-the ALSA, fontconfig, FreeType, X11/XCB, xkbcommon, and Vulkan development packages. On Ubuntu:
+`app:demo` runs the app with `--demo`, which uses simulated audio without the microphone, global
+shortcut, model, or clipboard. It previews hands-free, the countdown, submission, a Show with its
+ink on Windows and Mac, interrupted dismissal, cancellation, silence, copied text, and an error.
+`app:demo-tray` runs it with `--demo-tray`, which adds the tray and the Settings hide-and-reopen
+behavior with dictation disabled. Both modes use a temporary synthetic Show library and leave saved
+Shows alone. `--demo` opens that library automatically; `--demo-tray` opens it through Shows.
+`app:show-demo` writes a scripted Show bundle and prints its summary. Linux has experimental desktop
+support; see the Linux instructions below. Linux builds need `pkg-config` and the ALSA, fontconfig,
+FreeType, X11/XCB, xkbcommon, and Vulkan development packages. On Ubuntu:
 
 ```sh
 sudo apt-get install libasound2-dev libfontconfig1-dev libfreetype6-dev libx11-dev libxcb1-dev \
@@ -665,15 +666,9 @@ to cancel. Linux's cancel chord is reserved; bare Escape is not globally capture
 desktop shortcut and keyboard permissions; Settings shows the actual accepted bindings. Install the
 supplied `io.github.krvh.speakeasy.desktop` file in `~/.local/share/applications` (or the
 corresponding XDG data directory), and make the executable available as `speakeasy` on your PATH.
-Portals use this installed launcher identity. For source builds:
-
-```sh
-cargo build --release --locked -p speakeasy
-mkdir -p "$HOME/.local/bin"
-ln -s "$PWD/target/release/speakeasy" "$HOME/.local/bin/speakeasy"
-install -Dm644 packaging/linux/io.github.krvh.speakeasy.desktop \
-  "${XDG_DATA_HOME:-$HOME/.local/share}/applications/io.github.krvh.speakeasy.desktop"
-```
+Portals use this installed launcher identity. For source builds, `mise run linux:install` builds the
+release app, links it as `~/.local/bin/speakeasy`, and installs the desktop file into the XDG data
+directory.
 
 For the tar package, link its absolute `Speakeasy.AppDir/AppRun` path instead, and install the
 desktop file from `usr/share/applications` inside that directory. For AppImage, make it executable,

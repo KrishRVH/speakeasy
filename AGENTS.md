@@ -21,8 +21,9 @@ pins the compiler.
 - `mise run standards:check` is the final local gate. CI flags any commit pushed to `main` whose
   subject is not a Conventional Commit, lints and tests each push on Windows and macOS, and builds
   and publishes release packages.
-- The `native:`, `linux:`, `macos:`, `windows:`, `movie:`, and `profile:` tasks run opt-in native
-  checks and profiles; a task whose name or description names a system runs only there.
+- The `app:` tasks run the app from source. The `native:`, `linux:`, `macos:`, `windows:`, `movie:`,
+  and `profile:` tasks run opt-in native checks, profiles, and the Linux source install; a task
+  whose name or description names a system runs only there.
 
 Choose each command by what it does:
 
