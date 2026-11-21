@@ -49,10 +49,10 @@ embed-resource = "3.0.12"
 fdeflate = "0.3.7"
 futures-util = "0.3.34"
 getrandom = "0.4.3"
-gpui = { package = "gpui-pre", version = "=0.3.12", default-features = false }
-gpui_linux = { package = "gpui-pre-linux", version = "=0.3.12", default-features = false }
-gpui_macos = { package = "gpui-pre-macos", version = "=0.3.12", default-features = false }
-gpui_windows = { package = "gpui-pre-windows", version = "=0.3.12", default-features = false }
+gpui = { package = "gpui-pre", version = "=0.3.13", default-features = false }
+gpui_linux = { package = "gpui-pre-linux", version = "=0.3.13", default-features = false }
+gpui_macos = { package = "gpui-pre-macos", version = "=0.3.13", default-features = false }
+gpui_windows = { package = "gpui-pre-windows", version = "=0.3.13", default-features = false }
 image = { version = "0.25.10", default-features = false }
 libc = "0.2.191"
 libloading = "0.8.9"

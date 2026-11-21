@@ -1236,6 +1236,8 @@ impl WaylandWindowStatePtr {
 
                 if let Some(mut configure) = state.in_progress_configure.take() {
                     let got_unmaximized = state.maximized && !configure.maximized;
+                    let fullscreen_changed = state.fullscreen != configure.fullscreen;
+                    let mode_changed = fullscreen_changed || state.maximized != configure.maximized;
                     state.fullscreen = configure.fullscreen;
                     state.maximized = configure.maximized;
                     state.tiling = configure.tiling;
@@ -1263,24 +1265,40 @@ impl WaylandWindowStatePtr {
                             }
                         }
                     }
+                    let resized = configure.size.is_some_and(|size| size != state.bounds.size);
                     drop(state);
                     if visibility_changed {
                         self.report_visibility(configure.visibility);
                     }
-                    // Speakeasy patch: the visibility observer can have replaced the role.
-                    if throttled
-                        || self.state.borrow().surface_state.configure_object().as_ref()
-                            != Some(role)
-                    {
+                    // Speakeasy patch: the visibility and resize observers can replace the role,
+                    // so each later step checks it again.
+                    let role_is_current = || {
+                        self.state.borrow().surface_state.configure_object().as_ref() == Some(role)
+                    };
+                    if !role_is_current() {
                         return;
                     }
-                    if let Some(size) = configure.size {
+                    if !throttled && let Some(size) = configure.size {
                         self.resize(size);
+                    }
+                    if fullscreen_changed && role_is_current() {
+                        self.notify_resize();
+                    }
+                    if throttled || !role_is_current() {
+                        return;
+                    }
+                    // Same-size mode changes skip the resize callback, so report them as a move.
+                    if mode_changed && !resized && !fullscreen_changed {
+                        let callback = self.callbacks.borrow_mut().moved.take();
+                        if let Some(mut fun) = callback {
+                            fun();
+                            self.callbacks.borrow_mut().moved = Some(fun);
+                        }
                     }
                 }
             }
             let state = self.state.borrow_mut();
-            // Speakeasy patch: the resize observers can have replaced the role.
+            // Speakeasy patch: the resize and move observers can have replaced the role.
             if state.surface_state.configure_object().as_ref() != Some(role) {
                 return;
             }
@@ -1705,6 +1723,18 @@ impl WaylandWindowStatePtr {
             viewport.set_destination(f32::from(size.width) as i32, f32::from(size.height) as i32);
         }
         update_window(state);
+    }
+
+    fn notify_resize(&self) {
+        let (size, scale) = {
+            let state = self.state.borrow();
+            (state.bounds.size, state.scale)
+        };
+        let callback = self.callbacks.borrow_mut().resize.take();
+        if let Some(mut fun) = callback {
+            fun(size, scale);
+            self.callbacks.borrow_mut().resize = Some(fun);
+        }
     }
 
     pub fn resize(&self, size: Size<Pixels>) {

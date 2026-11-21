@@ -553,9 +553,9 @@ fn paint(sheet: &Sheet, bounds: Bounds<Pixels>, opacity: f32, window: &mut Windo
             .collect();
         let outline = ink::outline(&pixels, pen);
 
-        let mut path = PathBuilder::fill().with_style(PathStyle::Fill(
-            FillOptions::default().with_fill_rule(FillRule::NonZero),
-        ));
+        let mut path = PathBuilder::fill().with_style(PathStyle::Fill(FillOptions {
+            fill_rule: FillRule::NonZero,
+        }));
         let mut corners = outline
             .iter()
             .map(|corner| point(origin.x + px(corner.x), origin.y + px(corner.y)));

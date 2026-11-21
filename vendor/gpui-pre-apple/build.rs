@@ -1,4 +1,4 @@
-// Modified for gpui-pre (snapshot of zed@d2a4fb6): the gpui sources it reads are vendored under `vendor/gpui`.
+// Modified for gpui-pre (snapshot of zed@125ca86): the gpui sources it reads are vendored under `vendor/gpui`.
 #![allow(clippy::disallowed_methods, reason = "build scripts are exempt")]
 
 fn main() {
@@ -43,14 +43,15 @@ mod apple_build {
             "Edges".into(),
             "Size".into(),
             "Pixels".into(),
-            "PointF".into(),
             "Hsla".into(),
             "ContentMask".into(),
             "Uniforms".into(),
             "AtlasTile".into(),
-            "PathRasterizationInputIndex".into(),
-            "PathVertex_ScaledPixels".into(),
-            "PathRasterizationVertex".into(),
+            "GlobalInputIndex".into(),
+            "PathTileInputIndex".into(),
+            "PathTile".into(),
+            "PathCurve".into(),
+            "PathPaint".into(),
             "ShadowInputIndex".into(),
             "Shadow".into(),
             "QuadInputIndex".into(),
@@ -61,7 +62,6 @@ mod apple_build {
             "SpriteInputIndex".into(),
             "MonochromeSprite".into(),
             "PolychromeSprite".into(),
-            "PathSprite".into(),
             "SurfaceInputIndex".into(),
             "SurfaceBounds".into(),
             "TransformationMatrix".into(),

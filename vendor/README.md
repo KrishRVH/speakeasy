@@ -8,12 +8,12 @@ comment marks each patched item, and new source files say so in their first line
 | Directory           | Release                                                                       | Archive SHA-256                                                    |
 | ------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | `accesskit_windows` | [accesskit_windows 0.34.0](https://crates.io/crates/accesskit_windows/0.34.0) | `106c2b961215864d1c2e703ee63269c25c4e80a577ffb2c1017b9c17dcdf83a1` |
-| `gpui-pre`          | [gpui-pre 0.3.12](https://crates.io/crates/gpui-pre/0.3.12)                   | `29db89613527079737f53752eab27fb65c9a7dd94979256c65a0e590c9fd34d8` |
-| `gpui-pre-apple`    | [gpui-pre-apple 0.3.12](https://crates.io/crates/gpui-pre-apple/0.3.12)       | `a460605ec4e8cbcc9b213462a84b1d6cc3efe4ed8f0e18669659f07b2d5c6aec` |
-| `gpui-pre-linux`    | [gpui-pre-linux 0.3.12](https://crates.io/crates/gpui-pre-linux/0.3.12)       | `54bab418d0b7c027af9495f278619b46887362b3bd6446e246c87c5b0fa167df` |
-| `gpui-pre-macos`    | [gpui-pre-macos 0.3.12](https://crates.io/crates/gpui-pre-macos/0.3.12)       | `2de7d3f4ad51ac387e822495db363fcc1188d349793365731d054444c4cb06ee` |
-| `gpui-pre-wgpu`     | [gpui-pre-wgpu 0.3.12](https://crates.io/crates/gpui-pre-wgpu/0.3.12)         | `dc76608d385f6d0dcbad44504b1bf669dac3b7d7ffa2885acdb7c1c358caf852` |
-| `gpui-pre-windows`  | [gpui-pre-windows 0.3.12](https://crates.io/crates/gpui-pre-windows/0.3.12)   | `7201762420222d5b5ce5bdf0056996199212a3349bfb2457a3a0238c688681f3` |
+| `gpui-pre`          | [gpui-pre 0.3.13](https://crates.io/crates/gpui-pre/0.3.13)                   | `e17ece47c15edeca5889096947ddc73a86fb29318f811a8c7a64a8ddd6364247` |
+| `gpui-pre-apple`    | [gpui-pre-apple 0.3.13](https://crates.io/crates/gpui-pre-apple/0.3.13)       | `7b3a742d990b38f1b3c2d3a117df8cddf7e9b2e0757017cdb2dc9897a6fd3f07` |
+| `gpui-pre-linux`    | [gpui-pre-linux 0.3.13](https://crates.io/crates/gpui-pre-linux/0.3.13)       | `61235d40538557c44d3dff166b9984cd1d94824f71e6695f19bcc55b5dee7fa0` |
+| `gpui-pre-macos`    | [gpui-pre-macos 0.3.13](https://crates.io/crates/gpui-pre-macos/0.3.13)       | `5e48bf4ea6371e1c735c46163e57fc950f1c23999cb16191ead567cc82517da4` |
+| `gpui-pre-wgpu`     | [gpui-pre-wgpu 0.3.13](https://crates.io/crates/gpui-pre-wgpu/0.3.13)         | `7d1505797c4019f72e65ad5a23c585a3acbe6a574531794e5690d083ee19d3c8` |
+| `gpui-pre-windows`  | [gpui-pre-windows 0.3.13](https://crates.io/crates/gpui-pre-windows/0.3.13)   | `1831c6841cd0928c5a7e6ac8c7610cb3eed6e0a2257f62bffab9a12184b8f4f3` |
 
 The hashes match the `cksum` crates.io publishes for each release. To see every change, unpack
 the archive (`curl -sL https://static.crates.io/crates/NAME/NAME-VERSION.crate | tar xz`) and
@@ -54,10 +54,6 @@ app liveness for `AsyncApp`, and `App::shutdown` ordering.
 
 - `src/dispatcher.rs` marks foreground tasks running on the main queue, so macOS termination can
   tell when a nested run loop could not drain that serial queue.
-- `src/metal_renderer.rs` allocates the path resolve and MSAA textures only for frames whose scene
-  has paths, sized to that frame, and releases them on the first frame without paths. A resize no
-  longer allocates them. Metal command buffers retain their attachments, so frames in flight keep
-  what they use. CI builds it; only Linux samples path pixels.
 
 ## gpui-pre-macos
 
@@ -106,23 +102,12 @@ app liveness for `AsyncApp`, and `App::shutdown` ordering.
   output where the pill first showed, and acknowledging such a configure ended the connection with
   `wrong configure serial`.
 
-## gpui-pre-wgpu
-
-- `src/wgpu_renderer.rs` ensures the path textures only for frames that draw paths and releases
-  them otherwise; upstream ensured them every frame and already released them on resize. wgpu
-  keeps resources alive for pending submissions. `check_native_rendering` alternates path and
-  pathless frames and samples their pixels on Linux.
-
 ## gpui-pre-windows
 
 - `src/vsync.rs` and the new `src/vsync/interval.rs` convert DWM timing without truncating the
   QPC frequency and reject zero or implausible intervals through the 60 Hz fallback. Upstream
   divides by zero when it falls back to a refresh ratio such as 60/1, which ends the redraw
   thread. [gpui_timing.rs](../crates/platform/tests/gpui_timing.rs) runs the helper on every host.
-- `src/directx_renderer.rs` keeps the path textures and views in one optional value that the first
-  path frame allocates and a pathless frame or resize releases. Release unbinds shader-resource
-  slot 0 so the device context cannot keep the textures alive. D3D11 defers destruction until the
-  GPU finishes with them.
 - The new `src/accessibility.rs`, with hunks in `window.rs` and `events.rs`, ties UI Automation to
   committed visibility. Hide publishes an empty root-only tree before the window disappears and
   minimize as it minimizes; exposure resumes only after `WM_WINDOWPOSCHANGED` commits visibility,

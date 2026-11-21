@@ -1,10 +1,10 @@
 [package]
 name = "gpui-pre-windows"
-version = "0.3.12"
+version = "0.3.13"
 edition = { workspace = true }
 publish = true
 license = "Apache-2.0"
-description = "Zed's `gpui_windows` crate (gpui-pre snapshot of zed@d2a4fb6)"
+description = "Zed's `gpui_windows` crate (gpui-pre snapshot of zed@125ca86)"
 repository = "https://github.com/zed-industries/zed"
 
 [package.metadata.cargo-shear]
@@ -13,7 +13,7 @@ ignored = ["scap"]
 [package.metadata.gpui-pre]
 zed-crate = "gpui_windows"
 zed-version = "0.1.0"
-zed-rev = "d2a4fb6ded7c470be25d1541281da3882495b65b"
+zed-rev = "125ca8672e928b19a62c2e4b761fb29fe2a34ae3"
 
 [lib]
 path = "src/gpui_windows.rs"
@@ -25,9 +25,6 @@ default = ["gpui/default"]
 test-support = ["gpui/test-support"]
 screen-capture = ["gpui/screen-capture", "scap"]
 
-[dependencies]
-gpui = { workspace = true }
-
 [target.'cfg(target_os = "windows")'.dependencies]
 accesskit = { workspace = true }
 accesskit_windows = { workspace = true }
@@ -36,6 +33,7 @@ collections = { workspace = true }
 dunce = { workspace = true }
 etagere = { workspace = true }
 futures = { workspace = true }
+gpui = { workspace = true }
 gpui_util = { workspace = true }
 image = { workspace = true }
 itertools = { workspace = true }

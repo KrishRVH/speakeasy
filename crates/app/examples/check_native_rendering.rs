@@ -313,7 +313,7 @@ mod linux {
             if draws_path {
                 ensure!(
                     color(24, 24)? == DIAMOND,
-                    "Path did not render after allocation, release, or resize"
+                    "Path did not render after a pathless frame or resize"
                 );
             } else {
                 ensure!(
