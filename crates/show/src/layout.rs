@@ -35,7 +35,7 @@ impl Layout {
 
     pub(crate) fn at(layouts: &[Self], moment: Moment) -> Option<&Self> {
         let after = layouts.partition_point(|layout| layout.at <= moment);
-        layouts.get(after.saturating_sub(1))
+        layouts.get(after.checked_sub(1)?)
     }
 
     pub(crate) fn owner(&self, point: Point) -> Option<&Window> {

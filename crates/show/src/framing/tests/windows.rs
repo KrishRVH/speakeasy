@@ -63,6 +63,19 @@ fn a_menu_belongs_to_its_apps_window_and_a_moved_window_is_framed_where_it_ended
 }
 
 #[test]
+fn a_keyframe_before_the_first_window_layout_is_never_cropped_to_a_later_window() {
+    let opened = window(1, 0, Layer::Normal, [0.1, 0.1, 0.5, 0.5]);
+    let layouts = [arranged(1_000, vec![opened])];
+    let early = planned(&[], 500, &[], &layouts);
+    assert_eq!(
+        early, None,
+        "A window first seen after the keyframe cropped it"
+    );
+    let plan = planned(&[], 1_500, &[], &layouts).unwrap();
+    assert!(plan.crop.encloses(opened.bounds), "{plan:?}");
+}
+
+#[test]
 fn input_spread_across_many_windows_frames_the_input_instead() {
     let layouts = [arranged(
         0,
