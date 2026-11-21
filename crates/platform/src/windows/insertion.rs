@@ -79,8 +79,7 @@ pub(crate) fn copy_content(
 
 fn saved_formats() -> Option<Vec<SavedFormat>> {
     let concealed = clipboard_win::raw::register_format(CONCEALED)?.get();
-    let private =
-        PRIVATE_FORMATS.map(|name| clipboard_win::raw::register_format(name).map(NonZeroU32::get));
+    let private = private_formats();
     let mut size = 0_usize;
     clipboard::snapshot(
         fully_listed(clipboard_win::raw::EnumFormats::new())?,
@@ -328,9 +327,12 @@ impl NativeInsert for Insert {
     }
 }
 
+fn private_formats() -> [Option<u32>; 2] {
+    PRIVATE_FORMATS.map(|name| clipboard_win::raw::register_format(name).map(NonZeroU32::get))
+}
+
 fn bears_dictation_marks() -> bool {
-    let private =
-        PRIVATE_FORMATS.map(|name| clipboard_win::raw::register_format(name).map(NonZeroU32::get));
+    let private = private_formats();
     let excludes = |format| {
         let mut value = [u8::MAX; 4];
         clipboard_win::raw::get(format, &mut value).is_ok_and(|read| read == value.len())
