@@ -222,32 +222,27 @@ fn insert<N: NativeInsert>(
             if !permit.active() {
                 return Ok((Inserted::Cancelled, None));
             }
-            let mark = native.write(lease, text)?;
+            let written = (native.write(lease, text)?, contents);
             if !permit.active() {
-                native.restore(contents, &mark)?;
+                restore_now(native, Some(written));
                 return Ok((Inserted::Cancelled, None));
             }
-            let keys = match native.holds(text, &mark) {
+            let keys = match native.holds(text, &written.0) {
                 Ok(true) => native.paste_keys(),
+                Ok(false) if permit.active() => return Ok((CLIPBOARD_CHANGED, None)),
                 Ok(false) => {
-                    let outcome = if permit.active() {
-                        CLIPBOARD_CHANGED
-                    } else {
-                        native.restore(contents, &mark)?;
-                        Inserted::Cancelled
-                    };
-                    return Ok((outcome, None));
+                    restore_now(native, Some(written));
+                    return Ok((Inserted::Cancelled, None));
                 },
                 Err(error) => Err(error),
             };
-            let keys = match keys {
-                Ok(keys) => keys,
+            match keys {
+                Ok(keys) => (keys, Some(written)),
                 Err(error) => {
-                    restore_now(native, Some((mark, contents)))?;
+                    restore_now(native, Some(written));
                     return Err(error);
                 },
-            };
-            (keys, Some((mark, contents)))
+            }
         },
         Delivery::Direct => (native.text_keys(text)?, None),
     };
@@ -256,7 +251,7 @@ fn insert<N: NativeInsert>(
         native.shortcut_released(),
     );
     if !permit.active() {
-        restore_now(native, clipboard)?;
+        restore_now(native, clipboard);
         return Ok((Inserted::Cancelled, None));
     }
     if let Some(outcome) = preflight {
@@ -269,7 +264,7 @@ fn insert<N: NativeInsert>(
         return Ok((CLIPBOARD_CHANGED_BEFORE_PASTE, None));
     }
     if !permit.commit() {
-        restore_now(native, clipboard)?;
+        restore_now(native, clipboard);
         return Ok((Inserted::Cancelled, None));
     }
     let inserted = native.send(keys)?;
@@ -284,14 +279,14 @@ fn insert<N: NativeInsert>(
     Ok((inserted, saved))
 }
 
-fn restore_now<N: NativeInsert>(
-    native: &mut N,
-    clipboard: Option<(N::Mark, Option<N::Contents>)>,
-) -> anyhow::Result<()> {
+fn restore_now<N: NativeInsert>(native: &mut N, clipboard: Option<(N::Mark, Option<N::Contents>)>) {
     if let Some((mark, contents)) = clipboard {
-        native.restore(contents, &mark)?;
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "Restoring after an unsent paste is best effort; the dictation reports the cancellation or error that stopped it, and a clipboard that cannot be reopened keeps the dictated copy"
+        )]
+        let _ = native.restore(contents, &mark);
     }
-    Ok(())
 }
 
 fn submit<N: NativeInsert>(

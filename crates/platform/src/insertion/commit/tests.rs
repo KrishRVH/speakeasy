@@ -59,6 +59,7 @@ struct Fake {
     activity: u8,
     texts: Vec<String>,
     return_fails: bool,
+    fails: Vec<Step>,
 }
 
 impl Fake {
@@ -77,6 +78,7 @@ impl Fake {
             activity: 0,
             texts: Vec::new(),
             return_fails: false,
+            fails: Vec::new(),
         }
     }
 
@@ -94,6 +96,11 @@ impl Fake {
 
     fn sent(&self) -> bool {
         self.steps.iter().any(|step| matches!(step, Step::Send(_)))
+    }
+
+    fn fail_at(&self, step: Step) -> anyhow::Result<()> {
+        anyhow::ensure!(!self.fails.contains(&step), "Fixture {step:?} failure");
+        Ok(())
     }
 }
 
@@ -124,6 +131,7 @@ impl NativeInsert for Fake {
 
     fn restore(&mut self, contents: Option<u8>, mark: &u8) -> anyhow::Result<()> {
         self.reach(Step::Restore);
+        self.fail_at(Step::Restore)?;
         if *mark == self.clipboard {
             self.clipboard = contents.unwrap_or_default();
         }
@@ -140,11 +148,13 @@ impl NativeInsert for Fake {
 
     fn holds(&mut self, _: &str, mark: &u8) -> anyhow::Result<bool> {
         self.reach(Step::Holds);
+        self.fail_at(Step::Holds)?;
         Ok(self.holds && *mark == self.clipboard)
     }
 
     fn paste_keys(&mut self) -> anyhow::Result<Keys> {
         self.reach(Step::PasteKeys);
+        self.fail_at(Step::PasteKeys)?;
         Ok(Keys::Insert(Delivery::Paste))
     }
 
@@ -360,6 +370,69 @@ fn cancellation_restores_the_snapshot_only_while_the_dictation_owns_the_clipboar
         assert_eq!(outcome, Inserted::Cancelled);
         assert!(!native.sent());
         assert_eq!(native.clipboard, expected);
+    }
+    Ok(())
+}
+
+#[test]
+fn cancellation_after_the_write_reports_cancelled_even_when_the_restore_fails() -> anyhow::Result<()>
+{
+    for (revoked_at, holds) in [
+        (Step::Write, true),
+        (Step::Holds, false),
+        (Step::ShortcutReleased, true),
+        (Step::Mark, true),
+    ] {
+        for fails in [vec![], vec![Step::Restore]] {
+            let permit = permit()?;
+            let mut native = Fake {
+                clipboard: 1,
+                holds,
+                revokes_at: Some((revoked_at, permit.clone())),
+                fails,
+                ..Fake::new()
+            };
+            let (outcome, saved) =
+                insert(&mut native, "text", &permit, Delivery::Paste, &unfocused())
+                    .with_context(|| format!("Escape at {revoked_at:?} failed"))?;
+            assert_eq!(outcome, Inserted::Cancelled, "Escape at {revoked_at:?}");
+            assert!(saved.is_none() && !native.sent());
+            assert!(
+                native.steps.contains(&Step::Restore),
+                "Escape at {revoked_at:?} left the cancelled text on the clipboard"
+            );
+            assert_eq!(native.clipboard == 1, native.fails.is_empty());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_failed_restore_keeps_the_error_that_stopped_the_paste() -> anyhow::Result<()> {
+    for failed in [Step::Holds, Step::PasteKeys] {
+        for fails in [vec![failed], vec![failed, Step::Restore]] {
+            let mut native = Fake {
+                clipboard: 1,
+                fails,
+                ..Fake::new()
+            };
+            let error = insert(
+                &mut native,
+                "text",
+                &permit()?,
+                Delivery::Paste,
+                &unfocused(),
+            )
+            .err()
+            .context("A paste that failed reported an outcome")?;
+            assert_eq!(error.to_string(), format!("Fixture {failed:?} failure"));
+            assert!(!native.sent());
+            assert_eq!(
+                native.clipboard == 1,
+                !native.fails.contains(&Step::Restore),
+                "A paste that failed kept the dictated copy"
+            );
+        }
     }
     Ok(())
 }
