@@ -633,19 +633,18 @@ fn select_device(
     microphone: Option<&str>,
     proceed: impl Fn() -> Result<(), Startup>,
 ) -> Result<(cpal::Device, MicrophoneSource), Startup> {
-    if let Some(id) = microphone {
-        for device in host.input_devices().map_err(microphone_error)? {
-            proceed()?;
-            if device.id().is_ok_and(|actual| actual.to_string() == id) {
-                return Ok((device, MicrophoneSource::Chosen));
+    let source = match microphone {
+        Some(id) => {
+            for device in host.input_devices().map_err(microphone_error)? {
+                proceed()?;
+                if device.id().is_ok_and(|actual| actual.to_string() == id) {
+                    return Ok((device, MicrophoneSource::Chosen));
+                }
             }
-        }
-        proceed()?;
-    }
-    let source = if microphone.is_some() {
-        MicrophoneSource::Default
-    } else {
-        MicrophoneSource::Chosen
+            proceed()?;
+            MicrophoneSource::Default
+        },
+        None => MicrophoneSource::Chosen,
     };
     let device = host
         .default_input_device()

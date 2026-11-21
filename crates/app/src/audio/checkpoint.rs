@@ -41,7 +41,7 @@ impl<'a> Keeping<'a> {
 
     pub(super) fn classify(&mut self, speech: &mut Audibility, pcm: &[u8], cues: &Receiver<()>) {
         while cues.try_recv().is_ok() {
-            speech.expect_cue(pcm);
+            speech.expect_cue(pcm.len());
             if self.cues.len() < MAX_CUES {
                 self.cues.push((self.classified, pcm.len()));
             } else {
@@ -109,7 +109,7 @@ pub(crate) fn seal_kept(audio: &KeptAudio) -> anyhow::Result<Option<Sealed>> {
     for &(before, at) in &audio.cues {
         if let (Some(previous), Some(prefix)) = (pcm.audio().get(..before), pcm.audio().get(..at)) {
             speech.extend(previous);
-            speech.expect_cue(prefix);
+            speech.expect_cue(at);
             speech.extend(prefix);
         }
     }

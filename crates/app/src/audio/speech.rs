@@ -54,8 +54,8 @@ impl Audibility {
         }
     }
 
-    pub(super) fn expect_cue(&mut self, audio: &[u8]) {
-        let heard_until = audio.len().saturating_add(self.heard_for);
+    pub(super) fn expect_cue(&mut self, at: usize) {
+        let heard_until = at.saturating_add(self.heard_for);
         self.cue_until = self.cue_until.max(heard_until);
     }
 

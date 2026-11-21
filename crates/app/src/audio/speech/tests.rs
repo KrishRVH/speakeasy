@@ -180,7 +180,7 @@ fn only_what_sounds_beyond_a_cues_span_counts_toward_the_gate() {
     for (beyond, passes) in [(0, false), (SECOND * 8 / 100, false), (SECOND / 10, true)] {
         let recording = tone_then_quiet(span + beyond);
         let mut speech = Audibility::new(RATE);
-        speech.expect_cue(&[]);
+        speech.expect_cue(0);
         speech.complete(&recording);
         assert_eq!(
             speech.retained(recording.len()).is_some(),
@@ -201,7 +201,7 @@ fn a_voice_beneath_a_cue_still_counts() {
                 .chain(decode(&quiet)),
         );
         let mut speech = Audibility::new(RATE);
-        speech.expect_cue(&[]);
+        speech.expect_cue(0);
         speech.complete(&both);
         assert!(speech.retained(both.len()).is_some());
     }
@@ -224,7 +224,7 @@ fn the_cues_a_recording_hears_stay_out_of_the_voice_band_even_at_full_scale() {
                         .chain(iter::repeat_n(0, 48_000)),
                 );
                 let mut speech = Audibility::new(48_000);
-                speech.expect_cue(&[]);
+                speech.expect_cue(0);
                 speech.complete(&recording);
                 assert_eq!(speech.audible, 0, "{cue:?}, peak {loudest}, delay {delay}");
             }
@@ -249,7 +249,7 @@ fn a_recording_that_opens_on_a_sounding_cue_does_not_hear_it_as_speech() {
                 .chain(iter::repeat_n(0, 48_000)),
         );
         let mut speech = Audibility::new(48_000);
-        speech.expect_cue(&[]);
+        speech.expect_cue(0);
         speech.complete(&recording);
         assert_eq!(speech.audible, 0, "{cue:?}");
     }
@@ -265,7 +265,7 @@ fn a_cue_during_a_recording_counts_only_by_its_voice_band_from_where_it_was_aske
     .concat();
     let mut speech = Audibility::new(RATE);
     speech.extend(&recording[..SECOND * 2]);
-    speech.expect_cue(&recording[..SECOND * 2]);
+    speech.expect_cue(SECOND * 2);
     speech.complete(&recording);
 
     assert_eq!(speech.retained(recording.len()), Some(0..SECOND * 3 / 2));
@@ -279,7 +279,7 @@ fn speech_after_a_cue_trims_the_quiet_before_it_cue_and_all() {
     ]
     .concat();
     let mut speech = Audibility::new(RATE);
-    speech.expect_cue(&[]);
+    speech.expect_cue(0);
     speech.complete(&recording);
     assert_eq!(speech.retained(recording.len()), Some(SECOND..SECOND * 3));
 }
@@ -304,7 +304,7 @@ fn soft_voice_survives_the_gate_with_and_without_a_cue_notice() {
     for cue in [false, true] {
         let mut speech = Audibility::new(RATE);
         if cue {
-            speech.expect_cue(&[]);
+            speech.expect_cue(0);
         }
         speech.complete(&recording);
         assert_eq!(
@@ -324,7 +324,7 @@ fn a_constant_offset_neither_counts_as_speech_nor_moves_its_edges() {
         let retained = |recording: &[u8]| {
             let mut speech = Audibility::new(RATE);
             if cue {
-                speech.expect_cue(&[]);
+                speech.expect_cue(0);
             }
             speech.complete(recording);
             speech.retained(recording.len())

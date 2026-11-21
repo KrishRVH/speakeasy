@@ -35,7 +35,7 @@ fn replay(
             pcm.push(sample);
         }
         if cue {
-            speech.expect_cue(pcm.audio());
+            speech.expect_cue(pcm.audio().len());
         }
         speech.extend(pcm.audio());
         if let Some(range) = cuts.offer(&speech, pcm.audio().len()) {
@@ -74,7 +74,7 @@ proptest! {
         }
         let mut gate = Audibility::new(1000);
         if cue {
-            gate.expect_cue(baseline.audio());
+            gate.expect_cue(baseline.audio().len());
         }
         let sealed = baseline.seal(gate, 1000).unwrap().unwrap();
         prop_assert_eq!(&wav, &sealed.wav);
