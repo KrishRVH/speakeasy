@@ -17,7 +17,7 @@ fn fixture(root: &Path) -> anyhow::Result<(PathBuf, PathBuf)> {
         "engines/nemo-speech-cuda/nemo-speech.exe",
         "models/0123abcd/parakeet-tdt-0.6b-v3.q8_0.gguf",
         "downloads/nemo-speech.tar.gz.part",
-        "updates/Speakeasy-0.8.0.msi",
+        "updates/release-0123abcd/speakeasy-windows-x64-setup.exe",
         "shows/20261020T143205Z/summary.md",
         "shows/20261020T143205Z/.pinned",
     ] {
