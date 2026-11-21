@@ -85,6 +85,7 @@ pub(super) struct Log {
     pub handover: Option<Handover>,
     pub refuse_shield: bool,
     pub microphone_opened: bool,
+    pub released: Option<Release<Sample>>,
 }
 
 impl Log {
@@ -197,7 +198,9 @@ impl Env<Sample> for Log {
 
     fn retire_delivery(&mut self, _: SessionId) {}
 
-    fn release(&mut self, _: SessionId, _: &'static str, _: Release<Sample>) {}
+    fn release(&mut self, _: SessionId, _: &'static str, release: Release<Sample>) {
+        self.released = Some(release);
+    }
 
     fn remember(&mut self, _: &'static str) {}
 
