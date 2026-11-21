@@ -29,6 +29,9 @@ try {
         $signer = Get-ChildItem "${env:ProgramFiles(x86)}/Windows Kits/10/bin/*/x64/signtool.exe" -ErrorAction SilentlyContinue |
             Sort-Object FullName -Descending | Select-Object -First 1
         if (!$signer) { throw 'Install the Windows SDK signing tools.' }
+        if ($artifacts.Contains('%')) {
+            throw 'The installer sign command runs through cmd.exe, which expands % in file paths. Package from a folder whose path has no %.'
+        }
     }
     function Sign-PackageFile([string]$Path) {
         if (!$signer) { return }
