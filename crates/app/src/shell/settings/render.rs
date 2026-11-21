@@ -450,9 +450,9 @@ impl Settings {
 
 const fn setup_detail() -> &'static str {
     if cfg!(target_os = "macos") {
-        "Speakeasy downloads the Parakeet speech model and the engine that suits this Mac, about 0.8 GB, then turns dictation on."
+        "Speakeasy downloads the Parakeet speech model and the engine that suits this Mac, up to 0.8 GB, then turns dictation on."
     } else {
-        "Speakeasy downloads the Parakeet speech model and the engine that suits this PC, about 0.8 GB, then turns dictation on."
+        "Speakeasy downloads the Parakeet speech model and the engine that suits this PC, up to 0.8 GB, then turns dictation on."
     }
 }
 
