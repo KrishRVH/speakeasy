@@ -724,20 +724,20 @@ fn a_microphone_error_published_while_capture_stops_is_reported_as_lost() -> any
     );
     let control = Arc::new(Control::default());
     let (held, holding) = std::sync::mpsc::channel();
-    let (proceed, proceeding) = std::sync::mpsc::channel();
     let callback = thread::spawn({
         let control = Arc::clone(&control);
         move || -> anyhow::Result<()> {
             let publishing = control.publishing();
             held.send(())?;
-            proceeding.recv()?;
+            while control.mode() == Mode::Recording {
+                thread::yield_now();
+            }
             errors.try_send(cpal::ErrorKind::DeviceNotAvailable.into())?;
             drop(publishing);
             Ok(())
         }
     });
     holding.recv()?;
-    proceed.send(())?;
     let lost = recorder.stop(&control, None);
     callback
         .join()

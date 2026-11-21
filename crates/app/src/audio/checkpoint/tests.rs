@@ -153,7 +153,13 @@ async fn stopping_just_after_promotion_flushes_more_audio_than_the_lane_can_hold
         pcm,
     } = backlog()?;
     let flushed = tokio::task::spawn_blocking(move || tail.flush(Duration::MAX));
+    tokio::pin!(flushed);
+    let waited = still_pending(flushed.as_mut()).await;
     release.send(())?;
+    assert!(
+        waited,
+        "The flush stopped before the stalled keeper returned credits"
+    );
     assert!(flushed.await?);
     let checkpoint = keeper
         .close()
