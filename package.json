@@ -1,9 +1,9 @@
 {
   "name": "speakeasy-docs",
   "private": true,
-  "packageManager": "bun@1.4.4",
+  "packageManager": "bun@1.4.5",
   "devDependencies": {
-    "markdownlint-cli2": "^0.24.0",
-    "prettier": "^3.9.10"
+    "markdownlint-cli2": "^0.24.2",
+    "prettier": "^3.10.1"
   }
 }
