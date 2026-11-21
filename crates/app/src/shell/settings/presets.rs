@@ -10,10 +10,14 @@ use super::{
     text_field::{Submit, TextField},
 };
 use crate::{
-    config::presets::{self, LIMIT, Preset},
+    config::{
+        Config,
+        presets::{self, LIMIT, Preset},
+    },
     controls::{Weight, icon},
     gpui_ext::EntityUpdate as _,
     icons,
+    shell::choices::Used,
     theme::Theme,
 };
 
@@ -74,7 +78,10 @@ impl Settings {
         cx: &mut Context<'_, Self>,
     ) {
         let changes = matches!(edit, Edit::Use(_) | Edit::Update(_) | Edit::Save);
-        if cx.global::<Services>().is_quitting() || (changes && self.engine_work.is_busy()) {
+        if cx.global::<Services>().is_quitting()
+            || (changes && self.engine_work.is_busy())
+            || (matches!(edit, Edit::Use(_)) && self.using.is_some())
+        {
             return;
         }
         match edit {
@@ -89,14 +96,7 @@ impl Settings {
                         cx.notify();
                         return;
                     }
-                    self.config = selected;
-                    self.own_engine = false;
-                    self.choosing_model = false;
-                    self.vocabulary.stop_revising();
-                    self.edited(cx);
-                    if !self.locked() {
-                        self.restore_saved_preset(cx);
-                    }
+                    self.use_preset(preset, selected, cx);
                 }
             },
             Edit::Update(index) => {
@@ -134,24 +134,38 @@ impl Settings {
         cx.notify();
     }
 
-    fn restore_saved_preset(&mut self, cx: &mut Context<'_, Self>) {
-        let restoring = cx.update_global::<Services, _>(|services, cx| {
-            services.restore_saved_preset(&self.config, cx)
-        });
-        match restoring {
-            Ok(Some(refused)) => cx
-                .spawn(async move |this, cx| {
-                    if let Ok(reason) = refused.recv().await {
-                        this.update_if_alive(cx, |view, cx| {
-                            view.notice = Some(Notice::Problem(reason.into()));
-                            cx.notify();
-                        });
-                    }
-                })
-                .detach(),
-            Ok(None) => (),
+    fn use_preset(&mut self, preset: Preset, selected: Config, cx: &mut Context<'_, Self>) {
+        if self.locked() || cx.global::<Services>().mode.is_demo() {
+            self.load_preset(&preset, cx);
+            return;
+        }
+        match cx.update_global::<Services, _>(|services, cx| services.use_preset(selected, cx)) {
+            Ok(used) => {
+                self.using = Some(cx.spawn(async move |this, cx| {
+                    let used = used.recv().await.ok();
+                    this.update_if_alive(cx, |view, cx| view.finish_use(&preset, used, cx));
+                }));
+            },
             Err(reason) => self.notice = Some(Notice::Problem(reason.into())),
         }
+    }
+
+    fn finish_use(&mut self, preset: &Preset, used: Option<Used>, cx: &mut Context<'_, Self>) {
+        self.using = None;
+        match used {
+            Some(Ok(_)) => self.load_preset(preset, cx),
+            Some(Err(reason)) => self.notice = Some(Notice::Problem(reason.into())),
+            None => (),
+        }
+        cx.notify();
+    }
+
+    fn load_preset(&mut self, preset: &Preset, cx: &mut Context<'_, Self>) {
+        preset.load(&mut self.config);
+        self.own_engine = false;
+        self.choosing_model = false;
+        self.vocabulary.stop_revising();
+        self.edited(cx);
     }
 
     fn store_preset(
@@ -224,7 +238,7 @@ impl Settings {
                         "Use",
                         Action::Preset(Edit::Use(index)),
                         Weight::Secondary,
-                        !busy && !self.presentation.in_session,
+                        !busy && !self.presentation.in_session && self.using.is_none(),
                     )
                     .aria_label(format!("Use {name}"))
                     .into_any_element()

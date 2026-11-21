@@ -107,7 +107,7 @@ async fn resumed_preset_keeps_saved_settings_separate_from_effective_choices() -
 }
 
 #[tokio::test(start_paused = true)]
-async fn restoring_saved_settings_clears_the_preset_and_uses_the_saved_language()
+async fn adopting_the_saved_settings_clears_the_preset_and_uses_the_saved_language()
 -> anyhow::Result<()> {
     let mut h = Harness::new()?;
     h.ready().await?;
@@ -121,15 +121,17 @@ async fn restoring_saved_settings_clears_the_preset_and_uses_the_saved_language(
     h.observe(|snapshot| snapshot.preset.as_deref() == Some("French"))
         .await?;
 
-    assert_eq!(receive(&h.runtime.restore_saved()).await?, Ok(()));
+    let saved = ValidConfig::assume(saved);
+    assert_eq!(receive(&h.runtime.adopt(saved.clone())).await?, Ok(()));
     h.observe(|snapshot| snapshot.preset.is_none()).await?;
+    h.runtime.settle(saved.clone());
     h.start().await?;
     finish_in(&mut h, &saved.language).await?;
     h.close().await
 }
 
 #[tokio::test(start_paused = true)]
-async fn restoring_saved_settings_waits_for_the_active_session() -> anyhow::Result<()> {
+async fn adopting_settings_waits_for_the_active_session() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
     h.ready().await?;
     let saved = h.runtime.configuration.borrow().clone();
@@ -140,7 +142,7 @@ async fn restoring_saved_settings_waits_for_the_active_session() -> anyhow::Resu
     let adopted = choose(&h, "French", &french, &saved, h.snapshot().session).await?;
     assert_eq!(adopted.result, Disposition::Ok);
     h.start().await?;
-    let restored = receive(&h.runtime.restore_saved()).await?;
+    let restored = receive(&h.runtime.adopt(ValidConfig::assume(saved))).await?;
     assert_eq!(restored, Err(refusal(Refusal::PresetBusy)));
     finish_in(&mut h, "fr").await?;
     assert_eq!(h.snapshot().preset.as_deref(), Some("French"));
@@ -148,7 +150,7 @@ async fn restoring_saved_settings_waits_for_the_active_session() -> anyhow::Resu
 }
 
 #[tokio::test(start_paused = true)]
-async fn restoring_saved_settings_follows_a_preset_queued_before_it() -> anyhow::Result<()> {
+async fn adopting_settings_follows_a_preset_queued_before_it() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
     h.ready().await?;
     let saved = h.runtime.configuration.borrow().clone();
@@ -166,11 +168,27 @@ async fn restoring_saved_settings_follows_a_preset_queued_before_it() -> anyhow:
         h.snapshot().session,
         call,
     );
-    let restored = h.runtime.restore_saved();
+    let restored = h.runtime.adopt(ValidConfig::assume(saved.clone()));
     assert_eq!(receive(&adopted).await?.result, Disposition::Ok);
     assert_eq!(receive(&restored).await?, Ok(()));
     h.start().await?;
     finish_in(&mut h, &saved.language).await?;
     assert_eq!(h.snapshot().preset, None);
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_session_started_after_adoption_survives_the_save_that_follows() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    h.ready().await?;
+    let french = ValidConfig::assume(Config {
+        language: "fr".into(),
+        ..h.runtime.configuration.borrow().clone()
+    });
+    assert_eq!(receive(&h.runtime.adopt(french.clone())).await?, Ok(()));
+    h.runtime.settle(french.clone());
+    h.start().await?;
+    h.runtime.configure(french);
+    finish_in(&mut h, "fr").await?;
     h.close().await
 }

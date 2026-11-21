@@ -118,7 +118,7 @@ impl Drop for FakeAwake {
     }
 }
 
-struct Reports {
+pub(crate) struct Reports {
     captures: Receiver<OpenedCapture>,
     shows: Receiver<OpenedShow>,
     pins: Receiver<(SessionId, Taps)>,
@@ -129,6 +129,17 @@ struct Reports {
     loads: Receiver<()>,
     sounds: Receiver<Sound>,
     awake: Receiver<Option<speakeasy_platform::Keep>>,
+}
+
+pub(super) fn fake_runtime(
+    config: Config,
+    styles: watch::Receiver<Style>,
+    snapshots: watch::Sender<Snapshot>,
+    meter: watch::Sender<Meter>,
+) -> anyhow::Result<(Runtime, Reports)> {
+    let (ports, reports) = FakePorts::new();
+    let runtime = Runtime::start_with(config, styles, snapshots, meter, ports)?;
+    Ok((runtime, reports))
 }
 
 impl FakePorts {

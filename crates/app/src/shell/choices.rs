@@ -6,17 +6,23 @@ use super::Services;
 use crate::{
     config::{Change, Config, ValidConfig},
     control::{Call, Command, Disposition, Reply, Status},
-    runtime::Restored,
+    runtime::Adopted,
 };
 
 const UNACKNOWLEDGED: &str =
     "Preset selection stopped before acknowledging. Read status before choosing again.";
 
-const RESTORE_BUSY: &str =
-    "Finish the current session or preset selection before using a saved preset.";
+const USE_BUSY: &str = "Finish the current session or preset selection before using a preset.";
 
-const RESTORE_UNAVAILABLE: &str =
+const USE_UNAVAILABLE: &str =
     "This preset's engine or model is unavailable. Choose them again, then update this preset.";
+
+pub(super) type Used = Result<ValidConfig, &'static str>;
+
+enum Admission {
+    Ready(ValidConfig),
+    Waiting(ValidConfig, Receiver<Adopted>),
+}
 
 pub(super) struct Selected {
     pub name: String,
@@ -225,76 +231,69 @@ impl Services {
         }
     }
 
-    pub(super) fn restore_saved_preset(
+    pub(super) fn use_preset(
         &mut self,
-        draft: &Config,
+        candidate: Config,
         cx: &App,
-    ) -> Result<Option<Receiver<&'static str>>, &'static str> {
-        if self.preset_name().is_none() {
-            return Ok(None);
-        }
-        if self.runtime().is_none() {
-            self.forget_preset(cx);
-            return Ok(None);
-        }
+    ) -> Result<Receiver<Used>, &'static str> {
         if self.choices.applying || self.output.borrow().phase.is_active() {
-            return Err(RESTORE_BUSY);
+            return Err(USE_BUSY);
         }
-        let candidate = draft.clone();
         let path = self.path.clone();
         self.choices.cancel();
-        let (refusal, refused) = async_channel::bounded(1);
+        let (answer, used) = async_channel::bounded(1);
         let validation = cx
             .background_executor()
             .spawn(async move { candidate.validated(&path) });
         self.choices.task = Some(cx.spawn(async move |cx| {
             let result = validation.await;
             let admission =
-                cx.update_global::<Self, _>(|services, cx| services.admit_restore(result, cx));
-            let restored = match admission {
-                Ok(Some(receipt)) => {
-                    let restored = receipt.recv().await.unwrap_or(Err(UNACKNOWLEDGED));
-                    cx.update_global::<Self, _>(|services, _| services.confirm_restore(restored));
-                    restored
+                cx.update_global::<Self, _>(|services, cx| services.admit_use(result, cx));
+            let outcome = match admission {
+                Ok(Admission::Ready(config)) => Ok(config),
+                Ok(Admission::Waiting(config, receipt)) => {
+                    let adopted = receipt.recv().await.unwrap_or(Err(UNACKNOWLEDGED));
+                    cx.update_global::<Self, _>(|services, _| services.confirm_use(&config, adopted))
+                        .map(|()| config)
                 },
-                Ok(None) => Ok(()),
                 Err(reason) => Err(reason),
             };
-            if let Err(reason) = restored {
-                #[expect(
-                    clippy::let_underscore_must_use,
-                    reason = "Settings closed, so nobody waits to show why the saved preset was refused"
-                )]
-                let _ = refusal.try_send(reason);
-            }
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "Settings closed, so nobody waits to save the preset or explain its refusal"
+            )]
+            let _ = answer.try_send(outcome);
         }));
-        Ok(Some(refused))
+        Ok(used)
     }
 
-    fn admit_restore(
+    fn admit_use(
         &mut self,
         result: anyhow::Result<ValidConfig>,
         cx: &App,
-    ) -> Result<Option<Receiver<Restored>>, &'static str> {
-        let draft = result.map_err(|_unavailable| RESTORE_UNAVAILABLE)?;
-        if self.config.change_to(&draft) >= Change::Session {
-            return Ok(None);
-        }
+    ) -> Result<Admission, &'static str> {
+        let config = result.map_err(|_unavailable| USE_UNAVAILABLE)?;
         let Some(runtime) = self.runtime() else {
             self.forget_preset(cx);
-            return Ok(None);
+            return Ok(Admission::Ready(config));
         };
-        let receipt = runtime.restore_saved();
+        if self.preset_name().is_none() && self.config.change_to(&config) < Change::Session {
+            return Ok(Admission::Ready(config));
+        }
+        let receipt = runtime.adopt(config.clone());
         self.choices.applying = true;
-        Ok(Some(receipt))
+        Ok(Admission::Waiting(config, receipt))
     }
 
-    fn confirm_restore(&mut self, restored: Restored) {
+    fn confirm_use(&mut self, config: &ValidConfig, adopted: Adopted) -> Adopted {
         self.choices.applying = false;
-        if restored.is_ok() {
-            self.choices.selected = None;
-            self.output.send_modify(|snapshot| snapshot.preset = None);
+        adopted?;
+        self.choices.selected = None;
+        self.output.send_modify(|snapshot| snapshot.preset = None);
+        if let Some(runtime) = self.runtime() {
+            runtime.settle(config.clone());
         }
+        Ok(())
     }
 
     pub(super) fn reset_choice_for(&mut self, config: &Config) {

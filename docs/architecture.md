@@ -78,14 +78,16 @@ module unless a test file is named.
   the UI thread, leave saved settings unchanged, and require owner confirmation while idle.
   Generation, saved-configuration epoch, session counter, and caller lifetime reject stale results.
   The runtime keeps its saved configuration baseline separate from effective preset choices,
-  including after Resume. Text-only choices reuse the worker; engine changes reload it. Using, in
-  Settings, a preset that matches the saved baseline restores that baseline without rewriting
-  settings: the draft validates off the UI thread and compares in canonical form, and the owner
-  restores only while idle, in order with queued preset commands, so a restore never abandons a
-  recording. Settings disables Use during a session. Without a running owner, Use clears the
-  transient selection and restarts a pending Resume check. A transient selection takes precedence in
-  the Settings indicator, which follows Services as well as snapshots. Capturing a preset requires
-  both speech paths.
+  including after Resume. Text-only choices reuse the worker; engine changes reload it. Use in
+  Settings has one path: the candidate validates off the UI thread, replacing any pending tray or
+  command choice; a running owner adopts it only while idle, in order with queued preset commands,
+  and marks the saved baseline it then receives as already applied; only then does Settings save
+  it. A session that starts while that save is written therefore survives its completion, and a
+  refused or unavailable preset changes neither dictation nor the settings file. Settings disables
+  Use during a session. Without a running owner, a valid candidate clears the transient selection
+  and restarts a pending Resume check. A transient selection takes precedence in the Settings
+  indicator, which follows Services as well as snapshots. Capturing a preset requires both speech
+  paths.
 - **Audio capture**: [audio.rs](../crates/app/src/audio.rs) with
   [control.rs](../crates/app/src/audio/control.rs), [stream.rs](../crates/app/src/audio/stream.rs),
   [pcm.rs](../crates/app/src/audio/pcm.rs), [speech.rs](../crates/app/src/audio/speech.rs), and

@@ -9,7 +9,7 @@ use crate::{
 };
 
 impl<P: Ports> World<P> {
-    pub(super) fn direct(&self, directive: Directive, idle: bool) -> Option<Event<Native>> {
+    pub(super) fn direct(&mut self, directive: Directive, idle: bool) -> Option<Event<Native>> {
         match directive {
             Directive::Control(call)
                 if matches!(
@@ -46,12 +46,14 @@ impl<P: Ports> World<P> {
                 session: SessionId::new(session),
                 changed: self.changes.borrow().change_to(&baseline) >= Change::Session,
             }),
-            Directive::Restore(restoring) if idle => {
-                restoring.answer(Ok(()));
-                Some(Event::Configure(self.changes.borrow().clone()))
+            Directive::Adopt { config, answer } if idle => {
+                answer.answer(Ok(()));
+                let config = config.into_inner();
+                self.adopted = Some(config.clone());
+                Some(Event::Configure(config))
             },
-            Directive::Restore(restoring) => {
-                restoring.answer(Err(refusal(Refusal::PresetBusy)));
+            Directive::Adopt { answer, .. } => {
+                answer.answer(Err(refusal(Refusal::PresetBusy)));
                 None
             },
             Directive::Control(_) | Directive::Preset { .. } => None,

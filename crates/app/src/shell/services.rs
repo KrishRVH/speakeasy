@@ -77,7 +77,36 @@ struct Before {
 
 struct Owners {
     runtime: Runtime,
-    monitor: InputMonitor,
+    monitor: Monitor,
+}
+
+enum Monitor {
+    Desktop(InputMonitor),
+    #[cfg(test)]
+    Fake,
+}
+
+impl Monitor {
+    fn request_stop(&self) {
+        match self {
+            Self::Desktop(monitor) => monitor.request_stop(),
+            #[cfg(test)]
+            Self::Fake => (),
+        }
+    }
+
+    fn stopped(&self) -> impl Future<Output = ()> + use<> {
+        let stopped = match self {
+            Self::Desktop(monitor) => Some(monitor.stopped()),
+            #[cfg(test)]
+            Self::Fake => None,
+        };
+        async move {
+            if let Some(stopped) = stopped {
+                stopped.await;
+            }
+        }
+    }
 }
 
 impl Owners {
@@ -414,7 +443,10 @@ impl Services {
                 wsl.clone(),
                 focus.subscribe(),
             )?;
-            anyhow::Ok(Owners { runtime, monitor })
+            anyhow::Ok(Owners {
+                runtime,
+                monitor: Monitor::Desktop(monitor),
+            })
         });
         self.validation = None;
         if started.is_err() {
@@ -459,6 +491,27 @@ impl Services {
             return;
         }
         self.validate(cx);
+    }
+
+    #[cfg(test)]
+    pub(super) fn run_fake_owner(&mut self) -> anyhow::Result<runtime::FakeReports> {
+        let preset = self.preset_name().map(str::to_owned);
+        self.output
+            .send_modify(|snapshot| snapshot.preset.clone_from(&preset));
+        let (runtime, reports) = Runtime::fake(
+            self.config.clone(),
+            self.styles.subscribe(),
+            self.output.clone(),
+            self.meter.clone(),
+        )?;
+        let started = self.lifecycle.start(|| {
+            anyhow::Ok(Owners {
+                runtime,
+                monitor: Monitor::Fake,
+            })
+        })?;
+        anyhow::ensure!(started, "Services was not ready to start the fake owner");
+        Ok(reports)
     }
 
     pub(super) fn forget_preset(&mut self, cx: &App) {

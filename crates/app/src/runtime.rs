@@ -253,6 +253,16 @@ impl Runtime {
         )
     }
 
+    #[cfg(test)]
+    pub(crate) fn fake(
+        config: Config,
+        styles: watch::Receiver<Style>,
+        snapshots: watch::Sender<Snapshot>,
+        meter: watch::Sender<Meter>,
+    ) -> anyhow::Result<(Self, FakeReports)> {
+        tests::fake_runtime(config, styles, snapshots, meter)
+    }
+
     pub(crate) fn is_running(&self) -> bool {
         !self.input.is_closed() && !self.host.is_finished()
     }
@@ -357,10 +367,17 @@ impl<Host> Runtime<Host> {
         self.configuration.send_replace(config.into_inner());
     }
 
-    pub(crate) fn restore_saved(&self) -> Receiver<Restored> {
+    pub(crate) fn adopt(&self, config: ValidConfig) -> Receiver<Adopted> {
         let (answer, receipt) = async_channel::bounded(1);
-        self.direct(Directive::Restore(Restoring(answer)));
+        self.direct(Directive::Adopt {
+            config: Box::new(config),
+            answer: Adopting(answer),
+        });
         receipt
+    }
+
+    pub(crate) fn settle(&self, config: ValidConfig) {
+        self.configuration.send_replace(config.into_inner());
     }
 
     pub(crate) fn control(&self, call: Call) {
@@ -539,7 +556,7 @@ struct Wiring<P> {
     epoch: SnapshotEpoch,
 }
 
-pub(crate) type Restored = Result<(), &'static str>;
+pub(crate) type Adopted = Result<(), &'static str>;
 
 enum Directive {
     Control(Call),
@@ -550,27 +567,30 @@ enum Directive {
         session: u64,
         call: Call,
     },
-    Restore(Restoring),
+    Adopt {
+        config: Box<ValidConfig>,
+        answer: Adopting,
+    },
 }
 
 impl Directive {
     fn refuse(self, reason: &'static str) {
         match self {
             Self::Control(call) | Self::Preset { call, .. } => call.respond(Reply::refused(reason)),
-            Self::Restore(restoring) => restoring.answer(Err(reason)),
+            Self::Adopt { answer, .. } => answer.answer(Err(reason)),
         }
     }
 }
 
-struct Restoring(Sender<Restored>);
+struct Adopting(Sender<Adopted>);
 
-impl Restoring {
-    fn answer(self, restored: Restored) {
+impl Adopting {
+    fn answer(self, adopted: Adopted) {
         #[expect(
             clippy::let_underscore_must_use,
-            reason = "Services stops waiting for a restore that a newer preset choice replaced"
+            reason = "Services stops waiting for a preset that a newer choice replaced"
         )]
-        let _ = self.0.try_send(restored);
+        let _ = self.0.try_send(adopted);
     }
 }
 
@@ -615,3 +635,5 @@ fn input_lane() -> (InputSender, Receiver<Input>) {
 mod fixture;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(crate) use tests::Reports as FakeReports;

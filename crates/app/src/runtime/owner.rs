@@ -109,6 +109,7 @@ struct World<P: Ports> {
     cancel_shortcut: Arc<str>,
     default_microphone: Option<SessionId>,
     awake: Option<(Keep, Option<P::Awake>)>,
+    adopted: Option<Config>,
 }
 
 impl<P: Ports> Owner<P> {
@@ -170,6 +171,7 @@ impl<P: Ports> Owner<P> {
             cancel_shortcut: speakeasy_platform::CANCEL_SHORTCUT.into(),
             default_microphone: None,
             awake: None,
+            adopted: None,
         };
         let machine = Machine::new(
             Timing::DICTATION,
@@ -231,7 +233,13 @@ impl<P: Ports> Owner<P> {
                     Report::ShowGone(_) => machine::Report::ShowGone,
                 })
             },
-            Wake::Configuration => Event::Configure(world.changes.borrow_and_update().clone()),
+            Wake::Configuration => {
+                let saved = world.changes.borrow_and_update().clone();
+                if world.adopted.take().is_some_and(|adopted| adopted == saved) {
+                    return None;
+                }
+                Event::Configure(saved)
+            },
             Wake::Command(directive) => {
                 let idle = self.machine.is_idle() && self.machine.practice().is_none();
                 return world.direct(directive, idle);

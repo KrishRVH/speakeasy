@@ -80,6 +80,7 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                         preview: None,
                         engine_work: super::EngineWork::Idle,
                         saving: None,
+                        using: None,
                         saves,
                         saved: None,
                         _updates: Task::ready(()),
