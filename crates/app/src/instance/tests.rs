@@ -1,3 +1,4 @@
+mod admission;
 mod control;
 
 use super::*;
@@ -33,9 +34,14 @@ fn dial(path: &Path) -> anyhow::Result<(TcpStream, u128)> {
     Ok((stream, endpoint.nonce))
 }
 
-fn queue_shortcuts(path: &Path) -> anyhow::Result<()> {
+fn fill_the_shortcut_queue(path: &Path) -> anyhow::Result<()> {
     Instance::send(path, Request::Toggle)?;
-    Instance::send(path, Request::Cancel)
+    Instance::send(path, Request::Cancel)?;
+    ensure!(
+        Instance::send(path, Request::Toggle).is_err(),
+        "A shortcut beyond the waiting limit was acknowledged"
+    );
+    Ok(())
 }
 
 #[tokio::test]
@@ -82,18 +88,6 @@ fn requests_without_the_secret_are_never_delivered() -> anyhow::Result<()> {
         forged.read_exact(&mut [0]).is_err(),
         "A wrong secret was acknowledged"
     );
-    Instance::send(&path, Request::Toggle)?;
-    assert_eq!(next_request(&requests)?, Request::Toggle);
-    Ok(())
-}
-
-#[test]
-fn idle_unverified_connections_do_not_hold_up_a_shortcut() -> anyhow::Result<()> {
-    let directory = tempfile::tempdir()?;
-    let path = directory.path().join("settings.json");
-    let (_instance, requests) = Instance::acquire(&path)?.context("First owner missing")?;
-    let (_idle_first, _) = dial(&path)?;
-    let (_idle_second, _) = dial(&path)?;
     Instance::send(&path, Request::Toggle)?;
     assert_eq!(next_request(&requests)?, Request::Toggle);
     Ok(())
@@ -162,7 +156,7 @@ fn pending_commands_wait_for_the_ui_instead_of_disappearing() -> anyhow::Result<
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
     let (instance, requests) = Instance::acquire(&path)?.context("First owner missing")?;
-    queue_shortcuts(&path)?;
+    fill_the_shortcut_queue(&path)?;
     for expected in [Request::Toggle, Request::Cancel] {
         assert_eq!(next_request(&requests)?, expected);
     }
@@ -223,7 +217,7 @@ fn shutdown_wakes_a_server_waiting_for_the_ui() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
     let (instance, _requests) = Instance::acquire(&path)?.context("First owner missing")?;
-    queue_shortcuts(&path)?;
+    fill_the_shortcut_queue(&path)?;
     let (finished, completion) = std::sync::mpsc::channel();
     let cleanup = thread::spawn(move || {
         drop(instance);

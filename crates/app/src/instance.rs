@@ -1,5 +1,7 @@
 use std::{
+    collections::VecDeque,
     fs::{self, File},
+    future,
     io::{self, Read, Write as _},
     net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
@@ -15,7 +17,7 @@ use tokio::{
     io::{AsyncReadExt as _, AsyncWriteExt as _},
     net::TcpStream as AsyncStream,
     runtime::Runtime,
-    task::JoinSet,
+    task::{AbortHandle, Id, JoinError, JoinSet},
 };
 
 use crate::control::{self, Call, Command, Reply};
@@ -27,6 +29,7 @@ const MAX_PORT_FILE_BYTES: u64 = 64;
 const ACKNOWLEDGED: u8 = 0x06;
 const CONTROL: u8 = 3;
 const MAX_HANDSHAKES: usize = 16;
+const MAX_UNDELIVERED: usize = 2;
 const MAX_CONTROL_CALLS: usize = 8;
 const IO_TIMEOUT: Duration = Duration::from_millis(100);
 const ACCEPT_RETRY: Duration = Duration::from_millis(10);
@@ -108,8 +111,7 @@ impl Instance {
     }
 
     pub(crate) fn send(path: &Path, request: Request) -> anyhow::Result<()> {
-        let mut stream = connect(&path.with_file_name(PORT_FILE))?;
-        stream.write_all(&[request as u8])?;
+        connect(&path.with_file_name(PORT_FILE), &[request as u8])?;
         Ok(())
     }
 
@@ -118,18 +120,15 @@ impl Instance {
             Ok(bytes) => bytes,
             Err(reason) => return Reply::refused(reason),
         };
-        let Ok(mut stream) = connect(&path.with_file_name(PORT_FILE)) else {
+        let mut frame = vec![CONTROL];
+        if write_frame(&mut frame, &bytes).is_err() {
+            return Reply::refused("The control command exceeds its size limit.");
+        }
+        let Ok(mut stream) = connect(&path.with_file_name(PORT_FILE), &frame) else {
             return Reply::unknown(
                 "Speakeasy is not running or could not be verified. Start or restart it before using this command.",
             );
         };
-        let mut frame = vec![CONTROL];
-        if write_frame(&mut frame, &bytes)
-            .and_then(|()| stream.write_all(&frame))
-            .is_err()
-        {
-            return Reply::unknown(CONTROL_DISCONNECTED);
-        }
         let mut reply = ReplyDeadline {
             stream: &mut stream,
             sent: Instant::now(),
@@ -271,10 +270,10 @@ async fn accept_connections<F>(
 ) where
     F: Future<Output = io::Result<AsyncStream>> + Send,
 {
-    let mut handshakes = JoinSet::new();
+    let mut arrivals = Arrivals::default();
     let mut controls = JoinSet::new();
     loop {
-        let (stream, request) = tokio::select! {
+        tokio::select! {
             biased;
             () = requests.closed() => break,
             Some(completed) = controls.join_next(), if !controls.is_empty() => {
@@ -283,56 +282,145 @@ async fn accept_connections<F>(
                     reason = "A failed connection drops its receipt and socket; other callers remain independent"
                 )]
                 let _ = completed;
-                continue;
             },
-            Some(finished) = handshakes.join_next(), if !handshakes.is_empty() => {
-                let Ok(Some(request)) = finished else {
+            delivered = deliver(arrivals.next_shortcut(), requests) => {
+                if delivered.is_err() {
+                    break;
+                }
+                arrivals.delivered();
+            },
+            Some(joined) = arrivals.tasks.join_next_with_id(), if !arrivals.tasks.is_empty() => {
+                let Some((stream, command)) = arrivals.finish(joined, requests.len()).await else {
                     continue;
                 };
-                request
+                if controls.len() >= MAX_CONTROL_CALLS {
+                    #[expect(
+                        clippy::let_underscore_must_use,
+                        reason = "A refused caller may disconnect before receiving the busy response"
+                    )]
+                    let _ = serve_control(
+                        stream,
+                        Err("Speakeasy is busy. Try again when a control call finishes."),
+                        requests,
+                    )
+                    .await;
+                } else {
+                    let requests = requests.clone();
+                    controls.spawn(async move { serve_control(stream, command, &requests).await });
+                }
             },
-            accepted = accept(), if handshakes.len() < MAX_HANDSHAKES => {
-                if let Ok(mut stream) = accepted {
-                    handshakes.spawn(async move {
-                        let request = handshake(&mut stream, nonce).await.ok().flatten()?;
-                        Some((stream, request))
-                    });
+            accepted = accept() => {
+                if let Ok(stream) = accepted {
+                    arrivals.begin(stream, nonce);
+                    tokio::task::yield_now().await;
                 } else {
                     tokio::select! {
                         () = requests.closed() => break,
                         () = tokio::time::sleep(ACCEPT_RETRY) => {},
                     }
                 }
-                continue;
-            },
-        };
-
-        match request {
-            Incoming::Shortcut(request) => {
-                if requests.send(Event::Shortcut(request)).await.is_err() {
-                    break;
-                }
-            },
-            Incoming::Control(_) if controls.len() >= MAX_CONTROL_CALLS => {
-                #[expect(
-                    clippy::let_underscore_must_use,
-                    reason = "A refused caller may disconnect before receiving the busy response"
-                )]
-                let _ = serve_control(
-                    stream,
-                    Err("Speakeasy is busy. Try again when a control call finishes."),
-                    requests,
-                )
-                .await;
-            },
-            Incoming::Control(command) => {
-                let requests = requests.clone();
-                controls.spawn(async move { serve_control(stream, command, &requests).await });
             },
         }
     }
-    handshakes.shutdown().await;
+    arrivals.tasks.shutdown().await;
     controls.shutdown().await;
+}
+
+async fn deliver(
+    next: Option<Request>,
+    requests: &Sender<Event>,
+) -> Result<(), async_channel::SendError<Event>> {
+    match next {
+        Some(request) => requests.send(Event::Shortcut(request)).await,
+        None => future::pending().await,
+    }
+}
+
+#[derive(Default)]
+struct Arrivals {
+    tasks: JoinSet<Option<(AsyncStream, Incoming)>>,
+    order: VecDeque<Arrival>,
+}
+
+enum Arrival {
+    Handshake(AbortHandle),
+    Admitted(Request),
+}
+
+impl Arrivals {
+    fn begin(&mut self, mut stream: AsyncStream, nonce: u128) {
+        if self.handshakes() >= MAX_HANDSHAKES
+            && let Some(oldest) = self
+                .order
+                .iter()
+                .position(|arrival| matches!(arrival, Arrival::Handshake(_)))
+            && let Some(Arrival::Handshake(task)) = self.order.remove(oldest)
+        {
+            task.abort();
+        }
+        let task = self.tasks.spawn(async move {
+            let request = handshake(&mut stream, nonce).await.ok().flatten()?;
+            Some((stream, request))
+        });
+        self.order.push_back(Arrival::Handshake(task));
+    }
+
+    async fn finish(
+        &mut self,
+        joined: Result<(Id, Option<(AsyncStream, Incoming)>), JoinError>,
+        mailbox: usize,
+    ) -> Option<(AsyncStream, Result<Command, &'static str>)> {
+        let (id, outcome) = joined.unwrap_or_else(|error| (error.id(), None));
+        let position = self
+            .order
+            .iter()
+            .position(|arrival| matches!(arrival, Arrival::Handshake(task) if task.id() == id))?;
+        let control = match outcome {
+            Some((mut stream, Incoming::Shortcut(request))) => {
+                if self.admitted().saturating_add(mailbox) < MAX_UNDELIVERED
+                    && acknowledge(&mut stream).await
+                    && let Some(arrival) = self.order.get_mut(position)
+                {
+                    *arrival = Arrival::Admitted(request);
+                    return None;
+                }
+                None
+            },
+            Some((stream, Incoming::Control(command))) => Some((stream, command)),
+            None => None,
+        };
+        self.order.remove(position);
+        control
+    }
+
+    fn next_shortcut(&self) -> Option<Request> {
+        match self.order.front() {
+            Some(&Arrival::Admitted(request)) => Some(request),
+            _ => None,
+        }
+    }
+
+    fn delivered(&mut self) {
+        self.order.pop_front();
+    }
+
+    fn handshakes(&self) -> usize {
+        self.order
+            .iter()
+            .filter(|arrival| matches!(arrival, Arrival::Handshake(_)))
+            .count()
+    }
+
+    fn admitted(&self) -> usize {
+        self.order.len().saturating_sub(self.handshakes())
+    }
+}
+
+async fn acknowledge(stream: &mut AsyncStream) -> bool {
+    matches!(
+        tokio::time::timeout(IO_TIMEOUT, stream.write_all(&[ACKNOWLEDGED])).await,
+        Ok(Ok(()))
+    )
 }
 
 enum Incoming {
@@ -348,10 +436,10 @@ async fn handshake(stream: &mut AsyncStream, nonce: u128) -> io::Result<Option<I
         if u128::from_le_bytes(presented) != nonce {
             return Ok(None);
         }
-        stream.write_all(&[ACKNOWLEDGED]).await?;
         let byte = stream.read_u8().await?;
         if byte == CONTROL {
             let length = stream.read_u16().await?;
+            stream.write_all(&[ACKNOWLEDGED]).await?;
             if usize::from(length) > control::MAX_BYTES {
                 write_reply(
                     stream,
@@ -462,14 +550,14 @@ async fn write_reply(stream: &mut AsyncStream, reply: Reply) -> io::Result<()> {
         .map_err(|_error| io::ErrorKind::TimedOut)?
 }
 
-fn connect(port_file: &Path) -> anyhow::Result<TcpStream> {
+fn connect(port_file: &Path, request: &[u8]) -> anyhow::Result<TcpStream> {
     let endpoint = Endpoint::read(port_file)?;
     let address = SocketAddr::from((Ipv4Addr::LOCALHOST, endpoint.port));
     let mut stream = TcpStream::connect_timeout(&address, IO_TIMEOUT).context(NOT_RUNNING)?;
     stream.set_nodelay(true)?;
     stream.set_read_timeout(Some(IO_TIMEOUT))?;
     stream.set_write_timeout(Some(IO_TIMEOUT))?;
-    stream.write_all(&endpoint.nonce.to_le_bytes())?;
+    stream.write_all(&[endpoint.nonce.to_le_bytes().as_slice(), request].concat())?;
     let mut reply = [0];
     stream
         .read_exact(&mut reply)

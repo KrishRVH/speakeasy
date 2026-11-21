@@ -9,10 +9,9 @@ fn next_call(requests: &Receiver<Event>) -> anyhow::Result<Call> {
 }
 
 fn open_control(path: &Path, command: &[u8]) -> anyhow::Result<TcpStream> {
-    let mut client = connect(&path.with_file_name(PORT_FILE))?;
-    client.write_all(&[CONTROL])?;
-    write_frame(&mut client, command)?;
-    Ok(client)
+    let mut frame = vec![CONTROL];
+    write_frame(&mut frame, command)?;
+    connect(&path.with_file_name(PORT_FILE), &frame)
 }
 
 fn read_reply(client: &mut TcpStream) -> anyhow::Result<Reply> {
@@ -161,20 +160,22 @@ fn malformed_versions_and_unknown_fields_never_reach_the_owner() -> anyhow::Resu
 }
 
 #[test]
-fn oversized_control_frames_are_refused_before_reading_the_body() -> anyhow::Result<()> {
+fn oversized_control_frames_are_refused_without_waiting_for_the_body() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
     let (_instance, requests) = Instance::acquire(&path)?.context("First owner missing")?;
-    let mut client = connect(&path.with_file_name(PORT_FILE))?;
     let mut frame = vec![CONTROL];
     write_frame(&mut frame, &vec![0; MAX_BYTES + 1])?;
-    client.write_all(&frame)?;
-    let reply = read_reply(&mut client)?;
-    assert_eq!(reply.result, Disposition::Refused);
-    assert_eq!(
-        reply.reason.as_deref(),
-        Some("The control command exceeds its size limit.")
-    );
+    let header = frame.get(..3).context("The frame has no header")?;
+    for request in [header, &frame] {
+        let mut client = connect(&path.with_file_name(PORT_FILE), request)?;
+        let reply = read_reply(&mut client)?;
+        assert_eq!(reply.result, Disposition::Refused);
+        assert_eq!(
+            reply.reason.as_deref(),
+            Some("The control command exceeds its size limit.")
+        );
+    }
     assert!(requests.try_recv().is_err());
     Instance::send(&path, Request::Toggle)?;
     assert_eq!(next_request(&requests)?, Request::Toggle);
