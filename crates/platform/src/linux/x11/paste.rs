@@ -299,12 +299,15 @@ fn paste_refusal<C>(
     }
     let released = !modifiers_held(clipboard)?;
     let owned = still_owned(clipboard);
+    if matches!(owned, Ok(false)) {
+        return Ok(Some(CLIPBOARD_CHANGED));
+    }
     if let Some(outcome) =
         Delivery::Paste.preflight(external && !request.own_focus.held(), released)
     {
         return Ok(Some(outcome));
     }
-    Ok((!owned?).then_some(CLIPBOARD_CHANGED))
+    owned.map(|_| None)
 }
 
 #[derive(Debug, PartialEq, Eq)]

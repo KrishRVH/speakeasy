@@ -204,6 +204,35 @@ fn focus_moving_to_speakeasy_during_a_clipboard_check_refuses_the_paste() -> any
 }
 
 #[test]
+fn a_copy_made_as_focus_reaches_speakeasy_is_reported_as_a_changed_clipboard() -> anyhow::Result<()>
+{
+    let (events, _received) = async_channel::bounded(1);
+    let input = InputSender::new(events);
+    let permit = input.begin().context("Recording")?;
+    let report = crate::FocusReport::default();
+    let request = paste_request(&permit, report.subscribe());
+    let refused = authorize_paste(
+        &request,
+        &mut (),
+        |()| Ok(true),
+        |()| true,
+        |()| true,
+        |()| Ok(false),
+        |()| {
+            report.settle(7, true);
+            Ok(false)
+        },
+    )?;
+    assert_eq!(
+        refused.break_value(),
+        Some(CLIPBOARD_CHANGED),
+        "A copy the owner check saw was offered for manual pasting"
+    );
+    assert!(permit.commit(), "A refused paste spent its authority");
+    Ok(())
+}
+
+#[test]
 fn a_modifier_or_layout_change_during_the_last_clipboard_check_refuses_the_paste()
 -> anyhow::Result<()> {
     let (events, _received) = async_channel::bounded(1);
