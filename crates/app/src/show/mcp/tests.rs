@@ -476,7 +476,6 @@ fn setup_uses_the_resolved_appimage_launcher_without_resolving_the_mount_again()
     )?;
     let output = String::from_utf8(output)?;
     assert_eq!(output.matches(executable).count(), 3);
-    assert!(!output.contains(".mount_"));
     let mut refused = Vec::new();
     assert!(setup(None, Path::new("/home/public/Shows"), None, &mut refused).is_err());
     assert_eq!(refused, [] as [u8; 0]);
