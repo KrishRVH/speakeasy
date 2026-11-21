@@ -186,8 +186,8 @@ async fn a_session_started_after_adoption_survives_the_save_that_follows() -> an
         ..h.runtime.configuration.borrow().clone()
     });
     assert_eq!(receive(&h.runtime.adopt(french.clone())).await?, Ok(()));
-    h.runtime.settle(french.clone());
     h.start().await?;
+    h.runtime.settle(french.clone());
     h.runtime.configure(french);
     finish_in(&mut h, "fr").await?;
     h.close().await
