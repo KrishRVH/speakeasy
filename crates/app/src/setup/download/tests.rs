@@ -222,7 +222,7 @@ async fn fetch_discards_a_download_that_fails_its_checksum() -> anyhow::Result<(
 #[tokio::test]
 async fn cached_downloads_require_the_pinned_bytes_and_preserve_a_mismatch() -> anyhow::Result<()> {
     let expected = b"known checkpoint";
-    let digest = hex_digest(&Sha256::digest(expected));
+    let digest = sha256(expected);
     let download = Download {
         url: "https://example.invalid/model.gguf",
         size: expected.len() as u64,

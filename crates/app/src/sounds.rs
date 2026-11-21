@@ -23,18 +23,15 @@ const LINGER: Duration = Duration::from_secs(10);
 const RATE: u64 = 48_000;
 const VOICES: usize = 4;
 
-const fn wav(cue: Cue) -> &'static [u8] {
-    match cue {
+pub(crate) fn pcm(cue: Cue) -> &'static [u8] {
+    let wav = match cue {
         Cue::Start => START,
         Cue::Stop => STOP,
         Cue::Cancel => CANCEL,
         Cue::Show => SHOW,
         Cue::Copied => COPIED,
-    }
-}
-
-pub(crate) fn pcm(cue: Cue) -> &'static [u8] {
-    wav(cue).get(WAV_HEADER..).unwrap_or_default()
+    };
+    wav.get(WAV_HEADER..).unwrap_or_default()
 }
 
 const START: &[u8] = include_bytes!("../assets/sounds/start.wav");
