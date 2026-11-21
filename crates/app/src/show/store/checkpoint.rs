@@ -11,6 +11,7 @@ use std::{
 };
 
 use anyhow::Context as _;
+pub(in crate::show) use audio::Damaged;
 pub(crate) use audio::{KeptAudio, MAX_CUES};
 pub(crate) use keeper::{AudioEnding, AudioLog, AudioTail, FrameLog, Keeper, Kept};
 use speakeasy_show::{Bundle, Moment, Narration, NarrationLoss, Take, log};

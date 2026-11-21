@@ -151,6 +151,35 @@ async fn a_damaged_saved_narration_without_speech_stays_for_explicit_discard() -
     Ok(())
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn unreadable_retry_audio_behind_damaged_narration_gets_no_discard_advice()
+-> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+    let root = tempfile::tempdir()?;
+    let (_show, pending) = pending_show(root.path()).await?;
+    fs::write(pending.directory().join("narration.json"), b"{")?;
+    let audio = pending.directory().join("audio.log");
+    fs::set_permissions(&audio, fs::Permissions::from_mode(0o000))?;
+    let refused = reopen_with(pending);
+    fs::set_permissions(&audio, fs::Permissions::from_mode(0o600))?;
+    let Err(error) = refused else {
+        bail!("Unreadable audio was recovered");
+    };
+    let message = format!("{error:#}");
+    assert!(
+        !message.contains("no speech") && !message.contains("discard"),
+        "A read failure advised discarding the retry: {message}"
+    );
+    assert!(message.contains("Cannot read"), "{message}");
+    let reopened = reopen_with(interrupted(root.path())?)?;
+    assert!(
+        reopened.speech.is_some(),
+        "Restored access did not offer the kept speech"
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_retry_that_hears_no_words_keeps_its_retry_without_a_duplicate() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;

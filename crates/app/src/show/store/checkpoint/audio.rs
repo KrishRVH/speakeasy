@@ -29,7 +29,7 @@ const CUE: u8 = 3;
 const END: u8 = 4;
 
 #[derive(Debug)]
-pub(in crate::show::store) struct Damaged;
+pub(in crate::show) struct Damaged;
 
 impl fmt::Display for Damaged {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {

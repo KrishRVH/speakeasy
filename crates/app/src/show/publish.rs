@@ -11,7 +11,7 @@ use super::{
     Checkpoint, Checkpointing, Interrupted, SavedShow,
     recorder::NOTHING_RECORDED,
     store,
-    store::checkpoint::{Publication as Completion, SavedNarration},
+    store::checkpoint::{Damaged, Publication as Completion, SavedNarration},
     wsl::Lookup,
 };
 use crate::runtime::ports::{Audio, Footage, PUBLISH_STOPPED, Preservation, Published, Sealed};
@@ -20,6 +20,8 @@ const NO_SPEECH: &str = "Narration could not be recovered because the kept audio
                          The saved Show is unchanged; its narration retry is removed from Shows.";
 const UNREADABLE_NARRATION: &str = "Cannot read this Show's saved narration. Check access to its \
                                     folder; the interrupted Show stays in Shows";
+const UNREADABLE_AUDIO: &str = "Cannot read this Show's kept audio. Check access to its folder; the \
+                                interrupted Show stays in Shows";
 const DAMAGED_NARRATION: &str = "This Show's saved narration is damaged and its kept audio holds no \
                                  speech, so its narration cannot be retried. The saved Show is \
                                  unchanged; discard this retry in Shows.";
@@ -259,6 +261,9 @@ fn reopen_with(interrupted: Interrupted) -> anyhow::Result<Reopened> {
                 } else if crate::audio::silent_kept(&audio) {
                     recording.narration_lost = Some(NarrationLoss::AudioSilent);
                 }
+            },
+            Err(error) if pending && damaged && !error.is::<Damaged>() => {
+                return Err(error.context(UNREADABLE_AUDIO));
             },
             Ok(None) | Err(_) if pending && damaged => anyhow::bail!(DAMAGED_NARRATION),
             Ok(None) | Err(_) => recording.narration_lost = Some(NarrationLoss::NotTranscribed),
