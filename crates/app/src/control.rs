@@ -1,6 +1,5 @@
 use std::{
     ffi::{OsStr, OsString},
-    fmt,
     io::Write,
     path::PathBuf,
     time::{Duration, Instant},
@@ -9,55 +8,44 @@ use std::{
 use anyhow::{Context as _, anyhow, bail, ensure};
 use async_channel::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
-use zeroize::Zeroizing;
 
-use crate::{config::presets::validate_name, paths, transcript::style::Style};
+use crate::{paths, transcript::style::Style};
 
 const VERSION: u8 = 1;
-pub(crate) const MAX_BYTES: usize = 4096;
-pub(crate) const MAX_REPLY_BYTES: usize = 65_535;
-pub(crate) const OVERSIZED: &str = "The control command exceeds its size limit.";
 const TIMEOUT: Duration = Duration::from_secs(2);
 const PRINT_TIMEOUT: Duration = Duration::from_secs(120);
 
-#[derive(Clone, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub(crate) enum Command {
     Status,
-    Start {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        style: Option<Style>,
-    },
-    Capture {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        style: Option<Style>,
-    },
-    Stop {
-        session: String,
-    },
-    Print {
-        session: String,
-    },
-    Cancel {
-        session: String,
-    },
+    Start { style: Option<Style> },
+    Capture { style: Option<Style> },
+    Stop { session: String },
+    Print { session: String },
+    Cancel { session: String },
     PasteLast,
-    Style {
-        name: Style,
-    },
-    Preset {
-        name: String,
-    },
+    Style { name: Style },
+    Preset { name: String },
 }
 
-impl fmt::Debug for Command {
-    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
-        out.debug_struct("Command").finish_non_exhaustive()
+impl Command {
+    const fn timeout(&self) -> Duration {
+        match self {
+            Self::Print { .. } => PRINT_TIMEOUT,
+            Self::Status
+            | Self::Start { .. }
+            | Self::Capture { .. }
+            | Self::Stop { .. }
+            | Self::Cancel { .. }
+            | Self::PasteLast
+            | Self::Style { .. }
+            | Self::Preset { .. } => TIMEOUT,
+        }
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Status {
     pub version: String,
     pub service: String,
@@ -72,12 +60,6 @@ pub(crate) struct Status {
     pub last_dictation: bool,
 }
 
-impl fmt::Debug for Status {
-    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
-        out.debug_struct("Status").finish_non_exhaustive()
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Disposition {
@@ -86,8 +68,7 @@ pub(crate) enum Disposition {
     Unknown,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Reply {
     v: u8,
     pub result: Disposition,
@@ -98,15 +79,7 @@ pub(crate) struct Reply {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<Status>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub text: Option<Zeroizing<String>>,
-}
-
-impl fmt::Debug for Reply {
-    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
-        out.debug_struct("Reply")
-            .field("result", &self.result)
-            .finish_non_exhaustive()
-    }
+    pub text: Option<String>,
 }
 
 impl Reply {
@@ -123,45 +96,32 @@ impl Reply {
 
     pub(crate) fn ok(status: Status) -> Self {
         Self {
-            v: VERSION,
-            result: Disposition::Ok,
-            reason: None,
             session: status.session.clone(),
             status: Some(status),
-            text: None,
+            ..Self::accepted()
         }
     }
 
-    pub(crate) fn printed(text: Zeroizing<String>) -> Self {
-        let reply = Self {
+    pub(crate) fn printed(text: String) -> Self {
+        Self {
             text: Some(text),
             ..Self::accepted()
-        };
-        if reply.encode().is_ok() {
-            reply
-        } else {
-            Self::refused(
-                "The dictation is too long to print. Choose “Paste last dictation” to paste it instead.",
-            )
         }
     }
 
     pub(crate) fn refused(reason: impl Into<String>) -> Self {
-        Self::failure(Disposition::Refused, reason.into())
+        Self {
+            result: Disposition::Refused,
+            reason: Some(reason.into()),
+            ..Self::accepted()
+        }
     }
 
     pub(crate) fn unknown(reason: impl Into<String>) -> Self {
-        Self::failure(Disposition::Unknown, reason.into())
-    }
-
-    fn failure(result: Disposition, reason: String) -> Self {
         Self {
-            v: VERSION,
-            result,
-            reason: Some(reason),
-            session: None,
-            status: None,
-            text: None,
+            result: Disposition::Unknown,
+            reason: Some(reason.into()),
+            ..Self::accepted()
         }
     }
 
@@ -174,31 +134,9 @@ impl Reply {
     }
 
     pub(crate) fn write(&self, out: &mut impl Write) -> anyhow::Result<()> {
-        let json = self.encode().map_err(anyhow::Error::msg)?;
-        out.write_all(&json)?;
+        serde_json::to_writer(&mut *out, self)?;
         writeln!(out)?;
         Ok(())
-    }
-
-    pub(crate) fn encode(&self) -> Result<Zeroizing<Vec<u8>>, &'static str> {
-        let mut bytes = Zeroizing::new(vec![0; MAX_REPLY_BYTES]);
-        let mut unwritten = bytes.as_mut_slice();
-        serde_json::to_writer(&mut unwritten, self).map_err(|error| {
-            if error.is_io() {
-                "The control reply exceeds its size limit."
-            } else {
-                "Cannot encode the control reply."
-            }
-        })?;
-        let written = MAX_REPLY_BYTES.saturating_sub(unwritten.len());
-        bytes.truncate(written);
-        Ok(bytes)
-    }
-
-    pub(crate) fn decode(bytes: &[u8]) -> Option<Self> {
-        serde_json::from_slice::<Self>(bytes)
-            .ok()
-            .filter(|reply| reply.v == VERSION)
     }
 }
 
@@ -206,25 +144,22 @@ pub(crate) struct Call {
     pub command: Command,
     reply: Sender<Reply>,
     deadline: Instant,
-    caller: Option<Sender<Reply>>,
-}
-
-impl fmt::Debug for Call {
-    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
-        out.debug_struct("Call").finish_non_exhaustive()
-    }
 }
 
 impl Call {
     pub(crate) fn new(command: Command) -> (Self, Receiver<Reply>) {
-        let (reply, receipt) = async_channel::bounded(1);
         let now = Instant::now();
+        let deadline = now.checked_add(command.timeout()).unwrap_or(now);
+        Self::until(command, deadline)
+    }
+
+    fn until(command: Command, deadline: Instant) -> (Self, Receiver<Reply>) {
+        let (reply, receipt) = async_channel::bounded(1);
         (
             Self {
-                deadline: now.checked_add(command.timeout()).unwrap_or(now),
                 command,
                 reply,
-                caller: None,
+                deadline,
             },
             receipt,
         )
@@ -234,25 +169,12 @@ impl Call {
         self.deadline
     }
 
-    #[cfg(test)]
-    pub(crate) const fn reply(&self) -> &Sender<Reply> {
-        &self.reply
-    }
-
     pub(crate) fn is_live(&self) -> bool {
-        !self.reply.is_closed()
-            && self
-                .caller
-                .as_ref()
-                .is_none_or(|caller| !caller.is_closed())
-            && Instant::now() < self.deadline
+        !self.reply.is_closed() && Instant::now() < self.deadline
     }
 
     pub(crate) fn forwarded(&self) -> (Self, Receiver<Reply>) {
-        let (mut call, receipt) = Self::new(self.command.clone());
-        call.deadline = self.deadline;
-        call.caller = Some(self.caller.as_ref().unwrap_or(&self.reply).clone());
-        (call, receipt)
+        Self::until(self.command.clone(), self.deadline)
     }
 
     pub(crate) fn respond(self, reply: Reply) {
@@ -262,94 +184,6 @@ impl Call {
         )]
         let _ = self.reply.try_send(reply);
     }
-}
-
-#[derive(Serialize)]
-struct Outgoing<'command> {
-    v: u8,
-    #[serde(flatten)]
-    command: &'command Command,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Incoming {
-    v: u8,
-    op: String,
-    session: Option<String>,
-    name: Option<String>,
-    style: Option<Style>,
-}
-
-impl Command {
-    pub(crate) const fn timeout(&self) -> Duration {
-        match self {
-            Self::Print { .. } => PRINT_TIMEOUT,
-            Self::Status
-            | Self::Start { .. }
-            | Self::Capture { .. }
-            | Self::Stop { .. }
-            | Self::Cancel { .. }
-            | Self::PasteLast
-            | Self::Style { .. }
-            | Self::Preset { .. } => TIMEOUT,
-        }
-    }
-
-    pub(crate) fn encode(&self) -> Result<Vec<u8>, &'static str> {
-        let bytes = serde_json::to_vec(&Outgoing {
-            v: VERSION,
-            command: self,
-        })
-        .map_err(|_error| "Cannot encode the control command.")?;
-        if bytes.len() > MAX_BYTES {
-            return Err(OVERSIZED);
-        }
-        Ok(bytes)
-    }
-
-    pub(crate) fn decode(bytes: &[u8]) -> Result<Self, &'static str> {
-        let request: Incoming =
-            serde_json::from_slice(bytes).map_err(|_error| "Invalid control command.")?;
-        if request.v != VERSION {
-            return Err("Unsupported control version. Restart Speakeasy to use this command.");
-        }
-        match (
-            request.op.as_str(),
-            request.session,
-            request.name,
-            request.style,
-        ) {
-            ("status", None, None, None) => Ok(Self::Status),
-            ("start", None, None, style) => Ok(Self::Start { style }),
-            ("capture", None, None, style) => Ok(Self::Capture { style }),
-            ("stop", Some(session), None, None) if valid_token(&session) => {
-                Ok(Self::Stop { session })
-            },
-            ("print", Some(session), None, None) if valid_token(&session) => {
-                Ok(Self::Print { session })
-            },
-            ("cancel", Some(session), None, None) if valid_token(&session) => {
-                Ok(Self::Cancel { session })
-            },
-            ("paste_last", None, None, None) => Ok(Self::PasteLast),
-            ("style", None, Some(name), None) => Style::parse(&name)
-                .map(|name| Self::Style { name })
-                .ok_or("Unknown dictation style."),
-            ("preset", None, Some(name), None) if validate_name(&name).is_ok() => {
-                Ok(Self::Preset { name })
-            },
-            _ => Err("Invalid control command arguments."),
-        }
-    }
-}
-
-fn valid_token(token: &str) -> bool {
-    !token.is_empty()
-        && token.len() <= 64
-        && !token
-            .chars()
-            .any(|character| character.is_whitespace() || character.is_control())
 }
 
 pub(crate) struct Invocation {
@@ -401,11 +235,8 @@ impl Invocation {
             },
             ["paste-last"] => Command::PasteLast,
             ["style", name] => Command::Style { name: style(name)? },
-            ["preset", name] => {
-                validate_name(name)?;
-                Command::Preset {
-                    name: (*name).into(),
-                }
+            ["preset", name] => Command::Preset {
+                name: (*name).into(),
             },
             _ => bail!(
                 "Use status, dictation start [--print] [--style STYLE], dictation stop TOKEN [--print], \
@@ -428,11 +259,11 @@ fn style(name: &str) -> anyhow::Result<Style> {
 
 fn session(token: &str) -> anyhow::Result<String> {
     ensure!(
-        valid_token(token) && !token.starts_with('-'),
+        !token.starts_with('-'),
         "Use the exact session token that dictation start returned."
     );
     Ok(token.into())
 }
 
 #[cfg(test)]
-pub(crate) mod tests;
+mod tests;

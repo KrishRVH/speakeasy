@@ -185,7 +185,7 @@ pub(crate) fn validate(presets: &[Preset]) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(crate) fn validate_name(name: &str) -> anyhow::Result<()> {
+fn validate_name(name: &str) -> anyhow::Result<()> {
     ensure!(
         !name.is_empty()
             && name == name.trim()

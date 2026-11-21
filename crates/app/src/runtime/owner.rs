@@ -49,7 +49,6 @@ use crate::{
 
 const ORPHANED: &str =
     "The script that asked for this dictation stopped waiting, so nothing was pasted.";
-const TOO_LONG: &str = "This dictation is too long for a script to read, so nothing was pasted.";
 const SCREEN_UNSTOPPED: &str = "Cannot record the screen until Speakeasy restarts.";
 const UNCLAIMED: &str =
     "A script started this dictation to read it but stopped without asking, so nothing was pasted.";
@@ -609,14 +608,8 @@ impl<P: Ports> Env<Native> for World<P> {
                 } else if !call.is_live() {
                     Inserted::Unavailable(ORPHANED)
                 } else {
-                    let reply = Reply::printed(text);
-                    let printed = reply.text.is_some();
-                    call.respond(reply);
-                    if printed {
-                        Inserted::Sent
-                    } else {
-                        Inserted::Unavailable(TOO_LONG)
-                    }
+                    call.respond(Reply::printed(mem::take(&mut *text)));
+                    Inserted::Sent
                 };
                 self.delivery = Some(tokio::spawn(
                     async move { Delivered::Inserted(Ok(inserted)) },

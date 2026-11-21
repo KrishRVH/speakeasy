@@ -1,16 +1,13 @@
-mod admission;
-mod control;
-
 use super::*;
-use crate::testing::PATIENCE;
+use crate::{control::Disposition, testing::PATIENCE};
 
 fn next_event(requests: &Receiver<Event>) -> anyhow::Result<Event> {
-    let started = Instant::now();
+    let started = std::time::Instant::now();
     loop {
         if let Ok(event) = requests.try_recv() {
             return Ok(event);
         }
-        ensure!(
+        anyhow::ensure!(
             started.elapsed() < PATIENCE,
             "Instance request was not delivered"
         );
@@ -25,217 +22,65 @@ fn next_request(requests: &Receiver<Event>) -> anyhow::Result<Request> {
     }
 }
 
-fn dial(path: &Path) -> anyhow::Result<(TcpStream, u128)> {
-    let endpoint = Endpoint::read(&path.with_file_name(PORT_FILE))?;
-    let stream = TcpStream::connect_timeout(
-        &SocketAddr::from((Ipv4Addr::LOCALHOST, endpoint.port)),
-        PATIENCE,
-    )?;
-    Ok((stream, endpoint.nonce))
-}
-
-fn fill_the_shortcut_queue(path: &Path) -> anyhow::Result<()> {
-    Instance::send(path, Request::Toggle)?;
-    Instance::send(path, Request::Cancel)?;
-    ensure!(
-        Instance::send(path, Request::Toggle).is_err(),
-        "A shortcut beyond the waiting limit was acknowledged"
-    );
-    Ok(())
+fn next_call(requests: &Receiver<Event>) -> anyhow::Result<Call> {
+    match next_event(requests)? {
+        Event::Control(call) => Ok(call),
+        Event::Shortcut(_) => bail!("Control request became a shortcut action"),
+    }
 }
 
 #[tokio::test]
-async fn relaunch_requests_settings_and_shutdown_releases_the_lock() -> anyhow::Result<()> {
+async fn relaunch_reveals_the_owner_and_quit_releases_the_lock() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
     let (instance, requests) = Instance::acquire(&path)?.context("First owner missing")?;
     assert!(Instance::acquire(&path)?.is_none());
     assert_eq!(next_request(&requests)?, Request::Reveal);
-    for request in [Request::Toggle, Request::Cancel] {
+    Instance::send(&path, Request::Toggle)?;
+    assert_eq!(next_request(&requests)?, Request::Toggle);
+    for request in [Request::Cancel, Request::Toggle] {
         Instance::send(&path, request)?;
-        assert_eq!(next_request(&requests)?, request);
     }
-    instance.close().await;
+    tokio::time::timeout(PATIENCE, instance.close()).await?;
     assert!(requests.is_closed());
     assert!(!directory.path().join(PORT_FILE).exists());
     assert!(Instance::acquire(&path)?.is_some());
     Ok(())
 }
 
-#[tokio::test]
-async fn acquiring_in_a_runtime_reports_a_blocked_endpoint_and_releases_the_lock()
--> anyhow::Result<()> {
-    let directory = tempfile::tempdir()?;
-    let path = directory.path().join("settings.json");
-    let occupied = directory.path().join(PORT_FILE);
-    fs::create_dir(&occupied)?;
-    assert!(Instance::acquire(&path).is_err());
-    fs::remove_dir(&occupied)?;
-    assert!(Instance::acquire(&path)?.is_some());
-    Ok(())
-}
-
 #[test]
-fn requests_without_the_secret_are_never_delivered() -> anyhow::Result<()> {
+fn a_command_waits_for_its_owner_while_shortcuts_keep_flowing() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
     let (_instance, requests) = Instance::acquire(&path)?.context("First owner missing")?;
-    let (mut forged, nonce) = dial(&path)?;
-    forged.set_read_timeout(Some(PATIENCE))?;
-    forged.write_all(&(nonce ^ 1).to_le_bytes())?;
-    forged.write_all(&[Request::Cancel as u8])?;
+    let client = thread::spawn({
+        let path = path.clone();
+        move || Instance::control(&path, Command::PasteLast)
+    });
+    let call = next_call(&requests)?;
+    assert_eq!(call.command, Command::PasteLast);
+    Instance::send(&path, Request::Cancel)?;
+    assert_eq!(next_request(&requests)?, Request::Cancel);
     assert!(
-        forged.read_exact(&mut [0]).is_err(),
-        "A wrong secret was acknowledged"
+        !client.is_finished(),
+        "The caller did not wait for its owner"
     );
-    Instance::send(&path, Request::Toggle)?;
-    assert_eq!(next_request(&requests)?, Request::Toggle);
+    call.respond(Reply::refused("Fixture reason."));
+    let reply = client.join().unwrap();
+    assert_eq!(reply.result, Disposition::Refused);
+    assert_eq!(reply.reason.as_deref(), Some("Fixture reason."));
     Ok(())
 }
 
 #[test]
-fn a_secret_trickled_past_the_timeout_is_never_acknowledged() -> anyhow::Result<()> {
+fn a_command_the_owner_drops_is_unknown() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
     let (_instance, requests) = Instance::acquire(&path)?.context("First owner missing")?;
-    let (mut slow, nonce) = dial(&path)?;
-    slow.set_nodelay(true)?;
-    slow.set_read_timeout(Some(PATIENCE))?;
-    let secret = nonce.to_le_bytes();
-    let (last, leading) = secret.split_last().context("The secret is empty")?;
-    for &byte in leading {
-        if slow.write_all(&[byte]).is_err() {
-            break;
-        }
-        thread::sleep(Duration::from_millis(20));
-    }
-    #[expect(
-        clippy::let_underscore_must_use,
-        reason = "The server may already have closed the connection, which the read below reports"
-    )]
-    let _ = slow.write_all(&[*last, Request::Toggle as u8]);
-    assert!(
-        slow.read_exact(&mut [0]).is_err(),
-        "A trickled secret held the server past its timeout"
-    );
-    assert!(requests.try_recv().is_err());
-    Ok(())
-}
-
-#[test]
-fn unreachable_instances_name_their_remedy() -> anyhow::Result<()> {
-    let directory = tempfile::tempdir()?;
-    let path = directory.path().join("settings.json");
-    let stale = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?
-        .local_addr()?
-        .port();
-    for (published, remedy) in [
-        (format!("{stale} {:032x}", 1), NOT_RUNNING),
-        (stale.to_string(), INVALID_ENDPOINT),
-    ] {
-        fs::write(directory.path().join(PORT_FILE), published)?;
-        let error = Instance::send(&path, Request::Toggle)
-            .err()
-            .context("An unreachable instance accepted a request")?;
-        assert!(format!("{error:#}").starts_with(remedy), "{error:#}");
-    }
-    Ok(())
-}
-
-#[cfg(unix)]
-#[test]
-fn only_the_owner_can_read_the_published_secret_or_the_lock() -> anyhow::Result<()> {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    let directory = tempfile::tempdir()?;
-    let path = directory.path().join("settings.json");
-    let lock = directory.path().join(LOCK_FILE);
-    fs::write(&lock, b"")?;
-    fs::set_permissions(&lock, fs::Permissions::from_mode(0o644))?;
-    let _owner = Instance::acquire(&path)?.context("First owner missing")?;
-    for name in [PORT_FILE, LOCK_FILE] {
-        let mode = fs::metadata(directory.path().join(name))?
-            .permissions()
-            .mode();
-        assert_eq!(mode & 0o777, 0o600);
-    }
-    Ok(())
-}
-
-#[test]
-fn pending_commands_wait_for_the_ui_instead_of_disappearing() -> anyhow::Result<()> {
-    let directory = tempfile::tempdir()?;
-    let path = directory.path().join("settings.json");
-    let (instance, requests) = Instance::acquire(&path)?.context("First owner missing")?;
-    fill_the_shortcut_queue(&path)?;
-    for expected in [Request::Toggle, Request::Cancel] {
-        assert_eq!(next_request(&requests)?, expected);
-    }
-    drop(instance);
-    assert!(requests.is_closed());
-    Ok(())
-}
-
-async fn accept_or_fail(
-    listener: &tokio::net::TcpListener,
-    reachable: bool,
-    failures: &std::sync::mpsc::Sender<()>,
-) -> io::Result<AsyncStream> {
-    if reachable {
-        return listener.accept().await.map(|(stream, _)| stream);
-    }
-    failures.send(()).map_err(io::Error::other)?;
-    Err(io::ErrorKind::ConnectionAborted.into())
-}
-
-#[tokio::test]
-async fn failed_accepts_are_retried_until_shutdown() -> anyhow::Result<()> {
-    let directory = tempfile::tempdir()?;
-    let path = directory.path().join("settings.json");
-    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
-    let (Endpoint { nonce, .. }, _port_file) =
-        Endpoint::publish(listener.local_addr()?.port(), directory.path())?;
-    let (failure, failures) = std::sync::mpsc::channel();
-    let (requests, received) = async_channel::bounded(1);
-    let server_requests = requests.clone();
-    let started = Instant::now();
-    let server = tokio::spawn(async move {
-        let mut reaches_listener = [false, true].into_iter();
-        accept_connections(
-            || accept_or_fail(&listener, reaches_listener.next() == Some(true), &failure),
-            nonce,
-            &server_requests,
-        )
-        .await;
-    });
-    tokio::task::spawn_blocking(move || Instance::send(&path, Request::Toggle)).await??;
-    let delivered = tokio::time::timeout(PATIENCE, received.recv()).await??;
-    assert!(matches!(delivered, Event::Shortcut(Request::Toggle)));
-    tokio::time::sleep(ACCEPT_RETRY * 5).await;
-    requests.close();
-    tokio::time::timeout(PATIENCE, server).await??;
-    let most = started.elapsed().as_millis() / ACCEPT_RETRY.as_millis() + 2;
-    let retried = failures.try_iter().count();
-    assert!(
-        retried <= usize::try_from(most)?,
-        "Failed accepts retried without waiting"
-    );
-    Ok(())
-}
-
-#[test]
-fn shutdown_wakes_a_server_waiting_for_the_ui() -> anyhow::Result<()> {
-    let directory = tempfile::tempdir()?;
-    let path = directory.path().join("settings.json");
-    let (instance, _requests) = Instance::acquire(&path)?.context("First owner missing")?;
-    fill_the_shortcut_queue(&path)?;
-    let (finished, completion) = std::sync::mpsc::channel();
-    let cleanup = thread::spawn(move || {
-        drop(instance);
-        finished.send(()).unwrap();
-    });
-    completion.recv_timeout(PATIENCE)?;
-    cleanup.join().unwrap();
-    assert!(Instance::acquire(&path)?.is_some());
+    let client = thread::spawn(move || Instance::control(&path, Command::Status));
+    drop(next_call(&requests)?);
+    let reply = client.join().unwrap();
+    assert_eq!(reply.result, Disposition::Unknown);
+    assert_eq!(reply.reason.as_deref(), Some(UNCONFIRMED));
     Ok(())
 }

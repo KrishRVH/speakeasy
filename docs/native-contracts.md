@@ -90,9 +90,9 @@ question carrying its own one-slot reply lane, and a caller that stops waiting d
 late answer is discarded. The thread ends once every handle is gone and the lookup has returned;
 process exit ends one still blocked.
 
-The instance listener owns its current-thread Tokio executor and bounded set of control tasks for
-receipt/disconnect waits. Shutdown aborts and drains those tasks before the server thread joins;
-application state changes remain on the Services or session owner. The server thread builds its
+The instance listener owns its current-thread Tokio executor, which runs one task per connection.
+Shutdown drops the executor and its tasks before the server thread joins; application state changes
+remain on the Services or session owner. The server thread builds its
 executor and reports startup before `Instance::acquire` returns, so no executor is created or
 dropped on the acquiring thread.
 

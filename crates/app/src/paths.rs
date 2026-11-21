@@ -1,5 +1,6 @@
 use std::{
     ffi::OsString,
+    fs::File,
     io::{self, ErrorKind},
     path::{Path, PathBuf},
 };
@@ -69,6 +70,14 @@ pub(crate) fn remedy(error: &io::Error) -> &'static str {
             "Close programs using Speakeasy's files and check that you can write there, then try again."
         },
     }
+}
+
+pub(crate) fn open_lock(path: &Path) -> io::Result<File> {
+    File::options()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
 }
 
 #[derive(Clone, Copy)]

@@ -1,78 +1,56 @@
 use std::{
-    collections::VecDeque,
-    fmt,
     fs::{self, File},
-    future,
-    io::{self, Read, Write as _},
-    net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream},
+    io::{self, Read as _, Write as _},
+    net::{Ipv4Addr, Shutdown, TcpListener, TcpStream},
     path::{Path, PathBuf},
     sync::mpsc::{self, SyncSender},
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
-use anyhow::{Context as _, bail, ensure};
+use anyhow::{Context as _, bail};
 use async_channel::{Receiver, Sender};
+use serde::{Deserialize, Serialize};
 use speakeasy_platform::OwnedThread;
 use tokio::{
     io::{AsyncReadExt as _, AsyncWriteExt as _},
     net::TcpStream as AsyncStream,
     runtime::Runtime,
-    task::{AbortHandle, Id, JoinError, JoinSet},
 };
-use zeroize::Zeroizing;
 
-use crate::control::{self, Call, Command, Reply};
+use crate::control::{Call, Command, Reply};
 
 const LOCK_FILE: &str = "instance.lock";
 const PORT_FILE: &str = "instance.port";
-const MAX_PORT_FILE_BYTES: u64 = 64;
-
-const ACKNOWLEDGED: u8 = 0x06;
-const CONTROL: u8 = 3;
-const MAX_HANDSHAKES: usize = 16;
-const MAX_UNDELIVERED: usize = 2;
-const MAX_CONTROL_CALLS: usize = 8;
-const IO_TIMEOUT: Duration = Duration::from_millis(100);
-const ORDER_GRACE: Duration = Duration::from_millis(20);
-const ACCEPT_RETRY: Duration = Duration::from_millis(10);
 const REVEAL_ATTEMPTS: u32 = 25;
 const REVEAL_RETRY: Duration = Duration::from_millis(20);
 
-const NOT_RUNNING: &str = "Speakeasy is not running. Start it before using a desktop shortcut";
-const INVALID_ENDPOINT: &str = "Restart Speakeasy to use desktop shortcuts";
-const UNCONFIRMED: &str = "Speakeasy did not confirm the command. Check its state before trying again; no retry was sent.";
-const CONTROL_DISCONNECTED: &str = "Speakeasy closed without confirming the command. Restart Speakeasy to use this command, and check its state before trying again.";
+const NOT_RUNNING: &str = "Speakeasy is not running. Start it, then try again.";
+const UNCONFIRMED: &str =
+    "Speakeasy did not confirm the command. Check its state before trying again.";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum Request {
-    Reveal = 0,
-    Toggle = 1,
-    Cancel = 2,
+    Reveal,
+    Toggle,
+    Cancel,
 }
 
-impl Request {
-    const fn from_byte(byte: u8) -> Option<Self> {
-        match byte {
-            0 => Some(Self::Reveal),
-            1 => Some(Self::Toggle),
-            2 => Some(Self::Cancel),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Debug)]
 pub(crate) enum Event {
     Shortcut(Request),
     Control(Call),
 }
 
+#[derive(Serialize, Deserialize)]
+enum Message {
+    Shortcut(Request),
+    Control(Command),
+}
+
 pub(crate) struct Instance {
     requests: Sender<Event>,
+    port_file: PathBuf,
     server: OwnedThread,
-    _port_file: PortFile,
     _lock: File,
 }
 
@@ -82,7 +60,7 @@ impl Instance {
         fs::create_dir_all(directory)
             .with_context(|| format!("Cannot create {}", directory.display()))?;
         let lock_file = directory.join(LOCK_FILE);
-        let lock = speakeasy_platform::open_lock(&lock_file)
+        let lock = crate::paths::open_lock(&lock_file)
             .with_context(|| format!("Cannot open {}", lock_file.display()))?;
         match lock.try_lock() {
             Ok(()) => {},
@@ -93,69 +71,41 @@ impl Instance {
         }
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
         listener.set_nonblocking(true)?;
-        let (Endpoint { nonce, .. }, port_file) =
-            Endpoint::publish(listener.local_addr()?.port(), directory)?;
+        let port_file = directory.join(PORT_FILE);
+        fs::write(&port_file, listener.local_addr()?.port().to_string())
+            .with_context(|| format!("Cannot write {}", port_file.display()))?;
         let (requests, received) = async_channel::bounded(1);
         let (started, startup) = mpsc::sync_channel(1);
         let server = OwnedThread::spawn("instance-server", {
             let requests = requests.clone();
-            move || serve(listener, nonce, &requests, &started)
+            move || serve(listener, requests, &started)
         })?;
+        let instance = Self {
+            requests,
+            port_file,
+            server,
+            _lock: lock,
+        };
         startup
             .recv()?
             .context("Cannot start Speakeasy's shortcut listener")?;
-        let instance = Self {
-            requests,
-            server,
-            _port_file: port_file,
-            _lock: lock,
-        };
         Ok(Some((instance, received)))
     }
 
     pub(crate) fn send(path: &Path, request: Request) -> anyhow::Result<()> {
-        connect(&path.with_file_name(PORT_FILE), &[request as u8])?;
-        Ok(())
+        connect(path, &Message::Shortcut(request)).map(drop)
     }
 
     pub(crate) fn control(path: &Path, command: Command) -> Reply {
-        let bytes = match command.encode() {
-            Ok(bytes) => bytes,
-            Err(reason) => return Reply::refused(reason),
+        let Ok(mut stream) = connect(path, &Message::Control(command)) else {
+            return Reply::unknown(NOT_RUNNING);
         };
-        let mut frame = vec![CONTROL];
-        if write_frame(&mut frame, &bytes).is_err() {
-            return Reply::refused(control::OVERSIZED);
-        }
-        let mut stream = match connect(&path.with_file_name(PORT_FILE), &frame) {
-            Ok(stream) => stream,
-            Err(error) if error.is::<Unconfirmed>() => return Reply::unknown(UNCONFIRMED),
-            Err(_) => {
-                return Reply::unknown(
-                    "Speakeasy is not running or could not be verified. Start or restart it before using this command.",
-                );
-            },
-        };
-        let mut reply = ReplyDeadline {
-            stream: &mut stream,
-            sent: Instant::now(),
-            timeout: command.timeout().saturating_add(IO_TIMEOUT),
-        };
-        match read_frame(&mut reply) {
-            Ok(bytes) => Reply::decode(&bytes).unwrap_or_else(|| Reply::unknown(UNCONFIRMED)),
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::UnexpectedEof
-                        | io::ErrorKind::ConnectionReset
-                        | io::ErrorKind::ConnectionAborted
-                        | io::ErrorKind::BrokenPipe
-                ) =>
-            {
-                Reply::unknown(CONTROL_DISCONNECTED)
-            },
-            Err(_) => Reply::unknown(UNCONFIRMED),
-        }
+        let mut reply = Vec::new();
+        stream
+            .read_to_end(&mut reply)
+            .ok()
+            .and_then(|_| serde_json::from_slice(&reply).ok())
+            .unwrap_or_else(|| Reply::unknown(UNCONFIRMED))
     }
 
     pub(crate) async fn close(self) {
@@ -167,54 +117,11 @@ impl Instance {
 impl Drop for Instance {
     fn drop(&mut self) {
         self.requests.close();
-    }
-}
-
-struct Endpoint {
-    port: u16,
-    nonce: u128,
-}
-
-impl Endpoint {
-    fn publish(port: u16, directory: &Path) -> anyhow::Result<(Self, PortFile)> {
-        let mut bytes = [0_u8; 16];
-        getrandom::fill(&mut bytes)?;
-        let nonce = u128::from_le_bytes(bytes);
-        let mut file = tempfile::NamedTempFile::new_in(directory)?;
-        write!(file, "{port} {nonce:032x}")?;
-        let path = directory.join(PORT_FILE);
-        file.persist(&path).map_err(|error| error.error)?;
-        Ok((Self { port, nonce }, PortFile(path)))
-    }
-
-    fn read(port_file: &Path) -> anyhow::Result<Self> {
-        let mut text = String::new();
-        File::open(port_file)
-            .context(NOT_RUNNING)?
-            .take(MAX_PORT_FILE_BYTES)
-            .read_to_string(&mut text)
-            .context(INVALID_ENDPOINT)?;
-        text.trim()
-            .split_once(' ')
-            .and_then(|(port, nonce)| {
-                Some(Self {
-                    port: port.parse().ok()?,
-                    nonce: u128::from_str_radix(nonce, 16).ok()?,
-                })
-            })
-            .context(INVALID_ENDPOINT)
-    }
-}
-
-struct PortFile(PathBuf);
-
-impl Drop for PortFile {
-    fn drop(&mut self) {
         #[expect(
             clippy::let_underscore_must_use,
-            reason = "The released lock is authoritative; a stale port file carries a dead secret"
+            reason = "The released lock is authoritative; a stale port file only names a closed port"
         )]
-        let _ = fs::remove_file(&self.0);
+        let _ = fs::remove_file(&self.port_file);
     }
 }
 
@@ -233,20 +140,21 @@ fn reveal_running(path: &Path) -> anyhow::Result<()> {
     bail!("Speakeasy is already running. Open Settings from its {icon} icon.");
 }
 
-fn serve(
-    listener: TcpListener,
-    nonce: u128,
-    requests: &Sender<Event>,
-    started: &SyncSender<io::Result<()>>,
-) {
+fn connect(path: &Path, message: &Message) -> anyhow::Result<TcpStream> {
+    let port: u16 = fs::read_to_string(path.with_file_name(PORT_FILE))?
+        .trim()
+        .parse()?;
+    let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port))?;
+    stream.write_all(&serde_json::to_vec(message)?)?;
+    stream.shutdown(Shutdown::Write)?;
+    Ok(stream)
+}
+
+fn serve(listener: TcpListener, requests: Sender<Event>, started: &SyncSender<io::Result<()>>) {
     match listen(listener) {
         Ok((runtime, listener)) => {
             if started.send(Ok(())).is_ok() {
-                runtime.block_on(accept_connections(
-                    || async { listener.accept().await.map(|(stream, _)| stream) },
-                    nonce,
-                    requests,
-                ));
+                runtime.block_on(accept(&listener, &requests));
             }
         },
         Err(error) => {
@@ -270,398 +178,56 @@ fn listen(listener: TcpListener) -> io::Result<(Runtime, tokio::net::TcpListener
     Ok((runtime, listener))
 }
 
-async fn accept_connections<F>(
-    mut accept: impl FnMut() -> F + Send,
-    nonce: u128,
-    requests: &Sender<Event>,
-) where
-    F: Future<Output = io::Result<AsyncStream>> + Send,
-{
-    let mut arrivals = Arrivals::default();
-    let mut controls = JoinSet::new();
+async fn accept(listener: &tokio::net::TcpListener, requests: &Sender<Event>) {
     loop {
-        let next = arrivals.next(Instant::now());
         tokio::select! {
-            biased;
             () = requests.closed() => break,
-            Some(completed) = controls.join_next(), if !controls.is_empty() => {
-                #[expect(
-                    clippy::let_underscore_must_use,
-                    reason = "A failed connection drops its receipt and socket; other callers remain independent"
-                )]
-                let _ = completed;
-            },
-            Some(presented) = arrivals.verifying.join_next_with_id(), if !arrivals.verifying.is_empty() => {
-                arrivals.verified(presented);
-            },
-            delivered = deliver(next, requests) => {
-                let Ok(delivered) = delivered else {
-                    break;
-                };
-                if let Some(index) = delivered {
-                    arrivals.delivered(index);
-                }
-            },
-            Some(read) = arrivals.reading.join_next_with_id(), if !arrivals.reading.is_empty() => {
-                let Some((stream, command)) = arrivals.finish(read, requests.len()).await else {
-                    continue;
-                };
-                if controls.len() >= MAX_CONTROL_CALLS {
-                    #[expect(
-                        clippy::let_underscore_must_use,
-                        reason = "A refused caller may disconnect before receiving the busy response"
-                    )]
-                    let _ = serve_control(
-                        stream,
-                        Err("Speakeasy is busy. Try again when a control call finishes."),
-                        requests,
-                    )
-                    .await;
-                } else {
+            accepted = listener.accept() => {
+                if let Ok((stream, _)) = accepted {
                     let requests = requests.clone();
-                    controls.spawn(async move { serve_control(stream, command, &requests).await });
-                }
-            },
-            accepted = accept() => {
-                if let Ok(stream) = accepted {
-                    arrivals.begin(stream, nonce);
-                    tokio::task::yield_now().await;
-                } else {
-                    tokio::select! {
-                        () = requests.closed() => break,
-                        () = tokio::time::sleep(ACCEPT_RETRY) => {},
-                    }
+                    tokio::spawn(async move {
+                        #[expect(
+                            clippy::let_underscore_must_use,
+                            reason = "A caller that has left no longer reads its reply"
+                        )]
+                        let _ = answer(stream, &requests).await;
+                    });
                 }
             },
         }
     }
-    arrivals.shutdown().await;
-    controls.shutdown().await;
 }
 
-async fn deliver(
-    next: Next,
-    requests: &Sender<Event>,
-) -> Result<Option<usize>, async_channel::SendError<Event>> {
-    match next {
-        Next::Deliver(index, request) => requests
-            .send(Event::Shortcut(request))
-            .await
-            .map(|()| Some(index)),
-        Next::HoldUntil(until) => {
-            tokio::time::sleep_until(until.into()).await;
-            Ok(None)
+async fn answer(mut stream: AsyncStream, requests: &Sender<Event>) -> io::Result<()> {
+    let mut message = Vec::new();
+    stream.read_to_end(&mut message).await?;
+    let reply = match serde_json::from_slice(&message) {
+        Ok(Message::Shortcut(request)) => {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "A closed lane means Speakeasy is quitting and no longer takes shortcuts"
+            )]
+            let _ = requests.send(Event::Shortcut(request)).await;
+            return Ok(());
         },
-        Next::Hold => future::pending().await,
-    }
-}
-
-#[derive(Default)]
-struct Arrivals {
-    verifying: JoinSet<Option<AsyncStream>>,
-    reading: JoinSet<Option<(AsyncStream, Incoming)>>,
-    order: VecDeque<Arrival>,
-}
-
-struct Arrival {
-    accepted: Instant,
-    stage: Stage,
-}
-
-enum Stage {
-    Unverified(AbortHandle),
-    Reading(AbortHandle),
-    Admitted(Request),
-}
-
-enum Next {
-    Deliver(usize, Request),
-    HoldUntil(Instant),
-    Hold,
-}
-
-impl Arrivals {
-    fn begin(&mut self, mut stream: AsyncStream, nonce: u128) {
-        if self.unfinished() >= MAX_HANDSHAKES {
-            let Some(oldest) = self
-                .order
-                .iter()
-                .position(|arrival| matches!(arrival.stage, Stage::Unverified(_)))
-            else {
-                return;
-            };
-            if let Some(Arrival {
-                stage: Stage::Unverified(task),
-                ..
-            }) = self.order.remove(oldest)
-            {
-                task.abort();
-            }
-        }
-        let task = self.verifying.spawn(async move {
-            let presented = tokio::time::timeout(IO_TIMEOUT, verify(&mut stream, nonce)).await;
-            matches!(presented, Ok(Ok(true))).then_some(stream)
-        });
-        self.order.push_back(Arrival {
-            accepted: Instant::now(),
-            stage: Stage::Unverified(task),
-        });
-    }
-
-    fn verified(&mut self, joined: Result<(Id, Option<AsyncStream>), JoinError>) {
-        let (id, outcome) = joined.unwrap_or_else(|error| (error.id(), None));
-        let Some(position) = self.order.iter().position(
-            |arrival| matches!(&arrival.stage, Stage::Unverified(task) if task.id() == id),
-        ) else {
-            return;
-        };
-        let (Some(mut stream), Some(arrival)) = (outcome, self.order.get_mut(position)) else {
-            self.order.remove(position);
-            return;
-        };
-        let accepted = arrival.accepted;
-        arrival.stage = Stage::Reading(self.reading.spawn(async move {
-            let remaining = IO_TIMEOUT.saturating_sub(accepted.elapsed());
-            let incoming = tokio::time::timeout(remaining, read_request(&mut stream))
-                .await
-                .ok()?
-                .ok()??;
-            Some((stream, incoming))
-        }));
-    }
-
-    async fn finish(
-        &mut self,
-        joined: Result<(Id, Option<(AsyncStream, Incoming)>), JoinError>,
-        mailbox: usize,
-    ) -> Option<(AsyncStream, Result<Command, &'static str>)> {
-        let (id, outcome) = joined.unwrap_or_else(|error| (error.id(), None));
-        let position = self.order.iter().position(
-            |arrival| matches!(&arrival.stage, Stage::Reading(task) if task.id() == id),
-        )?;
-        let control = match outcome {
-            Some((mut stream, Incoming::Shortcut(request))) => {
-                if self.admitted().saturating_add(mailbox) < MAX_UNDELIVERED
-                    && !departed(&stream)
-                    && acknowledge(&mut stream).await
-                    && let Some(arrival) = self.order.get_mut(position)
-                {
-                    arrival.stage = Stage::Admitted(request);
-                    return None;
-                }
-                None
-            },
-            Some((stream, Incoming::Control(command))) => Some((stream, command)),
-            None => None,
-        };
-        self.order.remove(position);
-        control
-    }
-
-    fn next(&self, now: Instant) -> Next {
-        for (index, arrival) in self.order.iter().enumerate() {
-            match arrival.stage {
-                Stage::Admitted(request) => return Next::Deliver(index, request),
-                Stage::Reading(_) => return Next::Hold,
-                Stage::Unverified(_) => {
-                    if let Some(until) = arrival.accepted.checked_add(ORDER_GRACE)
-                        && until > now
-                    {
-                        return Next::HoldUntil(until);
-                    }
-                },
-            }
-        }
-        Next::Hold
-    }
-
-    fn delivered(&mut self, index: usize) {
-        self.order.remove(index);
-    }
-
-    fn unfinished(&self) -> usize {
-        self.order
-            .iter()
-            .filter(|arrival| !matches!(arrival.stage, Stage::Admitted(_)))
-            .count()
-    }
-
-    fn admitted(&self) -> usize {
-        self.order
-            .iter()
-            .filter(|arrival| matches!(arrival.stage, Stage::Admitted(_)))
-            .count()
-    }
-
-    async fn shutdown(&mut self) {
-        self.verifying.shutdown().await;
-        self.reading.shutdown().await;
-    }
-}
-
-fn departed(stream: &AsyncStream) -> bool {
-    !matches!(stream.try_read(&mut [0]), Err(error) if error.kind() == io::ErrorKind::WouldBlock)
-}
-
-async fn acknowledge(stream: &mut AsyncStream) -> bool {
-    matches!(
-        tokio::time::timeout(IO_TIMEOUT, stream.write_all(&[ACKNOWLEDGED])).await,
-        Ok(Ok(()))
-    )
-}
-
-enum Incoming {
-    Shortcut(Request),
-    Control(Result<Command, &'static str>),
-}
-
-async fn verify(stream: &mut AsyncStream, nonce: u128) -> io::Result<bool> {
-    stream.set_nodelay(true)?;
-    let mut presented = [0; size_of::<u128>()];
-    stream.read_exact(&mut presented).await?;
-    Ok(u128::from_le_bytes(presented) == nonce)
-}
-
-async fn read_request(stream: &mut AsyncStream) -> io::Result<Option<Incoming>> {
-    let byte = stream.read_u8().await?;
-    if byte == CONTROL {
-        let length = stream.read_u16().await?;
-        stream.write_all(&[ACKNOWLEDGED]).await?;
-        if usize::from(length) > control::MAX_BYTES {
-            write_reply(stream, Reply::refused(control::OVERSIZED)).await?;
-            stream.shutdown().await?;
-            tokio::io::copy(&mut stream.take(u64::from(length)), &mut tokio::io::sink()).await?;
-            return Ok(None);
-        }
-        let mut bytes = vec![0; usize::from(length)];
-        stream.read_exact(&mut bytes).await?;
-        return Ok(Some(Incoming::Control(Command::decode(&bytes))));
-    }
-    Ok(Request::from_byte(byte).map(Incoming::Shortcut))
-}
-
-struct ReplyDeadline<'stream> {
-    stream: &'stream mut TcpStream,
-    sent: Instant,
-    timeout: Duration,
-}
-
-impl Read for ReplyDeadline<'_> {
-    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        let remaining = self
-            .timeout
-            .checked_sub(self.sent.elapsed())
-            .filter(|remaining| !remaining.is_zero())
-            .ok_or(io::ErrorKind::TimedOut)?;
-        self.stream.set_read_timeout(Some(remaining))?;
-        self.stream.read(buffer)
-    }
-}
-
-fn read_frame(reader: &mut impl Read) -> io::Result<Zeroizing<Vec<u8>>> {
-    let mut length = [0; 2];
-    reader.read_exact(&mut length)?;
-    let length = usize::from(u16::from_be_bytes(length));
-    if length > control::MAX_REPLY_BYTES {
-        return Err(io::ErrorKind::InvalidData.into());
-    }
-    let mut bytes = Zeroizing::new(vec![0; length]);
-    reader.read_exact(&mut bytes)?;
-    Ok(bytes)
-}
-
-fn write_frame(writer: &mut impl io::Write, bytes: &[u8]) -> io::Result<()> {
-    let length = u16::try_from(bytes.len()).map_err(|_error| io::ErrorKind::InvalidData)?;
-    writer.write_all(&length.to_be_bytes())?;
-    writer.write_all(bytes)
-}
-
-async fn serve_control(
-    mut stream: AsyncStream,
-    command: Result<Command, &'static str>,
-    requests: &Sender<Event>,
-) -> io::Result<()> {
-    let reply = match command {
-        Ok(command) => {
-            if departed(&stream) {
-                return Ok(());
-            }
+        Ok(Message::Control(command)) => {
             let (call, receipt) = Call::new(command);
             let deadline = call.deadline();
-            match requests.try_send(Event::Control(call)) {
-                Ok(()) => {
-                    let mut extra = [0];
-                    let received = tokio::select! {
-                        biased;
-                        read = stream.read(&mut extra) => return read.map(drop),
-                        result = tokio::time::timeout_at(deadline.into(), receipt.recv()) => result,
-                    };
-                    match received {
-                        Ok(Ok(reply)) => reply,
-                        Ok(Err(_)) | Err(_) => Reply::unknown(UNCONFIRMED),
-                    }
-                },
-                Err(async_channel::TrySendError::Full(_)) => Reply::refused(
-                    "Speakeasy is busy. Try again when the current command finishes.",
-                ),
-                Err(async_channel::TrySendError::Closed(_)) => {
-                    Reply::refused("Speakeasy is stopping.")
-                },
-            }
+            let answered = async {
+                requests.send(Event::Control(call)).await.ok()?;
+                receipt.recv().await.ok()
+            };
+            tokio::time::timeout_at(deadline.into(), answered)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| Reply::unknown(UNCONFIRMED))
         },
-        Err(reason) => Reply::refused(reason),
+        Err(_) => {
+            Reply::refused("Speakeasy cannot read this command. Restart Speakeasy, then try again.")
+        },
     };
-    write_reply(&mut stream, reply).await
-}
-
-async fn write_reply(stream: &mut AsyncStream, reply: Reply) -> io::Result<()> {
-    let bytes = reply
-        .encode()
-        .or_else(|_| Reply::unknown(UNCONFIRMED).encode())
-        .map_err(|_error| io::ErrorKind::InvalidData)?;
-    let mut frame = Zeroizing::new(Vec::with_capacity(
-        bytes.len().saturating_add(size_of::<u16>()),
-    ));
-    write_frame(&mut *frame, &bytes)?;
-    tokio::time::timeout(IO_TIMEOUT, stream.write_all(&frame))
-        .await
-        .map_err(|_error| io::ErrorKind::TimedOut)?
-}
-
-fn connect(port_file: &Path, request: &[u8]) -> anyhow::Result<TcpStream> {
-    let endpoint = Endpoint::read(port_file)?;
-    let address = SocketAddr::from((Ipv4Addr::LOCALHOST, endpoint.port));
-    let mut stream = TcpStream::connect_timeout(&address, IO_TIMEOUT).context(NOT_RUNNING)?;
-    stream.set_nodelay(true)?;
-    stream.set_read_timeout(Some(IO_TIMEOUT))?;
-    stream.set_write_timeout(Some(IO_TIMEOUT))?;
-    stream.write_all(&[endpoint.nonce.to_le_bytes().as_slice(), request].concat())?;
-    let mut reply = [0];
-    if let Err(error) = stream.read_exact(&mut reply) {
-        if matches!(
-            error.kind(),
-            io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-        ) {
-            return Err(error).context(Unconfirmed);
-        }
-        return Err(error).context("Speakeasy did not answer; try the shortcut again");
-    }
-    ensure!(
-        reply == [ACKNOWLEDGED],
-        "Speakeasy instance could not be verified"
-    );
-    Ok(stream)
-}
-
-#[derive(Debug)]
-struct Unconfirmed;
-
-impl fmt::Display for Unconfirmed {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(
-            "Speakeasy did not confirm the request in time; check its state before trying again",
-        )
-    }
+    stream.write_all(&serde_json::to_vec(&reply)?).await
 }
 
 #[cfg(test)]
