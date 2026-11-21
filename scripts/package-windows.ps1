@@ -11,7 +11,7 @@ $signingCertificate = $env:SPEAKEASY_WINDOWS_SIGN_CERT_SHA1
 $timestamp = $env:SPEAKEASY_WINDOWS_SIGN_TIMESTAMP
 $signer = $null
 if ($signingCertificate -or $timestamp) {
-    if ($signingCertificate -notmatch '^[0-9a-fA-F]{40}$' -or $timestamp -notmatch '^https://') {
+    if ($signingCertificate -notmatch '^[0-9a-fA-F]{40}$' -or $timestamp -notmatch '^https://[^"]+$') {
         throw 'Distribution requires SPEAKEASY_WINDOWS_SIGN_CERT_SHA1 and an HTTPS SPEAKEASY_WINDOWS_SIGN_TIMESTAMP endpoint.'
     }
     $certificate = Get-Item "Cert:\CurrentUser\My\$signingCertificate" -ErrorAction Stop
@@ -81,9 +81,11 @@ try {
     $appVersion = $version.Trim().Substring('speakeasy '.Length)
     $compilerOptions = @("/DAppVersion=$appVersion", "/DPackageRoot=$destination", "/O$staging")
     if ($signer) {
+        # ISCC prints each Sign Tool command it runs, so cmd.exe reads the endpoint, which may carry a
+        # token, from the environment.
+        $shell = Join-Path ([Environment]::SystemDirectory) 'cmd.exe'
         $signToolPath = $signer.FullName.Replace('$', '$$')
-        $signTimestamp = $timestamp.Replace('$', '$$')
-        $signCommand = '/Sspeakeasy=$q{0}$q sign /sha1 {1} /s My /fd SHA256 /tr $q{2}$q /td SHA256 $f' -f $signToolPath, $signingCertificate, $signTimestamp
+        $signCommand = '/Sspeakeasy=$q{0}$q /d /v:off /s /c $q$q{1}$q sign /sha1 {2} /s My /fd SHA256 /tr $q%SPEAKEASY_WINDOWS_SIGN_TIMESTAMP%$q /td SHA256 $f$q' -f $shell, $signToolPath, $signingCertificate
         $compilerOptions += @('/DPublisherSigning', $signCommand)
     }
     & $iscc @compilerOptions 'packaging/windows/installer.iss'
@@ -100,4 +102,4 @@ try {
     throw
 } finally {
     Remove-Item -LiteralPath $staging -Force -Recurse
-}
+}
