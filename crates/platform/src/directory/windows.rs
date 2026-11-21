@@ -29,7 +29,7 @@ use windows_sys::{
         Storage::FileSystem::{
             BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS,
             FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_SHARE_DELETE, FILE_SHARE_READ,
-            FILE_SHARE_WRITE, GetFileInformationByHandle, ReOpenFile,
+            FILE_SHARE_WRITE, GetFileInformationByHandle,
         },
         System::IO::IO_STATUS_BLOCK,
     },
@@ -54,7 +54,11 @@ pub(super) fn child(parent: &File, name: &OsStr, directory: bool) -> io::Result<
     let name = UNICODE_STRING {
         Length: length,
         MaximumLength: length,
-        Buffer: text.as_mut_ptr(),
+        Buffer: if text.is_empty() {
+            ptr::null_mut()
+        } else {
+            text.as_mut_ptr()
+        },
     };
     let attributes = OBJECT_ATTRIBUTES {
         Length: u32::try_from(size_of::<OBJECT_ATTRIBUTES>())
@@ -122,18 +126,7 @@ pub(super) fn same(first: &File, second: &File) -> io::Result<bool> {
 struct DirectoryBuffer([u8; 16 << 10]);
 
 pub(super) fn visit(directory: &File, mut visit: impl FnMut(OsString)) -> io::Result<()> {
-    let handle = unsafe {
-        ReOpenFile(
-            directory.as_raw_handle(),
-            FILE_GENERIC_READ,
-            SHARE,
-            FILE_FLAG_BACKUP_SEMANTICS,
-        )
-    };
-    if handle == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
-        return Err(io::Error::last_os_error());
-    }
-    let directory = unsafe { File::from_raw_handle(handle) };
+    let directory = child(directory, OsStr::new(""), true)?;
     let mut buffer = DirectoryBuffer([0; 16 << 10]);
     let capacity =
         u32::try_from(buffer.0.len()).map_err(|_overflow| io::ErrorKind::InvalidInput)?;

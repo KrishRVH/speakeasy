@@ -136,9 +136,9 @@ A Show directory handle keeps every relative open anchored to the selected direc
 `openat` with `O_NOFOLLOW` and `O_NONBLOCK` for child entries and validates the resulting descriptor
 before reading. Windows opens a single child name with `NtOpenFile` relative to its parent handle,
 rejects reparse points and alternate data streams, and transfers the handle to `File` only after a
-successful open. Unix uses `fdopendir` on an independent directory open, and Windows uses
-`ReOpenFile` with `NtQueryDirectoryFile`, so listing owns its cursor. Readers validate size, type,
-and bytes through the same handle.
+successful open. Unix uses `fdopendir` on an independent directory open, and Windows uses an empty
+relative name with `NtOpenFile` and `NtQueryDirectoryFile`, so listing owns its cursor. Readers
+validate size, type, and bytes through the same handle.
 
 ## Linux desktop and transfer ownership
 
