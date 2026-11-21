@@ -11,10 +11,21 @@ use speakeasy_platform::Input;
 use super::*;
 use crate::{
     control::{Call, Command, Disposition},
-    shell::{LaunchMode, save::SaveQueue},
+    shell::{LaunchMode, choices::Selected, save::SaveQueue},
 };
 
 const PATIENCE: Duration = Duration::from_secs(5);
+
+fn select(services: &mut Services, name: &str, config: &Config) -> anyhow::Result<()> {
+    services.choices.selected = Some(Selected {
+        preset: Preset::capture(name, config)?,
+        config: ValidConfig::assume(config.clone()),
+    });
+    services
+        .output
+        .send_modify(|snapshot| snapshot.preset = Some(name.into()));
+    Ok(())
+}
 
 #[expect(
     clippy::future_not_send,
@@ -184,10 +195,11 @@ async fn paused(
     fs::rename(&baseline.model, &moved)?;
     cx.update(|cx| {
         cx.update_global::<Services, _>(|services, cx| {
-            select(services, "French", &broken);
+            select(services, "French", &broken)?;
             services.resume(cx);
-        });
-    });
+            anyhow::Ok(())
+        })
+    })?;
     using(settings, 0, cx).await?;
     let kept = preset_name(cx);
     let refused = settings.read_with(cx, |view, _| {
@@ -210,7 +222,7 @@ async fn paused(
 
     cx.update(|cx| {
         cx.update_global::<Services, _>(|services, cx| {
-            select(services, "French", &broken);
+            select(services, "French", &broken)?;
             let german = Config {
                 language: "de".into(),
                 ..services.config.clone()
@@ -387,5 +399,38 @@ async fn running(
         stored.language == "fr" && adopted == "fr",
         "Settings did not save the preset it used"
     );
+
+    until(cx, "The cancelled session did not end", |cx| {
+        Ok(!snapshot(cx).phase.is_active())
+    })
+    .await?;
+    let (call, chosen) = Call::new(Command::Preset {
+        name: "Saved".into(),
+    });
+    cx.update(|cx| cx.update_global::<Services, _>(|services, cx| services.control(call, cx)));
+    ensure!(
+        chosen.recv().await?.result == Disposition::Ok,
+        "The tray could not choose the saved preset"
+    );
+    settings.update(cx, |view, window, cx| {
+        view.edit_preset(Edit::Update(0), window, cx);
+    })?;
+    until(cx, "Updating the preset did not save", |cx| {
+        settings.read_with(cx, |view, _| view.saving.is_none())
+    })
+    .await?;
+    let chosen = preset_name(cx);
+    settings.read_with(cx, |view, _| {
+        ensure!(
+            chosen.as_deref() == Some("Saved")
+                && view
+                    .config
+                    .presets
+                    .first()
+                    .is_some_and(|saved| !view.preset_in_use(saved)),
+            "A preset updated to other settings still showed the tray's choice in use"
+        );
+        anyhow::Ok(())
+    })??;
     Ok(())
 }

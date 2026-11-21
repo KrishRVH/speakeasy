@@ -4,7 +4,7 @@ use speakeasy_core::lifecycle::ConfigEpoch;
 
 use super::Services;
 use crate::{
-    config::{Change, Config, ValidConfig},
+    config::{Change, Config, ValidConfig, presets::Preset},
     control::{Call, Command, Disposition, Reply, Status},
     runtime::Adopted,
 };
@@ -25,7 +25,7 @@ enum Admission {
 }
 
 pub(super) struct Selected {
-    pub name: String,
+    pub preset: Preset,
     pub config: ValidConfig,
 }
 
@@ -33,7 +33,7 @@ struct Selection {
     generation: u64,
     epoch: ConfigEpoch,
     session: u64,
-    name: String,
+    preset: Preset,
     baseline: Config,
 }
 
@@ -58,7 +58,11 @@ impl Services {
         self.choices
             .selected
             .as_ref()
-            .map(|choice| choice.name.as_str())
+            .map(|choice| choice.preset.name())
+    }
+
+    pub(super) fn chosen_preset(&self) -> Option<&Preset> {
+        self.choices.selected.as_ref().map(|choice| &choice.preset)
     }
 
     #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -132,6 +136,7 @@ impl Services {
             ));
             return;
         };
+        let preset = preset.clone();
         let baseline = self.config.clone();
         let mut candidate = baseline.clone();
         preset.load(&mut candidate);
@@ -144,7 +149,7 @@ impl Services {
             generation,
             epoch,
             session,
-            name,
+            preset,
             baseline,
         };
         let validation = cx
@@ -183,7 +188,7 @@ impl Services {
             generation,
             epoch,
             session,
-            name,
+            preset,
             baseline,
         } = selection;
         if !caller.is_live()
@@ -199,9 +204,15 @@ impl Services {
             .runtime()
             .ok_or("Resume dictation before choosing a preset.")?;
         let (call, receipt) = caller.forwarded();
-        runtime.preset(name.clone(), config.clone(), baseline, session, call);
+        runtime.preset(
+            preset.name().to_owned(),
+            config.clone(),
+            baseline,
+            session,
+            call,
+        );
         self.choices.applying = true;
-        Ok((Selected { name, config }, receipt))
+        Ok((Selected { preset, config }, receipt))
     }
 
     fn confirm_preset(&mut self, generation: u64, selected: Selected, reply: &Reply) {

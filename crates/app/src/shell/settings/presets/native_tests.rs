@@ -8,7 +8,6 @@ use super::{
 use crate::{
     config::{Config, ValidConfig},
     recognition_terms::Terms,
-    shell::choices::Selected,
     transcript::vocabulary::{Correction, Vocabulary},
 };
 
@@ -180,16 +179,6 @@ fn menu_cursor_survives_engine_work(
         "Delete chosen during engine work acted on another menu entry once it finished"
     );
     Ok(())
-}
-
-fn select(services: &mut Services, name: &str, config: &Config) {
-    services.choices.selected = Some(Selected {
-        name: name.into(),
-        config: ValidConfig::assume(config.clone()),
-    });
-    services
-        .output
-        .send_modify(|snapshot| snapshot.preset = Some(name.into()));
 }
 
 pub(in crate::shell::settings) mod applying;

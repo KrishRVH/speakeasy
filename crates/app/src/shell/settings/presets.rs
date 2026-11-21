@@ -215,7 +215,14 @@ impl Settings {
                             stored == preset && resolved.matches(&self.config)
                         })
             },
-            |active| active == preset.name(),
+            |active| {
+                active == preset.name()
+                    && self
+                        .presentation
+                        .chosen
+                        .as_ref()
+                        .is_none_or(|chosen| chosen == preset)
+            },
         )
     }
 

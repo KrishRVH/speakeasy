@@ -807,6 +807,7 @@ struct Presentation {
     message: String,
     model: Option<ModelState>,
     preset: Option<String>,
+    chosen: Option<crate::config::presets::Preset>,
     in_session: bool,
 }
 
@@ -821,6 +822,7 @@ impl Presentation {
             } else {
                 services.preset_name().map(str::to_owned)
             },
+            chosen: services.chosen_preset().cloned(),
             in_session: services.is_running() && snapshot.phase.is_active(),
             shortcut: Arc::clone(&snapshot.shortcut),
             cancel_shortcut: Arc::clone(&snapshot.cancel_shortcut),

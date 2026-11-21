@@ -86,7 +86,8 @@ module unless a test file is named.
   refused or unavailable preset changes neither dictation nor the settings file. Settings disables
   Use during a session. Without a running owner, a valid candidate clears the transient selection
   and restarts a pending Resume check. A transient selection takes precedence in the Settings
-  indicator, which follows Services as well as snapshots. Capturing a preset requires both speech
+  indicator, which follows Services as well as snapshots, while its row still holds the definition
+  that was chosen. Capturing a preset requires both speech
   paths.
 - **Audio capture**: [audio.rs](../crates/app/src/audio.rs) with
   [control.rs](../crates/app/src/audio/control.rs), [stream.rs](../crates/app/src/audio/stream.rs),
