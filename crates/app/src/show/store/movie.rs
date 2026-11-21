@@ -422,12 +422,12 @@ pub(in crate::show::store) fn retain(
     Ok(movie.metadata)
 }
 
-#[cfg(test)]
-pub(in crate::show) mod tests;
-
 pub(crate) fn code(path: &Path) -> String {
     let text = path.display().to_string();
     let longest = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
     let fence = "`".repeat(longest.saturating_add(1));
     format!("{fence} {text} {fence}")
 }
+
+#[cfg(test)]
+pub(in crate::show) mod tests;
