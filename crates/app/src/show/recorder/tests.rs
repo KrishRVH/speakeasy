@@ -236,6 +236,35 @@ async fn a_take_finished_before_its_first_frame_waits_three_seconds_for_one() ->
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_first_frame_wait_near_the_recording_limit_ends_at_the_limit() -> anyhow::Result<()> {
+    let limit = u64::try_from(RECORDING_LIMIT.as_millis())?;
+    let (recorded, ran) = record(async |feed| {
+        wait(limit - 1_000).await;
+        feed.finish().await;
+        wait(500).await;
+        feed.frame(limit - 500).await;
+    })
+    .await;
+    let footage = recorded?.context("Finished, not cancelled")?;
+    assert_eq!(footage.recording.duration, Moment::from_millis(limit - 500));
+    let (recorded, ran_late) = record(async |feed| {
+        wait(limit - 1_000).await;
+        feed.finish().await;
+        wait(1_100).await;
+        feed.frame(limit + 100).await;
+    })
+    .await;
+    assert_eq!(
+        failure(recorded).as_deref(),
+        Some(NOTHING_RECORDED),
+        "A first frame past the recording limit joined the Show"
+    );
+    assert_eq!(ran, Duration::from_millis(limit - 500) + TEARDOWN);
+    assert_eq!(ran_late, RECORDING_LIMIT + TEARDOWN);
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
 async fn cancelling_a_take_reports_nothing_once_its_sources_stop() -> anyhow::Result<()> {
     let (recorded, ran) = record(async |feed| {
         feed.frame(0).await;

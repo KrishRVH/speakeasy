@@ -724,8 +724,9 @@ module unless a test file is named.
   and each sample uses its own surface for annotation coordinates and gesture distances. Unavailable
   observations and queue overflow produce explicit gaps, with one lane slot reserved for their
   delivery. Gaps preserve known ink, discard incomplete clicks and drags, and prevent pins from
-  crossing an unobserved interval. Finishing drains observations through the chosen end after the
-  producers stop; teardown adds no annotations. Checkpoint replay preserves these same gaps. Pointer
+  crossing an unobserved interval. A take finished before its first frame waits up to three seconds
+  for one, never past the session's five-minute limit. Finishing drains observations through the
+  chosen end after the producers stop; teardown adds no annotations. Checkpoint replay preserves these same gaps. Pointer
   events also carry their source display rectangle. The tracker retains one coordinate-space proof
   per stroke and pin: mixed strokes and groups across resizes or gaps have none. A delayed pin uses
   the actual pointer point’s proof; stroke cuts preserve the carried joint’s proof. A recording

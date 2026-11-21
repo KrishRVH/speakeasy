@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::anyhow;
 use async_channel::{Receiver, Sender};
-use speakeasy_core::machine::SessionId;
+use speakeasy_core::{gesture::RECORDING_LIMIT, machine::SessionId};
 use speakeasy_platform::{
     Display, Frame, OwnedThread, Part, PointerMonitor, PointerSample, Scope, ScreenCapture,
     ScreenEvent, Shortcut, Taps, Target, WindowGone, WindowLayer, WindowLayout, WindowWatch,
@@ -361,7 +361,7 @@ impl<'a> Take<'a> {
                     if !self.state.journal().is_empty() {
                         break Some(Ok(Ending::Finished));
                     }
-                    finished_by.get_or_insert_with(first_frame_deadline);
+                    finished_by.get_or_insert_with(|| first_frame_deadline(self.started));
                 },
                 () = tokio::time::sleep_until(finished_by.unwrap_or_else(tokio::time::Instant::now)),
                     if finished_by.is_some() => break Some(Ok(Ending::Finished)),
@@ -632,9 +632,12 @@ fn rect(part: Part) -> Rect {
     Rect::from([part.left, part.top, part.right, part.bottom])
 }
 
-fn first_frame_deadline() -> tokio::time::Instant {
+fn first_frame_deadline(started: Instant) -> tokio::time::Instant {
     let now = tokio::time::Instant::now();
-    now.checked_add(FIRST_FRAME_WAIT).unwrap_or(now)
+    let waited = now.checked_add(FIRST_FRAME_WAIT).unwrap_or(now);
+    tokio::time::Instant::from_std(started)
+        .checked_add(RECORDING_LIMIT)
+        .map_or(waited, |limit| waited.min(limit))
 }
 
 async fn stop(capture: &ScreenCapture, pointer: &PointerMonitor, watch: Option<&WindowWatch>) {
