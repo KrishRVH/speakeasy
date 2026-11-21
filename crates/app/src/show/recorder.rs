@@ -224,6 +224,7 @@ fn record(
             if lanes.finishing.is_closed() {
                 return Ok(Ended::Cancelled);
             }
+            anyhow::ensure!(take.admits(runtime::now()), NOTHING_RECORDED);
             let (frame_lane, frames) = async_channel::bounded(FRAME_LANE);
             let capture =
                 ScreenCapture::start(target, SAMPLE_INTERVAL, MAX_FRAME_EDGE, frame_lane, movie)?;
@@ -305,6 +306,7 @@ struct Sources<S> {
 
 struct Take<'a> {
     started: Instant,
+    limit: Option<Instant>,
     canvas: &'a watch::Sender<Canvas>,
     display: [f32; 2],
     part: Part,
@@ -326,6 +328,7 @@ impl<'a> Take<'a> {
     ) -> Self {
         Self {
             started,
+            limit: started.checked_add(RECORDING_LIMIT),
             canvas,
             display: size,
             part,
@@ -349,9 +352,11 @@ impl<'a> Take<'a> {
             stop,
         } = sources;
 
+        let limit = self.limit.map(tokio::time::Instant::from_std);
         let mut finished_by = None;
 
         let ended = loop {
+            let deadline = finished_by.or(limit);
             tokio::select! {
                 biased;
                 finished = lanes.finishing.recv() => {
@@ -361,10 +366,10 @@ impl<'a> Take<'a> {
                     if !self.state.journal().is_empty() {
                         break Some(Ok(Ending::Finished));
                     }
-                    finished_by.get_or_insert_with(|| first_frame_deadline(self.started));
+                    finished_by.get_or_insert_with(|| first_frame_deadline(limit));
                 },
-                () = tokio::time::sleep_until(finished_by.unwrap_or_else(tokio::time::Instant::now)),
-                    if finished_by.is_some() => break Some(Ok(Ending::Finished)),
+                () = tokio::time::sleep_until(deadline.unwrap_or_else(tokio::time::Instant::now)),
+                    if deadline.is_some() => break Some(Ok(Ending::Finished)),
                 event = frames.recv() => {
                     let (ending, failure) = match event {
                         Ok(ScreenEvent::Frame(frame)) => {
@@ -408,7 +413,9 @@ impl<'a> Take<'a> {
                 Ok(layout) = layouts.recv() => self.arrange(layout),
             }
         };
-        let at = runtime::now();
+        let at = self
+            .limit
+            .map_or_else(runtime::now, |limit| runtime::now().min(limit));
         stop.await;
         let ended = ended.map(|result| {
             result.and_then(|ending| {
@@ -478,7 +485,14 @@ impl<'a> Take<'a> {
         Moment::from(at.saturating_duration_since(self.started))
     }
 
+    fn admits(&self, at: Instant) -> bool {
+        self.limit.is_none_or(|limit| at < limit)
+    }
+
     fn frame(&mut self, frame: Frame) -> anyhow::Result<()> {
+        if !self.admits(frame.at) {
+            return Ok(());
+        }
         self.place(frame.part, frame.at)?;
         let at = self.moment(frame.at);
         let event = self.state.arrive(at, || {
@@ -505,6 +519,9 @@ impl<'a> Take<'a> {
     }
 
     fn pointer(&mut self, sample: PointerSample) -> anyhow::Result<()> {
+        if !self.admits(sample.at()) {
+            return Ok(());
+        }
         let at = self.moment(sample.at());
         let earlier = self.state.tracker().strokes().len();
         match sample {
@@ -548,6 +565,9 @@ impl<'a> Take<'a> {
     }
 
     fn arrange(&mut self, layout: WindowLayout) {
+        if !self.admits(layout.at) {
+            return;
+        }
         let event = TakeEvent::Windows(Layout {
             at: self.moment(layout.at),
             windows: layout
@@ -573,6 +593,9 @@ impl<'a> Take<'a> {
     }
 
     fn pin(&mut self, taps: Taps) -> anyhow::Result<()> {
+        if !self.admits(taps.released) {
+            return Ok(());
+        }
         let taps = Span::new(self.moment(taps.pressed), self.moment(taps.released));
         let before = self.state.tracker().marks().len();
         self.apply(TakeEvent::Pin(taps))?;
@@ -632,12 +655,10 @@ fn rect(part: Part) -> Rect {
     Rect::from([part.left, part.top, part.right, part.bottom])
 }
 
-fn first_frame_deadline(started: Instant) -> tokio::time::Instant {
+fn first_frame_deadline(limit: Option<tokio::time::Instant>) -> tokio::time::Instant {
     let now = tokio::time::Instant::now();
     let waited = now.checked_add(FIRST_FRAME_WAIT).unwrap_or(now);
-    tokio::time::Instant::from_std(started)
-        .checked_add(RECORDING_LIMIT)
-        .map_or(waited, |limit| waited.min(limit))
+    limit.map_or(waited, |limit| waited.min(limit))
 }
 
 async fn stop(

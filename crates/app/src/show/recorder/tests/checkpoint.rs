@@ -89,7 +89,7 @@ async fn invalid_late_events_keep_the_frames_and_checkpoint_already_recorded() -
         },
         async |feed| {
             feed.frame(0).await;
-            feed.pointer(360_001, 0.5, 0.5, false, false).await;
+            feed.pointer(100, 0.5, f32::NAN, false, false).await;
         },
     )
     .await;

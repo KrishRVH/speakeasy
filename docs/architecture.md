@@ -772,7 +772,9 @@ module unless a test file is named.
   observations and queue overflow produce explicit gaps, with one lane slot reserved for their
   delivery. Gaps preserve known ink, discard incomplete clicks and drags, and prevent pins from
   crossing an unobserved interval. A take finished before its first frame waits up to three seconds
-  for one, never past the session's five-minute limit. Finishing drains observations through the
+  for one, never past the session's five-minute limit. The recorder arms that limit from session
+  start, ends there even when the owner's Finish arrives late, and admits no observation stamped at
+  or after it; a capture that would start past the limit fails as recording no frames. Finishing drains observations through the
   chosen end after the producers stop; teardown adds no annotations. Checkpoint replay preserves these same gaps. Pointer
   events also carry their source display rectangle. The tracker retains one coordinate-space proof
   per stroke and pin: mixed strokes and groups across resizes or gaps have none. A delayed pin uses

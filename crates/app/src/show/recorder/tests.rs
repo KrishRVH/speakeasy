@@ -265,6 +265,44 @@ async fn a_first_frame_wait_near_the_recording_limit_ends_at_the_limit() -> anyh
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_take_ends_at_the_recording_limit_however_late_its_finish_arrives() -> anyhow::Result<()>
+{
+    let limit = u64::try_from(RECORDING_LIMIT.as_millis())?;
+    for finish in [Some(limit + 400), None] {
+        let recording = tokio::time::timeout(
+            RECORDING_LIMIT * 2,
+            record(async |feed| {
+                feed.frame(0).await;
+                feed.frame(limit).await;
+                feed.pointer(limit + 100, 0.5, 0.5, false, true).await;
+                if let Some(finish) = finish {
+                    wait(finish).await;
+                    feed.finish().await;
+                }
+            }),
+        )
+        .await
+        .context("A take without a timely Finish ran past its recording limit")?;
+        let (recorded, ran) = recording;
+        let footage = recorded?.context("Finished, not cancelled")?;
+        assert_eq!(
+            footage.journal.samples().len(),
+            1,
+            "A frame stamped at the limit joined the Show"
+        );
+        assert_eq!(
+            footage.recording.actions,
+            [] as [Action; 0],
+            "A pointer sample past the limit joined the Show"
+        );
+        assert_eq!(footage.recording.duration, Moment::from_millis(limit));
+        assert_eq!(footage.recording.ending, Ending::Finished);
+        assert_eq!(ran, RECORDING_LIMIT + TEARDOWN);
+    }
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
 async fn cancelling_a_take_reports_nothing_once_its_sources_stop() -> anyhow::Result<()> {
     let (recorded, ran) = record(async |feed| {
         feed.frame(0).await;
@@ -323,15 +361,15 @@ async fn an_invalid_observation_ends_the_take_where_it_arrived_not_after_teardow
 -> anyhow::Result<()> {
     #[derive(Debug, Clone, Copy)]
     enum Invalid {
-        BeyondTheLimit,
+        Live,
         QueuedBehindFinish,
     }
-    for invalid in [Invalid::BeyondTheLimit, Invalid::QueuedBehindFinish] {
+    for invalid in [Invalid::Live, Invalid::QueuedBehindFinish] {
         let (recorded, _) = record(async |feed| {
             feed.frame(0).await;
             wait(700).await;
             match invalid {
-                Invalid::BeyondTheLimit => feed.pointer(360_001, 0.5, 0.5, false, false).await,
+                Invalid::Live => feed.pointer(650, 0.5, f32::INFINITY, false, false).await,
                 Invalid::QueuedBehindFinish => {
                     feed.pointer(650, f32::NAN, 0.5, false, false).await;
                     feed.finish().await;
