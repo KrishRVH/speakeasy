@@ -29,12 +29,25 @@ pub(in crate::shell::settings) fn exercise(
         cx.global_mut::<Services>().mode = LaunchMode::Live;
         let primary = view.onboarding_primary(Step::Prepare, cx);
         let next = view.onboarding_next(Step::Prepare, cx);
-        cx.global_mut::<Services>().mode = LaunchMode::DemoTray;
         view.config.clone_from(&original);
         view.saves = SaveQueue::new(path, original.clone());
+        let failed = view.onboarding_primary(Step::Prepare, cx);
+        let failed_next = view.onboarding_next(Step::Prepare, cx);
+        cx.global_mut::<Services>().checked = true;
+        let checked_next = view.onboarding_next(Step::Prepare, cx);
+        cx.global_mut::<Services>().checked = false;
+        cx.global_mut::<Services>().mode = LaunchMode::DemoTray;
         ensure!(
             primary.1 == Some(SettingsAction::Setup) && next == Step::Prepare,
             "An engine without a model skipped automatic setup"
+        );
+        ensure!(
+            failed.1 == Some(SettingsAction::Setup) && failed_next == Step::Prepare,
+            "Setup called speech ready although its saved settings never passed their check"
+        );
+        ensure!(
+            checked_next == Step::Permissions,
+            "Setup held back checked speech settings"
         );
         anyhow::Ok(())
     })??;

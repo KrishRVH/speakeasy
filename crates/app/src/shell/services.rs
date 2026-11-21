@@ -147,6 +147,7 @@ pub(crate) struct Services {
     pub(super) path: PathBuf,
     pub(super) default_settings: bool,
     pub config: Config,
+    pub(super) checked: bool,
     styles: watch::Sender<Style>,
     pub(super) choices: super::choices::Choices,
     pub output: watch::Sender<Snapshot>,
@@ -200,6 +201,7 @@ impl Services {
             path,
             default_settings,
             config,
+            checked: false,
             styles: watch::channel(Style::default()).0,
             choices: super::choices::Choices::default(),
             output,
@@ -240,6 +242,10 @@ impl Services {
     pub(crate) fn is_running(&self) -> bool {
         self.lifecycle
             .is_running(|owners| owners.runtime.is_running())
+    }
+
+    pub(super) const fn speech_checked(&self) -> bool {
+        self.checked
     }
 
     pub(super) const fn config_epoch(&self) -> ConfigEpoch {
@@ -400,6 +406,7 @@ impl Services {
             self.pause(cx);
         }
         self.config = Config::clone(&config);
+        self.checked = true;
         if self.lifecycle.is_pausing() {
             self.lifecycle.queue(Restart::Apply(Box::new(config)));
             return Ok(());
@@ -471,6 +478,7 @@ impl Services {
         } else {
             self.reset_choice_for(&config);
             self.config = config.into_inner();
+            self.checked = true;
             Ok(())
         };
         #[cfg(target_os = "windows")]
@@ -547,6 +555,9 @@ impl Services {
                 return Ok(());
             }
             services.validation = None;
+            if result.is_err() && services.choices.selected.is_none() {
+                services.checked = false;
+            }
             result.and_then(|config| {
                 if let Some(choice) = &mut services.choices.selected {
                     choice.config = config.clone();

@@ -140,7 +140,9 @@ impl Settings {
             .map(|installing| installing.setup.progress());
         let needs_setup = !self.locked()
             && !is_demo(ui.cx)
-            && (!self.config.speech_configured() || installing.is_some());
+            && (!self.config.speech_configured()
+                || crate::shell::settings::onboarding::speech_failed(ui.cx)
+                || installing.is_some());
         let state = if self.resetting() {
             kit.group(vec![
                 div()

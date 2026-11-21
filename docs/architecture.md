@@ -87,8 +87,7 @@ module unless a test file is named.
   Use during a session. Without a running owner, a valid candidate clears the transient selection
   and restarts a pending Resume check. A transient selection takes precedence in the Settings
   indicator, which follows Services as well as snapshots, while its row still holds the definition
-  that was chosen. Capturing a preset requires both speech
-  paths.
+  that was chosen. Capturing a preset requires both speech paths.
 - **Audio capture**: [audio.rs](../crates/app/src/audio.rs) with
   [control.rs](../crates/app/src/audio/control.rs), [stream.rs](../crates/app/src/audio/stream.rs),
   [pcm.rs](../crates/app/src/audio/pcm.rs), [speech.rs](../crates/app/src/audio/speech.rs), and
@@ -359,7 +358,9 @@ module unless a test file is named.
 - **First run**: [settings/onboarding.rs](../crates/app/src/shell/settings/onboarding.rs) owns the
   guide's four steps; [its view](../crates/app/src/shell/settings/render/onboarding.rs) presents
   local setup, dictation permissions, private practice, and completion. Saved model configuration
-  unlocks permission assistance even when native shortcut access prevents the runtime from starting.
+  that passed its file check unlocks permission assistance even when native shortcut access
+  prevents the runtime from starting; settings whose engine or model failed that check at startup
+  or Resume offer automatic setup instead of reporting local speech ready.
   A nonblank private result unlocks completion; leaving practice clears its receipt and text. The
   guide never asks for Show permissions or claims to verify external text delivery. Skip and Finish
   write an empty marker, the selected settings file's name plus `.onboarded`, beside it on an owned

@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use gpui::{Context, Task, Window, point, px};
+use gpui::{App, Context, Task, Window, point, px};
 use speakeasy_platform::OwnedThread;
 
 use super::{Action as SettingsAction, Notice, Settings, is_demo};
@@ -90,12 +90,19 @@ fn marker(settings: &Path) -> PathBuf {
     settings.with_added_extension("onboarded")
 }
 
+pub(super) fn speech_failed(cx: &App) -> bool {
+    !is_demo(cx) && !cx.global::<Services>().speech_checked()
+}
+
 impl Settings {
     pub(super) fn onboarding_next(&self, step: Step, cx: &Context<'_, Self>) -> Step {
         let demo = is_demo(cx);
         step.next(Readiness {
             prepared: demo
-                || (self.config.speech_configured() && !self.unsaved(cx) && self.saving.is_none()),
+                || (self.config.speech_configured()
+                    && !speech_failed(cx)
+                    && !self.unsaved(cx)
+                    && self.saving.is_none()),
             running: demo || cx.global::<Services>().is_running(),
             recognized: self.practice.recognized(),
         })
@@ -118,7 +125,7 @@ impl Settings {
             Step::Prepare if self.engine_work.installing().is_some() => ("Setting up…", None),
             Step::Prepare if self.engine_work.is_pausing() => ("Pausing download…", None),
             Step::Prepare | Step::Practice if self.saving.is_some() => ("Saving…", None),
-            Step::Prepare if !demo && !self.config.speech_configured() => (
+            Step::Prepare if !demo && (!self.config.speech_configured() || speech_failed(cx)) => (
                 "Set up automatically · 0.8 GB",
                 (!self.engine_work.is_busy()).then_some(SettingsAction::Setup),
             ),
