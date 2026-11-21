@@ -155,23 +155,28 @@ impl Roots {
         }
         let mut found: Option<Folder> = None;
         for configured in &self.roots {
-            let root = &configured.directory;
-            let candidate = if root.file_name() == path.file_name()
-                && matches!(holds_show(&configured.files), Ok(true))
-            {
-                root.clone()
-            } else {
-                root.join(path)
+            let Ok(root) = self.check(&configured.directory) else {
+                continue;
             };
-            if let Ok(Some(directory)) = configured.translate(&candidate) {
-                if found
-                    .as_ref()
-                    .is_some_and(|previous| previous.path != directory.path)
-                {
-                    return Err("That Show name is ambiguous across roots; use its absolute path");
+            let folder = if root.path.file_name() == Some(name)
+                && matches!(holds_show(&root.files), Ok(true))
+            {
+                root
+            } else if let Ok(files) = root.files.child(name) {
+                Folder {
+                    path: root.path.join(name),
+                    files,
                 }
-                found = Some(directory);
+            } else {
+                continue;
+            };
+            if found
+                .as_ref()
+                .is_some_and(|previous| previous.path != folder.path)
+            {
+                return Err("That Show name is ambiguous across roots; use its absolute path");
             }
+            found = Some(folder);
         }
         found.ok_or("That exact Show is unavailable inside the configured roots")
     }

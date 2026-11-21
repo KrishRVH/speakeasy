@@ -292,6 +292,11 @@ fn a_replaced_or_moved_root_neither_mixes_folders_nor_hides_other_roots() -> any
         .map(|root| &root.file)
         .collect();
     assert_eq!(unavailable, [&moved]);
+    for (name, listed) in [("kept", &kept), ("replacement", &replacement)] {
+        let resolved = roots.resolve(name).map_err(anyhow::Error::msg)?;
+        assert_eq!(&resolved.path, listed);
+        assert!(resolved.files.is_at(listed)?);
+    }
     Ok(())
 }
 
