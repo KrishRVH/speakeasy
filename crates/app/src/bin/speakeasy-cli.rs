@@ -36,7 +36,7 @@ fn relay(args: impl Iterator<Item = OsString>) -> ExitCode {
                 ExitCode::from,
             ),
         Err(error) => fail(format!(
-            "Cannot start {}: {error}. Run speakeasy-cli from the folder that holds Speakeasy.",
+            "Cannot start {}: {error}. Keep speakeasy-cli in the same folder as Speakeasy.",
             sibling.display()
         )),
     }

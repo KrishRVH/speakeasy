@@ -1,7 +1,7 @@
 use std::{
     fs::{self, File},
     io::{self, Read as _, Write as _},
-    net::{Ipv4Addr, Shutdown, TcpListener, TcpStream},
+    net::{Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
     sync::mpsc::{self, SyncSender},
     thread,
@@ -22,6 +22,7 @@ use crate::control::{Call, Command, Reply};
 
 const LOCK_FILE: &str = "instance.lock";
 const PORT_FILE: &str = "instance.port";
+const CONNECT_TIMEOUT: Duration = Duration::from_millis(100);
 const REVEAL_ATTEMPTS: u32 = 25;
 const REVEAL_RETRY: Duration = Duration::from_millis(20);
 
@@ -93,7 +94,9 @@ impl Instance {
     }
 
     pub(crate) fn send(path: &Path, request: Request) -> anyhow::Result<()> {
-        connect(path, &Message::Shortcut(request)).map(drop)
+        connect(path, &Message::Shortcut(request))
+            .map(drop)
+            .context("Speakeasy is not running. Start it before using a desktop shortcut")
     }
 
     pub(crate) fn control(path: &Path, command: Command) -> Reply {
@@ -144,7 +147,10 @@ fn connect(path: &Path, message: &Message) -> anyhow::Result<TcpStream> {
     let port: u16 = fs::read_to_string(path.with_file_name(PORT_FILE))?
         .trim()
         .parse()?;
-    let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port))?;
+    let mut stream = TcpStream::connect_timeout(
+        &SocketAddr::from((Ipv4Addr::LOCALHOST, port)),
+        CONNECT_TIMEOUT,
+    )?;
     stream.write_all(&serde_json::to_vec(message)?)?;
     stream.shutdown(Shutdown::Write)?;
     Ok(stream)
