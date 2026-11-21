@@ -12,6 +12,7 @@ use super::{
 use crate::{
     config::presets::{self, LIMIT, Preset},
     controls::{Weight, icon},
+    gpui_ext::EntityUpdate as _,
     icons,
     theme::Theme,
 };
@@ -92,11 +93,10 @@ impl Settings {
                     self.own_engine = false;
                     self.choosing_model = false;
                     self.vocabulary.stop_revising();
-                    if !self.locked() {
-                        cx.global_mut::<Services>()
-                            .restore_saved_preset(&self.config);
-                    }
                     self.edited(cx);
+                    if !self.locked() {
+                        self.restore_saved_preset(cx);
+                    }
                 }
             },
             Edit::Update(index) => {
@@ -132,6 +132,26 @@ impl Settings {
             Edit::Cancel => self.presets.clear(cx),
         }
         cx.notify();
+    }
+
+    fn restore_saved_preset(&mut self, cx: &mut Context<'_, Self>) {
+        let restoring = cx.update_global::<Services, _>(|services, cx| {
+            services.restore_saved_preset(&self.config, cx)
+        });
+        match restoring {
+            Ok(Some(refused)) => cx
+                .spawn(async move |this, cx| {
+                    if let Ok(reason) = refused.recv().await {
+                        this.update_if_alive(cx, |view, cx| {
+                            view.notice = Some(Notice::Problem(reason.into()));
+                            cx.notify();
+                        });
+                    }
+                })
+                .detach(),
+            Ok(None) => (),
+            Err(reason) => self.notice = Some(Notice::Problem(reason.into())),
+        }
     }
 
     fn store_preset(
@@ -204,7 +224,7 @@ impl Settings {
                         "Use",
                         Action::Preset(Edit::Use(index)),
                         Weight::Secondary,
-                        !busy,
+                        !busy && !self.presentation.in_session,
                     )
                     .aria_label(format!("Use {name}"))
                     .into_any_element()

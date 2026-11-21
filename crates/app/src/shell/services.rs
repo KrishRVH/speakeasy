@@ -458,6 +458,18 @@ impl Services {
             self.lifecycle.queue(Restart::Validate);
             return;
         }
+        self.validate(cx);
+    }
+
+    pub(super) fn forget_preset(&mut self, cx: &App) {
+        self.choices.cancel();
+        self.choices.selected = None;
+        if self.validation.is_some() {
+            self.validate(cx);
+        }
+    }
+
+    fn validate(&mut self, cx: &App) {
         let Some(epoch) = self.lifecycle.validate() else {
             return;
         };

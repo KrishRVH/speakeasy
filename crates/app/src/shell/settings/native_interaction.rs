@@ -62,6 +62,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                 cx.update(|cx| cx.global_mut::<Services>().settings = Some(settings));
                 onboarding::native_tests::exercise(settings, cx)?;
                 presets::native_tests::exercise(settings, cx)?;
+                presets::native_tests::transient_choice(settings, cx).await?;
                 settings.update(cx, |view, _, cx| {
                     let applied = cx.global::<Services>().config.language.clone();
                     view.config.language = "de".into();

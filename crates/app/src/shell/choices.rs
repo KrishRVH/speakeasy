@@ -1,3 +1,4 @@
+use async_channel::Receiver;
 use gpui::{App, Task};
 use speakeasy_core::lifecycle::ConfigEpoch;
 
@@ -5,10 +6,17 @@ use super::Services;
 use crate::{
     config::{Change, Config, ValidConfig},
     control::{Call, Command, Disposition, Reply, Status},
+    runtime::Restored,
 };
 
 const UNACKNOWLEDGED: &str =
     "Preset selection stopped before acknowledging. Read status before choosing again.";
+
+const RESTORE_BUSY: &str =
+    "Finish the current session or preset selection before using a saved preset.";
+
+const RESTORE_UNAVAILABLE: &str =
+    "This preset's engine or model is unavailable. Choose them again, then update this preset.";
 
 pub(super) struct Selected {
     pub name: String,
@@ -217,16 +225,76 @@ impl Services {
         }
     }
 
-    pub(super) fn restore_saved_preset(&mut self, draft: &Config) {
-        if self.preset_name().is_none() || self.config.change_to(draft) >= Change::Session {
-            return;
+    pub(super) fn restore_saved_preset(
+        &mut self,
+        draft: &Config,
+        cx: &App,
+    ) -> Result<Option<Receiver<&'static str>>, &'static str> {
+        if self.preset_name().is_none() {
+            return Ok(None);
         }
+        if self.runtime().is_none() {
+            self.forget_preset(cx);
+            return Ok(None);
+        }
+        if self.choices.applying || self.output.borrow().phase.is_active() {
+            return Err(RESTORE_BUSY);
+        }
+        let candidate = draft.clone();
+        let path = self.path.clone();
         self.choices.cancel();
-        self.choices.selected = None;
-        if let Some(runtime) = self.live_runtime() {
-            runtime.restore_saved();
+        let (refusal, refused) = async_channel::bounded(1);
+        let validation = cx
+            .background_executor()
+            .spawn(async move { candidate.validated(&path) });
+        self.choices.task = Some(cx.spawn(async move |cx| {
+            let result = validation.await;
+            let admission =
+                cx.update_global::<Self, _>(|services, cx| services.admit_restore(result, cx));
+            let restored = match admission {
+                Ok(Some(receipt)) => {
+                    let restored = receipt.recv().await.unwrap_or(Err(UNACKNOWLEDGED));
+                    cx.update_global::<Self, _>(|services, _| services.confirm_restore(restored));
+                    restored
+                },
+                Ok(None) => Ok(()),
+                Err(reason) => Err(reason),
+            };
+            if let Err(reason) = restored {
+                #[expect(
+                    clippy::let_underscore_must_use,
+                    reason = "Settings closed, so nobody waits to show why the saved preset was refused"
+                )]
+                let _ = refusal.try_send(reason);
+            }
+        }));
+        Ok(Some(refused))
+    }
+
+    fn admit_restore(
+        &mut self,
+        result: anyhow::Result<ValidConfig>,
+        cx: &App,
+    ) -> Result<Option<Receiver<Restored>>, &'static str> {
+        let draft = result.map_err(|_unavailable| RESTORE_UNAVAILABLE)?;
+        if self.config.change_to(&draft) >= Change::Session {
+            return Ok(None);
         }
-        self.output.send_modify(|snapshot| snapshot.preset = None);
+        let Some(runtime) = self.runtime() else {
+            self.forget_preset(cx);
+            return Ok(None);
+        };
+        let receipt = runtime.restore_saved();
+        self.choices.applying = true;
+        Ok(Some(receipt))
+    }
+
+    fn confirm_restore(&mut self, restored: Restored) {
+        self.choices.applying = false;
+        if restored.is_ok() {
+            self.choices.selected = None;
+            self.output.send_modify(|snapshot| snapshot.preset = None);
+        }
     }
 
     pub(super) fn reset_choice_for(&mut self, config: &Config) {

@@ -229,7 +229,10 @@ impl<P: Ports> Owner<P> {
                 })
             },
             Wake::Configuration => Event::Configure(world.changes.borrow_and_update().clone()),
-            Wake::Command(directive) => return world.direct(directive),
+            Wake::Command(directive) => {
+                let idle = self.machine.is_idle() && self.machine.practice().is_none();
+                return world.direct(directive, idle);
+            },
             Wake::Capture(event) => {
                 if let CaptureEvent::Ready(session, source) = &event {
                     world.default_microphone =

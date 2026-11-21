@@ -121,9 +121,56 @@ async fn restoring_saved_settings_clears_the_preset_and_uses_the_saved_language(
     h.observe(|snapshot| snapshot.preset.as_deref() == Some("French"))
         .await?;
 
-    h.runtime.restore_saved();
+    assert_eq!(receive(&h.runtime.restore_saved()).await?, Ok(()));
     h.observe(|snapshot| snapshot.preset.is_none()).await?;
     h.start().await?;
     finish_in(&mut h, &saved.language).await?;
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn restoring_saved_settings_waits_for_the_active_session() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    h.ready().await?;
+    let saved = h.runtime.configuration.borrow().clone();
+    let french = Config {
+        language: "fr".into(),
+        ..saved.clone()
+    };
+    let adopted = choose(&h, "French", &french, &saved, h.snapshot().session).await?;
+    assert_eq!(adopted.result, Disposition::Ok);
+    h.start().await?;
+    let restored = receive(&h.runtime.restore_saved()).await?;
+    assert_eq!(restored, Err(refusal(Refusal::PresetBusy)));
+    finish_in(&mut h, "fr").await?;
+    assert_eq!(h.snapshot().preset.as_deref(), Some("French"));
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn restoring_saved_settings_follows_a_preset_queued_before_it() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    h.ready().await?;
+    let saved = h.runtime.configuration.borrow().clone();
+    let french = Config {
+        language: "fr".into(),
+        ..saved.clone()
+    };
+    let (call, adopted) = Call::new(Command::Preset {
+        name: "French".into(),
+    });
+    h.runtime.preset(
+        "French".into(),
+        ValidConfig::assume(french),
+        saved.clone(),
+        h.snapshot().session,
+        call,
+    );
+    let restored = h.runtime.restore_saved();
+    assert_eq!(receive(&adopted).await?.result, Disposition::Ok);
+    assert_eq!(receive(&restored).await?, Ok(()));
+    h.start().await?;
+    finish_in(&mut h, &saved.language).await?;
+    assert_eq!(h.snapshot().preset, None);
     h.close().await
 }

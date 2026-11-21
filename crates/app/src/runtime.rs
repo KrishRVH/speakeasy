@@ -357,9 +357,10 @@ impl<Host> Runtime<Host> {
         self.configuration.send_replace(config.into_inner());
     }
 
-    pub(crate) fn restore_saved(&self) {
-        self.input.cancel();
-        self.configuration.send_modify(|_| {});
+    pub(crate) fn restore_saved(&self) -> Receiver<Restored> {
+        let (answer, receipt) = async_channel::bounded(1);
+        self.direct(Directive::Restore(Restoring(answer)));
+        receipt
     }
 
     pub(crate) fn control(&self, call: Call) {
@@ -390,7 +391,7 @@ impl<Host> Runtime<Host> {
             } else {
                 "Resume Speakeasy before using this command."
             };
-            error.into_inner().call().respond(Reply::refused(reason));
+            error.into_inner().refuse(reason);
         }
     }
 
@@ -538,6 +539,8 @@ struct Wiring<P> {
     epoch: SnapshotEpoch,
 }
 
+pub(crate) type Restored = Result<(), &'static str>;
+
 enum Directive {
     Control(Call),
     Preset {
@@ -547,13 +550,27 @@ enum Directive {
         session: u64,
         call: Call,
     },
+    Restore(Restoring),
 }
 
 impl Directive {
-    fn call(self) -> Call {
+    fn refuse(self, reason: &'static str) {
         match self {
-            Self::Control(call) | Self::Preset { call, .. } => call,
+            Self::Control(call) | Self::Preset { call, .. } => call.respond(Reply::refused(reason)),
+            Self::Restore(restoring) => restoring.answer(Err(reason)),
         }
+    }
+}
+
+struct Restoring(Sender<Restored>);
+
+impl Restoring {
+    fn answer(self, restored: Restored) {
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "Services stops waiting for a restore that a newer preset choice replaced"
+        )]
+        let _ = self.0.try_send(restored);
     }
 }
 

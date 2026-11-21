@@ -171,9 +171,7 @@ impl Settings {
             onboarding_focus: cx.focus_handle(),
             onboarding_completion: None,
             update: Update::Idle,
-            _updates: follow(updates, cx, Snapshot::clone, |view, snapshot, cx| {
-                view.apply_snapshot(&snapshot, cx);
-            }),
+            _updates: follow(updates, cx, |_| (), |view, (), cx| view.present(cx)),
             unreadable,
             reset: Reset::Idle,
             downloaded: crate::setup::downloaded(),
@@ -187,6 +185,7 @@ impl Settings {
             #[cfg(target_os = "windows")]
             minimize_to_tray: None,
         };
+        cx.observe_global::<Services>(Self::present).detach();
         view.refresh_microphones(cx);
         super::report_focus(window, cx);
         view
@@ -204,8 +203,9 @@ impl Settings {
         .detach();
     }
 
-    fn apply_snapshot(&mut self, snapshot: &Snapshot, cx: &mut Context<'_, Self>) {
-        let presentation = Presentation::new(snapshot, cx.global::<Services>());
+    fn present(&mut self, cx: &mut Context<'_, Self>) {
+        let services = cx.global::<Services>();
+        let presentation = Presentation::new(&services.output.borrow(), services);
         if self.presentation != presentation {
             self.presentation = presentation;
             cx.notify();
@@ -805,6 +805,7 @@ struct Presentation {
     message: String,
     model: Option<ModelState>,
     preset: Option<String>,
+    in_session: bool,
 }
 
 impl Presentation {
@@ -818,6 +819,7 @@ impl Presentation {
             } else {
                 services.preset_name().map(str::to_owned)
             },
+            in_session: services.is_running() && snapshot.phase.is_active(),
             shortcut: Arc::clone(&snapshot.shortcut),
             cancel_shortcut: Arc::clone(&snapshot.cancel_shortcut),
             message: if snapshot.message.is_empty() {

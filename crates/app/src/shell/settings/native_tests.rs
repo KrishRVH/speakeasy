@@ -72,6 +72,7 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                             message: String::new(),
                             model: None,
                             preset: None,
+                            in_session: false,
                         },
                         notice: None,
                         microphones: Vec::new(),
