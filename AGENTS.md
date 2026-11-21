@@ -7,8 +7,11 @@ entry in the [change and test map](docs/architecture.md#change-and-test-map); RE
 
 ## Workflows
 
-Use `mise run` for project workflows; run `mise tasks` and read the task you use. `Cargo.toml`,
-`clippy.toml`, and `rustfmt.toml` own Rust policy, and `rust-toolchain.toml` pins the compiler.
+Tasks are the project's interface. `mise run fmt`, `mise run lint`, `mise run test`, and
+`mise run standards:check` mean what they mean in every project, and each task holds what its
+workflow needs: flags, order, environment, and prerequisites. Run `mise tasks` and read the tasks
+you use. `Cargo.toml`, `clippy.toml`, and `rustfmt.toml` own Rust policy, and `rust-toolchain.toml`
+pins the compiler.
 
 - `mise install` installs the pinned tools and may use the network.
 - `mise run rust:lint`, `mise run rust:test`, and `mise run rust:doc` verify Rust changes.
@@ -18,11 +21,26 @@ Use `mise run` for project workflows; run `mise tasks` and read the task you use
 - `mise run standards:check` is the final local gate. CI flags any commit pushed to `main` whose
   subject is not a Conventional Commit, lints and tests each push on Windows and macOS, and builds
   and publishes release packages.
+- The `native:`, `linux:`, `macos:`, `windows:`, `movie:`, and `profile:` tasks run opt-in native
+  checks and profiles, each on the system its name or description gives.
 
-Run `git`, `rg`, `tokei`, and focused native commands directly. Extend an existing task before
-adding one. Measure the routine gate cost before adding checks. Mutation testing, dependency
-advisory gates, secret-scanning gates, fuzzing, coverage targets, and ADR gates are outside this
-project's profile; dependency licenses are checked only where packaging must cite them.
+Choose each command by what it does:
+
+- A task covers the workflow: run the task.
+- A workflow no task covers yet, such as a command line a doc tells readers to type, is a missing
+  task: extend an existing task or add one. A task earns its name with a shared verb or with
+  knowledge the caller would otherwise carry, its body is the toolchain's own command line, and
+  `depends` composes it with other tasks. A task that opens windows, records the screen, or needs a
+  native host stays opt-in, outside the gate.
+- Everything else runs as itself: `git`, `rg`, `tokei`, the scripts in `scripts/`, mise's own
+  commands such as `mise lock`, and one-off toolchain commands for focused diagnosis.
+
+A shell without mise activation, such as an agent shell, changes how a one-off toolchain command
+starts and nothing else: `mise exec -- <command>`. The config supplies the tools and versions.
+
+Measure the routine gate cost before adding checks. Mutation testing, dependency advisory gates,
+secret-scanning gates, fuzzing, coverage targets, and ADR gates are outside this project's profile;
+dependency licenses are checked only where packaging must cite them.
 
 ## Ownership and interfaces
 
