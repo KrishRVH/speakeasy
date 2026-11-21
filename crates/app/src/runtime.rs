@@ -585,6 +585,10 @@ impl Directive {
 struct Adopting(Sender<Adopted>);
 
 impl Adopting {
+    fn is_live(&self) -> bool {
+        !self.0.is_closed()
+    }
+
     fn answer(self, adopted: Adopted) {
         #[expect(
             clippy::let_underscore_must_use,

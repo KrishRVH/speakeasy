@@ -46,7 +46,7 @@ impl<P: Ports> World<P> {
                 session: SessionId::new(session),
                 changed: self.changes.borrow().change_to(&baseline) >= Change::Session,
             }),
-            Directive::Adopt { config, answer } if idle => {
+            Directive::Adopt { config, answer } if idle && answer.is_live() => {
                 answer.answer(Ok(()));
                 let config = config.into_inner();
                 self.adopted = Some(config.clone());
