@@ -822,9 +822,10 @@ fn a_missed_release_lets_s_reach_the_app() {
 
 #[test]
 fn a_show_key_whose_release_went_unseen_reaches_the_app_outside_a_hold() {
+    let start = now();
     let (mut policy, both) = windows_holding();
-    policy.observe(LETTER_S, true, both, now());
-    let typed = policy.observe(LETTER_S, true, NONE_HELD, now());
+    policy.observe(LETTER_S, true, both, start);
+    let typed = policy.observe(LETTER_S, true, NONE_HELD, start + Duration::from_secs(5));
     assert_eq!(delivered(&typed), [Action::Release]);
     assert!(!typed.swallows());
 

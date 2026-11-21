@@ -82,6 +82,10 @@ impl Repeat {
             Self::Never => None,
         }
     }
+
+    pub(super) fn continues(self, silence: Duration) -> bool {
+        self.quiet_limit().is_some_and(|limit| silence <= limit)
+    }
 }
 
 #[cfg(all(target_os = "windows", not(test)))]

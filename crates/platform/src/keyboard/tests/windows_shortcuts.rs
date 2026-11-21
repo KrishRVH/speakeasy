@@ -83,7 +83,10 @@ fn windows_f13_is_reserved_and_its_repeats_never_restart() {
 }
 
 fn f13_held_since(at: impl Fn(u64) -> Instant, repeats: &[u64]) -> Windows {
-    let mut policy = Windows::new(WindowsShortcut::F13);
+    f13_held(Windows::new(WindowsShortcut::F13), at, repeats)
+}
+
+fn f13_held(mut policy: Windows, at: impl Fn(u64) -> Instant, repeats: &[u64]) -> Windows {
     assert!(policy.observe(F13, true, NONE_HELD, at(0)).starts());
     for &millis in repeats {
         let repeat = policy.observe(F13, true, NONE_HELD, at(millis));
@@ -172,7 +175,8 @@ fn f13_silence_counts_as_a_lost_release_only_beyond_the_repeat_settings() {
         delay: Duration::from_secs(3),
         period: Duration::from_secs(3),
     };
-    let mut policy = f13_held_since(at, &[3_000, 6_000]).repeating(repeat_keys);
+    let repeat_keys_policy = Windows::new(WindowsShortcut::F13).repeating(repeat_keys);
+    let mut policy = f13_held(repeat_keys_policy, at, &[3_000, 6_000]);
     let show = policy.observe(LETTER_S, true, NONE_HELD, at(9_000));
     assert_eq!(
         delivered(&show),
@@ -184,18 +188,21 @@ fn f13_silence_counts_as_a_lost_release_only_beyond_the_repeat_settings() {
         [Action::Release]
     );
 
-    let mut policy = f13_held_since(at, &[]).repeating(|| typematic::Repeat::Never);
+    let without_repeat = || typematic::Repeat::Never;
+    let mut policy = f13_held(
+        Windows::new(WindowsShortcut::F13).repeating(without_repeat),
+        at,
+        &[],
+    );
     assert_eq!(
         delivered(&policy.observe(LETTER_S, true, NONE_HELD, at(30_000))),
         [Action::Show(Scope::Screen)],
         "Without repeat, F13's silence never shows a lost release"
     );
-
-    let mut policy = f13_held_since(at, &[3_000, 6_000]);
     assert_eq!(
-        delivered(&policy.observe(LETTER_S, true, NONE_HELD, at(9_000))),
-        [Action::Release],
-        "Under Windows' default repeat, 3 s of silence shows a lost release"
+        delivered(&policy.observe(F13, true, NONE_HELD, at(30_010))),
+        [Action::Release, Action::Press],
+        "Without repeat, another F13 down shows the last release went unseen"
     );
 }
 
@@ -203,7 +210,7 @@ fn f13_silence_counts_as_a_lost_release_only_beyond_the_repeat_settings() {
 fn a_windows_f13_hold_whose_release_went_unseen_ends_at_the_next_f13_release() {
     let start = now();
     let at = |millis| start + Duration::from_millis(millis);
-    let mut policy = f13_held_since(at, &[5_000]);
+    let mut policy = f13_held_since(at, &[500]);
     let later = at(6_000);
     assert_eq!(
         delivered(&policy.observe(F13, false, NONE_HELD, later)),
@@ -211,14 +218,46 @@ fn a_windows_f13_hold_whose_release_went_unseen_ends_at_the_next_f13_release() {
     );
     assert!(policy.observe(F13, true, NONE_HELD, later).starts());
 
+    let mut policy = f13_held_since(at, &[500, 533]);
+    let fresh = policy.observe(F13, true, NONE_HELD, at(5_000));
+    assert_eq!(
+        delivered(&fresh),
+        [Action::Release, Action::Press],
+        "An F13 down long after its repeats stopped was absorbed as a repeat"
+    );
+    assert!(fresh.swallows());
+}
+
+#[test]
+fn f13_held_through_a_lifecycle_interrupt_never_restarts_until_pressed_afresh() {
+    let start = now();
+    let at = |millis| start + Duration::from_millis(millis);
     let (sender, _events) = async_channel::bounded(4);
     let input = InputSender::new(sender);
-    let mut policy = f13_held_since(at, &[]);
+
+    let mut policy = f13_held_since(at, &[500]);
+    policy.interrupt(&input);
+    for millis in [533, 566] {
+        let repeat = policy.observe(F13, true, NONE_HELD, at(millis));
+        assert_eq!(
+            delivered(&repeat),
+            [],
+            "An F13 repeat right after the interrupt restarted dictation"
+        );
+        assert!(repeat.swallows());
+    }
+    assert_eq!(
+        delivered(&policy.observe(F13, false, NONE_HELD, at(900))),
+        []
+    );
+    assert!(policy.observe(F13, true, NONE_HELD, at(1_000)).starts());
+
+    let mut policy = f13_held_since(at, &[500]);
     policy.interrupt(&input);
     assert_eq!(
-        delivered(&policy.observe(F13, true, NONE_HELD, at(500))),
+        delivered(&policy.observe(F13, true, NONE_HELD, at(30_000))),
         [Action::Press],
-        "The first F13 press after a lifecycle interrupt was taken as a repeat"
+        "The first F13 press after the lock screen swallowed its release was absorbed"
     );
 }
 

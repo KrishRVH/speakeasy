@@ -414,22 +414,32 @@ impl Default for RepeatSettings {
 
 #[cfg(any(target_os = "windows", test))]
 #[derive(Default)]
-struct HeldKeys(Vec<u16>);
+struct HeldKeys(Vec<(u16, Instant)>);
 
 #[cfg(any(target_os = "windows", test))]
 impl HeldKeys {
-    fn stroke(&mut self, key: u16, down: bool) -> Stroke {
-        let held = self.0.contains(&key);
+    fn stroke(
+        &mut self,
+        key: u16,
+        down: bool,
+        at: Instant,
+        repeats_after: impl FnOnce(Duration) -> bool,
+    ) -> Stroke {
         if !down {
             self.forget(key);
-        } else if !held {
-            self.0.push(key);
+            return Stroke::Release;
         }
-        Stroke::new(down, held)
+        let Some((_, last)) = self.0.iter_mut().find(|(held, _)| *held == key) else {
+            self.0.push((key, at));
+            return Stroke::Press;
+        };
+        let repeat = repeats_after(at.saturating_duration_since(*last));
+        *last = at;
+        Stroke::new(down, repeat)
     }
 
     fn forget(&mut self, key: u16) {
-        self.0.retain(|held| *held != key);
+        self.0.retain(|(held, _)| *held != key);
     }
 }
 
@@ -491,8 +501,6 @@ impl Windows {
 
     pub(super) fn interrupt(&mut self, input: &InputSender) {
         self.chord.interrupt_recording(input);
-        self.keys = HeldKeys::default();
-        self.forget_f13();
     }
 
     pub(super) fn observe(
@@ -504,12 +512,20 @@ impl Windows {
     ) -> Decision {
         let key = u16::try_from(key).unwrap_or(u16::MAX);
         let mut missed_release = self.reconcile(physical.chord_keys);
-        if missed_release {
-            self.keys = HeldKeys::default();
-        }
-        let stroke = self.keys.stroke(key, down);
-        if stroke == Stroke::Press && Self::hold_key(key).is_some() && self.f13_fell_quiet(at) {
-            self.forget_f13();
+        let repeat = self.repeat.0;
+        let stroke = self
+            .keys
+            .stroke(key, down, at, |silence| repeat().continues(silence));
+        if stroke == Stroke::Press && key == Self::F13 && self.f13_tracked() {
+            self.forget_f13_down();
+            missed_release |= self.chord.reconcile(self.chord_held());
+        } else if stroke == Stroke::Press
+            && Self::hold_key(key).is_some()
+            && self.f13_fell_quiet(at)
+        {
+            self.keys.forget(Self::F13);
+            self.f13_heard = None;
+            self.forget_f13_down();
             missed_release |= self.chord.reconcile(self.chord_held());
         }
         if key == Self::F13 {
@@ -538,16 +554,21 @@ impl Windows {
         }
     }
 
-    fn forget_f13(&mut self) {
-        self.keys.forget(Self::F13);
-        self.f13_heard = None;
-        if let Some(tracked) = Self::CHORD_KEYS
+    fn f13_tracked(&mut self) -> bool {
+        self.f13_down().is_some_and(|tracked| *tracked)
+    }
+
+    fn forget_f13_down(&mut self) {
+        if let Some(tracked) = self.f13_down() {
+            *tracked = false;
+        }
+    }
+
+    fn f13_down(&mut self) -> Option<&mut bool> {
+        Self::CHORD_KEYS
             .into_iter()
             .zip(&mut self.chord_keys_down)
             .find_map(|(key, tracked)| (key == Self::F13).then_some(tracked))
-        {
-            *tracked = false;
-        }
     }
 
     pub(super) fn types(key: u32, down: bool, decision: &Decision) -> bool {

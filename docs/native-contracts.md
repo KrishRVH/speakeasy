@@ -300,24 +300,27 @@ wait and its final preflight. Its per-request autorelease pool encloses native d
 
 Windows F13 is VK 0x7C, and the hook swallows its every event. Windows updates async key state only
 after the hooks pass an event, so a swallowed F13 never reads as down, and its own events establish
-the hold. The low-level hook reports no autorepeat, and FilterKeys allows repeat delays up to 20 s,
-so the Windows policy remembers each key whose press it saw and takes another key-down before that
-key's release as a repeat. It forgets those keys at a lifecycle interrupt and when reconciliation
-finds a chord release the hook missed, since either shows the hook lost sight of the keyboard;
-otherwise a key whose release went unseen loses its next press to that rule. Nothing reports a
-swallowed F13's physical state, so an unseen F13 release keeps the hold until the next F13 release.
-While F13 is the last key to go down, its repeats keep arriving, so a hold key pressed after a
-longer silence than the repeat settings allow presumes the release went unseen: the hold ends and
-the key reaches the app. The limit is twice the longer of the repeat delay and interval, plus 250
-ms. The hook reads those settings with `SystemParametersInfoW` whenever it judges such a silence:
-the keyboard delay and speed, or FilterKeys' acceptance wait plus repeat delay, and its repeat
-interval, when FilterKeys is on without BounceKeys. FilterKeys without repeat never presumes a
-release, and an unreadable FilterKeys setting counts as its 20 s maximum. The read fills
-caller-owned values and sends no messages, so it cannot re-enter the hook. Windows autorepeat
-repeats only the most recent key and does not resume an earlier one, so any other key-down, a Show
-key or a Shift tap included, makes F13's silence expected until F13 is heard again. A hold key
-pressed within the limit after an unseen release, or after another key went down, still acts. F13
-modifies no other key, so the insertion worker's release wait and preflight do not wait for it.
+the hold. The low-level hook reports no autorepeat, so the Windows policy remembers each key whose
+press it saw, with the time of its last down, and takes another down of that key before its release
+as a repeat while it arrives within the repeat limit of the last one. Windows autorepeat repeats
+only the most recent key and does not resume an earlier one, so a down after a longer silence is a
+fresh press whose release went unseen. The limit is twice the longer of the repeat delay and
+interval, plus 250 ms. The hook reads those settings with `SystemParametersInfoW` whenever it judges
+such a silence: the keyboard delay and speed, or FilterKeys' acceptance wait plus repeat delay, and
+its repeat interval, when FilterKeys is on without BounceKeys. Without repeat every further down is
+fresh, and an unreadable FilterKeys setting counts as its 20 s maximum. The read fills caller-owned
+values and sends no messages, so it cannot re-enter the hook. The policy keeps those keys through a
+lifecycle interrupt and a missed chord release, so a swallowed key's repeats stay swallowed until
+its own release, and a press after the lock screen or a stall is fresh again; a key released unseen
+and pressed again within the limit loses that press. Nothing reports a swallowed F13's physical
+state, so an unseen F13 release keeps the hold until the next fresh F13 down, which ends the hold
+and starts another, or until the next F13 release. While F13 is the last key to go down, its repeats
+keep arriving, so a hold key pressed after a silence longer than the limit presumes the release went
+unseen: the hold ends and the key reaches the app. Any other key-down, a Show key or a Shift tap
+included, makes F13's silence expected until F13 is heard again. FilterKeys without repeat never
+presumes a release. A hold key pressed within the limit after an unseen release, or after another
+key went down, still acts. F13 modifies no other key, so the insertion worker's release wait and
+preflight do not wait for it.
 
 `StatusItem` is created, updated and removed on the main thread. It takes the item's button at
 creation, removing the item again if AppKit offers none, and holds that main-thread-only button, so
