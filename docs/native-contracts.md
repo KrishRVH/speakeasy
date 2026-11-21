@@ -251,10 +251,11 @@ input lane's closure, so a lane closed from any thread, including by its receive
 loop without waiting for another event. The waker only stops the loop and takes no lock, so a lane
 closed under the policy or monitor lock cannot deadlock. The event tap passes the current key
 through and disables itself when the input lane closes. Notification tokens remain retained until
-removal. A swallowed hold key stays suppressed until its own release or a fresh press of it, which
-shows that the release went unseen, so a key held through a tap outage, lifecycle interrupt or
-missed chord release never repeats into the app. The Mac tap tells a fresh press from a repeat by
-the event's autorepeat field.
+removal. A hold key acts only when pressed afresh during a hold, never on a repeat, so a key already
+down when the hold began does nothing. A swallowed hold key stays suppressed until its own release
+or a fresh press of it, which shows that the release went unseen, so a key held through a tap
+outage, lifecycle interrupt or missed chord release never repeats into the app. The Mac tap tells a
+fresh press from a repeat by the event's autorepeat field.
 
 Mac F13 uses key code 105 and the event's autorepeat field. Its initial press and release establish
 the pre-event hold explicitly; unrelated events reconcile against HID-system physical key state. The
@@ -264,14 +265,17 @@ wait and its final preflight. Its per-request autorelease pool encloses native d
 
 Windows F13 is VK 0x7C, and the hook swallows its every event. Windows updates async key state only
 after the hooks pass an event, so a swallowed F13 never reads as down, and its own events establish
-the hold. The low-level hook reports no autorepeat, so the Windows policy takes a key-down as a
-repeat only when the same key was the last one pressed and its previous press came at most 2.5 s
-earlier, beyond the slowest repeat Windows offers; hold keys use the same test. A fresh F13 press
-while F13 is held, or any event after F13 repeated and then fell silent past that limit while still
-the last key pressed, shows that its release went unseen and ends the hold first; on a keyboard that
-never repeats, only the fresh press does. A lifecycle interrupt stops its dictation as it stops
-every chord's, and F13 repeats after it never restart one. F13 modifies no other key, so the
-insertion worker's release wait and preflight do not wait for it.
+the hold. The low-level hook reports no autorepeat, and FilterKeys allows repeat delays up to 20 s,
+so the Windows policy remembers each key whose press it saw and takes another key-down before that
+key's release as a repeat. It forgets those keys at a lifecycle interrupt and when reconciliation
+finds a chord release the hook missed, since either shows the hook lost sight of the keyboard;
+otherwise a key whose release went unseen loses its next press to that rule. Nothing reports a
+swallowed F13's physical state, so an unseen F13 release keeps the hold until the next F13 release,
+and a hold key acts only within 1.5 s of F13's last press or repeat, beyond the 1 s slowest standard
+repeat delay. A hold key pressed later presumes the release went unseen: the hold ends and the key
+reaches the app, which also ends a still-held F13 hold whose repeats are slower than that or were
+stopped by another key. A hold key pressed sooner after an unseen release still acts. F13 modifies
+no other key, so the insertion worker's release wait and preflight do not wait for it.
 
 `StatusItem` is created, updated and removed on the main thread. It takes the item's button at
 creation, removing the item again if AppKit offers none, and holds that main-thread-only button, so
