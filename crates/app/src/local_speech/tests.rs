@@ -234,6 +234,61 @@ fn engine_secrets_are_unrelated_128_bit_tokens() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn health_probes_ask_the_engine_route_and_read_its_status() -> anyhow::Result<()> {
+    use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
+
+    let listener = tokio::net::TcpListener::bind((LOOPBACK, 0)).await?;
+    let port = listener.local_addr()?.port();
+    for (status, ready) in [("200 OK", true), ("503 Service Unavailable", false)] {
+        let engine = async {
+            let mut stream = BufReader::new(listener.accept().await?.0);
+            let mut request = String::new();
+            while stream.read_line(&mut request).await? > 2 {}
+            let reply = format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\n\r\n");
+            stream.write_all(reply.as_bytes()).await?;
+            anyhow::Ok(request)
+        };
+        let (probed, request) = tokio::join!(healthy(port, "/key/health", || Ok(true)), engine);
+        assert_eq!(probed?, ready, "{status}");
+        assert_eq!(
+            request?,
+            format!(
+                "GET /key/health HTTP/1.1\r\nHost: {LOOPBACK}:{port}\r\nConnection: close\r\n\r\n"
+            )
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_health_probe_writes_nothing_once_its_port_changes_hands() -> anyhow::Result<()> {
+    use tokio::io::AsyncReadExt as _;
+
+    let listener = tokio::net::TcpListener::bind((LOOPBACK, 0)).await?;
+    let port = listener.local_addr()?.port();
+    for (connected, outcome) in [(Ok(false), Some(false)), (Err(anyhow!("Taken")), None)] {
+        let mut checks = [Ok(true), connected].into_iter();
+        let probed = healthy(port, "/key/health", || {
+            checks.next().context("Checked again")?
+        })
+        .await;
+        let mut received = Vec::new();
+        listener
+            .accept()
+            .await?
+            .0
+            .read_to_end(&mut received)
+            .await?;
+        assert_eq!(probed.ok(), outcome);
+        assert!(
+            received.is_empty(),
+            "The probe wrote to a listener it had not verified after connecting"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_truncated_reply_is_a_broken_connection() -> anyhow::Result<()> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 

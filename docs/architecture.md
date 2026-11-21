@@ -984,11 +984,17 @@ implementations.
 
 The speech worker listens on loopback only. On Linux and Windows, Speakeasy declares the worker
 ready only after a successful health probe. Each probe and subsequent request first checks that the
-worker's own process group, a job object on Windows, holds its listener. macOS has no listener
-lookup, so each request there checks only that the worker still runs. Each worker gets a fresh
-random key. The NeMo engine receives it in its owner-only environment, but whisper-server accepts
-its route only on the command line, so on Linux other local accounts can read it through `/proc`
-unless `/proc` is mounted with `hidepid`. That route is the only guard on Whisper's `/inference` and
+worker's own process group, a job object on Windows, holds every listener a connection to its
+loopback port can reach, wildcard and IPv6 dual-stack listeners included. A listener that closes
+during the check is looked up again rather than called foreign, so an engine that crashes then
+reports its exit. The probe checks again once its connection is established and writes nothing
+unless the group still holds the port; the worker binds once, so that connection reached it.
+Requests connect through reqwest after their check, which leaves a moment in which a worker that
+just died could hand its port, and one request, to another program. macOS has no listener lookup, so
+each probe and request there checks only that the worker still runs. Each worker gets a fresh random
+key. The NeMo engine receives it in its owner-only environment, but whisper-server accepts its route
+only on the command line, so on Linux other local accounts can read it through `/proc` unless
+`/proc` is mounted with `hidepid`. That route is the only guard on Whisper's `/inference` and
 model-loading `/load` requests, so prefer Parakeet on shared Linux machines; automatic setup
 installs it.
 

@@ -15,6 +15,8 @@ use speakeasy_platform::LoopbackListener;
 use speakeasy_platform::ProcessGroup;
 use speakeasy_show::{Moment, Narration, Span, Word};
 use tokio::{
+    io::{AsyncReadExt as _, AsyncWriteExt as _},
+    net::TcpStream,
     process::{Child, Command},
     sync::watch,
     time::{sleep, timeout},
@@ -40,6 +42,8 @@ const INFERENCE_TIMEOUT: Duration = Duration::from_mins(30);
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const PARAKEET_RATES: RangeInclusive<u32> = 8_000..=96_000;
 const STOPPED: &str = "Transcription stopped. Check the selected model and engine, then try again.";
+#[cfg(not(target_os = "macos"))]
+const TAKEN: &str = "Another program took the speech engine's port. Try again.";
 
 const EXIT_GRACE: Duration = Duration::from_millis(500);
 const SIGILL: i32 = 4;
@@ -125,7 +129,7 @@ impl LocalSpeech {
     }
 
     async fn wait_until_serving(&mut self) -> anyhow::Result<()> {
-        let health = self.url(match self.protocol {
+        let health = self.route(match self.protocol {
             Protocol::Whisper => "health",
             Protocol::Nemo | Protocol::Nemotron => "ready",
         });
@@ -135,29 +139,10 @@ impl LocalSpeech {
                 bail!(startup_exit(self.child.wait().await?));
             }
             #[cfg(not(target_os = "macos"))]
-            match self.listener()? {
-                LoopbackListener::Missing => {
-                    sleep(HEALTH_POLL).await;
-                    continue;
-                },
-                LoopbackListener::Owned => {},
-                LoopbackListener::Foreign => {
-                    bail!("Another program took the speech engine's port. Try again.")
-                },
-            }
-            if let Ok(response) = self
-                .client
-                .get(&health)
-                .timeout(HEALTH_TIMEOUT)
-                .send()
-                .await
-                && response.status().is_success()
-            {
-                #[cfg(not(target_os = "macos"))]
-                ensure!(
-                    self.listener()? == LoopbackListener::Owned,
-                    "Another program took the speech engine's port. Try again."
-                );
+            let holds_port = || self.holds_port();
+            #[cfg(target_os = "macos")]
+            let holds_port = || Ok(true);
+            if healthy(self.port, &health, holds_port).await? {
                 return Ok(());
             }
             sleep(HEALTH_POLL).await;
@@ -171,6 +156,15 @@ impl LocalSpeech {
             .context("Cannot verify the speech engine's process. Try again.")
     }
 
+    #[cfg(not(target_os = "macos"))]
+    fn holds_port(&self) -> anyhow::Result<bool> {
+        match self.listener()? {
+            LoopbackListener::Missing => Ok(false),
+            LoopbackListener::Owned => Ok(true),
+            LoopbackListener::Foreign => bail!(TAKEN),
+        }
+    }
+
     #[cfg(unix)]
     fn leader_exited(&self) -> std::io::Result<bool> {
         self.group.leader_exited()
@@ -181,17 +175,15 @@ impl LocalSpeech {
         self.child.try_wait().map(|status| status.is_some())
     }
 
-    fn url(&self, path: &str) -> String {
-        let Self {
-            protocol,
-            port,
-            secret,
-            ..
-        } = self;
-        match protocol {
-            Protocol::Whisper => format!("http://{LOOPBACK}:{port}/{secret}/{path}"),
-            Protocol::Nemo | Protocol::Nemotron => format!("http://{LOOPBACK}:{port}/{path}"),
+    fn route(&self, endpoint: &str) -> String {
+        match self.protocol {
+            Protocol::Whisper => format!("/{}/{endpoint}", self.secret),
+            Protocol::Nemo | Protocol::Nemotron => format!("/{endpoint}"),
         }
+    }
+
+    fn url(&self, endpoint: &str) -> String {
+        format!("http://{LOOPBACK}:{}{}", self.port, self.route(endpoint))
     }
 
     async fn verify_listener(&mut self) -> anyhow::Result<()> {
@@ -583,6 +575,37 @@ async fn contain(child: &mut Child) -> anyhow::Result<ProcessGroup> {
             ))
         },
     }
+}
+
+async fn healthy(
+    port: u16,
+    route: &str,
+    mut holds_port: impl FnMut() -> anyhow::Result<bool>,
+) -> anyhow::Result<bool> {
+    if !holds_port()? {
+        return Ok(false);
+    }
+    let Ok(Ok(connection)) = timeout(HEALTH_TIMEOUT, TcpStream::connect((LOOPBACK, port))).await
+    else {
+        return Ok(false);
+    };
+    Ok(holds_port()?
+        && matches!(
+            timeout(HEALTH_TIMEOUT, succeeds(connection, port, route)).await,
+            Ok(Ok(true))
+        ))
+}
+
+async fn succeeds(mut connection: TcpStream, port: u16, route: &str) -> std::io::Result<bool> {
+    let request =
+        format!("GET {route} HTTP/1.1\r\nHost: {LOOPBACK}:{port}\r\nConnection: close\r\n\r\n");
+    connection.write_all(request.as_bytes()).await?;
+    let mut status_line = [0; 12];
+    connection.read_exact(&mut status_line).await?;
+    Ok(matches!(
+        status_line.split_first_chunk::<9>(),
+        Some((b"HTTP/1.1 " | b"HTTP/1.0 ", [b'2', _, _]))
+    ))
 }
 
 async fn unless_cancelled<T>(
