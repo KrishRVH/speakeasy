@@ -174,6 +174,11 @@ impl Settings {
                 let resolved = Preset::capture(preset.name(), &config)
                     .unwrap_or_else(|_unchanged| preset.clone());
                 self.presets.resolved = Some((preset.clone(), resolved.clone()));
+                let mut loaded = self.config.clone();
+                resolved.load(&mut loaded);
+                if self.saving.is_none() && !self.saves.needs_save(&loaded) {
+                    cx.update_global::<Services, _>(|services, _| services.checked = true);
+                }
                 self.load_preset(&resolved, cx);
             },
             Some(Err(reason)) => self.notice = Some(Notice::Problem(reason.into())),

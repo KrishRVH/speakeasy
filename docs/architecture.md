@@ -367,16 +367,16 @@ module unless a test file is named.
   that passed its file check unlocks permission assistance even when native shortcut access prevents
   the runtime from starting; settings whose engine or model failed that check at startup or Resume
   offer automatic setup instead of reporting local speech ready. Setup that leaves the saved speech
-  paths unchanged checks them again, since no save follows. A nonblank private result unlocks
-  completion; leaving practice clears its receipt and text. The guide never asks for Show
-  permissions or claims to verify external text delivery. Skip and Finish write an empty marker, the
-  selected settings file's name plus `.onboarded`, beside it on an owned worker, without saving or
-  replacing settings. Failed writes remain visible and retryable; shutdown drains an accepted write.
-  Startup opens an unfinished guide even after automatic model setup saved a valid configuration.
-  Replay preserves settings. Demo replay uses synthetic text without microphone access or a
-  completion write. State and file tests cover blocked transitions and marker failures; the Settings
-  native interaction test walks the simulated guide and checks text cleanup and preservation of
-  edits.
+  paths unchanged checks them again, and a preset Use that resolves to them counts as their check,
+  since no save follows either. A nonblank private result unlocks completion; leaving practice
+  clears its receipt and text. The guide never asks for Show permissions or claims to verify
+  external text delivery. Skip and Finish write an empty marker, the selected settings file's name
+  plus `.onboarded`, beside it on an owned worker, without saving or replacing settings. Failed
+  writes remain visible and retryable; shutdown drains an accepted write. Startup opens an
+  unfinished guide even after automatic model setup saved a valid configuration. Replay preserves
+  settings. Demo replay uses synthetic text without microphone access or a completion write. State
+  and file tests cover blocked transitions and marker failures; the Settings native interaction test
+  walks the simulated guide and checks text cleanup and preservation of edits.
 - **Setup**: [setup.rs](../crates/app/src/setup.rs) and [setup/](../crates/app/src/setup) choose,
   download, verify, and unpack engines and report which managed models are already downloaded; a
   full install is opt-in. Setup and update preparation report each step through
