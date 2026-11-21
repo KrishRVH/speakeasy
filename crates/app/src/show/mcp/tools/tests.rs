@@ -32,9 +32,11 @@ fn snapshot(directory: &Path) -> anyhow::Result<Vec<(PathBuf, Vec<u8>)>> {
 #[test]
 fn an_unmanaged_show_with_a_timestamped_name_has_no_managed_id_or_expiry() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
+    let managed = tempfile::tempdir()?;
     let name = "20261020T143205Z";
     fixture(root.path(), name)?;
-    let roots = Roots::open(&[root.path().to_owned()]).map_err(anyhow::Error::msg)?;
+    let roots = Roots::open(&[root.path().to_owned()], Some(managed.path().to_owned()))
+        .map_err(anyhow::Error::msg)?;
     let listed = content(&call(&roots, Tool::List, json!({})))?;
     let read = content(&call(&roots, Tool::Read, json!({"show": name})))?;
     for show in [&listed["shows"][0], &read["show"]] {
@@ -50,7 +52,7 @@ fn reads_preserve_edits_and_every_file_and_only_explicitly_expose_content() -> a
     let root = tempfile::tempdir()?;
     let directory = fixture(root.path(), "exact")?;
     let before = snapshot(root.path())?;
-    let roots = Roots::open(&[root.path().to_owned()]).map_err(anyhow::Error::msg)?;
+    let roots = Roots::open(&[root.path().to_owned()], None).map_err(anyhow::Error::msg)?;
     let listed = call(&roots, Tool::List, json!({}));
     assert_eq!(content(&listed)?["shows"].as_array().unwrap().len(), 1);
     assert!(!serde_json::to_string(&listed)?.contains("PRIVATE_"));
@@ -76,7 +78,7 @@ fn image_returns_exact_saved_bytes_and_never_falls_back_from_missing_source() ->
 {
     let root = tempfile::tempdir()?;
     let directory = fixture(root.path(), "exact")?;
-    let roots = Roots::open(&[root.path().to_owned()]).map_err(anyhow::Error::msg)?;
+    let roots = Roots::open(&[root.path().to_owned()], None).map_err(anyhow::Error::msg)?;
     for (selector, file) in [
         ("sheet", "contact-sheet.png"),
         ("keyframe", "frames/frame-01.png"),
@@ -140,7 +142,7 @@ fn image_returns_exact_saved_bytes_and_never_falls_back_from_missing_source() ->
 fn truncation_is_truthful_and_untimed_or_lost_narration_is_not_timed() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let directory = fixture(root.path(), "exact")?;
-    let roots = Roots::open(&[root.path().to_owned()]).map_err(anyhow::Error::msg)?;
+    let roots = Roots::open(&[root.path().to_owned()], None).map_err(anyhow::Error::msg)?;
     let text = "é".repeat(TEXT_LIMIT);
     fs::write(directory.join("summary.md"), &text)?;
     let mut manifest = fixture_manifest();
@@ -181,7 +183,7 @@ fn invalid_selectors_unknown_properties_damage_and_oversize_do_not_leak_content(
 -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let directory = fixture(root.path(), "exact")?;
-    let roots = Roots::open(&[root.path().to_owned()]).map_err(anyhow::Error::msg)?;
+    let roots = Roots::open(&[root.path().to_owned()], None).map_err(anyhow::Error::msg)?;
     for arguments in [
         json!({"show": "exact", "sheet": 0}),
         json!({"show": "exact", "sheet": 1, "keyframe": 1}),
@@ -241,7 +243,7 @@ fn linked_content_cannot_escape_an_allowed_bundle() -> anyhow::Result<()> {
         let temp = tempfile::tempdir()?;
         let root = temp.path().join("root");
         let directory = fixture(&root, "exact")?;
-        let roots = Roots::open(&[root]).map_err(anyhow::Error::msg)?;
+        let roots = Roots::open(&[root], None).map_err(anyhow::Error::msg)?;
         assert_eq!(
             call(&roots, tool, arguments.clone())["isError"],
             false,
@@ -257,5 +259,27 @@ fn linked_content_cannot_escape_an_allowed_bundle() -> anyhow::Result<()> {
             "{name}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn a_managed_id_belongs_to_the_directory_that_was_read() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let managed = temp.path().join("shows");
+    let name = "20261020T143205Z";
+    let original = fixture(&managed, name)?;
+    let roots = Roots::open(std::slice::from_ref(&managed), Some(managed.clone()))
+        .map_err(anyhow::Error::msg)?;
+    let current = content(&call(&roots, Tool::Read, json!({"show": name})))?;
+    assert_eq!(current["show"]["id"], name);
+    assert!(current["show"]["expiresAt"].is_string());
+    let folder = roots.resolve(name).map_err(anyhow::Error::msg)?;
+    fs::rename(&original, temp.path().join("moved"))?;
+    fs::write(fixture(&managed, name)?.join("summary.md"), "REPLACEMENT")?;
+    let read = read_folder(&roots, folder, None, false).map_err(anyhow::Error::msg)?;
+    let read: Value = serde_json::from_str(read[0]["text"].as_str().unwrap())?;
+    assert_eq!(read["summary"]["text"], "PRIVATE_EDITED_SUMMARY");
+    assert!(read["show"]["id"].is_null());
+    assert!(read["show"]["expiresAt"].is_null());
     Ok(())
 }

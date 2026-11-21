@@ -123,20 +123,30 @@ fn read(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
     let request: Read = decode(arguments)?;
     let query = lookup(request.at, request.mark, request.phrase, request.occurrence)?;
     let folder = roots.resolve(&request.show)?;
+    read_folder(roots, folder, query.as_ref(), request.narration)
+}
+
+fn read_folder(
+    roots: &Roots,
+    folder: Folder,
+    query: Option<&Query>,
+    with_narration: bool,
+) -> Result<Vec<Value>, String> {
     let entry = recall::Entry::read_from(folder.path, &folder.files);
     let manifest = manifest_of(&entry)?;
     let summary = recall::summary_from(&folder.files)
         .map_err(|_private| "Cannot read that Show's edited summary")?;
     let found = query
-        .as_ref()
         .map(|query| query.resolve(manifest))
         .transpose()
         .map_err(|safe| safe.to_string())?;
-    let narration = request.narration.then(|| narration(manifest));
     let content = ReadEvidence {
-        show: Inspection::of(&entry, roots.managed()),
+        show: Inspection::of(
+            &entry,
+            roots.managed_parent(&entry.directory, &folder.files),
+        ),
         summary: excerpt(&summary),
-        narration,
+        narration: with_narration.then(|| narration(manifest)),
         location: found,
     };
     Ok(vec![text(&content)?])

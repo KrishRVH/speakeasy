@@ -8,7 +8,7 @@ use speakeasy_show::Manifest;
 
 use crate::show::{
     evidence::Overview,
-    store::{self, address::ShowId, recall::Entry},
+    store::{address::ShowId, recall::Entry},
 };
 
 pub(super) const PAGE: usize = 100;
@@ -97,18 +97,23 @@ impl Root {
 }
 
 impl Roots {
-    pub(super) fn open(roots: &[PathBuf]) -> Result<Self, &'static str> {
+    pub(super) fn open(roots: &[PathBuf], managed: Option<PathBuf>) -> Result<Self, &'static str> {
         Ok(Self {
             roots: roots
                 .iter()
                 .map(|root| Root::open(root))
                 .collect::<Result<_, _>>()?,
-            managed: store::directory().ok(),
+            managed,
         })
     }
 
-    pub(super) fn managed(&self) -> Option<&Path> {
-        self.managed.as_deref()
+    pub(super) fn managed_parent(&self, directory: &Path, files: &ReadDirectory) -> Option<&Path> {
+        let managed = self.managed.as_deref()?;
+        let name = directory.file_name()?;
+        files
+            .is_at(&managed.join(name))
+            .unwrap_or(false)
+            .then_some(managed)
     }
 
     pub(super) fn resolve(&self, show: &str) -> Result<Folder, &'static str> {
@@ -221,7 +226,10 @@ impl Roots {
             .map(|path| {
                 let checked = self.check(&path)?;
                 let entry = Entry::read_from(checked.path, &checked.files);
-                Ok(Overview::of(&entry, self.managed()))
+                Ok(Overview::of(
+                    &entry,
+                    self.managed_parent(&entry.directory, &checked.files),
+                ))
             })
             .collect::<Result<Vec<_>, &'static str>>()?;
         Ok((rows, next))

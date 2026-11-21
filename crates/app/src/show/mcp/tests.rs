@@ -52,7 +52,7 @@ fn startup_requires_roots_and_setup_does_not_create_them() -> anyhow::Result<()>
     }
     let temp = tempfile::tempdir()?;
     let missing = temp.path().join("missing root");
-    assert!(Roots::open(slice::from_ref(&missing)).is_err());
+    assert!(Roots::open(slice::from_ref(&missing), None).is_err());
     let mut output = Vec::new();
     setup(
         Some(PathBuf::from("/fixture app/speakeasy")),
@@ -123,7 +123,7 @@ fn non_utf8_requested_and_canonical_roots_are_refused_without_private_paths() ->
         .join(OsString::from_vec(b"PRIVATE_ALIAS_\xff".to_vec()));
     symlink(&public, &private_alias)?;
     for path in [private, alias.join("shows"), private_alias.join("shows")] {
-        let error = Roots::open(&[path]).err().unwrap();
+        let error = Roots::open(&[path], None).err().unwrap();
         assert_eq!(error, "An MCP root path must be valid UTF-8");
     }
     Ok(())
@@ -136,13 +136,13 @@ fn roots_refuse_outside_sibling_prefix_parent_steps_and_ambiguous_names() -> any
     let sibling = temp.path().join("root-sibling");
     let inside = fixture(&root, "exact")?;
     let outside = fixture(&sibling, "exact")?;
-    let roots = Roots::open(slice::from_ref(&root)).map_err(anyhow::Error::msg)?;
+    let roots = Roots::open(slice::from_ref(&root), None).map_err(anyhow::Error::msg)?;
     assert_eq!(roots.resolve("exact").unwrap().path, inside.canonicalize()?);
     for path in [outside, root.join("../root/exact"), temp.path().to_owned()] {
         assert!(roots.resolve(path.to_str().unwrap()).is_err());
     }
     assert!(roots.resolve("latest").is_err());
-    let roots = Roots::open(&[root, sibling]).map_err(anyhow::Error::msg)?;
+    let roots = Roots::open(&[root, sibling], None).map_err(anyhow::Error::msg)?;
     assert!(roots.resolve("exact").is_err());
     assert_eq!(
         roots.resolve(inside.to_str().unwrap()).unwrap().path,
@@ -162,9 +162,9 @@ fn symlinked_bundles_and_symlinked_roots_are_refused() -> anyhow::Result<()> {
     let linked = root.join("linked");
     symlink(&outside, &linked)?;
     for root in [linked.clone(), linked.join(""), linked.join(".")] {
-        assert!(Roots::open(&[root]).is_err());
+        assert!(Roots::open(&[root], None).is_err());
     }
-    let roots = Roots::open(&[root]).map_err(anyhow::Error::msg)?;
+    let roots = Roots::open(&[root], None).map_err(anyhow::Error::msg)?;
     assert!(roots.resolve(linked.to_str().unwrap()).is_err());
     assert!(roots.list(None).unwrap().0.is_empty());
     Ok(())
@@ -178,7 +178,7 @@ fn listing_is_bounded_and_a_cursor_does_not_skip_the_next_show() -> anyhow::Resu
         fs::create_dir(&directory)?;
         fs::write(directory.join(Manifest::FILE), b"broken manifest")?;
     }
-    let roots = Roots::open(&[temp.path().to_owned()]).map_err(anyhow::Error::msg)?;
+    let roots = Roots::open(&[temp.path().to_owned()], None).map_err(anyhow::Error::msg)?;
     let (first, cursor) = roots.list(None).map_err(anyhow::Error::msg)?;
     assert_eq!(first.len(), 100);
     let cursor = cursor.unwrap();
@@ -203,8 +203,8 @@ fn explicit_root_ancestor_alias_is_fixed_at_launch_but_child_links_are_refused()
     let directory = fixture(&actual.join("shows"), "exact")?;
     let alias = temp.path().join("alias");
     symlink(&actual, &alias)?;
-    let roots =
-        Roots::open(&[temp.path().to_owned(), alias.join("shows")]).map_err(anyhow::Error::msg)?;
+    let roots = Roots::open(&[temp.path().to_owned(), alias.join("shows")], None)
+        .map_err(anyhow::Error::msg)?;
     assert_eq!(
         roots
             .resolve(alias.join("shows/exact").to_str().unwrap())
@@ -225,7 +225,7 @@ fn explicit_root_ancestor_alias_is_fixed_at_launch_but_child_links_are_refused()
 #[test]
 fn internal_show_directories_are_neither_listed_nor_resolved() -> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;
-    let roots = Roots::open(&[temp.path().to_owned()]).map_err(anyhow::Error::msg)?;
+    let roots = Roots::open(&[temp.path().to_owned()], None).map_err(anyhow::Error::msg)?;
     for name in [
         ".expired-20261020T143205Z",
         ".partial-example",

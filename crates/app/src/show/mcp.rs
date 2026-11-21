@@ -88,7 +88,8 @@ impl Command {
                 out,
             )?,
             Self::Serve { roots } => {
-                let roots = Roots::open(&roots).map_err(anyhow::Error::msg)?;
+                let roots = Roots::open(&roots, super::store::directory().ok())
+                    .map_err(anyhow::Error::msg)?;
                 protocol::serve(&roots, &mut io::stdin().lock(), out)?;
             },
         }
