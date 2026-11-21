@@ -61,9 +61,11 @@ Shows on a layer-shell desktop, which GPUI's report already refused. PointerRoot
 portal path queries focus on the owned X clipboard worker, which keeps cancellation responsive and
 opens the clipboard only for a copy.
 
-Automatic paste requires released modifiers. X11 queries the X server's key state; Wayland requires
-actual EI modifier feedback and a paste key from the advertised layout. Shortcut deactivation alone
-is insufficient. Unknown state yields an explicit manual-paste result. X11 automatic paste requires
+Automatic paste requires released modifiers. X11 queries the X server's key state; Wayland follows
+the EIS modifier events as
+[native contracts](native-contracts.md#linux-desktop-and-transfer-ownership) state and needs a paste
+key from the advertised layout. Shortcut deactivation alone is insufficient. A paused EI keyboard or
+a keymap Speakeasy cannot read yields an explicit manual-paste result. X11 automatic paste requires
 the first keyboard layout with an unshifted V key; other layouts receive manual-paste guidance.
 Clipboard writes are followed by ownership and cancellation checks; cleanup never restores a stale
 clipboard payload. Submitted synthetic keys receive release cleanup even after partial failure. X11
@@ -180,9 +182,10 @@ transfer descriptors alive as required, retire stale transfers, and preserve a n
 owner.
 
 EI sender feedback reports logical XKB masks, not a passive physical key stream. Parse the device
-keymap and inspect relevant modifier indices; Caps/Num Lock alone must not block insertion. Missing,
-paused, or disconnected feedback is unknown, and sender sync does not order the separate shortcut
-D-Bus stream. Compositor support needs native validation; compare the pinned
+keymap and inspect relevant modifier indices; Caps/Num Lock alone must not block insertion. A client
+assumes every modifier lifted when a device pauses, the EIS reports any nonzero state after it
+resumes, and sender sync does not order the separate shortcut D-Bus stream. Compositor support needs
+native validation; compare the pinned
 [Mutter 50 implementation](https://raw.githubusercontent.com/GNOME/mutter/50.0/src/backends/meta-eis-client.c),
 [Mutter 49 implementation](https://raw.githubusercontent.com/GNOME/mutter/49.0/src/backends/meta-eis-client.c),
 and [KDE modifier-feedback change](https://kde.org/announcements/changelogs/plasma/6/6.6.5-6.6.90/).

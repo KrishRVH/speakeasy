@@ -713,7 +713,7 @@ For the tar package, link its absolute `Speakeasy.AppDir/AppRun` path instead, a
 desktop file from `usr/share/applications` inside that directory. For AppImage, make it executable,
 link its absolute path as `speakeasy`, and install the desktop file from this repository or its
 `--appimage-extract` output. The executable stays in the chosen location. On Wayland, automatic
-paste needs compositor modifier feedback and libei, and typing needs EI direct text support; X11
+paste needs libei and the compositor's EI keyboard, and typing needs EI direct text support; X11
 pastes through XTest and cannot type. Settings' **Insert text by** control chooses **Paste
 (Ctrl+V)**, **Paste (Ctrl+Shift+V)** for terminals, **Type (keeps clipboard)**, or **Copy for manual
 paste** if automatic insertion is unavailable. X11 automatic paste needs the first keyboard layout
