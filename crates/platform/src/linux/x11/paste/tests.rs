@@ -157,6 +157,33 @@ fn focus_moving_to_speakeasy_during_the_last_clipboard_check_refuses_the_paste()
     Ok(())
 }
 
+#[test]
+fn a_copy_escaped_before_its_outcome_reports_cancellation_and_a_kept_one_commits()
+-> anyhow::Result<()> {
+    let (events, _received) = async_channel::bounded(1);
+    let input = InputSender::new(events);
+    let kept = input.begin().context("Kept recording")?;
+    assert_eq!(
+        settle_copy(&kept, COPIED_FOR_MANUAL_PASTE),
+        COPIED_FOR_MANUAL_PASTE
+    );
+    assert!(!kept.active(), "A kept copy left its recording cancellable");
+    let escaped = input.begin().context("Escaped recording")?;
+    escaped.revoke();
+    for outcome in [
+        COPIED_FOR_MANUAL_PASTE,
+        PASTE_AFTER_RELEASE,
+        CLIPBOARD_CHANGED,
+    ] {
+        assert_eq!(
+            settle_copy(&escaped, outcome),
+            Inserted::Cancelled,
+            "A copy reported an outcome after Escape"
+        );
+    }
+    Ok(())
+}
+
 #[tokio::test]
 async fn readiness_waits_for_insertion_setup_and_follows_its_failure_report() -> anyhow::Result<()>
 {

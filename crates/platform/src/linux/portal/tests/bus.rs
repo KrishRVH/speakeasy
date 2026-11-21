@@ -219,11 +219,7 @@ impl ClipboardAccess for Focus {
         Ok(true)
     }
 
-    fn set_text(
-        &mut self,
-        _: &str,
-        _: &InsertPermit,
-    ) -> anyhow::Result<Option<x11rb::protocol::xproto::Window>> {
+    fn write_text(&mut self, _: &str, _: &InsertPermit) -> anyhow::Result<bool> {
         bail!("The portal clipboard used the X11 clipboard")
     }
 

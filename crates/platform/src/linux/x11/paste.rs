@@ -20,7 +20,7 @@ use super::{
     clipboard::{Clipboard, ClipboardAccess as _},
 };
 use crate::{
-    Delivery, InputSender, Inserted, LinuxPaste, OwnedThread,
+    Delivery, InputSender, InsertPermit, Inserted, LinuxPaste, OwnedThread,
     insertion::{
         Insertion, MODIFIER_WAIT, PASTE_AFTER_RELEASE, Reply, abandon_queued,
         wait_for_released_modifiers,
@@ -164,10 +164,16 @@ impl Paster {
             }));
         };
         let Some(keys) = keys else {
-            return Ok(ControlFlow::Break(COPIED_FOR_MANUAL_PASTE));
+            return Ok(ControlFlow::Break(settle_copy(
+                &request.permit,
+                COPIED_FOR_MANUAL_PASTE,
+            )));
         };
         if shortcut_held {
-            return Ok(ControlFlow::Break(PASTE_AFTER_RELEASE));
+            return Ok(ControlFlow::Break(settle_copy(
+                &request.permit,
+                PASTE_AFTER_RELEASE,
+            )));
         }
         Ok(ControlFlow::Continue((owner, keys)))
     }
@@ -218,6 +224,14 @@ impl Paster {
                 "Text copied, but automatic paste failed and was not retried. Paste it manually.",
             ),
         })
+    }
+}
+
+fn settle_copy(permit: &InsertPermit, outcome: Inserted) -> Inserted {
+    match outcome {
+        Inserted::Copied(_) if !permit.commit() => Inserted::Cancelled,
+        Inserted::Unavailable(_) if !permit.active() => Inserted::Cancelled,
+        outcome => outcome,
     }
 }
 

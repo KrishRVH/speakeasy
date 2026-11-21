@@ -21,7 +21,7 @@ async fn a_blocked_focus_query_stays_off_the_caller_and_never_touches_clipboard_
             Ok(false)
         }
 
-        fn set_text(&mut self, _: &str, _: &InsertPermit) -> anyhow::Result<Option<Window>> {
+        fn write_text(&mut self, _: &str, _: &InsertPermit) -> anyhow::Result<bool> {
             bail!("Focus accessed clipboard contents")
         }
 
@@ -68,9 +68,9 @@ async fn clipboard_setup_does_not_block_cancel_and_skips_a_stale_queued_copy() -
             Ok(false)
         }
 
-        fn set_text(&mut self, _: &str, _: &InsertPermit) -> anyhow::Result<Option<Window>> {
+        fn write_text(&mut self, _: &str, _: &InsertPermit) -> anyhow::Result<bool> {
             self.0.send(())?;
-            Ok(Some(7))
+            Ok(true)
         }
 
         fn owner(&self) -> anyhow::Result<Window> {
@@ -146,7 +146,7 @@ async fn paste_needs_its_own_text_from_the_same_owner_after_looking_up_focus() -
             Ok(true)
         }
 
-        fn set_text(&mut self, _: &str, _: &InsertPermit) -> anyhow::Result<Option<Window>> {
+        fn write_text(&mut self, _: &str, _: &InsertPermit) -> anyhow::Result<bool> {
             bail!("The selection was already written")
         }
 
@@ -188,6 +188,41 @@ async fn paste_needs_its_own_text_from_the_same_owner_after_looking_up_focus() -
     Ok(())
 }
 
+#[test]
+fn escape_during_the_checks_after_a_copy_withdraws_it() -> anyhow::Result<()> {
+    struct Escaping(InsertPermit);
+
+    impl ClipboardAccess for Escaping {
+        fn external_target(&self, _: HostSession) -> anyhow::Result<bool> {
+            Ok(false)
+        }
+
+        fn write_text(&mut self, _: &str, _: &InsertPermit) -> anyhow::Result<bool> {
+            Ok(true)
+        }
+
+        fn owner(&self) -> anyhow::Result<Window> {
+            Ok(7)
+        }
+
+        fn holds_text(&mut self, _: &str) -> anyhow::Result<bool> {
+            self.0.revoke();
+            Ok(true)
+        }
+    }
+
+    let (events, _received) = async_channel::bounded(1);
+    let input = InputSender::new(events);
+    let permit = input.begin().context("Recording")?;
+    let mut clipboard = Escaping(permit.clone());
+    assert_eq!(
+        clipboard.set_text("fixture", &permit)?,
+        None,
+        "A copy cancelled while its content was checked still reported its owner"
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_panicking_clipboard_thread_answers_its_request_and_reports_why() -> anyhow::Result<()> {
     struct PanickingClipboard;
@@ -197,7 +232,7 @@ async fn a_panicking_clipboard_thread_answers_its_request_and_reports_why() -> a
             Ok(false)
         }
 
-        fn set_text(&mut self, _: &str, _: &InsertPermit) -> anyhow::Result<Option<Window>> {
+        fn write_text(&mut self, _: &str, _: &InsertPermit) -> anyhow::Result<bool> {
             panic::resume_unwind(Box::new("private payload"))
         }
 

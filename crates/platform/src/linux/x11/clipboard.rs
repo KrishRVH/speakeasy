@@ -185,9 +185,17 @@ fn answer<T>(
 
 pub(in crate::linux) trait ClipboardAccess {
     fn external_target(&self, host: HostSession) -> anyhow::Result<bool>;
-    fn set_text(&mut self, text: &str, permit: &InsertPermit) -> anyhow::Result<Option<Window>>;
+    fn write_text(&mut self, text: &str, permit: &InsertPermit) -> anyhow::Result<bool>;
     fn owner(&self) -> anyhow::Result<Window>;
     fn holds_text(&mut self, text: &str) -> anyhow::Result<bool>;
+
+    fn set_text(&mut self, text: &str, permit: &InsertPermit) -> anyhow::Result<Option<Window>> {
+        if !self.write_text(text, permit)? || !self.holds_text(text)? {
+            return Ok(None);
+        }
+        let owner = self.owner()?;
+        Ok((self.holds(owner, text)? && permit.active()).then_some(owner))
+    }
 
     fn holds(&mut self, owner: Window, text: &str) -> anyhow::Result<bool> {
         Ok(owner != x11rb::NONE && self.holds_text(text)? && self.owner()? == owner)
@@ -224,18 +232,12 @@ impl ClipboardAccess for Clipboard {
         has_external_target(&self.connection, host)
     }
 
-    fn set_text(&mut self, text: &str, permit: &InsertPermit) -> anyhow::Result<Option<Window>> {
-        if !copy_when(
+    fn write_text(&mut self, text: &str, permit: &InsertPermit) -> anyhow::Result<bool> {
+        copy_when(
             || permit.active(),
             || self.native(),
             |native| Ok(native.set_text(text)?),
-        )? || !self.holds_text(text)?
-        {
-            return Ok(None);
-        }
-
-        let owner = self.owner()?;
-        Ok(self.holds(owner, text)?.then_some(owner))
+        )
     }
 
     fn owner(&self) -> anyhow::Result<Window> {
