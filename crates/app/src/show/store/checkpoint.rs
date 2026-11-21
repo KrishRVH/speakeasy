@@ -10,8 +10,8 @@ use std::{
 
 use anyhow::Context as _;
 pub(crate) use audio::{KeptAudio, MAX_CUES};
-pub(crate) use keeper::{AudioLog, FrameLog, Keeper, Kept};
-use speakeasy_show::{Bundle, Moment, Narration, Take, log};
+pub(crate) use keeper::{AudioEnding, AudioLog, FrameLog, Keeper, Kept};
+use speakeasy_show::{Bundle, Moment, Narration, NarrationLoss, Take, log};
 
 use super::{
     Staged, address::ShowId, age, entry_exists, found, movie, recall, remove_if_present,
@@ -215,12 +215,17 @@ impl Checkpoint {
             .context("Cannot retain Show voice; its checkpoint remains available")
     }
 
-    pub(crate) fn narrate(&self, narration: &Narration, incomplete: bool) -> anyhow::Result<()> {
+    pub(crate) fn narrate(
+        &self,
+        narration: &Narration,
+        loss: Option<NarrationLoss>,
+    ) -> anyhow::Result<()> {
         let bytes = zeroize::Zeroizing::new(
             serde_json::to_vec(&StoredNarration {
                 version: NARRATION_VERSION,
                 narration,
-                incomplete,
+                incomplete: loss == Some(NarrationLoss::Incomplete),
+                audio_silent: loss == Some(NarrationLoss::AudioSilent),
             })
             .map_err(|_private_content| anyhow::anyhow!("Cannot encode recovered narration"))?,
         );
@@ -235,13 +240,10 @@ impl Checkpoint {
             .persist(self.directory.join(NARRATION))
             .map_err(|error| error.error)?;
         sync_directory(&self.directory)?;
-
-        remove_if_present(&self.directory.join(PUBLISHED))?;
-        sync_directory(&self.directory)?;
         Ok(())
     }
 
-    pub(crate) fn narration(&self) -> anyhow::Result<Option<(Narration, bool)>> {
+    pub(crate) fn narration(&self) -> anyhow::Result<Option<(Narration, Option<NarrationLoss>)>> {
         let read = recall::read_file(&self.directory, NARRATION, NARRATION_LIMIT)
             .map(zeroize::Zeroizing::new);
         let Some(bytes) = found(read)? else {
@@ -255,19 +257,22 @@ impl Checkpoint {
             saved.version == NARRATION_VERSION,
             "The saved Show narration is unsupported"
         );
-        Ok(Some((saved.narration, saved.incomplete)))
+        let loss = if saved.audio_silent {
+            Some(NarrationLoss::AudioSilent)
+        } else {
+            saved.incomplete.then_some(NarrationLoss::Incomplete)
+        };
+        Ok(Some((saved.narration, loss)))
     }
 
     pub(crate) fn audio(&self) -> anyhow::Result<Option<KeptAudio>> {
-        if !self.has_audio()? {
-            return Ok(None);
-        }
-        recall::regular_file(&self.directory, audio::FILE, audio::FILE_LIMIT)?;
-        audio::read(File::open(self.directory.join(audio::FILE))?).map(Some)
+        audio::available(&self.directory, audio::FILE)?
+            .map(audio::read)
+            .transpose()
     }
 
     pub(crate) fn has_audio(&self) -> anyhow::Result<bool> {
-        Ok(entry_exists(&self.directory.join(audio::FILE))?)
+        Ok(audio::available(&self.directory, audio::FILE)?.is_some())
     }
 
     pub(in crate::show) fn pending(&self) -> anyhow::Result<bool> {
@@ -309,8 +314,8 @@ impl Checkpoint {
     }
 
     pub(crate) fn replay(&self) -> anyhow::Result<Take> {
-        let opened = recall::regular_file(&self.directory, LOG, FILE_LIMIT)
-            .and_then(|()| File::open(self.directory.join(LOG)));
+        let directory = recall::open_directory(&self.directory)?;
+        let opened = recall::open_file(&directory, LOG, FILE_LIMIT);
         let mut reader = io::BufReader::new(found(opened)?.context(NO_FRAMES)?);
         let mut header = [0; log::HEADER_BYTES];
         reader
@@ -572,6 +577,8 @@ struct StoredNarration<N> {
     version: u32,
     narration: N,
     incomplete: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    audio_silent: bool,
 }
 
 pub(crate) enum Checkpointing {
@@ -581,7 +588,7 @@ pub(crate) enum Checkpointing {
 
 pub(crate) enum Release {
     Discard,
-    Keep(Option<(Narration, bool)>),
+    Keep(Option<(Narration, Option<NarrationLoss>)>),
 }
 
 impl Checkpointing {
@@ -598,9 +605,7 @@ impl Checkpointing {
         };
         tokio::task::spawn_blocking(move || match release {
             Release::Discard => checkpoint.discard(),
-            Release::Keep(Some((narration, incomplete))) => {
-                checkpoint.narrate(&narration, incomplete)
-            },
+            Release::Keep(Some((narration, loss))) => checkpoint.narrate(&narration, loss),
             Release::Keep(None) => Ok(()),
         })
         .await

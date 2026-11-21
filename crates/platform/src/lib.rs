@@ -4,6 +4,7 @@ compile_error!("Speakeasy supports Windows, macOS, and Linux.");
 mod awake;
 mod clipboard;
 mod desktop;
+mod directory;
 mod image;
 mod input;
 mod insertion;
@@ -35,6 +36,8 @@ pub use self::linux::{
 use self::macos as native;
 #[cfg(target_os = "macos")]
 pub use self::macos::StatusItem;
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+pub use self::process::LoopbackListener;
 #[cfg(target_os = "windows")]
 use self::windows as native;
 #[cfg(target_os = "windows")]
@@ -49,6 +52,7 @@ pub use self::{
         WindowsShortcut, attach_stdio, copy_text, prepare, reduced_motion, secure_input,
         show_startup_error,
     },
+    directory::{ReadDirectory, open_lock},
     image::BgraImage,
     input::{IdleInput, Input, InputSender, InsertPermit, Taps},
     insertion::{Delivery, Enter, FocusReport, Inserted, Inserter, OwnFocus},

@@ -17,7 +17,7 @@ const TILE: usize = 64;
 pub const MAX_FRAME_EDGE: u32 = 2_560;
 const EDGE: usize = MAX_FRAME_EDGE as usize;
 const PIXEL: usize = 4;
-const DURATION_LIMIT: Moment = Moment::from_millis(360_000);
+pub const DURATION_LIMIT: Moment = Moment::from_millis(360_000);
 const ENTRY_OVERHEAD: usize = Signature::BYTES + 64;
 const TILE_OVERHEAD: usize = 32;
 
@@ -107,13 +107,19 @@ impl Journal {
 
     #[must_use = "an unused admission skips its frame"]
     pub fn admit(&mut self) -> Option<Admission<'_>> {
-        let admitted = self.admits();
+        let admitted = self.admits() && self.has_time();
         self.arrived = self.arrived.saturating_add(1);
         admitted.then_some(Admission(self))
     }
 
     const fn admits(&self) -> bool {
         self.arrived.is_multiple_of(self.stride)
+    }
+
+    fn has_time(&self) -> bool {
+        self.samples
+            .last()
+            .is_none_or(|sample| sample.at < DURATION_LIMIT)
     }
 
     #[must_use]
@@ -249,7 +255,7 @@ impl Journal {
     }
 
     fn restore(&mut self, at: Moment, entry: Option<&Entry>) -> Result<(), SourceError> {
-        if let Some(entry) = entry {
+        if let Some(entry) = entry.filter(|_| self.has_time()) {
             require(self.admits(), "checkpoint frame disagrees with sampling")?;
             require(
                 entry.reset
@@ -268,6 +274,7 @@ impl Journal {
     }
 
     fn push(&mut self, at: Moment, entry: &Entry) {
+        let at = at.min(DURATION_LIMIT);
         let at = self.samples.last().map_or(at, |last| {
             at.max(last.at.saturating_add(Duration::from_millis(1)))
         });

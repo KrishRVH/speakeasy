@@ -1,5 +1,5 @@
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, File},
     io::{self, Read, Write as _},
     net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
@@ -26,6 +26,7 @@ const MAX_PORT_FILE_BYTES: u64 = 64;
 
 const ACKNOWLEDGED: u8 = 0x06;
 const CONTROL: u8 = 3;
+const MAX_HANDSHAKES: usize = 16;
 const MAX_CONTROL_CALLS: usize = 8;
 const IO_TIMEOUT: Duration = Duration::from_millis(100);
 const ACCEPT_RETRY: Duration = Duration::from_millis(10);
@@ -75,12 +76,7 @@ impl Instance {
         fs::create_dir_all(directory)
             .with_context(|| format!("Cannot create {}", directory.display()))?;
         let lock_file = directory.join(LOCK_FILE);
-        let lock = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(&lock_file)
+        let lock = speakeasy_platform::open_lock(&lock_file)
             .with_context(|| format!("Cannot open {}", lock_file.display()))?;
         match lock.try_lock() {
             Ok(()) => {},
@@ -275,9 +271,10 @@ async fn accept_connections<F>(
 ) where
     F: Future<Output = io::Result<AsyncStream>> + Send,
 {
+    let mut handshakes = JoinSet::new();
     let mut controls = JoinSet::new();
     loop {
-        let accepted = tokio::select! {
+        let (stream, request) = tokio::select! {
             biased;
             () = requests.closed() => break,
             Some(completed) = controls.join_next(), if !controls.is_empty() => {
@@ -288,17 +285,26 @@ async fn accept_connections<F>(
                 let _ = completed;
                 continue;
             },
-            accepted = accept() => accepted,
-        };
-        let Ok(mut stream) = accepted else {
-            tokio::select! {
-                () = requests.closed() => break,
-                () = tokio::time::sleep(ACCEPT_RETRY) => {},
-            }
-            continue;
-        };
-        let Ok(Some(request)) = handshake(&mut stream, nonce).await else {
-            continue;
+            Some(finished) = handshakes.join_next(), if !handshakes.is_empty() => {
+                let Ok(Some(request)) = finished else {
+                    continue;
+                };
+                request
+            },
+            accepted = accept(), if handshakes.len() < MAX_HANDSHAKES => {
+                if let Ok(mut stream) = accepted {
+                    handshakes.spawn(async move {
+                        let request = handshake(&mut stream, nonce).await.ok().flatten()?;
+                        Some((stream, request))
+                    });
+                } else {
+                    tokio::select! {
+                        () = requests.closed() => break,
+                        () = tokio::time::sleep(ACCEPT_RETRY) => {},
+                    }
+                }
+                continue;
+            },
         };
 
         match request {
@@ -325,6 +331,7 @@ async fn accept_connections<F>(
             },
         }
     }
+    handshakes.shutdown().await;
     controls.shutdown().await;
 }
 
@@ -344,13 +351,19 @@ async fn handshake(stream: &mut AsyncStream, nonce: u128) -> io::Result<Option<I
         stream.write_all(&[ACKNOWLEDGED]).await?;
         let byte = stream.read_u8().await?;
         if byte == CONTROL {
-            let length = usize::from(stream.read_u16().await?);
-            if length > control::MAX_BYTES {
-                return Ok(Some(Incoming::Control(Err(
-                    "The control command exceeds its size limit.",
-                ))));
+            let length = stream.read_u16().await?;
+            if usize::from(length) > control::MAX_BYTES {
+                write_reply(
+                    stream,
+                    Reply::refused("The control command exceeds its size limit."),
+                )
+                .await?;
+                stream.shutdown().await?;
+                tokio::io::copy(&mut stream.take(u64::from(length)), &mut tokio::io::sink())
+                    .await?;
+                return Ok(None);
             }
-            let mut bytes = vec![0; length];
+            let mut bytes = vec![0; usize::from(length)];
             stream.read_exact(&mut bytes).await?;
             return Ok(Some(Incoming::Control(Command::decode(&bytes))));
         }
@@ -402,13 +415,13 @@ async fn serve_control(
     command: Result<Command, &'static str>,
     requests: &Sender<Event>,
 ) -> io::Result<()> {
-    match stream.try_read(&mut [0]) {
-        Ok(_) => return Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {},
-        Err(error) => return Err(error),
-    }
     let reply = match command {
         Ok(command) => {
+            match stream.try_read(&mut [0]) {
+                Ok(_) => return Ok(()),
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {},
+                Err(error) => return Err(error),
+            }
             let (call, receipt) = Call::new(command);
             let deadline = call.deadline();
             match requests.try_send(Event::Control(call)) {
@@ -434,6 +447,10 @@ async fn serve_control(
         },
         Err(reason) => Reply::refused(reason),
     };
+    write_reply(&mut stream, reply).await
+}
+
+async fn write_reply(stream: &mut AsyncStream, reply: Reply) -> io::Result<()> {
     let bytes = reply
         .encode()
         .or_else(|_| Reply::unknown(UNCONFIRMED).encode())

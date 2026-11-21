@@ -9,8 +9,7 @@ use async_channel::{Receiver, Sender};
 use futures_util::{FutureExt as _, StreamExt as _, future::LocalBoxFuture};
 use x11rb::protocol::xproto::Window;
 use zbus::{
-    Message, Proxy,
-    proxy::SignalStream,
+    Message, MessageStream, Proxy,
     zvariant::{OwnedObjectPath, Value},
 };
 
@@ -74,14 +73,13 @@ impl<'a> Insertions<'a> {
     )]
     pub(super) async fn serve(
         mut self,
-        mut transfer_requests: SignalStream<'_>,
+        mut transfer_requests: Option<MessageStream>,
         requests: Receiver<Insertion>,
         input: &InputSender,
         stopping: &Receiver<Infallible>,
     ) -> anyhow::Result<()> {
         loop {
             self.advance_waiting()?;
-            let accepts_transfers = self.accepts_transfers();
             let idle = self.in_flight.is_none();
             let modifier_wait = or_pending(self.modifier_wait());
             let prepared = or_pending(
@@ -102,8 +100,8 @@ impl<'a> Insertions<'a> {
                 },
                 prepared = prepared => self.advance_preparation(prepared)?,
                 _ = self.transfers.next(), if !self.transfers.is_empty() => {},
-                event = transfer_requests.next(), if accepts_transfers => {
-                    self.serve_transfer(&event.context(CLIPBOARD_DISCONNECTED)?)?;
+                event = or_pending(transfer_requests.as_mut().map(|stream| stream.next())) => {
+                    self.serve_transfer(&event.context(CLIPBOARD_DISCONNECTED)??).await?;
                 },
                 request = requests.recv(), if idle => match request {
                     Ok(request) => {
@@ -134,8 +132,7 @@ impl<'a> Insertions<'a> {
     }
 
     fn accepts_transfers(&self) -> bool {
-        self.clipboard_session().is_some()
-            && self.transfers.len() < MAX_TRANSFERS
+        self.transfers.len() < MAX_TRANSFERS
             && !matches!(
                 self.in_flight,
                 Some(InFlight {
@@ -152,12 +149,7 @@ impl<'a> Insertions<'a> {
     }
 
     fn apply(&mut self, notice: Notice) {
-        apply_notice(
-            notice,
-            self.remote.as_mut().map(|remote| &mut remote.sender),
-            &mut self.selection,
-            &mut self.forfeited,
-        );
+        apply_notice(notice, &mut self.selection, &mut self.forfeited);
     }
 
     fn modifier_wait(&self) -> Option<tokio::time::Sleep> {
@@ -207,22 +199,25 @@ impl<'a> Insertions<'a> {
     }
 
     fn advance_preparation(&mut self, prepared: anyhow::Result<Prepared>) -> anyhow::Result<()> {
-        let request = self
+        let InFlight { request, phase } = self
             .in_flight
             .take()
-            .context("Missing clipboard preparation")?
-            .request;
+            .context("Missing clipboard preparation")?;
         let permit = request.permit.clone();
         let task = match prepared {
             Ok(Prepared::SelectionSet) => {
-                self.selection = Some(Selection::new(&request.text, permit.clone()));
+                self.selection = None;
+                if !permit.active() {
+                    request.reply.send(Ok(Inserted::Cancelled));
+                    return Ok(());
+                }
                 confirm_selection(self.selecting, permit).boxed_local()
             },
             Ok(Prepared::Copied { owner }) => {
-                confirm_owner(self.worker, owner, permit).boxed_local()
+                prepare_x11_paste(self.worker, owner, permit).boxed_local()
             },
             Ok(Prepared::Ownership { owned }) => {
-                query_focus(self.worker, permit, Route::Paste { owned }).boxed_local()
+                query_focus(self.worker, permit, Route::PortalPaste { owned }).boxed_local()
             },
             Ok(Prepared::NotCopied) => {
                 let outcome = if permit.active() {
@@ -237,7 +232,14 @@ impl<'a> Insertions<'a> {
                 return self.finish(request, external, route);
             },
             Err(error) => {
-                request.reply.send(Err(error));
+                if matches!(phase, Phase::SettingSelection(_)) {
+                    self.selection = None;
+                }
+                request.reply.send(if permit.active() {
+                    Err(error)
+                } else {
+                    Ok(Inserted::Cancelled)
+                });
                 return Ok(());
             },
         };
@@ -254,7 +256,7 @@ impl<'a> Insertions<'a> {
         let sender = self.remote.as_mut().map(|remote| &mut remote.sender);
         let outcome = match route {
             Route::Direct => insert_direct(sender, &request, external),
-            Route::Paste { owned } => finish_paste(
+            Route::X11Paste { owned } | Route::PortalPaste { owned } => finish_paste(
                 sender,
                 &request,
                 self.paste,
@@ -263,11 +265,20 @@ impl<'a> Insertions<'a> {
                 self.forfeited.as_ref(),
             ),
         };
+        let outcome = if matches!(route, Route::PortalPaste { .. }) {
+            publish_portal_selection(&mut self.selection, &request, outcome)
+        } else {
+            outcome
+        };
         request.reply.send(Ok(outcome));
         Ok(())
     }
 
-    fn serve_transfer(&self, event: &Message) -> anyhow::Result<()> {
+    #[expect(
+        clippy::future_not_send,
+        reason = "The desktop thread keeps the native sender and its transfer futures on one LocalSet"
+    )]
+    async fn serve_transfer(&self, event: &Message) -> anyhow::Result<()> {
         let (path, mime, serial): (OwnedObjectPath, String, u32) = event.body().deserialize()?;
         if self.clipboard_session() != Some(&path) {
             return Ok(());
@@ -275,9 +286,17 @@ impl<'a> Insertions<'a> {
         let payload = self
             .selection
             .as_ref()
-            .filter(|_| PLAIN_TEXT.contains(&mime.as_str()))
+            .filter(|_| self.accepts_transfers() && PLAIN_TEXT.contains(&mime.as_str()))
             .map(Selection::payload);
         let clipboard = self.clipboard;
+        let Some(payload) = payload else {
+            tokio::time::timeout(
+                SELECTION_TIMEOUT,
+                clipboard.call_noreply("SelectionWriteDone", &(path, serial, false)),
+            )
+            .await??;
+            return Ok(());
+        };
         let session = path.clone();
         let write = async move {
             let fd: zbus::zvariant::OwnedFd =
@@ -334,7 +353,8 @@ enum Prepared {
 
 enum Route {
     Direct,
-    Paste { owned: bool },
+    X11Paste { owned: bool },
+    PortalPaste { owned: bool },
 }
 
 async fn set_selection(
@@ -378,13 +398,15 @@ async fn confirm_selection(
     Ok(Prepared::Ownership { owned })
 }
 
-async fn confirm_owner(
+async fn prepare_x11_paste(
     worker: &x11::ClipboardWorker,
-    owner: Window,
+    selection_window: Window,
     permit: InsertPermit,
 ) -> anyhow::Result<Prepared> {
-    Ok(Prepared::Ownership {
-        owned: worker.owns(owner, permit).await?,
+    let (external, owned) = worker.paste_target(selection_window, permit).await?;
+    Ok(Prepared::Target {
+        external,
+        route: Route::X11Paste { owned },
     })
 }
 
@@ -474,6 +496,21 @@ fn finish_paste(
     Inserted::Sent
 }
 
+fn publish_portal_selection(
+    selection: &mut Option<Selection>,
+    request: &Insertion,
+    outcome: Inserted,
+) -> Inserted {
+    match outcome {
+        Inserted::Sent => {},
+        Inserted::Copied(_) if request.permit.commit() => {},
+        Inserted::Copied(_) => return Inserted::Cancelled,
+        Inserted::Cancelled | Inserted::Unavailable(_) => return outcome,
+    }
+    *selection = Some(Selection::new(&request.text, request.permit.clone()));
+    outcome
+}
+
 const fn paste_remedy(blocked: PasteBlocked) -> Inserted {
     match blocked {
         PasteBlocked::NoKeyboard => Inserted::Copied(
@@ -491,27 +528,18 @@ const fn paste_remedy(blocked: PasteBlocked) -> Inserted {
 
 pub(super) fn apply_notice(
     notice: Notice,
-    sender: Option<&mut ei::Sender>,
     selection: &mut Option<Selection>,
     forfeited: &mut Option<InsertPermit>,
 ) {
-    match notice {
-        Notice::ModifiersChanged => {
-            if let Some(sender) = sender {
-                sender.forget_modifiers();
-            }
-        },
-        Notice::SelectionLost { permit, revoked } => {
-            if selection
-                .as_ref()
-                .is_some_and(|selection| selection.serves(&permit))
-            {
-                *selection = None;
-            }
-            if revoked {
-                *forfeited = Some(permit);
-            }
-        },
+    let Notice { permit, revoked } = notice;
+    if selection
+        .as_ref()
+        .is_some_and(|selection| selection.serves(&permit))
+    {
+        *selection = None;
+    }
+    if revoked {
+        *forfeited = Some(permit);
     }
 }
 
@@ -543,6 +571,38 @@ mod tests {
         }
     }
 
+    #[test]
+    fn portal_selection_needs_committed_copy_authority() -> anyhow::Result<()> {
+        for active in [true, false] {
+            let (events, _receiver) = async_channel::bounded(1);
+            let input = InputSender::new(events);
+            let permit = input.begin().context("Recording")?;
+            let request = insertion(
+                "fixture",
+                &permit,
+                Delivery::Paste,
+                FocusReport::default().subscribe(),
+            );
+            if !active {
+                permit.revoke();
+            }
+            let mut selection = None;
+            let outcome =
+                publish_portal_selection(&mut selection, &request, COPIED_FOR_MANUAL_PASTE);
+            assert_eq!(selection.is_some(), active);
+            assert_eq!(
+                outcome,
+                if active {
+                    COPIED_FOR_MANUAL_PASTE
+                } else {
+                    Inserted::Cancelled
+                }
+            );
+            assert!(!permit.active());
+        }
+        Ok(())
+    }
+
     fn paste_after_notices(
         notices: &Receiver<Notice>,
         forfeited: &mut Option<InsertPermit>,
@@ -550,7 +610,7 @@ mod tests {
         owned: bool,
     ) -> Inserted {
         while let Ok(notice) = notices.try_recv() {
-            apply_notice(notice, None, &mut None, forfeited);
+            apply_notice(notice, &mut None, forfeited);
         }
         let request = insertion(
             "fixture",

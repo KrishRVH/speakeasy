@@ -183,7 +183,9 @@ fn touches(action: Action) -> impl Iterator<Item = (Point, Moment)> + Clone {
         Action::Click { at, point } => ((point, at), None),
         Action::Drag { span, from, to } => ((from, span.start()), Some((to, span.end()))),
     };
-    iter::once(first).chain(last)
+    iter::once(first)
+        .chain(last)
+        .filter(|&(point, _)| Rect::UNIT.contains(point))
 }
 
 #[derive(Clone, Copy)]
@@ -392,6 +394,7 @@ impl Screen {
     }
 
     fn finish_within(self, rect: Rect, bounds: Rect) -> Rect {
+        let rect = rect.intersection(bounds);
         let center = rect.center();
         let mut width = (rect.width().max(1e-4) * self.width).max(LEAST_WIDTH.min(self.width));
         let mut height = (rect.height().max(1e-4) * self.height).max(LEAST_HEIGHT.min(self.height));

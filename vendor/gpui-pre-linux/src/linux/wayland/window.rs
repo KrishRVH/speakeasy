@@ -435,6 +435,13 @@ fn build_popup_positioner(
 }
 
 impl WaylandSurfaceState {
+    // Speakeasy patch: a configure belongs to its role object, which observers can replace.
+    fn configure_object(&self) -> Option<ObjectId> {
+        self.xdg_surface()
+            .map(Proxy::id)
+            .or_else(|| self.layer_surface().map(Proxy::id))
+    }
+
     fn ack_configure(&self, serial: u32) {
         match self {
             WaylandSurfaceState::Xdg(WaylandXdgSurfaceState { xdg_surface, .. }) => {
@@ -1202,6 +1209,9 @@ impl WaylandWindowStatePtr {
 
     pub fn handle_xdg_surface_event(&self, event: xdg_surface::Event) {
         if let xdg_surface::Event::Configure { serial } = event {
+            let Some(role) = self.state.borrow().surface_state.configure_object() else {
+                return;
+            };
             {
                 let mut state = self.state.borrow_mut();
                 if let Some(window_controls) = state.in_progress_window_controls.take() {
@@ -1216,6 +1226,9 @@ impl WaylandWindowStatePtr {
             }
             {
                 let mut state = self.state.borrow_mut();
+                if state.surface_state.configure_object().as_ref() != Some(&role) {
+                    return;
+                }
 
                 if let Some(mut configure) = state.in_progress_configure.take() {
                     let got_unmaximized = state.maximized && !configure.maximized;
@@ -1250,7 +1263,10 @@ impl WaylandWindowStatePtr {
                     if visibility_changed {
                         self.report_visibility(configure.visibility);
                     }
-                    if throttled {
+                    if throttled
+                        || self.state.borrow().surface_state.configure_object().as_ref()
+                            != Some(&role)
+                    {
                         return;
                     }
                     if let Some(size) = configure.size {
@@ -1259,6 +1275,9 @@ impl WaylandWindowStatePtr {
                 }
             }
             let state = self.state.borrow_mut();
+            if state.surface_state.configure_object().as_ref() != Some(&role) {
+                return;
+            }
             state.surface_state.ack_configure(serial);
 
             let window_geometry = inset_by_tiling(
@@ -1799,6 +1818,7 @@ impl WaylandWindowStatePtr {
                 ))
             }
         };
+        self.frame_loop.set(FrameLoop::Unconfigured);
         state.redraw_requested = true;
         state.surface.commit();
         let reported = state.visibility != WindowVisibility::Visible;

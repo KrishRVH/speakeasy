@@ -528,6 +528,7 @@ impl Capture {
         if unsafe { self.device.GetDeviceRemovedReason() }.is_err() {
             return Err(Failure::DeviceLost);
         }
+        let part = self.part()?;
         let mut newest = None;
         while let Some(frame) = self.next_frame()? {
             newest = Some(frame);
@@ -545,7 +546,6 @@ impl Capture {
         if captured < clean_from {
             return Ok(false);
         }
-        let part = self.part()?;
         self.pending = Some(PendingFrame {
             frame,
             at: captured,
@@ -751,14 +751,8 @@ pub(crate) fn configure_overlay(window: &NativeWindow, display: Display) -> anyh
         })
     };
 
-    let dpi = || unsafe { GetDpiForWindow(hwnd) };
-    let before = dpi();
-    place()?;
-
-    if dpi() != before {
-        place()?;
-    }
-    Ok(())
+    super::presentation::place_across_dpi(|| unsafe { GetDpiForWindow(hwnd) }, place)
+        .map_err(Into::into)
 }
 
 pub(crate) fn set_overlay_input(window: &NativeWindow, takes_input: bool) {

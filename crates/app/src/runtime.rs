@@ -357,6 +357,11 @@ impl<Host> Runtime<Host> {
         self.configuration.send_replace(config.into_inner());
     }
 
+    pub(crate) fn restore_saved(&self) {
+        self.input.cancel();
+        self.configuration.send_modify(|_| {});
+    }
+
     pub(crate) fn control(&self, call: Call) {
         self.direct(Directive::Control(call));
     }

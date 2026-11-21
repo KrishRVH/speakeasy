@@ -21,6 +21,10 @@ MinVersion=10.0.22000
 WizardStyle=modern
 SetupIconFile=speakeasy.ico
 UninstallDisplayIcon={app}\speakeasy.exe
+#ifdef PublisherSigning
+SignTool=speakeasy
+SignedUninstaller=yes
+#endif
 OutputDir=..\..\artifacts
 OutputBaseFilename=speakeasy-windows-x64-setup
 Compression=lzma2

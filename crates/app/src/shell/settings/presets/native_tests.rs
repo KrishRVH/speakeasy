@@ -79,6 +79,15 @@ pub(in crate::shell::settings) fn exercise(
                 && view.config.recognition_terms.phrases() == ["Kubernetes"],
             "Using a preset did not apply its language, corrections, and hints, or a correction being revised overwrote them"
         );
+        let before = view.config.presets.clone();
+        let model = std::mem::take(&mut view.config.model);
+        view.presets.enter("Incomplete", cx);
+        view.edit_preset(Edit::Save, window, cx);
+        view.edit_preset(Edit::Update(0), window, cx);
+        ensure!(view.config.presets == before, "An incomplete draft changed saved presets");
+        view.presets.clear(cx);
+        view.config.model = model;
+
         view.config.language = "de".into();
         view.edit_preset(Edit::Update(0), window, cx);
         ensure!(

@@ -17,13 +17,13 @@ function Get-SignInCommand {
 }
 $existing = Get-SignInCommand
 if ($null -ne $existing -or (Test-Path $data)) { throw 'The runner already has Speakeasy state; refusing to change it.' }
-New-Item -ItemType Directory -Path $work, $data -Force | Out-Null
 $configuration = Join-Path $work 'selected Ω config/settings.json'
 $configurationHash = $null
 $model = Join-Path $data 'models/synthetic.bin'
 $show = Join-Path $data 'shows/synthetic'
-$before = @{}
+$before = $null
 function Check-UserData {
+    if ($null -eq $before) { return }
     if ($configurationHash -and (Get-FileHash -LiteralPath $configuration).Hash -ne $configurationHash) {
         throw 'Maintenance changed the selected custom settings file.'
     }
@@ -34,6 +34,9 @@ function Check-UserData {
             throw 'Maintenance changed settings, models, or an edited Show.'
         }
     }
+}
+function Invoke-Cleanup([scriptblock]$Action, [Collections.Generic.List[Management.Automation.ErrorRecord]]$Failures) {
+    try { & $Action } catch { $Failures.Add($_) }
 }
 function Invoke-Setup {
     $process = Start-Process -FilePath $Installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$app`"" -Wait -PassThru
@@ -69,6 +72,8 @@ function Check-UpdateHandoff([bool]$ReleaseParent) {
     $parent = Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 90' -PassThru
     $setup = $null
     $preview = $null
+    $failure = $null
+    $cleanup = [Collections.Generic.List[Management.Automation.ErrorRecord]]::new()
     try {
         $setup = Start-Process -FilePath $staged -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$app`"", "/SPEAKEASYPARENT=$($parent.Id)", "/SPEAKEASYCONFIG=`"$configuration`"", '/SPEAKEASYDEMO=1' -PassThru
         if ($setup.WaitForExit(1500)) { throw 'The installer did not wait for its parent.' }
@@ -122,15 +127,40 @@ function Check-UpdateHandoff([bool]$ReleaseParent) {
         if ($LASTEXITCODE -ne 0 -or $observed -ne $version) { throw 'Upgrade did not install the current app version.' }
         if ((Get-FileHash -LiteralPath $image).Hash -ne $currentImageHash) { throw 'Update did not install the current packaged GUI.' }
         Check-UserData
+    } catch {
+        $failure = $_
+        throw
     } finally {
-        if ($preview) { Close-Preview $preview }
-        if ($setup) {
-            if (!$setup.HasExited) { $setup.Kill($true); [void]$setup.WaitForExit(10000) }
-            $setup.Dispose()
+        Invoke-Cleanup {
+            if ($setup) {
+                if (!$setup.HasExited) { $setup.Kill($true); [void]$setup.WaitForExit(10000) }
+                $setup.Dispose()
+            }
+        } $cleanup
+        Invoke-Cleanup {
+            if (!$parent.HasExited) { $parent.Kill(); [void]$parent.WaitForExit(10000) }
+            $parent.Dispose()
+        } $cleanup
+        Invoke-Cleanup {
+            if ($preview) { Close-Preview $preview }
+        } $cleanup
+        Invoke-Cleanup {
+            foreach ($leftover in Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $image }) {
+                $process = Get-Process -Id $leftover.ProcessId -ErrorAction SilentlyContinue
+                if (!$process) { continue }
+                try {
+                    if (!$process.HasExited) { $process.Kill() }
+                    if (!$process.WaitForExit(10000)) { throw 'The relaunched fixture kept running.' }
+                } finally {
+                    $process.Dispose()
+                }
+            }
+        } $cleanup
+        Invoke-Cleanup { Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue } $cleanup
+        if ($cleanup.Count) {
+            if ($null -eq $failure) { throw $cleanup[0] }
+            $cleanup | ForEach-Object { Write-Warning "Update fixture cleanup failed: $_" }
         }
-        if (!$parent.HasExited) { $parent.Kill(); [void]$parent.WaitForExit(10000) }
-        $parent.Dispose()
-        Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
     }
 }
 function Check-RunningAppProtection {
@@ -196,8 +226,20 @@ public static class InstallerPreview {
     [DllImport("kernel32", SetLastError=true)] public static extern bool CloseHandle(IntPtr handle);
 }
 '@
+$failure = $null
+$cleanup = [Collections.Generic.List[Management.Automation.ErrorRecord]]::new()
 try {
+    New-Item -ItemType Directory -Path $work, $data -Force | Out-Null
     Invoke-Setup
+    $setupSignature = Get-AuthenticodeSignature -LiteralPath $Installer
+    if ($setupSignature.Status -eq 'Valid') {
+        $uninstallSignature = Get-AuthenticodeSignature -LiteralPath (Join-Path $app 'unins000.exe')
+        if ($uninstallSignature.Status -ne 'Valid' -or
+            $uninstallSignature.SignerCertificate.Thumbprint -ne $setupSignature.SignerCertificate.Thumbprint -or
+            !$uninstallSignature.TimeStamperCertificate) {
+            throw 'The installed uninstaller lacks the expected timestamped publisher signature.'
+        }
+    }
     $version = & (Join-Path $app 'speakeasy-cli.exe') --version
     if ($LASTEXITCODE -ne 0 -or $version -notmatch '^speakeasy \d+\.\d+\.\d+$') { throw 'Installed CLI failed.' }
     $currentImageHash = (Get-FileHash -LiteralPath (Join-Path $app 'speakeasy.exe')).Hash
@@ -210,9 +252,11 @@ try {
     & (Join-Path $app 'speakeasy-cli.exe') show demo --out $show | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Could not prepare a synthetic Show.' }
     [IO.File]::WriteAllText((Join-Path $show 'user-notes.txt'), 'Keep these edits through every upgrade.')
+    $expected = @{}
     foreach ($file in Get-ChildItem -LiteralPath $data -File -Recurse) {
-        $before[$file.FullName] = (Get-FileHash -LiteralPath $file.FullName).Hash
+        $expected[$file.FullName] = (Get-FileHash -LiteralPath $file.FullName).Hash
     }
+    $before = $expected
     Check-RunningAppProtection
     Check-ConsoleImageProtection
     Check-UpdateHandoff $false
@@ -227,10 +271,24 @@ try {
     Invoke-Uninstall
     if ((Get-SignInCommand) -ne $portable) { throw 'Uninstall removed another copy''s sign-in command.' }
     Write-Host 'Per-user install, both running images, parent wait and timeout, staged-file retention, upgrade/relaunch, and uninstall passed; settings, models, edited Shows, and other copies are preserved.'
+} catch {
+    $failure = $_
+    throw
 } finally {
-    if (Test-Path (Join-Path $app 'unins000.exe')) { Invoke-Uninstall }
-    Remove-ItemProperty -Path $runKey -Name 'Speakeasy' -ErrorAction SilentlyContinue
+    Invoke-Cleanup {
+        if (Test-Path (Join-Path $app 'unins000.exe')) { Invoke-Uninstall }
+    } $cleanup
+    Invoke-Cleanup {
+        Remove-ItemProperty -Path $runKey -Name 'Speakeasy' -ErrorAction SilentlyContinue
+    } $cleanup
     # The guard admitted only a fresh data directory and no sign-in entry; every fixture is ours.
-    Remove-Item -LiteralPath $data -Force -Recurse
-    Remove-Item -LiteralPath $work -Force -Recurse
+    foreach ($fixture in $data, $work) {
+        Invoke-Cleanup {
+            if (Test-Path -LiteralPath $fixture) { Remove-Item -LiteralPath $fixture -Force -Recurse }
+        } $cleanup
+    }
+    if ($cleanup.Count) {
+        if ($null -eq $failure) { throw $cleanup[0] }
+        $cleanup | ForEach-Object { Write-Warning "Installer fixture cleanup failed: $_" }
+    }
 }

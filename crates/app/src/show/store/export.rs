@@ -1,5 +1,4 @@
 use std::{
-    fs::File,
     io::{self, Read as _, Seek, Write as _},
     path::{Path, PathBuf},
 };
@@ -196,16 +195,11 @@ fn archive(
 }
 
 fn copy(directory: &Path, name: &str, limit: u64, out: &mut impl io::Write) -> io::Result<u64> {
-    recall::regular_file(directory, name, limit)?;
-    let file = File::open(recall::bundle_path(directory, name))?;
-    let metadata = file.metadata()?;
-    if !metadata.is_file() || metadata.len() > limit {
-        return Err(io::Error::other(
-            "file changed or exceeds the export size limit",
-        ));
-    }
+    let folder = recall::open_directory(directory)?;
+    let file = recall::open_file(&folder, name, limit)?;
+    let expected = file.metadata()?.len();
     let copied = io::copy(&mut file.take(limit.saturating_add(1)), out)?;
-    if copied != metadata.len() || copied > limit {
+    if copied != expected || copied > limit {
         return Err(io::Error::other("file changed during export; try again"));
     }
     Ok(copied)

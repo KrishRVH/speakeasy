@@ -9,10 +9,19 @@ fn saved(parent: &Path, checkpoint: &Checkpoint) -> anyhow::Result<PathBuf> {
         checkpoint.directory.join(PUBLISHED),
         directory.file_name().unwrap().to_string_lossy().as_bytes(),
     )?;
-    fs::write(
-        checkpoint.directory.join(recorded::FILE),
-        b"synthetic audio",
-    )?;
+    let mut audio = recorded::MAGIC.to_vec();
+    for record in [
+        recorded::Record::Begin {
+            rate: 8_000,
+            start: std::time::Duration::ZERO,
+            language: "en".into(),
+        },
+        recorded::Record::Samples(zeroize::Zeroizing::new(vec![1, 0])),
+        recorded::Record::End,
+    ] {
+        audio.extend_from_slice(&record.encode()?);
+    }
+    fs::write(checkpoint.directory.join(recorded::FILE), audio)?;
     Ok(directory)
 }
 

@@ -8,7 +8,7 @@ use crate::{
     runtime::ports::{CaptureEvent, Sealed},
     show::{
         AudioLog,
-        checkpoint::{KeptAudio, MAX_CUES},
+        checkpoint::{AudioEnding, KeptAudio, MAX_CUES},
     },
 };
 
@@ -73,13 +73,13 @@ impl<'a> Keeping<'a> {
             .is_none_or(|log| log.offer(pcm, &self.cues))
     }
 
-    pub(super) fn finish(&mut self, pcm: &[u8], rate: u32) -> bool {
+    pub(super) fn finish(&mut self, pcm: &[u8], rate: u32, ending: AudioEnding) -> bool {
         self.incoming.close();
         let offered = self.offer(pcm, rate);
         let finished = self
             .log
             .take()
-            .is_none_or(|log| log.finish(pcm, &self.cues));
+            .is_none_or(|log| log.finish(pcm, &self.cues, ending));
         offered && finished
     }
 

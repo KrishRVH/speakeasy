@@ -344,15 +344,15 @@ fn a_show_publishes_a_complete_private_bundle() -> anyhow::Result<()> {
     };
     let summary = clipboard.context("The summary was copied")?;
     assert!(!permit.active(), "Publishing spends the permit");
-    let mut entries = fs::read_dir(&shows)?;
-    let directory = entries
-        .next()
-        .context("The bundle is in the Shows folder")??
-        .path();
-    assert!(
-        entries.next().is_none(),
-        "The Shows folder holds only the bundle"
-    );
+    let entries = fs::read_dir(&shows)?
+        .filter_map(|entry| match entry {
+            Ok(entry) if entry.file_name() == store::retention::LOCK => None,
+            other => Some(other.map(|entry| entry.path())),
+        })
+        .collect::<io::Result<Vec<_>>>()?;
+    let [directory] = entries.as_slice() else {
+        bail!("The Shows folder should contain one complete bundle");
+    };
     assert_eq!(
         show.folder()?,
         Some(directory.as_path()),
@@ -365,10 +365,10 @@ fn a_show_publishes_a_complete_private_bundle() -> anyhow::Result<()> {
         "The summary copied is the one written"
     );
     let manifest = Manifest::parse(&fs::read(directory.join("show.json"))?)?;
-    let source = store::source::inspect(&directory)?;
+    let source = store::source::inspect(directory)?;
     assert_eq!(source.moments(), moments);
     assert_eq!(source.duration(), manifest.recording().duration);
-    let held = store::source::frame(&directory, &source, Moment::from_millis(3_150))?;
+    let held = store::source::frame(directory, &source, Moment::from_millis(3_150))?;
     assert_eq!(held.at.as_millis(), 3_000);
     assert_eq!(held.image, desktop(width, height, 0, 0, false));
     assert_eq!(manifest.recording().narration, narration);
@@ -393,7 +393,7 @@ fn a_show_publishes_a_complete_private_bundle() -> anyhow::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
-        let mode = fs::metadata(&directory)?.permissions().mode();
+        let mode = fs::metadata(directory)?.permissions().mode();
         assert_eq!(mode & 0o777, 0o700);
     }
     Ok(())

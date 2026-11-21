@@ -4901,6 +4901,7 @@ dependencies = [
  "x11rb",
  "xkbcommon 0.9.0",
  "zbus",
+ "zeroize",
 ]
 
 [[package]]

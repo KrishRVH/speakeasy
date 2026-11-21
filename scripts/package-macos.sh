@@ -9,6 +9,9 @@ if [[ "$(uname -s)" != Darwin ]]; then
   echo "Run this on macOS with the Xcode command line tools installed." >&2
   exit 1
 fi
+mkdir -p artifacts
+rm -rf -- artifacts/Speakeasy.app
+rm -f -- artifacts/speakeasy-macos.zip artifacts/speakeasy-macos.dmg
 signing_identity=${SPEAKEASY_MAC_SIGN_IDENTITY:-}
 notary_profile=${SPEAKEASY_MAC_NOTARY_PROFILE:-}
 if [[ -n "$signing_identity" || -n "$notary_profile" ]]; then
@@ -17,8 +20,6 @@ if [[ -n "$signing_identity" || -n "$notary_profile" ]]; then
     exit 1
   fi
 fi
-mkdir -p artifacts
-rm -f artifacts/speakeasy-macos.zip artifacts/speakeasy-macos.dmg
 staging=$(mktemp -d artifacts/.macos-package.XXXXXX)
 trap 'rm -rf -- "$staging"' EXIT
 # Submits one archive and stops unless Apple accepts it, naming the submission to check.
@@ -33,8 +34,7 @@ if result.get("status") != "Accepted":
 ' "$2" < "$staging/notarization.json"
 }
 MACOSX_DEPLOYMENT_TARGET=14.0 cargo build --release --locked -p speakeasy
-bundle="artifacts/Speakeasy.app"
-rm -rf "$bundle"
+bundle="$staging/Speakeasy.app"
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
 cp target/release/speakeasy "$bundle/Contents/MacOS/speakeasy"
 cp packaging/macos/Info.plist "$bundle/Contents/Info.plist"
@@ -84,5 +84,5 @@ if [[ -n "$signing_identity" ]]; then
   xcrun stapler validate "$staging/speakeasy-macos.dmg"
   spctl --assess --type open --context context:primary-signature "$staging/speakeasy-macos.dmg"
 fi
-mv "$staging/speakeasy-macos.zip" "$staging/speakeasy-macos.dmg" artifacts/
-echo "Built $bundle"
+mv "$staging/speakeasy-macos.zip" "$staging/speakeasy-macos.dmg" "$bundle" artifacts/
+echo "Built artifacts/Speakeasy.app"

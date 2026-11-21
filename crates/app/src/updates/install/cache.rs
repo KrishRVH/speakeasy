@@ -1,5 +1,5 @@
 use std::{
-    fs::{self, File, Metadata, OpenOptions},
+    fs::{self, File, Metadata},
     io,
     path::Path,
 };
@@ -13,13 +13,8 @@ const CACHE_ACCESS: &str = "Cannot access the update cache. Check free space and
 pub(super) fn acquire(root: &Path) -> anyhow::Result<File> {
     fs::create_dir_all(root)
         .context("Cannot create the update cache. Check free space and folder access.")?;
-    let lock = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(root.join(crate::updates::LOCK))
-        .context(CACHE_ACCESS)?;
+    let lock =
+        speakeasy_platform::open_lock(&root.join(crate::updates::LOCK)).context(CACHE_ACCESS)?;
 
     match lock.try_lock() {
         Ok(()) => {},

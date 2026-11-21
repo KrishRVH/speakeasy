@@ -1,5 +1,5 @@
 use super::*;
-use crate::{InkPoint, Layer, Stroke, Window};
+use crate::{InkPoint, Layer, Span, Stroke, Window};
 
 fn window(id: u32, app: u32, layer: Layer, bounds: [f32; 4]) -> Window {
     Window {
@@ -203,4 +203,45 @@ fn a_large_window_short_of_the_whole_screen_keeps_a_far_label_in_frame() {
         plan.crop.contains(label) && plan.crop.contains(toggle),
         "{plan:?}"
     );
+}
+
+#[test]
+fn a_drag_leaving_the_screen_frames_its_visible_starting_window() {
+    let from = Point::new(0.25, 0.3);
+    let at = Moment::from_millis(1_000);
+    let window = window(1, 0, Layer::Normal, [0.1, 0.1, 0.45, 0.5]);
+    for to in [Point::new(1.5, 0.3), Point::new(-0.5, -0.5)] {
+        let action = Action::Drag {
+            span: Span::at(at),
+            from,
+            to,
+        };
+        let mut shots = [shot(1, 1_000)];
+        shots[0].keyframe.action = Some(action);
+        let recording = Recording {
+            surface: SCREEN,
+            actions: vec![action],
+            ..Recording::default()
+        };
+        let layouts = [arranged(0, vec![window])];
+        plan(&recording, &mut shots, &[], &[], &layouts);
+        let crop = shots[0].plan.unwrap().crop;
+        assert!(
+            crop.encloses(window.bounds) && crop.area() < 0.4,
+            "{crop:?}"
+        );
+        let mut image = crate::Image::filled(320, 200, [0; 3]).unwrap();
+        let drawn = crate::draw::annotate(
+            &mut image,
+            &shots[0].keyframe,
+            &recording,
+            &[],
+            &crate::typeface::tests::typeface(),
+        );
+        assert!(drawn.extent().is_none());
+        assert!(matches!(
+            drawn.corner(Rect::UNIT),
+            crate::draw::Corner::Left
+        ));
+    }
 }

@@ -95,7 +95,7 @@ impl Settings {
         let demo = is_demo(cx);
         step.next(Readiness {
             prepared: demo
-                || (!self.config.needs_engine() && !self.unsaved(cx) && self.saving.is_none()),
+                || (self.config.speech_configured() && !self.unsaved(cx) && self.saving.is_none()),
             running: demo || cx.global::<Services>().is_running(),
             recognized: self.practice.recognized(),
         })

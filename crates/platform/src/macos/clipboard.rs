@@ -28,10 +28,10 @@ pub(super) fn acquire() -> Lease {
 }
 
 pub(crate) fn copy_text(text: &str) -> anyhow::Result<()> {
-    objc2::rc::autoreleasepool(|_| write(acquire(), text))
+    objc2::rc::autoreleasepool(|_| write(acquire(), text).map(|_| ()))
 }
 
-pub(super) fn write(lease: Lease, text: &str) -> anyhow::Result<()> {
+pub(super) fn write(lease: Lease, text: &str) -> anyhow::Result<isize> {
     let item = item(text, None)?;
     publish(lease, &[item])
 }
@@ -41,14 +41,20 @@ pub(super) type Saved = Vec<Vec<(Retained<NSString>, Retained<NSData>)>>;
 const SAVED_BYTES: usize = 64 << 20;
 
 pub(super) fn save(lease: &Lease) -> Option<Saved> {
+    let items = lease.pasteboard.pasteboardItems()?;
+    let typed: Vec<_> = items.iter().map(|item| (item.types(), item)).collect();
+    if typed.iter().any(|(types, _)| {
+        types
+            .iter()
+            .any(|kind| kind.isEqualToString(ns_string!("org.nspasteboard.ConcealedType")))
+    }) {
+        return None;
+    }
     let mut size = 0_usize;
     let mut saved = Vec::new();
-    for item in &lease.pasteboard.pasteboardItems()? {
+    for (types, item) in typed {
         let mut kept = Vec::new();
-        for kind in &item.types() {
-            if kind.isEqualToString(ns_string!("org.nspasteboard.ConcealedType")) {
-                return None;
-            }
+        for kind in &types {
             let data = item.dataForType(&kind)?;
             size = size
                 .checked_add(data.len())
@@ -60,10 +66,16 @@ pub(super) fn save(lease: &Lease) -> Option<Saved> {
     (!saved.is_empty()).then_some(saved)
 }
 
-pub(super) fn restore(lease: Lease, saved: &Saved, mark: isize) -> anyhow::Result<()> {
+pub(super) fn restore(lease: Lease, saved: Option<&Saved>, mark: isize) -> anyhow::Result<()> {
     if lease.pasteboard.changeCount() != mark {
         return Ok(());
     }
+    let Some(saved) = saved else {
+        lease
+            .pasteboard
+            .prepareForNewContentsWithOptions(NSPasteboardContentsOptions::CurrentHostOnly);
+        return Ok(());
+    };
     let items = saved
         .iter()
         .map(|kept| {
@@ -77,7 +89,7 @@ pub(super) fn restore(lease: Lease, saved: &Saved, mark: isize) -> anyhow::Resul
             Ok(item)
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
-    publish(lease, &items)
+    publish(lease, &items).map(|_| ())
 }
 
 fn private_item() -> anyhow::Result<Retained<NSPasteboardItem>> {
@@ -98,7 +110,7 @@ pub(crate) fn copy_content(
         crate::clipboard::copy_when(
             authorized,
             || Ok(acquire()),
-            |lease| publish(lease, &[item]),
+            |lease| publish(lease, &[item]).map(|_| ()),
         )
     })
 }
@@ -124,18 +136,18 @@ fn item(
     Ok(item)
 }
 
-fn publish(lease: Lease, items: &[Retained<NSPasteboardItem>]) -> anyhow::Result<()> {
+fn publish(lease: Lease, items: &[Retained<NSPasteboardItem>]) -> anyhow::Result<isize> {
     let writers: Vec<&ProtocolObject<dyn NSPasteboardWriting>> = items
         .iter()
         .map(|item| ProtocolObject::from_ref(&**item))
         .collect();
     let items = NSArray::from_slice(&writers);
-    lease
+    let mark = lease
         .pasteboard
         .prepareForNewContentsWithOptions(NSPasteboardContentsOptions::CurrentHostOnly);
     ensure!(
         lease.pasteboard.writeObjects(&items),
         "Cannot place the complete copy on the clipboard"
     );
-    Ok(())
+    Ok(mark)
 }

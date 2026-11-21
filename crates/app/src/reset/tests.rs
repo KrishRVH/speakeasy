@@ -1,5 +1,5 @@
 use std::{
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     path::PathBuf,
 };
 
@@ -147,5 +147,36 @@ fn a_linked_folder_loses_only_its_link() -> anyhow::Result<()> {
         elsewhere.join("keep.txt").is_file(),
         "The purge followed a link out of Speakeasy's folder"
     );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn reset_unlinks_a_socket_in_place_of_a_download_directory() -> anyhow::Result<()> {
+    use std::os::unix::net::UnixListener;
+
+    let root = tempfile::tempdir()?;
+    let (settings, data) = fixture(root.path())?;
+    let path = data.join("models");
+    fs::remove_dir_all(&path)?;
+    let _socket = UnixListener::bind(&path)?;
+    purge(&settings, &data)?;
+    assert!(!path.exists());
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn reset_restricts_existing_and_new_lock_files_to_the_owner() -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let root = tempfile::tempdir()?;
+    let (settings, data) = fixture(root.path())?;
+    fs::set_permissions(data.join("setup.lock"), fs::Permissions::from_mode(0o644))?;
+    purge(&settings, &data)?;
+    for name in ["setup.lock", "updates.lock"] {
+        let mode = fs::metadata(data.join(name))?.permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
     Ok(())
 }

@@ -30,6 +30,22 @@ fn snapshot(directory: &Path) -> anyhow::Result<Vec<(PathBuf, Vec<u8>)>> {
 }
 
 #[test]
+fn an_unmanaged_show_with_a_timestamped_name_has_no_managed_id_or_expiry() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let name = "20261020T143205Z";
+    fixture(root.path(), name)?;
+    let roots = Roots::open(&[root.path().to_owned()]).map_err(anyhow::Error::msg)?;
+    let listed = content(&call(&roots, Tool::List, json!({})))?;
+    let read = content(&call(&roots, Tool::Read, json!({"show": name})))?;
+    for show in [&listed["shows"][0], &read["show"]] {
+        assert!(show["status"].is_string());
+        assert!(show["id"].is_null());
+        assert!(show["expiresAt"].is_null());
+    }
+    Ok(())
+}
+
+#[test]
 fn reads_preserve_edits_and_every_file_and_only_explicitly_expose_content() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let directory = fixture(root.path(), "exact")?;

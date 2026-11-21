@@ -78,7 +78,10 @@ module unless a test file is named.
   the UI thread, leave saved settings unchanged, and require owner confirmation while idle.
   Generation, saved-configuration epoch, session counter, and caller lifetime reject stale results.
   The runtime keeps its saved configuration baseline separate from effective preset choices,
-  including after Resume. Text-only choices reuse the worker; engine changes reload it.
+  including after Resume. Text-only choices reuse the worker; engine changes reload it. Using a
+  preset that matches the saved baseline reapplies that baseline without rewriting settings; a
+  transient selection takes precedence in the Settings indicator. Capturing a preset requires both
+  speech paths.
 - **Audio capture**: [audio.rs](../crates/app/src/audio.rs) with
   [control.rs](../crates/app/src/audio/control.rs), [stream.rs](../crates/app/src/audio/stream.rs),
   [pcm.rs](../crates/app/src/audio/pcm.rs), [speech.rs](../crates/app/src/audio/speech.rs), and
@@ -141,7 +144,8 @@ module unless a test file is named.
   in `Config::fillers` ([config.rs](../crates/app/src/config.rs)). `for_dictation` composes filler
   removal, phrase corrections, spoken symbols, and the session's output style for insertion and
   paired replay. [symbols.rs](../crates/app/src/transcript/symbols.rs) writes symbols only in Prose,
-  after corrections, and a spoken line break must stand between punctuation or the text's ends.
+  after corrections. A spoken line break must stand between punctuation or the text's ends.
+  Multiword commands and joining symbols respect sentence boundaries.
   [vocabulary.rs](../crates/app/src/transcript/vocabulary.rs) validates and compiles per-request
   phrase corrections after filler removal, preserving timed-word spans. Its tests cover word
   boundaries, non-chaining replacements, duplicate validation, and timing. Whisper invents subtitle
@@ -235,9 +239,10 @@ module unless a test file is named.
   updates, and stores presets by position, and ignores those changes during model setup or file
   selection. The save queue applies used choices; library-only changes leave sessions running.
   [text_field.rs](../crates/app/src/shell/settings/text_field.rs) owns native selection and IME
-  composition; its pure edit state tests Unicode boundaries, and
-  [native_tests.rs](../crates/app/src/shell/settings/native_tests.rs) checks owned-window
-  composition and save draining. The
+  composition. Focus loss, Tab, and a mouse selection commit the marked text before moving the
+  caret. Windows AltGr stays available for character input. The pure edit state tests Unicode
+  boundaries, and [native_tests.rs](../crates/app/src/shell/settings/native_tests.rs) checks
+  owned-window composition and save draining. The
   [native interaction test](../crates/app/src/shell/settings/native_interaction.rs) checks dropdown
   keyboard navigation, focus restoration, Parakeet's English cleanup switch, presets, and private
   practice cleanup through the borrowed-window close callback.
@@ -370,10 +375,12 @@ module unless a test file is named.
 - **Instance and relaunch**: [instance.rs](../crates/app/src/instance.rs) owns the lock and the
   secret-gated loopback commands. Shortcut opcodes 0–2 serve relaunch and Linux desktop bindings.
   Opcode 3 carries versioned JSON in a length-prefixed 4 KiB command frame; replies may use the full
-  64 KiB frame. An owned server thread bounds authentication and owns up to eight concurrent control
-  receipts, each with a two-second deadline, except a print, which waits up to two minutes. Shortcut
-  cancel/toggle bindings remain responsive while a receipt waits; shutdown drains every task.
-  [control.rs](../crates/app/src/control.rs) rejects malformed commands without echoing input.
+  64 KiB frame. An owned server thread bounds authentication to 16 concurrent connections and owns
+  up to eight separate control receipts, each with a two-second deadline, except a print, which
+  waits up to two minutes. Shortcut cancel/toggle bindings remain responsive while a receipt waits;
+  shutdown drains every task. [control.rs](../crates/app/src/control.rs) rejects malformed commands
+  without echoing input. Unix instance, setup, and update leases use owner-only regular files and
+  tighten the permissions of previously created lock files.
   [owner/commands.rs](../crates/app/src/runtime/owner/commands.rs) admits actions only for live
   callers and acknowledges actual owner decisions. Stop/cancel tokens combine the runtime
   incarnation with the session ID and exclude Shows and practice. Style is acknowledged by its
@@ -382,7 +389,8 @@ module unless a test file is named.
   before the machine unless `print_to_scripts` is on; changing it is a session change, so turning it
   off ends a running capture. A capture (`start --print`) marks its session's handoff; a print
   stores its call in that session, which answers it with the text in place of insertion or refuses
-  it when the session ends without text, so one session answers one print at most.
+  it when the session ends without text, so one session answers one print at most. Show promotion
+  leaves these private dictations in their original session.
   [tests/printing.rs](../crates/app/src/runtime/tests/printing.rs) covers that handoff.
   [tests/control.rs](../crates/app/src/runtime/tests/control.rs) covers stale authority, busy
   admission, per-session style, and preset adoption.
@@ -392,7 +400,8 @@ module unless a test file is named.
   including exact managed IDs and expiry dates. `show keep` changes retention for one explicit
   managed Show and `show discard` permanently removes one interrupted checkpoint; inspection stays
   read-only. `show wait` polls the Shows folder and inspects the first folder that appears after it
-  starts; atomic publication means it never sees a partial Show.
+  starts. It orders Shows observed in the same poll by the timestamp of the publication marker
+  written under the retention lock just before rename. Atomic publication hides partial Shows.
   [command/tests.rs](../crates/app/src/show/command/tests.rs) inspects simulated Shows, checks
   failure output, and exercises the embedded [agent skill](../skills/speakeasy-show/SKILL.md). The
   Windows package's [console entry](../crates/app/src/bin/speakeasy-cli.rs) relays Show and control
@@ -402,8 +411,10 @@ module unless a test file is named.
   [check-package.sh](../scripts/check-package.sh) launches every release package before upload.
 - **Agent evidence**: [show/evidence.rs](../crates/app/src/show/evidence.rs) shares inspection and
   temporal queries between CLI and [show/mcp.rs](../crates/app/src/show/mcp.rs). MCP exposes three
-  read-only tools within explicit launch roots, refuses child symlinks, bounds lines/content/images,
-  and reports actual source sample times. It serves the 2026-07-28 stateless protocol and the
+  read-only tools within explicit launch roots. It opens directories and regular files relative to
+  retained directory handles, refuses links and hidden publication directories, bounds lines,
+  content, and images, and reports actual source sample times. Only entries in the managed Shows
+  parent receive managed IDs or retention dates. It serves the 2026-07-28 stateless protocol and the
   2025-11-25 initialized protocol used by current external clients. No tool exports, sends, or reads
   ordinary dictation. Initialization instructions are the disclosure followed by the embedded
   skill's reading guide without its front matter. Setup resolves the durable installed launcher and
@@ -415,9 +426,9 @@ module unless a test file is named.
   [show/publish.rs](../crates/app/src/show/publish.rs), and the session owner.
   [runtime/tests/shows.rs](../crates/app/src/runtime/tests/shows.rs) drives Shows with a fake
   screen, and [runtime/tests/last_show.rs](../crates/app/src/runtime/tests/last_show.rs) checks
-  which saved Show the owner remembers;
-  [show/recorder/tests.rs](../crates/app/src/show/recorder/tests.rs) drives the area choice and a
-  take on synthetic frames and pointer samples;
+  which saved Show the owner remembers. An explicit Show request opens neither recorder until the
+  owner shields the session; [show/recorder/tests.rs](../crates/app/src/show/recorder/tests.rs)
+  drives the area choice and a take on synthetic frames and pointer samples;
   [show/publish/tests.rs](../crates/app/src/show/publish/tests.rs) checks every published file, a
   refused copy, and the cancel path.
 - **Show review**: [show/review.rs](../crates/app/src/show/review.rs) owns the native library view,
@@ -508,8 +519,9 @@ module unless a test file is named.
   thought; text starts remain increasing and punctuation stays attached. Marks take selection
   priority; ordinary frames add coverage or a changed screen. An opening frame is added only when it
   differs and narration precedes the first chosen anchor. Selection caps at 36 keyframes, merges
-  crowded mark groups, and spreads remaining frames across the recording. Float-to-pixel conversions
-  saturate outside their integer range and map NaN to zero.
+  crowded mark groups while retaining their chronological ranges, and spreads remaining frames
+  across the recording. Float-to-pixel conversions saturate outside their integer range and map NaN
+  to zero.
 - **Show framing**: [framing.rs](../crates/show/src/framing.rs) crops screen-Show keyframes; window
   and area Shows record `Framing::Chosen` in the checkpoint header and keep their frames whole. A
   screen Show's platform window watch records window layouts, front to back: bounds as fractions of
@@ -517,22 +529,22 @@ module unless a test file is named.
   top), menu, or bar. The checkpoint journal keeps them for recovery; `show.json` never does. Each
   keyframe's slice runs halfway to its neighbors. Its input is the drawn ink and pins plus clicks
   and drags in the slice, and the click focus joins its extent. Each stroke, pin, click, and drag
-  casts one vote, shared by its points. A click or drag point votes for the window under it at its
-  time, ink and pins at the keyframe's time. A menu votes for its app's front window and passes
-  through to the window beneath when its app has none; a bar votes for the front normal window,
-  which floating windows never are. When one or two windows hold 80% of the votes, the keyframe
-  frames them where they stand at its time, with their app's menus and the app's windows in front
-  that overlap them, such as dialogs, and any input outside them, padded by 12 points; the frame is
-  fixed, so nothing beside a control falls out. When those windows cover 90% of the screen or more,
-  as a maximized window does, the crop covers only the input and the changes it caused, inside the
-  windows. With no input, the front window frames the keyframe, joined by the normal window with the
-  most changed area, each with its app's menus and overlapping windows in front. Without windows,
-  the input joins changed regions within 40 points of it; with no input, any changed region frames
-  the keyframe. That crop pads the activity by 0.28 of the screen's geometric mean side, grows to
-  320 by 200 points and to a quarter of the screen's width or height, and stays whole at 85%
-  coverage. A keyframe without activity takes the nearest earlier crop, else the next. Neighbors
-  whose union overlaps by 60% share one crop. Geometry is the only input; no window titles or app
-  names. [signature.rs](../crates/show/src/signature.rs) supplies changed regions from pooled
+  casts one vote, shared by its on-screen points. A click or drag point votes for the window under
+  it at its time, ink and pins at the keyframe's time. A menu votes for its app's front window and
+  passes through to the window beneath when its app has none; a bar votes for the front normal
+  window, which floating windows never are. When one or two windows hold 80% of the votes, the
+  keyframe frames them where they stand at its time, with their app's menus and the app's windows in
+  front that overlap them, such as dialogs, and any input outside them, padded by 12 points; the
+  frame is fixed, so nothing beside a control falls out. When those windows cover 90% of the screen
+  or more, as a maximized window does, the crop covers only the input and the changes it caused,
+  inside the windows. With no input, the front window frames the keyframe, joined by the normal
+  window with the most changed area, each with its app's menus and overlapping windows in front.
+  Without windows, the input joins changed regions within 40 points of it; with no input, any
+  changed region frames the keyframe. That crop pads the activity by 0.28 of the screen's geometric
+  mean side, grows to 320 by 200 points and to a quarter of the screen's width or height, and stays
+  whole at 85% coverage. A keyframe without activity takes the nearest earlier crop, else the next.
+  Neighbors whose union overlaps by 60% share one crop. Geometry is the only input; no window titles
+  or app names. [signature.rs](../crates/show/src/signature.rs) supplies changed regions from pooled
   samples, ignoring pointer-sized changes. Composition grows a crop to everything drawn, then
   [framing/content.rs](../crates/show/src/framing/content.rs) moves edges outward, never inward and
   never past the planned window, into empty gutters and past lines and borders that cross them,
@@ -626,19 +638,22 @@ module unless a test file is named.
   capture; frame or audio failure cannot release its lock. The frame lane queues at most 512
   events/64 MiB and its log caps at 1 GiB/200,000 events. The audio lane queues at most 64 events/8
   MiB and its checksummed PCM log caps at 128 MiB; a backlog stays in capture's existing PCM buffer.
+  Final audio flush waits for available credits within a bounded deadline. Only ordinary stop writes
+  an audio end record; a disconnected or stalled microphone leaves a recoverable prefix.
   [Audio checkpointing](../crates/app/src/audio/checkpoint.rs) preserves cue boundaries before and
   after promotion, so recovery seals through the same speech gate and trimming. Narration is
-  atomically written and synced while audio remains recoverable. Successful transcription copies
-  voice into the staged bundle before checkpoint retirement. Publication binds durable checkpoint
-  and bundle markers before rename; the marker distinguishes narrated publication so a crash before
-  checkpoint deletion cannot offer duplicate recovery. If checkpoint storage never opens, in-memory
-  footage remains publishable. A lost checkpoint completion stops publication; an unknown checkpoint
-  state cannot become an apparently complete bundle. Untranscribed audio keeps a published
-  checkpoint visible as Narration pending; a silent microphone's audio holds nothing to retry or
-  export, so its checkpoint retires without keeping voice. A retry creates a new bundle. Unfinished
-  cancellation records discard before deletion; private audio, narration, frame, and movie files are
-  removed before the lock, so blocked deletion remains available to cleanup. Audio retains the
-  original seven-day expiry regardless of a saved bundle's Keep marker. Discovery isolates damaged
+  atomically written and synced while audio remains recoverable. Successful transcription copies a
+  valid voice prefix into the staged bundle before checkpoint retirement. Publication binds durable
+  checkpoint and bundle markers before rename; the marker distinguishes narrated publication so a
+  crash before checkpoint deletion cannot offer duplicate recovery. If checkpoint storage never
+  opens, in-memory footage remains publishable. A lost checkpoint completion stops publication; an
+  unknown checkpoint state cannot become an apparently complete bundle. Untranscribed audio keeps a
+  published checkpoint visible as Narration pending; a silent microphone's audio holds nothing to
+  retry or export, so its checkpoint records that disposition and retires without keeping voice. A
+  retry keeps the published association intact until a new bundle commits. Unfinished cancellation
+  records discard before deletion; private audio, narration, frame, and movie files are removed
+  before the lock, so blocked deletion remains available to cleanup. Audio retains the original
+  seven-day expiry regardless of a saved bundle's Keep marker. Discovery isolates damaged
   checkpoints so healthy entries remain visible and saved bundles still expire.
   [checkpoint/tests.rs](../crates/app/src/show/store/checkpoint/tests.rs) exercises damaged
   siblings, expiry, lock ownership, and durable discard/publication markers.
@@ -942,13 +957,14 @@ and can panic. Clippy catches the named constructors but cannot name those `Defa
 implementations.
 
 The speech worker listens on loopback only. On Linux and Windows, Speakeasy declares the worker
-ready, and sends each request, only after checking that the worker's own process group, a job object
-on Windows, holds its listener. macOS has no listener lookup, so each request there checks only that
-the worker still runs. Each worker gets a fresh random key. The NeMo engine receives it in its
-owner-only environment, but whisper-server accepts its route only on the command line, so on Linux
-other local accounts can read it through `/proc` unless `/proc` is mounted with `hidepid`. That
-route is the only guard on Whisper's `/inference` and model-loading `/load` requests, so prefer
-Parakeet on shared Linux machines; automatic setup installs it.
+ready only after a successful health probe. Each probe and subsequent request first checks that the
+worker's own process group, a job object on Windows, holds its listener. macOS has no listener
+lookup, so each request there checks only that the worker still runs. Each worker gets a fresh
+random key. The NeMo engine receives it in its owner-only environment, but whisper-server accepts
+its route only on the command line, so on Linux other local accounts can read it through `/proc`
+unless `/proc` is mounted with `hidepid`. That route is the only guard on Whisper's `/inference` and
+model-loading `/load` requests, so prefer Parakeet on shared Linux machines; automatic setup
+installs it.
 
 On macOS both engines start with `GGML_METAL_TENSOR_DISABLE=1`. ggml turns its Metal tensor kernels
 on by itself for M5-class GPUs, and there they return "no speech" or garbage text.

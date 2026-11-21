@@ -165,3 +165,23 @@ fn cropped_evidence_refuses_a_surface_that_resized_between_frames() {
     assert!(Evidence::compose::<crate::Error>(&moments, crop, widening, &typeface()).is_err());
     assert!(Evidence::compose::<crate::Error>(&moments, None, widening, &typeface()).is_ok());
 }
+
+#[test]
+fn phrase_matches_are_limited_to_the_recorded_timeline() {
+    let at = Moment::from_millis;
+    let mut manifest = manifest();
+    let Narration::Words(words) = &mut manifest.recording.narration else {
+        panic!("The fixture is timed");
+    };
+    words[3].span = Span::new(at(2100), at(4200));
+    for span in [Span::new(at(4200), at(4300)), Span::new(at(4300), at(4400))] {
+        words.push(crate::Word {
+            span,
+            text: "save the café".into(),
+        });
+    }
+    assert_eq!(
+        manifest.locate(Focus::Phrase("save the café")).unwrap(),
+        [Span::new(at(100), at(400)), Span::new(at(2000), at(4000))]
+    );
+}

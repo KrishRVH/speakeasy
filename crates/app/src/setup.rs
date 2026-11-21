@@ -4,7 +4,7 @@ mod engine;
 
 use std::{
     convert::Infallible,
-    fs::{self, File, OpenOptions},
+    fs::{self, File},
     io,
     path::{Path, PathBuf},
     process::ExitStatus,
@@ -227,13 +227,7 @@ impl Installation {
 
     async fn acquire(root: &Path, progress: &watch::Sender<Progress>) -> anyhow::Result<Self> {
         fs::create_dir_all(root).map_err(file_error(root))?;
-        let lock = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(root.join(LOCK))
-            .map_err(file_error(root))?;
+        let lock = speakeasy_platform::open_lock(&root.join(LOCK)).map_err(file_error(root))?;
         loop {
             match lock.try_lock() {
                 Ok(()) => {

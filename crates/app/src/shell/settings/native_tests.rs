@@ -1,9 +1,13 @@
 use anyhow::{Context as _, ensure};
 use gpui::{
-    AppContext as _, Bounds, EntityInputHandler as _, WindowBounds, WindowOptions, point, px, size,
+    AppContext as _, Bounds, EntityInputHandler as _, Focusable as _, WindowBounds, WindowOptions,
+    point, px, size,
 };
 
-use super::{native_interaction::draw, *};
+use super::{
+    native_interaction::{activate, draw, wait_for},
+    *,
+};
 use crate::{config::valid_config, theme::Theme};
 
 #[test]
@@ -69,6 +73,7 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                             cancel_shortcut: Arc::from(""),
                             message: String::new(),
                             model: None,
+                            preset: None,
                         },
                         notice: None,
                         microphones: Vec::new(),
@@ -101,6 +106,24 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                 );
                 window.update(cx, |field, window, cx| {
                     field.set_text("🦀 café ".into(), cx);
+                    let before = field
+                        .selected_text_range(false, window, cx)
+                        .context("No selection")?;
+                    field.key_down(
+                        &gpui::KeyDownEvent {
+                            keystroke: gpui::Keystroke::parse("ctrl-alt-a")?,
+                            is_held: false,
+                            prefer_character_input: true,
+                        },
+                        window,
+                        cx,
+                    );
+                    ensure!(
+                        field
+                            .selected_text_range(false, window, cx)
+                            .is_some_and(|after| after.range == before.range),
+                        "AltGr changed the selection"
+                    );
                     field.replace_and_mark_text_in_range(None, "日本", Some(1..2), window, cx);
                     let selection = field
                         .selected_text_range(false, window, cx)
@@ -137,9 +160,43 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                     anyhow::Ok(())
                 })??;
                 draw(window, cx)?;
+                window.update(cx, |_, window, _| activate(window))??;
+                wait_for(
+                    window,
+                    gpui::Window::is_window_active,
+                    "The phrase editor did not activate",
+                    cx,
+                )
+                .await?;
                 window.update(cx, |field, window, cx| {
                     let bounds = field.bounds_for_range(8..11, Bounds::default(), window, cx);
                     ensure!(bounds.is_some(), "The field did not shape its text");
+                    field.focus_handle(cx).focus(window, cx);
+                    field.replace_and_mark_text_in_range(None, "仮", None, window, cx);
+                    field.key_down(
+                        &gpui::KeyDownEvent {
+                            keystroke: gpui::Keystroke::parse("tab")?,
+                            is_held: false,
+                            prefer_character_input: false,
+                        },
+                        window,
+                        cx,
+                    );
+                    ensure!(
+                        field.marked_text_range(window, cx).is_none(),
+                        "Tab left a marked range"
+                    );
+                    field.replace_and_mark_text_in_range(None, "名", None, window, cx);
+                    anyhow::Ok(())
+                })??;
+                draw(window, cx)?;
+                window.update(cx, |_, window, cx| window.blur(cx))?;
+                draw(window, cx)?;
+                window.update(cx, |field, window, cx| {
+                    ensure!(
+                        field.marked_text_range(window, cx).is_none(),
+                        "Blur left a marked range"
+                    );
                     window.remove_window();
                     anyhow::Ok(())
                 })??;

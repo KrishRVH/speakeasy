@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -7,7 +5,7 @@ use speakeasy_show::{Manifest, Narration};
 
 use super::{
     DISCLOSURE, Roots, protocol,
-    scope::{PAGE, PATH_LIMIT},
+    scope::{Folder, PAGE, PATH_LIMIT},
 };
 use crate::show::{
     evidence::{
@@ -124,9 +122,10 @@ struct ReadEvidence {
 fn read(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
     let request: Read = decode(arguments)?;
     let query = lookup(request.at, request.mark, request.phrase, request.occurrence)?;
-    let entry = open(roots, &request.show)?;
+    let folder = roots.resolve(&request.show)?;
+    let entry = recall::Entry::read_from(folder.path, &folder.files);
     let manifest = manifest_of(&entry)?;
-    let summary = recall::summary(&entry.directory)
+    let summary = recall::summary_from(&folder.files)
         .map_err(|_private| "Cannot read that Show's edited summary")?;
     let found = query
         .as_ref()
@@ -135,7 +134,7 @@ fn read(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
         .map_err(|safe| safe.to_string())?;
     let narration = request.narration.then(|| narration(manifest));
     let content = ReadEvidence {
-        show: Inspection::of(&entry, entry.directory.parent()),
+        show: Inspection::of(&entry, roots.managed()),
         summary: excerpt(&summary),
         narration,
         location: found,
@@ -201,16 +200,17 @@ fn image(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
         (None, None, Some(query)) => Picture::Source(query),
         _ => return Err("Choose exactly one sheet, keyframe, time, mark or phrase".to_owned()),
     };
-    let entry = open(roots, &request.show)?;
+    let folder = roots.resolve(&request.show)?;
+    let entry = recall::Entry::read_from(folder.path.clone(), &folder.files);
     let manifest = manifest_of(&entry)?;
-    let directory = &entry.directory;
+    let directory = &folder.path;
     let (png, metadata) = match picture {
         Picture::Sheet(number) => {
             let (name, frames) = number
                 .checked_sub(1)
                 .and_then(|index| manifest.sheets().nth(index))
                 .ok_or("That Show has no sheet with that number")?;
-            let png = recall::read_file(directory, &name, IMAGE_LIMIT)
+            let png = recall::read_from(&folder.files, &name, IMAGE_LIMIT)
                 .map_err(|_private| "That saved sheet is unavailable or exceeds 8 MiB")?;
             (
                 png,
@@ -222,7 +222,7 @@ fn image(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
                 .checked_sub(1)
                 .and_then(|index| manifest.keyframes().get(index))
                 .ok_or("That Show has no keyframe with that number")?;
-            let png = recall::read_file(directory, &frame.file(), IMAGE_LIMIT)
+            let png = recall::read_from(&folder.files, &frame.file(), IMAGE_LIMIT)
                 .map_err(|_private| "That saved keyframe is unavailable or exceeds 8 MiB")?;
             let marks: Vec<_> = manifest
                 .marks()
@@ -236,7 +236,7 @@ fn image(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
                 json!({"show": directory, "keyframe": number, "atMs": frame.at.as_millis(), "marks": marks, "crop": frame.crop, "annotations": true}),
             )
         },
-        Picture::Source(query) => source_image(directory, manifest, &query)?,
+        Picture::Source(query) => source_image(&folder, manifest, &query)?,
     };
     if !u64::try_from(png.len()).is_ok_and(|length| length <= IMAGE_LIMIT) {
         return Err("The selected image is not a PNG of at most 8 MiB".to_owned());
@@ -257,11 +257,6 @@ fn image(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
     ])
 }
 
-fn open(roots: &Roots, show: &str) -> Result<recall::Entry, &'static str> {
-    let directory = roots.resolve(show)?;
-    recall::Entry::open(&directory).map_err(|_private| "Cannot read that Show")
-}
-
 fn manifest_of(entry: &recall::Entry) -> Result<&Manifest, &'static str> {
     entry
         .show
@@ -271,7 +266,7 @@ fn manifest_of(entry: &recall::Entry) -> Result<&Manifest, &'static str> {
 }
 
 fn source_image(
-    directory: &Path,
+    folder: &Folder,
     manifest: &Manifest,
     query: &Query,
 ) -> Result<(Vec<u8>, Value), String> {
@@ -279,18 +274,20 @@ fn source_image(
     let span = found
         .selected
         .ok_or("Several phrase matches exist; use show_read to list matches, then choose match")?;
-    let index = source::inspect(directory)
-        .map_err(|_private| "Retained source frames are unavailable for that Show")?;
+    let unavailable = |_private| "Retained source frames are unavailable for that Show";
+    let mut source = source::Reader::open(&folder.files).map_err(unavailable)?;
+    let index = source.inspect().map_err(unavailable)?;
     if index.duration() != manifest.recording().duration {
         return Err("Retained source timing disagrees with the Show manifest".to_owned());
     }
-    let frame = source::frame(directory, &index, span.start())
+    let frame = source
+        .frame(&index, span.start())
         .map_err(|_private| "Cannot read the selected retained source frame")?;
     let png = frame
         .image
         .encode_png()
         .map_err(|_private| "Cannot encode the retained source image")?;
-    let metadata = json!({"show": directory, "location": found, "sampleAtMs": frame.at.as_millis(), "requestedAtMs": span.start().as_millis(), "sampleAfterRequest": frame.at > span.start(), "samplingStride": index.stride(), "longestGapMs": source::longest_gap(&index), "annotations": false});
+    let metadata = json!({"show": folder.path, "location": found, "sampleAtMs": frame.at.as_millis(), "requestedAtMs": span.start().as_millis(), "sampleAfterRequest": frame.at > span.start(), "samplingStride": index.stride(), "longestGapMs": source::longest_gap(&index), "annotations": false});
     Ok((png, metadata))
 }
 

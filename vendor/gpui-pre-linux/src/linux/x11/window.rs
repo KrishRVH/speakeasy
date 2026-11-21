@@ -265,6 +265,7 @@ pub struct X11WindowState {
     executor: ForegroundExecutor,
     atoms: XcbAtoms,
     x_root_window: xproto::Window,
+    override_redirect: bool,
     x_screen_index: usize,
     visual_id: u32,
     pub(crate) counter_id: sync::Counter,
@@ -509,11 +510,12 @@ impl X11WindowState {
             id
         };
 
+        let override_redirect = params.kind == WindowKind::PopUp;
         let win_aux = xproto::CreateWindowAux::new()
             // https://stackoverflow.com/questions/43218127/x11-xlib-xcb-creating-a-window-requires-border-pixel-if-specifying-colormap-wh
             .border_pixel(visual_set.black_pixel)
             .colormap(colormap)
-            .override_redirect((params.kind == WindowKind::PopUp) as u32)
+            .override_redirect(u32::from(override_redirect))
             .event_mask(
                 xproto::EventMask::EXPOSURE
                     | xproto::EventMask::STRUCTURE_NOTIFY
@@ -834,6 +836,7 @@ impl X11WindowState {
                 executor,
                 display,
                 x_root_window: visual_set.root,
+                override_redirect,
                 x_screen_index,
                 visual_id: visual.id,
                 bounds: bounds.to_pixels(scale_factor),
@@ -1881,15 +1884,43 @@ impl PlatformWindow for X11Window {
         check_reply(|| "X11 shape of the input region failed.", result).log_err();
     }
 
-    // Speakeasy patch: hiding unmaps the window without closing it, on GPUI's own connection.
+    // Speakeasy patch: hiding withdraws a managed window according to ICCCM §4.1.4.
     fn set_visible(&self, visible: bool) {
         let window = self.0.x_window;
-        let result = if visible {
-            self.0.xcb.map_window(window)
-        } else {
-            self.0.xcb.unmap_window(window)
+        if visible {
+            check_reply(|| "X11 MapWindow failed.", self.0.xcb.map_window(window)).log_err();
+            return;
+        }
+        if check_reply(|| "X11 UnmapWindow failed.", self.0.xcb.unmap_window(window))
+            .log_err()
+            .is_none()
+        {
+            return;
+        }
+        let (root, override_redirect) = {
+            let state = self.0.state.borrow();
+            (state.x_root_window, state.override_redirect)
         };
-        check_reply(|| "X11 MapWindow or UnmapWindow failed.", result).log_err();
+        if !override_redirect {
+            let event = xproto::UnmapNotifyEvent {
+                response_type: xproto::UNMAP_NOTIFY_EVENT,
+                sequence: 0,
+                event: root,
+                window,
+                from_configure: false,
+            };
+            check_reply(
+                || "X11 withdrawal notification failed.",
+                self.0.xcb.send_event(
+                    false,
+                    root,
+                    xproto::EventMask::SUBSTRUCTURE_REDIRECT
+                        | xproto::EventMask::SUBSTRUCTURE_NOTIFY,
+                    event,
+                ),
+            )
+            .log_err();
+        }
     }
 
     fn window_decorations(&self) -> gpui::Decorations {

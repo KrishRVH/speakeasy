@@ -1,10 +1,15 @@
-use std::time::{Duration, Instant};
+use std::{
+    sync::mpsc,
+    time::{Duration, Instant},
+};
 
 use async_channel::{Receiver, Sender};
 use speakeasy_show::{Framing, Size, TakeEvent};
 use zeroize::Zeroizing;
 
 use super::{FrameRecord, audio};
+
+const FINISH_WAIT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy, Default)]
 pub(super) struct Credit {
@@ -14,22 +19,22 @@ pub(super) struct Credit {
 
 pub(super) struct Producer<T> {
     sender: Option<Sender<T>>,
-    credits: Receiver<Credit>,
+    credits: mpsc::Receiver<Credit>,
     complete: Receiver<bool>,
     queued: Credit,
     limit: Credit,
 }
 
-enum Offered {
+enum Offered<T> {
     Sent,
-    Busy,
+    Busy(T),
     Stopped,
 }
 
 impl<T> Producer<T> {
     pub(super) fn new(
         sender: Sender<T>,
-        credits: Receiver<Credit>,
+        credits: mpsc::Receiver<Credit>,
         complete: Receiver<bool>,
         events: usize,
         bytes: usize,
@@ -43,21 +48,24 @@ impl<T> Producer<T> {
         }
     }
 
-    fn offer(&mut self, record: T, bytes: usize) -> Offered {
-        while let Ok(credit) = self.credits.try_recv() {
-            self.queued.events = self.queued.events.saturating_sub(credit.events);
-            self.queued.bytes = self.queued.bytes.saturating_sub(credit.bytes);
+    fn offer(&mut self, record: T, bytes: usize) -> Offered<T> {
+        loop {
+            match self.credits.try_recv() {
+                Ok(credit) => self.settle(credit),
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => return Offered::Stopped,
+            }
         }
         let Some(sender) = &self.sender else {
             return Offered::Stopped;
         };
-        if sender.is_closed() || self.credits.is_closed() {
+        if sender.is_closed() || bytes > self.limit.bytes {
             return Offered::Stopped;
         }
         if self.queued.events >= self.limit.events
             || self.queued.bytes.saturating_add(bytes) > self.limit.bytes
         {
-            return Offered::Busy;
+            return Offered::Busy(record);
         }
         match sender.try_send(record) {
             Ok(()) => {
@@ -65,9 +73,32 @@ impl<T> Producer<T> {
                 self.queued.bytes = self.queued.bytes.saturating_add(bytes);
                 Offered::Sent
             },
-            Err(async_channel::TrySendError::Full(_)) => Offered::Busy,
+            Err(async_channel::TrySendError::Full(record)) => Offered::Busy(record),
             Err(async_channel::TrySendError::Closed(_)) => Offered::Stopped,
         }
+    }
+
+    fn offer_until(&mut self, mut record: T, bytes: usize, deadline: Instant) -> Offered<T> {
+        loop {
+            match self.offer(record, bytes) {
+                Offered::Busy(pending) => {
+                    let Ok(credit) = self
+                        .credits
+                        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                    else {
+                        return Offered::Stopped;
+                    };
+                    self.settle(credit);
+                    record = pending;
+                },
+                offered => return offered,
+            }
+        }
+    }
+
+    fn settle(&mut self, credit: Credit) {
+        self.queued.events = self.queued.events.saturating_sub(credit.events);
+        self.queued.bytes = self.queued.bytes.saturating_sub(credit.bytes);
     }
 
     fn stop(&mut self) {
@@ -131,6 +162,12 @@ impl FrameLog {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum AudioEnding {
+    Complete,
+    Interrupted,
+}
+
 pub(crate) struct AudioLog {
     producer: Producer<audio::Record>,
     offered: usize,
@@ -154,35 +191,49 @@ impl AudioLog {
         self.threshold = usize::try_from(rate)
             .unwrap_or(usize::MAX)
             .clamp(2, 64 << 10);
-        self.send(audio::Record::Begin {
-            rate,
-            start,
-            language,
-        })
+        self.send(
+            audio::Record::Begin {
+                rate,
+                start,
+                language,
+            },
+            None,
+        )
     }
 
     pub(crate) fn offer(&mut self, pcm: &[u8], cues: &[(usize, usize)]) -> bool {
         if !self.complete {
             return false;
         }
-        self.chunk(pcm, cues, false);
+        self.chunk(pcm, cues, None);
         self.complete
     }
 
-    pub(crate) fn finish(mut self, pcm: &[u8], cues: &[(usize, usize)]) -> bool {
+    pub(crate) fn finish(
+        mut self,
+        pcm: &[u8],
+        cues: &[(usize, usize)],
+        ending: AudioEnding,
+    ) -> bool {
+        let now = Instant::now();
+        let deadline = now.checked_add(FINISH_WAIT).unwrap_or(now);
         while self.complete && (self.offered < pcm.len() || self.cues < cues.len()) {
             let before = (self.offered, self.cues);
-            self.chunk(pcm, cues, true);
+            self.chunk(pcm, cues, Some(deadline));
             if before == (self.offered, self.cues) {
                 self.complete = false;
             }
         }
-        self.complete && self.send(audio::Record::End)
+        self.complete
+            && match ending {
+                AudioEnding::Complete => self.send(audio::Record::End, Some(deadline)),
+                AudioEnding::Interrupted => true,
+            }
     }
 
-    fn chunk(&mut self, pcm: &[u8], cues: &[(usize, usize)], finishing: bool) {
+    fn chunk(&mut self, pcm: &[u8], cues: &[(usize, usize)], deadline: Option<Instant>) {
         let pending = pcm.len().saturating_sub(self.offered);
-        let end = if finishing || pending >= self.threshold {
+        let end = if deadline.is_some() || pending >= self.threshold {
             self.offered.saturating_add(pending.min(audio::CHUNK_BYTES))
         } else {
             self.offered
@@ -191,24 +242,31 @@ impl AudioLog {
             if at > end {
                 break;
             }
-            if !self.send(audio::Record::Cue { before, at }) {
+            if !self.send(audio::Record::Cue { before, at }, deadline) {
                 return;
             }
             self.cues = self.cues.saturating_add(1);
         }
         if end > self.offered
             && let Some(bytes) = pcm.get(self.offered..end)
-            && self.send(audio::Record::Samples(Zeroizing::new(bytes.to_vec())))
+            && self.send(
+                audio::Record::Samples(Zeroizing::new(bytes.to_vec())),
+                deadline,
+            )
         {
             self.offered = end;
         }
     }
 
-    fn send(&mut self, record: audio::Record) -> bool {
+    fn send(&mut self, record: audio::Record, deadline: Option<Instant>) -> bool {
         let bytes = record.bytes();
-        match self.producer.offer(record, bytes) {
+        let offered = match deadline {
+            Some(deadline) => self.producer.offer_until(record, bytes, deadline),
+            None => self.producer.offer(record, bytes),
+        };
+        match offered {
             Offered::Sent => true,
-            Offered::Busy => false,
+            Offered::Busy(_) => false,
             Offered::Stopped => {
                 self.complete = false;
                 self.producer.stop();
@@ -260,7 +318,7 @@ mod tests {
         while let Ok(record) = input.records.try_recv() {
             input.acknowledge(record.bytes());
         }
-        assert!(log.finish(&pcm, &[]));
+        assert!(log.finish(&pcm, &[], AudioEnding::Complete));
         assert!(matches!(
             input.records.try_recv().unwrap(),
             audio::Record::End

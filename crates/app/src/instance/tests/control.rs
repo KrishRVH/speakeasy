@@ -166,11 +166,15 @@ fn oversized_control_frames_are_refused_before_reading_the_body() -> anyhow::Res
     let path = directory.path().join("settings.json");
     let (_instance, requests) = Instance::acquire(&path)?.context("First owner missing")?;
     let mut client = connect(&path.with_file_name(PORT_FILE))?;
-    client.write_all(&[CONTROL])?;
-    let oversized = u16::try_from(MAX_BYTES)?.saturating_add(1);
-    client.write_all(&oversized.to_be_bytes())?;
+    let mut frame = vec![CONTROL];
+    write_frame(&mut frame, &vec![0; MAX_BYTES + 1])?;
+    client.write_all(&frame)?;
     let reply = read_reply(&mut client)?;
     assert_eq!(reply.result, Disposition::Refused);
+    assert_eq!(
+        reply.reason.as_deref(),
+        Some("The control command exceeds its size limit.")
+    );
     assert!(requests.try_recv().is_err());
     Instance::send(&path, Request::Toggle)?;
     assert_eq!(next_request(&requests)?, Request::Toggle);

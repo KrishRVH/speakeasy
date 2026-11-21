@@ -39,9 +39,16 @@ enum Keys {
 
 const WRITTEN: u8 = 200;
 
+#[derive(Clone, Copy)]
+enum SnapshotAccess {
+    Available,
+    Unavailable,
+}
+
 struct Fake {
     steps: Vec<Step>,
     clipboard: u8,
+    snapshot: SnapshotAccess,
     changes_clipboard_at: Option<Step>,
     revokes_at: Option<(Step, InsertPermit)>,
     holds: bool,
@@ -59,6 +66,7 @@ impl Fake {
         Self {
             steps: Vec::new(),
             clipboard: 0,
+            snapshot: SnapshotAccess::Available,
             changes_clipboard_at: None,
             revokes_at: None,
             holds: true,
@@ -104,20 +112,20 @@ impl NativeInsert for Fake {
 
     fn save(&mut self, (): &()) -> Option<u8> {
         self.reach(Step::Save);
-        Some(self.clipboard)
+        matches!(self.snapshot, SnapshotAccess::Available).then_some(self.clipboard)
     }
 
-    fn write(&mut self, (): (), text: &str) -> anyhow::Result<()> {
+    fn write(&mut self, (): (), text: &str) -> anyhow::Result<u8> {
         self.reach(Step::Write);
         self.texts.push(text.to_owned());
         self.clipboard = WRITTEN;
-        Ok(())
+        Ok(self.clipboard)
     }
 
-    fn restore(&mut self, contents: u8, mark: &u8) -> anyhow::Result<()> {
+    fn restore(&mut self, contents: Option<u8>, mark: &u8) -> anyhow::Result<()> {
         self.reach(Step::Restore);
         if *mark == self.clipboard {
-            self.clipboard = contents;
+            self.clipboard = contents.unwrap_or_default();
         }
         if let Some(restored) = &self.restored {
             restored.try_send(self.clipboard)?;
@@ -198,7 +206,6 @@ fn paste_checks_the_clipboard_again_after_focus_and_sends_once() -> anyhow::Resu
             Step::Acquire,
             Step::Save,
             Step::Write,
-            Step::Mark,
             Step::Holds,
             Step::PasteKeys,
             Step::ExternalFocus,
@@ -314,6 +321,46 @@ fn escape_while_another_app_holds_the_clipboard_prevents_the_write() -> anyhow::
         Inserted::Cancelled
     );
     assert_eq!(native.steps, [Step::Acquire]);
+    Ok(())
+}
+
+#[test]
+fn escape_during_a_delayed_clipboard_snapshot_prevents_the_write() -> anyhow::Result<()> {
+    let permit = permit()?;
+    let mut native = Fake {
+        revokes_at: Some((Step::Save, permit.clone())),
+        ..Fake::new()
+    };
+    assert_eq!(
+        insert(&mut native, "text", &permit, Delivery::Paste, &unfocused())?.0,
+        Inserted::Cancelled
+    );
+    assert_eq!(native.steps, [Step::Acquire, Step::Save]);
+    Ok(())
+}
+
+#[test]
+fn cancellation_restores_the_snapshot_only_while_the_dictation_owns_the_clipboard()
+-> anyhow::Result<()> {
+    for (changed, snapshot, expected) in [
+        (false, SnapshotAccess::Available, 1),
+        (false, SnapshotAccess::Unavailable, 0),
+        (true, SnapshotAccess::Available, WRITTEN + 1),
+        (true, SnapshotAccess::Unavailable, WRITTEN + 1),
+    ] {
+        let permit = permit()?;
+        let mut native = Fake {
+            clipboard: 1,
+            snapshot,
+            changes_clipboard_at: changed.then_some(Step::ShortcutReleased),
+            revokes_at: Some((Step::ShortcutReleased, permit.clone())),
+            ..Fake::new()
+        };
+        let (outcome, ..) = insert(&mut native, "text", &permit, Delivery::Paste, &unfocused())?;
+        assert_eq!(outcome, Inserted::Cancelled);
+        assert!(!native.sent());
+        assert_eq!(native.clipboard, expected);
+    }
     Ok(())
 }
 

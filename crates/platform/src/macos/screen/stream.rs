@@ -226,14 +226,16 @@ impl Stream {
     }
 
     fn start(&mut self) -> Result<(), Failure> {
-        self.running = true;
         let (completion, reply) = completed(Operation::Start);
 
         unsafe {
             self.native
                 .startCaptureWithCompletionHandler(Some(&completion));
         }
-        reply.recv().unwrap_or(Err(Failure::Unstarted))
+        drop(completion);
+        reply.recv().unwrap_or(Err(Failure::Unstarted))?;
+        self.running = true;
+        Ok(())
     }
 
     fn stop(&mut self) -> Result<(), Failure> {
@@ -247,6 +249,7 @@ impl Stream {
             self.native
                 .stopCaptureWithCompletionHandler(Some(&completion));
         }
+        drop(completion);
         let result = reply.recv().unwrap_or(Err(Failure::Stalled));
         if result.is_ok() || self.stopped.is_closed() {
             self.running = false;

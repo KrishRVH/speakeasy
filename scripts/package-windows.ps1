@@ -1,5 +1,12 @@
 $ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $PSScriptRoot '..')
+$artifacts = (New-Item -ItemType Directory -Force -Path 'artifacts').FullName
+$zipName = 'speakeasy-windows-x64.zip'
+$installerName = 'speakeasy-windows-x64-setup.exe'
+$outputs = @($zipName, $installerName, 'windows') | ForEach-Object { Join-Path $artifacts $_ }
+foreach ($output in $outputs) {
+    if (Test-Path -LiteralPath $output) { Remove-Item -LiteralPath $output -Force -Recurse }
+}
 $signingCertificate = $env:SPEAKEASY_WINDOWS_SIGN_CERT_SHA1
 $timestamp = $env:SPEAKEASY_WINDOWS_SIGN_TIMESTAMP
 $signer = $null
@@ -17,6 +24,10 @@ function Sign-PackageFile([string]$Path) {
     if (!$signer) { return }
     & $signer.FullName sign /sha1 $signingCertificate /s My /fd SHA256 /tr $timestamp /td SHA256 $Path
     if ($LASTEXITCODE -ne 0) { throw 'Windows package signing failed.' }
+    Confirm-PackageSignature $Path
+}
+function Confirm-PackageSignature([string]$Path) {
+    if (!$signer) { return }
     $signature = Get-AuthenticodeSignature -LiteralPath $Path
     if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Thumbprint -ne $signingCertificate -or !$signature.TimeStamperCertificate) {
         throw 'The Windows package does not have its expected valid timestamped publisher signature.'
@@ -39,34 +50,54 @@ try {
 } finally {
     $env:RUSTFLAGS = $callerRustFlags
 }
-$destination = Join-Path (Get-Location) 'artifacts/windows'
-New-Item -ItemType Directory -Force -Path $destination | Out-Null
-foreach ($executable in @('speakeasy.exe', 'speakeasy-cli.exe')) {
-    Copy-Item "target/x86_64-pc-windows-msvc/release/$executable" $destination
-    $image = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes("$destination/$executable"))
-    if ($image.IndexOf('VCRUNTIME140', [StringComparison]::OrdinalIgnoreCase) -ge 0) {
-        throw "$executable imports the Visual C++ runtime, which Windows does not include"
+$staging = (New-Item -ItemType Directory -Path (Join-Path $artifacts ('.windows-package-' + [guid]::NewGuid()))).FullName
+try {
+    $destination = Join-Path $staging 'windows'
+    New-Item -ItemType Directory -Force -Path $destination | Out-Null
+    foreach ($executable in @('speakeasy.exe', 'speakeasy-cli.exe')) {
+        Copy-Item "target/x86_64-pc-windows-msvc/release/$executable" $destination
+        $image = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes("$destination/$executable"))
+        if ($image.IndexOf('VCRUNTIME140', [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            throw "$executable imports the Visual C++ runtime, which Windows does not include"
+        }
+        Sign-PackageFile (Join-Path $destination $executable)
     }
-    Sign-PackageFile (Join-Path $destination $executable)
+    $version = & "$destination/speakeasy-cli.exe" --version
+    if ($LASTEXITCODE -ne 0 -or $version -notmatch '^speakeasy \d+\.\d+\.\d+$') {
+        throw 'The console entry did not return its version and exit status to PowerShell'
+    }
+    Copy-Item 'settings.example.json' $destination
+    Copy-Item 'LICENSE' $destination
+    cargo about generate --locked --fail -c packaging/about.toml --target x86_64-pc-windows-msvc -o "$destination/THIRD-PARTY-NOTICES.txt" packaging/notices.hbs
+    if ($LASTEXITCODE -ne 0) { throw 'Third-party notices failed' }
+    Copy-Item 'crates/app/assets/JosefinSans-OFL.txt' $destination
+    Copy-Item 'crates/show/NOTICE.md' $destination
+    Compress-Archive -LiteralPath "$destination/speakeasy.exe", "$destination/speakeasy-cli.exe", "$destination/settings.example.json", "$destination/LICENSE", "$destination/THIRD-PARTY-NOTICES.txt", "$destination/JosefinSans-OFL.txt", "$destination/NOTICE.md" -DestinationPath (Join-Path $staging $zipName)
+    $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
+    if (!$iscc) {
+        $iscc = (Get-Item "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe" -ErrorAction SilentlyContinue).FullName
+    }
+    if (!$iscc) { throw 'Install Inno Setup 6 to build the per-user installer.' }
+    $appVersion = $version.Trim().Substring('speakeasy '.Length)
+    $compilerOptions = @("/DAppVersion=$appVersion", "/DPackageRoot=$destination", "/O$staging")
+    if ($signer) {
+        $signToolPath = $signer.FullName.Replace('$', '$$')
+        $signTimestamp = $timestamp.Replace('$', '$$')
+        $signCommand = '/Sspeakeasy=$q{0}$q sign /sha1 {1} /s My /fd SHA256 /tr $q{2}$q /td SHA256 $f' -f $signToolPath, $signingCertificate, $signTimestamp
+        $compilerOptions += @('/DPublisherSigning', $signCommand)
+    }
+    & $iscc @compilerOptions 'packaging/windows/installer.iss'
+    if ($LASTEXITCODE -ne 0) { throw 'Windows installer compilation failed' }
+    Confirm-PackageSignature (Join-Path $staging $installerName)
+    foreach ($name in @($zipName, $installerName, 'windows')) {
+        Move-Item -LiteralPath (Join-Path $staging $name) -Destination $artifacts
+    }
+    Write-Host "Built $artifacts/windows"
+} catch {
+    foreach ($output in $outputs) {
+        Remove-Item -LiteralPath $output -Force -Recurse -ErrorAction SilentlyContinue
+    }
+    throw
+} finally {
+    Remove-Item -LiteralPath $staging -Force -Recurse
 }
-$version = & "$destination/speakeasy-cli.exe" --version
-if ($LASTEXITCODE -ne 0 -or $version -notmatch '^speakeasy \d+\.\d+\.\d+$') {
-    throw 'The console entry did not return its version and exit status to PowerShell'
-}
-Copy-Item 'settings.example.json' $destination
-Copy-Item 'LICENSE' $destination
-cargo about generate --locked --fail -c packaging/about.toml --target x86_64-pc-windows-msvc -o "$destination/THIRD-PARTY-NOTICES.txt" packaging/notices.hbs
-if ($LASTEXITCODE -ne 0) { throw 'Third-party notices failed' }
-Copy-Item 'crates/app/assets/JosefinSans-OFL.txt' $destination
-Copy-Item 'crates/show/NOTICE.md' $destination
-Compress-Archive -LiteralPath "$destination/speakeasy.exe", "$destination/speakeasy-cli.exe", "$destination/settings.example.json", "$destination/LICENSE", "$destination/THIRD-PARTY-NOTICES.txt", "$destination/JosefinSans-OFL.txt", "$destination/NOTICE.md" -DestinationPath 'artifacts/speakeasy-windows-x64.zip' -Force
-$iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
-if (!$iscc) {
-    $iscc = (Get-Item "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe" -ErrorAction SilentlyContinue).FullName
-}
-if (!$iscc) { throw 'Install Inno Setup 6 to build the per-user installer. The portable ZIP has been built.' }
-$appVersion = $version.Trim().Substring('speakeasy '.Length)
-& $iscc "/DAppVersion=$appVersion" "/DPackageRoot=$destination" 'packaging/windows/installer.iss'
-if ($LASTEXITCODE -ne 0) { throw 'Windows installer compilation failed' }
-Sign-PackageFile (Join-Path (Get-Location) 'artifacts/speakeasy-windows-x64-setup.exe')
-Write-Host "Built $destination"

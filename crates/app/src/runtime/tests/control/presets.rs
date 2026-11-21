@@ -105,3 +105,25 @@ async fn resumed_preset_keeps_saved_settings_separate_from_effective_choices() -
     assert_eq!(adopted.result, Disposition::Ok);
     h.close().await
 }
+
+#[tokio::test(start_paused = true)]
+async fn restoring_saved_settings_clears_the_preset_and_uses_the_saved_language()
+-> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    h.ready().await?;
+    let saved = h.runtime.configuration.borrow().clone();
+    let french = Config {
+        language: "fr".into(),
+        ..saved.clone()
+    };
+    let adopted = choose(&h, "French", &french, &saved, h.snapshot().session).await?;
+    assert_eq!(adopted.result, Disposition::Ok);
+    h.observe(|snapshot| snapshot.preset.as_deref() == Some("French"))
+        .await?;
+
+    h.runtime.restore_saved();
+    h.observe(|snapshot| snapshot.preset.is_none()).await?;
+    h.start().await?;
+    finish_in(&mut h, &saved.language).await?;
+    h.close().await
+}

@@ -49,7 +49,14 @@ impl Manifest {
                     .ok_or(Unlocated("This Show has no mark with that number"))?
                     .span,
             ],
-            Focus::Phrase(phrase) => self.find_phrase(phrase)?,
+            Focus::Phrase(phrase) => {
+                return Ok(self
+                    .find_phrase(phrase)?
+                    .into_iter()
+                    .filter(|span| span.start() <= duration)
+                    .map(|span| Span::new(span.start(), span.end().min(duration)))
+                    .collect());
+            },
         };
         if spans.iter().any(|span| span.end() > duration) {
             return Err(Unlocated(

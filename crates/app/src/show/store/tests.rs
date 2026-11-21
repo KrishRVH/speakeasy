@@ -238,7 +238,7 @@ fn a_bundle_appears_whole_under_a_fresh_name() -> anyhow::Result<()> {
     drop(stage(managed(&second, None)?, bundle()?, None)?);
     assert_eq!(
         names(&parent)?,
-        ["20261019T143603Z"],
+        [retention::LOCK, "20261019T143603Z"],
         "a bundle dropped before it persists, as a Show cancelled at commit drops it, leaves \
          nothing behind"
     );

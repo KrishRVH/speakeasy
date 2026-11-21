@@ -819,7 +819,9 @@ impl<P: Payload> Machine<P> {
                 self.end_practice(env);
                 let start = self.gesture.toggle(now.moment);
                 self.handle_action(now, start, env)?;
-                self.start_show(scope, env);
+                if self.session.is_some() && !self.start_show(scope, env) {
+                    self.discard(env);
+                }
                 None
             },
             Input::Press | Input::Toggle | Input::PasteLast | Input::StartShow(_) => None,
@@ -1037,7 +1039,9 @@ impl<P: Payload> Machine<P> {
                 else {
                     return;
                 };
-                if session.is_transcribing() {
+                if session.is_transcribing()
+                    && !matches!(self.notice, Some(Notice::NarrationLost(_)))
+                {
                     self.notice = Some(Notice::LoadingModel);
                 }
                 if !session.absorb_failure(ticket) {
@@ -1091,13 +1095,13 @@ impl<P: Payload> Machine<P> {
         }
     }
 
-    fn start_show(&mut self, scope: P::Scope, env: &mut impl Env<P>) {
+    fn start_show(&mut self, scope: P::Scope, env: &mut impl Env<P>) -> bool {
         let held = matches!(self.gesture.state(), State::Held | State::HandsFree);
         let Some(session) = self.session.as_mut() else {
-            return;
+            return false;
         };
         if !held || !session.turn_into_show(scope, env) {
-            return;
+            return false;
         }
         if self.microphone == Device::Open {
             env.listen_whole();
@@ -1113,6 +1117,7 @@ impl<P: Payload> Machine<P> {
             self.cue_heard(Cue::Show, env);
         }
         self.gesture.show();
+        true
     }
 
     fn handle_show(
@@ -1593,7 +1598,10 @@ impl<P: Payload> Machine<P> {
         let Some(session) = self.session.as_mut() else {
             return;
         };
-        if session.awaits_worker() && self.worker.revive(&self.config, env) {
+        if session.awaits_worker()
+            && self.worker.revive(&self.config, env)
+            && !matches!(self.notice, Some(Notice::NarrationLost(_)))
+        {
             self.notice = Some(Notice::LoadingModel);
         }
         self.worker.transcribe(session, &self.config, env);
@@ -1702,6 +1710,7 @@ impl<P: Payload> Machine<P> {
             return Err(Refusal::PresetStale);
         }
         self.apply_settings(config, env);
+        self.outcome = Outcome::Idle;
         self.preset = Some(name);
         Ok(())
     }

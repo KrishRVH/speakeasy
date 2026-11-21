@@ -137,7 +137,7 @@ fn roots_refuse_outside_sibling_prefix_parent_steps_and_ambiguous_names() -> any
     let inside = fixture(&root, "exact")?;
     let outside = fixture(&sibling, "exact")?;
     let roots = Roots::open(slice::from_ref(&root)).map_err(anyhow::Error::msg)?;
-    assert_eq!(roots.resolve("exact").unwrap(), inside.canonicalize()?);
+    assert_eq!(roots.resolve("exact").unwrap().path, inside.canonicalize()?);
     for path in [outside, root.join("../root/exact"), temp.path().to_owned()] {
         assert!(roots.resolve(path.to_str().unwrap()).is_err());
     }
@@ -145,7 +145,7 @@ fn roots_refuse_outside_sibling_prefix_parent_steps_and_ambiguous_names() -> any
     let roots = Roots::open(&[root, sibling]).map_err(anyhow::Error::msg)?;
     assert!(roots.resolve("exact").is_err());
     assert_eq!(
-        roots.resolve(inside.to_str().unwrap()).unwrap(),
+        roots.resolve(inside.to_str().unwrap()).unwrap().path,
         inside.canonicalize()?
     );
     Ok(())
@@ -161,7 +161,9 @@ fn symlinked_bundles_and_symlinked_roots_are_refused() -> anyhow::Result<()> {
     let outside = fixture(temp.path(), "outside")?;
     let linked = root.join("linked");
     symlink(&outside, &linked)?;
-    assert!(Roots::open(slice::from_ref(&linked)).is_err());
+    for root in [linked.clone(), linked.join(""), linked.join(".")] {
+        assert!(Roots::open(&[root]).is_err());
+    }
     let roots = Roots::open(&[root]).map_err(anyhow::Error::msg)?;
     assert!(roots.resolve(linked.to_str().unwrap()).is_err());
     assert!(roots.list(None).unwrap().0.is_empty());
@@ -201,11 +203,13 @@ fn explicit_root_ancestor_alias_is_fixed_at_launch_but_child_links_are_refused()
     let directory = fixture(&actual.join("shows"), "exact")?;
     let alias = temp.path().join("alias");
     symlink(&actual, &alias)?;
-    let roots = Roots::open(&[alias.join("shows")]).map_err(anyhow::Error::msg)?;
+    let roots =
+        Roots::open(&[temp.path().to_owned(), alias.join("shows")]).map_err(anyhow::Error::msg)?;
     assert_eq!(
         roots
             .resolve(alias.join("shows/exact").to_str().unwrap())
-            .unwrap(),
+            .unwrap()
+            .path,
         directory.canonicalize()?
     );
     let child = actual.join("shows/link");
@@ -215,6 +219,23 @@ fn explicit_root_ancestor_alias_is_fixed_at_launch_but_child_links_are_refused()
             .resolve(alias.join("shows/link").to_str().unwrap())
             .is_err()
     );
+    Ok(())
+}
+
+#[test]
+fn internal_show_directories_are_neither_listed_nor_resolved() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let roots = Roots::open(&[temp.path().to_owned()]).map_err(anyhow::Error::msg)?;
+    for name in [
+        ".expired-20261020T143205Z",
+        ".partial-example",
+        ".checkpoints",
+    ] {
+        let hidden = fixture(temp.path(), name)?.canonicalize()?;
+        assert!(roots.resolve(name).is_err());
+        assert!(roots.resolve(hidden.to_str().unwrap()).is_err());
+    }
+    assert!(roots.list(None).unwrap().0.is_empty());
     Ok(())
 }
 

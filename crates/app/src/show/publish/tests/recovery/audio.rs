@@ -2,6 +2,18 @@ use super::*;
 use crate::audio::fixture::square_wave;
 
 async fn with_audio(parent: &Path) -> anyhow::Result<Checkpoint> {
+    let pcm = square_wave(3000)
+        .take(8_000)
+        .flat_map(i16::to_le_bytes)
+        .collect::<Vec<_>>();
+    with_pcm(parent, &pcm, crate::show::checkpoint::AudioEnding::Complete).await
+}
+
+async fn with_pcm(
+    parent: &Path,
+    pcm: &[u8],
+    ending: crate::show::checkpoint::AudioEnding,
+) -> anyhow::Result<Checkpoint> {
     let parent = parent.to_owned();
     let crate::show::Kept {
         keeper,
@@ -21,15 +33,7 @@ async fn with_audio(parent: &Path) -> anyhow::Result<Checkpoint> {
     );
     assert!(frames.send(take.end(Moment::from_millis(1_000), Ending::Finished)));
     assert!(audio.begin(8_000, Duration::from_millis(125), "fr".into()));
-    assert!(
-        audio.finish(
-            &square_wave(3000)
-                .take(8_000)
-                .flat_map(i16::to_le_bytes)
-                .collect::<Vec<_>>(),
-            &[]
-        )
-    );
+    assert!(audio.finish(pcm, &[], ending));
     assert!(frames.close().await);
     keeper
         .close()

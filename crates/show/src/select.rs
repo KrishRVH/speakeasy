@@ -123,6 +123,11 @@ fn select_within(recording: &Recording, samples: &[Sample], most: usize) -> Opti
     let mut candidates: Vec<Candidate> = group_marks(&frames, &marks, &action_starts, most)
         .into_iter()
         .filter_map(|group| frames.mark_candidate(&marks, group))
+        .scan(0, |previous_frame, mut candidate| {
+            candidate.frame = candidate.frame.max(*previous_frame);
+            *previous_frame = candidate.frame;
+            Some(candidate)
+        })
         .collect();
 
     candidates.extend(

@@ -143,11 +143,12 @@ impl Settings {
                 .then_some(Action::Onboarding(TourAction::Next))
         };
         match step {
-            Step::Prepare if self.locked() => ("Continue", None),
+            Step::Prepare if self.resetting() => ("Starting over…", None),
+            Step::Prepare if self.unreadable => ("Continue", None),
             Step::Prepare if self.engine_work.installing().is_some() => ("Setting up…", None),
             Step::Prepare if self.engine_work.is_pausing() => ("Pausing download…", None),
             Step::Prepare | Step::Practice if self.saving.is_some() => ("Saving…", None),
-            Step::Prepare if !demo && self.config.needs_engine() => (
+            Step::Prepare if !demo && !self.config.speech_configured() => (
                 "Set up automatically · 0.8 GB",
                 (!self.engine_work.is_busy()).then_some(Action::Setup),
             ),
@@ -179,8 +180,18 @@ impl Settings {
             .map(|installing| installing.setup.progress());
         let needs_setup = !self.locked()
             && !is_demo(ui.cx)
-            && (self.config.needs_engine() || installing.is_some());
-        let state = if self.locked() {
+            && (!self.config.speech_configured() || installing.is_some());
+        let state = if self.resetting() {
+            kit.group(vec![
+                div()
+                    .p(px(16.0))
+                    .child(kit.label(
+                        "Starting over",
+                        "Removing settings and downloads. Your Shows stay.",
+                    ))
+                    .into_any_element(),
+            ])
+        } else if self.unreadable {
             self.unreadable_banner(ui)
         } else if needs_setup {
             kit.group(vec![

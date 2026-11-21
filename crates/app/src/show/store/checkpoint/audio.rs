@@ -1,14 +1,15 @@
 use std::{
     fs::File,
-    io::{self, BufReader},
+    io::{self, BufReader, Seek as _},
     num::NonZeroU32,
+    path::Path,
     time::Duration,
 };
 
 use anyhow::{Context as _, bail, ensure};
 use zeroize::Zeroizing;
 
-use super::read_complete;
+use super::{found, read_complete, recall};
 use crate::audio::MAX_SAMPLE_RATE as MAX_RATE;
 
 pub(super) const MAGIC: &[u8; 8] = b"SPKAUD01";
@@ -113,11 +114,49 @@ pub(in crate::show::store) fn read(file: File) -> anyhow::Result<KeptAudio> {
     decode(BufReader::new(file), usize::try_from(bytes)?)
 }
 
-fn decode(mut file: impl io::Read, bytes: usize) -> anyhow::Result<KeptAudio> {
+pub(in crate::show::store) fn available(
+    directory: &Path,
+    name: &str,
+) -> anyhow::Result<Option<File>> {
+    let folder = recall::open_directory(directory)?;
+    let Some((mut file, metadata)) = found(folder.file(Path::new(name)))? else {
+        return Ok(None);
+    };
+    ensure!(metadata.len() <= FILE_LIMIT, DAMAGED);
+    if metadata.len() <= u64::try_from(MAGIC.len())? {
+        return Ok(None);
+    }
+    let present = decode_prefix(BufReader::new(&mut file), 0, Samples::First)?.is_some();
+    if present {
+        file.rewind()?;
+        Ok(Some(file))
+    } else {
+        Ok(None)
+    }
+}
+
+enum Samples {
+    First,
+    All,
+}
+
+fn decode(file: impl io::Read, bytes: usize) -> anyhow::Result<KeptAudio> {
+    decode_prefix(file, bytes, Samples::All)?.context(DAMAGED)
+}
+
+fn decode_prefix(
+    mut file: impl io::Read,
+    bytes: usize,
+    samples: Samples,
+) -> anyhow::Result<Option<KeptAudio>> {
     let mut magic = [0; 8];
-    file.read_exact(&mut magic).context(DAMAGED)?;
+    if !read_complete(&mut file, &mut magic)? {
+        return Ok(None);
+    }
     ensure!(&magic == MAGIC, DAMAGED);
-    let first = next(&mut file)?.context(DAMAGED)?;
+    let Some(first) = next(&mut file)? else {
+        return Ok(None);
+    };
     let Some((&BEGIN, header)) = first.split_first() else {
         bail!(DAMAGED);
     };
@@ -154,7 +193,10 @@ fn decode(mut file: impl io::Read, bytes: usize) -> anyhow::Result<KeptAudio> {
                     && data.len().is_multiple_of(2)
                     && audio.pcm.len().saturating_add(data.len()) <= limit =>
             {
-                audio.pcm.extend_from_slice(data);
+                match samples {
+                    Samples::First => return Ok(Some(audio)),
+                    Samples::All => audio.pcm.extend_from_slice(data),
+                }
             },
             CUE if audio.cues.len() < MAX_CUES => {
                 let ([before, at], []) = data.as_chunks::<8>() else {
@@ -185,7 +227,10 @@ fn decode(mut file: impl io::Read, bytes: usize) -> anyhow::Result<KeptAudio> {
         *at = (*at).min(audio.pcm.len());
         *before <= audio.pcm.len()
     });
-    Ok(audio)
+    Ok(match samples {
+        Samples::First => None,
+        Samples::All => Some(audio),
+    })
 }
 
 fn next(file: &mut impl io::Read) -> anyhow::Result<Option<Zeroizing<Vec<u8>>>> {

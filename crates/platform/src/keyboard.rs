@@ -64,7 +64,12 @@ impl Chord {
 
     fn interrupt_recording(&mut self, input: &InputSender) {
         Action::Interrupt.deliver(input);
-        self.interrupt();
+        self.miss_events();
+    }
+
+    fn miss_events(&mut self) -> bool {
+        self.swallowing = 0;
+        self.interrupt()
     }
 
     #[cfg(any(target_os = "macos", test))]
@@ -73,7 +78,11 @@ impl Chord {
     }
 
     fn reconcile(&mut self, held: bool) -> bool {
-        !held && self.release().is_some()
+        if held || self.hold == Hold::Released {
+            return false;
+        }
+        self.swallowing = 0;
+        self.release().is_some()
     }
 }
 
@@ -276,14 +285,20 @@ impl Modifiers {
 pub(super) struct Physical {
     chord_keys: [bool; 5],
     other_shortcut: bool,
+    chord_blocked: bool,
 }
 
 #[cfg(any(target_os = "windows", test))]
 impl Physical {
     pub(super) fn read(shortcut: crate::WindowsShortcut, down: impl Fn(u16) -> bool) -> Self {
+        let other_shortcut = shortcut.modifiers(&down).other_shortcut;
         Self {
             chord_keys: Windows::CHORD_KEYS.map(&down),
-            other_shortcut: shortcut.modifiers(down).other_shortcut,
+            other_shortcut,
+            chord_blocked: match shortcut {
+                crate::WindowsShortcut::ControlWindows => down(Windows::ALT),
+                _ => other_shortcut,
+            },
         }
     }
 }
@@ -453,7 +468,7 @@ impl Windows {
             let pinned = self.taps.shift(down, physical.other_shortcut, at);
             return Decision::pass(pinned.map(Action::Pin));
         }
-        if let Some(decision) = self.chord_key(key, down, physical.other_shortcut, at) {
+        if let Some(decision) = self.chord_key(key, down, physical.chord_blocked, at) {
             return decision;
         }
         self.taps.interrupt();
@@ -495,10 +510,9 @@ impl Windows {
         if pressed {
             self.pressed = Some(at);
         }
-        let solo = self.shortcut != crate::WindowsShortcut::ControlWindows;
         let action = match (self.chord_held(), pressed) {
             (false, _) => self.chord.release(),
-            (true, true) if solo && other_shortcut => None,
+            (true, true) if other_shortcut => None,
             (true, true) => self.chord.press(),
             (true, false) => None,
         };
@@ -650,7 +664,7 @@ impl Mac {
 
     pub(super) fn missed_events(&mut self, input: &InputSender) {
         self.taps.interrupt();
-        if self.chord.interrupt() {
+        if self.chord.miss_events() {
             Action::Interrupt.deliver(input);
         }
     }

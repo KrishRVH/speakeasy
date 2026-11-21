@@ -127,7 +127,7 @@ impl Take {
     }
 
     pub fn end(&mut self, at: Moment, ending: Ending) -> TakeEvent {
-        self.latest = self.latest.max(at.min(DURATION_LIMIT));
+        self.latest = self.through().max(at.min(DURATION_LIMIT));
         self.ending = Some(ending);
         TakeEvent::End {
             at: self.latest,
@@ -190,16 +190,19 @@ impl Take {
 
     #[must_use]
     pub fn finish(self) -> (Recording, Journal) {
-        let at = self
-            .journal
-            .samples()
-            .last()
-            .map_or(self.latest, |sample| self.latest.max(sample.at));
+        let at = self.through();
         let recording = Recording {
             ending: self.ending.unwrap_or(Ending::ScreenStopped),
             ..self.tracker.finish(at)
         };
         (recording, self.journal.sealed())
+    }
+
+    fn through(&self) -> Moment {
+        self.journal
+            .samples()
+            .last()
+            .map_or(self.latest, |sample| self.latest.max(sample.at))
     }
 }
 

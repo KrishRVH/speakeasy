@@ -669,7 +669,9 @@ impl<P: Ports> Env<Native> for World<P> {
 
     fn release(&mut self, session: SessionId, checkpoint: Checkpointing, release: Release<Native>) {
         let release = match release {
-            Release::Keep(narration) => show::Release::Keep(narration),
+            Release::Keep(narration) => show::Release::Keep(
+                narration.map(|(narration, loss)| (narration, loss.map(native::show_loss))),
+            ),
             Release::Discard => show::Release::Discard,
         };
         self.retiring.push((

@@ -9,8 +9,9 @@ use edit::{Composition, Direction, Edit};
 use gpui::{
     AccessibleAction, App, Bounds, ClipboardItem, Context, ElementInputHandler, EntityInputHandler,
     EventEmitter, FocusHandle, Focusable, KeyDownEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, Pixels, Point, ShapedLine, TextRun, UTF16Selection, UnderlineStyle, WeakEntity,
-    Window, accesskit::ActionData, canvas, div, fill, point, prelude::*, px, size,
+    MouseMoveEvent, Pixels, Point, ShapedLine, Subscription, TextRun, UTF16Selection,
+    UnderlineStyle, WeakEntity, Window, accesskit::ActionData, canvas, div, fill, point,
+    prelude::*, px, size,
 };
 use viewport::Viewport;
 
@@ -32,6 +33,7 @@ pub(super) struct TextField {
     edit: Edit,
     viewport: Viewport,
     focus: FocusHandle,
+    blur: Option<Subscription>,
     theme: Theme,
     layout: Option<Layout>,
     selecting: bool,
@@ -76,6 +78,7 @@ impl TextField {
             edit: Edit::default(),
             viewport: Viewport::default(),
             focus: cx.focus_handle().tab_stop(true),
+            blur: None,
             theme,
             layout: None,
             selecting: false,
@@ -113,13 +116,20 @@ impl TextField {
     ) {
         let key = &event.keystroke;
         if self.edit.marked.is_some() {
+            if key.key == "tab" {
+                self.unmark_text(window, cx);
+            }
             return;
         }
-        let command = if cfg!(target_os = "macos") {
-            key.modifiers.platform
-        } else {
-            key.modifiers.control
-        };
+        let modifiers = key.modifiers;
+        let command = !modifiers.alt
+            && !modifiers.shift
+            && !modifiers.function
+            && if cfg!(target_os = "macos") {
+                modifiers.platform && !modifiers.control
+            } else {
+                modifiers.control && !modifiers.platform
+            };
         match key.key.as_str() {
             "a" if command => {
                 self.edit.select(0, false);
@@ -178,6 +188,7 @@ impl TextField {
         cx: &mut Context<'_, Self>,
     ) {
         window.focus(&self.focus, cx);
+        self.edit.unmark();
         self.selecting = true;
         self.select_point(event.position, event.modifiers.shift);
         cx.notify();
@@ -411,6 +422,13 @@ impl Focusable for TextField {
 
 impl Render for TextField {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        if self.blur.is_none() {
+            self.blur = Some(cx.on_blur(&self.focus, window, |field, window, cx| {
+                if field.edit.marked.is_some() {
+                    field.unmark_text(window, cx);
+                }
+            }));
+        }
         let palette = self.theme.palette();
         let field = cx.entity();
         let this = cx.weak_entity();

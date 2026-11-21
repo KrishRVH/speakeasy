@@ -6,13 +6,14 @@ use std::{
     fs::File,
     io::{BufWriter, Write as _},
     path::{Path, PathBuf},
+    sync::mpsc,
     time::{Duration, Instant, SystemTime},
 };
 
 use anyhow::Context as _;
 use async_channel::{Receiver, Sender};
 use movie::Writing;
-pub(crate) use producers::{AudioLog, FrameLog};
+pub(crate) use producers::{AudioEnding, AudioLog, FrameLog};
 use producers::{Credit, Producer};
 use speakeasy_platform::{MovieTarget, StoppableThread};
 use speakeasy_show::{Framing, Size, TakeEvent, log};
@@ -135,7 +136,7 @@ impl FrameRecord {
 
 struct Input<T> {
     records: Receiver<T>,
-    credits: Sender<Credit>,
+    credits: mpsc::SyncSender<Credit>,
     flushed: Sender<bool>,
     storage: Option<Storage>,
 }
@@ -143,7 +144,7 @@ struct Input<T> {
 impl<T> Input<T> {
     fn lane(events: usize, bytes: usize) -> (Producer<T>, Self) {
         let (outgoing, records) = async_channel::bounded(events);
-        let (credits, available) = async_channel::bounded(events);
+        let (credits, available) = mpsc::sync_channel(events);
         let (flushed, complete) = async_channel::bounded(1);
         (
             Producer::new(outgoing, available, complete, events, bytes),

@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, ops::Range, time::Duration};
 
 use super::frames::Frames;
-use crate::{Moment, Rect, marks::Mark};
+use crate::{Moment, Rect, Span, marks::Mark};
 
 const SAME_SCREEN: f32 = 0.05;
 const INK_CONTEXT: f32 = 0.08;
@@ -40,19 +40,19 @@ impl Grouping<'_> {
         };
         let mut groups: Vec<Range<usize>> = Vec::new();
         for (index, mark) in self.marks.iter().enumerate() {
-            let joins = groups.last().is_some_and(|group| {
-                let (Some(first), Some(previous)) = (
-                    self.marks.get(group.start),
-                    self.marks.get(group.end.saturating_sub(1)),
-                ) else {
-                    return false;
-                };
-                let joined = group.start..index.saturating_add(1);
-                mark.span.end().since(first.span.start()) <= GROUP_SPAN
-                    && self.ink(&joined) <= GROUP_STROKES
-                    && !acted_between(previous.span.end(), mark.span.start())
-                    && self.spread(joined) < SAME_SCREEN
-            });
+            let joins =
+                groups.last().is_some_and(|group| {
+                    let Some(span) = self.marks.get(group.clone()).and_then(|members| {
+                        members.iter().map(|mark| mark.span).reduce(Span::union)
+                    }) else {
+                        return false;
+                    };
+                    let joined = group.start..index.saturating_add(1);
+                    span.end().max(mark.span.end()).since(span.start()) <= GROUP_SPAN
+                        && self.ink(&joined) <= GROUP_STROKES
+                        && !acted_between(span.end(), mark.span.start())
+                        && self.spread(joined) < SAME_SCREEN
+                });
             match groups.last_mut() {
                 Some(group) if joins => group.end = index.saturating_add(1),
                 _ => groups.push(index..index.saturating_add(1)),
@@ -121,7 +121,9 @@ impl Grouping<'_> {
             self.marks
                 .get(group.clone())
                 .and_then(|members| members.iter().map(|mark| mark.bounds).reduce(Rect::union)),
-            self.shown_on.get(group.end.saturating_sub(1)),
+            self.shown_on
+                .get(group.clone())
+                .and_then(|frames| frames.iter().max()),
         ) else {
             return 1.0;
         };

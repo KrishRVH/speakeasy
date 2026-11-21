@@ -90,13 +90,13 @@ impl ClipboardWorker {
         .await
     }
 
-    pub(in crate::linux) async fn owns(
+    pub(in crate::linux) async fn paste_target(
         &self,
         owner: Window,
         permit: InsertPermit,
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<(bool, bool)> {
         self.ask(
-            |reply| ClipboardRequest::Owns {
+            |reply| ClipboardRequest::PasteTarget {
                 owner,
                 permit,
                 reply,
@@ -137,10 +137,10 @@ enum ClipboardRequest {
         permit: InsertPermit,
         reply: Reply<anyhow::Result<Option<Window>>>,
     },
-    Owns {
+    PasteTarget {
         owner: Window,
         permit: InsertPermit,
-        reply: Reply<anyhow::Result<bool>>,
+        reply: Reply<anyhow::Result<(bool, bool)>>,
     },
 }
 
@@ -155,11 +155,17 @@ impl ClipboardRequest {
                 permit,
                 reply,
             } => answer(&permit, reply, None, || clipboard.set_text(&text, &permit)),
-            Self::Owns {
+            Self::PasteTarget {
                 owner,
                 permit,
                 reply,
-            } => answer(&permit, reply, false, || clipboard.owns(owner)),
+            } => answer(&permit, reply, (false, false), || {
+                let external = clipboard
+                    .external_target(HostSession::Wayland)
+                    .unwrap_or(false);
+                let owned = permit.active() && clipboard.owns(owner)?;
+                Ok((external, owned))
+            }),
         }
     }
 }
@@ -361,7 +367,10 @@ mod tests {
             Some(7)
         );
         assert_eq!(copies.try_iter().count(), 1);
-        assert!(worker.owns(7, current.clone()).await?);
+        assert_eq!(
+            worker.paste_target(7, current.clone()).await?,
+            (false, true)
+        );
         drop(worker);
         assert!(
             !current.active(),
@@ -371,6 +380,37 @@ mod tests {
             !input.is_closed(),
             "Clipboard retirement closed input before the desktop thread could report why"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn paste_checks_selection_ownership_after_looking_up_focus() -> anyhow::Result<()> {
+        struct LosingClipboard(mpsc::Sender<&'static str>);
+
+        impl ClipboardAccess for LosingClipboard {
+            fn external_target(&self, _: HostSession) -> anyhow::Result<bool> {
+                self.0.send("focus")?;
+                Ok(true)
+            }
+
+            fn set_text(&mut self, _: &str, _: &InsertPermit) -> anyhow::Result<Option<Window>> {
+                bail!("The selection was already written")
+            }
+
+            fn owns(&self, _: Window) -> anyhow::Result<bool> {
+                self.0.send("ownership")?;
+                Ok(false)
+            }
+        }
+
+        let (sender, _events) = async_channel::bounded(4);
+        let input = InputSender::new(sender);
+        let permit = input.begin().context("Recording")?;
+        let (calls, seen) = mpsc::channel();
+        let worker = ClipboardWorker::spawn(input, move || Ok(LosingClipboard(calls)))?;
+        worker.ready().await?;
+        assert_eq!(worker.paste_target(7, permit).await?, (true, false));
+        assert_eq!(seen.try_iter().collect::<Vec<_>>(), ["focus", "ownership"]);
         Ok(())
     }
 

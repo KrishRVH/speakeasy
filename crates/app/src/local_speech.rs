@@ -10,6 +10,8 @@ use std::{
 use anyhow::{Context as _, anyhow, bail, ensure};
 use reqwest::{Client, RequestBuilder, multipart};
 use serde::{Deserialize, de::DeserializeOwned};
+#[cfg(not(target_os = "macos"))]
+use speakeasy_platform::LoopbackListener;
 use speakeasy_platform::ProcessGroup;
 use speakeasy_show::{Moment, Narration, Span, Word};
 use tokio::{
@@ -128,8 +130,20 @@ impl LocalSpeech {
             Protocol::Nemo | Protocol::Nemotron => "ready",
         });
         loop {
-            if let Some(status) = self.child.try_wait()? {
-                bail!(startup_exit(status));
+            if self.leader_exited()? {
+                self.group.terminate();
+                bail!(startup_exit(self.child.wait().await?));
+            }
+            #[cfg(not(target_os = "macos"))]
+            match self.listener()? {
+                LoopbackListener::Missing => {
+                    sleep(HEALTH_POLL).await;
+                    continue;
+                },
+                LoopbackListener::Owned => {},
+                LoopbackListener::Foreign => {
+                    bail!("Another program took the speech engine's port. Try again.")
+                },
             }
             if let Ok(response) = self
                 .client
@@ -141,15 +155,30 @@ impl LocalSpeech {
             {
                 #[cfg(not(target_os = "macos"))]
                 ensure!(
-                    self.group
-                        .holds_loopback_listener(self.port)
-                        .context("Cannot verify the speech engine's process. Try again.")?,
+                    self.listener()? == LoopbackListener::Owned,
                     "Another program took the speech engine's port. Try again."
                 );
                 return Ok(());
             }
             sleep(HEALTH_POLL).await;
         }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn listener(&self) -> anyhow::Result<LoopbackListener> {
+        self.group
+            .loopback_listener(self.port)
+            .context("Cannot verify the speech engine's process. Try again.")
+    }
+
+    #[cfg(unix)]
+    fn leader_exited(&self) -> std::io::Result<bool> {
+        self.group.leader_exited()
+    }
+
+    #[cfg(target_os = "windows")]
+    fn leader_exited(&mut self) -> std::io::Result<bool> {
+        self.child.try_wait().map(|status| status.is_some())
     }
 
     fn url(&self, path: &str) -> String {
@@ -166,14 +195,13 @@ impl LocalSpeech {
     }
 
     async fn verify_listener(&mut self) -> anyhow::Result<()> {
-        if !matches!(self.child.try_wait(), Ok(None)) {
+        if !matches!(self.leader_exited(), Ok(false)) {
             return Err(self.kill_and_reap_with_cause().await);
         }
         #[cfg(not(target_os = "macos"))]
         ensure!(
-            self.group
-                .holds_loopback_listener(self.port)
-                .is_ok_and(|held| held),
+            self.listener()
+                .is_ok_and(|listener| listener == LoopbackListener::Owned),
             STOPPED
         );
         Ok(())
@@ -384,7 +412,7 @@ struct Heard {
 impl Timed {
     fn into_narration(self) -> Narration {
         let heard: Vec<Heard> = if self.words.is_empty() {
-            joined(self.segments.into_iter().flat_map(|segment| segment.words))
+            joined(self.segments)
         } else {
             self.words
                 .into_iter()
@@ -428,21 +456,31 @@ impl Token {
     }
 }
 
-fn joined(tokens: impl Iterator<Item = Token>) -> Vec<Heard> {
+fn joined(segments: Vec<TimedSegment>) -> Vec<Heard> {
     let mut words: Vec<Heard> = Vec::new();
-    for token in tokens {
-        if token.word.trim().is_empty() || token.word.trim_start().starts_with("[_") {
-            continue;
-        }
-        match words.last_mut() {
-            Some(word) if !token.word.starts_with(char::is_whitespace) => {
-                word.span = word
-                    .span
-                    .zip(token.span())
-                    .map(|(whole, piece)| whole.union(piece));
-                word.text.push_str(&token.word);
-            },
-            _ => words.push(token.into_heard()),
+    for segment in segments {
+        let mut boundary = true;
+        for token in segment.words {
+            let text = token.word.trim();
+            if text.is_empty() {
+                boundary = true;
+                continue;
+            }
+            if text.starts_with("[_") {
+                continue;
+            }
+            let ends_word = token.word.ends_with(char::is_whitespace);
+            match words.last_mut() {
+                Some(word) if !boundary && !token.word.starts_with(char::is_whitespace) => {
+                    word.span = word
+                        .span
+                        .zip(token.span())
+                        .map(|(whole, piece)| whole.union(piece));
+                    word.text.push_str(text);
+                },
+                _ => words.push(token.into_heard()),
+            }
+            boundary = ends_word;
         }
     }
     words

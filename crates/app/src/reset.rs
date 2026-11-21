@@ -1,5 +1,5 @@
 use std::{
-    fs::{self, File, OpenOptions, TryLockError},
+    fs::{self, File, TryLockError},
     io,
     path::Path,
 };
@@ -35,13 +35,7 @@ fn purge_with(
 }
 
 fn claim(lock: &Path, busy: &str) -> anyhow::Result<File> {
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(lock)
-        .map_err(|error| cannot("open", lock, &error))?;
+    let file = speakeasy_platform::open_lock(lock).map_err(|error| cannot("open", lock, &error))?;
     match file.try_lock() {
         Ok(()) => Ok(file),
         Err(TryLockError::WouldBlock) => bail!("{busy}"),
@@ -51,8 +45,14 @@ fn claim(lock: &Path, busy: &str) -> anyhow::Result<File> {
 
 fn remove(path: &Path) -> io::Result<()> {
     let removed = match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.is_file() => fs::remove_file(path),
-        Ok(_) => fs::remove_dir_all(path),
+        Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(path),
+        #[cfg(windows)]
+        Ok(metadata)
+            if std::os::windows::fs::FileTypeExt::is_symlink_dir(&metadata.file_type()) =>
+        {
+            fs::remove_dir(path)
+        },
+        Ok(_) => fs::remove_file(path),
         Err(error) => Err(error),
     };
     match removed {

@@ -4,9 +4,14 @@ use anyhow::{anyhow, bail, ensure};
 use gpui::{AsyncApp, div, rgb};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
 use x11rb::{
+    connection::Connection as _,
     protocol::{
+        Event,
         shape::{self, ConnectionExt as _},
-        xproto::{AtomEnum, ConnectionExt as _, ImageFormat, MapState},
+        xproto::{
+            AtomEnum, ChangeWindowAttributesAux, ConnectionExt as _, EventMask, ImageFormat,
+            MapState,
+        },
     },
     xcb_ffi::XCBConnection,
 };
@@ -29,6 +34,12 @@ fn idle_native_pill_can_render_a_window_opened_after_launch() -> anyhow::Result<
 #[ignore = "Opt-in native windows on the X11 display, never microphone, input, or clipboard"]
 fn reopened_native_pill_shows_an_active_session_but_never_replays_feedback() -> anyhow::Result<()> {
     run_native(check_reopened_pill)
+}
+
+#[test]
+#[ignore = "Opt-in managed window on a private X11 display, never microphone, input, or clipboard"]
+fn native_pill_app_withdraws_a_managed_window_that_is_already_unmapped() -> anyhow::Result<()> {
+    run_native(async |cx: &AsyncApp| cx.update(check_managed_withdrawal))
 }
 
 fn run_native(
@@ -112,6 +123,44 @@ fn check_idle_pill(cx: &mut App) -> anyhow::Result<()> {
         "Pill did not become unmapped"
     );
     Ok(())
+}
+
+fn check_managed_withdrawal(cx: &mut App) -> anyhow::Result<()> {
+    let window = cx.open_window(WindowOptions::default(), |_, cx| cx.new(|_| LateColors))?;
+    let id = window.update(cx, |_, window, _| x11_window(window))??;
+    let (connection, screen) = XCBConnection::connect(None)?;
+    let root = connection
+        .setup()
+        .roots
+        .get(screen)
+        .context("X11 screen")?
+        .root;
+    connection
+        .change_window_attributes(
+            root,
+            &ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_NOTIFY),
+        )?
+        .check()?;
+
+    let attributes = connection.get_window_attributes(id)?.reply()?;
+    assert!(!attributes.override_redirect);
+    connection.unmap_window(id)?.check()?;
+    window.update(cx, |_, window, _| window.set_window_visible(false))?;
+    assert_eq!(
+        connection.get_window_attributes(id)?.reply()?.map_state,
+        MapState::UNMAPPED
+    );
+    while let Some(event) = connection.poll_for_event()? {
+        if matches!(event, Event::UnmapNotify(notify)
+            if notify.event == root
+                && notify.window == id
+                && notify.response_type & 0x80 != 0
+                && !notify.from_configure)
+        {
+            return Ok(());
+        }
+    }
+    bail!("The root did not receive the managed window's synthetic withdrawal")
 }
 
 #[expect(

@@ -359,7 +359,7 @@ impl Settings {
     fn speech_section(&self, ui: &Ui<'_>) -> Div {
         let kit = ui.kit();
         let mut rows = vec![self.model_row(ui).into_any_element()];
-        if self.config_complete() && !speech::detects_language(&self.config) {
+        if self.config.speech_configured() && !speech::detects_language(&self.config) {
             rows.push(
                 kit.setting(
                     "Language",
@@ -421,7 +421,7 @@ impl Settings {
                 "Nemotron 3.5 · Follows your language and recognition hints".into(),
                 false,
             ),
-            Some(Speech::Own) if self.config_complete() => (
+            Some(Speech::Own) if self.config.speech_configured() => (
                 format!("Your own engine · {}", file_name(&self.config.model)).into(),
                 false,
             ),
@@ -644,7 +644,7 @@ impl Settings {
                 &self.config.model,
                 Action::Choose(EngineFile::Model),
             ))
-            .child(kit.detail(if self.config_complete() {
+            .child(kit.detail(if self.config.speech_configured() {
                 hint
             } else {
                 "Choose both files to switch to your own engine."

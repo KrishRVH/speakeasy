@@ -603,3 +603,53 @@ fn contact_sheets_cover_every_frame_once_in_readable_pages() {
         }
     }
 }
+
+#[test]
+fn overlapping_marks_stay_in_number_order_across_a_screen_change() {
+    let at = Moment::from_millis;
+    let recording = Recording {
+        strokes: vec![
+            Stroke::new(vec![
+                InkPoint {
+                    point: Point::new(0.3, 0.4),
+                    at: at(1_000),
+                },
+                InkPoint {
+                    point: Point::new(0.7, 0.4),
+                    at: at(3_000),
+                },
+            ])
+            .unwrap(),
+        ],
+        pins: vec![Pin {
+            at: at(1_040),
+            point: Point::new(0.5, 0.4),
+        }],
+        ..ended(Ending::Finished)
+    };
+    let samples = [
+        Sample {
+            at: at(1_040),
+            signature: signature(0),
+        },
+        Sample {
+            at: at(3_000),
+            signature: signature(255),
+        },
+    ];
+    let selection = select(&recording, &samples).unwrap();
+    let bundle = compose(
+        recording,
+        selection,
+        |_| Image::filled(160, 120, [90; 3]),
+        &typeface(),
+    )
+    .unwrap();
+    assert_eq!(bundle.manifest.marks().len(), 2);
+    let (_, files) = bundle.into_files(located(Path::new("show")), None).unwrap();
+    let file = files
+        .iter()
+        .find(|file| file.name == Manifest::FILE)
+        .unwrap();
+    Manifest::parse(&file.contents).unwrap();
+}

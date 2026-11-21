@@ -959,15 +959,19 @@ async fn phrase_corrections_follow_filler_cleanup_for_dictation_and_shows_withou
 #[tokio::test(start_paused = true)]
 async fn preset_library_edits_keep_recording_but_loading_words_cancels_old_inference()
 -> anyhow::Result<()> {
-    let mut h = Harness::new()?;
+    let mut library = Config {
+        engine_executable: "synthetic-engine".into(),
+        model: "synthetic-model".into(),
+        ..Config::default()
+    };
+    let mut h = Harness::with_ports(library.clone(), |_| {})?;
     receive(&h.loads).await?;
-    let mut library = Config::default();
     let choices = Config {
         vocabulary: vec![Correction {
             heard: "cube control".into(),
             written: "kubectl".into(),
         }],
-        ..Config::default()
+        ..library.clone()
     };
     library.presets.push(Preset::capture("Coding", &choices)?);
     h.start().await?;

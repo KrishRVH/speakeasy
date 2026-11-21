@@ -15,8 +15,9 @@ fn main() -> ExitCode {
     };
     match first.to_str() {
         Some("--help" | "-h") => help(),
-        Some("show" | "--version" | "status" | "dictation" | "paste-last" | "style" | "preset") => {
-            relay(first, args)
+        Some("show" | "--version") => relay(first, args, Route::Utility),
+        Some("status" | "dictation" | "paste-last" | "style" | "preset") => {
+            relay(first, args, Route::Control)
         },
         _ => fail(
             "Use show, status, dictation, paste-last, style, preset, --version, or --help. Start \
@@ -26,24 +27,36 @@ fn main() -> ExitCode {
     }
 }
 
-fn relay(first: OsString, rest: impl Iterator<Item = OsString>) -> ExitCode {
+enum Route {
+    Utility,
+    Control,
+}
+
+fn relay(first: OsString, rest: impl Iterator<Item = OsString>, route: Route) -> ExitCode {
+    let unavailable = match route {
+        Route::Utility => 1,
+        Route::Control => 2,
+    };
     let sibling = match env::current_exe() {
         Ok(exe) => exe.with_file_name(format!("speakeasy{}", env::consts::EXE_SUFFIX)),
-        Err(error) => return fail(format!("Cannot locate Speakeasy: {error}"), 1),
+        Err(error) => return fail(format!("Cannot locate Speakeasy: {error}"), unavailable),
     };
     match Command::new(&sibling).arg(first).args(rest).status() {
         Ok(status) => match status.code().and_then(|code| u8::try_from(code).ok()) {
-            Some(code) => ExitCode::from(code),
-            None => fail(format!("Speakeasy stopped unexpectedly ({status})."), 1),
+            Some(code) if matches!(route, Route::Utility) || code <= 2 => ExitCode::from(code),
+            _ => fail(
+                format!("Speakeasy stopped unexpectedly ({status})."),
+                unavailable,
+            ),
         },
         Err(error) if error.kind() == io::ErrorKind::NotFound => fail(
             format!(
                 "speakeasy-cli needs {} beside it; extract the whole package again.",
                 sibling.display()
             ),
-            1,
+            unavailable,
         ),
-        Err(error) => fail(format!("Cannot start Speakeasy: {error}"), 1),
+        Err(error) => fail(format!("Cannot start Speakeasy: {error}"), unavailable),
     }
 }
 

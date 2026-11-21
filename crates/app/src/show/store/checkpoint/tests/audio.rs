@@ -10,7 +10,7 @@ async fn audio_checkpoint(parent: &Path) -> anyhow::Result<Checkpoint> {
     } = Keeper::start(move || Ok(parent), SystemTime::now())?;
     drop(frames);
     assert!(audio.begin(8_000, std::time::Duration::ZERO, "en".into()));
-    assert!(audio.finish(&[1, 0, 2, 0], &[]));
+    assert!(audio.finish(&[1, 0, 2, 0], &[], AudioEnding::Complete));
     keeper
         .close()
         .await?
@@ -24,18 +24,21 @@ async fn narration_write_failure_keeps_audio_and_success_keeps_it_until_bundle_p
     let checkpoint = audio_checkpoint(root.path()).await?;
     let path = checkpoint.directory.clone();
     fs::create_dir(path.join(NARRATION))?;
-    assert!(checkpoint.narrate(&Narration::default(), false).is_err());
+    assert!(checkpoint.narrate(&Narration::default(), None).is_err());
     assert_eq!(&*checkpoint.audio()?.unwrap().pcm, &[1, 0, 2, 0]);
     fs::remove_dir(path.join(NARRATION))?;
     let held = root.path().join("held-audio");
     fs::rename(path.join(AUDIO), &held)?;
     fs::create_dir(path.join(AUDIO))?;
     let narration = Narration::Text("synthetic successful transcription".into());
-    checkpoint.narrate(&narration, true)?;
-    assert_eq!(checkpoint.narration()?, Some((narration, true)));
+    checkpoint.narrate(&narration, Some(NarrationLoss::Incomplete))?;
+    assert_eq!(
+        checkpoint.narration()?,
+        Some((narration, Some(NarrationLoss::Incomplete)))
+    );
     fs::remove_dir(path.join(AUDIO))?;
     fs::rename(held, path.join(AUDIO))?;
-    checkpoint.narrate(&Narration::default(), false)?;
+    checkpoint.narrate(&Narration::default(), None)?;
     assert!(checkpoint.has_audio()?);
     Ok(())
 }

@@ -79,7 +79,7 @@ app liveness for `AsyncApp`, and `App::shutdown` ordering.
   shape, as Wayland's input region already does; upstream X11 ignores it. The X11 pill passes
   through every click; `idle_native_pill_starts_unmapped_and_can_show_and_hide` fails without this.
 - `src/linux/x11/window.rs` implements `PlatformWindow::set_visible` with MapWindow and UnmapWindow
-  on GPUI's own connection; upstream X11 ignores it.
+  on GPUI's own connection; managed windows also send the ICCCM withdrawal event to the root.
   `idle_native_pill_starts_unmapped_and_can_show_and_hide` fails without this.
 - `src/linux/wayland/window.rs` implements `PlatformWindow::set_visible`. A toplevel or layer
   surface opened without `show` has no role objects until it is shown. Hiding one does as GTK and
@@ -89,7 +89,8 @@ app liveness for `AsyncApp`, and `App::shutdown` ordering.
   surface new role objects with the saved title, app ID, size limits, maximized or fullscreen
   state, and decoration request, or
   the layer surface's options, which runtime exclusive-zone and edge changes keep current, on the
-  output the compositor chooses; the window draws on that new role's first configure. A withdrawn
+  output the compositor chooses; the window draws on that new role's first configure. Configure
+  handling checks its role again after observer callbacks, since they can replace it. A withdrawn
   window never draws, reports itself hidden, and takes decoration requests without a decoration
   object to send them to; a popup cannot open on one. Floating windows, dialogs, and
   popups open shown and ignore it. On sway with two outputs, the `--demo-tray` pill shows its tray

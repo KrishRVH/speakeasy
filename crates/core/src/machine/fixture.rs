@@ -83,6 +83,8 @@ pub(super) struct Handover {
 pub(super) struct Log {
     producers: Vec<mpsc::Receiver<()>>,
     pub handover: Option<Handover>,
+    pub refuse_shield: bool,
+    pub microphone_opened: bool,
 }
 
 impl Log {
@@ -101,7 +103,7 @@ impl Env<Sample> for Log {
     fn style(&mut self) {}
 
     fn shield(&mut self, _: &u64) -> bool {
-        true
+        !self.refuse_shield
     }
 
     fn revoke(&mut self, _: &u64) {}
@@ -120,6 +122,7 @@ impl Env<Sample> for Log {
         _: &Settings,
         _: RecognitionMode,
     ) -> Result<(), String> {
+        self.microphone_opened = true;
         Ok(())
     }
 

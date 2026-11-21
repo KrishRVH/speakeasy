@@ -62,15 +62,12 @@ pub(super) struct TransferPayload {
 pub(super) async fn transfer(
     write: impl Future<Output = anyhow::Result<OwnedFd>>,
     done: impl AsyncFnOnce(bool) -> anyhow::Result<()>,
-    payload: Option<TransferPayload>,
+    payload: TransferPayload,
 ) {
-    let success = match payload {
-        Some(payload) => tokio::select! {
-            biased;
-            _ = payload.invalidated.recv() => false,
-            written = write_payload(write, &payload.text) => written.is_ok(),
-        },
-        None => false,
+    let success = tokio::select! {
+        biased;
+        _ = payload.invalidated.recv() => false,
+        written = write_payload(write, &payload.text) => written.is_ok(),
     };
     #[expect(
         clippy::let_underscore_must_use,
@@ -138,7 +135,7 @@ mod tests {
                 sent.send(success).await?;
                 Ok(())
             },
-            Some(payload),
+            payload,
         )
         .await;
         Ok(reported.recv().await?)
@@ -162,7 +159,7 @@ mod tests {
                     Ok(OwnedFd::from(writer))
                 },
                 async |_| Ok(()),
-                Some(selection.payload()),
+                selection.payload(),
             )
             .boxed_local(),
         );
@@ -237,9 +234,9 @@ mod tests {
         tokio::time::timeout(
             TRANSFER_TIMEOUT + Duration::from_millis(500),
             transfer(
-                std::future::pending(),
+                async { bail!("Fixture write failed") },
                 async |_| std::future::pending().await,
-                None,
+                selected.payload(),
             ),
         )
         .await

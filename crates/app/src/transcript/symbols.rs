@@ -69,10 +69,9 @@ fn command<'a>(
 ) -> Option<(Mark, &'a [&'a str])> {
     COMMANDS.iter().find_map(|(words, mark)| {
         let spoken = tokens.get(..words.len())?;
-        let said = spoken
-            .iter()
-            .zip(words.iter())
-            .all(|(token, word)| bare(token).eq_ignore_ascii_case(word));
+        if !matches_command(spoken, words) {
+            return None;
+        }
         let ends = spoken.len() == tokens.len();
         let alone = || {
             let before = previous.is_none_or(|token| !trailing(token).is_empty());
@@ -106,12 +105,17 @@ fn command<'a>(
         };
         let fits = match *mark {
             Mark::Break(_) => alone(),
-            Mark::Join(_) => previous.is_some() && !ends && !named() && !stops(),
+            Mark::Join(_) => {
+                previous.is_some_and(|token| !trailing(token).contains(STOPS))
+                    && !ends
+                    && !named()
+                    && !stops()
+            },
             Mark::Open(symbol) => opens(symbol),
             Mark::Close(symbol) => written.pending(symbol),
             Mark::Pair(symbol) => written.pending(symbol) || opens(symbol),
         };
-        (said && fits).then_some((*mark, spoken))
+        fits.then_some((*mark, spoken))
     })
 }
 
@@ -131,12 +135,19 @@ fn closed_later(open: char, after: &[&str]) -> bool {
             Mark::Break(_) | Mark::Join(_) | Mark::Open(_) => false,
         };
         closes
-            && after.windows(words.len()).any(|window| {
-                window
-                    .iter()
-                    .zip(words.iter())
-                    .all(|(token, word)| bare(token).eq_ignore_ascii_case(word))
-            })
+            && after
+                .windows(words.len())
+                .any(|window| matches_command(window, words))
+    })
+}
+
+fn matches_command(spoken: &[&str], words: &[&str]) -> bool {
+    spoken.split_last().is_some_and(|(_, prefix)| {
+        prefix.iter().all(|token| !trailing(token).contains(STOPS))
+            && spoken
+                .iter()
+                .zip(words)
+                .all(|(token, word)| bare(token).eq_ignore_ascii_case(word))
     })
 }
 
@@ -281,6 +292,10 @@ mod tests {
     #[test]
     fn words_that_only_resemble_commands_stay() {
         for heard in [
+            "Hello. Underscore world",
+            "Look forward. Slash prices",
+            "It is open. Quote me close quote",
+            "Say open quote hello and close. Quote this other sentence.",
             "A new line of products.",
             "Open the bracket drawer.",
             "Look at sign language.",

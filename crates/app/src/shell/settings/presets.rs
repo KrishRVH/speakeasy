@@ -78,10 +78,23 @@ impl Settings {
         match edit {
             Edit::Use(index) => {
                 if let Some(preset) = self.config.presets.get(index).cloned() {
-                    preset.load(&mut self.config);
+                    let mut selected = self.config.clone();
+                    preset.load(&mut selected);
+                    if !selected.speech_configured() {
+                        self.notice = Some(Notice::Problem(
+                            "Choose an engine and model, then update this preset.".into(),
+                        ));
+                        cx.notify();
+                        return;
+                    }
+                    self.config = selected;
                     self.own_engine = false;
                     self.choosing_model = false;
                     self.vocabulary.stop_revising();
+                    if !self.locked() {
+                        cx.global_mut::<Services>()
+                            .restore_saved_preset(&self.config);
+                    }
                     self.edited(cx);
                 }
             },
@@ -148,9 +161,11 @@ impl Settings {
         }
     }
 
-    fn preset_in_use(&self, preset: &Preset, ui: &Ui<'_>) -> bool {
-        preset.matches(&self.config)
-            || ui.cx.global::<Services>().preset_name() == Some(preset.name())
+    fn preset_in_use(&self, preset: &Preset) -> bool {
+        self.presentation.preset.as_deref().map_or_else(
+            || preset.matches(&self.config),
+            |active| active == preset.name(),
+        )
     }
 
     pub(super) fn presets_section(&self, ui: &Ui<'_>) -> Div {
@@ -171,7 +186,7 @@ impl Settings {
                     format!("More for {name}"),
                     Some(ui.press(Action::Menu(menu))),
                 );
-                let status = if self.preset_in_use(preset, ui) {
+                let status = if self.preset_in_use(preset) {
                     div()
                         .flex()
                         .items_center()
@@ -226,7 +241,9 @@ impl Settings {
                     "Save",
                     Action::Preset(Edit::Save),
                     Weight::Primary,
-                    !busy && !self.presets.name.read(ui.cx).text().trim().is_empty(),
+                    !busy
+                        && self.config.speech_configured()
+                        && !self.presets.name.read(ui.cx).text().trim().is_empty(),
                 ))
                 .child(ui.button("Cancel", Action::Preset(Edit::Cancel), Weight::Quiet))
                 .into_any_element()
@@ -240,7 +257,7 @@ impl Settings {
                         "Save current settings as a preset",
                         Action::Preset(Edit::Name),
                         Weight::Quiet,
-                        !busy && !full && self.config_complete(),
+                        !busy && !full && self.config.speech_configured(),
                     )
                     .pl(px(8.0))
                     .pr(px(10.0))

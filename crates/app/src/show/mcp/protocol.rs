@@ -85,7 +85,11 @@ fn read_line(input: &mut impl BufRead) -> io::Result<Line> {
     let mut line = Vec::new();
     let mut oversized = false;
     loop {
-        let available = input.fill_buf()?;
+        let available = match input.fill_buf() {
+            Ok(available) => available,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
         if available.is_empty() {
             return Ok(if oversized {
                 Line::Oversized

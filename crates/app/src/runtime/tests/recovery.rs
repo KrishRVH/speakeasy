@@ -35,7 +35,8 @@ async fn interrupted_with_audio(
                     .take(8_000)
                     .flat_map(i16::to_le_bytes)
                     .collect::<Vec<_>>(),
-                &[]
+                &[],
+                show::checkpoint::AudioEnding::Complete,
             )
         );
     } else {

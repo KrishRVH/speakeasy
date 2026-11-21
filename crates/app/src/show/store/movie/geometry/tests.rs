@@ -27,7 +27,7 @@ fn every_torn_record_bounds_geometry_without_losing_playable_video() -> anyhow::
     let bytes = journal(directory.path())?;
     for length in 0..=bytes.len() {
         fs::write(directory.path().join(FILE), &bytes[..length])?;
-        let kept = recover(directory.path(), ID, SIZE, 90)?;
+        let kept = recover(&recall::open_directory(directory.path())?, ID, SIZE, 90)?;
         let records = length.saturating_sub(HEADER_BYTES) / RECORD_BYTES;
         let through = if records == 0 {
             0
@@ -65,7 +65,7 @@ fn corrupt_receipts_stop_at_their_last_known_sample_and_future_receipts_bound_th
         let mut damaged = bytes.clone();
         damaged[offset] ^= 1;
         fs::write(directory.path().join(FILE), &damaged)?;
-        let kept = recover(directory.path(), ID, SIZE, 90)?;
+        let kept = recover(&recall::open_directory(directory.path())?, ID, SIZE, 90)?;
         let good = offset.saturating_sub(HEADER_BYTES) / RECORD_BYTES;
         let expected = if offset < HEADER_BYTES || good == 0 {
             0
@@ -77,14 +77,35 @@ fn corrupt_receipts_stop_at_their_last_known_sample_and_future_receipts_bound_th
     let mut damaged = bytes.clone();
     damaged.push(0);
     fs::write(directory.path().join(FILE), damaged)?;
-    let kept = recover(directory.path(), ID, SIZE, 20)?;
+    let kept = recover(&recall::open_directory(directory.path())?, ID, SIZE, 20)?;
     assert_eq!(kept.through, 20);
     assert_eq!(kept.changes.len(), 1);
     assert_eq!(kept.at(19).map(|change| change.content), Some(CHANGES[0].1));
     fs::write(directory.path().join(FILE), bytes)?;
-    assert_eq!(recover(directory.path(), ID, SIZE, 20)?.through, 20);
-    assert_eq!(recover(directory.path(), [8; 16], SIZE, 90)?.through, 0);
-    assert_eq!(recover(directory.path(), ID, [640, 480], 90)?.through, 0);
+    assert_eq!(
+        recover(&recall::open_directory(directory.path())?, ID, SIZE, 20)?.through,
+        20
+    );
+    assert_eq!(
+        recover(
+            &recall::open_directory(directory.path())?,
+            [8; 16],
+            SIZE,
+            90
+        )?
+        .through,
+        0
+    );
+    assert_eq!(
+        recover(
+            &recall::open_directory(directory.path())?,
+            ID,
+            [640, 480],
+            90
+        )?
+        .through,
+        0
+    );
     Ok(())
 }
 
@@ -119,7 +140,7 @@ fn receipt_order_and_coverage_must_match_the_video() -> anyhow::Result<()> {
         assert!(writing.record(sample, content, WHOLE).is_err());
     }
     writing.record(1, CHANGES[1].1, WHOLE)?;
-    let mut geometry = recover(directory.path(), ID, SIZE, 2)?;
+    let mut geometry = recover(&recall::open_directory(directory.path())?, ID, SIZE, 2)?;
     assert_eq!(geometry.changes.len(), 2);
     geometry.through = 1;
     assert!(geometry.validate(SIZE, 2).is_err());

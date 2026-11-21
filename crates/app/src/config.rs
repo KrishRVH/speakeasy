@@ -270,6 +270,10 @@ impl Config {
         self.engine_executable.as_os_str().is_empty()
     }
 
+    pub(crate) fn speech_configured(&self) -> bool {
+        !self.needs_engine() && !self.model.as_os_str().is_empty()
+    }
+
     pub(crate) fn change_to(&self, next: &Self) -> Change {
         let Self {
             linux,

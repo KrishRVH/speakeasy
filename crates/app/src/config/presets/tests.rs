@@ -7,6 +7,14 @@ use crate::{
     transcript::vocabulary::Vocabulary,
 };
 
+fn synthetic() -> Config {
+    Config {
+        engine_executable: "synthetic-engine".into(),
+        model: "synthetic-model".into(),
+        ..Config::default()
+    }
+}
+
 #[test]
 fn loading_a_domain_restores_its_words_and_model_without_changing_global_preferences()
 -> anyhow::Result<()> {
@@ -16,7 +24,7 @@ fn loading_a_domain_restores_its_words_and_model_without_changing_global_prefere
         text_delivery: TextDelivery::Type,
         theme: Theme::Iris,
         play_sounds: false,
-        ..Config::default()
+        ..synthetic()
     };
     let prose = Preset::capture("Writing", &writing)?;
     let mut recognition_terms = Terms::default();
@@ -99,7 +107,7 @@ fn sparse_settings_need_no_presets_and_invalid_libraries_are_rejected_even_witho
     let path = directory.path().join("settings.json");
     std::fs::write(&path, "{}")?;
     assert_eq!(Config::read(&path)?.presets, Vec::<Preset>::new());
-    let preset = serde_json::to_value(Preset::capture("PRIVATE_NAME", &Config::default())?)?;
+    let preset = serde_json::to_value(Preset::capture("PRIVATE_NAME", &synthetic())?)?;
     for invalid in [
         serde_json::json!({"presets": vec![preset.clone(); LIMIT + 1]}),
         serde_json::json!({"presets": [preset, preset]}),
@@ -138,7 +146,7 @@ fn a_description_names_the_model_a_preset_runs_even_under_a_stale_marker() -> an
         model: Model::Nemotron.file_name().into(),
         nemo_model: Some(Model::Nemotron),
         language: "de-DE".into(),
-        ..Config::default()
+        ..synthetic()
     };
     let parakeet_file = Config {
         model: Model::Parakeet.file_name().into(),
@@ -164,10 +172,27 @@ fn a_description_names_the_model_a_preset_runs_even_under_a_stale_marker() -> an
 proptest! {
     #[test]
     fn names_cannot_hide_case_duplicates_or_controls(name in "[a-z]{1,48}", control in 0u8..32) {
-        let first = Preset::capture(&name, &Config::default()).unwrap();
-        let upper = Preset::capture(&name.to_uppercase(), &Config::default()).unwrap();
+        let config = synthetic();
+        let first = Preset::capture(&name, &config).unwrap();
+        let upper = Preset::capture(&name.to_uppercase(), &config).unwrap();
         prop_assert!(validate(&[first, upper]).is_err());
         let corrupted = format!("{name}{}suffix", char::from(control));
-        prop_assert!(Preset::capture(&corrupted, &Config::default()).is_err());
+        prop_assert!(Preset::capture(&corrupted, &config).is_err());
+    }
+}
+
+#[test]
+fn a_preset_needs_both_speech_paths() {
+    for config in [
+        Config {
+            model: PathBuf::new(),
+            ..synthetic()
+        },
+        Config {
+            engine_executable: PathBuf::new(),
+            ..synthetic()
+        },
+    ] {
+        assert!(Preset::capture("Incomplete", &config).is_err());
     }
 }

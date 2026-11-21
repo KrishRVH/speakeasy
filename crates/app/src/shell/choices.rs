@@ -217,6 +217,18 @@ impl Services {
         }
     }
 
+    pub(super) fn restore_saved_preset(&mut self, draft: &Config) {
+        if self.preset_name().is_none() || self.config.change_to(draft) >= Change::Session {
+            return;
+        }
+        self.choices.cancel();
+        self.choices.selected = None;
+        if let Some(runtime) = self.live_runtime() {
+            runtime.restore_saved();
+        }
+        self.output.send_modify(|snapshot| snapshot.preset = None);
+    }
+
     pub(super) fn reset_choice_for(&mut self, config: &Config) {
         if self.config.change_to(config) >= Change::Session {
             self.choices.cancel();

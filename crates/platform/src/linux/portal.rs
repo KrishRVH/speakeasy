@@ -5,7 +5,6 @@ use std::{
     collections::HashMap,
     convert::Infallible,
     iter,
-    ops::ControlFlow,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -204,18 +203,18 @@ struct Remote {
     clipboard_session: Option<OwnedObjectPath>,
 }
 
-enum Notice {
-    ModifiersChanged,
-    SelectionLost { permit: InsertPermit, revoked: bool },
+struct Notice {
+    permit: InsertPermit,
+    revoked: bool,
 }
 
 struct Pump {
     input: InputSender,
     shortcut_session: Option<OwnedObjectPath>,
     session_root: String,
-    shortcuts: MessageStream,
+    shortcuts: Option<MessageStream>,
     changes: DesktopChanges,
-    owners: MessageStream,
+    owners: Option<MessageStream>,
     selections: Receiver<SelectionHandoff>,
     notify: Sender<Notice>,
     ownership: SelectionOwnership,
@@ -252,17 +251,15 @@ impl Pump {
                 handoff = self.selections.recv(), if self.handoff.is_none() => {
                     self.begin_handoff(handoff.context("Clipboard preparation stopped")?)?;
                 },
-                event = self.owners.next(), if self.ownership.session.is_some() => {
+                event = or_pending(self.owners.as_mut().map(|stream| stream.next())) => {
                     self.observe_owner(&event.context(CLIPBOARD_DISCONNECTED)??)?;
                 },
                 Err(revoked) = revocation(&mut self.changes, &self.session_root) => {
                     return Err(revoked);
                 },
-                event = self.shortcuts.next(), if self.shortcut_session.is_some() => {
+                event = or_pending(self.shortcuts.as_mut().map(|stream| stream.next())) => {
                     let event = event.context("Shortcut portal disconnected")??;
-                    if self.on_shortcut(&event)?.is_break() {
-                        return Ok(());
-                    }
+                    self.on_shortcut(&event)?;
                 },
                 () = settle => {},
             }
@@ -283,7 +280,8 @@ impl Pump {
     }
 
     fn begin_handoff(&mut self, handoff: SelectionHandoff) -> anyhow::Result<()> {
-        let mut queued = iter::from_fn(|| self.owners.next().now_or_never()).fuse();
+        let owners = self.owners.as_mut().context(CLIPBOARD_DISCONNECTED)?;
+        let mut queued = iter::from_fn(|| owners.next().now_or_never()).fuse();
         for event in queued.by_ref().take(SIGNAL_BACKLOG) {
             self.ownership
                 .observe(&event.context(CLIPBOARD_DISCONNECTED)??, &self.notify)?;
@@ -309,28 +307,20 @@ impl Pump {
         Ok(())
     }
 
-    fn on_shortcut(&mut self, event: &Message) -> anyhow::Result<ControlFlow<()>> {
+    fn on_shortcut(&mut self, event: &Message) -> anyhow::Result<()> {
         let activated = match event.header().member().map(MemberName::as_str) {
             Some("Activated") => true,
             Some("Deactivated") => false,
-            _ => return Ok(ControlFlow::Continue(())),
+            _ => return Ok(()),
         };
         let (path, action, _, _): (OwnedObjectPath, String, u64, Results) =
             event.body().deserialize()?;
-        if Some(&path) != self.shortcut_session.as_ref() {
-            return Ok(ControlFlow::Continue(()));
-        }
-        let Some(input) = shortcut_event(&mut self.held, &action, activated) else {
-            return Ok(ControlFlow::Continue(()));
-        };
-
-        if matches!(input, Input::Press) && self.notify.try_send(Notice::ModifiersChanged).is_err()
+        if Some(&path) == self.shortcut_session.as_ref()
+            && let Some(input) = shortcut_event(&mut self.held, &action, activated)
         {
-            self.input.close();
-            return Ok(ControlFlow::Break(()));
+            self.input.deliver(input);
         }
-        self.input.deliver(input);
-        Ok(ControlFlow::Continue(()))
+        Ok(())
     }
 }
 
@@ -577,10 +567,37 @@ async fn serve(
         remote,
         labels,
     } = bound;
-    let shortcuts = shortcut_signals(&portal.connection).await?;
+    let shortcuts = match &shortcut_session {
+        Some(session) => Some(session_signals(&portal.connection, SHORTCUTS, None, session).await?),
+        None => None,
+    };
     let clipboard = portal.proxy(CLIPBOARD).await?;
-    let transfer_requests = clipboard.receive_signal("SelectionTransfer").await?;
-    let owners = selection_owner_changes(&portal.connection).await?;
+    let clipboard_session = remote
+        .as_ref()
+        .and_then(|remote| remote.clipboard_session.clone());
+    let (transfer_requests, owners) = match &clipboard_session {
+        Some(session) => (
+            Some(
+                session_signals(
+                    &portal.connection,
+                    CLIPBOARD,
+                    Some("SelectionTransfer"),
+                    session,
+                )
+                .await?,
+            ),
+            Some(
+                session_signals(
+                    &portal.connection,
+                    CLIPBOARD,
+                    Some("SelectionOwnerChanged"),
+                    session,
+                )
+                .await?,
+            ),
+        ),
+        None => (None, None),
+    };
     let (notify, notices) = async_channel::bounded(SIGNAL_BACKLOG);
     let (selecting, selections) = async_channel::bounded(1);
 
@@ -596,9 +613,7 @@ async fn serve(
             selections,
             notify,
             ownership: SelectionOwnership {
-                session: remote
-                    .as_ref()
-                    .and_then(|remote| remote.clipboard_session.clone()),
+                session: clipboard_session,
                 monitored: None,
                 owned: false,
             },
@@ -639,25 +654,23 @@ fn lacks_registry(error: &zbus::Error) -> bool {
     )
 }
 
-async fn shortcut_signals(connection: &Connection) -> anyhow::Result<MessageStream> {
+async fn session_signals(
+    connection: &Connection,
+    interface: &str,
+    member: Option<&str>,
+    session: &OwnedObjectPath,
+) -> anyhow::Result<MessageStream> {
     let rule = MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
         .sender(DESTINATION)?
-        .interface(SHORTCUTS)?
+        .interface(interface)?
         .path(DESKTOP)?
-        .build();
-    Ok(MessageStream::for_match_rule(rule, connection, Some(SIGNAL_BACKLOG)).await?)
-}
-
-async fn selection_owner_changes(connection: &Connection) -> anyhow::Result<MessageStream> {
-    let rule = MatchRule::builder()
-        .msg_type(zbus::message::Type::Signal)
-        .sender(DESTINATION)?
-        .interface(CLIPBOARD)?
-        .member("SelectionOwnerChanged")?
-        .path(DESKTOP)?
-        .build();
-    Ok(MessageStream::for_match_rule(rule, connection, Some(SIGNAL_BACKLOG)).await?)
+        .arg_path(0, session.as_str())?;
+    let rule = match member {
+        Some(member) => rule.member(member)?,
+        None => rule,
+    };
+    Ok(MessageStream::for_match_rule(rule.build(), connection, Some(SIGNAL_BACKLOG)).await?)
 }
 
 async fn revocation(
@@ -718,7 +731,7 @@ fn deadline(started: Instant, wait: Duration) -> tokio::time::Sleep {
 
 fn lose_selection(permit: InsertPermit, notify: &Sender<Notice>) -> anyhow::Result<()> {
     let revoked = permit.revoke();
-    notify.try_send(Notice::SelectionLost { permit, revoked })?;
+    notify.try_send(Notice { permit, revoked })?;
     Ok(())
 }
 
@@ -808,7 +821,7 @@ mod tests {
         ownership.adopt(next.clone(), &notify)?;
         let mut payload = Some(Selection::new("fixture", next.clone()));
         let mut forfeited = None;
-        apply_notice(notices.try_recv()?, None, &mut payload, &mut forfeited);
+        apply_notice(notices.try_recv()?, &mut payload, &mut forfeited);
         assert!(
             next.active(),
             "Preceding ownership loss revoked the current recording"
@@ -818,7 +831,7 @@ mod tests {
             "Preceding ownership loss discarded the current payload"
         );
         ownership.observe(&owner_changed(&session, false)?, &notify)?;
-        apply_notice(notices.try_recv()?, None, &mut payload, &mut forfeited);
+        apply_notice(notices.try_recv()?, &mut payload, &mut forfeited);
         assert!(!next.commit(), "Current ownership loss authorized paste");
         assert!(payload.is_none());
         let unowned = input.begin().context("Unowned recording")?;

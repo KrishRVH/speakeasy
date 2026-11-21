@@ -104,7 +104,7 @@ pub struct Publication<P: Payload> {
 
 #[cfg_attr(test, derive(Clone, Debug))]
 pub enum Release<P: Payload> {
-    Keep(Option<(P::Narration, bool)>),
+    Keep(Option<(P::Narration, Option<NarrationLoss>)>),
     Discard,
 }
 
@@ -670,6 +670,7 @@ impl<P: Payload> Session<P> {
 
     pub(super) fn turn_into_show(&mut self, scope: P::Scope, env: &mut impl Env<P>) -> bool {
         if !self.is_dictation()
+            || self.for_script()
             || !(self.is_queued() || self.is_capturing())
             || !env.shield(&self.permit)
         {
@@ -734,8 +735,9 @@ impl<P: Payload> Session<P> {
             Disposition::Finished => Release::Keep(match self.stage {
                 Stage::AwaitingFootage {
                     narration,
-                    loss: loss @ (None | Some(NarrationLoss::Incomplete)),
-                } => Some((narration, loss.is_some())),
+                    loss:
+                        loss @ (None | Some(NarrationLoss::Incomplete | NarrationLoss::AudioSilent)),
+                } => Some((narration, loss)),
                 _ => None,
             }),
             Disposition::Unfinished | Disposition::Forfeited => Release::Discard,

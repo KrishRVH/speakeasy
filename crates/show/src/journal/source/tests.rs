@@ -291,3 +291,35 @@ fn crop_geometry_checks_intermediate_samples_without_reading_pixels() {
     );
     assert!(source.stable_geometry(span(2000, 3000)));
 }
+
+#[test]
+fn arrivals_at_the_time_limit_keep_a_readable_source() {
+    let mut live = crate::Take::new(
+        1 << 20,
+        crate::Size {
+            width: 20.0,
+            height: 20.0,
+        },
+        crate::Framing::Chosen,
+    );
+    let mut replay = crate::Take::new(
+        1 << 20,
+        crate::Size {
+            width: 20.0,
+            height: 20.0,
+        },
+        crate::Framing::Chosen,
+    );
+    for value in [0, 100, 200] {
+        let arrival = live
+            .arrive(DURATION_LIMIT, || Image::filled(20, 20, [value; 3]).ok())
+            .unwrap();
+        replay.apply(&arrival).unwrap();
+    }
+    for take in [live, replay] {
+        let (recording, journal) = take.finish();
+        assert_eq!(recording.duration, DURATION_LIMIT);
+        let source = open(&encode(&journal, recording.duration)).unwrap();
+        assert_eq!(source.moments(), [DURATION_LIMIT]);
+    }
+}

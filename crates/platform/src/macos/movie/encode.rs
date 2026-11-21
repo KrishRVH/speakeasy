@@ -132,6 +132,7 @@ impl encode::Codec for Codec {
 
     fn finish(mut self) -> anyhow::Result<()> {
         ensure!(self.frames > 0, "The movie contains no frames");
+        self.output.check()?;
         let (completed, reply) = mpsc::sync_channel(1);
         let completion = RcBlock::new(move || {
             #[expect(
@@ -142,8 +143,13 @@ impl encode::Codec for Codec {
         });
 
         unsafe {
+            ensure!(
+                self.native.status() == AVAssetWriterStatus::Writing,
+                "The native movie writer stopped before finalization"
+            );
             self.native.finishWritingWithCompletionHandler(&completion);
         }
+        drop(completion);
         reply
             .recv()
             .context("Movie finalization did not complete")?;
@@ -160,7 +166,7 @@ impl encode::Codec for Codec {
 
 impl Drop for Codec {
     fn drop(&mut self) {
-        if !self.finished {
+        if !self.finished && unsafe { self.native.status() } == AVAssetWriterStatus::Writing {
             unsafe {
                 self.native.cancelWriting();
             }

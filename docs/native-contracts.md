@@ -30,8 +30,8 @@ callbacks. An old permit cannot revoke or commit a newer recording. Final author
 after blocking clipboard acquisition and immediately before an irreversible write/send; successful
 commitment is not permission to repeat input after an error. Synthetic key arrays remain live for
 their synchronous submission and carry the app's own-input marker so hooks ignore them. Direct text
-is split only at valid encoding boundaries. Clipboard data and decoded images never enter
-Debug/error output.
+is split only at valid encoding boundaries; Windows sends line breaks as Return taps. Clipboard data
+and decoded images never enter Debug/error output.
 
 `KeyCount` is a relaxed atomic counter. The Windows keyboard hook adds each key press it passes
 through that is not a modifier or lock key. The Mac event tap adds each key-down it passes through,
@@ -51,9 +51,11 @@ dictation keeps its clipboard snapshot unused, so a slow target cannot paste the
 then receive Return. A paste snapshots the clipboard under the same lease that writes the dictation,
 and the insertion thread answers the request before it waits 500 ms and puts the snapshot back. The
 restore reopens the clipboard and writes only if the sequence number or change count still equals
-the one read after the dictation's write, so it never replaces a newer copy. The thread serves the
-next request only after the restore, which therefore snapshots the restored copy. The snapshot lives
-only on the insertion thread and is dropped after the restore.
+the one recorded within the dictation's write transaction. Cancellation before submission restores
+the same snapshot immediately or clears the dictated copy when no snapshot was available. Windows
+and macOS inspect every clipboard format or item type for concealed content before reading any
+payload. The thread serves the next request only after the restore, which therefore snapshots the
+restored copy. The snapshot lives only on the insertion thread and is dropped after the restore.
 
 `MonitorControl` serializes publishing a live run-loop handle, readiness and stop. Stop-before-start
 remains effective; retirement removes the handle before a later stop can wake it. This lock cannot
@@ -88,15 +90,16 @@ the WSL VM and block, so the app reads it only on the WSL lookup thread; the CLI
 synchronously. The file is bounded to 64 KiB; an unreadable or oversized file gives no WSL path.
 
 Windows presentation/subclass operations run on the HWND's owning thread. `Window::new` verifies
-that ownership. A subclass is removed during native destruction. Low-level hook callbacks without a
-context argument use thread-local state only on their owning hook/message-loop thread, and callback
-failures cannot unwind across the native ABI. The input owner removes hooks/window registrations
-before releasing their reachable state. A raw integer HWND transports identity, not ownership. The
-test-only `native_window` requires a live HWND that outlives its borrowed handle. `keyboard_hook`
-casts `lparam` only for a nonnegative hook code, when Windows supplies a `KBDLLHOOKSTRUCT` valid
-through that invocation; other codes are forwarded unchanged. `Monitor` shares its `StopEvent` with
-the native thread so owner cancellation can wake a blocked message wait; the final `Arc` releases
-the kernel event only after both users finish.
+that ownership. The pill and overlay reapply their physical bounds after a DPI transition because
+GPUI can reposition them synchronously during the initial move. A subclass is removed during native
+destruction. Low-level hook callbacks without a context argument use thread-local state only on
+their owning hook/message-loop thread, and callback failures cannot unwind across the native ABI.
+The input owner removes hooks/window registrations before releasing their reachable state. A raw
+integer HWND transports identity, not ownership. The test-only `native_window` requires a live HWND
+that outlives its borrowed handle. `keyboard_hook` casts `lparam` only for a nonnegative hook code,
+when Windows supplies a `KBDLLHOOKSTRUCT` valid through that invocation; other codes are forwarded
+unchanged. `Monitor` shares its `StopEvent` with the native thread so owner cancellation can wake a
+blocked message wait; the final `Arc` releases the kernel event only after both users finish.
 
 The file dialog owns a dedicated STA/message-loop thread and all title/filter/output buffers until
 `GetOpenFileNameW` returns. Successful COM initialization is balanced on that same thread. Dropping
@@ -120,10 +123,22 @@ Owner: `crates/platform/src/process.rs`.
 Termination authority originates only from a freshly spawned child. Windows attaches its process
 handle to a private kill-on-close job immediately after spawn; listener PID lookups only test
 membership and never grant authority. Unix children must start with `process_group(0)`, and their
-owner terminates the group before reaping the leader. `waitid(WNOWAIT)` verifies that the leader is
-still this process's unreaped child; consuming the stored leader before signaling prevents a second
-signal after PID reuse. Listener table parsing and `/proc` inspection remain read-only membership
-evidence.
+owner polls for exit with `waitid(WNOWAIT)` and terminates the group before reaping the leader. The
+same check verifies that the leader is still this process's unreaped child; consuming the stored
+leader before signaling prevents a second signal after PID reuse. Listener table parsing and `/proc`
+inspection remain read-only membership evidence.
+
+## Show directory handles
+
+Owner: `crates/platform/src/directory.rs`.
+
+A Show directory handle keeps every relative open anchored to the selected directory. Unix uses
+`openat` with `O_NOFOLLOW` and `O_NONBLOCK` for child entries and validates the resulting descriptor
+before reading. Windows opens a single child name with `NtOpenFile` relative to its parent handle,
+rejects reparse points and alternate data streams, and transfers the handle to `File` only after a
+successful open. Unix uses `fdopendir` on an independent directory open, and Windows uses
+`ReOpenFile` with `NtQueryDirectoryFile`, so listing owns its cursor. Readers validate size, type,
+and bytes through the same handle.
 
 ## Linux desktop and transfer ownership
 
@@ -140,15 +155,18 @@ Context/device/event references are adopted and released once; device references
 context. The EIS descriptor transfers to libei, while readiness and keymap access own duplicates.
 The sender and native pointers remain on their desktop thread/LocalSet. Prepared input borrows the
 sender exclusively from capability/modifier validation through submission, so queued dispatch cannot
-replace the selected device during that interval. A disconnect ends the service even though later
-dispatch calls may succeed.
+replace the selected device during that interval. EIS modifier events govern paste readiness; a
+paused device returns to neutral and resuming preserves the last reported state. Global shortcut
+signals can arrive out of order with those events and never reset the modifier state. A disconnect
+ends the service even though later dispatch calls may succeed.
 
 Portal transfer descriptors are owned, set nonblocking before AsyncFd registration and retained
-until the transfer future drops. At most the bounded transfer set remains active. Selection loss
-invalidates its transfer payloads; paste commitment alone does not, because an editor may request
-bytes afterward. Writes and reporting have deadlines. X11 clipboard serving and insertion have
-separate owners; selection ownership is rechecked after blocking focus/modifier queries and before
-committing paste. That query and XTEST submission are not one atomic server transaction.
+until the transfer future drops. Session-scoped signal streams keep draining while transfers are
+full, and excess requests receive a failed acknowledgement. The portal clipboard serves bytes only
+after the permit commits to paste or manual copy. Selection loss invalidates its transfer payloads.
+Writes and reporting have deadlines. X11 clipboard serving and insertion have separate owners;
+selection ownership is rechecked after blocking focus/modifier queries and before committing paste.
+That query and XTEST submission are not one atomic server transaction.
 
 ## Linux realtime opt-out
 
@@ -189,8 +207,9 @@ publication is necessary because stopping a not-yet-entered loop is not a reliab
 tap port is published once before events can run, allowing disabled-tap recovery. Lifecycle
 callbacks can arrive on the posting thread; they touch only the synchronized policy and input lane.
 Policy decisions and delivery occur under one lock to preserve event order. Callback panics close
-the lane/stop the loop instead of crossing the ABI. Notification tokens remain retained until
-removal.
+the lane and stop the loop. The event tap passes the current key through and disables itself when
+the input lane closes. Notification tokens remain retained until removal. Lifecycle interrupts, tap
+outages, and missed chord releases retire stale hold-key suppression.
 
 Mac F13 uses key code 105 and the event's autorepeat field. Its initial press and release establish
 the pre-event hold explicitly; unrelated events reconcile against HID-system physical key state. The
@@ -250,7 +269,8 @@ move-away-and-back.
 Mac `Source` may cross threads because its retained ScreenCaptureKit filter is immutable and lacks
 thread affinity; no AppKit object is moved with it. The filter excludes the whole application,
 including subsequently opened app windows. Fixed-region streams retain the native stream, output and
-private serial queue until stop acknowledgement and queue drainage. Only successful stop, the exact
+private serial queue until stop acknowledgement and queue drainage. A failed start detaches the
+output and drains the queue directly. For a started stream, only successful stop, the exact
 documented already-stopped domain/code, or the actual did-stop signal establishes cessation; other
 stop errors do not. Failure notification precedes potentially blocking cleanup. Callback samples are
 borrowed only during the call; copied bounded BGRA leaves the callback. Native image buffers stay
@@ -338,8 +358,9 @@ private file. Segment order, actual byte cap and sync are enforced under one loc
 latched before releasing that lock. Each appended sample owns an independent CVPixelBuffer; the pool
 allocation threshold is based on actual buffer size. Writable pixel slices are exclusive and bounded
 by the native allocation while locked. CMSampleBuffer/format results follow Create ownership and
-retain their dependencies. Finish waits for its native completion; unfinished Drop cancels before
-closing the sink. The checkpoint lease outlives those resources.
+retain their dependencies. Finalization requires a writing writer and waits for its native
+completion. Drop cancels a writer still writing before closing the sink. The checkpoint lease
+outlives those resources.
 
 ## GPUI and vendored adapters
 

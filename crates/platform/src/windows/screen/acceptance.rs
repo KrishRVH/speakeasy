@@ -262,9 +262,9 @@ fn a_window_capture_stops_once_its_window_closes_or_goes_off_screen() -> anyhow:
         let mut capture = Capture::start(target, INTERVAL, u32::MAX, &stopping)?;
         read_next(&mut capture, started)?.context("No frame arrived")?;
 
-        let departing = Instant::now();
         let _remaining = departure.take_off_screen(subject)?;
-        let stopped = read_next(&mut capture, departing);
+        let cutoff = Instant::now() + Duration::from_secs(1);
+        let stopped = capture.poll(cutoff);
         assert!(
             matches!(stopped, Err(Failure::Window(reason)) if reason == gone),
             "{departure:?} left capture at {stopped:?}"

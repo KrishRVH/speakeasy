@@ -1,4 +1,4 @@
-use std::ptr::null_mut;
+use std::{io, ptr::null_mut};
 
 use anyhow::{bail, ensure};
 use async_channel::Sender;
@@ -16,7 +16,7 @@ use windows_sys::{
             },
         },
         UI::{
-            HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI},
+            HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI},
             Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
             WindowsAndMessaging::{
                 GWL_EXSTYLE, GWL_STYLE, GetForegroundWindow, GetPropW, HWND_TOPMOST,
@@ -157,9 +157,30 @@ fn place_pill(hwnd: HWND) {
         .saturating_sub(margin);
     let left = centered_left(info.rcWork, width);
 
-    unsafe {
-        SetWindowPos(hwnd, HWND_TOPMOST, left, top, width, height, SWP_NOACTIVATE);
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "The status pill can still be shown in its last valid position if repositioning fails"
+    )]
+    let _ = place_across_dpi(
+        || unsafe { GetDpiForWindow(hwnd) },
+        || {
+            ok_or_last_error(unsafe {
+                SetWindowPos(hwnd, HWND_TOPMOST, left, top, width, height, SWP_NOACTIVATE)
+            })
+        },
+    );
+}
+
+pub(super) fn place_across_dpi(
+    mut dpi: impl FnMut() -> u32,
+    mut place: impl FnMut() -> io::Result<()>,
+) -> io::Result<()> {
+    let before = dpi();
+    place()?;
+    if dpi() != before {
+        place()?;
     }
+    Ok(())
 }
 
 fn centered_left(area: RECT, width: i32) -> i32 {
@@ -349,6 +370,23 @@ mod tests {
             first_hides.is_closed() && second_hides.is_closed(),
             "A tray lane outlived its window"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn placement_reasserts_the_requested_bounds_after_dpi_changes() -> anyhow::Result<()> {
+        for (dpi_after, expected) in [(96, 1), (144, 2)] {
+            let mut dpis = [96, dpi_after].into_iter();
+            let mut placements = 0;
+            place_across_dpi(
+                || dpis.next().expect("Sample DPI before and after placement"),
+                || {
+                    placements += 1;
+                    Ok(())
+                },
+            )?;
+            assert_eq!(placements, expected);
+        }
         Ok(())
     }
 

@@ -47,6 +47,7 @@ const MAC_F13: i64 = 105;
 const NONE_HELD: Physical = Physical {
     chord_keys: [false; 5],
     other_shortcut: false,
+    chord_blocked: false,
 };
 
 const NO_MODIFIERS: Modifiers = Modifiers {
@@ -377,6 +378,18 @@ fn interruption_revokes_authority_before_delivering_release() -> anyhow::Result<
     assert!(matches!(events.try_recv()?, Input::Interrupt));
     assert!(matches!(events.try_recv()?, Input::Release));
     Ok(())
+}
+
+#[test]
+fn alt_blocks_the_control_windows_chord_in_either_order() {
+    for [first, second] in [[LEFT_CONTROL, LEFT_WINDOWS], [LEFT_WINDOWS, LEFT_CONTROL]] {
+        let mut policy = Windows::default();
+        assert!(!policy.observe(ALT, true, NONE_HELD, now()).starts());
+        assert!(!policy.observe(first, true, held(&[ALT]), now()).starts());
+        let decision = policy.observe(second, true, held(&[ALT, first]), now());
+        assert_eq!(delivered(&decision), []);
+        assert!(!decision.swallows());
+    }
 }
 
 #[test]
@@ -803,22 +816,34 @@ fn a_missed_release_lets_s_reach_the_app() {
 }
 
 #[test]
-fn a_show_key_whose_release_went_unseen_asks_for_no_show_outside_a_hold() {
+fn a_show_key_whose_release_went_unseen_reaches_the_app_outside_a_hold() {
     let (mut policy, both) = windows_holding();
     policy.observe(LETTER_S, true, both, now());
     let typed = policy.observe(LETTER_S, true, NONE_HELD, now());
     assert_eq!(delivered(&typed), [Action::Release]);
+    assert!(!typed.swallows());
 
     let (sender, _events) = async_channel::bounded(4);
     let mut mac = mac_holding();
     mac.observe(key(MAC_S, true, FN_HELD), keyboard_fn_up, now());
     mac.missed_events(&InputSender::new(sender));
     let typed = mac.observe(key(MAC_S, true, NO_MODIFIERS), keyboard_fn_up, now());
+    assert!(!typed.swallows());
     assert_eq!(
         delivered(&typed),
         [],
         "S typed after the outage asked for a Show"
     );
+}
+
+#[test]
+fn a_lifecycle_interrupt_forgets_swallowed_hold_keys() {
+    let (sender, _events) = async_channel::bounded(4);
+    let input = InputSender::new(sender);
+    let (mut policy, both) = windows_holding();
+    assert!(policy.observe(SPACE, true, both, now()).swallows());
+    policy.interrupt(&input);
+    assert!(!policy.observe(SPACE, true, both, now()).swallows());
 }
 
 #[test]

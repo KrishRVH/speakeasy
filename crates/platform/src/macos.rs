@@ -103,8 +103,8 @@ pub(super) fn start(
         policy: Mutex::new(keyboard::Mac::new(shortcut)),
         typed,
     });
-    let observers = lifecycle_observers(&input, &policy);
     let control = Arc::new(MonitorControl::default());
+    let observers = lifecycle_observers(&input, &policy, &control);
     let thread = OwnedThread::spawn("input-monitor", {
         let control = Arc::clone(&control);
         move || monitor(&input, &control, &policy)
@@ -132,7 +132,7 @@ impl RunLoopReady<'_> {
                 cancel: CANCEL_SHORTCUT.into(),
             });
         });
-        if !started {
+        if !started || self.input.is_closed() {
             run_loop.stop();
         }
     }
@@ -165,14 +165,19 @@ impl Observer {
         name: &NSString,
         input: &InputSender,
         policy: &Arc<SharedPolicy>,
+        control: &Arc<MonitorControl<CFRunLoop>>,
     ) -> Self {
         let input = input.clone();
         let policy = Arc::clone(policy);
+        let control = Arc::clone(control);
         let callback = RcBlock::new(move |_: NonNull<NSNotification>| {
             let interrupted =
                 panic::catch_unwind(AssertUnwindSafe(|| policy.lock().interrupt(&input)));
             if interrupted.is_err() {
                 input.close();
+            }
+            if input.is_closed() {
+                control.request_stop(CFRunLoop::stop);
             }
         });
 
@@ -191,7 +196,11 @@ impl Drop for Observer {
     }
 }
 
-fn lifecycle_observers(input: &InputSender, policy: &Arc<SharedPolicy>) -> [Observer; 3] {
+fn lifecycle_observers(
+    input: &InputSender,
+    policy: &Arc<SharedPolicy>,
+    control: &Arc<MonitorControl<CFRunLoop>>,
+) -> [Observer; 3] {
     let workspace = NSWorkspace::sharedWorkspace().notificationCenter();
 
     let (will_sleep, resigned) = unsafe {
@@ -203,9 +212,9 @@ fn lifecycle_observers(input: &InputSender, policy: &Arc<SharedPolicy>) -> [Obse
     let distributed = NSDistributedNotificationCenter::defaultCenter().into_super();
     let screen_locked = ns_string!("com.apple.screenIsLocked");
     [
-        Observer::interrupt_on(workspace.clone(), will_sleep, input, policy),
-        Observer::interrupt_on(workspace, resigned, input, policy),
-        Observer::interrupt_on(distributed, screen_locked, input, policy),
+        Observer::interrupt_on(workspace.clone(), will_sleep, input, policy, control),
+        Observer::interrupt_on(workspace, resigned, input, policy, control),
+        Observer::interrupt_on(distributed, screen_locked, input, policy, control),
     ]
 }
 
@@ -272,6 +281,7 @@ fn run_event_loop(
     run_loop.add_observer(&observer, modes);
     tap.enable();
     CFRunLoop::run_current();
+    port.set_enabled(false);
     run_loop.remove_observer(&observer, modes);
     run_loop.remove_source(&source, modes);
     Ok(())
@@ -291,7 +301,7 @@ impl TapPort {
         self.port.get_or_init(|| port.clone());
     }
 
-    fn reenable(&self) -> bool {
+    fn set_enabled(&self, enabled: bool) -> bool {
         let Some(port) = self.port.get() else {
             return false;
         };
@@ -301,7 +311,7 @@ impl TapPort {
                 .as_concrete_TypeRef()
                 .cast::<objc2_core_foundation::CFMachPort>()
         };
-        cg::CGEvent::tap_enable(port, true);
+        cg::CGEvent::tap_enable(port, enabled);
         cg::CGEvent::tap_is_enabled(port)
     }
 }
@@ -312,13 +322,24 @@ fn shortcut_tap<'tap>(
     port: &'tap TapPort,
 ) -> anyhow::Result<CGEventTap<'tap>> {
     let callback = move |_, kind, event: &CGEvent| {
-        panic::catch_unwind(AssertUnwindSafe(|| {
-            observe(input, policy, port, kind, event)
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            if input.is_closed() {
+                CallbackResult::Keep
+            } else {
+                observe(input, policy, port, kind, event)
+            }
         }))
         .unwrap_or_else(|_| {
             input.close();
             CallbackResult::Keep
-        })
+        });
+        if input.is_closed() {
+            port.set_enabled(false);
+            CFRunLoop::get_current().stop();
+            CallbackResult::Keep
+        } else {
+            result
+        }
     };
     let events = vec![
         CGEventType::KeyDown,
@@ -373,7 +394,7 @@ fn observe(
     ) {
         policy.missed_events(input);
         typed.add();
-        if !port.reenable() {
+        if !port.set_enabled(true) {
             input.close();
         }
         return CallbackResult::Keep;
@@ -523,12 +544,14 @@ impl insertion::NativeInsert for Insert {
         clipboard::save(lease)
     }
 
-    fn write(&mut self, lease: clipboard::Lease, text: &str) -> anyhow::Result<()> {
+    fn write(&mut self, lease: clipboard::Lease, text: &str) -> anyhow::Result<Self::Mark> {
         clipboard::write(lease, text)
     }
 
-    fn restore(&mut self, contents: clipboard::Saved, mark: &isize) -> anyhow::Result<()> {
-        objc2::rc::autoreleasepool(|_| clipboard::restore(clipboard::acquire(), &contents, *mark))
+    fn restore(&mut self, contents: Option<clipboard::Saved>, mark: &isize) -> anyhow::Result<()> {
+        objc2::rc::autoreleasepool(|_| {
+            clipboard::restore(clipboard::acquire(), contents.as_ref(), *mark)
+        })
     }
 
     fn mark(&mut self) -> isize {

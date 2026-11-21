@@ -34,11 +34,12 @@ async fn promote(before_cue: Vec<u8>) -> anyhow::Result<(Option<Sealed>, Option<
         log: audio,
         start: Duration::from_millis(125),
         language: "fr".into(),
-    })?;
+    })
+    .map_err(|_refused| anyhow::anyhow!("Synthetic checkpoint was refused"))?;
     assert!(keeping.offer(&pcm, RATE));
     pcm.extend(iter::repeat_n(0, 2 * SECOND));
     keeping.classify(&mut speech, &pcm, &heard);
-    assert!(keeping.finish(&pcm, RATE));
+    assert!(keeping.finish(&pcm, RATE, AudioEnding::Complete));
     assert!(incoming.is_closed());
     let checkpoint = keeper
         .close()
@@ -78,5 +79,52 @@ async fn promoted_speech_replays_to_the_same_sealed_audio() -> anyhow::Result<()
     };
     assert!(recovered.wav == live.wav, "Replay changed sealed audio");
     assert_eq!(recovered.trimmed, live.trimmed);
+    Ok(())
+}
+
+#[tokio::test]
+async fn stopping_just_after_promotion_flushes_more_audio_than_the_lane_can_hold()
+-> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let parent = root.path().to_owned();
+    let (release, wait) = std::sync::mpsc::channel();
+    let Kept {
+        keeper,
+        frames,
+        audio,
+    } = Keeper::start(
+        move || {
+            wait.recv()?;
+            Ok(parent)
+        },
+        SystemTime::now(),
+    )?;
+    drop(frames);
+    let (send, incoming) = async_channel::bounded(1);
+    send.try_send(Keep {
+        log: audio,
+        start: Duration::ZERO,
+        language: "en".into(),
+    })
+    .map_err(|_refused| anyhow::anyhow!("Synthetic checkpoint was refused"))?;
+    let (entered, finishing) = async_channel::bounded(1);
+    let flushed = tokio::task::spawn_blocking(move || {
+        let mut keeping = Keeping::new(&incoming);
+        let pcm = vec![1; 9 << 20];
+        let offered = keeping.offer(&pcm, RATE);
+        entered.try_send(())?;
+        Ok::<_, anyhow::Error>(offered && keeping.finish(&pcm, RATE, AudioEnding::Complete))
+    });
+    finishing.recv().await?;
+    tokio::time::sleep(Duration::from_millis(75)).await;
+    release.send(())?;
+    assert!(flushed.await??);
+    let checkpoint = keeper
+        .close()
+        .await?
+        .context("Fixture checkpoint is missing")?;
+    let audio = checkpoint.audio()?.context("Fixture audio is missing")?;
+    assert_eq!(audio.pcm.len(), 9 << 20);
+    assert!(audio.complete);
     Ok(())
 }

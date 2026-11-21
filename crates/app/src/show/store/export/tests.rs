@@ -1,4 +1,7 @@
-use std::{collections::BTreeSet, fs};
+use std::{
+    collections::BTreeSet,
+    fs::{self, File},
+};
 
 use serde_json::json;
 use speakeasy_show::{Image, Journal, Moment};

@@ -6,6 +6,7 @@ use std::{
 };
 
 use anyhow::Context as _;
+use speakeasy_platform::ReadDirectory;
 use speakeasy_show::{Journal, Moment, Source, SourceFrame};
 
 use super::{found, recall};
@@ -32,26 +33,42 @@ pub(crate) fn present(directory: &Path) -> io::Result<bool> {
 }
 
 pub(crate) fn inspect(directory: &Path) -> anyhow::Result<Source> {
-    let mut file = open(directory)?;
-    Source::read(file.metadata()?.len(), |range| read_range(&mut file, range))
-        .context("Cannot inspect source.frames")
+    Reader::open(&recall::open_directory(directory)?)?.inspect()
 }
 
 pub(crate) fn frame(directory: &Path, source: &Source, at: Moment) -> anyhow::Result<SourceFrame> {
-    let mut file = open(directory)?;
-    anyhow::ensure!(
-        file.metadata()?.len() == source.bytes(),
-        "Source frames changed. Refresh the Show before reading them."
-    );
-    source
-        .frame(at, |range| read_range(&mut file, range))
-        .context("Cannot read the recorded source frame")
+    Reader::open(&recall::open_directory(directory)?)?.frame(source, at)
 }
 
-fn open(directory: &Path) -> anyhow::Result<File> {
-    recall::regular_file(directory, FILE, Source::FILE_LIMIT)
-        .context("Source frames are unavailable for this Show")?;
-    File::open(directory.join(FILE)).context("Cannot open source.frames")
+pub(in crate::show) struct Reader(File);
+
+impl Reader {
+    pub(in crate::show) fn open(directory: &ReadDirectory) -> anyhow::Result<Self> {
+        recall::open_file(directory, FILE, Source::FILE_LIMIT)
+            .map(Self)
+            .context("Source frames are unavailable for this Show")
+    }
+
+    pub(in crate::show) fn inspect(&mut self) -> anyhow::Result<Source> {
+        Source::read(self.0.metadata()?.len(), |range| {
+            read_range(&mut self.0, range)
+        })
+        .context("Cannot inspect source.frames")
+    }
+
+    pub(in crate::show) fn frame(
+        &mut self,
+        source: &Source,
+        at: Moment,
+    ) -> anyhow::Result<SourceFrame> {
+        anyhow::ensure!(
+            self.0.metadata()?.len() == source.bytes(),
+            "Source frames changed. Refresh the Show before reading them."
+        );
+        source
+            .frame(at, |range| read_range(&mut self.0, range))
+            .context("Cannot read the recorded source frame")
+    }
 }
 
 fn read_range(file: &mut File, range: Range<u64>) -> anyhow::Result<Vec<u8>> {

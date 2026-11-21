@@ -262,18 +262,24 @@ impl Settings {
                     )
                 })
                 .into(),
-            Menu::Preset(index) => vec![
-                Item {
-                    label: "Update with current settings".into(),
-                    action: Action::Preset(presets::Edit::Update(index)),
-                    kind: Kind::Command { destructive: false },
-                },
-                Item {
-                    label: "Delete".into(),
-                    action: Action::Preset(presets::Edit::Delete(index)),
-                    kind: Kind::Command { destructive: true },
-                },
-            ],
+            Menu::Preset(index) => {
+                let update =
+                    (self.config.speech_configured() && !self.engine_work.is_busy()).then(|| {
+                        Item {
+                            label: "Update with current settings".into(),
+                            action: Action::Preset(presets::Edit::Update(index)),
+                            kind: Kind::Command { destructive: false },
+                        }
+                    });
+                update
+                    .into_iter()
+                    .chain([Item {
+                        label: "Delete".into(),
+                        action: Action::Preset(presets::Edit::Delete(index)),
+                        kind: Kind::Command { destructive: true },
+                    }])
+                    .collect()
+            },
         }
     }
 

@@ -47,7 +47,7 @@ use crate::{
     runtime::ports::{
         CaptureEvent, Capturing, Listening, Lost, MicrophoneSource, Partition, Sealed,
     },
-    show::AudioLog,
+    show::{AudioLog, checkpoint::AudioEnding},
 };
 
 const INITIAL_RESERVATION: Duration = Duration::from_secs(10);
@@ -370,12 +370,17 @@ impl<D> Recorder<D> {
     ) -> Captured<D> {
         let mut keeping = checkpoint::Keeping::new(&requests.keep);
         let drained = self.drain(id, events, control, requests, &mut keeping);
-        if !abandoned(control, events) && !keeping.finish(self.pcm.audio(), self.rate) {
+        control.finish();
+        control.quiesce();
+        let ending = if matches!(drained, Ok(None)) {
+            AudioEnding::Complete
+        } else {
+            AudioEnding::Interrupted
+        };
+        if !abandoned(control, events) && !keeping.finish(self.pcm.audio(), self.rate, ending) {
             keeping.warn(id, events);
         }
         drop(keeping);
-        control.finish();
-        control.quiesce();
         let Self {
             pcm,
             mut speech,

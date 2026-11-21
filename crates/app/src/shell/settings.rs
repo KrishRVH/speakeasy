@@ -402,7 +402,7 @@ impl Settings {
         if services.is_quitting()
             || services.mode.is_demo()
             || self.locked()
-            || !self.config_complete()
+            || !self.config.speech_configured()
             || !self.saves.needs_save(&self.config)
         {
             return;
@@ -411,10 +411,6 @@ impl Settings {
         if let Some(progress) = self.saves.submit(self.config.clone(), epoch) {
             self.advance_save(progress, cx);
         }
-    }
-
-    fn config_complete(&self) -> bool {
-        !self.config.needs_engine() && !self.config.model.as_os_str().is_empty()
     }
 
     fn unsaved(&self, cx: &App) -> bool {
@@ -808,6 +804,7 @@ struct Presentation {
     cancel_shortcut: Arc<str>,
     message: String,
     model: Option<ModelState>,
+    preset: Option<String>,
 }
 
 impl Presentation {
@@ -816,6 +813,11 @@ impl Presentation {
         Self {
             indicator: status.indicator,
             model: services.is_running().then_some(snapshot.model),
+            preset: if services.is_running() {
+                snapshot.preset.clone()
+            } else {
+                services.preset_name().map(str::to_owned)
+            },
             shortcut: Arc::clone(&snapshot.shortcut),
             cancel_shortcut: Arc::clone(&snapshot.cancel_shortcut),
             message: if snapshot.message.is_empty() {

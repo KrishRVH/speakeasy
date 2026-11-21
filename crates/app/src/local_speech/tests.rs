@@ -338,13 +338,11 @@ async fn a_program_that_takes_the_released_port_never_becomes_the_engine() -> an
     )
     .await?;
     let squatter = tokio::net::TcpListener::bind((LOOPBACK, port)).await?;
-    let started = tokio::select! {
-        started = start => started?,
-        failed = impersonate_engine(&squatter) => {
-            failed?;
-            bail!("The impersonated engine stopped answering");
-        },
-    };
+    let started = timeout(crate::testing::PATIENCE, start).await??;
+    assert!(
+        timeout(HEALTH_TIMEOUT, squatter.accept()).await.is_err(),
+        "Startup contacted a listener outside the speech engine's group"
+    );
     let error = started
         .err()
         .context("The program on the engine's port became the engine")?;
@@ -386,13 +384,28 @@ async fn audio_never_reaches_a_program_that_took_an_exited_engines_port() -> any
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn an_engine_that_died_while_idle_names_the_remedy_its_exit_proves() -> anyhow::Result<()> {
-    let (_directory, mut speech, _listener) = shell_engine("kill -s ILL $$").await?;
-    speech.child.wait().await?;
+    use crate::testing::PATIENCE;
+
+    let (directory, mut speech, _listener) =
+        shell_engine("sleep 60 & printf '%s' \"$!\" > member.pid; kill -s ILL $$").await?;
+    let leader = speech.child.id().context("Missing engine process")?;
+    timeout(PATIENCE, until(|| process_state(leader) == Some('Z'))).await?;
+    let member: u32 = timeout(
+        PATIENCE,
+        fixture_number(&directory.path().join("member.pid")),
+    )
+    .await?;
     let wav = audio::silent_wav(16_000, Duration::from_secs(1))?;
     let transcribed = speech.transcribe(wav, "en", &Terms::default()).await;
     speech.stop().await;
     let error = transcribed.err().context("The exited engine transcribed")?;
     assert!(error.to_string().contains("CPU instructions"), "{error}");
+    timeout(
+        PATIENCE,
+        until(|| process_state(member).is_none_or(|state| state == 'Z')),
+    )
+    .await
+    .context("A process of the exited engine's group kept running")?;
     Ok(())
 }
 
@@ -854,5 +867,26 @@ async fn abandoned_and_failed_streams_probe_the_owned_engine_before_reuse() -> a
         speech.stop().await;
         assert!(result??.0.is_none());
     }
+    Ok(())
+}
+
+#[test]
+fn whisper_tokens_preserve_whitespace_and_segment_boundaries() -> anyhow::Result<()> {
+    let body = r#"{"text":"Hello world. Next part.","segments":[
+        {"words":[{"word":"Hello","start":0,"end":0.1},
+                  {"word":" ","start":0.1,"end":0.2},
+                  {"word":"wor","start":0.2,"end":0.3},
+                  {"word":"ld. ","start":0.3,"end":0.4},
+                  {"word":"Next","start":0.4,"end":0.5}]},
+        {"words":[{"word":"part.","start":0.5,"end":0.6}]}]}"#;
+    assert_eq!(
+        narration(body)?,
+        timed(&[
+            (0, 100, "Hello"),
+            (200, 400, "world."),
+            (400, 500, "Next"),
+            (500, 600, "part.")
+        ])
+    );
     Ok(())
 }

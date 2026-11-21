@@ -162,19 +162,18 @@ impl Writing {
 }
 
 pub(super) fn recover(
-    directory: &Path,
+    directory: &speakeasy_platform::ReadDirectory,
     id: [u8; 16],
     size: [u32; 2],
     frames: u32,
 ) -> anyhow::Result<Geometry> {
-    if std::fs::symlink_metadata(directory.join(FILE))
-        .is_ok_and(|metadata| metadata.is_file() && metadata.len() == 0)
-    {
-        return Ok(Geometry::default());
-    }
-    let Some(bytes) = found(recall::read_file(directory, FILE, FILE_LIMIT))? else {
+    let Some((file, metadata)) = found(directory.file(Path::new(FILE)))? else {
         return Ok(Geometry::default());
     };
+    if metadata.len() == 0 {
+        return Ok(Geometry::default());
+    }
+    let bytes = recall::read_bounded(file, FILE_LIMIT)?;
     let expected = header(id, size);
     let Some(records) = bytes.strip_prefix(expected.as_slice()) else {
         return Ok(Geometry::default());

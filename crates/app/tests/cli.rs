@@ -69,6 +69,30 @@ fn an_isolated_console_entry_never_launches_the_app_for_help_or_invalid_options(
     let missing = Command::new(&isolated).args(["show", "list"]).output()?;
     assert_eq!(missing.status.code(), Some(1));
     assert!(String::from_utf8(missing.stderr)?.contains("extract the whole package"));
+    for verb in ["status", "dictation", "paste-last", "style", "preset"] {
+        let missing = Command::new(&isolated).arg(verb).output()?;
+        assert_eq!(missing.status.code(), Some(2));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn relay_treats_an_unexpected_control_exit_as_unknown() -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let root = tempfile::tempdir()?;
+    let isolated = root.path().join(Path::new(CLI).file_name().unwrap());
+    fs::copy(CLI, &isolated)?;
+    let sibling = root.path().join("speakeasy");
+    fs::write(&sibling, "#!/bin/sh\nexit 101\n")?;
+    fs::set_permissions(&sibling, fs::Permissions::from_mode(0o700))?;
+
+    let control = Command::new(&isolated).arg("status").output()?;
+    assert_eq!(control.status.code(), Some(2));
+    assert!(String::from_utf8(control.stderr)?.contains("stopped unexpectedly"));
+    let utility = Command::new(&isolated).arg("--version").output()?;
+    assert_eq!(utility.status.code(), Some(101));
     Ok(())
 }
 

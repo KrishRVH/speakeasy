@@ -17,6 +17,8 @@ const ABANDONED_AFTER: Duration = Duration::from_hours(1);
 
 const SWEEP_EVERY: Duration = Duration::from_hours(1);
 
+pub(super) const SAVED_AT: &str = ".saved-at";
+
 const PIN: &str = ".pinned";
 
 const STAGING_PREFIX: &str = ".partial-";
@@ -77,12 +79,21 @@ pub(super) struct Staged {
     staging: tempfile::TempDir,
     directory: PathBuf,
     summary: String,
+    managed: bool,
     pub source_lost: bool,
 }
 
 impl Staged {
     pub(super) fn persist(mut self) -> anyhow::Result<(SavedShow, String)> {
         let parent = self.directory.parent().unwrap_or(&self.directory);
+        let _publication = if self.managed {
+            let lock = retention::lock(parent).map_err(cannot_save(parent))?;
+            write_flushed(&self.staging.path().join(SAVED_AT), &[]).map_err(cannot_save(parent))?;
+            sync_directory(self.staging.path()).map_err(cannot_save(parent))?;
+            Some(lock)
+        } else {
+            None
+        };
         fs::rename(self.staging.path(), &self.directory).map_err(cannot_save(parent))?;
         self.staging.disable_cleanup(true);
         #[expect(
@@ -142,6 +153,7 @@ pub(super) fn stage(
     retained: Option<Retained<'_>>,
 ) -> anyhow::Result<Staged> {
     let directory = location.directory();
+    let managed = location.id().is_some();
     let parent = directory
         .parent()
         .context("A Show's directory needs a parent")?;
@@ -176,6 +188,7 @@ pub(super) fn stage(
         staging,
         directory: directory.to_path_buf(),
         summary,
+        managed,
         source_lost,
     })
 }

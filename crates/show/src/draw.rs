@@ -83,7 +83,7 @@ impl<'a> Shown<'a> {
             .action
             .map(Action::point)
             .or_else(|| nearest_click(&recording.actions, keyframe.at))
-            .filter(|point| point.is_finite());
+            .filter(|point| Rect::UNIT.contains(*point));
         let recent_marks = marks
             .iter()
             .filter(|mark| own.is_empty() && recent(mark.span));
@@ -145,9 +145,15 @@ impl Drawn {
             .focus
             .iter()
             .chain(&self.occupied)
+            .filter(|point| view.contains(**point))
             .map(within)
             .any(in_top_left);
-        if crowded_left && !self.focus.iter().map(within).any(in_top_right) {
+        let crowded_right = self
+            .focus
+            .filter(|&point| view.contains(point))
+            .as_ref()
+            .is_some_and(|point| in_top_right(within(point)));
+        if crowded_left && !crowded_right {
             Corner::Right
         } else {
             Corner::Left

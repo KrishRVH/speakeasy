@@ -41,7 +41,7 @@ async fn closing_frames_flushes_them_without_waiting_for_audio_or_releasing_the_
     tokio::pin!(closing);
     assert!(still_pending(&mut closing).await);
     assert!(audio.begin(8_000, Duration::from_millis(100), "en".into()));
-    assert!(audio.finish(&[3, 0, 4, 0], &[(0, 0)]));
+    assert!(audio.finish(&[3, 0, 4, 0], &[(0, 0)], AudioEnding::Complete));
     let checkpoint = closing.await?.context("Fixture checkpoint is missing")?;
     assert!(checkpoint.replay()?.ended());
     let kept = audio::read(File::open(checkpoint.directory.join(audio::FILE))?)?;
@@ -62,7 +62,7 @@ async fn a_frame_failure_does_not_stop_the_audio_stream() -> anyhow::Result<()> 
     assert!(frames.begin(0, Size::default(), speakeasy_show::Framing::Automatic));
     assert!(!frames.close().await);
     assert!(audio.begin(8_000, Duration::ZERO, "en".into()));
-    assert!(audio.finish(&[5, 0], &[]));
+    assert!(audio.finish(&[5, 0], &[], AudioEnding::Complete));
     let checkpoint = keeper
         .close()
         .await?
@@ -107,7 +107,7 @@ async fn an_audio_failure_does_not_stop_frames_or_release_the_owner() -> anyhow:
         .await?
         .context("Fixture checkpoint is missing")?;
     assert!(checkpoint.replay()?.ended());
-    assert!(checkpoint.audio().is_err());
+    assert!(checkpoint.audio()?.is_none());
     checkpoint.discard()?;
     Ok(())
 }

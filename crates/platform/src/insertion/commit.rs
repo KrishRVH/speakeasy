@@ -94,7 +94,7 @@ pub(crate) fn settle<N: NativeInsert + 'static>(
         Ok((outcome, saved)) => Settled {
             outcome: Ok(outcome),
             restore: saved.map(|saved| {
-                Box::new(move || native.restore(saved.contents, &saved.mark))
+                Box::new(move || native.restore(Some(saved.contents), &saved.mark))
                     as Box<dyn FnOnce() -> anyhow::Result<()>>
             }),
         },
@@ -173,9 +173,13 @@ pub(crate) trait NativeInsert {
 
     fn save(&mut self, lease: &Self::Lease) -> Option<Self::Contents>;
 
-    fn write(&mut self, lease: Self::Lease, text: &str) -> anyhow::Result<()>;
+    fn write(&mut self, lease: Self::Lease, text: &str) -> anyhow::Result<Self::Mark>;
 
-    fn restore(&mut self, contents: Self::Contents, mark: &Self::Mark) -> anyhow::Result<()>;
+    fn restore(
+        &mut self,
+        contents: Option<Self::Contents>,
+        mark: &Self::Mark,
+    ) -> anyhow::Result<()>;
 
     fn mark(&mut self) -> Self::Mark;
 
@@ -215,19 +219,47 @@ fn insert<N: NativeInsert>(
                 return Ok((Inserted::Cancelled, None));
             }
             let contents = native.save(&lease);
-            native.write(lease, text)?;
-            let mark = native.mark();
-            if !native.holds(text, &mark)? {
-                return Ok((CLIPBOARD_CHANGED, None));
+            if !permit.active() {
+                return Ok((Inserted::Cancelled, None));
             }
-            (native.paste_keys()?, Some((mark, contents)))
+            let mark = native.write(lease, text)?;
+            if !permit.active() {
+                native.restore(contents, &mark)?;
+                return Ok((Inserted::Cancelled, None));
+            }
+            let keys = match native.holds(text, &mark) {
+                Ok(true) => native.paste_keys(),
+                Ok(false) => {
+                    let outcome = if permit.active() {
+                        CLIPBOARD_CHANGED
+                    } else {
+                        native.restore(contents, &mark)?;
+                        Inserted::Cancelled
+                    };
+                    return Ok((outcome, None));
+                },
+                Err(error) => Err(error),
+            };
+            let keys = match keys {
+                Ok(keys) => keys,
+                Err(error) => {
+                    restore_now(native, Some((mark, contents)))?;
+                    return Err(error);
+                },
+            };
+            (keys, Some((mark, contents)))
         },
         Delivery::Direct => (native.text_keys(text)?, None),
     };
-    if let Some(outcome) = delivery.preflight(
+    let preflight = delivery.preflight(
         !own_focus.held() && native.external_focus(),
         native.shortcut_released(),
-    ) {
+    );
+    if !permit.active() {
+        restore_now(native, clipboard)?;
+        return Ok((Inserted::Cancelled, None));
+    }
+    if let Some(outcome) = preflight {
         return Ok((outcome, None));
     }
     if clipboard
@@ -237,6 +269,7 @@ fn insert<N: NativeInsert>(
         return Ok((CLIPBOARD_CHANGED_BEFORE_PASTE, None));
     }
     if !permit.commit() {
+        restore_now(native, clipboard)?;
         return Ok((Inserted::Cancelled, None));
     }
     let inserted = native.send(keys)?;
@@ -249,6 +282,16 @@ fn insert<N: NativeInsert>(
             })
         });
     Ok((inserted, saved))
+}
+
+fn restore_now<N: NativeInsert>(
+    native: &mut N,
+    clipboard: Option<(N::Mark, Option<N::Contents>)>,
+) -> anyhow::Result<()> {
+    if let Some((mark, contents)) = clipboard {
+        native.restore(contents, &mark)?;
+    }
+    Ok(())
 }
 
 fn submit<N: NativeInsert>(

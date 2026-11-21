@@ -1,7 +1,7 @@
 mod frame;
 pub(in crate::show::store) mod geometry;
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, File},
     io::{Read as _, Seek as _, Write as _},
     path::Path,
     time::Instant,
@@ -11,9 +11,10 @@ use anyhow::Context as _;
 pub(crate) use frame::{AnnotationState, Crop, decoder_time};
 use serde::{Deserialize, Serialize};
 use speakeasy_core::gesture::RECORDING_LIMIT;
+use speakeasy_platform::ReadDirectory;
 use speakeasy_show::{Moment, MovieError, MoviePrefix};
 
-use super::{entry_exists, found, recall, sync_directory};
+use super::{found, recall, sync_directory};
 
 pub(crate) const FILE: &str = "recording.mp4";
 pub(crate) const HEADER: &str = "recording.json";
@@ -188,7 +189,14 @@ impl Reading {
         directory: &Path,
         annotations: Moment,
     ) -> anyhow::Result<Option<Self>> {
-        let Some(reading) = open(directory)? else {
+        Self::optional_from(&recall::open_directory(directory)?, annotations)
+    }
+
+    fn optional_from(
+        directory: &ReadDirectory,
+        annotations: Moment,
+    ) -> anyhow::Result<Option<Self>> {
+        let Some(reading) = open_from(directory)? else {
             return Ok(None);
         };
         let coverage = reading
@@ -266,8 +274,8 @@ pub(super) fn checkpoint(directory: &Path) -> anyhow::Result<CheckpointMovie> {
     }
 }
 
-fn read_metadata(directory: &Path) -> anyhow::Result<Metadata> {
-    let bytes = recall::read_file(directory, HEADER, HEADER_LIMIT)?;
+fn read_metadata(directory: &ReadDirectory) -> anyhow::Result<Metadata> {
+    let bytes = recall::read_from(directory, HEADER, HEADER_LIMIT)?;
     let metadata: Metadata = serde_json::from_slice(&bytes)
         .map_err(|_private_content| anyhow::anyhow!("Movie timing metadata is damaged"))?;
     anyhow::ensure!(
@@ -280,25 +288,18 @@ fn read_metadata(directory: &Path) -> anyhow::Result<Metadata> {
 }
 
 pub(super) fn open(directory: &Path) -> anyhow::Result<Option<Reading>> {
-    if !entry_exists(&directory.join(FILE))? {
+    open_from(&recall::open_directory(directory)?)
+}
+
+fn open_from(directory: &ReadDirectory) -> anyhow::Result<Option<Reading>> {
+    let Some(mut file) = found(recall::open_file(directory, FILE, MoviePrefix::FILE_LIMIT))? else {
         anyhow::ensure!(
-            !entry_exists(&directory.join(HEADER))?,
+            found(directory.file(Path::new(HEADER)))?.is_none(),
             "Movie timing exists without its video"
         );
         return Ok(None);
-    }
-    recall::regular_file(directory, FILE, MoviePrefix::FILE_LIMIT)?;
+    };
     let mut metadata = read_metadata(directory)?;
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::fs::OpenOptionsExt as _;
-
-        const SHARE_READ_DELETE: u32 = 0x1 | 0x4;
-        options.share_mode(SHARE_READ_DELETE);
-    }
-    let mut file = options.open(directory.join(FILE))?;
     let length = file.metadata()?.len();
     let prefix = MoviePrefix::read(length, |range| {
         let length = range
@@ -356,7 +357,8 @@ pub(super) fn open(directory: &Path) -> anyhow::Result<Option<Reading>> {
                 && !prefix.truncated()
                 && coverage.frames == prefix.frames()
                 && coverage.end_ms == end_ms.min(limit)
-                && coverage.annotations_through_ms <= limit,
+                && coverage.annotations_through_ms
+                    <= speakeasy_show::JOURNAL_DURATION_LIMIT.as_millis(),
             "Saved movie coverage differs from its fragments"
         );
     }
@@ -379,8 +381,11 @@ pub(super) fn open(directory: &Path) -> anyhow::Result<Option<Reading>> {
     }))
 }
 
-pub(crate) fn saved(directory: &Path, annotations: Moment) -> anyhow::Result<Option<Inspected>> {
-    Ok(Reading::optional(directory, annotations)?.map(|reading| reading.movie))
+pub(super) fn saved(
+    directory: &ReadDirectory,
+    annotations: Moment,
+) -> anyhow::Result<Option<Inspected>> {
+    Ok(Reading::optional_from(directory, annotations)?.map(|reading| reading.movie))
 }
 
 pub(in crate::show::store) fn retain(
@@ -388,6 +393,10 @@ pub(in crate::show::store) fn retain(
     mut reading: Reading,
     annotations: Moment,
 ) -> anyhow::Result<Metadata> {
+    anyhow::ensure!(
+        annotations <= speakeasy_show::JOURNAL_DURATION_LIMIT,
+        "Movie annotation coverage exceeds the Show journal limit"
+    );
     let mut output = File::create_new(destination.join(FILE))?;
     reading.copy_to(&mut output, MoviePrefix::FILE_LIMIT)?;
     output.sync_all()?;

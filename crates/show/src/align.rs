@@ -199,7 +199,9 @@ fn about_to_begin(clauses: &[Clause], anchor: Moment, next: Option<Moment>) -> O
 }
 
 fn ends_clause(text: &str, clause_words: usize) -> bool {
-    let text = text.trim_end_matches(['"', '\'', '”', '’', ')', ']']);
+    let text = text
+        .trim_end()
+        .trim_end_matches(['"', '\'', '”', '’', ')', ']']);
     text.ends_with(['.', '!', '?', ';', ':'])
         || (clause_words >= COMMA_CLAUSE_WORDS && text.ends_with(','))
 }

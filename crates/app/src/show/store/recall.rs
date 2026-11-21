@@ -1,15 +1,17 @@
 use std::{
-    fmt, fs,
+    fmt,
+    fs::{self, File},
     io::{self, Read as _},
     path::{Path, PathBuf},
 };
 
 use serde::Serialize;
+use speakeasy_platform::ReadDirectory;
 use speakeasy_show::{Bundle, Manifest, Unreadable};
 
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
 use super::SavedShow;
-use super::{PIN, found, pinned, stamp};
+use super::{PIN, found, stamp};
 
 pub(super) const SUMMARY_LIMIT: u64 = 1 << 20;
 
@@ -52,6 +54,7 @@ impl std::error::Error for ReadError {}
 pub(crate) struct Entry {
     pub directory: PathBuf,
     pub show: Result<ReadShow, ReadError>,
+    pinned: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -71,20 +74,24 @@ impl Entry {
         }
     }
 
-    pub(crate) fn pinned(&self) -> Option<bool> {
-        match &self.show {
-            Ok(show) => Some(show.pinned),
-            Err(_) => pinned(&self.directory).ok(),
-        }
+    pub(crate) const fn pinned(&self) -> Option<bool> {
+        self.pinned
     }
 
     pub(crate) fn open(directory: &Path) -> io::Result<Self> {
         let directory = std::path::absolute(directory)?;
-        if !fs::metadata(&directory)?.is_dir() {
-            return Err(io::Error::other("a Show must be a directory"));
+        let files = open_directory(&directory)?;
+        Ok(Self::read_from(directory, &files))
+    }
+
+    pub(in crate::show) fn read_from(directory: PathBuf, files: &ReadDirectory) -> Self {
+        let pinned = found(files.file(Path::new(PIN))).map(|file| file.is_some());
+        let show = read(files, pinned.as_ref().copied());
+        Self {
+            directory,
+            show,
+            pinned: pinned.ok(),
         }
-        let show = read(&directory);
-        Ok(Self { directory, show })
     }
 
     pub(crate) fn file(&self, name: &str) -> PathBuf {
@@ -129,17 +136,20 @@ pub(crate) fn directories(parent: &Path) -> io::Result<Vec<PathBuf>> {
     Ok(shows.into_iter().map(|(_, _, entry)| entry).collect())
 }
 
-fn read(directory: &Path) -> Result<ReadShow, ReadError> {
-    let file_error = |name: &str, error: io::Error| {
+fn read(
+    directory: &ReadDirectory,
+    pinned: Result<bool, &io::Error>,
+) -> Result<ReadShow, ReadError> {
+    let file_error = |name: &str, error: &io::Error| {
         ReadError::File(FileProblem {
             name: name.to_owned(),
             reason: error.to_string(),
         })
     };
-    let bytes = read_file(directory, Manifest::FILE, MANIFEST_LIMIT)
-        .map_err(|error| file_error(Manifest::FILE, error))?;
+    let bytes = read_from(directory, Manifest::FILE, MANIFEST_LIMIT)
+        .map_err(|error| file_error(Manifest::FILE, &error))?;
     let manifest = Manifest::parse(&bytes).map_err(ReadError::Manifest)?;
-    let pinned = pinned(directory).map_err(|error| file_error(PIN, error))?;
+    let pinned = pinned.map_err(|error| file_error(PIN, error))?;
     let mut problems: Vec<_> = manifest
         .files()
         .filter_map(|name| {
@@ -148,7 +158,7 @@ fn read(directory: &Path) -> Result<ReadShow, ReadError> {
             } else {
                 u64::MAX
             };
-            regular_file(directory, &name, limit)
+            open_file(directory, &name, limit)
                 .err()
                 .map(|error| FileProblem {
                     name,
@@ -174,40 +184,44 @@ fn read(directory: &Path) -> Result<ReadShow, ReadError> {
     })
 }
 
+pub(in crate::show::store) fn open_directory(directory: &Path) -> io::Result<ReadDirectory> {
+    ReadDirectory::open(&directory.canonicalize()?)
+}
+
 pub(super) fn regular_file(directory: &Path, name: &str, limit: u64) -> io::Result<()> {
-    let mut path = directory.to_owned();
-    let mut parts = name.split('/');
-    let file = parts.next_back().unwrap_or_default();
-    for folder in parts {
-        path.push(folder);
-        if !fs::symlink_metadata(&path)?.is_dir() {
-            return Err(io::Error::other("parent must be a directory, not a link"));
-        }
-    }
-    path.push(file);
-    let metadata = fs::symlink_metadata(&path)?;
-    if !metadata.is_file() {
-        return Err(io::Error::other("not a regular file"));
-    }
+    open_file(&open_directory(directory)?, name, limit).map(drop)
+}
+
+pub(super) fn open_file(directory: &ReadDirectory, name: &str, limit: u64) -> io::Result<File> {
+    let (file, metadata) = directory.file(Path::new(name))?;
     if metadata.len() > limit {
         return Err(too_large());
     }
     if metadata.len() == 0 && name != Bundle::SUMMARY {
         return Err(io::Error::other("file is empty"));
     }
-    Ok(())
+    Ok(file)
 }
 
-pub(super) fn bundle_path(directory: &Path, name: &str) -> PathBuf {
+fn bundle_path(directory: &Path, name: &str) -> PathBuf {
     directory.join(name.split('/').collect::<PathBuf>())
 }
 
 pub(crate) fn read_file(directory: &Path, name: &str, limit: u64) -> io::Result<Vec<u8>> {
-    regular_file(directory, name, limit)?;
+    read_from(&open_directory(directory)?, name, limit)
+}
+
+pub(in crate::show) fn read_from(
+    directory: &ReadDirectory,
+    name: &str,
+    limit: u64,
+) -> io::Result<Vec<u8>> {
+    read_bounded(open_file(directory, name, limit)?, limit)
+}
+
+pub(super) fn read_bounded(file: File, limit: u64) -> io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
-    fs::File::open(bundle_path(directory, name))?
-        .take(limit.saturating_add(1))
-        .read_to_end(&mut bytes)?;
+    file.take(limit.saturating_add(1)).read_to_end(&mut bytes)?;
     if !u64::try_from(bytes.len()).is_ok_and(|length| length <= limit) {
         return Err(too_large());
     }
@@ -219,7 +233,11 @@ fn too_large() -> io::Error {
 }
 
 pub(crate) fn summary(directory: &Path) -> io::Result<String> {
-    let bytes = read_file(directory, Bundle::SUMMARY, SUMMARY_LIMIT)?;
+    summary_from(&open_directory(directory)?)
+}
+
+pub(in crate::show) fn summary_from(directory: &ReadDirectory) -> io::Result<String> {
+    let bytes = read_from(directory, Bundle::SUMMARY, SUMMARY_LIMIT)?;
     String::from_utf8(bytes)
         .map_err(|_private_error| io::Error::other("summary.md is not valid UTF-8 text"))
 }

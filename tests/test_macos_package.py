@@ -84,6 +84,7 @@ def test_archive_appears_only_after_signature_and_distribution_acceptance(
     )
     result, commands = package(tmp_path, environment)
     assert result.returncode == 0, result.stderr
+    assert (tmp_path / "artifacts/Speakeasy.app/Contents/MacOS/speakeasy").is_file()
     assert (tmp_path / "artifacts/speakeasy-macos.zip").exists()
     signing = next(command for command in commands if command[:2] == ["codesign", "--force"])
     assert ("runtime" in signing) == signed
@@ -106,6 +107,7 @@ def test_archive_appears_only_after_signature_and_distribution_acceptance(
     [
         {"STUB_NOTARY_STATUS": "Invalid"},
         {"STUB_FAIL_TOOL": "cargo"},
+        {"STUB_FAIL_TOOL": "codesign"},
         {"STUB_FAIL_TOOL": "xcrun"},
         {"STUB_FAIL_TOOL": "spctl"},
         {"STUB_FAIL_TOOL": "hdiutil"},
@@ -118,7 +120,7 @@ def test_failed_distribution_never_emits_a_release_archive(
     tmp_path: Path, failure: dict[str, str]
 ) -> None:
     artifacts = tmp_path / "artifacts"
-    artifacts.mkdir()
+    (artifacts / "Speakeasy.app").mkdir(parents=True)
     for name in ["speakeasy-macos.zip", "speakeasy-macos.dmg"]:
         (artifacts / name).write_text("stale archive")
     result, _ = package(
@@ -130,6 +132,7 @@ def test_failed_distribution_never_emits_a_release_archive(
         },
     )
     assert result.returncode != 0
+    assert not (artifacts / "Speakeasy.app").exists()
     assert not (artifacts / "speakeasy-macos.zip").exists()
     assert not (artifacts / "speakeasy-macos.dmg").exists()
     assert not list(artifacts.glob(".macos-package.*"))

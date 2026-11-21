@@ -1,16 +1,19 @@
-use async_channel::Receiver;
+use anyhow::Context as _;
 use cpal::traits::{DeviceTrait, HostTrait};
 use speakeasy_platform::OwnedThread;
+use tokio::sync::watch;
 
+#[derive(Clone)]
 pub(crate) struct InputDevice {
     pub id: String,
     pub name: String,
 }
 
 type Listing = anyhow::Result<Vec<InputDevice>>;
+type Scan = Result<Vec<InputDevice>, cpal::Error>;
 
 pub(crate) struct MicrophoneScan {
-    devices: Receiver<Listing>,
+    devices: watch::Receiver<Option<Scan>>,
     thread: OwnedThread,
 }
 
@@ -18,14 +21,13 @@ impl MicrophoneScan {
     pub(crate) fn listing(
         current: &mut Option<Self>,
     ) -> anyhow::Result<impl Future<Output = Listing> + use<>> {
-        let devices = Self::share(current, enumerate_microphones)?;
-        Ok(async move { devices.recv().await? })
+        Self::share(current, enumerate_microphones)
     }
 
-    fn share(
+    fn share<F: FnOnce() -> Scan + Send + 'static>(
         current: &mut Option<Self>,
-        enumerate: impl FnOnce() -> Listing + Send + 'static,
-    ) -> anyhow::Result<Receiver<Listing>> {
+        enumerate: F,
+    ) -> anyhow::Result<impl Future<Output = Listing> + use<F>> {
         let scan = match current {
             Some(scan) if !scan.thread.is_finished() => scan,
             idle => {
@@ -33,21 +35,28 @@ impl MicrophoneScan {
                 idle.insert(Self::spawn(finished, enumerate)?)
             },
         };
-        Ok(scan.devices.clone())
+        let mut devices = scan.devices.clone();
+        Ok(async move {
+            let result = devices.wait_for(Option::is_some).await?;
+            result
+                .clone()
+                .context("Microphone enumeration did not finish")?
+                .map_err(Into::into)
+        })
     }
 
     fn spawn(
         finished: Option<Self>,
-        enumerate: impl FnOnce() -> Listing + Send + 'static,
+        enumerate: impl FnOnce() -> Scan + Send + 'static,
     ) -> anyhow::Result<Self> {
-        let (reply, devices) = async_channel::bounded(1);
+        let (reply, devices) = watch::channel(None);
         let thread = OwnedThread::spawn("microphone-scan", move || {
             drop(finished);
             #[expect(
                 clippy::let_underscore_must_use,
-                reason = "The lane closes only once the scan and every waiting Settings view drop their receivers, so nobody wants the list"
+                reason = "A scan with no remaining waiters has no result to deliver"
             )]
-            let _ = reply.try_send(enumerate());
+            let _ = reply.send(Some(enumerate()));
         })?;
         Ok(Self { devices, thread })
     }
@@ -57,7 +66,7 @@ impl MicrophoneScan {
     }
 }
 
-fn enumerate_microphones() -> Listing {
+fn enumerate_microphones() -> Scan {
     Ok(cpal::default_host()
         .input_devices()?
         .filter_map(|device| {
@@ -73,11 +82,30 @@ fn enumerate_microphones() -> Listing {
 mod tests {
     use std::sync::mpsc;
 
-    use anyhow::{Context as _, bail};
     use tokio::time::timeout;
 
     use super::*;
     use crate::testing::PATIENCE;
+
+    #[tokio::test]
+    async fn every_waiter_receives_the_same_in_flight_microphone_scan() -> anyhow::Result<()> {
+        let (release, released) = mpsc::channel();
+        let mut current = None;
+        let first = MicrophoneScan::share(&mut current, move || {
+            released.recv().expect("Fixture released");
+            Ok(vec![InputDevice {
+                id: "usb".into(),
+                name: "USB".into(),
+            }])
+        })?;
+        let second = MicrophoneScan::share(&mut current, || {
+            Err(cpal::ErrorKind::DeviceNotAvailable.into())
+        })?;
+        release.send(())?;
+        assert_eq!(timeout(PATIENCE, first).await??[0].id, "usb");
+        assert_eq!(timeout(PATIENCE, second).await??[0].id, "usb");
+        Ok(())
+    }
 
     #[tokio::test]
     async fn a_blocked_microphone_scan_serves_the_next_request_instead_of_another_thread()
@@ -85,7 +113,7 @@ mod tests {
         let (release, released) = mpsc::channel();
         let mut current = None;
         let abandoned = MicrophoneScan::share(&mut current, move || {
-            released.recv()?;
+            released.recv().expect("Fixture released");
             Ok(vec![InputDevice {
                 id: "usb".into(),
                 name: "USB".into(),
@@ -94,16 +122,16 @@ mod tests {
 
         drop(abandoned);
         let waiting = MicrophoneScan::share(&mut current, || {
-            bail!("A second scan started while one was enumerating")
+            Err(cpal::ErrorKind::DeviceNotAvailable.into())
         })?;
         let exited = current.as_ref().context("No scan is held")?.exited();
         release.send(())?;
-        let devices = timeout(PATIENCE, waiting.recv()).await???;
+        let devices = timeout(PATIENCE, waiting).await??;
         assert_eq!(devices.len(), 1);
         assert_eq!(devices[0].id, "usb");
         timeout(PATIENCE, exited).await?;
         let fresh = MicrophoneScan::share(&mut current, || Ok(Vec::new()))?;
-        assert!(timeout(PATIENCE, fresh.recv()).await???.is_empty());
+        assert!(timeout(PATIENCE, fresh).await??.is_empty());
         Ok(())
     }
 }

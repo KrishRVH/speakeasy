@@ -61,12 +61,10 @@ pub(super) fn retain(
     if SystemTime::now() >= expires {
         return Ok(());
     }
-    let voice = recall::regular_file(checkpoint, audio::FILE, audio::FILE_LIMIT);
-    if found(voice)?.is_none() {
+    let Some(input) = audio::available(checkpoint, audio::FILE)? else {
         return Ok(());
-    }
-    let mut input =
-        File::open(checkpoint.join(audio::FILE))?.take(audio::FILE_LIMIT.saturating_add(1));
+    };
+    let mut input = input.take(audio::FILE_LIMIT.saturating_add(1));
     let mut output = File::create_new(staged.staging.path().join(FILE))?;
     let copied = io::copy(&mut input, &mut output)?;
     anyhow::ensure!(
@@ -100,6 +98,8 @@ fn deadline(directory: &Path) -> io::Result<Option<SystemTime>> {
 }
 
 pub(crate) fn read(directory: &Path, now: SystemTime) -> anyhow::Result<Voice> {
+    const DAMAGED: &str =
+        "Cannot read this Show's voice; recover the original Show before exporting voice";
     let Some(expires) = deadline(directory)? else {
         anyhow::ensure!(
             !entry_exists(&directory.join(FILE))?,
@@ -110,10 +110,11 @@ pub(crate) fn read(directory: &Path, now: SystemTime) -> anyhow::Result<Voice> {
     if now >= expires {
         return Ok(Voice::Expired);
     }
-    recall::regular_file(directory, FILE, audio::FILE_LIMIT).context(
-        "Cannot read this Show's voice; recover the original Show before exporting voice",
-    )?;
-    audio::read(File::open(directory.join(FILE))?).map(Voice::Kept)
+    match audio::available(directory, FILE).context(DAMAGED)? {
+        Some(file) => audio::read(file).map(Voice::Kept),
+        None if entry_exists(&directory.join(FILE))? => Ok(Voice::Absent),
+        None => anyhow::bail!(DAMAGED),
+    }
 }
 
 pub(super) fn expire(directory: &Path, now: SystemTime) -> io::Result<()> {
@@ -141,6 +142,18 @@ mod tests {
         expire(directory.path(), now)?;
         assert!(!directory.path().join(FILE).exists());
         assert!(directory.path().join(super::super::PIN).exists());
+        Ok(())
+    }
+
+    #[test]
+    fn an_existing_header_only_voice_file_exports_without_voice() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        fs::write(directory.path().join(FILE), b"SPKAUD01")?;
+        fs::write(directory.path().join(EXPIRY), 100_u64.to_le_bytes())?;
+        assert!(matches!(
+            read(directory.path(), SystemTime::UNIX_EPOCH)?,
+            Voice::Absent
+        ));
         Ok(())
     }
 

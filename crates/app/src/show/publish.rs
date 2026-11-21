@@ -130,10 +130,7 @@ fn publish_with(
             clippy::let_underscore_must_use,
             reason = "A failed checkpoint write keeps recovery audio; this bundle still carries the narration"
         )]
-        let _ = checkpoint.narrate(
-            &footage.recording.narration,
-            lost == Some(NarrationLoss::Incomplete),
-        );
+        let _ = checkpoint.narrate(&footage.recording.narration, lost);
     }
     if !permit.active() {
         return Ok(Published::Cancelled);
@@ -214,9 +211,9 @@ fn reopen_with(interrupted: Interrupted) -> anyhow::Result<Reopened> {
     let mut speech = None;
 
     match checkpoint.narration() {
-        Ok(Some((narration, incomplete))) => {
+        Ok(Some((narration, loss))) => {
             recording.narration = narration;
-            recording.narration_lost = incomplete.then_some(NarrationLoss::Incomplete);
+            recording.narration_lost = loss;
         },
         Ok(None) | Err(_) => match checkpoint.audio() {
             Ok(Some(audio)) => {
@@ -227,6 +224,12 @@ fn reopen_with(interrupted: Interrupted) -> anyhow::Result<Reopened> {
                         sealed,
                         language: audio.language,
                         incomplete,
+                    });
+                } else if pending {
+                    recording.narration_lost = Some(if incomplete {
+                        NarrationLoss::AudioStopped
+                    } else {
+                        NarrationLoss::NotTranscribed
                     });
                 } else if incomplete {
                     recording.narration_lost = Some(NarrationLoss::Incomplete);

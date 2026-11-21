@@ -1,9 +1,9 @@
 #[cfg(target_os = "linux")]
 use std::fs;
-#[cfg(unix)]
-use std::mem::MaybeUninit;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use std::net::Ipv4Addr;
+#[cfg(unix)]
+use std::{io, mem::MaybeUninit};
 #[cfg(target_os = "windows")]
 use std::{
     io,
@@ -33,6 +33,14 @@ use crate::windows::{ok_or_last_error, take_handle};
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 const LOOPBACK: u32 = u32::from_ne_bytes(Ipv4Addr::LOCALHOST.octets());
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoopbackListener {
+    Missing,
+    Owned,
+    Foreign,
+}
 
 #[cfg(target_os = "windows")]
 #[derive(Debug)]
@@ -77,9 +85,15 @@ impl ProcessGroup {
         }
     }
 
-    pub fn holds_loopback_listener(&self, port: u16) -> anyhow::Result<bool> {
+    pub fn loopback_listener(&self, port: u16) -> anyhow::Result<LoopbackListener> {
         let owners = loopback_listener_owners(port)?;
-        Ok(!owners.is_empty() && owners.into_iter().all(|owner| self.contains(owner)))
+        Ok(if owners.is_empty() {
+            LoopbackListener::Missing
+        } else if owners.into_iter().all(|owner| self.contains(owner)) {
+            LoopbackListener::Owned
+        } else {
+            LoopbackListener::Foreign
+        })
     }
 
     fn contains(&self, pid: u32) -> bool {
@@ -178,6 +192,10 @@ impl ProcessGroup {
         })
     }
 
+    pub fn leader_exited(&self) -> io::Result<bool> {
+        self.leader.map_or(Ok(true), leader_exited)
+    }
+
     pub fn terminate(&mut self) {
         if let Some(leader) = self.leader.take().filter(|&leader| unreaped(leader)) {
             unsafe {
@@ -189,15 +207,28 @@ impl ProcessGroup {
 
 #[cfg(unix)]
 fn unreaped(pid: libc::pid_t) -> bool {
-    let mut info = MaybeUninit::<libc::siginfo_t>::uninit();
+    leader_exited(pid).is_ok()
+}
 
-    unsafe {
-        libc::waitid(
-            libc::P_PID,
-            pid.cast_unsigned(),
-            info.as_mut_ptr(),
-            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
-        ) == 0
+#[cfg(unix)]
+fn leader_exited(pid: libc::pid_t) -> io::Result<bool> {
+    loop {
+        let mut info = MaybeUninit::<libc::siginfo_t>::zeroed();
+        let result = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                pid.cast_unsigned(),
+                info.as_mut_ptr(),
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        };
+        if result == 0 {
+            return Ok(unsafe { info.assume_init().si_pid() } == pid);
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
+        }
     }
 }
 
@@ -210,14 +241,14 @@ impl Drop for ProcessGroup {
 
 #[cfg(target_os = "linux")]
 impl ProcessGroup {
-    pub fn holds_loopback_listener(&self, port: u16) -> anyhow::Result<bool> {
-        let Some(leader) = self.leader.filter(|&leader| unreaped(leader)) else {
-            return Ok(false);
-        };
+    pub fn loopback_listener(&self, port: u16) -> anyhow::Result<LoopbackListener> {
         let mut unheld = loopback_listeners(&fs::read_to_string("/proc/net/tcp")?, port);
         if unheld.is_empty() {
-            return Ok(false);
+            return Ok(LoopbackListener::Missing);
         }
+        let Some(leader) = self.leader.filter(|&leader| unreaped(leader)) else {
+            return Ok(LoopbackListener::Foreign);
+        };
 
         release_held(leader, &mut unheld);
         if !unheld.is_empty() {
@@ -229,7 +260,11 @@ impl ProcessGroup {
                 release_held(member, &mut unheld);
             }
         }
-        Ok(unheld.is_empty())
+        Ok(if unheld.is_empty() {
+            LoopbackListener::Owned
+        } else {
+            LoopbackListener::Foreign
+        })
     }
 }
 
@@ -285,6 +320,8 @@ mod tests {
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     use std::net::{Ipv4Addr, TcpListener, TcpStream};
 
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    use super::LoopbackListener;
     use super::ProcessGroup;
 
     #[cfg(unix)]
@@ -346,12 +383,12 @@ mod tests {
             thread::sleep(Duration::from_millis(5));
         }
         let mut group = ProcessGroup::led_by(stranger.cast_unsigned())?;
-        let counted = group.holds_loopback_listener(port);
+        let counted = group.loopback_listener(port);
         group.terminate();
         Command::new("kill").arg(stranger.to_string()).status()?;
         let ended = reports.next().context("No status")??;
         parent.wait()?;
-        assert!(!counted?, "Its listener counted");
+        assert_eq!(counted?, LoopbackListener::Foreign);
         assert_eq!(ended, "143", "Ended by SIGTERM, not SIGKILL");
         Ok(())
     }
@@ -376,16 +413,18 @@ mod tests {
             .stdin(Stdio::from(OwnedFd::from(held)))
             .spawn()?;
         let mut group = ProcessGroup::led_by(child.id())?;
-        assert!(group.holds_loopback_listener(port)?);
-        for other in [foreign.local_addr()?.port(), client.local_addr()?.port()] {
-            assert!(
-                !group.holds_loopback_listener(other)?,
-                "Port {other} counted"
-            );
-        }
+        assert_eq!(group.loopback_listener(port)?, LoopbackListener::Owned);
+        assert_eq!(
+            group.loopback_listener(foreign.local_addr()?.port())?,
+            LoopbackListener::Foreign
+        );
+        assert_eq!(
+            group.loopback_listener(client.local_addr()?.port())?,
+            LoopbackListener::Missing
+        );
         group.terminate();
         child.wait()?;
-        assert!(!group.holds_loopback_listener(port)?);
+        assert_ne!(group.loopback_listener(port)?, LoopbackListener::Owned);
         Ok(())
     }
 
@@ -415,7 +454,7 @@ mod tests {
         let mut group = ProcessGroup::led_by(leader.id())?;
         let handed_over = leader.stdout.take().context("Leader output missing")?;
         BufReader::new(handed_over).read_line(&mut String::new())?;
-        assert!(group.holds_loopback_listener(port)?);
+        assert_eq!(group.loopback_listener(port)?, LoopbackListener::Owned);
         group.terminate();
         leader.wait()?;
         Ok(())
@@ -458,8 +497,8 @@ mod tests {
         BufReader::new(child.stdout.take().context("Child output missing")?)
             .read_line(&mut reported)?;
         let held = reported.trim().parse()?;
-        assert!(group.holds_loopback_listener(held)?);
-        assert!(!group.holds_loopback_listener(port)?);
+        assert_eq!(group.loopback_listener(held)?, LoopbackListener::Owned);
+        assert_ne!(group.loopback_listener(port)?, LoopbackListener::Owned);
 
         drop(group);
         child.wait()?;

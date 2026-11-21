@@ -145,7 +145,7 @@ impl Tracker {
         self.pointer = Some(InkPoint { point, at });
         self.shift_down = drawing.then(|| self.shift_down.unwrap_or(at));
         if drawing && pressed {
-            self.use_shift(at);
+            self.use_shift();
         }
         let inside = Rect::UNIT.contains(point);
         if drawing && inside {
@@ -208,6 +208,10 @@ impl Tracker {
             }) = self.pointer
             && Rect::UNIT.contains(point)
         {
+            if self.ink.as_ref().is_some_and(|ink| !ink.deliberate) {
+                self.ink = None;
+                self.shift_down = None;
+            }
             self.pins.push(Pin {
                 at: taps.end(),
                 point,
@@ -267,16 +271,15 @@ impl Tracker {
             false
         };
         if deliberate {
-            self.use_shift(point.at);
+            self.use_shift();
         }
     }
 
-    fn use_shift(&mut self, at: Moment) {
-        let noted = self
-            .shift_down
-            .is_some_and(|down| self.shift_uses.last().is_some_and(|&used| used >= down));
-        if !noted {
-            self.shift_uses.push(at);
+    fn use_shift(&mut self) {
+        if let Some(down) = self.shift_down
+            && self.shift_uses.last().is_none_or(|&used| used < down)
+        {
+            self.shift_uses.push(down);
         }
     }
 
@@ -432,6 +435,27 @@ mod tests {
 
     fn pin(tracker: &mut Tracker, first: Span, second: Span) -> bool {
         tracker.pin(Span::new(first.start(), second.end()))
+    }
+
+    #[test]
+    fn accepting_a_pin_retires_its_pending_ink() {
+        let mut tracker = Tracker::new(SURFACE);
+        let at = Moment::from_millis;
+        tracker.observe(at(40), Point::new(0.5, 0.5), true, false);
+        assert!(tracker.pin(Span::new(at(10), at(50))));
+        tracker.observe(at(60), Point::new(0.55, 0.5), true, false);
+        tracker.observe(at(70), Point::new(0.6, 0.5), true, false);
+        let recording = tracker.finish(at(80));
+        assert_eq!(recording.strokes[0].span().start(), at(60));
+    }
+
+    #[test]
+    fn drawing_attributes_a_deliberate_stroke_to_the_start_of_its_shift_hold() {
+        let mut tracker = Tracker::new(SURFACE);
+        let at = Moment::from_millis;
+        tracker.observe(at(40), Point::new(0.5, 0.5), true, false);
+        tracker.observe(at(60), Point::new(0.52, 0.5), true, false);
+        assert!(!tracker.pin(Span::new(at(10), at(50))));
     }
 
     #[test]

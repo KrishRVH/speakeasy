@@ -482,14 +482,14 @@ pub(super) fn draw(window: impl Into<AnyWindowHandle>, cx: &mut AsyncApp) -> any
     cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
 }
 
-async fn wait_for(
-    settings: WindowHandle<Settings>,
+pub(super) async fn wait_for(
+    handle: impl Into<AnyWindowHandle> + Copy,
     reached: impl Fn(&Window) -> bool,
     failure: &'static str,
     cx: &mut AsyncApp,
 ) -> anyhow::Result<()> {
     let start = Instant::now();
-    while !settings.update(cx, |_, window, _| reached(window))? {
+    while !cx.update_window(handle.into(), |_, window, _| reached(window))? {
         ensure!(start.elapsed() < ACTIVATION, failure);
         cx.background_executor()
             .timer(Duration::from_millis(10))
@@ -530,7 +530,7 @@ pub(super) fn key(
         reason = "Linux focuses the owned window through a fallible X11 connection; other platforms share its signature"
     )
 )]
-fn activate(window: &gpui::Window) -> anyhow::Result<()> {
+pub(super) fn activate(window: &gpui::Window) -> anyhow::Result<()> {
     cfg_select! {
         target_os = "linux" => {
             use raw_window_handle::{HasWindowHandle, RawWindowHandle};

@@ -98,11 +98,15 @@ impl Request {
 }
 
 fn widened(directory: &Path, focus: &Query, around: Duration) -> anyhow::Result<Span> {
-    let manifest = recall::Entry::open(directory)?.show?.manifest;
-    let span = focus
-        .resolve(&manifest)?
-        .selected
-        .context("Several phrases match; select one with --match K before exporting")?;
+    let span = if let Query::At(at) = focus {
+        Span::at(*at)
+    } else {
+        let manifest = recall::Entry::open(directory)?.show?.manifest;
+        focus
+            .resolve(&manifest)?
+            .selected
+            .context("Several phrases match; select one with --match K before exporting")?
+    };
     Ok(Span::new(
         span.start().saturating_sub(around),
         span.end().saturating_add(around),

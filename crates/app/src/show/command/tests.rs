@@ -10,18 +10,24 @@ fn parse(args: &[&str]) -> anyhow::Result<Command> {
 }
 
 async fn interrupted(parent: &Path) -> anyhow::Result<store::checkpoint::Interrupted> {
-    let (checkpoint, writer) = store::checkpoint::Keeper::fixture(
-        parent,
-        SystemTime::now(),
+    let parent = parent.to_owned();
+    let store::checkpoint::Kept {
+        keeper,
+        mut frames,
+        mut audio,
+    } = store::checkpoint::Keeper::start(move || Ok(parent), SystemTime::now())?;
+    assert!(frames.begin(
         1_000,
         Size {
             width: 80.0,
-            height: 60.0,
+            height: 60.0
         },
-        Framing::Automatic,
-    )?;
-    assert!(writer.close().await);
-    checkpoint
+        Framing::Automatic
+    ));
+    assert!(audio.begin(8_000, Duration::ZERO, "private-fixture".into()));
+    assert!(audio.finish(&[1, 0], &[], store::checkpoint::AudioEnding::Interrupted));
+    assert!(frames.close().await);
+    keeper
         .close()
         .await?
         .context("Fixture checkpoint is missing")?
@@ -363,16 +369,12 @@ async fn interrupted_listing_has_distinct_identity_and_original_expiry_without_r
         interrupted.directory().join("published"),
         saved.file_name().unwrap().as_encoded_bytes(),
     )?;
-    fs::write(
-        interrupted.directory().join("audio.log"),
-        b"private synthetic audio fixture",
-    )?;
     bytes.clear();
     output::list(std::iter::empty(), Some(root.path()), true, &mut bytes)?;
     let listing: Value = serde_json::from_slice(&bytes)?;
     assert_eq!(listing[0]["status"], "narrationPending");
     assert_eq!(listing[0]["id"], interrupted.id());
-    assert!(!String::from_utf8(bytes)?.contains("private synthetic"));
+    assert!(!String::from_utf8(bytes)?.contains("private-fixture"));
     interrupted.lock()?.discard()?;
     assert!(
         saved.exists(),

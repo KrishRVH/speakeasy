@@ -1,8 +1,36 @@
-use std::io::Cursor;
+use std::io::{BufReader, Cursor, Read};
 
 use anyhow::Context as _;
 
 use super::{super::DISCLOSURE, *};
+
+#[test]
+fn interrupted_reads_preserve_input_already_buffered_for_a_line() -> io::Result<()> {
+    struct Interrupted {
+        chunks: std::array::IntoIter<io::Result<&'static [u8]>, 3>,
+    }
+
+    impl Read for Interrupted {
+        fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+            self.chunks
+                .next()
+                .transpose()?
+                .unwrap_or_default()
+                .read(output)
+        }
+    }
+
+    let mut reader = BufReader::new(Interrupted {
+        chunks: [
+            Ok(&b"some"[..]),
+            Err(io::ErrorKind::Interrupted.into()),
+            Ok(b" text\n"),
+        ]
+        .into_iter(),
+    });
+    assert!(matches!(read_line(&mut reader)?, Line::Message(line) if line == b"some text"));
+    Ok(())
+}
 
 fn stateless(id: Value, method: &str) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "method": method, "params": {"_meta": {VERSION_META: STATELESS_VERSION, CAPABILITIES_META: {}}}})

@@ -39,6 +39,10 @@ impl Preset {
     pub(crate) fn capture(name: &str, config: &Config) -> anyhow::Result<Self> {
         let name = name.trim();
         validate_name(name)?;
+        ensure!(
+            config.speech_configured(),
+            "Choose the engine executable and a matching model before saving a preset."
+        );
         config.validate_choices()?;
         Ok(Self {
             name: name.to_owned(),

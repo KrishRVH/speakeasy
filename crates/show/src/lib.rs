@@ -37,8 +37,8 @@ pub use crate::{
     geometry::{PixelRect, Point, Rect},
     image::Image,
     journal::{
-        Admission, Entry, Journal, MAX_FRAME_EDGE, Source, SourceError, SourceFrame, Take,
-        TakeEvent, log,
+        Admission, DURATION_LIMIT as JOURNAL_DURATION_LIMIT, Entry, Journal, MAX_FRAME_EDGE,
+        Source, SourceError, SourceFrame, Take, TakeEvent, log,
     },
     layout::{Layer, Layout, MOST_WINDOWS, Window},
     marks::{Mark, Shape},

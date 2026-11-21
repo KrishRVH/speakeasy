@@ -926,20 +926,20 @@ every ordering of events against both within the bounds
   packaging emits a drag-to-Applications DMG and ZIP. For Windows publisher signing, provision a
   certificate and its private-key access in the build user's `CurrentUser\My` certificate store, set
   `SPEAKEASY_WINDOWS_SIGN_CERT_SHA1` to its thumbprint and `SPEAKEASY_WINDOWS_SIGN_TIMESTAMP` to an
-  HTTPS RFC 3161 timestamp endpoint. Packaging signs both executables before archiving and then
-  signs the installer; it rejects a failed signature, wrong signer, or missing timestamp. With
-  neither setting it builds unsigned local packages. Authenticode identifies the publisher;
-  SmartScreen reputation is separate. The Mac bundle carries its microphone usage declaration and a
-  local signature by default; grant its permissions as [Get started](#get-started) describes. For
-  distribution, set both `SPEAKEASY_MAC_SIGN_IDENTITY` to a Developer ID Application identity
-  already in the keychain and `SPEAKEASY_MAC_NOTARY_PROFILE` to a stored `notarytool` keychain
-  profile. Packaging then signs with hardened runtime and the microphone entitlement, submits to
-  Apple, staples the accepted ticket, and checks Gatekeeper before emitting the ZIP and DMG.
-  Incomplete settings or rejected notarization fail the build. The release workflow provisions
-  neither publisher credential, so it builds unsigned Windows and locally signed Mac packages; no
-  credentials belong in the repository. Moving from a local signature to Developer ID can require
-  granting microphone, Accessibility, and screen recording permissions again; check them after
-  replacing the app.
+  HTTPS RFC 3161 timestamp endpoint. Packaging signs both executables before archiving, and Inno
+  Setup signs the installer and its embedded uninstaller. Packaging rejects a failed signature,
+  wrong signer, or missing timestamp. With neither setting it builds unsigned local packages.
+  Authenticode identifies the publisher; SmartScreen reputation is separate. The Mac bundle carries
+  its microphone usage declaration and a local signature by default; grant its permissions as
+  [Get started](#get-started) describes. For distribution, set both `SPEAKEASY_MAC_SIGN_IDENTITY` to
+  a Developer ID Application identity already in the keychain and `SPEAKEASY_MAC_NOTARY_PROFILE` to
+  a stored `notarytool` keychain profile. Packaging then signs with hardened runtime and the
+  microphone entitlement, submits to Apple, staples the accepted ticket, and checks Gatekeeper
+  before emitting the ZIP and DMG. Incomplete settings or rejected notarization fail the build. The
+  release workflow provisions neither publisher credential, so it builds unsigned Windows and
+  locally signed Mac packages; no credentials belong in the repository. Moving from a local
+  signature to Developer ID can require granting microphone, Accessibility, and screen recording
+  permissions again; check them after replacing the app.
 - Verified Windows updates use an Ed25519 key independently of publisher signing. Commit only the
   32-byte public key as hexadecimal in `packaging/update-key.pub`; store its PKCS#8 PEM private key
   as the repository's `SPEAKEASY_UPDATE_PRIVATE_KEY` Actions secret, with a maintainer-held backup.

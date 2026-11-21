@@ -84,8 +84,10 @@ pub(crate) fn interval(duration: Duration) -> String {
     format!("{count} {unit}{}", if count == 1 { "" } else { "s" })
 }
 
+pub(in crate::show) const LOCK: &str = ".retention.lock";
+
 pub(super) fn lock(parent: &Path) -> io::Result<File> {
-    let path = parent.join(".retention.lock");
+    let path = parent.join(LOCK);
     if found(fs::symlink_metadata(&path))?.is_some_and(|metadata| !metadata.is_file()) {
         return Err(io::Error::other(format!(
             "{} must be a regular file",
