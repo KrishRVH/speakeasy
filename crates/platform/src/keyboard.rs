@@ -302,6 +302,7 @@ pub(super) struct Physical {
     chord_keys: [bool; 5],
     other_shortcut: bool,
     chord_blocked: bool,
+    injected: bool,
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -315,7 +316,12 @@ impl Physical {
                 crate::WindowsShortcut::ControlWindows => down(Windows::ALT),
                 _ => other_shortcut,
             },
+            injected: false,
         }
+    }
+
+    pub(super) const fn injected(self, injected: bool) -> Self {
+        Self { injected, ..self }
     }
 }
 
@@ -529,7 +535,7 @@ impl Windows {
             missed_release |= self.chord.reconcile(self.chord_held());
         }
         if key == Self::F13 {
-            self.f13_heard = (stroke != Stroke::Release).then_some(at);
+            self.f13_heard = (stroke != Stroke::Release && !physical.injected).then_some(at);
         } else if down {
             self.f13_heard = None;
         }

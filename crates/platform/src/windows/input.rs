@@ -30,13 +30,14 @@ use windows_sys::{
             Input::KeyboardAndMouse::VIRTUAL_KEY,
             WindowsAndMessaging::{
                 CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-                HHOOK, KBDLLHOOKSTRUCT, MSG, MWMO_INPUTAVAILABLE, MsgWaitForMultipleObjectsEx,
-                PBT_APMSUSPEND, PM_NOREMOVE, PM_REMOVE, PeekMessageW, PostThreadMessageW,
-                QS_ALLINPUT, RegisterClassW, SetWindowsHookExW, TranslateMessage,
-                UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_APP, WM_KEYDOWN, WM_POWERBROADCAST,
-                WM_QUERYENDSESSION, WM_QUIT, WM_SYSKEYDOWN, WM_WTSSESSION_CHANGE, WNDCLASSW,
-                WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP, WTS_CONSOLE_DISCONNECT,
-                WTS_REMOTE_DISCONNECT, WTS_SESSION_LOCK, WTS_SESSION_LOGOFF,
+                HHOOK, KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG, MWMO_INPUTAVAILABLE,
+                MsgWaitForMultipleObjectsEx, PBT_APMSUSPEND, PM_NOREMOVE, PM_REMOVE, PeekMessageW,
+                PostThreadMessageW, QS_ALLINPUT, RegisterClassW, SetWindowsHookExW,
+                TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_APP, WM_KEYDOWN,
+                WM_POWERBROADCAST, WM_QUERYENDSESSION, WM_QUIT, WM_SYSKEYDOWN,
+                WM_WTSSESSION_CHANGE, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
+                WTS_CONSOLE_DISCONNECT, WTS_REMOTE_DISCONNECT, WTS_SESSION_LOCK,
+                WTS_SESSION_LOGOFF,
             },
         },
     },
@@ -127,8 +128,8 @@ struct HookState {
 }
 
 impl HookState {
-    fn observe(&mut self, key: u32, down: bool) -> bool {
-        let physical = keyboard::Physical::read(self.shortcut, is_key_down);
+    fn observe(&mut self, key: u32, down: bool, injected: bool) -> bool {
+        let physical = keyboard::Physical::read(self.shortcut, is_key_down).injected(injected);
         let decision = self.policy.observe(key, down, physical, Instant::now());
         decision.deliver(&self.input);
         if decision.starts() && self.shortcut.masks_start() {
@@ -410,10 +411,11 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
         && panic::catch_unwind(|| {
             let event = unsafe { &*(lparam as *const KBDLLHOOKSTRUCT) };
             let down = matches!(u32::try_from(wparam), Ok(WM_KEYDOWN | WM_SYSKEYDOWN));
+            let injected = event.flags & LLKHF_INJECTED != 0;
             event.dwExtraInfo != OWN_INPUT
                 && HOOK.with_borrow_mut(|slot| {
                     slot.as_mut()
-                        .is_some_and(|state| state.observe(event.vkCode, down))
+                        .is_some_and(|state| state.observe(event.vkCode, down, injected))
                 })
         })
         .unwrap_or_else(|_| {

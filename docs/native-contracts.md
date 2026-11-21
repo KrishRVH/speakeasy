@@ -317,10 +317,11 @@ state, so an unseen F13 release keeps the hold until the next fresh F13 down, wh
 and starts another, or until the next F13 release. While F13 is the last key to go down, its repeats
 keep arriving, so a hold key pressed after a silence longer than the limit presumes the release went
 unseen: the hold ends and the key reaches the app. Any other key-down, a Show key or a Shift tap
-included, makes F13's silence expected until F13 is heard again. FilterKeys without repeat never
+included, makes F13's silence expected until F13 is heard again, and so does an F13 down the hook
+reports as injected, since Windows never repeats injected input. FilterKeys without repeat never
 presumes a release. A hold key pressed within the limit after an unseen release, or after another
-key went down, still acts. F13 modifies no other key, so the insertion worker's release wait and
-preflight do not wait for it.
+key or an injected F13 went down, still acts. F13 modifies no other key, so the insertion worker's
+release wait and preflight do not wait for it.
 
 `StatusItem` is created, updated and removed on the main thread. It takes the item's button at
 creation, removing the item again if AppKit offers none, and holds that main-thread-only button, so

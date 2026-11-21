@@ -49,6 +49,7 @@ const NONE_HELD: Physical = Physical {
     chord_keys: [false; 5],
     other_shortcut: false,
     chord_blocked: false,
+    injected: false,
 };
 
 const NO_MODIFIERS: Modifiers = Modifiers {

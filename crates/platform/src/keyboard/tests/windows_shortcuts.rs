@@ -229,6 +229,26 @@ fn a_windows_f13_hold_whose_release_went_unseen_ends_at_the_next_f13_release() {
 }
 
 #[test]
+fn an_injected_f13_that_never_repeats_keeps_its_show_gesture() {
+    let start = now();
+    let at = |millis| start + Duration::from_millis(millis);
+    let injected = NONE_HELD.injected(true);
+    let mut policy = Windows::new(WindowsShortcut::F13);
+    assert!(policy.observe(F13, true, injected, at(0)).starts());
+    let show = policy.observe(LETTER_S, true, NONE_HELD, at(5_000));
+    assert_eq!(
+        delivered(&show),
+        [Action::Show(Scope::Screen)],
+        "Windows never repeats injected input, so an injected F13's silence is no lost release"
+    );
+    assert!(show.swallows());
+    assert_eq!(
+        delivered(&policy.observe(F13, false, injected, at(6_000))),
+        [Action::Release]
+    );
+}
+
+#[test]
 fn f13_held_through_a_lifecycle_interrupt_never_restarts_until_pressed_afresh() {
     let start = now();
     let at = |millis| start + Duration::from_millis(millis);
