@@ -112,7 +112,32 @@ fn check_on_a_private_window_station() -> anyhow::Result<()> {
         !insert.holds(TEXT, &mark)?,
         "A copy with no text must read as a change even under its own mark"
     );
+    assert_an_interrupted_listing_is_refused()?;
     assert_restores_only_what_it_replaced(&mut insert)
+}
+
+fn assert_an_interrupted_listing_is_refused() -> anyhow::Result<()> {
+    let html = clipboard_win::raw::register_format("HTML Format")
+        .context("Cannot register a clipboard format")?;
+    copy_previous(html, false)?;
+    let (first, rest) = {
+        let _clipboard = open_clipboard()?;
+        let mut formats = clipboard_win::raw::EnumFormats::new();
+        (
+            formats.next().context("The copy listed no format")?,
+            formats,
+        )
+    };
+    assert_eq!(
+        fully_listed(std::iter::once(first).chain(rest)),
+        None,
+        "A format listing that failed partway was taken as complete"
+    );
+    let _clipboard = open_clipboard()?;
+    let listed = fully_listed(clipboard_win::raw::EnumFormats::new())
+        .context("A complete format listing was refused")?;
+    assert!(listed.contains(&html.get()));
+    Ok(())
 }
 
 fn assert_restores_only_what_it_replaced(insert: &mut Insert) -> anyhow::Result<()> {

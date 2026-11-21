@@ -57,10 +57,11 @@ submission restores the same snapshot immediately or clears the dictated copy wh
 available, as does a write that fails partway, under the number read once it has failed, or a
 failure after the write; these restores are best effort, so the dictation still reports its
 cancellation or the original error. Windows and macOS inspect every clipboard format or item type
-for concealed content before reading any payload; macOS checks that the pasteboard still holds the
-dictated text by reading the one item whose types it has just inspected. The thread serves the next
-request only after the restore, which therefore snapshots the restored copy. The snapshot lives only
-on the insertion thread and is dropped after the restore.
+for concealed content before reading any payload, and Windows saves nothing when its format listing
+ends in an error; macOS checks that the pasteboard still holds the dictated text by reading the one
+item whose types it has just inspected. The thread serves the next request only after the restore,
+which therefore snapshots the restored copy. The snapshot lives only on the insertion thread and is
+dropped after the restore.
 
 `MonitorControl` serializes publishing a live run-loop handle, readiness and stop. Stop-before-start
 remains effective; retirement removes the handle before a later stop can wake it. This lock cannot

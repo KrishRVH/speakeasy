@@ -5,9 +5,12 @@ use std::{
 };
 
 use anyhow::Context as _;
-use windows_sys::Win32::UI::{
-    Input::KeyboardAndMouse::{INPUT, VK_CONTROL, VK_RETURN, VK_V},
-    WindowsAndMessaging::GetForegroundWindow,
+use windows_sys::Win32::{
+    Foundation::{ERROR_SUCCESS, GetLastError, SetLastError},
+    UI::{
+        Input::KeyboardAndMouse::{INPUT, VK_CONTROL, VK_RETURN, VK_V},
+        WindowsAndMessaging::GetForegroundWindow,
+    },
 };
 use zeroize::Zeroizing;
 
@@ -61,7 +64,7 @@ fn saved_formats() -> Option<Vec<SavedFormat>> {
         PRIVATE_FORMATS.map(|name| clipboard_win::raw::register_format(name).map(NonZeroU32::get));
     let mut size = 0_usize;
     clipboard::snapshot(
-        clipboard_win::raw::EnumFormats::new(),
+        fully_listed(clipboard_win::raw::EnumFormats::new())?,
         |format| {
             if *format == concealed || HANDLES.contains(format) || PRIVATE_AND_GDI.contains(format)
             {
@@ -81,6 +84,12 @@ fn saved_formats() -> Option<Vec<SavedFormat>> {
             Some((format, data))
         },
     )
+}
+
+fn fully_listed(formats: impl IntoIterator<Item = u32>) -> Option<Vec<u32>> {
+    unsafe { SetLastError(ERROR_SUCCESS) };
+    let formats = formats.into_iter().collect();
+    (unsafe { GetLastError() } == ERROR_SUCCESS).then_some(formats)
 }
 
 fn restore_clipboard(
