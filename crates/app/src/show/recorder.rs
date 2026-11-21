@@ -419,7 +419,7 @@ impl<'a> Take<'a> {
         stop.await;
         let ended = ended.map(|result| {
             result.and_then(|ending| {
-                self.settle(&samples, &lanes.pinned, at)?;
+                self.settle(&frames, &samples, &lanes.pinned, at)?;
                 Ok(ending)
             })
         });
@@ -444,10 +444,17 @@ impl<'a> Take<'a> {
 
     fn settle(
         &mut self,
+        frames: &Receiver<ScreenEvent>,
         samples: &Receiver<PointerSample>,
         pinned: &Receiver<Taps>,
         at: Instant,
     ) -> anyhow::Result<()> {
+        std::iter::from_fn(|| frames.try_recv().ok())
+            .filter_map(|event| match event {
+                ScreenEvent::Frame(frame) if frame.at <= at => Some(frame),
+                _ => None,
+            })
+            .try_for_each(|frame| self.frame(frame))?;
         let mut samples = std::iter::from_fn(|| samples.try_recv().ok())
             .filter(|sample| sample.at() <= at)
             .peekable();

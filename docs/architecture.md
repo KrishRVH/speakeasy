@@ -779,19 +779,20 @@ module unless a test file is named.
   for one, never past the session's five-minute limit. The recorder arms that limit from session
   start, ends there even when the owner's Finish arrives late, and admits no observation stamped at
   or after it; a capture that would start past the limit fails as recording no frames. Finishing
-  drains observations and queued pins through the chosen end after the producers stop, each pin
-  after the samples up to its release, as the live order would judge it; teardown adds no
-  annotations. Checkpoint replay preserves these same gaps. Pointer events also carry their source
-  display rectangle. The tracker retains one coordinate-space proof per stroke and pin: mixed
-  strokes and groups across resizes or gaps have none. A pin takes the last pointer sample at or
-  before its second tap's release, with that sample's proof, however late the taps arrive, and
-  samples from before an accepted pin start no ink. Stroke cuts preserve the carried joint’s proof.
-  A recording without spaces, such as the scripted demo, has unknown provenance. Geometry, overlay
-  timing, and the area drag run on every host; native capture is opt-in, and window lookup and the
-  picker's clicks need native acceptance. On Windows, an opt-in acceptance test stops an owned
-  window's capture as it hides, minimizes, cloaks, moves away, and closes. The
-  [recording owner](../crates/platform/src/movie/recording.rs) writes silent H.264 fragments from
-  admitted frames through the [Windows codec](../crates/platform/src/windows/movie/encoder.rs) or
+  drains queued frames, observations, and pins through the chosen end after the producers stop, so a
+  first frame captured just before the limit still joins the Show, each pin after the samples up to
+  its release, as the live order would judge it; teardown adds no annotations. Checkpoint replay
+  preserves these same gaps. Pointer events also carry their source display rectangle. The tracker
+  retains one coordinate-space proof per stroke and pin: mixed strokes and groups across resizes or
+  gaps have none. A pin takes the last pointer sample at or before its second tap's release, with
+  that sample's proof, however late the taps arrive, and samples from before an accepted pin start
+  no ink. Stroke cuts preserve the carried joint’s proof. A recording without spaces, such as the
+  scripted demo, has unknown provenance. Geometry, overlay timing, and the area drag run on every
+  host; native capture is opt-in, and window lookup and the picker's clicks need native acceptance.
+  On Windows, an opt-in acceptance test stops an owned window's capture as it hides, minimizes,
+  cloaks, moves away, and closes. The [recording owner](../crates/platform/src/movie/recording.rs)
+  writes silent H.264 fragments from admitted frames through the
+  [Windows codec](../crates/platform/src/windows/movie/encoder.rs) or
   [Mac codec](../crates/platform/src/macos/movie/encode.rs). Its non-cloneable
   [lease](../crates/platform/src/movie.rs) waits for a durable origin acknowledgment before opening
   the file and closes only after native file handles release. It bounds its canvas to 2560 pixels

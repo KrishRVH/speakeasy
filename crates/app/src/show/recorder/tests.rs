@@ -265,6 +265,24 @@ async fn a_first_frame_wait_near_the_recording_limit_ends_at_the_limit() -> anyh
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_first_frame_still_queued_when_the_recording_limit_fires_joins_the_show()
+-> anyhow::Result<()> {
+    let limit = u64::try_from(RECORDING_LIMIT.as_millis())?;
+    let (recorded, ran) = record(async |feed| {
+        wait(limit).await;
+        feed.frame(limit - 10).await;
+    })
+    .await;
+    let footage = recorded
+        .context("The limit discarded a first frame captured before it")?
+        .context("Finished, not cancelled")?;
+    assert_eq!(footage.journal.samples().len(), 1);
+    assert_eq!(footage.recording.duration, Moment::from_millis(limit));
+    assert_eq!(ran, RECORDING_LIMIT + TEARDOWN);
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_take_ends_at_the_recording_limit_however_late_its_finish_arrives() -> anyhow::Result<()>
 {
     let limit = u64::try_from(RECORDING_LIMIT.as_millis())?;
