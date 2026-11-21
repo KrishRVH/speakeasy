@@ -131,6 +131,41 @@ async fn a_failed_movie_is_discarded_without_finalizing() -> anyhow::Result<()> 
 }
 
 #[tokio::test]
+async fn a_quiet_screen_covers_no_more_than_the_recording_limit() -> anyhow::Result<()> {
+    const LIMIT: Duration = Duration::from_secs(1);
+    const POLL: Duration = Duration::from_millis(250);
+    let first = frame(2, 2, 140);
+    let start = first.at;
+    let (control, target) = MovieControl::new(
+        PathBuf::from("synthetic.mp4"),
+        Instant::now()
+            .checked_add(INTERVAL.saturating_mul(150))
+            .unwrap(),
+        LIMIT,
+    );
+    let native = crate::OwnedThread::spawn("synthetic quiet movie", move || {
+        let (_stop, stopping) = async_channel::bounded(1);
+        let mut movie = Movie::<Accepting>::Pending(target);
+        assert!(movie.frame(&first, &stopping).is_ok());
+        for step in 1..=8 {
+            let now = start.checked_add(POLL.saturating_mul(step)).unwrap();
+            assert!(movie.poll(now, &stopping).is_ok());
+        }
+        movie.stop(start.checked_add(LIMIT.saturating_mul(2)).unwrap());
+    })?;
+    accept_first_frame(&control).await?;
+    native.join().await?;
+    let Some(MovieEvent::Finished {
+        through, frames, ..
+    }) = control.next().await
+    else {
+        anyhow::bail!("Synthetic movie did not finish");
+    };
+    assert_eq!((frames, through), (31, start.checked_add(LIMIT).unwrap()));
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_cancelled_pending_movie_releases_its_lease_without_a_frame() {
     let (control, target) = control();
     let (_stop, stopping) = async_channel::bounded(1);

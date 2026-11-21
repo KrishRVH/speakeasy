@@ -207,14 +207,21 @@ impl<C: Codec> Recording<C> {
         now: Instant,
         stopping: &Receiver<Infallible>,
     ) -> anyhow::Result<ControlFlow<()>> {
+        let through = now
+            .min(self.horizon())
+            .saturating_duration_since(self.first);
         let Some(encoder) = &mut self.encoder else {
             return Ok(ControlFlow::Continue(()));
         };
         let target = &self.target;
-        let through = now
-            .min(target.deadline())
-            .saturating_duration_since(self.first);
         encoder.advance(End::Through(through), &mut Publication { target, stopping })
+    }
+
+    fn horizon(&self) -> Instant {
+        let deadline = self.target.deadline();
+        self.first
+            .checked_add(self.target.limit())
+            .map_or(deadline, |limit| limit.min(deadline))
     }
 }
 
@@ -234,7 +241,7 @@ impl<C: Codec> Drop for Recording<C> {
         let through = ended
             .unwrap_or(self.first)
             .max(presented)
-            .min(self.target.deadline());
+            .min(self.horizon());
         let finalized = self.encoder.take().is_some_and(|encoder| {
             !matches!(self.ending, Ending::Failed) && encoder.finish().is_ok()
         });
