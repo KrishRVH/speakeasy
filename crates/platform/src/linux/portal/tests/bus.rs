@@ -377,8 +377,9 @@ fn private_bus_a_replacement_serves_nothing_once_the_portal_accepts_it_until_it_
         );
         portal.own().await?;
         portal.transfer(1).await?;
-        assert!(
-            portal.served(1).await? == (Vec::new(), false),
+        assert_eq!(
+            portal.served(1).await?,
+            (Vec::new(), false),
             "The desktop offered a copy cancelled during SetSelection and Speakeasy served the previous one for it"
         );
 
@@ -386,21 +387,24 @@ fn private_bus_a_replacement_serves_nothing_once_the_portal_accepts_it_until_it_
         let (_, answer) = client.paste("charlie").await?;
         let selecting = portal.expect("SetSelection").await?;
         portal.transfer(2).await?;
-        assert!(
-            portal.served(2).await? == (Vec::new(), false),
+        assert_eq!(
+            portal.served(2).await?,
+            (Vec::new(), false),
             "A transfer while SetSelection was pending served text"
         );
         portal.reply(&selecting).await?;
         portal.transfer(3).await?;
-        assert!(
-            portal.served(3).await? == (Vec::new(), false),
+        assert_eq!(
+            portal.served(3).await?,
+            (Vec::new(), false),
             "A transfer while the desktop confirmed a replacement served text"
         );
         portal.own().await?;
         client.focus().await?;
         portal.transfer(4).await?;
-        assert!(
-            portal.served(4).await? == (Vec::new(), false),
+        assert_eq!(
+            portal.served(4).await?,
+            (Vec::new(), false),
             "A transfer during a replacement served text before the paste committed"
         );
         client.input.deliver(Input::Cancel);
@@ -413,8 +417,9 @@ fn private_bus_a_replacement_serves_nothing_once_the_portal_accepts_it_until_it_
             "Cancelling during preparation did not cancel the paste"
         );
         portal.transfer(5).await?;
-        assert!(
-            portal.served(5).await? == (Vec::new(), false),
+        assert_eq!(
+            portal.served(5).await?,
+            (Vec::new(), false),
             "The desktop offered a cancelled copy and Speakeasy served the previous one for it"
         );
         assert!(client.alive());
@@ -441,8 +446,9 @@ fn private_bus_a_replacement_the_desktop_confirms_after_the_wait_serves_neither_
         );
         portal.own().await?;
         portal.transfer(1).await?;
-        assert!(
-            portal.served(1).await? == (Vec::new(), false),
+        assert_eq!(
+            portal.served(1).await?,
+            (Vec::new(), false),
             "The desktop confirmed a replacement after the wait and Speakeasy served the copy it replaced"
         );
         assert!(client.alive());
@@ -468,8 +474,9 @@ fn private_bus_a_selection_the_portal_never_answers_serves_neither_copy() -> any
         portal.reply(&selecting).await?;
         portal.own().await?;
         portal.transfer(1).await?;
-        assert!(
-            portal.served(1).await? == (Vec::new(), false),
+        assert_eq!(
+            portal.served(1).await?,
+            (Vec::new(), false),
             "The desktop set a selection Speakeasy stopped waiting for and Speakeasy served the copy it replaced"
         );
         assert!(client.alive());

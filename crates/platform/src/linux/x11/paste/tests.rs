@@ -300,8 +300,9 @@ fn a_copy_made_during_the_focus_layout_or_modifier_queries_refuses_the_paste() -
             },
             |owner| Ok(*owner == 7),
         )?;
-        assert!(
-            refused.break_value() == Some(CLIPBOARD_CHANGED),
+        assert_eq!(
+            refused.break_value(),
+            Some(CLIPBOARD_CHANGED),
             "A copy made during the {copied_during} query was pasted"
         );
         assert!(permit.commit(), "A refused paste spent its authority");
