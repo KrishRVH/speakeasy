@@ -37,10 +37,11 @@ impl Navigation {
     }
 
     pub(super) const fn tab(&self, page: Page) -> &FocusHandle {
+        let [dictation, words, general] = &self.tabs;
         match page {
-            Page::Dictation => &self.tabs[0],
-            Page::Words => &self.tabs[1],
-            Page::General => &self.tabs[2],
+            Page::Dictation => dictation,
+            Page::Words => words,
+            Page::General => general,
         }
     }
 }

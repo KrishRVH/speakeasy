@@ -75,23 +75,22 @@ impl Editor {
         }
     }
 
-    pub(super) fn set_theme(&self, theme: Theme, cx: &mut Context<'_, Settings>) {
-        for field in [&self.addition, &self.revision]
+    fn fields(&self) -> impl Iterator<Item = &Entity<TextField>> {
+        [&self.addition, &self.revision]
             .into_iter()
             .flat_map(Pair::fields)
             .chain([&self.practiced])
-        {
+    }
+
+    pub(super) fn set_theme(&self, theme: Theme, cx: &mut Context<'_, Settings>) {
+        for field in self.fields() {
             field.update(cx, |field, _| field.set_theme(theme));
         }
     }
 
     pub(super) fn clear(&mut self, cx: &mut Context<'_, Settings>) {
         self.editing = None;
-        for field in [&self.addition, &self.revision]
-            .into_iter()
-            .flat_map(Pair::fields)
-            .chain([&self.practiced])
-        {
+        for field in self.fields() {
             field.update(cx, |field, cx| field.set_text(String::new(), cx));
         }
     }
