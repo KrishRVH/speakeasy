@@ -153,7 +153,7 @@ impl Frame {
         format!(
             "#{} of {count} · {}{}{crop}",
             self.number,
-            super::navigation::Stamp(self.at()),
+            Stamp(self.at()),
             self.marker
         )
     }
@@ -200,7 +200,8 @@ impl Detail {
         let mut duration = None;
         match entry.show {
             Err(ReadError::Manifest(Unreadable::Unsupported(version))) => warnings.push(format!(
-                "This Show uses format {version}. Update Speakeasy to view its frames. Its summary may still be readable."
+                "This Show uses format {version}. Update Speakeasy to view its frames. Its summary \
+                 may still be readable."
             )),
             Err(error) => warnings.push(format!(
                 "Cannot read this Show's frame list: {error}. Its summary may still be readable."
@@ -213,7 +214,9 @@ impl Detail {
                 if mode == Mode::Video {
                     match Annotations::new(recording, manifest.marks()) {
                         Ok(annotations) => scene = Some(Arc::new(annotations)),
-                        Err(error) => warnings.push(format!("Video annotations are unavailable: {error}")),
+                        Err(error) => {
+                            warnings.push(format!("Video annotations are unavailable: {error}"));
+                        },
                     }
                 }
                 narration = Narration::from_recording(recording);
@@ -255,7 +258,8 @@ impl Detail {
                 Ok(source) => {
                     source_available = true;
                     coverage = format!(
-                        "{} retained samples from {} arrivals · longest gap {} ms · source images have no annotations",
+                        "{} retained samples from {} arrivals · longest gap {} ms · source images \
+                         have no annotations",
                         source.moments().len(),
                         source.arrivals(),
                         source::longest_gap(&source)

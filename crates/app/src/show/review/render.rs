@@ -25,14 +25,15 @@ use crate::{
     theme::{Palette, alpha},
 };
 
-const RETRY_NARRATION: &str = "Transcribe the kept audio with your configured local engine and the original \
-    language. This saves a narrated copy; your existing Show and edits stay unchanged.";
-const RECOVER_SHOW: &str = "Recover the frames, ink, marks, and audio that reached the checkpoint. Narration \
-    uses your configured local engine and the original language.";
-const RECOVERY_AUDIO: &str = "Recovery leaves your clipboard alone. Recovered voice stays private for video \
-    export and expires seven days after the original recording, even if you keep the Show.";
-const RECOVERY_PREFIX: &str = "A crash or a slow or full disk can leave a shorter recording. Recovery preserves \
-    the original expiry date.";
+const RETRY_NARRATION: &str = "Transcribe the kept audio with your configured local engine and the \
+    original language. This saves a narrated copy; your existing Show and edits stay unchanged.";
+const RECOVER_SHOW: &str = "Recover the frames, ink, marks, and audio that reached the checkpoint. \
+    Narration uses your configured local engine and the original language.";
+const RECOVERY_AUDIO: &str = "Recovery leaves your clipboard alone. Recovered voice stays private \
+    for video export and expires seven days after the original recording, \
+    even if you keep the Show.";
+const RECOVERY_PREFIX: &str = "A crash or a slow or full disk can leave a shorter recording. \
+    Recovery preserves the original expiry date.";
 const DELETE_SHOW: &str = "This removes its images, video, summary, narration, and associated \
     recovery audio, even if kept. Exported copies stay.";
 const RECORD_HINT: &str =
@@ -888,6 +889,16 @@ impl Review {
         } else {
             RECOVER_SHOW
         };
+        let explanation = div()
+            .max_w(px(640.0))
+            .p(px(16.0))
+            .flex()
+            .flex_col()
+            .gap(px(8.0))
+            .child(div().line_height(BODY_LINE).child(lead))
+            .child(kit.detail(RECOVERY_AUDIO))
+            .child(kit.detail(RECOVERY_PREFIX))
+            .into_any_element();
         div()
             .flex_1()
             .min_w(px(0.0))
@@ -931,18 +942,7 @@ impl Review {
                     .flex_col()
                     .items_start()
                     .gap(px(16.0))
-                    .child(kit.group(vec![
-                            div()
-                                .max_w(px(640.0))
-                                .p(px(16.0))
-                                .flex()
-                                .flex_col()
-                                .gap(px(8.0))
-                                .child(div().line_height(BODY_LINE).child(lead))
-                                .child(kit.detail(RECOVERY_AUDIO))
-                                .child(kit.detail(RECOVERY_PREFIX))
-                                .into_any_element(),
-                        ]))
+                    .child(kit.group([explanation]))
                     .child(command(
                         kit,
                         Action::Discard,
