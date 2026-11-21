@@ -10,6 +10,16 @@ if [[ "$(uname -s)" != Darwin ]]; then
   exit 1
 fi
 mkdir -p artifacts
+# One run at a time owns the outputs. The lock belongs to this shell's open descriptor, so it ends
+# with the run even when the run is killed.
+exec 9>> artifacts/.package-macos.lock
+python3 -c '
+import fcntl, sys
+try:
+    fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    sys.exit("Another macOS package run is using artifacts. Wait for it to finish, then try again.")
+'
 rm -rf -- artifacts/Speakeasy.app
 rm -f -- artifacts/speakeasy-macos.zip artifacts/speakeasy-macos.dmg
 signing_identity=${SPEAKEASY_MAC_SIGN_IDENTITY:-}
@@ -84,5 +94,7 @@ if [[ -n "$signing_identity" ]]; then
   xcrun stapler validate "$staging/speakeasy-macos.dmg"
   spctl --assess --type open --context context:primary-signature "$staging/speakeasy-macos.dmg"
 fi
-mv "$staging/speakeasy-macos.zip" "$staging/speakeasy-macos.dmg" "$bundle" artifacts/
+# The app goes first, so a rename that fails publishes no archive.
+mv "$bundle" artifacts/
+mv "$staging/speakeasy-macos.zip" "$staging/speakeasy-macos.dmg" artifacts/
 echo "Built artifacts/Speakeasy.app"

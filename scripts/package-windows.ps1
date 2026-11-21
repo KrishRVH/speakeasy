@@ -1,57 +1,66 @@
 $ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $PSScriptRoot '..')
 $artifacts = (New-Item -ItemType Directory -Force -Path 'artifacts').FullName
+# One run at a time owns the outputs. Windows releases the lock with its handle, even after a crash.
+try {
+    $lock = [IO.File]::Open((Join-Path $artifacts '.package-windows.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
+} catch [IO.IOException] {
+    $sharingViolation = 32
+    if (($_.Exception.HResult -band 0xFFFF) -ne $sharingViolation) { throw }
+    throw 'Another Windows package run is using artifacts. Wait for it to finish, then try again.'
+}
 $zipName = 'speakeasy-windows-x64.zip'
 $installerName = 'speakeasy-windows-x64-setup.exe'
 $outputs = @($zipName, $installerName, 'windows') | ForEach-Object { Join-Path $artifacts $_ }
-foreach ($output in $outputs) {
-    if (Test-Path -LiteralPath $output) { Remove-Item -LiteralPath $output -Force -Recurse }
-}
-$signingCertificate = $env:SPEAKEASY_WINDOWS_SIGN_CERT_SHA1
-$timestamp = $env:SPEAKEASY_WINDOWS_SIGN_TIMESTAMP
-$signer = $null
-if ($signingCertificate -or $timestamp) {
-    if ($signingCertificate -notmatch '^[0-9a-fA-F]{40}$' -or $timestamp -notmatch '^https://[^"]+$') {
-        throw 'Distribution requires SPEAKEASY_WINDOWS_SIGN_CERT_SHA1 and an HTTPS SPEAKEASY_WINDOWS_SIGN_TIMESTAMP endpoint.'
-    }
-    $certificate = Get-Item "Cert:\CurrentUser\My\$signingCertificate" -ErrorAction Stop
-    if (!$certificate.HasPrivateKey) { throw 'The signing certificate has no accessible private key.' }
-    $signer = Get-ChildItem "${env:ProgramFiles(x86)}/Windows Kits/10/bin/*/x64/signtool.exe" -ErrorAction SilentlyContinue |
-        Sort-Object FullName -Descending | Select-Object -First 1
-    if (!$signer) { throw 'Install the Windows SDK signing tools.' }
-}
-function Sign-PackageFile([string]$Path) {
-    if (!$signer) { return }
-    & $signer.FullName sign /sha1 $signingCertificate /s My /fd SHA256 /tr $timestamp /td SHA256 $Path
-    if ($LASTEXITCODE -ne 0) { throw 'Windows package signing failed.' }
-    Confirm-PackageSignature $Path
-}
-function Confirm-PackageSignature([string]$Path) {
-    if (!$signer) { return }
-    $signature = Get-AuthenticodeSignature -LiteralPath $Path
-    if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Thumbprint -ne $signingCertificate -or !$signature.TimeStamperCertificate) {
-        throw 'The Windows package does not have its expected valid timestamped publisher signature.'
-    }
-}
-# GPUI compiles its release shaders with the Windows SDK compiler.
-if (!$env:GPUI_FXC_PATH) {
-    $compiler = Get-ChildItem "${env:ProgramFiles(x86)}/Windows Kits/10/bin/*/x64/fxc.exe" -ErrorAction SilentlyContinue |
-        Sort-Object FullName -Descending | Select-Object -First 1
-    if (!$compiler) { throw 'Install the Windows SDK (including fxc.exe) from Visual Studio Build Tools.' }
-    $env:GPUI_FXC_PATH = $compiler.FullName
-}
-# VCRUNTIME140.dll comes from the Visual C++ Redistributable, not Windows, so link the CRT statically.
-# With --target set, the flag reaches only target crates; cc-built C code follows it to /MT.
-$callerRustFlags = $env:RUSTFLAGS
-$env:RUSTFLAGS = '-C target-feature=+crt-static'
+$staging = $null
 try {
-    cargo build --release --locked -p speakeasy --target x86_64-pc-windows-msvc
-    if ($LASTEXITCODE -ne 0) { throw 'Rust build failed' }
-} finally {
-    $env:RUSTFLAGS = $callerRustFlags
-}
-$staging = (New-Item -ItemType Directory -Path (Join-Path $artifacts ('.windows-package-' + [guid]::NewGuid()))).FullName
-try {
+    foreach ($output in $outputs) {
+        if (Test-Path -LiteralPath $output) { Remove-Item -LiteralPath $output -Force -Recurse }
+    }
+    $signingCertificate = $env:SPEAKEASY_WINDOWS_SIGN_CERT_SHA1
+    $timestamp = $env:SPEAKEASY_WINDOWS_SIGN_TIMESTAMP
+    $signer = $null
+    if ($signingCertificate -or $timestamp) {
+        if ($signingCertificate -notmatch '^[0-9a-fA-F]{40}$' -or $timestamp -notmatch '^https://[^"]+$') {
+            throw 'Distribution requires SPEAKEASY_WINDOWS_SIGN_CERT_SHA1 and an HTTPS SPEAKEASY_WINDOWS_SIGN_TIMESTAMP endpoint.'
+        }
+        $certificate = Get-Item "Cert:\CurrentUser\My\$signingCertificate" -ErrorAction Stop
+        if (!$certificate.HasPrivateKey) { throw 'The signing certificate has no accessible private key.' }
+        $signer = Get-ChildItem "${env:ProgramFiles(x86)}/Windows Kits/10/bin/*/x64/signtool.exe" -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending | Select-Object -First 1
+        if (!$signer) { throw 'Install the Windows SDK signing tools.' }
+    }
+    function Sign-PackageFile([string]$Path) {
+        if (!$signer) { return }
+        & $signer.FullName sign /sha1 $signingCertificate /s My /fd SHA256 /tr $timestamp /td SHA256 $Path
+        if ($LASTEXITCODE -ne 0) { throw 'Windows package signing failed.' }
+        Confirm-PackageSignature $Path
+    }
+    function Confirm-PackageSignature([string]$Path) {
+        if (!$signer) { return }
+        $signature = Get-AuthenticodeSignature -LiteralPath $Path
+        if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Thumbprint -ne $signingCertificate -or !$signature.TimeStamperCertificate) {
+            throw 'The Windows package does not have its expected valid timestamped publisher signature.'
+        }
+    }
+    # GPUI compiles its release shaders with the Windows SDK compiler.
+    if (!$env:GPUI_FXC_PATH) {
+        $compiler = Get-ChildItem "${env:ProgramFiles(x86)}/Windows Kits/10/bin/*/x64/fxc.exe" -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending | Select-Object -First 1
+        if (!$compiler) { throw 'Install the Windows SDK (including fxc.exe) from Visual Studio Build Tools.' }
+        $env:GPUI_FXC_PATH = $compiler.FullName
+    }
+    # VCRUNTIME140.dll comes from the Visual C++ Redistributable, not Windows, so link the CRT statically.
+    # With --target set, the flag reaches only target crates; cc-built C code follows it to /MT.
+    $callerRustFlags = $env:RUSTFLAGS
+    $env:RUSTFLAGS = '-C target-feature=+crt-static'
+    try {
+        cargo build --release --locked -p speakeasy --target x86_64-pc-windows-msvc
+        if ($LASTEXITCODE -ne 0) { throw 'Rust build failed' }
+    } finally {
+        $env:RUSTFLAGS = $callerRustFlags
+    }
+    $staging = (New-Item -ItemType Directory -Path (Join-Path $artifacts ('.windows-package-' + [guid]::NewGuid()))).FullName
     $destination = Join-Path $staging 'windows'
     New-Item -ItemType Directory -Force -Path $destination | Out-Null
     foreach ($executable in @('speakeasy.exe', 'speakeasy-cli.exe')) {
@@ -101,5 +110,6 @@ try {
     }
     throw
 } finally {
-    Remove-Item -LiteralPath $staging -Force -Recurse
-}
+    if ($staging) { Remove-Item -LiteralPath $staging -Force -Recurse }
+    $lock.Dispose()
+}
