@@ -636,8 +636,9 @@ module unless a test file is named.
   [store/video.rs](../crates/app/src/show/store/video.rs) composes a separate MP4 through local
   FFmpeg. It copies the validated source prefix into private staging, checks decoded frame count,
   paints annotations at 30 Hz output ticks using each source frame's geometry, and aligns original
-  PCM and optional subtitles to the selected session interval. Full exports preserve voice before
-  screen promotion and after the last captured image by holding the boundary frame. Clipped captions
+  PCM and optional subtitles to the selected session interval. Full exports and focused clips
+  preserve voice before screen promotion and after the last captured image by holding the boundary
+  frame; a clip that starts at or after the end of both is refused with that end. Clipped captions
   contain only intersecting words. The plain-text subtitle decoder receives neutral style resets
   after braces and backslashes so markup-like narration stays literal through `mov_text` encoding.
   Missing voice and annotation coverage are reported. The

@@ -178,6 +178,34 @@ fn exports_start_with_earlier_voice_and_keep_a_partial_last_frame() -> anyhow::R
     Ok(())
 }
 
+#[test]
+fn a_clip_after_the_last_image_is_bounded_by_the_voice_and_names_the_end() -> anyhow::Result<()> {
+    let show = tempfile::tempdir()?;
+    let annotations = Moment::from_millis(500);
+    movie::tests::recovered_movie(show.path(), annotations)?;
+    let reading = movie::Reading::open(show.path(), annotations)?;
+    let from = |start: u64| {
+        Some(Span::new(
+            Moment::from_millis(start),
+            Moment::from_millis(start + 400),
+        ))
+    };
+    let tail = timeline::Timing::new(&reading.movie, from(1500), Some(&audio(0)))?;
+    assert_eq!((tail.start_ms, tail.end_ms), (1500, 1900));
+    for (start, voice, end) in [(1500, None, "0:01.250"), (2000, Some(audio(0)), "0:02.000")] {
+        let error = timeline::Timing::new(&reading.movie, from(start), voice.as_ref())
+            .err()
+            .context("A clip after the Show's end was accepted")?;
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "The selected interval starts at or after this Show's end at {end}; choose an earlier focus or a wider --around interval"
+            )
+        );
+    }
+    Ok(())
+}
+
 fn ffmpeg(args: &[&str], path: &Path) -> anyhow::Result<Vec<u8>> {
     let result = Command::new("ffmpeg")
         .args(["-v", "error", "-nostdin"])

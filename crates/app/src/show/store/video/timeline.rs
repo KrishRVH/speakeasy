@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::Context as _;
 use speakeasy_core::gesture::RECORDING_LIMIT;
-use speakeasy_show::{Narration, Recording, Span, timed_clauses};
+use speakeasy_show::{Moment, Narration, Recording, Span, timed_clauses};
 
 use crate::show::store::{checkpoint::KeptAudio, movie::Inspected};
 
@@ -45,8 +45,19 @@ impl Timing {
                 )
             },
         };
-        let start_ms = span.map_or(origin, |span| span.start().as_millis().max(origin));
-        let end_ms = span.map_or(end, |span| span.end().as_millis().min(end));
+        let (start_ms, end_ms) = match span {
+            None => (origin, end),
+            Some(span) => {
+                let start = span.start().as_millis();
+                anyhow::ensure!(
+                    start < end,
+                    "The selected interval starts at or after this Show's end at {}.{:03}; choose an earlier focus or a wider --around interval",
+                    Moment::from_millis(end),
+                    end % 1_000
+                );
+                (start.max(origin), span.end().as_millis().min(end))
+            },
+        };
         anyhow::ensure!(
             start_ms < end_ms,
             "The selected interval has no retained video; choose a wider --around interval"
