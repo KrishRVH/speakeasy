@@ -1,8 +1,12 @@
 # Speakeasy agent guide
 
 Speakeasy is a native Rust dictation app for Windows, macOS, and Linux. Keep it fast, small, and
-usable offline with local speech engines. Before changing behavior or a module interface, find its
-entry in the [change and test map](docs/architecture.md#change-and-test-map); README's
+usable offline with local speech engines. It is a single-user desktop app whose data stays on the
+user's machine, so build for the ordinary case: a cooperative OS, a normal filesystem, and the
+user's own processes. Code earns its place through what users feel, instant response and faithful
+transcription, or by keeping the codebase small and obvious enough for agents to change it safely.
+Before changing behavior or a module interface, find its entry in the
+[change and test map](docs/architecture.md#change-and-test-map); README's
 [Build and verify](README.md#build-and-verify) section lists packaging and native checks.
 
 ## Workflows
@@ -73,7 +77,7 @@ dependency licenses are checked only where packaging must cite them.
   architecture map and native-thread ownership in the native contracts.
 - Handle external failures with explicit errors or events. Use iterators or checked access and
   choose checked, saturating, or wrapping arithmetic according to the domain. Never let a panic
-  cross FFI or include private content in errors.
+  cross FFI.
 - Production code returns errors instead of asserting; it keeps only `const` assertions and
   `debug_assert!`s on internal contracts that release builds may skip. It writes output through
   fallible I/O, such as `writeln!` on a locked handle, and discards a `#[must_use]` value only with
@@ -92,23 +96,19 @@ uses an explicit reserved cancel chord or desktop command binding.
 
 Keep errors actionable and local. Never add dictation history, accounts, telemetry, automatic
 upload, or silent provider switching. A Show is the one record Speakeasy keeps: the screen is
-captured only after the user asks, frames leave out Speakeasy's windows, and bundles stay private to
-the user and expire after seven days unless kept. Ordinary dictation stays in memory. Show audio
-stays private and expires seven days after recording, even when the bundle is kept. Successful
-publication retains voice for explicit video export; cancellation or discard removes recovery audio.
-Save narration and retained voice durably before retiring the checkpoint, and recover to a new
-bundle without overwriting edits. Preserve user settings and edits. Keep secrets in ignored local
-`.env` files; never print keys, recorded audio, screen pixels, transcript text, or engine output,
-including through `Debug`. The one exception is `dictation stop TOKEN --print`, which returns a
-script-started `--print` dictation's text to that caller only. Models and generated artifacts stay
-out of Git.
+captured only after the user asks, frames leave out Speakeasy's windows, and a Show, its audio
+included, expires seven days after recording unless kept. A Show interrupted by a crash recovers as
+a new bundle. Ordinary dictation stays in memory. Preserve user settings and edits. Keep signing
+keys and other secrets in ignored local `.env` files. Models and generated artifacts stay out of
+Git.
 
 ## Tests and review
 
-A test defends behavior, an invariant, a failure, or a trust seam that types and the gate do not
-enforce. Do not test trivial getters, constructors, copied config values, or framework behavior.
-Show that a new assertion fails for a concrete fault; mechanical moves need no new tests. Use
-property tests for generated boundary inputs and commit proptest regression seeds.
+A test defends behavior a user or script caller would notice, or a failure they would meet in
+ordinary use; types, the gate, and the explorer cover the rest. Do not test trivial getters,
+constructors, copied config values, or framework behavior. Show that a new assertion fails for a
+concrete fault; mechanical moves need no new tests. Use property tests for generated boundary inputs
+and commit proptest regression seeds.
 
 Default tests use fakes or public fixtures. They must not record live microphone audio, capture the
 screen, install a global hook, or modify the user's clipboard or focused app. `--demo` is simulated.
@@ -117,8 +117,9 @@ from mocked checks. Screen checks compare only owned-window pixels and never wri
 Owned-window rendering checks run on private or native displays without microphone or input access.
 
 Get an independent read-only agent review for nontrivial behavior or architecture changes. Verify
-findings with source evidence or a regression test. One writer owns one worktree. Serialize
-lockfiles, shared config, formatters, and integration. Each worktree has its own build directory.
+findings with source evidence or a regression test, fix the ones a user would meet in ordinary use,
+and list the rest for the maintainer. One writer owns one worktree. Serialize lockfiles, shared
+config, formatters, and integration. Each worktree has its own build directory.
 
 Before handoff, run `mise run standards:check` and relevant native checks. Report the checked
 revision, behavior proved, results, unavailable native verification, and unresolved findings. Push
@@ -134,8 +135,8 @@ For format, settings, CLI, or protocol changes, follow the pre-1.0 current-versi
 
 Keep current contracts in code, tests, and docs; Git holds history. Replace rather than accumulate:
 remove obsolete code, settings, tests, and docs with the change. Names, types, and tests carry local
-meaning; the owning documentation page preserves invariants, platform behavior, and trust seams they
-cannot express. Update that page when a contract changes and state each policy once.
+meaning; the owning documentation page preserves invariants and platform behavior they cannot
+express. Update that page when a contract changes and state each policy once.
 
 Keep task notes in ignored `.scratch/` and run output in `artifacts/`. Do not commit plans,
 handoffs, research, reports, or dated audits. Prefer native toolchain guarantees over duplicate
