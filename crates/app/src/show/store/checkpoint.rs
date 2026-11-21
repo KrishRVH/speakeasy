@@ -710,7 +710,6 @@ struct StoredNarration<N> {
     version: u32,
     narration: N,
     incomplete: bool,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     audio_silent: bool,
 }
 

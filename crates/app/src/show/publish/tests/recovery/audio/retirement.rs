@@ -174,6 +174,28 @@ async fn a_retry_reads_kept_speech_past_an_empty_or_wordless_saved_narration() -
     Ok(())
 }
 
+#[tokio::test]
+async fn a_saved_narration_from_an_earlier_format_retries_from_kept_speech() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let (_show, pending) = pending_show(root.path()).await?;
+    let earlier = Narration::Text("earlier format".into());
+    pending.lock()?.narrate(&earlier, None)?;
+    let saved = pending.directory().join("narration.json");
+    let mut stored: serde_json::Value = serde_json::from_slice(&fs::read(&saved)?)?;
+    stored
+        .as_object_mut()
+        .context("Saved narration is not an object")?
+        .remove("audio_silent");
+    fs::write(&saved, serde_json::to_vec(&stored)?)?;
+    let reopened = reopen_with(interrupted(root.path())?)?;
+    assert!(
+        reopened.speech.is_some(),
+        "A narration saved without the current fields hid the kept speech"
+    );
+    assert_ne!(reopened.footage.recording.narration, earlier);
+    Ok(())
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn unreadable_retry_audio_behind_unusable_narration_gets_access_advice() -> anyhow::Result<()>
