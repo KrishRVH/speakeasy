@@ -133,12 +133,15 @@ module unless a test file is named.
 - **Local speech**: [local_speech.rs](../crates/app/src/local_speech.rs),
   [child.rs](../crates/app/src/child.rs), [http.rs](../crates/app/src/http.rs), and
   [platform/src/process.rs](../crates/platform/src/process.rs) start, query, and reap engines.
-  [local_speech/tests.rs](../crates/app/src/local_speech/tests.rs) drives startup and requests
-  against fake engines; [runtime/fixture.rs](../crates/app/src/runtime/fixture.rs) profiles the real
-  owner and worker on public audio, opt-in.
-  [local_speech/streaming.rs](../crates/app/src/local_speech/streaming.rs) owns the authenticated
-  loopback WebSocket and bounded final wait. Its tests cover final-only delivery, abandoned feeds,
-  and malformed replies; local_speech/tests.rs covers authentication and listener ownership.
+  Whisper word-timing requests ask whisper-server to wrap long segments only between words
+  (`split_on_word`), so every segment starts a new word and a token without a leading space joins
+  the word before it. [local_speech/tests.rs](../crates/app/src/local_speech/tests.rs) drives
+  startup and requests against fake engines;
+  [runtime/fixture.rs](../crates/app/src/runtime/fixture.rs) profiles the real owner and worker on
+  public audio, opt-in. [local_speech/streaming.rs](../crates/app/src/local_speech/streaming.rs)
+  owns the authenticated loopback WebSocket and bounded final wait. Its tests cover final-only
+  delivery, abandoned feeds, and malformed replies; local_speech/tests.rs covers authentication and
+  listener ownership.
 - **Model choices and hints**: [models.rs](../crates/app/src/models.rs) owns curated identities and
   engine language adaptation. [recognition_terms.rs](../crates/app/src/recognition_terms.rs)
   validates bounded recognition hints independently of transcript corrections. Hints travel per

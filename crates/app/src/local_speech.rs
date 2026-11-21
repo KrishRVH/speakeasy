@@ -214,6 +214,9 @@ impl LocalSpeech {
                         crate::models::whisper_language(language).to_owned(),
                     )
                     .text("temperature", "0.0");
+                if R::WORDS {
+                    form = form.text("split_on_word", "true");
+                }
                 if !terms.phrases().is_empty() {
                     form = form.text("prompt", terms.prompt());
                 }
@@ -358,6 +361,7 @@ fn reply<T: DeserializeOwned>(body: &[u8]) -> anyhow::Result<T> {
 
 trait Reply: DeserializeOwned {
     const FORMAT: &'static str;
+    const WORDS: bool;
 }
 
 #[derive(Deserialize)]
@@ -367,6 +371,7 @@ struct Plain {
 
 impl Reply for Plain {
     const FORMAT: &'static str = "json";
+    const WORDS: bool = false;
 }
 
 #[derive(Deserialize)]
@@ -381,6 +386,7 @@ struct Timed {
 
 impl Reply for Timed {
     const FORMAT: &'static str = "verbose_json";
+    const WORDS: bool = true;
 }
 
 #[derive(Deserialize)]
@@ -404,7 +410,10 @@ struct Heard {
 impl Timed {
     fn into_narration(self) -> Narration {
         let heard: Vec<Heard> = if self.words.is_empty() {
-            joined(self.segments.into_iter().flat_map(|segment| segment.words))
+            self.segments
+                .into_iter()
+                .flat_map(|segment| joined(segment.words))
+                .collect()
         } else {
             self.words
                 .into_iter()
@@ -448,7 +457,7 @@ impl Token {
     }
 }
 
-fn joined(tokens: impl Iterator<Item = Token>) -> Vec<Heard> {
+fn joined(tokens: Vec<Token>) -> Vec<Heard> {
     let mut words: Vec<Heard> = Vec::new();
     let mut boundary = true;
     for token in tokens {
