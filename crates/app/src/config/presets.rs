@@ -170,6 +170,10 @@ pub(crate) fn validate(presets: &[Preset]) -> anyhow::Result<()> {
         );
         let mut choices = Config::default();
         preset.load(&mut choices);
+        ensure!(
+            choices.speech_configured(),
+            "Preset {row} needs an engine executable and a model."
+        );
         choices
             .validate_choices()
             .with_context(|| format!("Preset {row}"))?;

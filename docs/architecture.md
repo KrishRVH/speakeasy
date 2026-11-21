@@ -80,8 +80,8 @@ module unless a test file is named.
   The runtime keeps its saved configuration baseline separate from effective preset choices,
   including after Resume. Text-only choices reuse the worker; engine changes reload it. Using a
   preset that matches the saved baseline reapplies that baseline without rewriting settings; a
-  transient selection takes precedence in the Settings indicator. Capturing a preset requires both
-  speech paths.
+  transient selection takes precedence in the Settings indicator. Capturing or loading a preset
+  requires both speech paths.
 - **Audio capture**: [audio.rs](../crates/app/src/audio.rs) with
   [control.rs](../crates/app/src/audio/control.rs), [stream.rs](../crates/app/src/audio/stream.rs),
   [pcm.rs](../crates/app/src/audio/pcm.rs), [speech.rs](../crates/app/src/audio/speech.rs), and
@@ -233,11 +233,12 @@ module unless a test file is named.
   runs one engine job at a time: an open file choice, a model setup, and a pausing setup each refuse
   the others, and a file chosen for an engine the user has since left is dropped.
   [config/presets.rs](../crates/app/src/config/presets.rs) stores bounded named dictation choices,
-  validates them without opening inactive model paths, loads them into the settings, and matches
-  them against the current settings. Its snapshot excludes microphone, delivery, shortcuts, sound,
-  and presentation options. [settings/presets.rs](../crates/app/src/shell/settings/presets.rs) uses,
-  updates, and stores presets by position, and ignores those changes during model setup or file
-  selection. The save queue applies used choices; library-only changes leave sessions running.
+  validates them without opening inactive model paths, rejects one without both speech paths, loads
+  them into the settings, and matches them against the current settings. Its snapshot excludes
+  microphone, delivery, shortcuts, sound, and presentation options.
+  [settings/presets.rs](../crates/app/src/shell/settings/presets.rs) uses, updates, and stores
+  presets by position, and ignores those changes during model setup or file selection. The save
+  queue applies used choices; library-only changes leave sessions running.
   [text_field.rs](../crates/app/src/shell/settings/text_field.rs) owns native selection and IME
   composition. Focus loss, Tab, and a mouse selection commit the marked text before moving the
   caret. Windows AltGr stays available for character input. The pure edit state tests Unicode
