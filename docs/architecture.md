@@ -725,8 +725,8 @@ module unless a test file is named.
   before the lock, so blocked deletion remains available to cleanup. Audio retains the original
   seven-day expiry regardless of a saved bundle's Keep marker. Discovery isolates damaged
   checkpoints so healthy entries remain visible and saved bundles still expire. A pending checkpoint
-  whose audio is damaged stays listed as a problem, and `show discard` still removes it by ID or
-  path.
+  whose audio is damaged or unreadable stays listed as a problem, and `show discard` still removes
+  it by ID or path; only an empty or partly written audio header counts as no audio.
   [checkpoint/tests.rs](../crates/app/src/show/store/checkpoint/tests.rs) exercises damaged
   siblings, expiry, lock ownership, and durable discard/publication markers.
   [journal/log.rs](../crates/show/src/journal/log.rs) shares live/replay admission, thinning, and

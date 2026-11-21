@@ -192,6 +192,43 @@ async fn a_pending_show_with_damaged_audio_stays_reported_and_discardable() -> a
 }
 
 #[tokio::test]
+async fn a_pending_show_whose_audio_header_is_wrong_is_reported_rather_than_retired()
+-> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let (_show, pending) = pending_show(root.path()).await?;
+    fs::write(pending.directory().join("audio.log"), b"NOTAUDIO")?;
+    store::sweep(root.path(), SystemTime::now())?;
+    assert!(
+        pending.directory().exists(),
+        "Damaged audio retired silently"
+    );
+    let listing = store::checkpoint::list(root.path(), SystemTime::now());
+    assert_eq!(listing.problems.len(), 1);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_pending_show_whose_audio_denies_reads_stays_discardable() -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+    let root = tempfile::tempdir()?;
+    let (show, pending) = pending_show(root.path()).await?;
+    let audio = pending.directory().join("audio.log");
+    fs::set_permissions(&audio, fs::Permissions::from_mode(0o000))?;
+    let listing = store::checkpoint::list(root.path(), SystemTime::now());
+    assert_eq!(listing.problems.len(), 1);
+    let discarded = store::checkpoint::resolve(root.path(), Path::new(&pending.id()))
+        .and_then(|interrupted| interrupted.lock()?.discard());
+    if audio.exists() {
+        fs::set_permissions(&audio, fs::Permissions::from_mode(0o600))?;
+    }
+    discarded?;
+    assert!(!pending.directory().exists());
+    assert!(show.directory().exists());
+    Ok(())
+}
+
+#[tokio::test]
 async fn damaged_audio_does_not_block_saving_intact_frames_and_narration() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let interrupted = with_audio(root.path()).await?.interrupted()?;

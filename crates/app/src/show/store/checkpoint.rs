@@ -312,11 +312,7 @@ impl Checkpoint {
         }
         Ok(match self.publication()? {
             Some(Publication::Narrated) => true,
-            Some(Publication::Pending) => match self.retryable() {
-                Ok(retryable) => !retryable,
-                Err(damaged) if damaged.is::<audio::Damaged>() => false,
-                Err(error) => return Err(error),
-            },
+            Some(Publication::Pending) => self.retryable().is_ok_and(|retryable| !retryable),
             None => false,
         })
     }

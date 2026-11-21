@@ -1,7 +1,7 @@
 use std::{
     fmt,
     fs::File,
-    io::{self, BufReader, Seek as _},
+    io::{self, BufReader, Read as _, Seek as _},
     num::NonZeroU32,
     path::Path,
     time::Duration,
@@ -140,7 +140,11 @@ pub(in crate::show::store) fn available_from(
         return Ok(None);
     };
     ensure!(metadata.len() <= FILE_LIMIT, Damaged);
-    if metadata.len() <= u64::try_from(MAGIC.len())? {
+    if let Some(expected) = MAGIC.get(..usize::try_from(metadata.len())?) {
+        let mut header = [0; MAGIC.len()];
+        let header = header.get_mut(..expected.len()).ok_or(Damaged)?;
+        file.read_exact(header)?;
+        ensure!(header == expected, Damaged);
         return Ok(None);
     }
     let present = decode_prefix(BufReader::new(&mut file), 0, Samples::First)?.is_some();
