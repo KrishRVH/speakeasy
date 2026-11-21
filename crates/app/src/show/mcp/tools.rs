@@ -1,6 +1,9 @@
+use std::io;
+
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use speakeasy_platform::ReadDirectory;
 use speakeasy_show::{Manifest, Narration};
 
 use super::{
@@ -110,7 +113,13 @@ fn read(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
     let request: Read = decode(arguments)?;
     let query = lookup(request.at, request.mark, request.phrase, request.occurrence)?;
     let folder = roots.resolve(&request.show)?;
-    read_folder(roots, folder, query.as_ref(), request.narration)
+    read_folder(
+        roots,
+        folder,
+        query.as_ref(),
+        request.narration,
+        recall::summary_from,
+    )
 }
 
 fn read_folder(
@@ -118,11 +127,12 @@ fn read_folder(
     folder: Folder,
     query: Option<&Query>,
     with_narration: bool,
+    summary: impl FnOnce(&ReadDirectory) -> io::Result<String>,
 ) -> Result<Vec<Value>, String> {
+    let summary =
+        summary(&folder.files).map_err(|_private| "Cannot read that Show's edited summary")?;
     let entry = recall::Entry::read_from(folder.path, &folder.files, roots.managed());
     let manifest = manifest_of(&entry)?;
-    let summary = recall::summary_from(&folder.files)
-        .map_err(|_private| "Cannot read that Show's edited summary")?;
     let found = query
         .map(|query| query.resolve(manifest))
         .transpose()

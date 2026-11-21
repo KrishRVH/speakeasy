@@ -274,12 +274,17 @@ fn a_managed_id_belongs_to_the_directory_that_was_read() -> anyhow::Result<()> {
     assert_eq!(current["show"]["id"], name);
     assert!(current["show"]["expiresAt"].is_string());
     let folder = roots.resolve(name).map_err(anyhow::Error::msg)?;
-    fs::rename(&original, temp.path().join("moved"))?;
-    fs::write(fixture(&managed, name)?.join("summary.md"), "REPLACEMENT")?;
-    let read = read_folder(&roots, folder, None, false).map_err(anyhow::Error::msg)?;
+    let read = read_folder(&roots, folder, None, false, |files| {
+        let summary = recall::summary_from(files);
+        fs::rename(&original, temp.path().join("moved"))?;
+        let replacement = fixture(&managed, name).map_err(std::io::Error::other)?;
+        fs::write(replacement.join("summary.md"), "REPLACEMENT")?;
+        summary
+    })
+    .map_err(anyhow::Error::msg)?;
     let read: Value = serde_json::from_str(read[0]["text"].as_str().unwrap())?;
     assert_eq!(read["summary"]["text"], "PRIVATE_EDITED_SUMMARY");
-    assert!(read["show"]["id"].is_null());
+    assert!(read["show"]["id"].is_null(), "{}", read["show"]);
     assert!(read["show"]["expiresAt"].is_null());
     let listing = serde_json::to_value(roots.list(None).map_err(anyhow::Error::msg)?)?;
     assert_eq!(listing["shows"][0]["id"], name, "{listing}");
@@ -303,7 +308,8 @@ fn a_show_swapped_for_a_link_after_resolution_cannot_lead_reads_outside() -> any
     let folder = roots.resolve("exact").map_err(anyhow::Error::msg)?;
     fs::rename(&directory, temp.path().join("original"))?;
     symlink(&outside, &directory)?;
-    let read = read_folder(&roots, folder, None, false).map_err(anyhow::Error::msg)?;
+    let read = read_folder(&roots, folder, None, false, recall::summary_from)
+        .map_err(anyhow::Error::msg)?;
     let read: Value = serde_json::from_str(read[0]["text"].as_str().unwrap())?;
     assert_eq!(read["summary"]["text"], "PRIVATE_EDITED_SUMMARY");
     assert_eq!(read["show"]["durationMs"], 1000);
