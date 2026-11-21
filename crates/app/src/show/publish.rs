@@ -267,7 +267,7 @@ fn reopen_with(interrupted: Interrupted) -> anyhow::Result<Reopened> {
                     recording.narration_lost = Some(NarrationLoss::AudioSilent);
                 }
             },
-            Err(error) if pending && damaged && !error.is::<Damaged>() => {
+            Err(error) if pending && !error.is::<Damaged>() => {
                 return Err(error.context(UNREADABLE_AUDIO));
             },
             Ok(None) | Err(_) if pending && damaged => anyhow::bail!(DAMAGED_NARRATION),
