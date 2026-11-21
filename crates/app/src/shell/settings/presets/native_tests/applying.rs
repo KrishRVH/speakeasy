@@ -6,13 +6,15 @@ use std::{
 
 use anyhow::ensure;
 use speakeasy_core::machine::{ModelState, Phase};
-use speakeasy_platform::{Input, Scope};
+#[cfg(target_os = "windows")]
+use speakeasy_platform::WindowsShortcut;
+use speakeasy_platform::{Input, InputSender, Scope};
 
 use super::*;
 use crate::{
     config::Engine,
     control::{Call, Command, Disposition},
-    shell::{LaunchMode, choices::Selected, save::SaveQueue},
+    shell::{LaunchMode, choices::Selected, save::SaveQueue, services::Launch},
     status::ServiceState,
 };
 
@@ -140,6 +142,8 @@ pub(in crate::shell::settings) async fn exercise(
         resolved(settings, &path, &library, cx).await?;
         resumed(&library, cx).await?;
         redrafted(settings, &path, &library, cx).await?;
+        rechecked(&library, cx).await?;
+        rebound(&library, cx).await?;
         cx.update(|cx| {
             cx.update_global::<Services, _>(|services, _| {
                 services.config = library.clone();
@@ -227,7 +231,7 @@ async fn paused(
                 ..services.config.clone()
             };
             let saved_at = services.config_epoch().next();
-            services.adopt_saved(ValidConfig::assume(german), saved_at, cx)
+            services.adopt_saved(&german, ValidConfig::assume(german.clone()), saved_at, cx)
         })
     })?;
     settle(cx).await;
@@ -379,64 +383,74 @@ async fn redrafted(
 
 #[expect(
     clippy::future_not_send,
-    reason = "Native acceptance drives Services and a fake owner on GPUI's UI thread"
+    reason = "Native acceptance drives Services on GPUI's UI thread"
 )]
-async fn resumed(library: &Config, cx: &mut AsyncApp) -> anyhow::Result<()> {
-    let french = Config {
-        language: "fr".into(),
-        ..library.clone()
-    };
+async fn use_paused(
+    library: &Config,
+    preset: Config,
+    cx: &AsyncApp,
+) -> anyhow::Result<ValidConfig> {
     let used = cx
         .update(|cx| {
             cx.update_global::<Services, _>(|services, cx| {
                 services.config = library.clone();
                 services.choices.selected = None;
-                services.launch = crate::shell::services::Launch::Fake;
-                services.use_preset(french, |_| true, cx)
+                services.launch = Launch::Fake;
+                services.use_preset(preset, |_| true, cx)
             })
         })
         .map_err(anyhow::Error::msg)?;
-    let admitted = used.recv().await?.map_err(anyhow::Error::msg)?;
-    let saved_at = cx.update(|cx| cx.global::<Services>().config_epoch());
-    cx.update(|cx| cx.update_global::<Services, _>(|services, cx| services.resume(cx)));
-    let shown = async {
-        until(cx, "Resume did not start the fake owner", |cx| {
-            Ok(snapshot(cx).model == ModelState::Ready)
+    used.recv().await?.map_err(anyhow::Error::msg)
+}
+
+#[expect(
+    clippy::future_not_send,
+    reason = "Native acceptance drives a fake owner on GPUI's UI thread"
+)]
+async fn show_after_resume(cx: &mut AsyncApp) -> anyhow::Result<InputSender> {
+    until(cx, "Resume did not start the fake owner", |cx| {
+        Ok(snapshot(cx).model == ModelState::Ready)
+    })
+    .await?;
+    let input = cx
+        .update(|cx| {
+            cx.global::<Services>()
+                .runtime()
+                .map(|runtime| runtime.input.clone())
         })
-        .await?;
-        let input = cx
-            .update(|cx| {
-                cx.global::<Services>()
-                    .runtime()
-                    .map(|runtime| runtime.input.clone())
-            })
-            .context("Resume started no owner")?;
-        input.deliver(Input::Press);
-        until(cx, "The resumed owner did not record", |cx| {
-            Ok(snapshot(cx).phase == Phase::Recording)
-        })
-        .await?;
-        input.deliver(Input::Show(Scope::Screen));
-        until(cx, "The resumed owner did not start a Show", |cx| {
-            Ok(snapshot(cx).show)
-        })
-        .await?;
-        cx.update(|cx| {
-            cx.update_global::<Services, _>(|services, cx| {
-                services.adopt_saved(admitted, saved_at, cx)
-            })
-        })?;
-        settle(cx).await;
-        settle(cx).await;
-        let after = snapshot(cx);
-        let kept = after.show && after.phase == Phase::Recording;
-        input.deliver(Input::Cancel);
-        anyhow::Ok(kept)
-    }
-    .await;
+        .context("Resume started no owner")?;
+    input.deliver(Input::Press);
+    until(cx, "The resumed owner did not record", |cx| {
+        Ok(snapshot(cx).phase == Phase::Recording)
+    })
+    .await?;
+    input.deliver(Input::Show(Scope::Screen));
+    until(cx, "The resumed owner did not start a Show", |cx| {
+        Ok(snapshot(cx).show)
+    })
+    .await?;
+    Ok(input)
+}
+
+#[expect(
+    clippy::future_not_send,
+    reason = "Native acceptance drives a fake owner on GPUI's UI thread"
+)]
+async fn still_showing(cx: &AsyncApp) -> bool {
+    settle(cx).await;
+    settle(cx).await;
+    let after = snapshot(cx);
+    after.show && after.phase == Phase::Recording
+}
+
+#[expect(
+    clippy::future_not_send,
+    reason = "Native acceptance retires a fake owner on GPUI's UI thread"
+)]
+async fn retire(library: &Config, cx: &mut AsyncApp) -> anyhow::Result<()> {
     cx.update(|cx| {
         cx.update_global::<Services, _>(|services, cx| {
-            services.launch = crate::shell::services::Launch::Desktop;
+            services.launch = Launch::Desktop;
             services.pause(cx);
         });
     });
@@ -447,9 +461,149 @@ async fn resumed(library: &Config, cx: &mut AsyncApp) -> anyhow::Result<()> {
         }))
     })
     .await?;
+    cx.update(|cx| {
+        cx.update_global::<Services, _>(|services, _| {
+            services.config = library.clone();
+            services.admitted = None;
+        });
+    });
+    Ok(())
+}
+
+fn rebind(config: &Config) -> Config {
+    let mut rebound = config.clone();
+    #[cfg(target_os = "linux")]
+    {
+        rebound.linux.external_shortcut = !rebound.linux.external_shortcut;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        rebound.windows_shortcut = if rebound.windows_shortcut == WindowsShortcut::F13 {
+            WindowsShortcut::RightControl
+        } else {
+            WindowsShortcut::F13
+        };
+    }
+    rebound
+}
+
+#[expect(
+    clippy::future_not_send,
+    reason = "Native acceptance drives Services and a fake owner on GPUI's UI thread"
+)]
+async fn resumed(library: &Config, cx: &mut AsyncApp) -> anyhow::Result<()> {
+    let french = Config {
+        language: "fr".into(),
+        ..library.clone()
+    };
+    let admitted = use_paused(library, french, cx).await?;
+    let saved_at = cx.update(|cx| cx.global::<Services>().config_epoch());
+    cx.update(|cx| cx.update_global::<Services, _>(|services, cx| services.resume(cx)));
+    let shown = async {
+        let input = show_after_resume(cx).await?;
+        cx.update(|cx| {
+            cx.update_global::<Services, _>(|services, cx| {
+                let submitted = Config::clone(&admitted);
+                services.adopt_saved(&submitted, admitted, saved_at, cx)
+            })
+        })?;
+        let kept = still_showing(cx).await;
+        input.deliver(Input::Cancel);
+        anyhow::Ok(kept)
+    }
+    .await;
+    retire(library, cx).await?;
     ensure!(
         shown?,
         "Saving the preset used while paused discarded the Show started after Resume"
+    );
+    Ok(())
+}
+
+#[expect(
+    clippy::future_not_send,
+    reason = "Native acceptance drives Services and a fake owner on GPUI's UI thread"
+)]
+async fn rechecked(library: &Config, cx: &mut AsyncApp) -> anyhow::Result<()> {
+    let french = Config {
+        language: "fr".into(),
+        ..library.clone()
+    };
+    let german = Config {
+        language: "de".into(),
+        ..library.clone()
+    };
+    use_paused(library, french, cx).await?;
+    cx.update(|cx| {
+        cx.update_global::<Services, _>(|services, cx| {
+            services.resume(cx);
+            services.follow_draft(&german, cx);
+        });
+    });
+    let started = until(cx, "Resume did not start the fake owner", |cx| {
+        Ok(snapshot(cx).model == ModelState::Ready)
+    })
+    .await;
+    let launched = cx.update(|cx| {
+        cx.global::<Services>()
+            .launched()
+            .map(|config| config.language.clone())
+    });
+    retire(library, cx).await?;
+    started?;
+    ensure!(
+        launched.as_deref() == Some("de"),
+        "A draft written while Resume checked a paused Use left the owner on the older preset"
+    );
+    Ok(())
+}
+
+#[expect(
+    clippy::future_not_send,
+    reason = "Native acceptance drives Services and a fake owner on GPUI's UI thread"
+)]
+async fn rebound(library: &Config, cx: &mut AsyncApp) -> anyhow::Result<()> {
+    let french = Config {
+        language: "fr".into(),
+        ..library.clone()
+    };
+    let admitted = use_paused(library, french, cx).await?;
+    let older = Config::clone(&admitted);
+    let rebound = rebind(&older);
+    let saved_at = cx.update(|cx| cx.global::<Services>().config_epoch());
+    cx.update(|cx| {
+        cx.update_global::<Services, _>(|services, cx| {
+            services.follow_draft(&rebound, cx);
+            services.resume(cx);
+        });
+    });
+    let shown = async {
+        let input = show_after_resume(cx).await?;
+        cx.update(|cx| {
+            cx.update_global::<Services, _>(|services, cx| {
+                services.adopt_saved(&older, admitted, saved_at, cx)
+            })
+        })?;
+        let outlasted = still_showing(cx).await;
+        cx.update(|cx| {
+            cx.update_global::<Services, _>(|services, cx| {
+                services.adopt_saved(&rebound, ValidConfig::assume(rebound.clone()), saved_at, cx)
+            })
+        })?;
+        let kept = still_showing(cx).await;
+        input.deliver(Input::Cancel);
+        anyhow::Ok((outlasted, kept))
+    }
+    .await;
+    retire(library, cx).await?;
+    let (outlasted, kept) = shown?;
+    ensure!(
+        outlasted,
+        "An older save landing after Resume discarded the Show started on the newer draft"
+    );
+    ensure!(
+        kept,
+        "The newest save's shortcut, already in use since Resume, paused the owner"
     );
     Ok(())
 }

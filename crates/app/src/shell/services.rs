@@ -78,6 +78,7 @@ struct Before {
 struct Owners {
     runtime: Runtime,
     monitor: Monitor,
+    launched: Config,
 }
 
 #[cfg(test)]
@@ -415,8 +416,8 @@ impl Services {
         self.show_copies.cancel();
 
         self.reset_choice_for(&config);
-        if self.runtime().is_some_and(|runtime| {
-            !runtime.is_running() || self.config.change_to(&config) == Change::Desktop
+        if self.lifecycle.active().is_some_and(|owners| {
+            !owners.runtime.is_running() || owners.launched.change_to(&config) == Change::Desktop
         }) {
             self.pause(cx);
         }
@@ -435,12 +436,12 @@ impl Services {
             .selected
             .as_ref()
             .map_or(config, |choice| choice.config.clone());
-        self.start(config)
+        self.start(config, self.config.clone())
     }
 
-    fn start(&mut self, config: ValidConfig) -> anyhow::Result<()> {
+    fn start(&mut self, config: ValidConfig, baseline: Config) -> anyhow::Result<()> {
         self.show_copies.cancel();
-        let baseline = self.admitted.clone().unwrap_or_else(|| self.config.clone());
+        let launched = Config::clone(&config);
         #[cfg(test)]
         let launch = self.launch;
         let preset = self.preset_name().map(str::to_owned);
@@ -469,6 +470,7 @@ impl Services {
                 return anyhow::Ok(Owners {
                     runtime,
                     monitor: Monitor::Fake { _reports: reports },
+                    launched,
                 });
             }
             let (runtime, monitor) = Runtime::start(
@@ -484,6 +486,7 @@ impl Services {
             anyhow::Ok(Owners {
                 runtime,
                 monitor: Monitor::Desktop(monitor),
+                launched,
             })
         });
         self.validation = None;
@@ -495,22 +498,24 @@ impl Services {
 
     pub(super) fn adopt_saved(
         &mut self,
+        submitted: &Config,
         config: ValidConfig,
         saved_at: ConfigEpoch,
         cx: &App,
     ) -> anyhow::Result<()> {
         #[cfg(target_os = "windows")]
         let start_at_login = config.start_at_login;
-        if self
+        let superseded = self
             .admitted
             .as_ref()
-            .is_some_and(|admitted| admitted.change_to(&config) < Change::Session)
-        {
+            .is_some_and(|admitted| admitted != submitted);
+        if !superseded {
             self.admitted = None;
         }
-        let adopted = if self
-            .lifecycle
-            .save_may_enable(saved_at, |owners| owners.runtime.is_running())
+        let adopted = if !superseded
+            && self
+                .lifecycle
+                .save_may_enable(saved_at, |owners| owners.runtime.is_running())
         {
             self.apply(config, cx)
         } else {
@@ -551,10 +556,12 @@ impl Services {
             self.output.clone(),
             self.meter.clone(),
         )?;
+        let launched = self.config.clone();
         let started = self.lifecycle.start(|| {
             anyhow::Ok(Owners {
                 runtime,
                 monitor: Monitor::Fake { _reports: reports },
+                launched,
             })
         })?;
         anyhow::ensure!(started, "Services was not ready to start the fake owner");
@@ -564,6 +571,15 @@ impl Services {
     pub(super) fn forget_preset(&mut self, cx: &App) {
         self.choices.cancel();
         self.choices.selected = None;
+        self.recheck(cx);
+    }
+
+    #[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
+    pub(super) fn launched(&self) -> Option<&Config> {
+        self.lifecycle.active().map(|owners| &owners.launched)
+    }
+
+    pub(super) fn recheck(&mut self, cx: &App) {
         if self.validation.is_some() {
             self.validate(cx);
         }
@@ -600,9 +616,10 @@ impl Services {
             result.and_then(|config| {
                 if let Some(choice) = &mut services.choices.selected {
                     choice.config = config.clone();
-                    services.start(config)
+                    services.start(config, services.config.clone())
                 } else if services.admitted.is_some() {
-                    services.start(config)
+                    let baseline = Config::clone(&config);
+                    services.start(config, baseline)
                 } else {
                     services.apply(config, cx)
                 }

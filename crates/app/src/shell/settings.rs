@@ -410,7 +410,7 @@ impl Settings {
             return;
         }
         let epoch = services.config_epoch();
-        cx.global_mut::<Services>().follow_draft(&self.config);
+        cx.update_global::<Services, _>(|services, cx| services.follow_draft(&self.config, cx));
         if let Some(progress) = self.saves.submit(self.config.clone(), epoch) {
             self.advance_save(progress, cx);
         }
@@ -727,8 +727,12 @@ impl Settings {
         };
         let applied = saved.map(|saved| {
             saved.update_draft(&mut self.config);
+            let SavedConfig {
+                submitted,
+                validated,
+            } = *saved;
             cx.update_global::<Services, _>(|services, cx| {
-                services.adopt_saved(saved.validated, epoch, cx)
+                services.adopt_saved(&submitted, validated, epoch, cx)
             })
         });
         if error.is_some() {

@@ -301,10 +301,15 @@ impl Services {
         Ok(used)
     }
 
-    pub(super) fn follow_draft(&mut self, draft: &Config) {
-        if let Some(admitted) = &mut self.admitted {
-            admitted.clone_from(draft);
+    pub(super) fn follow_draft(&mut self, draft: &Config, cx: &App) {
+        let Some(admitted) = &mut self.admitted else {
+            return;
+        };
+        if admitted == draft {
+            return;
         }
+        admitted.clone_from(draft);
+        self.recheck(cx);
     }
 
     pub(super) fn restore_owner(&mut self, cx: &App) {

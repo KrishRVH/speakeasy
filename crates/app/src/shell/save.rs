@@ -7,7 +7,7 @@ use speakeasy_platform::OwnedThread;
 use crate::config::{Config, ValidConfig};
 
 pub(super) struct SavedConfig {
-    submitted: Config,
+    pub(super) submitted: Config,
     pub(super) validated: ValidConfig,
 }
 
