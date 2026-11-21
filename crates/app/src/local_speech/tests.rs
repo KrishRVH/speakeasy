@@ -251,6 +251,8 @@ async fn only_a_complete_success_head_proves_the_engine_healthy() -> anyhow::Res
         ("HTTP/1.1 200 OK\r\nContent-Length : 0\r\n\r\n", false),
         ("HTTP/1.1 200 OK\r\n: no name\r\n\r\n", false),
         ("HTTP/1.1 200 OK\r\nX-Bad: a\rb\r\n\r\n", false),
+        ("HTTP/1.1 200 OK\r\nX-Bad: value\r\r\n\r\n", false),
+        ("HTTP/1.1 200 OK\r\r\n\r\n", false),
         ("HTTP/1.1 200", false),
         ("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n", false),
         (

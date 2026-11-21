@@ -619,9 +619,11 @@ async fn succeeds(mut connection: TcpStream, port: u16, route: &str) -> std::io:
 }
 
 fn answers_success(head: &[u8]) -> bool {
-    let mut lines = head
-        .split(|&byte| byte == b'\n')
-        .map(|line| line.strip_suffix(b"\r").unwrap_or(line));
+    let mut lines = head.split_inclusive(|&byte| byte == b'\n').map(|line| {
+        line.strip_suffix(b"\r\n")
+            .or_else(|| line.strip_suffix(b"\n"))
+            .unwrap_or(line)
+    });
     let line = lines.next().unwrap_or_default();
     let Some(status) = line
         .strip_prefix(b"HTTP/1.1 ")
@@ -631,7 +633,13 @@ fn answers_success(head: &[u8]) -> bool {
     };
     let succeeded = match status {
         [b'2', tens, ones, reason @ ..] => {
-            tens.is_ascii_digit() && ones.is_ascii_digit() && matches!(reason, [] | [b' ', ..])
+            tens.is_ascii_digit()
+                && ones.is_ascii_digit()
+                && match reason {
+                    [] => true,
+                    [b' ', phrase @ ..] => is_field_text(phrase),
+                    _ => false,
+                }
         },
         _ => false,
     };
@@ -646,10 +654,13 @@ fn is_header_field(line: &[u8]) -> bool {
             && name
                 .iter()
                 .all(|&byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte))
-            && value
-                .iter()
-                .all(|&byte| byte == b'\t' || !byte.is_ascii_control())
+            && is_field_text(value)
     })
+}
+
+fn is_field_text(text: &[u8]) -> bool {
+    text.iter()
+        .all(|&byte| byte == b'\t' || !byte.is_ascii_control())
 }
 
 async fn unless_cancelled<T>(
