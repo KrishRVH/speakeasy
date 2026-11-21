@@ -142,42 +142,36 @@ impl Settings {
             && !is_demo(ui.cx)
             && (!self.config.speech_configured() || speech_failed(ui.cx) || installing.is_some());
         let state = if self.resetting() {
-            kit.group(vec![
-                div()
-                    .p(px(16.0))
-                    .child(kit.label(
-                        "Starting over",
-                        "Removing settings and downloads. Your Shows stay.",
-                    ))
-                    .into_any_element(),
-            ])
+            kit.group([div()
+                .p(px(16.0))
+                .child(kit.label(
+                    "Starting over",
+                    "Removing settings and downloads. Your Shows stay.",
+                ))
+                .into_any_element()])
         } else if self.unreadable {
             self.unreadable_banner(ui)
         } else if needs_setup {
-            kit.group(vec![
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(12.0))
-                    .p(px(16.0))
-                    .child(kit.label("Parakeet speech model", super::setup_detail()))
-                    .when_some(installing, |row, progress| {
-                        row.child(kit.progress(fraction(progress)))
-                            .child(kit.detail(progress_text(progress)))
-                    })
-                    .into_any_element(),
-            ])
+            kit.group([div()
+                .flex()
+                .flex_col()
+                .gap(px(12.0))
+                .p(px(16.0))
+                .child(kit.label("Parakeet speech model", super::setup_detail()))
+                .when_some(installing, |row, progress| {
+                    row.child(kit.progress(fraction(progress)))
+                        .child(kit.detail(progress_text(progress)))
+                })
+                .into_any_element()])
         } else {
-            kit.group(vec![
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(12.0))
-                    .p(px(16.0))
-                    .child(icon(icons::CHECK, 16.0, ui.palette.lamp))
-                    .child(kit.label("Local speech is ready", "Next, try your shortcut."))
-                    .into_any_element(),
-            ])
+            kit.group([div()
+                .flex()
+                .items_center()
+                .gap(px(12.0))
+                .p(px(16.0))
+                .child(icon(icons::CHECK, 16.0, ui.palette.lamp))
+                .child(kit.label("Local speech is ready", "Next, try your shortcut."))
+                .into_any_element()])
         };
         div()
             .flex()
@@ -219,7 +213,7 @@ impl Settings {
                     .text_size(px(15.0))
                     .child("Let Speakeasy hear you and type for you."),
             )
-            .child(kit.group(vec![
+            .child(kit.group([
                 kit.setting(
                     format!(
                         "Microphone · {}",
@@ -245,7 +239,7 @@ impl Settings {
             .child(div().text_size(px(15.0)).child(
                 "Next, try a sentence in this window. Nothing records until you use your shortcut.",
             ))
-            .child(kit.group(vec![
+            .child(kit.group([
                 kit.setting(
                     "Microphone",
                     if cfg!(target_os = "windows") {
@@ -365,14 +359,15 @@ impl Settings {
             .flex_col()
             .gap(px(16.0))
             .child(card)
-            .child(kit.group(vec![
-                kit.setting(
-                    "Microphone",
-                    "Not hearing anything? Choose another input.",
-                    self.dropdown(ui, Menu::Microphone, "Microphone", self.microphone_name()),
-                )
-                .into_any_element(),
-            ]))
+            .child(
+                kit.group([kit
+                    .setting(
+                        "Microphone",
+                        "Not hearing anything? Choose another input.",
+                        self.dropdown(ui, Menu::Microphone, "Microphone", self.microphone_name()),
+                    )
+                    .into_any_element()]),
+            )
             .child(ui.text(if is_demo(ui.cx) {
                 "Demo words only. Your microphone is off."
             } else {

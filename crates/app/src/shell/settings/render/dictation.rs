@@ -334,7 +334,7 @@ impl Settings {
             .gap(px(8.0))
             .child(div().flex().child(toggle))
             .when(self.shows_help, |section| {
-                section.child(kit.group(vec![
+                section.child(kit.group([
                     line(
                         vec![keys(), word("+"), key("S"), key("W"), key("A")],
                         "Record the screen, a window, or an area",
