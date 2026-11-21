@@ -183,6 +183,7 @@ fn focus_moving_to_speakeasy_during_the_last_clipboard_check_refuses_the_paste()
         |()| true,
         |()| true,
         |()| Ok(false),
+        |()| Ok(true),
     )?;
     assert_eq!(refused.break_value(), Delivery::Paste.check_focus(false));
     assert!(permit.commit(), "A refused paste spent its authority");
@@ -207,8 +208,9 @@ fn a_modifier_or_layout_change_during_the_last_clipboard_check_refuses_the_paste
                 Ok(true)
             },
             |_| true,
-            |&(_, switched)| !switched,
-            |&(pressed, _)| Ok(pressed),
+            |&mut (_, switched)| !switched,
+            |&mut (pressed, _)| Ok(pressed),
+            |_| Ok(true),
         )?;
         assert_eq!(
             refused.break_value(),
@@ -218,6 +220,47 @@ fn a_modifier_or_layout_change_during_the_last_clipboard_check_refuses_the_paste
                 PASTE_AFTER_RELEASE
             }),
             "A change during the clipboard check went unseen (layout: {layout})"
+        );
+        assert!(permit.commit(), "A refused paste spent its authority");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_copy_made_during_the_focus_layout_or_modifier_queries_refuses_the_paste() -> anyhow::Result<()>
+{
+    let (events, _received) = async_channel::bounded(1);
+    let input = InputSender::new(events);
+    for copied_during in ["focus", "layout", "modifiers"] {
+        let permit = input.begin().context("Recording")?;
+        let request = paste_request(&permit, crate::FocusReport::default().subscribe());
+        let copy = |owner: &mut Window, query| {
+            if query == copied_during {
+                *owner = 9;
+            }
+        };
+        let mut owner: Window = 7;
+        let refused = authorize_paste(
+            &request,
+            &mut owner,
+            |_| Ok(true),
+            |owner| {
+                copy(owner, "focus");
+                true
+            },
+            |owner| {
+                copy(owner, "layout");
+                true
+            },
+            |owner| {
+                copy(owner, "modifiers");
+                Ok(false)
+            },
+            |owner| Ok(*owner == 7),
+        )?;
+        assert!(
+            refused.break_value() == Some(CLIPBOARD_CHANGED),
+            "A copy made during the {copied_during} query was pasted"
         );
         assert!(permit.commit(), "A refused paste spent its authority");
     }
@@ -239,6 +282,7 @@ fn a_failed_or_unreadable_clipboard_check_never_reports_a_copy() -> anyhow::Resu
         |()| false,
         |()| true,
         |()| Ok(true),
+        |()| Ok(true),
     )?;
     assert_eq!(
         changed.break_value(),
@@ -251,6 +295,7 @@ fn a_failed_or_unreadable_clipboard_check_never_reports_a_copy() -> anyhow::Resu
         |()| bail!("Synthetic clipboard failure"),
         |()| false,
         |()| true,
+        |()| Ok(true),
         |()| Ok(true),
     );
     assert!(
@@ -276,6 +321,7 @@ fn escape_during_a_failing_paste_check_reports_cancellation() -> anyhow::Result<
         |()| false,
         |()| true,
         |()| Ok(false),
+        |()| Ok(true),
     );
     assert!(
         matches!(checked, Ok(ControlFlow::Break(Inserted::Cancelled))),

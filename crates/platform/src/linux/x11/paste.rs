@@ -202,6 +202,7 @@ impl Paster {
             |clipboard| clipboard.external_target(HostSession::X11).unwrap_or(false),
             |clipboard| uses_first_layout(&clipboard.connection).unwrap_or(false),
             |clipboard| modifiers_held(clipboard, keyboard),
+            |clipboard| Ok(clipboard.owner()? == owner),
         )? {
             return Ok(settle_copy(&request.permit, outcome));
         }
@@ -256,9 +257,10 @@ fn authorize_paste<C>(
     request: &Insertion,
     clipboard: &mut C,
     holds_text: impl FnOnce(&mut C) -> anyhow::Result<bool>,
-    external_target: impl FnOnce(&C) -> bool,
-    first_layout: impl FnOnce(&C) -> bool,
-    modifiers_held: impl FnOnce(&C) -> anyhow::Result<bool>,
+    external_target: impl FnOnce(&mut C) -> bool,
+    first_layout: impl FnOnce(&mut C) -> bool,
+    modifiers_held: impl FnOnce(&mut C) -> anyhow::Result<bool>,
+    still_owned: impl FnOnce(&mut C) -> anyhow::Result<bool>,
 ) -> anyhow::Result<ControlFlow<Inserted>> {
     let refusal = paste_refusal(
         request,
@@ -267,6 +269,7 @@ fn authorize_paste<C>(
         external_target,
         first_layout,
         modifiers_held,
+        still_owned,
     );
     if !request.permit.active() {
         return Ok(ControlFlow::Break(Inserted::Cancelled));
@@ -282,9 +285,10 @@ fn paste_refusal<C>(
     request: &Insertion,
     clipboard: &mut C,
     holds_text: impl FnOnce(&mut C) -> anyhow::Result<bool>,
-    external_target: impl FnOnce(&C) -> bool,
-    first_layout: impl FnOnce(&C) -> bool,
-    modifiers_held: impl FnOnce(&C) -> anyhow::Result<bool>,
+    external_target: impl FnOnce(&mut C) -> bool,
+    first_layout: impl FnOnce(&mut C) -> bool,
+    modifiers_held: impl FnOnce(&mut C) -> anyhow::Result<bool>,
+    still_owned: impl FnOnce(&mut C) -> anyhow::Result<bool>,
 ) -> anyhow::Result<Option<Inserted>> {
     if !holds_text(clipboard)? {
         return Ok(Some(CLIPBOARD_CHANGED));
@@ -294,7 +298,12 @@ fn paste_refusal<C>(
         return Ok(Some(SECOND_LAYOUT));
     }
     let released = !modifiers_held(clipboard)?;
-    Ok(Delivery::Paste.preflight(external && !request.own_focus.held(), released))
+    if let Some(outcome) =
+        Delivery::Paste.preflight(external && !request.own_focus.held(), released)
+    {
+        return Ok(Some(outcome));
+    }
+    Ok((!still_owned(clipboard)?).then_some(CLIPBOARD_CHANGED))
 }
 
 #[derive(Debug, PartialEq, Eq)]
