@@ -107,22 +107,20 @@ mod tests {
         Ok(directory)
     }
 
-    fn wait_for_two(
+    fn wait_for(
         parent: &Path,
-        first: (SystemTime, SystemTime),
-        second: (SystemTime, SystemTime),
-    ) -> anyhow::Result<(PathBuf, PathBuf, PathBuf)> {
-        let mut saved = None;
+        shows: &[(SystemTime, SystemTime)],
+    ) -> anyhow::Result<(PathBuf, Vec<PathBuf>)> {
+        let mut saved = Vec::new();
         let found = next_saved_polling(parent, Duration::from_secs(20), POLL, |_| {
-            if saved.is_none() {
-                saved = Some((
-                    save_at(parent, first.0, first.1).unwrap(),
-                    save_at(parent, second.0, second.1).unwrap(),
-                ));
+            if saved.is_empty() {
+                saved = shows
+                    .iter()
+                    .map(|&(recorded, at)| save_at(parent, recorded, at).unwrap())
+                    .collect();
             }
         })?;
-        let (first, second) = saved.context("No Show was saved")?;
-        Ok((found.directory, first, second))
+        Ok((found.directory, saved))
     }
 
     #[test]
@@ -159,26 +157,32 @@ mod tests {
         for (first_recorded, second_recorded) in [(later, earlier), (earlier, later)] {
             let root = tempfile::tempdir()?;
             save(root.path(), SystemTime::now())?;
-            let (found, first, _) = wait_for_two(
+            let (found, saved) = wait_for(
                 root.path(),
-                (first_recorded, now),
-                (second_recorded, now + Duration::from_secs(1)),
+                &[
+                    (first_recorded, now),
+                    (second_recorded, now + Duration::from_secs(10)),
+                ],
             )?;
-            assert_eq!(found, first);
+            assert_eq!(found, saved[0]);
         }
         Ok(())
     }
 
     #[test]
-    fn shows_saved_in_the_same_instant_resolve_to_the_latest_recording() -> anyhow::Result<()> {
+    fn shows_saved_in_the_same_instant_resolve_to_the_later_recording() -> anyhow::Result<()> {
         let root = tempfile::tempdir()?;
         let now = SystemTime::now();
-        let (found, _, recorded_later) = wait_for_two(
+        let minute = Duration::from_secs(60);
+        let (found, saved) = wait_for(
             root.path(),
-            (now, now),
-            (now + Duration::from_secs(60), now),
+            &[
+                (now, now),
+                (now + minute, now),
+                (now + minute * 2, now + Duration::from_secs(10)),
+            ],
         )?;
-        assert_eq!(found, recorded_later);
+        assert_eq!(found, saved[1]);
         Ok(())
     }
 
