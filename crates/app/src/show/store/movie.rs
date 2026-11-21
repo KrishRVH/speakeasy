@@ -32,7 +32,6 @@ pub(crate) struct Metadata {
     pub size: [u32; 2],
     pub finished: Option<Finished>,
     pub coverage: Option<Coverage>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub geometry: Option<geometry::Geometry>,
 }
 
