@@ -53,6 +53,23 @@ function Invoke-Uninstall {
     if (Test-Path (Join-Path $app 'speakeasy.exe')) { throw 'Uninstall retained the application executable.' }
     Check-UserData
 }
+function Open-Launched($Launched) {
+    $process = Get-Process -Id $Launched.ProcessId -ErrorAction SilentlyContinue
+    if (!$process) { return $null }
+    $pinned = $false
+    try {
+        # Holding the handle pins this process, so the start time proves the PID was not reused.
+        try { [void]$process.Handle } catch {
+            if (Get-Process -Id $Launched.ProcessId -ErrorAction SilentlyContinue) { throw }
+            return $null
+        }
+        $pinned = [Math]::Abs(($process.StartTime - $Launched.CreationDate).TotalMilliseconds) -lt 1
+        if ($pinned) { return $process }
+        return $null
+    } finally {
+        if (!$pinned) { $process.Dispose() }
+    }
+}
 function Close-Preview([Diagnostics.Process]$Preview) {
     try {
         $Preview.Refresh()
@@ -104,10 +121,7 @@ function Check-UpdateHandoff([bool]$ReleaseParent) {
                 throw 'A failed handoff changed the app or terminated its parent.'
             }
             $launched = Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $image }
-            if ($launched) {
-                $preview = Get-Process -Id $launched.ProcessId
-                throw 'A failed update relaunched the application.'
-            }
+            if ($launched) { throw 'A failed update relaunched the application.' }
             Check-UserData
             return
         }
@@ -122,7 +136,8 @@ function Check-UpdateHandoff([bool]$ReleaseParent) {
         if (@($launched).Count -ne 1 -or !$launched.CommandLine.Contains('--demo-tray') -or !$launched.CommandLine.Contains($configuration)) {
             throw 'Update did not relaunch the exact app and selected configuration in demo mode.'
         }
-        $preview = Get-Process -Id $launched.ProcessId
+        $preview = Open-Launched $launched
+        if (!$preview) { throw 'The updated preview exited before it opened its window.' }
         do {
             $preview.Refresh()
             if ($preview.HasExited -or [DateTime]::UtcNow -ge $deadline) { throw 'The updated preview did not open its window.' }
@@ -154,15 +169,9 @@ function Check-UpdateHandoff([bool]$ReleaseParent) {
         } $cleanup)
         foreach ($leftover in $leftovers) {
             Invoke-Cleanup {
-                $process = Get-Process -Id $leftover.ProcessId -ErrorAction SilentlyContinue
+                $process = Open-Launched $leftover
                 if (!$process) { return }
                 try {
-                    # Holding the handle pins this process, so the start time proves the PID was not reused.
-                    try { [void]$process.Handle } catch {
-                        if (Get-Process -Id $leftover.ProcessId -ErrorAction SilentlyContinue) { throw }
-                        return
-                    }
-                    if ([Math]::Abs(($process.StartTime - $leftover.CreationDate).TotalMilliseconds) -ge 1) { return }
                     if (!$process.HasExited) { $process.Kill() }
                     if (!$process.WaitForExit(10000)) { throw 'The relaunched fixture kept running.' }
                 } finally {
@@ -180,6 +189,7 @@ function Check-RunningAppProtection {
     $image = Join-Path $app 'speakeasy.exe'
     $imageHash = (Get-FileHash -LiteralPath $image).Hash
     $preview = Start-Process -FilePath $image -ArgumentList '--demo-tray', "--config `"$previewConfig`"" -NoNewWindow -PassThru
+    [void]$preview.Handle
     $failure = $null
     $cleanup = [Collections.Generic.List[Management.Automation.ErrorRecord]]::new()
     try {
