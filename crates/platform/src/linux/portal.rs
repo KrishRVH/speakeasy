@@ -14,7 +14,7 @@ use futures_util::{FutureExt as _, StreamExt as _};
 use tokio::task::JoinSet;
 use zbus::{
     Connection, MatchRule, Message, MessageStream, Proxy,
-    names::MemberName,
+    names::{MemberName, OwnedUniqueName},
     zvariant::{OwnedObjectPath, OwnedValue, Value},
 };
 
@@ -56,6 +56,7 @@ type DesktopChanges = futures_util::stream::Select<MessageStream, MessageStream>
 
 struct Portal {
     connection: Connection,
+    owner: OwnedUniqueName,
     sender_segment: String,
     unanswered: Vec<OwnedObjectPath>,
     sessions: Vec<OwnedObjectPath>,
@@ -89,9 +90,11 @@ impl Portal {
             .trim_start_matches(':')
             .replace('.', "_");
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-        let changes = desktop_changes(&connection).await?;
+        let owner = portal_owner(&connection).await?;
+        let changes = desktop_changes(&connection, &owner).await?;
         let portal = Self {
             connection,
+            owner,
             sender_segment,
             unanswered: Vec::new(),
             sessions: Vec::new(),
@@ -256,7 +259,7 @@ impl Pump {
                 },
                 event = or_pending(self.shortcuts.as_mut().map(|stream| stream.next())) => {
                     let event = event.context("Shortcut portal disconnected")??;
-                    self.on_shortcut(&event)?;
+                    self.on_shortcut(&event);
                 },
                 () = settle => {},
             }
@@ -304,20 +307,23 @@ impl Pump {
         Ok(())
     }
 
-    fn on_shortcut(&mut self, event: &Message) -> anyhow::Result<()> {
+    fn on_shortcut(&mut self, event: &Message) {
         let activated = match event.header().member().map(MemberName::as_str) {
             Some("Activated") => true,
             Some("Deactivated") => false,
-            _ => return Ok(()),
+            _ => return,
         };
-        let (path, action, _, _): (OwnedObjectPath, String, u64, Results) =
-            event.body().deserialize()?;
+        let Ok((path, action, _, _)) = event
+            .body()
+            .deserialize::<(OwnedObjectPath, String, u64, Results)>()
+        else {
+            return;
+        };
         if Some(&path) == self.shortcut_session.as_ref()
             && let Some(input) = shortcut_event(&mut self.held, &action, activated)
         {
             self.input.deliver(input);
         }
-        Ok(())
     }
 }
 
@@ -334,14 +340,18 @@ struct SelectionOwnership {
 
 impl SelectionOwnership {
     fn observe(&mut self, event: &Message, notify: &Sender<Notice>) -> anyhow::Result<()> {
-        let (path, values): (OwnedObjectPath, Results) = event.body().deserialize()?;
-        if Some(&path) != self.session.as_ref() {
+        let change = event.body().deserialize::<(OwnedObjectPath, Results)>();
+        if let Ok((path, _)) = &change
+            && Some(path) != self.session.as_ref()
+        {
             return Ok(());
         }
-        self.owned = values
-            .get("session_is_owner")
-            .and_then(|value| bool::try_from(value).ok())
-            .unwrap_or(false);
+        self.owned = change.is_ok_and(|(_, values)| {
+            values
+                .get("session_is_owner")
+                .and_then(|value| bool::try_from(value).ok())
+                .unwrap_or(false)
+        });
         if !self.owned
             && let Some(permit) = self.monitored.take()
         {
@@ -574,31 +584,25 @@ async fn serve(
         labels,
         paste,
     } = bound;
+    let signals = async |interface, member, session| {
+        session_signals(
+            &portal.connection,
+            &portal.owner,
+            interface,
+            member,
+            session,
+        )
+        .await
+    };
     let shortcuts = match &shortcut_session {
-        Some(session) => Some(session_signals(&portal.connection, SHORTCUTS, None, session).await?),
+        Some(session) => Some(signals(SHORTCUTS, None, session).await?),
         None => None,
     };
     let clipboard = portal.proxy(CLIPBOARD).await?;
     let (transfer_requests, owners) = match &clipboard_session {
         Some(session) => (
-            Some(
-                session_signals(
-                    &portal.connection,
-                    CLIPBOARD,
-                    Some("SelectionTransfer"),
-                    session,
-                )
-                .await?,
-            ),
-            Some(
-                session_signals(
-                    &portal.connection,
-                    CLIPBOARD,
-                    Some("SelectionOwnerChanged"),
-                    session,
-                )
-                .await?,
-            ),
+            Some(signals(CLIPBOARD, Some("SelectionTransfer"), session).await?),
+            Some(signals(CLIPBOARD, Some("SelectionOwnerChanged"), session).await?),
         ),
         None => (None, None),
     };
@@ -660,13 +664,14 @@ fn lacks_registry(error: &zbus::Error) -> bool {
 
 async fn session_signals(
     connection: &Connection,
+    owner: &OwnedUniqueName,
     interface: &str,
     member: Option<&str>,
     session: &OwnedObjectPath,
 ) -> anyhow::Result<MessageStream> {
     let rule = MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
-        .sender(DESTINATION)?
+        .sender(owner.as_ref())?
         .interface(interface)?
         .path(DESKTOP)?
         .arg_path(0, session.as_str())?;
@@ -704,10 +709,27 @@ fn check_revocation(event: &Message, session_root: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn desktop_changes(connection: &Connection) -> anyhow::Result<DesktopChanges> {
+async fn portal_owner(connection: &Connection) -> anyhow::Result<OwnedUniqueName> {
+    Ok(connection
+        .call_method(
+            Some("org.freedesktop.DBus"),
+            "/org/freedesktop/DBus",
+            Some("org.freedesktop.DBus"),
+            "GetNameOwner",
+            &(DESTINATION,),
+        )
+        .await?
+        .body()
+        .deserialize()?)
+}
+
+async fn desktop_changes(
+    connection: &Connection,
+    owner: &OwnedUniqueName,
+) -> anyhow::Result<DesktopChanges> {
     let closed = MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
-        .sender(DESTINATION)?
+        .sender(owner.as_ref())?
         .interface(SESSION)?
         .member("Closed")?
         .build();
@@ -756,6 +778,8 @@ fn shortcut_event(held: &mut bool, action: &str, activated: bool) -> Option<Inpu
 
 #[cfg(test)]
 mod tests {
+    mod bus;
+
     use super::{insertion::apply_notice, transfer::Selection, *};
 
     pub(super) fn fixture_session() -> anyhow::Result<OwnedObjectPath> {

@@ -19,6 +19,8 @@ use x11rb::{
 };
 use xkbcommon::xkb::{KEYSYM_CASE_INSENSITIVE, Keysym, keysym_from_name};
 
+#[cfg(test)]
+pub(super) use self::clipboard::ClipboardAccess;
 pub(super) use self::clipboard::ClipboardWorker;
 use self::paste::InsertionWorker;
 use super::{Actionable, HostSession, ShortcutLabels, stop_requested, watch_readable};

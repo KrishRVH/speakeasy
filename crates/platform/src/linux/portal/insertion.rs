@@ -275,7 +275,10 @@ impl<'a> Insertions<'a> {
         reason = "The desktop thread keeps the native sender and its transfer futures on one LocalSet"
     )]
     async fn serve_transfer(&self, event: &Message) -> anyhow::Result<()> {
-        let (path, mime, serial): (OwnedObjectPath, String, u32) = event.body().deserialize()?;
+        let Ok((path, mime, serial)) = event.body().deserialize::<(OwnedObjectPath, String, u32)>()
+        else {
+            return Ok(());
+        };
         if self.clipboard_session.as_ref() != Some(&path) {
             return Ok(());
         }
