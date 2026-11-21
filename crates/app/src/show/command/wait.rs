@@ -1,6 +1,6 @@
 use std::{
     collections::HashSet,
-    fs,
+    fs, io,
     path::{Path, PathBuf},
     thread,
     time::{Duration, Instant, SystemTime},
@@ -30,15 +30,11 @@ fn next_saved_polling(
     let started = Instant::now();
     let known: HashSet<PathBuf> = shows(parent)?.into_iter().collect();
     loop {
-        if let Some(directory) = shows(parent)?
+        let fresh = shows(parent)?
             .into_iter()
-            .filter(|directory| !known.contains(directory))
-            .map(|directory| (saved_at(&directory), directory))
-            .min()
-            .map(|(_, directory)| directory)
-        {
-            return Entry::open(&directory)
-                .with_context(|| format!("Cannot open Show {}", directory.display()));
+            .filter(|directory| !known.contains(directory));
+        if let Some(entry) = first_saved(fresh)? {
+            return Ok(entry);
         }
         let waited = started.elapsed();
         anyhow::ensure!(
@@ -50,13 +46,30 @@ fn next_saved_polling(
     }
 }
 
-fn saved_at(directory: &Path) -> SystemTime {
-    fs::symlink_metadata(directory.join(SAVED_AT))
+fn first_saved(newest_first: impl Iterator<Item = PathBuf>) -> anyhow::Result<Option<Entry>> {
+    let mut candidates: Vec<_> = newest_first
+        .map(|directory| (saved_at(&directory), directory))
+        .collect();
+    candidates.sort_by_key(|&(saved, _)| (saved.is_none(), saved));
+    candidates
+        .into_iter()
+        .find_map(|(_, directory)| match Entry::open(&directory) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            opened => {
+                Some(opened.with_context(|| format!("Cannot open Show {}", directory.display())))
+            },
+        })
+        .transpose()
+}
+
+fn saved_at(directory: &Path) -> Option<SystemTime> {
+    let marker = fs::symlink_metadata(directory.join(SAVED_AT))
         .ok()
-        .filter(std::fs::Metadata::is_file)
-        .and_then(|metadata| metadata.modified().ok())
-        .or_else(|| fs::metadata(directory).ok()?.modified().ok())
-        .unwrap_or(SystemTime::UNIX_EPOCH)
+        .filter(fs::Metadata::is_file);
+    marker
+        .or_else(|| fs::metadata(directory).ok())?
+        .modified()
+        .ok()
 }
 
 fn shows(parent: &Path) -> anyhow::Result<Vec<PathBuf>> {
@@ -73,21 +86,44 @@ mod tests {
     use super::*;
     use crate::show::store;
 
-    fn save(parent: &Path) -> anyhow::Result<PathBuf> {
-        save_recorded(parent, SystemTime::now())
-    }
-
-    fn save_recorded(parent: &Path, recorded: SystemTime) -> anyhow::Result<PathBuf> {
+    fn save(parent: &Path, recorded: SystemTime) -> anyhow::Result<PathBuf> {
         let directory = store::fresh_directory(parent, recorded)?;
         let bundle = Demo::new(Typeface::parse(crate::BRAND_FONT_FILE)?).bundle((320, 200))?;
         store::stage(store::managed(&directory, None)?, bundle, None)?.persist()?;
         Ok(directory)
     }
 
+    fn save_at(parent: &Path, recorded: SystemTime, saved: SystemTime) -> anyhow::Result<PathBuf> {
+        let directory = save(parent, recorded)?;
+        fs::File::options()
+            .write(true)
+            .open(directory.join(SAVED_AT))?
+            .set_modified(saved)?;
+        Ok(directory)
+    }
+
+    fn wait_for_two(
+        parent: &Path,
+        first: (SystemTime, SystemTime),
+        second: (SystemTime, SystemTime),
+    ) -> anyhow::Result<(PathBuf, PathBuf, PathBuf)> {
+        let mut saved = None;
+        let found = next_saved_polling(parent, Duration::from_secs(20), POLL, |_| {
+            if saved.is_none() {
+                saved = Some((
+                    save_at(parent, first.0, first.1).unwrap(),
+                    save_at(parent, second.0, second.1).unwrap(),
+                ));
+            }
+        })?;
+        let (first, second) = saved.context("No Show was saved")?;
+        Ok((found.directory, first, second))
+    }
+
     #[test]
     fn wait_reports_only_a_show_saved_after_it_began() -> anyhow::Result<()> {
         let root = tempfile::tempdir()?;
-        let earlier = save(root.path())?;
+        let earlier = save(root.path(), SystemTime::now())?;
         let (began, waiting) = mpsc::channel();
         let parent = root.path().to_owned();
         let waiter = thread::spawn(move || {
@@ -101,7 +137,7 @@ mod tests {
         });
         waiting.recv()?;
         thread::sleep(Duration::from_millis(100));
-        let fresh = save(root.path())?;
+        let fresh = save(root.path(), SystemTime::now())?;
         let found = waiter
             .join()
             .map_err(|_panic| anyhow::anyhow!("The waiter panicked"))??;
@@ -112,24 +148,50 @@ mod tests {
     }
 
     #[test]
-    fn wait_selects_the_earliest_of_several_shows_seen_at_once() -> anyhow::Result<()> {
+    fn wait_selects_the_first_saved_of_several_shows_seen_at_once() -> anyhow::Result<()> {
+        let now = SystemTime::now();
+        let (earlier, later) = (now - Duration::from_secs(60), now + Duration::from_secs(60));
+        for (first_recorded, second_recorded) in [(later, earlier), (earlier, later)] {
+            let root = tempfile::tempdir()?;
+            save(root.path(), SystemTime::now())?;
+            let (found, first, _) = wait_for_two(
+                root.path(),
+                (first_recorded, now),
+                (second_recorded, now + Duration::from_secs(1)),
+            )?;
+            assert_eq!(found, first);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn shows_saved_in_the_same_instant_resolve_to_the_latest_recording() -> anyhow::Result<()> {
         let root = tempfile::tempdir()?;
-        let _older = save(root.path())?;
-        let mut first = None;
-        let found = next_saved_polling(root.path(), Duration::from_secs(20), POLL, |_| {
-            assert!(first.is_none());
-            first = Some(save(root.path()).unwrap());
-            let earlier = SystemTime::now() - Duration::from_secs(60);
-            let _second = save_recorded(root.path(), earlier).unwrap();
-        })?;
-        assert_eq!(found.directory, first.context("No Show was saved")?);
+        let now = SystemTime::now();
+        let (found, _, recorded_later) = wait_for_two(
+            root.path(),
+            (now, now),
+            (now + Duration::from_secs(60), now),
+        )?;
+        assert_eq!(found, recorded_later);
+        Ok(())
+    }
+
+    #[test]
+    fn a_show_removed_before_it_is_opened_does_not_end_the_wait() -> anyhow::Result<()> {
+        let root = tempfile::tempdir()?;
+        let kept = save(root.path(), SystemTime::now())?;
+        let removed = root.path().join("removed");
+        let found = first_saved([removed, kept.clone()].into_iter())?
+            .context("The remaining Show was skipped")?;
+        assert_eq!(found.directory, std::path::absolute(&kept)?);
         Ok(())
     }
 
     #[test]
     fn wait_gives_up_without_naming_an_older_show() -> anyhow::Result<()> {
         let root = tempfile::tempdir()?;
-        save(root.path())?;
+        save(root.path(), SystemTime::now())?;
         let error = next_saved_polling(
             root.path(),
             Duration::from_millis(50),
