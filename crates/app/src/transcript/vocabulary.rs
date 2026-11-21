@@ -1,4 +1,4 @@
-use std::{cmp::Reverse, collections::HashSet, fmt, iter};
+use std::{cmp::Reverse, collections::HashSet, iter};
 
 use anyhow::ensure;
 use serde::{Deserialize, Serialize};
@@ -11,17 +11,11 @@ const PUNCTUATION: [char; 19] = [
     '.', ',', '!', '?', ';', ':', '…', '(', ')', '[', ']', '{', '}', '"', '\'', '“', '”', '‘', '’',
 ];
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Correction {
     pub heard: String,
     pub written: String,
-}
-
-impl fmt::Debug for Correction {
-    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
-        out.debug_struct("Correction").finish_non_exhaustive()
-    }
 }
 
 pub(crate) fn validate(rules: &[Correction]) -> anyhow::Result<()> {

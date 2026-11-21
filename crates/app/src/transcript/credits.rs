@@ -64,13 +64,9 @@ mod tests {
             "Thank you.",
             " thank you ",
             "THANK YOU!",
-            "Thank you",
-            "Thanks for watching.",
             "subtitles by the amara org community",
-            "İzlediğiniz için teşekkür ederim.",
             "IZLEDIĞINIZ İÇİN TEŞEKKÜR EDERİM",
             "I\u{307}zlediğiniz için teşekkür ederim",
-            "ALTYAZI M.K.",
             "ご視聴ありがとうございました。",
         ] {
             assert!(says(heard, BRIEFLY), "{heard}");

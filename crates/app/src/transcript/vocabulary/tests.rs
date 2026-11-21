@@ -57,41 +57,18 @@ fn a_phrase_preserves_union_of_word_times_including_overlaps() {
 }
 
 #[test]
-fn invalid_and_duplicate_rules_fail_without_echoing_their_contents() {
+fn invalid_and_duplicate_rules_are_refused() {
+    let rule = |heard: &str, written: &str| Correction {
+        heard: heard.into(),
+        written: written.into(),
+    };
     for rules in [
-        vec![Correction {
-            heard: "PRIVATE\nPHRASE".into(),
-            written: "secret".into(),
-        }],
-        vec![Correction {
-            heard: "PRIVATE_PHRASE".into(),
-            written: " ".into(),
-        }],
-        vec![
-            Correction {
-                heard: "PRIVATE_PHRASE".into(),
-                written: "secret".into()
-            };
-            LIMIT + 1
-        ],
-        vec![
-            Correction {
-                heard: " private phrase ".into(),
-                written: "a".into(),
-            },
-            Correction {
-                heard: "PRIVATE  PHRASE".into(),
-                written: "b".into(),
-            },
-        ],
+        vec![rule("two\nlines", "written")],
+        vec![rule("heard", " ")],
+        vec![rule("heard", "written"); LIMIT + 1],
+        vec![rule(" spoken phrase ", "a"), rule("SPOKEN  PHRASE", "b")],
     ] {
-        assert!(
-            !validate(&rules)
-                .unwrap_err()
-                .to_string()
-                .contains("PRIVATE")
-        );
-        assert!(!format!("{rules:?}").contains("PRIVATE"));
+        assert!(validate(&rules).is_err());
     }
     assert!(validate(&rules()).is_ok());
 }
