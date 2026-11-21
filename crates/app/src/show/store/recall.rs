@@ -36,6 +36,7 @@ pub(crate) struct FileProblem {
 
 #[derive(Debug)]
 pub(crate) enum ReadError {
+    Folder,
     Manifest(Unreadable),
     File(FileProblem),
 }
@@ -43,6 +44,7 @@ pub(crate) enum ReadError {
 impl fmt::Display for ReadError {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Folder => out.write_str("Cannot open this folder"),
             Self::Manifest(error) => error.fmt(out),
             Self::File(problem) => write!(out, "{}: {}", problem.name, problem.reason),
         }
@@ -90,6 +92,15 @@ impl Entry {
         Ok(Self::read_from(directory, &files, managed))
     }
 
+    pub(in crate::show) const fn unopened(directory: PathBuf) -> Self {
+        Self {
+            directory,
+            show: Err(ReadError::Folder),
+            pinned: None,
+            id: None,
+        }
+    }
+
     pub(in crate::show) fn read_from(
         directory: PathBuf,
         files: &ReadDirectory,
@@ -114,11 +125,16 @@ impl Entry {
 pub(crate) fn list(parent: &Path) -> io::Result<impl Iterator<Item = io::Result<Entry>>> {
     let paths = directories(parent)?;
     Ok(paths.into_iter().filter_map(|path| {
-        found(Entry::open(&path, Some(parent)).and_then(|entry| {
+        let opened = Entry::open(&path, Some(parent)).and_then(|entry| {
             fs::metadata(&entry.directory)?;
             Ok(entry)
-        }))
-        .transpose()
+        });
+        match found(opened) {
+            Ok(entry) => entry.map(Ok),
+            Err(_private) => found(fs::symlink_metadata(&path))
+                .map(|listed| listed.map(|_| Entry::unopened(path)))
+                .transpose(),
+        }
     }))
 }
 

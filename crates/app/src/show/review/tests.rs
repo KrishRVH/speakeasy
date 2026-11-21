@@ -9,6 +9,8 @@ use super::{
 use crate::show::store::recall::{self, Health};
 
 mod handoff;
+#[cfg(unix)]
+mod listing;
 mod narration;
 mod navigation;
 mod offers;

@@ -258,12 +258,7 @@ impl Roots {
                     child = opened;
                     &child
                 },
-                Err(_private) => {
-                    return Some(Overview::damaged(
-                        row.path,
-                        "Cannot open this folder".to_owned(),
-                    ));
-                },
+                Err(_private) => return Some(Overview::of(&Entry::unopened(row.path))),
             },
         };
         let entry = Entry::read_from(row.path, files, self.managed());

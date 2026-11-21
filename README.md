@@ -470,10 +470,11 @@ when kept, unmanaged, or unavailable; deletion occurs during a later cleanup pas
 field describes retention, not numbered pin marks. If the manifest cannot be read, duration, counts,
 and pin status are null, and inspection omits its detail fields and frame tables. Inspection exits
 with status 1 for damage or an unsupported format, after printing its findings. A listing succeeds
-even when individual Shows are damaged. An unreadable Shows folder fails the command; a missing one
-is an empty listing. `narrationLost` is `audioStopped`, `audioSilent`, `notTranscribed`, or
-`incomplete`; with no reported loss, `show.json` omits it and `inspect` reports null. `incomplete`
-means recovery transcribed the surviving audio prefix; its text and timings cover only that prefix.
+even when individual Shows are damaged or their folders cannot be opened. An unreadable Shows folder
+fails the command; a missing one is an empty listing. `narrationLost` is `audioStopped`,
+`audioSilent`, `notTranscribed`, or `incomplete`; with no reported loss, `show.json` omits it and
+`inspect` reports null. `incomplete` means recovery transcribed the surviving audio prefix; its text
+and timings cover only that prefix.
 
 Manifests are limited to 16 MiB and summaries to 1 MiB. Only the current format, 3, is read and
 written; unknown fields are ignored. Other formats are reported as unsupported and left untouched.

@@ -92,6 +92,10 @@ impl Overview {
         };
         let problems = match &entry.show {
             Ok(show) => show.problems.iter().map(file).collect(),
+            Err(error @ ReadError::Folder) => vec![Problem {
+                file: entry.directory.clone(),
+                reason: error.to_string(),
+            }],
             Err(ReadError::File(problem)) => vec![file(problem)],
             Err(error @ ReadError::Manifest(_)) => vec![Problem {
                 file: entry.file(Manifest::FILE),
