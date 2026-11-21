@@ -237,8 +237,9 @@ module unless a test file is named.
   them into the settings, and matches them against the current settings. Its snapshot excludes
   microphone, delivery, shortcuts, sound, and presentation options.
   [settings/presets.rs](../crates/app/src/shell/settings/presets.rs) uses, updates, and stores
-  presets by position, and ignores those changes during model setup or file selection. The save
-  queue applies used choices; library-only changes leave sessions running.
+  presets by position, and ignores those changes during model setup or file selection. A preset's
+  menu keeps Update in place, unavailable during that work, so its keyboard cursor stays on the
+  entry it chose. The save queue applies used choices; library-only changes leave sessions running.
   [text_field.rs](../crates/app/src/shell/settings/text_field.rs) owns native selection and IME
   composition. Tab and GPUI focus loss commit the marked text. While a composition is marked, a
   click or an accessible selection leaves the caret to the input method: macOS offers the click to

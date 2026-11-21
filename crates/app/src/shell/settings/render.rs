@@ -15,7 +15,8 @@ use super::{
     permissions,
 };
 use crate::{
-    controls::{Kit, Tone, Weight, facet, hollow, icon, popover},
+    controls::{DISABLED, Kit, Tone, Weight, facet, hollow, icon, popover},
+    gpui_ext::AriaDisabled as _,
     icons,
     progress::Progress,
     shell::Services,
@@ -237,6 +238,11 @@ impl Settings {
                                 highlighted,
                                 press,
                             ),
+                            Kind::Unavailable => ui
+                                .kit()
+                                .menu_action(id, item.label, false, highlighted, |_, _, _| {})
+                                .aria_disabled(true)
+                                .opacity(DISABLED),
                         }
                     }),
             )

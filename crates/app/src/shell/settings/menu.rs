@@ -75,6 +75,7 @@ pub(super) struct Item {
 pub(super) enum Kind {
     Choice { chosen: bool },
     Command { destructive: bool },
+    Unavailable,
 }
 
 impl Item {
@@ -262,24 +263,22 @@ impl Settings {
                     )
                 })
                 .into(),
-            Menu::Preset(index) => {
-                let update =
-                    (self.config.speech_configured() && !self.engine_work.is_busy()).then(|| {
-                        Item {
-                            label: "Update with current settings".into(),
-                            action: Action::Preset(presets::Edit::Update(index)),
-                            kind: Kind::Command { destructive: false },
-                        }
-                    });
-                update
-                    .into_iter()
-                    .chain([Item {
-                        label: "Delete".into(),
-                        action: Action::Preset(presets::Edit::Delete(index)),
-                        kind: Kind::Command { destructive: true },
-                    }])
-                    .collect()
-            },
+            Menu::Preset(index) => vec![
+                Item {
+                    label: "Update with current settings".into(),
+                    action: Action::Preset(presets::Edit::Update(index)),
+                    kind: if self.config.speech_configured() && !self.engine_work.is_busy() {
+                        Kind::Command { destructive: false }
+                    } else {
+                        Kind::Unavailable
+                    },
+                },
+                Item {
+                    label: "Delete".into(),
+                    action: Action::Preset(presets::Edit::Delete(index)),
+                    kind: Kind::Command { destructive: true },
+                },
+            ],
         }
     }
 
@@ -380,7 +379,11 @@ impl Settings {
         let Some(menu) = self.menus.open else {
             return;
         };
-        if let Some(item) = self.menu_items(menu).get(self.menus.cursor) {
+        if let Some(item) = self
+            .menu_items(menu)
+            .get(self.menus.cursor)
+            .filter(|item| item.kind != Kind::Unavailable)
+        {
             self.act(item.action, window, cx);
         }
         cx.stop_propagation();

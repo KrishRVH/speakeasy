@@ -1,5 +1,5 @@
 use anyhow::ensure;
-use gpui::{AsyncApp, Task, WindowHandle};
+use gpui::{AsyncApp, KeyDownEvent, KeyUpEvent, Keystroke, Task, WindowHandle};
 
 use super::{
     super::{EngineFile, EngineWork, native_interaction::draw, vocabulary},
@@ -124,6 +124,7 @@ pub(in crate::shell::settings) fn exercise(
             view.config.language == "en",
             "The surviving preset was not usable"
         );
+        menu_cursor_survives_engine_work(view, window, cx)?;
         view.toggle_menu(Menu::Preset(0), window, cx);
         view.finish_reset(Ok(()), cx);
         ensure!(
@@ -135,5 +136,47 @@ pub(in crate::shell::settings) fn exercise(
         cx.notify();
         anyhow::Ok(())
     })??;
+    Ok(())
+}
+
+fn menu_cursor_survives_engine_work(
+    view: &mut Settings,
+    window: &mut gpui::Window,
+    cx: &mut gpui::Context<'_, Settings>,
+) -> anyhow::Result<()> {
+    let enter = KeyUpEvent {
+        keystroke: Keystroke::parse("enter")?,
+    };
+    view.config
+        .presets
+        .push(Preset::capture("Spare", &view.config)?);
+    let kept = view.config.presets.clone();
+    view.toggle_menu(Menu::Preset(1), window, cx);
+    view.engine_work = EngineWork::Choosing {
+        engine: view.config.engine,
+        file: EngineFile::Model,
+        _picker: Task::ready(()),
+    };
+    view.menu_release(&enter, window, cx);
+    ensure!(
+        view.config.presets == kept && view.menus.open == Some(Menu::Preset(1)),
+        "Enter on Update during engine work acted on another menu entry"
+    );
+    view.menu_key(
+        &KeyDownEvent {
+            keystroke: Keystroke::parse("end")?,
+            is_held: false,
+            prefer_character_input: false,
+        },
+        window,
+        cx,
+    );
+    view.finish_choice(Ok(None), cx);
+    view.menu_release(&enter, window, cx);
+    ensure!(
+        view.config.presets.len() == 1
+            && view.config.presets.first().map(Preset::name) == Some("Other"),
+        "Delete chosen during engine work acted on another menu entry once it finished"
+    );
     Ok(())
 }
