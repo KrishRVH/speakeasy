@@ -21,9 +21,10 @@ when the full interaction remains correct.
   application-owned Quit keep the UI responsive.
 - Cancelling or promoting dictation to a Show discards piece results while their worker finishes; no
   partial text reaches insertion. The next session can wait behind that one piece. Cancelling final
-  inference on GPU, or a Nemotron stream on either device, reuses a worker only after it transcribes
-  a second of silence within two seconds. Failed checks and other cancelled final CPU inference
-  retire the worker. A retained worker may keep its largest model buffers until Pause releases it.
+  inference on GPU, or a Nemotron stream on either device, reuses a worker that has not answered
+  only after it transcribes a second of silence within two seconds. Failed checks and other
+  cancelled final CPU inference retire the worker. A retained worker may keep its largest model
+  buffers until Pause releases it.
 - The audio callback allocates nothing and writes to a bounded single-producer, single-consumer
   ring. Consumer-side PCM starts with a ten-second reservation and cannot grow past five minutes.
   Callback sample count, owner timer, and consumer limit defend the bound independently.
@@ -58,7 +59,8 @@ public audio or fake devices. `profile_recording_dictation` replays public PCM t
 callback, ring, drain, and pause cutter while the local worker recognizes it, with fake insertion.
 It reports request hashes and durations, word and formatting errors against a public reference,
 total inference work, release latency, and drain and meter cadence. Pair segmented and whole runs at
-real time for latency and capture load; accelerated playback is only a quality check.
+real time for latency and capture load; accelerated playback is only a quality check. A segmented
+Nemotron run streams continuously, so it reports neither request durations nor total inference.
 [Verification](architecture.md#verification) names the fixture variables. The synthetic
 `profile_audio_pipeline` probe times callback/downmix/consumer work; `profile_audio_seal` times
 sealing a five-minute recording, classified for speech while recording. Sealing includes the
@@ -107,25 +109,27 @@ SPEAKEASY_FIXTURE_CONFIG="$PWD/.scratch/public-speech/config.json" \
   -- --exact --ignored --nocapture --test-threads=1
 ```
 
-Each case starts and warms a fresh worker, reports startup separately, replays audio through the
-capture pipeline and waits for worker teardown. It uses fake insertion and no microphone or hooks.
-Output contains hashes and counts, never reference or recognized text. A failed case stops the run;
-there is no aggregate success report for an incomplete corpus. Empty recognition counts as word
-deletions and has no insertion latency. The final JSON gives overall and per-tag results: total word
-errors divided by total reference words, insertion counts, and nearest-rank p50/p95 release latency
-for real-time insertions only. Accelerated replays retain quality results but have no aggregate
-latency percentiles. Report sample counts; a small corpus cannot establish a stable tail latency.
+Each case starts a fresh worker, warming it only where the app does, reports startup separately,
+replays audio through the capture pipeline and waits for worker teardown. It uses fake insertion and
+no microphone or hooks. Output contains hashes and counts, never reference or recognized text. A
+failed case stops the run; there is no aggregate success report for an incomplete corpus. Empty
+recognition counts as word deletions and has no insertion latency. The final JSON gives overall and
+per-tag results: total word errors divided by total reference words, insertion counts, and
+nearest-rank p50/p95 release latency for real-time insertions only. Accelerated replays retain
+quality results but have no aggregate latency percentiles. Report sample counts; a small corpus
+cannot establish a stable tail latency.
 
 Word scoring is an alphanumeric-token proxy, identified in output as
-`lowercase-alphanumeric-runs-v1`. It lowercases tokens and splits at punctuation and combining
-marks; it does not normalize Unicode or numbers, expand contractions or segment languages without
-word boundaries. Do not compare its rates across languages. The separate formatting score uses
-whitespace tokens with case and punctuation intact. Neither measures human correction effort. Use
-references with intended formatting for that score; uppercase audiobook transcripts cannot establish
-punctuation quality. Preserve silence cases' insertion counts and raw error totals even when their
-zero reference words make an error rate undefined. Compare the same pinned corpus and normalization
-across products, and evaluate conversational speech, accents, names, numbers and languages
-separately before drawing product-wide conclusions.
+`lowercase-alphanumeric-runs-v1`. It lowercases tokens and splits at every character Unicode classes
+as neither alphabetic nor numeric, such as punctuation and some combining marks; it does not
+normalize Unicode or numbers, expand contractions or segment languages without word boundaries. Do
+not compare its rates across languages. The separate formatting score uses whitespace tokens with
+case and punctuation intact. Neither measures human correction effort. Use references with intended
+formatting for that score; uppercase audiobook transcripts cannot establish punctuation quality.
+Preserve silence cases' insertion counts and raw error totals even when their zero reference words
+make an error rate undefined. Compare the same pinned corpus and normalization across products, and
+evaluate conversational speech, accents, names, numbers and languages separately before drawing
+product-wide conclusions.
 
 Set `SPEAKEASY_FIXTURE_CLEANUP=raw` to compare cleanup policies on one recognition. The replay
 preserves language and recognition hints, disables corrections and filler removal, and uses the

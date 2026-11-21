@@ -16,10 +16,10 @@ appears only while capture is open, and its `lamp` accent never signals recordin
 
 `crates/app/src/theme.rs` defines four themes. Jet & Champagne is the default; Emerald Lounge, Iris,
 and Midnight Chrome are selectable in Settings, and choosing one recolors Settings, the pill, Shows,
-and the tray at once. The wordmark is Josefin Sans SemiBold, embedded under the SIL Open Font
-License, and the line is “Say the word.” App icons come from the SVG sources in `packaging/brand`:
-the committed Windows and macOS icon files omit the ornament at 32 px and below, and Linux installs
-the full scalable icon.
+and the Windows and Linux tray at once. The wordmark is Josefin Sans SemiBold, embedded under the
+SIL Open Font License, and the line is “Say the word.” App icons come from the SVG sources in
+`packaging/brand`: the committed Windows and macOS icon files omit the ornament at 32 px and below,
+and Linux installs the full scalable icon.
 
 Inside the windows the ornament recedes: the icon, the pill, and the jewels carry the Deco, while
 Settings and Shows read as calm panels. Both draw their controls from one kit in
@@ -112,9 +112,9 @@ once the microphone listens, a lower note when a recording finishes, by gesture,
 limit, as its microphone is lost after speech, as a Show's screen, window, or audio capture stops,
 or as an interruption finishes a Show, a muted low note when the user cancels or a Show has nothing
 to record, two rising notes when a Show starts, and a rising chord when text or a Show waits on the
-clipboard. Text arriving in the editor, errors, hands-free locking, and dictation that an
-interruption discards stay silent; the pill already says them. **Play sounds** in Settings turns
-every cue off.
+clipboard. Text arriving in the editor, errors, hands-free locking, **Copy last Show**, and
+dictation that an interruption discards stay silent; the pill already says them. **Play sounds** in
+Settings turns every cue off.
 
 Each cue echoes the pill. The high note sounds as the pill opens to listening rather than at the
 press, so it never promises a microphone still opening, and a desktop shortcut that takes the keys

@@ -136,9 +136,9 @@ the pill shows:
 Soft kalimba notes mark the moments you may not be watching: a high note once Speakeasy is
 listening, a lower one when you finish, the five-minute limit does, or the microphone stops after
 you speak, a muted low note when you cancel, two rising notes when a Show starts, and a short chord
-when text or a Show is copied. Speakeasy listens beneath its own cues, so a recording that hears
-only a cue sends nothing, while a word said over one still counts. Turn them off with **Play
-sounds** in Settings.
+when text or a Show you just recorded is copied. Speakeasy listens beneath its own cues, so a
+recording that hears only a cue sends nothing, while a word said over one still counts. Turn them
+off with **Play sounds** in Settings.
 
 ### Show your coding agent
 
@@ -489,7 +489,7 @@ settings. On Windows with a WSL distribution, setup also prints a stanza for an 
 WSL: WSL interop starts the Windows `speakeasy-cli.exe`, so roots and Show paths stay Windows paths,
 and Show IDs work unchanged. When interop, drive mounting, or a lettered drive is missing, setup
 says so instead. The server's initialization instructions carry the disclosure above and the reading
-guide that `speakeasy show skill` prints.
+guide that `speakeasy show skill` prints, without its front matter.
 
 `show skill` prints the [agent reading guide](skills/speakeasy-show/SKILL.md) embedded in the
 installed binary. `show skill --install DIR` writes it to `DIR/speakeasy-show/SKILL.md` for an agent
@@ -693,8 +693,8 @@ avoid requesting keyboard-control access. The optional `linux` settings object h
 and `cancel` chords in portal syntax, such as `CTRL+LOGO+space`: X11 grabs them, and Wayland
 requests them as preferred triggers. It also holds `external_shortcut`, which Shortcuts sets. The
 top-level `text_delivery` setting holds the **Insert text by** choice: `paste`, `terminal_paste`,
-`type`, or `copy`. After rebinding Speakeasy's shortcuts in your desktop's settings or changing
-keyboard layouts, pause and resume dictation.
+`type`, or `copy`. After rebinding Speakeasy's shortcuts in your desktop's settings or changing the
+keyboard map, pause and resume dictation.
 
 A tray host is optional: without one, closing Settings quits and the launcher reopens the app.
 Configuration lives under `$XDG_CONFIG_HOME/speakeasy`, downloads under `$XDG_DATA_HOME/speakeasy`,

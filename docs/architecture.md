@@ -173,13 +173,14 @@ module unless a test file is named.
   tests cover word boundaries, non-chaining replacements, duplicate validation, and timing. Whisper
   invents subtitle credits such as “Thank you.” from near-silence, and
   [credits.rs](../crates/app/src/transcript/credits.rs) lists the ones it is known to invent. The
-  worker drops a Whisper transcript or Show narration that is exactly one of them when its recording
-  held under one second of audible time. The comparison reads letters and digits only, ignoring
-  case, punctuation, and the dot that distinguishes Turkish i. Dictation then ends as “No speech
-  detected”, and a Show keeps empty narration, as silence does. A credit with other words around it,
-  from a second or more of sound, or from another engine stays. A credit really said alone in under
-  a second is dropped too, and where room noise passes the gate every window counts, so in a noisy
-  room only a recording shorter than about a second qualifies.
+  worker drops a Whisper transcript or Show narration that is exactly one of them, or exactly the
+  prompt listing two or more recognition hints, when its recording held under one second of audible
+  time. The comparison reads letters and digits only, ignoring case, punctuation, and the dot that
+  distinguishes Turkish i. Dictation then ends as “No speech detected”, and a Show keeps empty
+  narration, as silence does. A credit with other words around it, from a second or more of sound,
+  or from another engine stays. A credit really said alone in under a second is dropped too, and
+  where room noise passes the gate every window counts, so in a noisy room only a recording shorter
+  than about a second qualifies.
   [runtime/tests/recognition.rs](../crates/app/src/runtime/tests/recognition.rs) checks dictation
   and Show narration, with and without word times.
 - **Insertion**: [platform/src/insertion.rs](../crates/platform/src/insertion.rs) with the Windows
@@ -266,23 +267,24 @@ module unless a test file is named.
   the others, and a file chosen for an engine the user has since left is dropped.
   [config/presets.rs](../crates/app/src/config/presets.rs) stores bounded named dictation choices,
   validates them without opening inactive model paths, loads them into the settings, and matches
-  them against the current settings. Its snapshot excludes microphone, delivery, shortcuts, sound,
-  and presentation options. [settings/presets.rs](../crates/app/src/shell/settings/presets.rs) uses,
-  updates, and stores presets by position, and ignores those changes during model setup or file
-  selection. A preset's menu keeps Update in place, unavailable during that work, so its keyboard
-  cursor stays on the entry it chose. Use loads the validated engine and model paths, so a preset
-  that spells the saved files differently neither queues a save that could overwrite an outside edit
-  nor keeps offering Use once applied. The save queue applies used choices; library-only changes
-  leave sessions running. [text_field.rs](../crates/app/src/shell/settings/text_field.rs) owns
-  native selection and IME composition. Tab and GPUI focus loss commit the marked text. While a
-  composition is marked, a click or an accessible selection leaves the caret to the input method:
-  macOS offers the click to the input context first, X11 and Wayland end the composition before
-  delivering a press, and Windows keeps composing. X11 window focus loss resets XIM and removes the
-  marked text, leaving the composition to the input method: IBus commits it back for engines that
-  commit their preedit on reset and drops it for the others. Only the bare primary modifier edits,
-  so Windows AltGr stays available for character input. The pure edit state tests Unicode
-  boundaries, and [native_tests.rs](../crates/app/src/shell/settings/native_tests.rs) checks
-  owned-window composition and save draining. The
+  them against the current settings. Its snapshot holds only the engine, model, language,
+  recognition hints, filler removal, phrase corrections, thread count, and GPU preference.
+  [settings/presets.rs](../crates/app/src/shell/settings/presets.rs) uses, updates, and stores
+  presets by position, and ignores those changes during model setup or file selection. A preset's
+  menu keeps Update in place, unavailable during that work, so its keyboard cursor stays on the
+  entry it chose. Use loads the validated engine and model paths, so a preset that spells the saved
+  files differently neither queues a save that could overwrite an outside edit nor keeps offering
+  Use once applied. The save queue applies used choices; library-only changes leave sessions
+  running. [text_field.rs](../crates/app/src/shell/settings/text_field.rs) owns native selection and
+  IME composition. Tab and GPUI focus loss commit the marked text. While a composition is marked, a
+  click or an accessible selection leaves the caret to the input method: macOS offers the click to
+  the input context first, X11 and Wayland end the composition before delivering a press, and
+  Windows keeps composing. X11 window focus loss resets XIM and removes the marked text, leaving the
+  composition to the input method: IBus commits it back for engines that commit their preedit on
+  reset and drops it for the others. Only the bare primary modifier edits, so Windows AltGr stays
+  available for character input. The pure edit state tests Unicode boundaries, and
+  [native_tests.rs](../crates/app/src/shell/settings/native_tests.rs) checks owned-window
+  composition and save draining. The
   [native interaction test](../crates/app/src/shell/settings/native_interaction.rs) checks dropdown
   keyboard navigation, focus restoration, Parakeet's English cleanup switch, presets, and private
   practice cleanup through the borrowed-window close callback.
@@ -446,10 +448,10 @@ module unless a test file is named.
   acknowledged by its Services owner without inventing a session-status observation; ordinary status
   is observed by the session owner. A lost receipt is unknown, never proof of refusal. Capture and
   print are refused before the machine unless `print_to_scripts` is on; changing it is a session
-  change, so turning it off ends a running capture. A capture (`start --print`) marks its session's
-  handoff; a print stores its call in that session, which answers it with the text in place of
-  insertion or refuses it when the session ends without text, so one session answers one print at
-  most. Show promotion leaves these private dictations in their original session.
+  change, so turning it off ends a running capture. A capture (`dictation start --print`) marks its
+  session's handoff; a print stores its call in that session, which answers it with the text in
+  place of insertion or refuses it when the session ends without text, so one session answers one
+  print at most. Show promotion leaves these private dictations in their original session.
   [tests/printing.rs](../crates/app/src/runtime/tests/printing.rs) covers that handoff.
   [tests/control.rs](../crates/app/src/runtime/tests/control.rs) covers stale authority, busy
   admission, per-session style, and preset adoption.
@@ -741,7 +743,7 @@ module unless a test file is named.
   checkpoint visible as Narration pending; publication keeps one for retry only when its audio is
   not damaged and its frame log replays a frame; one with neither retires, and a retry whose kept
   audio holds no speech retires it and says so, and the Shows window rereads its library after any
-  failed recovery so a retired row stops offering Retry; a retry whose transcription yields no words
+  failed recovery so a retired row stops offering retry; a retry whose transcription yields no words
   saves no copy and stays. Saved narration that cannot be read fails recovery and stays; damaged
   narration, including an empty file, falls back to the kept audio, as does a retry's saved
   narration without words. Kept audio that cannot be read then fails recovery with access advice,
@@ -1013,10 +1015,11 @@ stateDiagram-v2
     Queued --> Opening: microphone free
     Opening --> Recording: first samples
     Opening --> Stopping: first samples after finish
+    Opening --> AwaitingFootage: Show capture ends before samples; no narration
     Recording --> Recording: recognize pause-aligned pieces; retain whole audio
     Recording --> Stopping: release / next press / limit
     Stopping --> Recognizing: audio sealed; retire microphone
-    Recording --> Recognizing: microphone lost after speech; seal what arrived
+    Recording --> Recognizing: capture ends or microphone lost after speech; seal what arrived
     Stopping --> [*]: no speech
     Recognizing --> Recognizing: await worker / pieces / final request / retry
     Recognizing --> Delivering: complete dictation text; insert
