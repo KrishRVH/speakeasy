@@ -419,9 +419,7 @@ impl<'a> Take<'a> {
         stop.await;
         let ended = ended.map(|result| {
             result.and_then(|ending| {
-                std::iter::from_fn(|| samples.try_recv().ok())
-                    .filter(|sample| sample.at() <= at)
-                    .try_for_each(|sample| self.pointer(sample))?;
+                self.settle(&samples, &lanes.pinned, at)?;
                 Ok(ending)
             })
         });
@@ -442,6 +440,24 @@ impl<'a> Take<'a> {
             },
         };
         self.into_footage(at, ending).await.map(Some)
+    }
+
+    fn settle(
+        &mut self,
+        samples: &Receiver<PointerSample>,
+        pinned: &Receiver<Taps>,
+        at: Instant,
+    ) -> anyhow::Result<()> {
+        let mut samples = std::iter::from_fn(|| samples.try_recv().ok())
+            .filter(|sample| sample.at() <= at)
+            .peekable();
+        let pins = std::iter::from_fn(|| pinned.try_recv().ok()).filter(|taps| taps.released <= at);
+        for taps in pins {
+            std::iter::from_fn(|| samples.next_if(|sample| sample.at() <= taps.released))
+                .try_for_each(|sample| self.pointer(sample))?;
+            self.pin(taps)?;
+        }
+        samples.try_for_each(|sample| self.pointer(sample))
     }
 
     async fn abandon_log(&mut self) {

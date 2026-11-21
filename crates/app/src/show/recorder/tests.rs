@@ -489,6 +489,29 @@ async fn a_pin_is_judged_after_the_pointer_samples_queued_before_it() -> anyhow:
     Ok(())
 }
 
+#[tokio::test(start_paused = true)]
+async fn a_pin_queued_beside_finish_still_joins_the_show() -> anyhow::Result<()> {
+    let (recorded, _) = record(async |feed| {
+        feed.frame(0).await;
+        feed.pointer(300, 0.3, 0.4, false, false).await;
+        wait(700).await;
+        feed.taps(400, 600).await;
+        feed.pointer(650, 0.8, 0.8, false, false).await;
+        feed.finish().await;
+    })
+    .await;
+    let recording = recorded?.context("Finished, not cancelled")?.recording;
+    assert_eq!(
+        recording.pins,
+        [Pin {
+            at: Moment::from_millis(600),
+            point: Point::new(0.3, 0.4),
+        }],
+        "Finish dropped the pin queued beside it or judged it after later samples"
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn an_area_is_dragged_out_or_left_unchosen_and_earlier_pins_mark_nothing()
 -> anyhow::Result<()> {

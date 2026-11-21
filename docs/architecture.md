@@ -774,8 +774,9 @@ module unless a test file is named.
   crossing an unobserved interval. A take finished before its first frame waits up to three seconds
   for one, never past the session's five-minute limit. The recorder arms that limit from session
   start, ends there even when the owner's Finish arrives late, and admits no observation stamped at
-  or after it; a capture that would start past the limit fails as recording no frames. Finishing drains observations through the
-  chosen end after the producers stop; teardown adds no annotations. Checkpoint replay preserves these same gaps. Pointer
+  or after it; a capture that would start past the limit fails as recording no frames. Finishing drains observations and
+  queued pins through the chosen end after the producers stop, each pin after the samples up to its
+  release, as the live order would judge it; teardown adds no annotations. Checkpoint replay preserves these same gaps. Pointer
   events also carry their source display rectangle. The tracker retains one coordinate-space proof
   per stroke and pin: mixed strokes and groups across resizes or gaps have none. A delayed pin uses
   the actual pointer point’s proof; stroke cuts preserve the carried joint’s proof. A recording
