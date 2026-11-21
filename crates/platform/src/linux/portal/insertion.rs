@@ -634,6 +634,58 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn a_sent_paste_serves_its_text_and_an_unfinished_replacement_serves_nothing()
+    -> anyhow::Result<()> {
+        let (events, _receiver) = async_channel::bounded(1);
+        let input = InputSender::new(events);
+        let paste = |text| -> anyhow::Result<(InsertPermit, Insertion)> {
+            let permit = input.begin().context("Recording")?;
+            let request = insertion(
+                text,
+                &permit,
+                Delivery::Paste,
+                FocusReport::default().subscribe(),
+            );
+            Ok((permit, request))
+        };
+        let (sent, request) = paste("fixture")?;
+        assert!(sent.commit());
+        let mut selection = None;
+        assert_eq!(
+            publish_portal_selection(&mut selection, &request, true, Inserted::Sent),
+            Inserted::Sent
+        );
+        assert!(
+            selection
+                .as_ref()
+                .is_some_and(|selection| selection.serves(&sent)),
+            "A sent paste left nothing to serve"
+        );
+        let (_, kept) = paste("unconfirmed")?;
+        assert_eq!(
+            publish_portal_selection(&mut selection, &kept, false, CLIPBOARD_CHANGED),
+            CLIPBOARD_CHANGED
+        );
+        assert!(
+            selection
+                .as_ref()
+                .is_some_and(|selection| selection.serves(&sent)),
+            "A replacement the portal never confirmed withdrew the sent copy"
+        );
+        let (_, replaced) = paste("confirmed")?;
+        replaced.permit.revoke();
+        assert_eq!(
+            publish_portal_selection(&mut selection, &replaced, true, Inserted::Cancelled),
+            Inserted::Cancelled
+        );
+        assert!(
+            selection.is_none(),
+            "A confirmed replacement cancelled before its paste kept serving the copy it replaced"
+        );
+        Ok(())
+    }
+
     fn paste_after_notices(
         notices: &Receiver<Notice>,
         forfeited: &mut Option<InsertPermit>,
