@@ -83,7 +83,8 @@ app liveness for `AsyncApp`, and `App::shutdown` ordering.
   so a window manager forgets it even when it was already unmapped.
   `idle_native_pill_starts_unmapped_and_can_show_and_hide` fails without the map and unmap, and
   `native_pill_app_withdraws_a_managed_window_that_is_already_unmapped`, which listens on the root
-  as a window manager does, fails without the withdrawal event.
+  as a window manager and a taskbar do, fails without the withdrawal event or its
+  SubstructureNotify mask.
 - `src/linux/wayland/window.rs` implements `PlatformWindow::set_visible`. A toplevel or layer
   surface opened without `show` has no role objects until it is shown. Hiding one does as GTK and
   Qt do: it destroys its role objects, the decoration, toplevel, and xdg_surface or the layer

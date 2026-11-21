@@ -135,12 +135,15 @@ fn check_managed_withdrawal(cx: &mut App) -> anyhow::Result<()> {
         .get(screen)
         .context("X11 screen")?
         .root;
-    connection
-        .change_window_attributes(
-            root,
-            &ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_REDIRECT),
-        )?
-        .check()?;
+    let (taskbar, _) = XCBConnection::connect(None)?;
+    for (listener, mask) in [
+        (&connection, EventMask::SUBSTRUCTURE_REDIRECT),
+        (&taskbar, EventMask::SUBSTRUCTURE_NOTIFY),
+    ] {
+        listener
+            .change_window_attributes(root, &ChangeWindowAttributesAux::new().event_mask(mask))?
+            .check()?;
+    }
 
     let attributes = connection.get_window_attributes(id)?.reply()?;
     assert!(!attributes.override_redirect);
@@ -150,17 +153,28 @@ fn check_managed_withdrawal(cx: &mut App) -> anyhow::Result<()> {
         connection.get_window_attributes(id)?.reply()?.map_state,
         MapState::UNMAPPED
     );
-    while let Some(event) = connection.poll_for_event()? {
+    for (listener, name) in [(&connection, "window manager"), (&taskbar, "taskbar")] {
+        ensure!(
+            withdrawn(listener, root, id)?,
+            "The {name} did not receive the managed window's synthetic withdrawal"
+        );
+    }
+    Ok(())
+}
+
+fn withdrawn(listener: &XCBConnection, root: u32, id: u32) -> anyhow::Result<bool> {
+    listener.get_input_focus()?.reply()?;
+    while let Some(event) = listener.poll_for_event()? {
         if matches!(event, Event::UnmapNotify(notify)
             if notify.event == root
                 && notify.window == id
                 && notify.response_type & 0x80 != 0
                 && !notify.from_configure)
         {
-            return Ok(());
+            return Ok(true);
         }
     }
-    bail!("The root did not receive the managed window's synthetic withdrawal")
+    Ok(false)
 }
 
 #[expect(
