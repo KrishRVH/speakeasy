@@ -14,7 +14,7 @@ use super::{
     store::checkpoint::{Publication as Completion, SavedNarration},
     wsl::Lookup,
 };
-use crate::runtime::ports::{Footage, PUBLISH_STOPPED, Preservation, Published, Sealed};
+use crate::runtime::ports::{Audio, Footage, PUBLISH_STOPPED, Preservation, Published, Sealed};
 
 const NO_SPEECH: &str = "Narration could not be recovered because the kept audio holds no speech. \
                          The saved Show is unchanged; its narration retry is removed from Shows.";
@@ -156,6 +156,15 @@ fn publish_with(
     }
     let audio_kept =
         completion == Completion::Pending && checkpoint.is_some_and(Checkpoint::keeps_retry);
+    let audio = |voice_cut: bool| {
+        if audio_kept {
+            Audio::KeptForRetry
+        } else if voice_cut && lost.is_none() {
+            Audio::VoiceCutShort
+        } else {
+            Audio::Settled
+        }
+    };
     let result = persist(handoff, footage, checkpoint, completion, permit, parent);
     match result {
         Ok(Some(Persisted {
@@ -163,12 +172,13 @@ fn publish_with(
             summary,
             source_lost,
             movie_lost,
+            voice_cut,
         })) => {
             let preservation = Preservation {
                 narration_lost: lost,
                 source_lost,
                 movie_lost,
-                audio_kept,
+                audio: audio(voice_cut),
             };
             match origin {
                 Origin::Live { checkpoint } => {
@@ -284,6 +294,7 @@ struct Persisted {
     summary: String,
     source_lost: bool,
     movie_lost: bool,
+    voice_cut: bool,
 }
 
 fn persist(
@@ -346,12 +357,12 @@ fn persist(
         Some(checkpoint) => checkpoint.retain_movie(&mut staged, duration)?,
         None => false,
     };
-    if completion == Completion::Narrated
-        && voiced
-        && let Some(checkpoint) = checkpoint
-    {
-        checkpoint.retain_voice(&staged)?;
-    }
+    let voice_cut = match checkpoint {
+        Some(checkpoint) if completion == Completion::Narrated && voiced => {
+            checkpoint.retain_voice(&staged)?
+        },
+        Some(_) | None => false,
+    };
     let source_lost = staged.source_lost;
     drop(journal);
     if !permit.commit() {
@@ -366,6 +377,7 @@ fn persist(
         summary,
         source_lost,
         movie_lost,
+        voice_cut,
     }))
 }
 

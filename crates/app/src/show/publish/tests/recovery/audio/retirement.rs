@@ -332,7 +332,7 @@ async fn a_saved_show_promises_no_retry_that_its_checkpoint_cannot_replay() -> a
         bail!("Synthetic Show was not saved");
     };
     assert!(
-        !preservation.audio_kept,
+        preservation.audio != Audio::KeptForRetry,
         "A retry was promised without frames to replay"
     );
     assert_eq!(recoverable(root.path()), []);
@@ -365,10 +365,51 @@ async fn a_saved_show_promises_no_retry_from_damaged_audio() -> anyhow::Result<(
         bail!("Synthetic Show was not saved");
     };
     assert!(
-        !preservation.audio_kept,
+        preservation.audio != Audio::KeptForRetry,
         "Damaged audio was promised a retry"
     );
     assert!(!interrupted.directory().exists());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_saved_show_reports_voice_whose_last_audio_missed_its_checkpoint() -> anyhow::Result<()> {
+    let speech = crate::audio::fixture::square_wave(3000)
+        .take(8_000)
+        .flat_map(i16::to_le_bytes)
+        .collect::<Vec<_>>();
+    for (ending, cut) in [
+        (AudioEnding::Interrupted, true),
+        (AudioEnding::Complete, false),
+    ] {
+        let root = tempfile::tempdir()?;
+        let checkpoint = with_pcm(root.path(), &speech, ending).await?;
+        let captured = narrated(
+            Footage::from(checkpoint.replay()?),
+            Narration::Text("synthetic narration".into()),
+            None,
+        );
+        let (_input, active) = permit();
+        let Published::Saved { preservation, .. } = publish_with(
+            Handoff::default(),
+            captured,
+            Origin::Live {
+                checkpoint: Some(checkpoint),
+            },
+            &active,
+            || Ok(root.path().to_owned()),
+            |_| Ok(()),
+        )?
+        else {
+            bail!("Synthetic Show was not saved");
+        };
+        assert_eq!(
+            preservation.audio == Audio::VoiceCutShort,
+            cut,
+            "{:?}",
+            preservation.audio
+        );
+    }
     Ok(())
 }
 

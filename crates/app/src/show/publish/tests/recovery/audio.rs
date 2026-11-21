@@ -123,9 +123,11 @@ async fn pending_retry_preserves_edits_and_failure_does_not_publish_another_copy
     let (_input, active) = permit();
     let Published::Saved {
         show: original,
-        preservation: Preservation {
-            audio_kept: true, ..
-        },
+        preservation:
+            Preservation {
+                audio: Audio::KeptForRetry,
+                ..
+            },
         ..
     } = publish_with(
         Handoff::default(),
@@ -184,7 +186,8 @@ async fn pending_retry_preserves_edits_and_failure_does_not_publish_another_copy
         show: copy,
         narrated_copy: true,
         preservation: Preservation {
-            audio_kept: false, ..
+            audio: Audio::Settled,
+            ..
         },
         ..
     } = publish_with(
@@ -228,9 +231,11 @@ async fn kept_bundle_cannot_extend_audio_expiry_and_discard_audio_leaves_it_unto
         let (_input, active) = permit();
         let Published::Saved {
             show,
-            preservation: Preservation {
-                audio_kept: true, ..
-            },
+            preservation:
+                Preservation {
+                    audio: Audio::KeptForRetry,
+                    ..
+                },
             ..
         } = publish_with(
             Handoff::default(),

@@ -6,7 +6,7 @@ use super::commands;
 use crate::runtime::{
     LOADING, SHOW_COPIED, SHOW_GONE,
     native::{Copied, Native, Restored},
-    ports::{PUBLISH_STOPPED, Preservation, Unchosen},
+    ports::{Audio, PUBLISH_STOPPED, Preservation, Unchosen},
 };
 
 const INSERT_FAILED: &str =
@@ -154,13 +154,18 @@ const fn narrated(lost: Option<NarrationLoss>) -> Option<&'static str> {
 }
 
 fn preserved(message: &mut String, preservation: Preservation) {
-    if preservation.audio_kept {
+    if preservation.audio == Audio::KeptForRetry {
         message.push_str(
             " Audio is kept privately for retry in Shows until its original seven-day expiry.",
         );
     }
     if preservation.movie_lost {
         message.push_str(" Video could not be saved; the selected keyframes are available.");
+    }
+    if preservation.audio == Audio::VoiceCutShort {
+        message.push_str(
+            " Voice for video export ends early because its last audio was not saved in time; the narration is complete.",
+        );
     }
     if preservation.source_lost {
         message.push_str(
@@ -189,28 +194,34 @@ mod tests {
 
     #[test]
     fn saved_show_messages_report_retained_audio_and_lost_source_independently() {
-        for (audio_kept, source_lost, suffix) in [
-            (false, false, ""),
+        for (audio, source_lost, suffix) in [
+            (Audio::Settled, false, ""),
             (
-                true,
+                Audio::KeptForRetry,
                 false,
                 " Audio is kept privately for retry in Shows until its original seven-day expiry.",
             ),
             (
-                false,
+                Audio::Settled,
                 true,
                 " Retained source frames could not be saved; the selected keyframes are available.",
             ),
             (
-                true,
+                Audio::KeptForRetry,
                 true,
                 " Audio is kept privately for retry in Shows until its original seven-day expiry. \
                  Retained source frames could not be saved; the selected keyframes are available.",
             ),
+            (
+                Audio::VoiceCutShort,
+                false,
+                " Voice for video export ends early because its last audio was not saved in time; \
+                 the narration is complete.",
+            ),
         ] {
             let preservation = Preservation {
                 source_lost,
-                audio_kept,
+                audio,
                 ..Preservation::default()
             };
             for (outcome, prefix) in [

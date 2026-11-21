@@ -56,19 +56,20 @@ pub(super) fn retain(
     checkpoint: &Path,
     staged: &Staged,
     recorded: SystemTime,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let expires = recorded
         .checked_add(KEPT_FOR)
         .context("Show voice expiry is out of range")?;
     if SystemTime::now() >= expires {
-        return Ok(());
+        return Ok(false);
     }
-    let input = match audio::available(checkpoint, audio::FILE) {
+    let mut input = match audio::available(checkpoint, audio::FILE) {
         Ok(Some(input)) => input,
-        Ok(None) => return Ok(()),
-        Err(damaged) if damaged.is::<audio::Damaged>() => return Ok(()),
+        Ok(None) => return Ok(false),
+        Err(damaged) if damaged.is::<audio::Damaged>() => return Ok(false),
         Err(error) => return Err(error),
     };
+    let cut = !audio::ended(&mut input)?;
     let mut input = input.take(audio::FILE_LIMIT.saturating_add(1));
     let mut output = File::create_new(staged.staging.path().join(FILE))?;
     let copied = io::copy(&mut input, &mut output)?;
@@ -86,7 +87,7 @@ pub(super) fn retain(
     )?;
     expiry.sync_all()?;
     sync_directory(staged.staging.path())?;
-    Ok(())
+    Ok(cut)
 }
 
 fn deadline(directory: &ReadDirectory) -> io::Result<Option<SystemTime>> {

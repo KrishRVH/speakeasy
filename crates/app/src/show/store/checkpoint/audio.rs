@@ -156,6 +156,24 @@ pub(in crate::show::store) fn available_from(
     }
 }
 
+pub(in crate::show::store) fn ended(file: &mut File) -> anyhow::Result<bool> {
+    let end = Record::End.encode()?;
+    let header = u64::try_from(MAGIC.len())?;
+    let Some(start) = file
+        .metadata()?
+        .len()
+        .checked_sub(u64::try_from(end.len())?)
+        .filter(|&start| start >= header)
+    else {
+        return Ok(false);
+    };
+    file.seek(io::SeekFrom::Start(start))?;
+    let mut last = Zeroizing::new(vec![0; end.len()]);
+    file.read_exact(&mut last)?;
+    file.rewind()?;
+    Ok(last == end)
+}
+
 enum Samples {
     First,
     All,

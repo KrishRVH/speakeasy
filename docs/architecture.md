@@ -707,7 +707,8 @@ module unless a test file is named.
   [Audio checkpointing](../crates/app/src/audio/checkpoint.rs) preserves cue boundaries before and
   after promotion, so recovery seals through the same speech gate and trimming. Narration is
   atomically written and synced while audio remains recoverable. Successful transcription copies a
-  valid voice prefix into the staged bundle before checkpoint retirement; audio too damaged to read
+  valid voice prefix into the staged bundle before checkpoint retirement, and the saved Show says
+  when that voice lacks its end record, as after a final flush that missed its deadline; audio too damaged to read
   is left out of voice rather than blocking the frames and narration. Publication binds durable
   checkpoint and bundle markers before rename; the marker distinguishes narrated publication so a
   crash before checkpoint deletion cannot offer duplicate recovery. Publication and cleanup retire

@@ -60,7 +60,7 @@ async fn failed_or_cancelled_narrated_copy_keeps_new_narration_recoverable() -> 
             )?,
             Published::Saved {
                 preservation: Preservation {
-                    audio_kept: true,
+                    audio: Audio::KeptForRetry,
                     ..
                 },
                 ..
@@ -132,7 +132,7 @@ async fn durable_bundle_retires_checkpoint_even_when_narration_checkpoint_write_
         )?,
         Published::Saved {
             preservation: Preservation {
-                audio_kept: false,
+                audio: Audio::Settled,
                 ..
             },
             ..
@@ -177,7 +177,7 @@ async fn only_audio_that_may_hold_speech_is_kept_for_retry_or_as_voice() -> anyh
         else {
             bail!("The {lost:?} Show was not saved");
         };
-        assert_eq!(preservation.audio_kept, retry, "{lost:?}");
+        assert_eq!(preservation.audio == Audio::KeptForRetry, retry, "{lost:?}");
         assert_eq!(
             store::checkpoint::list(root.path(), SystemTime::now())
                 .shows

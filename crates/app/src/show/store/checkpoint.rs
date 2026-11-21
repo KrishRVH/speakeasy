@@ -220,7 +220,7 @@ impl Checkpoint {
         Ok(lost)
     }
 
-    pub(in crate::show) fn retain_voice(&self, staged: &Staged) -> anyhow::Result<()> {
+    pub(in crate::show) fn retain_voice(&self, staged: &Staged) -> anyhow::Result<bool> {
         super::voice::retain(&self.directory, staged, self.recorded()?)
             .context("Cannot retain Show voice; its checkpoint remains available")
     }
