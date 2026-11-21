@@ -188,7 +188,7 @@ impl LocalSpeech {
 
     async fn verify_listener(&mut self) -> anyhow::Result<()> {
         if !matches!(self.leader_exited(), Ok(false)) {
-            return Err(self.kill_and_reap_with_cause().await);
+            return Err(self.terminate_with_cause().await);
         }
         #[cfg(not(target_os = "macos"))]
         ensure!(
@@ -246,12 +246,12 @@ impl LocalSpeech {
         };
         match exchange(request).await {
             Ok(body) => reply(&body),
-            Err(Unanswered::Disconnected) => Err(self.kill_and_reap_with_cause().await),
+            Err(Unanswered::Disconnected) => Err(self.terminate_with_cause().await),
             Err(Unanswered::Failed(error)) => Err(error),
         }
     }
 
-    async fn kill_and_reap_with_cause(&mut self) -> anyhow::Error {
+    async fn terminate_with_cause(&mut self) -> anyhow::Error {
         self.group.terminate();
         if let Ok(Ok(status)) = timeout(EXIT_GRACE, self.child.wait()).await
             && let Some(remedy) = exit_remedy(status)

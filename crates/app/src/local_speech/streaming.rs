@@ -168,7 +168,6 @@ enum Kind {
 }
 
 fn parse(text: &str) -> anyhow::Result<Event> {
-    ensure!(text.len() <= MAX_RESPONSE_BYTES, FAILED);
     serde_json::from_str(text).ok().context(FAILED)
 }
 
