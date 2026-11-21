@@ -256,11 +256,20 @@ impl Runtime {
     #[cfg(test)]
     pub(crate) fn fake(
         config: Config,
+        baseline: Config,
         styles: watch::Receiver<Style>,
         snapshots: watch::Sender<Snapshot>,
         meter: watch::Sender<Meter>,
     ) -> anyhow::Result<(Self, FakeReports)> {
-        tests::fake_runtime(config, styles, snapshots, meter)
+        tests::fake_runtime(
+            Configuration {
+                effective: config,
+                saved: baseline,
+                styles,
+            },
+            snapshots,
+            meter,
+        )
     }
 
     pub(crate) fn is_running(&self) -> bool {

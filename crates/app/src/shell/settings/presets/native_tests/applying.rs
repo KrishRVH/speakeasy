@@ -6,13 +6,14 @@ use std::{
 
 use anyhow::ensure;
 use speakeasy_core::machine::{ModelState, Phase};
-use speakeasy_platform::Input;
+use speakeasy_platform::{Input, Scope};
 
 use super::*;
 use crate::{
     config::Engine,
     control::{Call, Command, Disposition},
     shell::{LaunchMode, choices::Selected, save::SaveQueue},
+    status::ServiceState,
 };
 
 const PATIENCE: Duration = Duration::from_secs(5);
@@ -137,6 +138,8 @@ pub(in crate::shell::settings) async fn exercise(
     let exercised = async {
         paused(settings, &baseline, cx).await?;
         resolved(settings, &path, &library, cx).await?;
+        resumed(&library, cx).await?;
+        redrafted(settings, &path, &library, cx).await?;
         cx.update(|cx| {
             cx.update_global::<Services, _>(|services, _| {
                 services.config = library.clone();
@@ -144,15 +147,10 @@ pub(in crate::shell::settings) async fn exercise(
                 services.run_fake_owner()
             })
         })
-        .map(|reports| (reports, ()))
     }
     .await;
     let running = match exercised {
-        Ok((reports, ())) => {
-            let ran = running(settings, &path, cx).await;
-            drop(reports);
-            ran
-        },
+        Ok(()) => running(settings, &path, cx).await,
         Err(error) => Err(error),
     };
     cx.update(|cx| cx.update_global::<Services, _>(|services, cx| services.pause(cx)));
@@ -322,6 +320,142 @@ async fn resolved(
         "A preset whose check finished after an engine switch replaced the newer draft"
     );
     fs::write(path, serde_json::to_vec_pretty(library)?)?;
+    Ok(())
+}
+
+#[expect(
+    clippy::future_not_send,
+    reason = "Native acceptance waits on a real settings write on GPUI's UI thread"
+)]
+async fn redrafted(
+    settings: WindowHandle<Settings>,
+    path: &Path,
+    library: &Config,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<()> {
+    let french = Config {
+        language: "fr".into(),
+        ..library.clone()
+    };
+    let german = Config {
+        language: "de".into(),
+        ..library.clone()
+    };
+    let used = cx
+        .update(|cx| {
+            cx.update_global::<Services, _>(|services, cx| {
+                services.config = library.clone();
+                services.choices.selected = None;
+                services.use_preset(french, cx)
+            })
+        })
+        .map_err(anyhow::Error::msg)?;
+    used.recv().await?.map_err(anyhow::Error::msg)?;
+    settings.update(cx, |view, _, cx| {
+        view.saves = SaveQueue::new(path.to_owned(), library.clone());
+        view.config = german.clone();
+        view.commit(cx);
+    })?;
+    until(cx, "The newer draft was not saved", |cx| {
+        settings.read_with(cx, |view, _| view.saves.is_idle())
+    })
+    .await?;
+    let (followed, saved) = cx.update(|cx| {
+        cx.update_global::<Services, _>(|services, _| {
+            let outcome = (services.admitted.is_none(), services.config == german);
+            services.admitted = None;
+            services.config = library.clone();
+            outcome
+        })
+    });
+    settings.update(cx, |view, _, cx| {
+        view.config = library.clone();
+        view.saves = SaveQueue::new(path.to_owned(), library.clone());
+        view.notice = None;
+        cx.notify();
+    })?;
+    fs::write(path, serde_json::to_vec_pretty(library)?)?;
+    ensure!(
+        saved && followed,
+        "A draft saved after a paused Use left Resume on the used preset"
+    );
+    Ok(())
+}
+
+#[expect(
+    clippy::future_not_send,
+    reason = "Native acceptance drives Services and a fake owner on GPUI's UI thread"
+)]
+async fn resumed(library: &Config, cx: &mut AsyncApp) -> anyhow::Result<()> {
+    let french = Config {
+        language: "fr".into(),
+        ..library.clone()
+    };
+    let used = cx
+        .update(|cx| {
+            cx.update_global::<Services, _>(|services, cx| {
+                services.config = library.clone();
+                services.choices.selected = None;
+                services.launch = crate::shell::services::Launch::Fake;
+                services.use_preset(french, cx)
+            })
+        })
+        .map_err(anyhow::Error::msg)?;
+    let admitted = used.recv().await?.map_err(anyhow::Error::msg)?;
+    let saved_at = cx.update(|cx| cx.global::<Services>().config_epoch());
+    cx.update(|cx| cx.update_global::<Services, _>(|services, cx| services.resume(cx)));
+    let shown = async {
+        until(cx, "Resume did not start the fake owner", |cx| {
+            Ok(snapshot(cx).model == ModelState::Ready)
+        })
+        .await?;
+        let input = cx
+            .update(|cx| {
+                cx.global::<Services>()
+                    .runtime()
+                    .map(|runtime| runtime.input.clone())
+            })
+            .context("Resume started no owner")?;
+        input.deliver(Input::Press);
+        until(cx, "The resumed owner did not record", |cx| {
+            Ok(snapshot(cx).phase == Phase::Recording)
+        })
+        .await?;
+        input.deliver(Input::Show(Scope::Screen));
+        until(cx, "The resumed owner did not start a Show", |cx| {
+            Ok(snapshot(cx).show)
+        })
+        .await?;
+        cx.update(|cx| {
+            cx.update_global::<Services, _>(|services, cx| {
+                services.adopt_saved(admitted, saved_at, cx)
+            })
+        })?;
+        settle(cx).await;
+        settle(cx).await;
+        let after = snapshot(cx);
+        let kept = after.show && after.phase == Phase::Recording;
+        input.deliver(Input::Cancel);
+        anyhow::Ok(kept)
+    }
+    .await;
+    cx.update(|cx| {
+        cx.update_global::<Services, _>(|services, cx| {
+            services.launch = crate::shell::services::Launch::Desktop;
+            services.pause(cx);
+        });
+    });
+    until(cx, "The resumed owner did not retire", |cx| {
+        Ok(cx.update(|cx| {
+            let services = cx.global::<Services>();
+            services.runtime().is_none() && services.service_state() != ServiceState::Pausing
+        }))
+    })
+    .await?;
+    ensure!(
+        shown?,
+        "Saving the preset used while paused discarded the Show started after Resume"
+    );
     Ok(())
 }
 

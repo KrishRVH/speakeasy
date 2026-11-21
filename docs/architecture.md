@@ -89,10 +89,12 @@ module unless a test file is named.
   the candidate validates, outlasts it: Settings drops the Use with a notice and returns the owner
   to the saved settings. Settings disables Use during a session. Without a live owner, including one
   that stopped on its own, a valid candidate clears the transient selection and restarts a pending
-  Resume check. A transient selection takes precedence in the Settings indicator, which follows
-  Services as well as snapshots, while its row still holds the definition that was chosen. Capturing
-  a preset requires both speech paths; a stored preset missing one still loads with its settings,
-  and Use on it asks for an engine and model without changing dictation.
+  Resume check. One that changes the session becomes the configuration Resume starts on, following
+  each newer draft Settings writes, until the newest of those saves lands; that save therefore keeps
+  a session or Show started after Resume. A transient selection takes precedence in the Settings
+  indicator, which follows Services as well as snapshots, while its row still holds the definition
+  that was chosen. Capturing a preset requires both speech paths; a stored preset missing one still
+  loads with its settings, and Use on it asks for an engine and model without changing dictation.
 - **Audio capture**: [audio.rs](../crates/app/src/audio.rs) with
   [control.rs](../crates/app/src/audio/control.rs), [stream.rs](../crates/app/src/audio/stream.rs),
   [pcm.rs](../crates/app/src/audio/pcm.rs), [speech.rs](../crates/app/src/audio/speech.rs), and

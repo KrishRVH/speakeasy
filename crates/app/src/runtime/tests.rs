@@ -133,13 +133,21 @@ pub(crate) struct Reports {
 }
 
 pub(super) fn fake_runtime(
-    config: Config,
-    styles: watch::Receiver<Style>,
+    configuration: Configuration,
     snapshots: watch::Sender<Snapshot>,
     meter: watch::Sender<Meter>,
 ) -> anyhow::Result<(Runtime, Reports)> {
     let (ports, reports) = FakePorts::new();
-    let runtime = Runtime::start_with(config, styles, snapshots, meter, ports)?;
+    let (input, inputs) = input_lane();
+    let runtime = Runtime::host(
+        configuration,
+        snapshots,
+        meter,
+        ports,
+        input,
+        inputs,
+        Wiring::run_on_own_thread,
+    )?;
     Ok((runtime, reports))
 }
 

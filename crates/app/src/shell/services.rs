@@ -80,10 +80,19 @@ struct Owners {
     monitor: Monitor,
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Launch {
+    Desktop,
+    Fake,
+}
+
 enum Monitor {
     Desktop(InputMonitor),
     #[cfg(test)]
-    Fake,
+    Fake {
+        _reports: runtime::FakeReports,
+    },
 }
 
 impl Monitor {
@@ -91,7 +100,7 @@ impl Monitor {
         match self {
             Self::Desktop(monitor) => monitor.request_stop(),
             #[cfg(test)]
-            Self::Fake => (),
+            Self::Fake { .. } => (),
         }
     }
 
@@ -99,7 +108,7 @@ impl Monitor {
         let stopped = match self {
             Self::Desktop(monitor) => Some(monitor.stopped()),
             #[cfg(test)]
-            Self::Fake => None,
+            Self::Fake { .. } => None,
         };
         async move {
             if let Some(stopped) = stopped {
@@ -148,6 +157,9 @@ pub(crate) struct Services {
     pub(super) default_settings: bool,
     pub config: Config,
     pub(super) checked: bool,
+    pub(super) admitted: Option<Config>,
+    #[cfg(test)]
+    pub(super) launch: Launch,
     styles: watch::Sender<Style>,
     pub(super) choices: super::choices::Choices,
     pub output: watch::Sender<Snapshot>,
@@ -202,6 +214,9 @@ impl Services {
             default_settings,
             config,
             checked: false,
+            admitted: None,
+            #[cfg(test)]
+            launch: Launch::Desktop,
             styles: watch::channel(Style::default()).0,
             choices: super::choices::Choices::default(),
             output,
@@ -425,7 +440,9 @@ impl Services {
 
     fn start(&mut self, config: ValidConfig) -> anyhow::Result<()> {
         self.show_copies.cancel();
-        let baseline = self.config.clone();
+        let baseline = self.admitted.clone().unwrap_or_else(|| self.config.clone());
+        #[cfg(test)]
+        let launch = self.launch;
         let preset = self.preset_name().map(str::to_owned);
         let Self {
             lifecycle,
@@ -440,6 +457,20 @@ impl Services {
         let started = lifecycle.start(|| {
             announce(output, runtime::LOADING);
             output.send_modify(|snapshot| snapshot.preset.clone_from(&preset));
+            #[cfg(test)]
+            if launch == Launch::Fake {
+                let (runtime, reports) = Runtime::fake(
+                    config.into_inner(),
+                    baseline,
+                    styles.subscribe(),
+                    output.clone(),
+                    meter.clone(),
+                )?;
+                return anyhow::Ok(Owners {
+                    runtime,
+                    monitor: Monitor::Fake { _reports: reports },
+                });
+            }
             let (runtime, monitor) = Runtime::start(
                 config,
                 baseline,
@@ -470,6 +501,13 @@ impl Services {
     ) -> anyhow::Result<()> {
         #[cfg(target_os = "windows")]
         let start_at_login = config.start_at_login;
+        if self
+            .admitted
+            .as_ref()
+            .is_some_and(|admitted| admitted.change_to(&config) < Change::Session)
+        {
+            self.admitted = None;
+        }
         let adopted = if self
             .lifecycle
             .save_may_enable(saved_at, |owners| owners.runtime.is_running())
@@ -502,11 +540,12 @@ impl Services {
     }
 
     #[cfg(test)]
-    pub(super) fn run_fake_owner(&mut self) -> anyhow::Result<runtime::FakeReports> {
+    pub(super) fn run_fake_owner(&mut self) -> anyhow::Result<()> {
         let preset = self.preset_name().map(str::to_owned);
         self.output
             .send_modify(|snapshot| snapshot.preset.clone_from(&preset));
         let (runtime, reports) = Runtime::fake(
+            self.config.clone(),
             self.config.clone(),
             self.styles.subscribe(),
             self.output.clone(),
@@ -515,11 +554,11 @@ impl Services {
         let started = self.lifecycle.start(|| {
             anyhow::Ok(Owners {
                 runtime,
-                monitor: Monitor::Fake,
+                monitor: Monitor::Fake { _reports: reports },
             })
         })?;
         anyhow::ensure!(started, "Services was not ready to start the fake owner");
-        Ok(reports)
+        Ok(())
     }
 
     pub(super) fn forget_preset(&mut self, cx: &App) {
@@ -535,7 +574,7 @@ impl Services {
             return;
         };
         let config = self.choices.selected.as_ref().map_or_else(
-            || self.config.clone(),
+            || self.admitted.clone().unwrap_or_else(|| self.config.clone()),
             |choice| Config::clone(&choice.config),
         );
         let path = self.path.clone();
@@ -561,6 +600,8 @@ impl Services {
             result.and_then(|config| {
                 if let Some(choice) = &mut services.choices.selected {
                     choice.config = config.clone();
+                    services.start(config)
+                } else if services.admitted.is_some() {
                     services.start(config)
                 } else {
                     services.apply(config, cx)
@@ -643,6 +684,7 @@ impl Services {
             done,
         };
         self.choices.selected = None;
+        self.admitted = None;
         self.pause(cx);
         announce(&self.output, RESETTING);
         if self.lifecycle.is_pausing() {

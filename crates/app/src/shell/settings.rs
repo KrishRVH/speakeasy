@@ -410,6 +410,7 @@ impl Settings {
             return;
         }
         let epoch = services.config_epoch();
+        cx.global_mut::<Services>().follow_draft(&self.config);
         if let Some(progress) = self.saves.submit(self.config.clone(), epoch) {
             self.advance_save(progress, cx);
         }

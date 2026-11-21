@@ -278,7 +278,14 @@ impl Services {
         Ok(used)
     }
 
-    pub(super) fn restore_owner(&self) {
+    pub(super) fn follow_draft(&mut self, draft: &Config) {
+        if let Some(admitted) = &mut self.admitted {
+            admitted.clone_from(draft);
+        }
+    }
+
+    pub(super) fn restore_owner(&mut self) {
+        self.admitted = None;
         if let Some(runtime) = self.runtime() {
             runtime.restore(self.config.clone());
         }
@@ -291,6 +298,9 @@ impl Services {
     ) -> Result<Admission, &'static str> {
         let config = result.map_err(|_unavailable| USE_UNAVAILABLE)?;
         let Some(runtime) = self.live_runtime() else {
+            if self.config.change_to(&config) >= Change::Session {
+                self.admitted = Some(config.clone().into_inner());
+            }
             self.forget_preset(cx);
             return Ok(Admission::Ready(config));
         };
