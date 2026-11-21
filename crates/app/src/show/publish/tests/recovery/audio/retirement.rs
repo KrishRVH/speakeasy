@@ -336,6 +336,13 @@ async fn a_saved_show_keeps_its_recovery_until_its_folder_is_synced() -> anyhow:
 
 #[tokio::test]
 async fn a_saved_show_promises_no_retry_that_its_checkpoint_cannot_replay() -> anyhow::Result<()> {
+    for torn in [None, Some(0), Some(5)] {
+        promises_no_retry_without_a_replayable_frame(torn).await?;
+    }
+    Ok(())
+}
+
+async fn promises_no_retry_without_a_replayable_frame(torn: Option<u64>) -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let parent = root.path().to_owned();
     let crate::show::Kept {
@@ -355,10 +362,18 @@ async fn a_saved_show_promises_no_retry_that_its_checkpoint_cannot_replay() -> a
         .collect::<Vec<_>>();
     assert!(audio.begin(8_000, Duration::ZERO, "en".into()));
     assert!(audio.finish(&speech, &[], AudioEnding::Complete));
-    let checkpoint = keeper
+    let interrupted = keeper
         .close()
         .await?
-        .context("Fixture checkpoint is missing")?;
+        .context("Fixture checkpoint is missing")?
+        .interrupted()?;
+    if let Some(length) = torn {
+        fs::OpenOptions::new()
+            .write(true)
+            .open(interrupted.directory().join("take.log"))?
+            .set_len(length)?;
+    }
+    let checkpoint = interrupted.lock()?;
     let mut take = Take::new(1 << 20, surface, speakeasy_show::Framing::Automatic);
     take.arrive(Moment::from_millis(100), || {
         Some(desktop(80, 60, 0, 0, false))

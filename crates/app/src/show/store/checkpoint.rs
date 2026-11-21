@@ -4,7 +4,7 @@ mod keeper;
 use std::{
     fmt,
     fs::{self, File, OpenOptions},
-    io::{self, Read as _, Write as _},
+    io::{self, Write as _},
     iter,
     path::{Path, PathBuf},
     time::SystemTime,
@@ -394,13 +394,14 @@ impl Checkpoint {
 
     fn read_take(&self, extent: Extent) -> anyhow::Result<Take> {
         let directory = recall::open_directory(&self.directory)?;
-        let opened = recall::open_file(&directory, LOG, FILE_LIMIT);
+        let opened = match recall::open_file(&directory, LOG, FILE_LIMIT) {
+            Err(error) if recall::empty(&error) => anyhow::bail!(NoFrames),
+            opened => opened,
+        };
         let mut reader = io::BufReader::new(found(opened)?.ok_or(NoFrames)?);
         let mut header = [0; log::HEADER_BYTES];
-        reader
-            .read_exact(&mut header)
-            .context("The Show checkpoint header is incomplete")?;
-        let mut take = log::start(&header)?;
+        anyhow::ensure!(read_complete(&mut reader, &mut header)?, NoFrames);
+        let mut take = log::start(&header).map_err(|_damaged| NoFrames)?;
         let mut consumed = u64::try_from(log::HEADER_BYTES)?;
         for _ in 0..EVENT_LIMIT {
             let mut length = [0; 4];
