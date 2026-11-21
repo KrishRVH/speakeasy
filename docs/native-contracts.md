@@ -205,27 +205,29 @@ shortcut signals can arrive out of order with those events and never reset the m
 disconnect ends the service even though later dispatch calls may succeed.
 
 Portal transfer descriptors are owned, set nonblocking before AsyncFd registration and retained
-until the transfer future drops. Portal signal match rules name the portal's unique bus name rather
-than its well-known one, so zbus also drops a signal another client addresses straight to
-Speakeasy's connection; a malformed shortcut or transfer signal is skipped, and a malformed
-ownership change counts as lost ownership. Session-scoped signal streams keep draining while
-transfers are full. A replacement selection counts as owned only after an ownership change received
-after its SetSelection reply, because the portal frontend replies before its backend sets the
-selection; ownership changes do not name the selection they belong to, so a late change for the
-previous copy can still confirm a replacement. A transfer Speakeasy declines, for a full transfer
-set, a paste replacing the selection, another MIME type, or no current committed copy, still gets
-SelectionWrite: its descriptor closes empty and SelectionWriteDone reports failure, since Mutter
-ends a transfer only when its descriptor closes. Refusals run beside the insertion loop, at most
-`SIGNAL_BACKLOG` at once; later ones wait their turn in arrival order. A transfer whose selection
-was invalidated before it started still asks for its descriptor and closes it empty. The insertion
-loop polls method replies and new insertions ahead of transfer requests, and on the desktop thread's
-single-threaded runtime a signal stream refills only between polls, at most `SIGNAL_BACKLOG`
-messages at a time, so transfer requests cannot hold off an insertion. The portal clipboard serves
-bytes only after the permit commits to paste or manual copy. Selection loss invalidates its transfer
-payloads. Writes and reporting have deadlines. X11 clipboard serving and insertion have separate
-owners; after blocking focus/modifier queries and before committing paste, the X11 paste confirms
-that the clipboard still holds the dictated text from the same owner. That check and XTEST
-submission are not one atomic server transaction.
+until the transfer future drops. Speakeasy subscribes to portal restarts before it reads the
+portal's unique bus name, then sends every portal call to that name, so a restart during startup
+ends the service instead of splitting calls and signals between two portals. Portal signal match
+rules name that unique name rather than the well-known one, so zbus also drops a signal another
+client addresses straight to Speakeasy's connection; a malformed shortcut or transfer signal is
+skipped, and a malformed ownership change counts as lost ownership. Session-scoped signal streams
+keep draining while transfers are full. A replacement selection counts as owned only after an
+ownership change received after its SetSelection reply, because the portal frontend replies before
+its backend sets the selection; ownership changes do not name the selection they belong to, so a
+late change for the previous copy can still confirm a replacement. A transfer Speakeasy declines,
+for a full transfer set, a paste replacing the selection, another MIME type, or no current committed
+copy, still gets SelectionWrite: its descriptor closes empty and SelectionWriteDone reports failure,
+since Mutter ends a transfer only when its descriptor closes. Refusals run beside the insertion
+loop, at most `SIGNAL_BACKLOG` at once; later ones wait their turn in arrival order. A transfer
+whose selection was invalidated before it started still asks for its descriptor and closes it empty.
+The insertion loop polls method replies and new insertions ahead of transfer requests, and on the
+desktop thread's single-threaded runtime a signal stream refills only between polls, at most
+`SIGNAL_BACKLOG` messages at a time, so transfer requests cannot hold off an insertion. The portal
+clipboard serves bytes only after the permit commits to paste or manual copy. Selection loss
+invalidates its transfer payloads. Writes and reporting have deadlines. X11 clipboard serving and
+insertion have separate owners; after blocking focus/modifier queries and before committing paste,
+the X11 paste confirms that the clipboard still holds the dictated text from the same owner. That
+check and XTEST submission are not one atomic server transaction.
 
 ## Linux realtime opt-out
 

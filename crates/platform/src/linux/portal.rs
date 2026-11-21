@@ -67,11 +67,14 @@ struct Portal {
 
 impl Portal {
     async fn connect() -> anyhow::Result<(Self, DesktopChanges)> {
-        let connection = Connection::session().await?;
+        Self::open(Connection::session().await?).await
+    }
 
+    async fn open(connection: Connection) -> anyhow::Result<(Self, DesktopChanges)> {
+        let (owner, changes) = watch_portal(&connection).await?;
         let registered = connection
             .call_method(
-                Some(DESTINATION),
+                Some(owner.as_ref()),
                 DESKTOP,
                 Some("org.freedesktop.host.portal.Registry"),
                 "Register",
@@ -91,8 +94,6 @@ impl Portal {
             .trim_start_matches(':')
             .replace('.', "_");
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-        let owner = portal_owner(&connection).await?;
-        let changes = desktop_changes(&connection, &owner).await?;
         let portal = Self {
             connection,
             owner,
@@ -121,7 +122,7 @@ impl Portal {
     }
 
     async fn proxy(&self, interface: &'static str) -> anyhow::Result<Proxy<'static>> {
-        Ok(Proxy::new(&self.connection, DESTINATION, DESKTOP, interface).await?)
+        Ok(Proxy::new(&self.connection, self.owner.clone(), DESKTOP, interface).await?)
     }
 
     async fn request<B: serde::Serialize + zbus::zvariant::DynamicType + Sync>(
@@ -133,7 +134,8 @@ impl Portal {
     ) -> anyhow::Result<Results> {
         let path: OwnedObjectPath =
             format!("{DESKTOP}/request/{}/{token}", self.sender_segment).try_into()?;
-        let request = Proxy::new(&self.connection, DESTINATION, path.clone(), REQUEST).await?;
+        let request =
+            Proxy::new(&self.connection, self.owner.clone(), path.clone(), REQUEST).await?;
         let mut responses = request.receive_signal("Response").await?;
 
         self.unanswered.push(path.clone());
@@ -183,7 +185,7 @@ impl Portal {
                 let _ = tokio::time::timeout(
                     CLOSE_TIMEOUT,
                     self.connection.call_method(
-                        Some(DESTINATION),
+                        Some(self.owner.as_ref()),
                         path,
                         Some(interface),
                         "Close",
@@ -720,8 +722,29 @@ fn check_revocation(event: &Message, session_root: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn portal_owner(connection: &Connection) -> anyhow::Result<OwnedUniqueName> {
-    Ok(connection
+async fn watch_portal(
+    connection: &Connection,
+) -> anyhow::Result<(OwnedUniqueName, DesktopChanges)> {
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "A portal that is running but not activatable still answers GetNameOwner below, and one that is neither fails there"
+    )]
+    let _ = connection
+        .call_method(
+            Some("org.freedesktop.DBus"),
+            "/org/freedesktop/DBus",
+            Some("org.freedesktop.DBus"),
+            "StartServiceByName",
+            &(DESTINATION, 0_u32),
+        )
+        .await;
+    let restarts = MessageStream::for_match_rule(
+        owner_changes(DESTINATION)?,
+        connection,
+        Some(REVOCATION_BACKLOG),
+    )
+    .await?;
+    let owner: OwnedUniqueName = connection
         .call_method(
             Some("org.freedesktop.DBus"),
             "/org/freedesktop/DBus",
@@ -729,30 +752,19 @@ async fn portal_owner(connection: &Connection) -> anyhow::Result<OwnedUniqueName
             "GetNameOwner",
             &(DESTINATION,),
         )
-        .await?
+        .await
+        .context("The desktop portal is unavailable")?
         .body()
-        .deserialize()?)
-}
-
-async fn desktop_changes(
-    connection: &Connection,
-    owner: &OwnedUniqueName,
-) -> anyhow::Result<DesktopChanges> {
+        .deserialize()?;
     let closed = MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
         .sender(owner.as_ref())?
         .interface(SESSION)?
         .member("Closed")?
         .build();
-    Ok(futures_util::stream::select(
-        MessageStream::for_match_rule(closed, connection, Some(REVOCATION_BACKLOG)).await?,
-        MessageStream::for_match_rule(
-            owner_changes(DESTINATION)?,
-            connection,
-            Some(REVOCATION_BACKLOG),
-        )
-        .await?,
-    ))
+    let closed =
+        MessageStream::for_match_rule(closed, connection, Some(REVOCATION_BACKLOG)).await?;
+    Ok((owner, futures_util::stream::select(closed, restarts)))
 }
 
 async fn or_pending<F: Future>(future: Option<F>) -> F::Output {

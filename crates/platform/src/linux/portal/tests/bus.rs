@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{bail, ensure};
 use tokio::task::{JoinHandle, LocalSet};
-use zbus::{connection::Builder, message::Type};
+use zbus::{connection::Builder, message::Type, names::UniqueName};
 
 use super::{super::*, fixture_session};
 use crate::{
@@ -250,8 +250,7 @@ struct Client {
 impl Client {
     async fn start(bus: &Bus) -> anyhow::Result<Self> {
         let connection = bus.connect().await?;
-        let owner = portal_owner(&connection).await?;
-        let changes = desktop_changes(&connection, &owner).await?;
+        let (owner, changes) = watch_portal(&connection).await?;
         let name = connection.unique_name().context("Client name")?.to_string();
         let sender_segment = name.trim_start_matches(':').replace('.', "_");
         let portal = Portal {
@@ -644,6 +643,92 @@ fn private_bus_every_transfer_past_full_transfers_and_refusals_is_still_refused(
             );
         }
         assert!(client.alive(), "The flood stopped the service");
+        Ok(())
+    })
+}
+
+#[test]
+fn private_bus_the_client_watches_for_a_portal_restart_before_it_reads_the_owner_it_calls()
+-> anyhow::Result<()> {
+    on_private_bus(async |bus| {
+        let mut portal = FakePortal::start(&bus).await?;
+        let owner = portal
+            .connection
+            .unique_name()
+            .context("Portal name")?
+            .to_string();
+        let monitor = bus.connect().await?;
+        let mut observed = MessageStream::from(&monitor);
+        monitor
+            .call_method(
+                Some("org.freedesktop.DBus"),
+                "/org/freedesktop/DBus",
+                Some("org.freedesktop.DBus.Monitoring"),
+                "BecomeMonitor",
+                &(vec!["type='method_call'"], 0_u32),
+            )
+            .await?;
+        let connection = bus.connect().await?;
+        let client = connection.unique_name().context("Client name")?.to_string();
+        let (opened, registered) = tokio::join!(Portal::open(connection), async {
+            let call = portal.expect("Register").await?;
+            portal.reply(&call).await
+        });
+        registered?;
+        let (opened, _changes) = opened?;
+        ensure!(
+            opened.owner.as_str() == owner,
+            "The client read another owner"
+        );
+        let clipboard = opened.proxy(CLIPBOARD).await?;
+        let (requested, answered) =
+            tokio::join!(clipboard.call_method("RequestClipboard", &()), async {
+                let call = portal.expect("RequestClipboard").await?;
+                portal.reply(&call).await
+            });
+        answered?;
+        requested?;
+
+        let mut calls = Vec::new();
+        while calls
+            .last()
+            .map(|(member, _, _): &(String, String, String)| member.as_str())
+            != Some("RequestClipboard")
+        {
+            let message = tokio::time::timeout(PATIENCE, observed.next())
+                .await
+                .context("The monitor missed the client's portal calls")?
+                .context("The monitor closed")??;
+            let header = message.header();
+            if header.sender().map(UniqueName::as_str) != Some(client.as_str()) {
+                continue;
+            }
+            let member = header.member().map_or_default(MemberName::to_string);
+            let destination = header.destination().map_or_default(ToString::to_string);
+            let rule = message.body().deserialize::<String>().unwrap_or_default();
+            calls.push((member, destination, rule));
+        }
+        let position = |found: &dyn Fn(&(String, String, String)) -> bool| {
+            calls
+                .iter()
+                .position(found)
+                .context("The client never made that call")
+        };
+        let watched = position(&|(member, _, rule)| {
+            member == "AddMatch" && rule.contains("NameOwnerChanged")
+        })?;
+        let read = position(&|(member, _, _)| member == "GetNameOwner")?;
+        assert!(
+            watched < read,
+            "The client read the portal's owner before watching for a restart: {calls:?}"
+        );
+        assert!(
+            calls
+                .iter()
+                .filter(|(_, destination, _)| destination != "org.freedesktop.DBus")
+                .all(|(_, destination, _)| *destination == owner),
+            "The client called the portal by a name a restart can move: {calls:?}"
+        );
         Ok(())
     })
 }
