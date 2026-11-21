@@ -136,11 +136,14 @@ fn unreachable_instances_name_their_remedy() -> anyhow::Result<()> {
 
 #[cfg(unix)]
 #[test]
-fn only_the_owner_can_read_the_published_secret() -> anyhow::Result<()> {
+fn only_the_owner_can_read_the_published_secret_or_the_lock() -> anyhow::Result<()> {
     use std::os::unix::fs::PermissionsExt as _;
 
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
+    let lock = directory.path().join(LOCK_FILE);
+    fs::write(&lock, b"")?;
+    fs::set_permissions(&lock, fs::Permissions::from_mode(0o644))?;
     let _owner = Instance::acquire(&path)?.context("First owner missing")?;
     for name in [PORT_FILE, LOCK_FILE] {
         let mode = fs::metadata(directory.path().join(name))?
