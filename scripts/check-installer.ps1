@@ -38,6 +38,11 @@ function Check-UserData {
 function Invoke-Cleanup([scriptblock]$Action, [Collections.Generic.List[Management.Automation.ErrorRecord]]$Failures) {
     try { & $Action } catch { $Failures.Add($_) }
 }
+function Complete-Cleanup($Failure, [Collections.Generic.List[Management.Automation.ErrorRecord]]$Failures, [string]$Fixture) {
+    if (!$Failures.Count) { return }
+    if ($null -eq $Failure) { throw $Failures[0] }
+    $Failures | ForEach-Object { Write-Warning "$Fixture cleanup failed: $_" }
+}
 function Invoke-Setup {
     $process = Start-Process -FilePath $Installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$app`"" -Wait -PassThru
     if ($process.ExitCode -ne 0) { throw "Installer failed with exit code $($process.ExitCode)." }
@@ -144,23 +149,29 @@ function Check-UpdateHandoff([bool]$ReleaseParent) {
         Invoke-Cleanup {
             if ($preview) { Close-Preview $preview }
         } $cleanup
-        Invoke-Cleanup {
-            foreach ($leftover in Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $image }) {
+        $leftovers = @(Invoke-Cleanup {
+            Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $image }
+        } $cleanup)
+        foreach ($leftover in $leftovers) {
+            Invoke-Cleanup {
                 $process = Get-Process -Id $leftover.ProcessId -ErrorAction SilentlyContinue
-                if (!$process) { continue }
+                if (!$process) { return }
                 try {
+                    # Holding the handle pins this process, so the start time proves the PID was not reused.
+                    try { [void]$process.Handle } catch {
+                        if (Get-Process -Id $leftover.ProcessId -ErrorAction SilentlyContinue) { throw }
+                        return
+                    }
+                    if ([Math]::Abs(($process.StartTime - $leftover.CreationDate).TotalMilliseconds) -ge 1) { return }
                     if (!$process.HasExited) { $process.Kill() }
                     if (!$process.WaitForExit(10000)) { throw 'The relaunched fixture kept running.' }
                 } finally {
                     $process.Dispose()
                 }
-            }
-        } $cleanup
-        Invoke-Cleanup { Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue } $cleanup
-        if ($cleanup.Count) {
-            if ($null -eq $failure) { throw $cleanup[0] }
-            $cleanup | ForEach-Object { Write-Warning "Update fixture cleanup failed: $_" }
+            } $cleanup
         }
+        Invoke-Cleanup { Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue } $cleanup
+        Complete-Cleanup $failure $cleanup 'Update fixture'
     }
 }
 function Check-RunningAppProtection {
@@ -169,6 +180,8 @@ function Check-RunningAppProtection {
     $image = Join-Path $app 'speakeasy.exe'
     $imageHash = (Get-FileHash -LiteralPath $image).Hash
     $preview = Start-Process -FilePath $image -ArgumentList '--demo-tray', "--config `"$previewConfig`"" -NoNewWindow -PassThru
+    $failure = $null
+    $cleanup = [Collections.Generic.List[Management.Automation.ErrorRecord]]::new()
     try {
         $deadline = [DateTime]::UtcNow.AddSeconds(15)
         do {
@@ -187,8 +200,12 @@ function Check-RunningAppProtection {
         $preview.Refresh()
         if ($preview.HasExited -or (Get-FileHash -LiteralPath $image).Hash -ne $imageHash) { throw 'Blocked maintenance disturbed the running app.' }
         if ([IO.File]::ReadAllText($previewConfig) -ne 'demo preserves this file') { throw 'Demo changed its config.' }
+    } catch {
+        $failure = $_
+        throw
     } finally {
-        Close-Preview $preview
+        Invoke-Cleanup { Close-Preview $preview } $cleanup
+        Complete-Cleanup $failure $cleanup 'Running app fixture'
     }
 }
 function Check-ConsoleImageProtection {
@@ -197,6 +214,8 @@ function Check-ConsoleImageProtection {
     $source = [IO.File]::Open($image, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
     $mapping = [IntPtr]::Zero
     $view = [IntPtr]::Zero
+    $failure = $null
+    $cleanup = [Collections.Generic.List[Management.Automation.ErrorRecord]]::new()
     try {
         $mapping = [InstallerPreview]::CreateFileMapping($source.SafeFileHandle, [IntPtr]::Zero, 0x01000002, 0, 0, $null)
         if ($mapping -eq [IntPtr]::Zero) { throw 'Could not create an owned CLI image mapping.' }
@@ -208,10 +227,18 @@ function Check-ConsoleImageProtection {
         if ($blocked.ExitCode -eq 0 -or (Get-FileHash -LiteralPath $image).Hash -ne $imageHash) {
             throw 'Maintenance changed a mapped CLI image.'
         }
+    } catch {
+        $failure = $_
+        throw
     } finally {
-        if ($view -ne [IntPtr]::Zero -and ![InstallerPreview]::UnmapViewOfFile($view)) { throw 'Could not release the owned CLI image view.' }
-        if ($mapping -ne [IntPtr]::Zero -and ![InstallerPreview]::CloseHandle($mapping)) { throw 'Could not release the owned CLI image mapping.' }
-        $source.Dispose()
+        Invoke-Cleanup {
+            if ($view -ne [IntPtr]::Zero -and ![InstallerPreview]::UnmapViewOfFile($view)) { throw 'Could not release the owned CLI image view.' }
+        } $cleanup
+        Invoke-Cleanup {
+            if ($mapping -ne [IntPtr]::Zero -and ![InstallerPreview]::CloseHandle($mapping)) { throw 'Could not release the owned CLI image mapping.' }
+        } $cleanup
+        Invoke-Cleanup { $source.Dispose() } $cleanup
+        Complete-Cleanup $failure $cleanup 'Console image fixture'
     }
 }
 Add-Type -TypeDefinition @'
@@ -287,8 +314,5 @@ try {
             if (Test-Path -LiteralPath $fixture) { Remove-Item -LiteralPath $fixture -Force -Recurse }
         } $cleanup
     }
-    if ($cleanup.Count) {
-        if ($null -eq $failure) { throw $cleanup[0] }
-        $cleanup | ForEach-Object { Write-Warning "Installer fixture cleanup failed: $_" }
-    }
+    Complete-Cleanup $failure $cleanup 'Installer fixture'
 }
