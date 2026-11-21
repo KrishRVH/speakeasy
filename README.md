@@ -799,9 +799,10 @@ microphone, language, filler removal, recognition hints, phrase correction, spok
 delivery, sound, and script-reading changes end it but keep the model loaded. Changing the Windows
 or Mac shortcut, Linux Shortcuts, or most Linux **Insert text by** choices restarts dictation, which
 reloads the model. Saving stays responsive and preserves edits made while the save is running. A
-failed save returns Settings to the saved settings; dictation follows once no recording or Show is
-running, or at once for a change that restarts it. Changes made while dictation is paused are saved
-without resuming it, and pausing during a save keeps it paused; Quit finishes requested saves.
+failed save returns Settings to the saved settings, and a save that a newer one follows waits like
+it: dictation follows once no recording or Show is running, restarting then if the shortcut or
+**Insert text by** changed. Changes made while dictation is paused are saved without resuming it,
+and pausing during a save keeps it paused; Quit finishes requested saves.
 
 <p align="center">
   <img src="docs/assets/themes.png"

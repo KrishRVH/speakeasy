@@ -77,40 +77,50 @@ module unless a test file is named.
   [shell/choices.rs](../crates/app/src/shell/choices.rs) routes control commands and owns
   saved-preset selection; Services holds the transient style. Every configuration request reaches
   the session owner in the order Services sends it, on one lane: a save that changes what a session
-  reads, the rollback after a failed save, Use in Settings, and tray or command presets. The
-  [runtime](../crates/app/src/runtime.rs) handle keeps the baseline those requests leave in effect,
-  apart from a transient preset, including after Resume, and compares each save with it, never with
-  an older file. Only a save that changes what a session reads revokes input and ends the session at
-  once; any other leaves recordings and Shows running. A rollback, including to the save kept before
-  a later queued one failed, waits until no session or practice runs and then applies the newest
-  baseline without replacing the result of the session that just ended, so a save accepted meanwhile
-  replaces it; one whose desktop settings differ from those the owner launched with restarts it at
-  once, like any save. Each tray or command preset, and each Use sent to the owner, carries a
-  sequence number: Services honors an accepted answer only when no newer request was accepted and no
-  session-changing save, rollback, Reset, Use while paused, or owner restart followed it, and tells
-  a superseded tray or command caller it was refused, so a caller told it succeeded finds its preset
-  after Pause and Resume. Tray and command presets validate off the UI thread, leave saved settings
+  reads, the rollback after a failed save, Use in Settings, tray or command presets, and a waiting
+  restart. The owner reads that lane before input, so a press sent after a save records with the
+  saved settings. The [runtime](../crates/app/src/runtime.rs) handle keeps the baseline those
+  requests leave in effect, apart from a transient preset, including after Resume, and compares each
+  save with it, never with an older file. Settings lands queued saves in order: a write that
+  finishes while a newer draft waits lands then, and the newest lands last. Only the newest save,
+  when it changes what a session reads, revokes input and ends the session at once; any other leaves
+  recordings and Shows running. A rollback or an older queued save waits until no session or
+  practice runs and then applies the newest baseline without replacing the result of the session
+  that just ended, so a save accepted meanwhile replaces it. A save restarts the owner at once only
+  when its desktop settings differ both from those the owner launched with and from its baseline.
+  When the owner's desktop settings otherwise differ from Services', as after a rollback, an older
+  queued save, or a later save over either, Services asks the owner to stop once no session or
+  practice runs and then restarts it, which replaces that session's result as Pause does; a newer
+  save or rollback withdraws that request. Each tray or command preset and each Use is numbered when
+  chosen, and Services sends one only while it is the newest choice. Each request sent to the owner
+  also carries its lane position: Services honors an accepted answer only when no newer request was
+  accepted and no session-changing save, rollback, Reset, Use while paused, or owner restart
+  followed it, counts requests settled only once the owner answered every one, and tells a
+  superseded tray or command caller it was refused, so a caller told it succeeded finds its preset
+  after Pause and Resume. Pause lets a validating choice finish and answer: a tray or command preset
+  that a newer choice or Pause overtakes is refused, and a Use that Pause interrupts completes as a
+  Use while paused. Tray and command presets validate off the UI thread, leave saved settings
   unchanged, and the owner confirms one only while idle, when no session has started and no
   session-changing save has landed since it was chosen. Text-only choices reuse the worker; engine
   changes reload it. Use in Settings validates its candidate off the UI thread; a running owner
-  adopts one that changes what a session reads only while idle, and only then does Settings save it.
-  A session that starts while that save is written therefore survives its completion, and a refused
-  or unavailable preset changes neither dictation nor the settings file. A change to any setting a
-  preset keeps, made while the candidate validates, outlasts it: the owner never sees the candidate,
-  and Settings drops the Use with a notice. If such a change comes after the owner adopted it, if
-  the save fails, or if Settings closes before the owner's answer reaches it, Services rolls back.
-  Settings disables Use during a session. Without a live owner, including one that stopped on its
-  own, a valid candidate clears the transient selection. One that changes the session becomes the
+  adopts one that changes what a session reads only while idle, Services makes it the configuration
+  Resume starts on, and only then does Settings save it. A session that starts while that save is
+  written therefore survives its completion, and a refused or unavailable preset changes neither
+  dictation nor the settings file. A change to any setting a session reads, made while the candidate
+  validates, outlasts it: the owner never sees the candidate, and Settings drops the Use with a
+  notice. If a change to a setting the preset keeps comes after the owner adopted it, if the save
+  fails, or if Settings closes before it loads the owner's answer, Services rolls back. Settings
+  disables Use during a session. Without a live owner, including one that stopped on its own, a
+  valid candidate clears the transient selection. One that changes the session becomes the
   configuration Resume starts on, following each newer draft Settings writes, until the newest of
   those saves lands or a failed one rolls it back. A Resume check that finishes on anything but the
   current candidate checks again, so Resume launches only the newest saved or accepted
-  configuration. Older saves landing meanwhile leave the owner alone, and a save restarts the owner
-  only when its desktop settings differ from those the owner launched with, so the newest save keeps
-  a session or Show started after Resume, even one using a shortcut changed in that draft. A
-  transient selection takes precedence in the Settings indicator, which follows Services as well as
-  snapshots, while its row still holds the definition that was chosen. Capturing a preset requires
-  both speech paths; a stored preset missing one still loads with its settings, and Use on it asks
-  for an engine and model without changing dictation.
+  configuration. Older saves landing meanwhile leave the owner alone, so the newest save keeps a
+  session or Show started after Resume, even one using a shortcut changed in that draft. A transient
+  selection takes precedence in the Settings indicator, which follows Services as well as snapshots,
+  while its row still holds the definition that was chosen. Capturing a preset requires both speech
+  paths; a stored preset missing one still loads with its settings, and Use on it asks for an engine
+  and model without changing dictation.
 - **Audio capture**: [audio.rs](../crates/app/src/audio.rs) with
   [control.rs](../crates/app/src/audio/control.rs), [stream.rs](../crates/app/src/audio/stream.rs),
   [pcm.rs](../crates/app/src/audio/pcm.rs), [speech.rs](../crates/app/src/audio/speech.rs),
@@ -373,7 +383,7 @@ module unless a test file is named.
   [Mac acceptance](../crates/app/src/shell/shutdown/mac_acceptance.rs) holds an accepted Show write
   across external, nested, repeated, and app-owned quit, checking foreground frames and instance
   release without devices or input. [save/tests.rs](../crates/app/src/shell/save/tests.rs) checks
-  ordered writes and edits made during one;
+  that queued writes land in order and edits made during one;
   [lifecycle/tests.rs](../crates/core/src/lifecycle/tests.rs) checks terminal Quit and Pause or a
   resume check around Save, and [lifecycle/explore.rs](../crates/core/src/lifecycle/explore.rs)
   tries every ordering of lifecycle operations, as [exhaustive exploration](#exhaustive-exploration)
