@@ -8,13 +8,21 @@ use speakeasy_platform::InsertPermit;
 use speakeasy_show::{Framing, NarrationLoss, Typeface, compose, select};
 
 use super::{
-    Checkpoint, Checkpointing, Interrupted, SavedShow, recorder::NOTHING_RECORDED, store,
-    store::checkpoint::Publication as Completion, wsl::Lookup,
+    Checkpoint, Checkpointing, Interrupted, SavedShow,
+    recorder::NOTHING_RECORDED,
+    store,
+    store::checkpoint::{Publication as Completion, SavedNarration},
+    wsl::Lookup,
 };
 use crate::runtime::ports::{Footage, PUBLISH_STOPPED, Preservation, Published, Sealed};
 
 const NO_SPEECH: &str = "Narration could not be recovered because the kept audio holds no speech. \
                          The saved Show is unchanged; its narration retry is removed from Shows.";
+const UNREADABLE_NARRATION: &str = "Cannot read this Show's saved narration. Check access to its \
+                                    folder; the interrupted Show stays in Shows";
+const DAMAGED_NARRATION: &str = "This Show's saved narration is damaged and its kept audio holds no \
+                                 speech, so its narration cannot be retried. The saved Show is \
+                                 unchanged; discard this retry in Shows.";
 
 pub(crate) struct Publication {
     pub footage: Footage,
@@ -213,12 +221,14 @@ fn reopen_with(interrupted: Interrupted) -> anyhow::Result<Reopened> {
     let recording = &mut footage.recording;
     let mut speech = None;
 
-    match checkpoint.narration() {
-        Ok(Some((narration, loss))) => {
+    let saved = checkpoint.narration().context(UNREADABLE_NARRATION)?;
+    let damaged = matches!(saved, SavedNarration::Damaged);
+    match saved {
+        SavedNarration::Saved(narration, loss) => {
             recording.narration = narration;
             recording.narration_lost = loss;
         },
-        Ok(None) | Err(_) => match checkpoint.audio() {
+        SavedNarration::Absent | SavedNarration::Damaged => match checkpoint.audio() {
             Ok(Some(audio)) => {
                 let incomplete = !audio.complete;
                 if let Some(sealed) = crate::audio::seal_kept(&audio)? {
@@ -228,6 +238,8 @@ fn reopen_with(interrupted: Interrupted) -> anyhow::Result<Reopened> {
                         language: audio.language,
                         incomplete,
                     });
+                } else if pending && damaged {
+                    anyhow::bail!(DAMAGED_NARRATION);
                 } else if pending {
                     checkpoint.discard()?;
                     anyhow::bail!(NO_SPEECH);
@@ -237,6 +249,7 @@ fn reopen_with(interrupted: Interrupted) -> anyhow::Result<Reopened> {
                     recording.narration_lost = Some(NarrationLoss::AudioSilent);
                 }
             },
+            Ok(None) | Err(_) if pending && damaged => anyhow::bail!(DAMAGED_NARRATION),
             Ok(None) | Err(_) => recording.narration_lost = Some(NarrationLoss::NotTranscribed),
         },
     }

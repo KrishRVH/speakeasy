@@ -34,7 +34,7 @@ async fn narration_write_failure_keeps_audio_and_success_keeps_it_until_bundle_p
     checkpoint.narrate(&narration, Some(NarrationLoss::Incomplete))?;
     assert_eq!(
         checkpoint.narration()?,
-        Some((narration, Some(NarrationLoss::Incomplete)))
+        SavedNarration::Saved(narration, Some(NarrationLoss::Incomplete))
     );
     fs::remove_dir(path.join(AUDIO))?;
     fs::rename(held, path.join(AUDIO))?;

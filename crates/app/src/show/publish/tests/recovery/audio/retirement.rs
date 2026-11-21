@@ -97,6 +97,60 @@ async fn a_failed_narrated_retry_keeps_its_narration_after_its_audio_is_lost() -
     Ok(())
 }
 
+async fn failed_retry_with_short_audio(root: &Path) -> anyhow::Result<Interrupted> {
+    let (_show, pending) = pending_show(root).await?;
+    let narration = Narration::Text("recovered narration".into());
+    assert!(retry(root, narration, || bail!("Synthetic save failure")).is_err());
+    let donor = tempfile::tempdir()?;
+    let short = with_pcm(donor.path(), &[1, 0].repeat(400), AudioEnding::Interrupted)
+        .await?
+        .interrupted()?;
+    fs::copy(
+        short.directory().join("audio.log"),
+        pending.directory().join("audio.log"),
+    )?;
+    Ok(pending)
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn an_unreadable_saved_narration_fails_its_retry_without_erasing_it() -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+    let root = tempfile::tempdir()?;
+    let pending = failed_retry_with_short_audio(root.path()).await?;
+    let saved = pending.directory().join("narration.json");
+    fs::set_permissions(&saved, fs::Permissions::from_mode(0o000))?;
+    let refused = reopen_with(interrupted(root.path())?);
+    assert!(saved.is_file(), "A read error erased the only transcript");
+    fs::set_permissions(&saved, fs::Permissions::from_mode(0o600))?;
+    let Err(error) = refused else {
+        bail!("An unreadable narration was retried as missing");
+    };
+    assert!(format!("{error:#}").contains("Cannot read"), "{error:#}");
+    let reopened = reopen_with(interrupted(root.path())?)?;
+    assert_eq!(
+        reopened.footage.recording.narration,
+        Narration::Text("recovered narration".into())
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_damaged_saved_narration_without_speech_stays_for_explicit_discard() -> anyhow::Result<()>
+{
+    let root = tempfile::tempdir()?;
+    let pending = failed_retry_with_short_audio(root.path()).await?;
+    fs::write(pending.directory().join("narration.json"), b"{")?;
+    let Err(error) = reopen_with(interrupted(root.path())?) else {
+        bail!("A damaged narration was recovered");
+    };
+    assert!(format!("{error:#}").contains("damaged"), "{error:#}");
+    let survivor = interrupted(root.path()).context("A damaged narration retired its retry")?;
+    survivor.lock()?.discard()?;
+    assert!(!pending.directory().exists());
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_pending_show_whose_audio_lost_every_sample_retires_its_retry() -> anyhow::Result<()> {
     for content in [b"".as_slice(), b"SPKAUD01"] {

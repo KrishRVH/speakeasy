@@ -249,26 +249,32 @@ impl Checkpoint {
         Ok(())
     }
 
-    pub(crate) fn narration(&self) -> anyhow::Result<Option<(Narration, Option<NarrationLoss>)>> {
-        let read = recall::read_file(&self.directory, NARRATION, NARRATION_LIMIT)
-            .map(zeroize::Zeroizing::new);
-        let Some(bytes) = found(read)? else {
-            return Ok(None);
+    pub(crate) fn narration(&self) -> io::Result<SavedNarration> {
+        let read = found(recall::read_file(
+            &self.directory,
+            NARRATION,
+            NARRATION_LIMIT,
+        ));
+        let bytes = match read {
+            Ok(Some(bytes)) => zeroize::Zeroizing::new(bytes),
+            Ok(None) => return Ok(SavedNarration::Absent),
+            Err(error) if error.kind() == io::ErrorKind::FileTooLarge => {
+                return Ok(SavedNarration::Damaged);
+            },
+            Err(error) => return Err(error),
         };
-        let saved: StoredNarration<Narration> =
-            serde_json::from_slice(&bytes).map_err(|_private_content| {
-                anyhow::anyhow!("The saved Show narration is damaged or unsupported")
-            })?;
-        anyhow::ensure!(
-            saved.version == NARRATION_VERSION,
-            "The saved Show narration is unsupported"
-        );
+        let Some(saved) = serde_json::from_slice::<StoredNarration<Narration>>(&bytes)
+            .ok()
+            .filter(|saved| saved.version == NARRATION_VERSION)
+        else {
+            return Ok(SavedNarration::Damaged);
+        };
         let loss = if saved.audio_silent {
             Some(NarrationLoss::AudioSilent)
         } else {
             saved.incomplete.then_some(NarrationLoss::Incomplete)
         };
-        Ok(Some((saved.narration, loss)))
+        Ok(SavedNarration::Saved(saved.narration, loss))
     }
 
     pub(crate) fn audio(&self) -> anyhow::Result<Option<KeptAudio>> {
@@ -651,6 +657,13 @@ fn lock(directory: &Path) -> io::Result<Option<Checkpoint>> {
         Err(fs::TryLockError::WouldBlock) => Ok(None),
         Err(fs::TryLockError::Error(error)) => Err(error),
     }
+}
+
+#[cfg_attr(test, derive(Debug, PartialEq))]
+pub(crate) enum SavedNarration {
+    Absent,
+    Damaged,
+    Saved(Narration, Option<NarrationLoss>),
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
