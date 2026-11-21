@@ -3,7 +3,7 @@
 use std::{
     fs,
     io::Write as _,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
 };
 
@@ -11,6 +11,20 @@ use serde_json::{Value, json};
 
 const CLI: &str = env!("CARGO_BIN_EXE_speakeasy-cli");
 const APP: &str = env!("CARGO_BIN_EXE_speakeasy");
+
+fn isolated_cli(root: &Path) -> anyhow::Result<PathBuf> {
+    let name = Path::new(CLI)
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("The console entry has no file name"))?;
+    let isolated = root.join(name);
+    if cfg!(unix) {
+        let copied = Command::new("cp").arg(CLI).arg(&isolated).status()?;
+        anyhow::ensure!(copied.success(), "cp could not isolate the console entry");
+    } else {
+        fs::copy(CLI, &isolated)?;
+    }
+    Ok(isolated)
+}
 
 #[test]
 fn console_entry_waits_and_preserves_output_arguments_and_working_directory() -> anyhow::Result<()>
@@ -56,8 +70,7 @@ fn console_entry_waits_and_preserves_output_arguments_and_working_directory() ->
 fn an_isolated_console_entry_never_launches_the_app_for_help_or_invalid_options()
 -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
-    let isolated = root.path().join(Path::new(CLI).file_name().unwrap());
-    fs::copy(CLI, &isolated)?;
+    let isolated = isolated_cli(root.path())?;
     for args in [vec![], vec!["--help"], vec!["-h"]] {
         let help = Command::new(&isolated).args(args).output()?;
         assert!(help.status.success());
@@ -79,20 +92,22 @@ fn an_isolated_console_entry_never_launches_the_app_for_help_or_invalid_options(
 #[cfg(unix)]
 #[test]
 fn relay_treats_an_unexpected_control_exit_as_unknown() -> anyhow::Result<()> {
-    use std::os::unix::fs::PermissionsExt as _;
-
     let root = tempfile::tempdir()?;
-    let isolated = root.path().join(Path::new(CLI).file_name().unwrap());
-    fs::copy(CLI, &isolated)?;
-    let sibling = root.path().join("speakeasy");
-    fs::write(&sibling, "#!/bin/sh\nexit 101\n")?;
-    fs::set_permissions(&sibling, fs::Permissions::from_mode(0o700))?;
-
-    let control = Command::new(&isolated).arg("status").output()?;
+    let isolated = isolated_cli(root.path())?;
+    std::os::unix::fs::symlink("/bin/sh", root.path().join("speakeasy"))?;
+    for verb in ["status", "show"] {
+        fs::write(root.path().join(verb), "exit 101\n")?;
+    }
+    let relay = |verb| {
+        Command::new(&isolated)
+            .current_dir(root.path())
+            .arg(verb)
+            .output()
+    };
+    let control = relay("status")?;
     assert_eq!(control.status.code(), Some(2));
     assert!(String::from_utf8(control.stderr)?.contains("stopped unexpectedly"));
-    let utility = Command::new(&isolated).arg("--version").output()?;
-    assert_eq!(utility.status.code(), Some(101));
+    assert_eq!(relay("show")?.status.code(), Some(101));
     Ok(())
 }
 
