@@ -1,5 +1,6 @@
 use std::{
     collections::VecDeque,
+    fmt,
     fs::{self, File},
     future,
     io::{self, Read, Write as _},
@@ -124,10 +125,14 @@ impl Instance {
         if write_frame(&mut frame, &bytes).is_err() {
             return Reply::refused("The control command exceeds its size limit.");
         }
-        let Ok(mut stream) = connect(&path.with_file_name(PORT_FILE), &frame) else {
-            return Reply::unknown(
-                "Speakeasy is not running or could not be verified. Start or restart it before using this command.",
-            );
+        let mut stream = match connect(&path.with_file_name(PORT_FILE), &frame) {
+            Ok(stream) => stream,
+            Err(error) if error.is::<Unconfirmed>() => return Reply::unknown(UNCONFIRMED),
+            Err(_) => {
+                return Reply::unknown(
+                    "Speakeasy is not running or could not be verified. Start or restart it before using this command.",
+                );
+            },
         };
         let mut reply = ReplyDeadline {
             stream: &mut stream,
@@ -563,21 +568,30 @@ fn connect(port_file: &Path, request: &[u8]) -> anyhow::Result<TcpStream> {
     stream.write_all(&[endpoint.nonce.to_le_bytes().as_slice(), request].concat())?;
     let mut reply = [0];
     if let Err(error) = stream.read_exact(&mut reply) {
-        let unconfirmed = matches!(
+        if matches!(
             error.kind(),
             io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-        );
-        return Err(error).context(if unconfirmed {
-            "Speakeasy did not confirm the request in time; check its state before trying again"
-        } else {
-            "Speakeasy did not answer; try the shortcut again"
-        });
+        ) {
+            return Err(error).context(Unconfirmed);
+        }
+        return Err(error).context("Speakeasy did not answer; try the shortcut again");
     }
     ensure!(
         reply == [ACKNOWLEDGED],
         "Speakeasy instance could not be verified"
     );
     Ok(stream)
+}
+
+#[derive(Debug)]
+struct Unconfirmed;
+
+impl fmt::Display for Unconfirmed {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(
+            "Speakeasy did not confirm the request in time; check its state before trying again",
+        )
+    }
 }
 
 #[cfg(test)]

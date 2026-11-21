@@ -207,3 +207,29 @@ fn a_peer_closing_after_the_control_opcode_is_never_reported_as_success() -> any
     server.join().unwrap()?;
     Ok(())
 }
+
+#[test]
+fn a_request_sent_but_never_acknowledged_is_unconfirmed_rather_than_absent() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("settings.json");
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+    let (endpoint, _port_file) =
+        Endpoint::publish(listener.local_addr()?.port(), directory.path())?;
+    let server = thread::spawn(move || -> anyhow::Result<Vec<u8>> {
+        let (mut stream, _) = listener.accept()?;
+        stream.set_read_timeout(Some(PATIENCE))?;
+        let mut received = Vec::new();
+        stream.read_to_end(&mut received)?;
+        Ok(received)
+    });
+    let reply = Instance::control(&path, Command::PasteLast);
+    assert_eq!(reply.result, Disposition::Unknown);
+    assert_eq!(reply.reason.as_deref(), Some(UNCONFIRMED));
+    let received = server.join().unwrap()?;
+    assert_eq!(
+        received.get(..16),
+        Some(endpoint.nonce.to_le_bytes().as_slice())
+    );
+    assert_eq!(received.get(16), Some(&CONTROL));
+    Ok(())
+}
