@@ -94,6 +94,52 @@ fn input_cut_short_releases_every_key_it_left_down() -> anyhow::Result<()> {
 }
 
 #[test]
+fn input_cut_short_after_its_paste_or_return_landed_is_not_offered_again() -> anyhow::Result<()> {
+    let control_up = (VK_CONTROL, 0, UP);
+    let v_up = (0x56, 0, UP);
+    let return_up = (VK_RETURN, 0, UP);
+    let blocked_paste = insert().paste_keys()?.blocked;
+    let blocked_return = insert().return_keys()?.blocked;
+    let blocked_typing = insert().text_keys("a\nb")?.blocked;
+    let cases = [
+        (insert().paste_keys()?, 0, vec![], &blocked_paste),
+        (insert().paste_keys()?, 1, vec![control_up], &blocked_paste),
+        (
+            insert().paste_keys()?,
+            2,
+            vec![v_up, control_up],
+            &Inserted::Sent,
+        ),
+        (insert().paste_keys()?, 3, vec![control_up], &Inserted::Sent),
+        (insert().return_keys()?, 0, vec![], &blocked_return),
+        (insert().return_keys()?, 1, vec![return_up], &Inserted::Sent),
+        (
+            insert().text_keys("a\nb")?,
+            3,
+            vec![(VK_SHIFT, 0, UP)],
+            &blocked_typing,
+        ),
+    ];
+    for (keys, sent, expected_release, expected) in cases {
+        let mut released = None;
+        let outcome = keys.settle(sent, |left_down| released = Some(strokes(left_down)));
+        assert_eq!(&outcome, expected, "Input cut short after {sent} keys");
+        assert_eq!(
+            released.unwrap_or_default(),
+            expected_release,
+            "Keys left down after {sent} keys"
+        );
+    }
+    let mut released = false;
+    assert_eq!(
+        insert().paste_keys()?.settle(4, |_| released = true),
+        Inserted::Sent
+    );
+    assert!(!released, "Complete input sent releases");
+    Ok(())
+}
+
+#[test]
 #[ignore = "Starts a child on a private window station, whose clipboard is never the desktop's"]
 fn copied_text_stays_private_and_a_copied_image_is_a_change() -> anyhow::Result<()> {
     let module = module_path!()

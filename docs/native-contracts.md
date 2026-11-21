@@ -35,8 +35,9 @@ their synchronous submission and carry the app's own-input marker so hooks ignor
 is split only at valid encoding boundaries. Windows and macOS type each line break, whether CRLF, CR
 or LF, as Shift+Enter, which chat and form fields take as a new line rather than a send; Linux sends
 line breaks inside EI text, and the compositor decides how to insert them. Windows input cut short
-releases every key its sent part left down. Clipboard data and decoded images never enter
-Debug/error output.
+releases every key its sent part left down, and reports the paste or Return as sent once the key
+that acts, V with Ctrl or Return, went down; typed text cut short reports itself blocked. Clipboard
+data and decoded images never enter Debug/error output.
 
 `KeyCount` is a relaxed atomic counter. The Windows keyboard hook adds each key press it passes
 through that is not a modifier or lock key. The Mac event tap adds each key-down it passes through,

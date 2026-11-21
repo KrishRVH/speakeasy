@@ -176,7 +176,25 @@ pub(super) struct Insert {
 
 pub(super) struct Keys {
     input: Vec<INPUT>,
+    lands_after: usize,
     blocked: Inserted,
+}
+
+impl Keys {
+    fn settle(self, sent: usize, release: impl FnOnce(&[INPUT])) -> Inserted {
+        if sent == self.input.len() {
+            return Inserted::Sent;
+        }
+        let left_down = still_down(self.input.get(..sent).unwrap_or_default());
+        if !left_down.is_empty() {
+            release(&left_down);
+        }
+        if sent >= self.lands_after {
+            Inserted::Sent
+        } else {
+            self.blocked
+        }
+    }
 }
 
 impl NativeInsert for Insert {
@@ -236,6 +254,7 @@ impl NativeInsert for Insert {
                 release(VK_V),
                 release(VK_CONTROL),
             ],
+            lands_after: 2,
             blocked: Inserted::Copied("Text copied. This app blocked paste; press Ctrl+V."),
         })
     }
@@ -254,6 +273,7 @@ impl NativeInsert for Insert {
             }
         }
         Ok(Keys {
+            lands_after: input.len(),
             input,
             blocked: Inserted::Unavailable(
                 "Typing was blocked or cut short. Turn off “Type instead of paste” in Settings.",
@@ -264,6 +284,7 @@ impl NativeInsert for Insert {
     fn return_keys(&mut self) -> anyhow::Result<Keys> {
         Ok(Keys {
             input: vec![press(VK_RETURN), release(VK_RETURN)],
+            lands_after: 1,
             blocked: Inserted::Unavailable("This app blocked Return."),
         })
     }
@@ -289,18 +310,13 @@ impl NativeInsert for Insert {
 
     fn send(&mut self, keys: Keys) -> anyhow::Result<Inserted> {
         let sent = send_input(&keys.input)?;
-        if sent == keys.input.len() {
-            return Ok(Inserted::Sent);
-        }
-        let left_down = still_down(keys.input.get(..sent).unwrap_or_default());
-        if !left_down.is_empty() {
+        Ok(keys.settle(sent, |left_down| {
             #[expect(
                 clippy::let_underscore_must_use,
                 reason = "Release the keys that cut-short input left down even if the target also blocks the cleanup"
             )]
-            let _ = send_input(&left_down);
-        }
-        Ok(keys.blocked)
+            let _ = send_input(left_down);
+        }))
     }
 }
 
