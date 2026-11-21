@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::Context as _;
+use anyhow::{Context as _, ensure};
 use async_channel::{Receiver, Sender};
 use futures_util::{FutureExt as _, StreamExt as _, future::LocalBoxFuture};
 use x11rb::protocol::xproto::Window;
@@ -121,7 +121,7 @@ impl<'a> Insertions<'a> {
                 _ = self.transfers.next(), if !self.transfers.is_empty() => {},
                 _ = self.refusals.next(), if !self.refusals.is_empty() => self.refuse_declined(),
                 event = or_pending(transfer_requests.as_mut().map(|stream| stream.next())) => {
-                    self.serve_transfer(&event.context(CLIPBOARD_DISCONNECTED)??);
+                    self.serve_transfer(&event.context(CLIPBOARD_DISCONNECTED)??)?;
                 },
                 readable = readable => readable?.clear_ready(),
                 () = modifier_wait => {},
@@ -277,13 +277,13 @@ impl<'a> Insertions<'a> {
         Ok(())
     }
 
-    fn serve_transfer(&mut self, event: &Message) {
+    fn serve_transfer(&mut self, event: &Message) -> anyhow::Result<()> {
         let Ok((path, mime, serial)) = event.body().deserialize::<(OwnedObjectPath, String, u32)>()
         else {
-            return;
+            return Ok(());
         };
         if self.clipboard_session.as_ref() != Some(&path) {
-            return;
+            return Ok(());
         }
         let payload = self
             .selection
@@ -296,22 +296,26 @@ impl<'a> Insertions<'a> {
                 self.transfers
                     .push(transfer(write, done, payload).boxed_local());
             },
-            None => self.decline(path, serial),
+            None if self.refusals.len() < SIGNAL_BACKLOG => self.start_refusal(path, serial),
+            None => {
+                ensure!(
+                    self.declined.len() < SIGNAL_BACKLOG,
+                    "Clipboard transfer requests overran"
+                );
+                self.declined.push_back((path, serial));
+            },
         }
+        Ok(())
     }
 
-    fn decline(&mut self, session: OwnedObjectPath, serial: u32) {
-        if self.refusals.len() < SIGNAL_BACKLOG {
-            let (write, done) = transfer_calls(self.clipboard, session, serial);
-            self.refusals.push(refuse(write, done).boxed_local());
-        } else {
-            self.declined.push_back((session, serial));
-        }
+    fn start_refusal(&self, session: OwnedObjectPath, serial: u32) {
+        let (write, done) = transfer_calls(self.clipboard, session, serial);
+        self.refusals.push(refuse(write, done).boxed_local());
     }
 
     fn refuse_declined(&mut self) {
         if let Some((session, serial)) = self.declined.pop_front() {
-            self.decline(session, serial);
+            self.start_refusal(session, serial);
         }
     }
 

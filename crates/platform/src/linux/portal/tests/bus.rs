@@ -669,6 +669,29 @@ fn private_bus_every_transfer_past_full_transfers_and_refusals_is_still_refused(
 }
 
 #[test]
+fn private_bus_a_transfer_past_the_refusal_queue_ends_the_service() -> anyhow::Result<()> {
+    on_private_bus(async |bus| {
+        let mut portal = FakePortal::start(&bus).await?;
+        let client = Client::start(&bus).await?;
+        client.copy(&mut portal, "alpha").await?;
+        for serial in 1..=4 {
+            portal.transfer(serial).await?;
+            portal.expect("SelectionWrite").await?;
+        }
+        let last = u32::try_from(2 * SIGNAL_BACKLOG)?.saturating_add(5);
+        for serial in 5..=last {
+            portal.transfer(serial).await?;
+        }
+        let ended = tokio::time::timeout(PATIENCE, client.served).await;
+        assert!(
+            matches!(&ended, Ok(Ok(Err(error))) if error.to_string().contains("overran")),
+            "A transfer past the refusal queue left the service holding every request: {ended:?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
 fn private_bus_the_client_watches_for_a_portal_restart_before_it_reads_the_owner_it_calls()
 -> anyhow::Result<()> {
     on_private_bus(async |bus| {
