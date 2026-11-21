@@ -147,9 +147,10 @@ fn server_arguments_match_each_engine() {
     };
     let whisper = Config {
         engine: Engine::Whisper,
-        language: "en".into(),
+        language: "de-DE".into(),
         model: "model.bin".into(),
         use_gpu: false,
+        threads: 3,
         ..Config::default()
     };
     assert_eq!(
@@ -166,9 +167,9 @@ fn server_arguments_match_each_engine() {
             "--public",
             "served",
             "--threads",
-            "4",
+            "3",
             "--language",
-            "en",
+            "de",
             "--no-gpu",
         ],
         "Whisper keeps default timestamp decoding and ends with its CPU switch"
@@ -179,7 +180,7 @@ fn server_arguments_match_each_engine() {
     };
     assert_eq!(
         arguments(&whisper_on_gpu).last().map(String::as_str),
-        Some("en")
+        Some("de")
     );
     let nemo = Config {
         engine: Engine::Nemo,
@@ -697,9 +698,7 @@ async fn streaming_verifies_the_listener_before_sending_credentials_or_audio() -
     speech.stop().await;
     assert!(result?.is_err());
     assert!(
-        timeout(Duration::from_millis(30), listener.accept())
-            .await
-            .is_err(),
+        crate::testing::still_pending(listener.accept()).await,
         "Connected to a program that does not own the engine"
     );
     Ok(())
