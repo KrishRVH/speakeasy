@@ -8,7 +8,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSArray, NSData, NSString, ns_string};
 
-use crate::clipboard::{self, Pasteboard, Screen};
+use crate::clipboard::{self, CONCEALED_TYPE, Pasteboard, Screen, TRANSIENT_TYPE};
 
 #[expect(
     clippy::disallowed_types,
@@ -56,7 +56,8 @@ pub(super) fn holds(lease: &Lease, text: &str, mark: isize) -> bool {
             .filter(|items| items.count() == 1)
             .and_then(|items| items.firstObject())
             .is_some_and(|item| {
-                !concealed(&item.types())
+                let types: Vec<String> = item.types().iter().map(|kind| kind.to_string()).collect();
+                clipboard::marks_dictation(&types)
                     && item
                         .stringForType(string)
                         .is_some_and(|held| held.isEqualToString(&NSString::from_str(text)))
@@ -65,9 +66,8 @@ pub(super) fn holds(lease: &Lease, text: &str, mark: isize) -> bool {
 }
 
 fn concealed(types: &NSArray<NSString>) -> bool {
-    types
-        .iter()
-        .any(|kind| kind.isEqualToString(ns_string!("org.nspasteboard.ConcealedType")))
+    let concealed = NSString::from_str(CONCEALED_TYPE);
+    types.iter().any(|kind| kind.isEqualToString(&concealed))
 }
 
 pub(super) fn restore(lease: Lease, saved: Option<&Saved>, mark: isize) -> anyhow::Result<()> {
@@ -93,7 +93,7 @@ fn items_from(saved: &Saved) -> anyhow::Result<Vec<Retained<NSPasteboardItem>>> 
 fn private_item() -> anyhow::Result<Retained<NSPasteboardItem>> {
     let item = NSPasteboardItem::new();
     ensure!(
-        item.setString_forType(ns_string!(""), ns_string!("org.nspasteboard.TransientType")),
+        item.setString_forType(ns_string!(""), &NSString::from_str(TRANSIENT_TYPE)),
         "Cannot mark the clipboard copy private"
     );
     Ok(item)

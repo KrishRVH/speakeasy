@@ -33,6 +33,13 @@ const SYNTHESIZED: [u32; 2] = [
     clipboard_win::formats::CF_PALETTE,
 ];
 
+const TEXT_FORMATS: [u32; 4] = [
+    clipboard_win::formats::CF_UNICODETEXT,
+    clipboard_win::formats::CF_TEXT,
+    clipboard_win::formats::CF_OEMTEXT,
+    clipboard_win::formats::CF_LOCALE,
+];
+
 const HANDLES: [u32; 6] = [
     clipboard_win::formats::CF_METAFILEPICT,
     clipboard_win::formats::CF_ENHMETAFILE,
@@ -322,15 +329,22 @@ impl NativeInsert for Insert {
 }
 
 fn bears_dictation_marks() -> bool {
-    let present = |name| {
-        clipboard_win::raw::register_format(name)
-            .map(|format| clipboard_win::raw::is_format_avail(format.get()))
+    let private =
+        PRIVATE_FORMATS.map(|name| clipboard_win::raw::register_format(name).map(NonZeroU32::get));
+    let excludes = |format| {
+        let mut value = [u8::MAX; 4];
+        clipboard_win::raw::get(format, &mut value).is_ok_and(|read| read == value.len())
+            && value == [0; 4]
     };
-    present(CONCEALED) == Some(false)
-        && PRIVATE_FORMATS
-            .into_iter()
-            .all(|name| present(name) == Some(true))
+    private
+        .into_iter()
+        .all(|format| format.is_some_and(excludes))
         && clipboard_win::raw::is_format_avail(clipboard_win::formats::CF_UNICODETEXT)
+        && fully_listed(clipboard_win::raw::EnumFormats::new()).is_some_and(|formats| {
+            formats
+                .iter()
+                .all(|format| TEXT_FORMATS.contains(format) || private.contains(&Some(*format)))
+        })
 }
 
 fn still_down(sent: &[INPUT]) -> Vec<INPUT> {

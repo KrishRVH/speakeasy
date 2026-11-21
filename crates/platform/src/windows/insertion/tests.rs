@@ -258,25 +258,46 @@ fn assert_previous(html: NonZeroU32, source: &str) -> anyhow::Result<()> {
 }
 
 fn assert_only_its_own_copy_is_read(insert: &mut Insert) -> anyhow::Result<()> {
-    let concealed = clipboard_win::raw::register_format(CONCEALED)
-        .context("Cannot register a clipboard format")?;
-    for (marked, hidden, source) in [
-        (true, true, "A concealed copy of the same text"),
+    let register = |name| {
+        clipboard_win::raw::register_format(name)
+            .map(NonZeroU32::get)
+            .context("Cannot register a clipboard format")
+    };
+    let concealed = register(CONCEALED)?;
+    let html = register("HTML Format")?;
+    let history = register(PRIVATE_FORMATS[0])?;
+    let cases: [(&str, &dyn Fn() -> anyhow::Result<()>); 4] = [
+        ("A concealed copy of the same text", &|| {
+            mark_private()?;
+            clipboard_win::raw::set_without_clear(concealed, &[0])?;
+            Ok(())
+        }),
         (
-            false,
-            false,
             "A copy of the same text without the dictation's private marks",
+            &|| Ok(()),
         ),
-    ] {
+        (
+            "A rich copy of the same text that bears the dictation's private marks",
+            &|| {
+                mark_private()?;
+                clipboard_win::raw::set_without_clear(html, b"<b>fixture</b>")?;
+                Ok(())
+            },
+        ),
+        (
+            "A copy of the same text that allows clipboard history",
+            &|| {
+                mark_private()?;
+                clipboard_win::raw::set_without_clear(history, &1_u32.to_ne_bytes())?;
+                Ok(())
+            },
+        ),
+    ];
+    for (source, copy) in cases {
         {
             let _clipboard = open_clipboard()?;
             clipboard_win::raw::empty()?;
-            if marked {
-                mark_private()?;
-            }
-            if hidden {
-                clipboard_win::raw::set_without_clear(concealed.get(), &[0])?;
-            }
+            copy()?;
             clipboard_win::raw::set_string_with(
                 &windows_line_endings(TEXT),
                 clipboard_win::options::NoClear,

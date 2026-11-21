@@ -100,6 +100,18 @@ pub(crate) fn snapshot<Kind, Data>(
 }
 
 #[cfg(any(target_os = "macos", test))]
+pub(crate) const CONCEALED_TYPE: &str = "org.nspasteboard.ConcealedType";
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) const TRANSIENT_TYPE: &str = "org.nspasteboard.TransientType";
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn marks_dictation(types: &[String]) -> bool {
+    types.iter().any(|kind| kind == TRANSIENT_TYPE)
+        && !types.iter().any(|kind| kind == CONCEALED_TYPE)
+}
+
+#[cfg(any(target_os = "macos", test))]
 pub(crate) trait Pasteboard {
     type Saved;
     type Items;

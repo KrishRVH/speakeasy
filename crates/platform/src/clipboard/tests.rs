@@ -229,3 +229,20 @@ fn a_pasteboard_snapshot_that_changed_while_it_was_read_is_dropped() {
         "A snapshot outlived by a newer copy would be restored over it"
     );
 }
+
+#[test]
+fn only_a_pasteboard_item_bearing_the_transient_mark_reads_as_the_dictation() {
+    let item = |types: &[&str]| {
+        marks_dictation(&types.iter().map(ToString::to_string).collect::<Vec<_>>())
+    };
+    let text = "public.utf8-plain-text";
+    assert!(item(&[TRANSIENT_TYPE, text]));
+    assert!(
+        !item(&[text, "public.html"]),
+        "Another app's rich copy of the same text was taken for the dictation"
+    );
+    assert!(
+        !item(&[TRANSIENT_TYPE, CONCEALED_TYPE, text]),
+        "A concealed copy was taken for the dictation"
+    );
+}

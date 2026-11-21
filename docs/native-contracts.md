@@ -72,10 +72,12 @@ it alone. The paste restores nothing after a failed write, so it never writes un
 copy may own. Windows and macOS inspect every clipboard format or item type for concealed content
 before reading any payload; Windows saves nothing when its format listing ends in an error, and
 macOS saves nothing when its change count moved while it read the items. The dictated-text check
-reads text only from a clipboard that bears no concealment mark: macOS reads the one item whose
-types it has just inspected, and Windows also requires the dictation's private marks. The thread
-serves the next request only after the restore, which therefore snapshots the restored copy. The
-snapshot lives only on the insertion thread and is dropped after the restore.
+reads text only from a clipboard that bears no concealment mark and carries the dictation's own
+marks, so another app's copy of the same text never passes for it: macOS reads the one item whose
+types it has just inspected and requires its transient mark, and Windows requires both private marks
+to exclude the copy and lists no format beyond them and the text formats. The thread serves the next
+request only after the restore, which therefore snapshots the restored copy. The snapshot lives only
+on the insertion thread and is dropped after the restore.
 
 `MonitorControl` serializes publishing a live run-loop handle, readiness and stop. Stop-before-start
 remains effective; retirement removes the handle before a later stop can wake it. This lock cannot
