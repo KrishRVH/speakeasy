@@ -152,6 +152,10 @@ jobs:
     permissions:
       contents: read
       actions: read
+    # With movie_fixture_run the native matrix is skipped, so after a pin change task auto-install
+    # would install every tool here; these tasks need only Rust.
+    env:
+      MISE_TASK_RUN_AUTO_INSTALL: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
