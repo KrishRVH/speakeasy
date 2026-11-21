@@ -152,8 +152,11 @@ async fn stopping_just_after_promotion_flushes_more_audio_than_the_lane_can_hold
         mut tail,
         pcm,
     } = backlog()?;
-    let flushed = tokio::task::spawn_blocking(move || tail.flush(Duration::MAX));
+    let (entered, entering) = tokio::sync::oneshot::channel();
+    let flushed =
+        tokio::task::spawn_blocking(move || entered.send(()).is_ok() && tail.flush(Duration::MAX));
     tokio::pin!(flushed);
+    timeout(PATIENCE, entering).await??;
     let waited = still_pending(flushed.as_mut()).await;
     release.send(())?;
     assert!(
