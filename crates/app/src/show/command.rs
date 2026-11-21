@@ -311,7 +311,7 @@ fn seconds(args: &mut impl Iterator<Item = OsString>) -> anyhow::Result<Duration
         .context("--timeout needs whole seconds from 1 to 3600")
 }
 
-pub(super) fn operand(arg: &OsStr) -> bool {
+fn operand(arg: &OsStr) -> bool {
     !arg.is_empty() && !arg.as_encoded_bytes().starts_with(b"-")
 }
 

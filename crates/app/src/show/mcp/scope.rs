@@ -94,12 +94,11 @@ impl Root {
             if !visible(name) {
                 return Err("The Show path contains a hidden or invalid directory");
             }
-            files =
-                Some(
-                    files.as_ref().unwrap_or(&self.files).child(name).map_err(
-                        |_private| "Show paths must stay in directories, without symlinks",
-                    )?,
-                );
+            let parent = files.as_ref().unwrap_or(&self.files);
+            let child = parent
+                .child(name)
+                .map_err(|_private| "Show paths must stay in directories, without symlinks")?;
+            files = Some(child);
             path.push(name);
         }
         let files = match files {

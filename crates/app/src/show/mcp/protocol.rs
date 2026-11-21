@@ -19,9 +19,7 @@ const INVALID_PARAMS: i32 = -32602;
 const INTERNAL_ERROR: i32 = -32603;
 const UNSUPPORTED_VERSION: i32 = -32022;
 
-#[derive(Default)]
 enum Protocol {
-    #[default]
     New,
     Initializing,
     Ready,
@@ -32,7 +30,7 @@ pub(super) fn serve(
     input: &mut impl BufRead,
     out: &mut impl Write,
 ) -> io::Result<()> {
-    let mut protocol = Protocol::default();
+    let mut protocol = Protocol::New;
     loop {
         let response = match read_line(input)? {
             Line::Eof => return Ok(()),

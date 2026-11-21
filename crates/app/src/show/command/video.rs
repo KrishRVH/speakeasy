@@ -123,11 +123,12 @@ async fn export(
             receiver.is_closed()
         })
     });
+    let stopped = |_private_panic| anyhow::anyhow!("Video export stopped");
     tokio::select! {
-        result = &mut work => result.map_err(|_private_panic| anyhow::anyhow!("Video export stopped"))?,
+        result = &mut work => result.map_err(stopped)?,
         signal = &mut interrupt => {
             drop(cancel);
-            let result = work.await.map_err(|_private_panic| anyhow::anyhow!("Video export stopped"))?;
+            let result = work.await.map_err(stopped)?;
             signal.context("Cannot listen for video export cancellation")?;
             result.map_err(|_cancelled| anyhow::anyhow!(video::CANCELLED))
         },

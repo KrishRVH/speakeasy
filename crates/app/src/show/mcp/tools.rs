@@ -246,7 +246,7 @@ fn image(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
         return Err("The selected image is not a PNG of at most 8 MiB".to_owned());
     }
     let mut reader =
-        image::ImageReader::with_format(std::io::Cursor::new(&png), image::ImageFormat::Png);
+        image::ImageReader::with_format(io::Cursor::new(&png), image::ImageFormat::Png);
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(PIXEL_EDGE_LIMIT);
     limits.max_image_height = Some(PIXEL_EDGE_LIMIT);
