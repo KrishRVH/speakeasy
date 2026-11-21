@@ -624,6 +624,16 @@ fn overlapping_marks_group_by_the_span_of_the_whole_group_and_the_screen_it_show
         [[0, 1, 2]],
         "Each mark's screen matches the one the group shows, yet they split"
     );
+
+    let outlasting = Recording {
+        pins: pinned([1_040, 1_080]),
+        ..recording(vec![held_until(22_000)], Vec::new(), Narration::default())
+    };
+    assert_eq!(
+        groups(&outlasting, &samples(250, 25_000, |_| 128)),
+        [vec![0], vec![1, 2]],
+        "Pins joined a group whose stroke already spans more than twenty seconds"
+    );
 }
 
 #[test]
