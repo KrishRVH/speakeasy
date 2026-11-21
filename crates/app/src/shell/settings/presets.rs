@@ -230,8 +230,16 @@ impl Settings {
     }
 
     fn preset_in_use(&self, preset: &Preset) -> bool {
-        self.presentation.preset.as_deref().map_or_else(
-            || {
+        match self.presentation.preset.as_deref() {
+            Some(active) => {
+                active == preset.name()
+                    && self
+                        .presentation
+                        .chosen
+                        .as_ref()
+                        .is_none_or(|chosen| chosen == preset)
+            },
+            None => {
                 preset.matches(&self.config)
                     || self
                         .presets
@@ -241,15 +249,7 @@ impl Settings {
                             stored == preset && resolved.matches(&self.config)
                         })
             },
-            |active| {
-                active == preset.name()
-                    && self
-                        .presentation
-                        .chosen
-                        .as_ref()
-                        .is_none_or(|chosen| chosen == preset)
-            },
-        )
+        }
     }
 
     pub(super) fn presets_section(&self, ui: &Ui<'_>) -> Div {

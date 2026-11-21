@@ -43,7 +43,7 @@ struct Selection {
 pub(super) struct Choices {
     pub selected: Option<Selected>,
     generation: u64,
-    task: Option<Task<()>>,
+    choosing: Option<Task<()>>,
     using: Option<Task<()>>,
     applying: bool,
 }
@@ -51,19 +51,19 @@ pub(super) struct Choices {
 impl Choices {
     pub(super) fn cancel(&mut self) {
         self.generation = self.generation.wrapping_add(1);
-        self.task = None;
+        self.choosing = None;
         self.using = None;
         self.applying = false;
     }
 
     fn supersede(&mut self) -> bool {
-        let acknowledging = self.applying.then(|| self.task.take()).flatten();
+        let acknowledging = self.choosing.take_if(|_| self.applying);
         let unsettled = acknowledging.is_some();
         if let Some(acknowledging) = acknowledging {
             acknowledging.detach();
         }
         self.generation = self.generation.wrapping_add(1);
-        self.task = None;
+        self.choosing = None;
         self.applying = false;
         unsettled
     }
@@ -151,13 +151,13 @@ impl Services {
             .presets
             .iter()
             .find(|preset| preset.name() == name)
+            .cloned()
         else {
             call.respond(Reply::refused(
                 "That saved preset is unavailable. Save it in Settings first.",
             ));
             return;
         };
-        let preset = preset.clone();
         let baseline = self.config.clone();
         let mut candidate = baseline.clone();
         preset.load(&mut candidate);
@@ -176,7 +176,7 @@ impl Services {
         let validation = cx
             .background_executor()
             .spawn(async move { candidate.validated(&path) });
-        self.choices.task = Some(cx.spawn(async move |cx| {
+        self.choices.choosing = Some(cx.spawn(async move |cx| {
             let result = validation.await;
             let admission = cx.update_global::<Self, _>(|services, _| {
                 services.admit_preset(selection, result, &call)
@@ -204,7 +204,7 @@ impl Services {
         selection: Selection,
         result: anyhow::Result<ValidConfig>,
         caller: &Call,
-    ) -> Result<(Selected, async_channel::Receiver<Reply>), &'static str> {
+    ) -> Result<(Selected, Receiver<Reply>), &'static str> {
         let Selection {
             generation,
             epoch,

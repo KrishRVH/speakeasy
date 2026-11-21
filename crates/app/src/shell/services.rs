@@ -585,10 +585,15 @@ impl Services {
         let Some(epoch) = self.lifecycle.validate() else {
             return;
         };
-        let config = self.choices.selected.as_ref().map_or_else(
-            || self.admitted.clone().unwrap_or_else(|| self.config.clone()),
-            |choice| Config::clone(&choice.config),
-        );
+        let config = self
+            .choices
+            .selected
+            .as_ref()
+            .map_or_else(
+                || self.admitted.as_ref().unwrap_or(&self.config),
+                |choice| &*choice.config,
+            )
+            .clone();
         let path = self.path.clone();
         let validation = cx
             .background_executor()
