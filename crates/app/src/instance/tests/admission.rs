@@ -178,3 +178,28 @@ async fn a_shortcut_whose_caller_has_visibly_left_is_not_admitted() -> anyhow::R
     assert!(acknowledged(&staying)?);
     Ok(())
 }
+
+#[tokio::test]
+async fn an_unchecked_connection_holds_later_shortcuts_only_for_its_grace() -> anyhow::Result<()> {
+    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
+    let mut arrivals = Arrivals::default();
+    let accepted = Instant::now();
+    let unchecked = arrivals
+        .verifying
+        .spawn(future::pending::<Option<AsyncStream>>());
+    arrivals.order.push_back(Arrival {
+        accepted,
+        stage: Stage::Unverified(unchecked),
+    });
+    let (_caller, read) = read_by_server(&mut arrivals, &listener, 7, Request::Toggle).await?;
+    assert!(arrivals.finish(read, 0).await.is_none());
+    let expiry = accepted
+        .checked_add(ORDER_GRACE)
+        .context("The grace overflows")?;
+    assert!(matches!(arrivals.next(accepted), Next::HoldUntil(until) if until == expiry));
+    assert!(matches!(
+        arrivals.next(expiry),
+        Next::Deliver(1, Request::Toggle)
+    ));
+    Ok(())
+}
