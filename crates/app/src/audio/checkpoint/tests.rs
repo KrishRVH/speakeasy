@@ -2,11 +2,13 @@ use std::{iter, time::SystemTime};
 
 use anyhow::Context as _;
 use speakeasy_core::machine::Cue;
+use tokio::time::timeout;
 
 use super::*;
 use crate::{
     audio::{fixture, pcm::SAMPLE_BYTES},
-    show::{Keeper, Kept},
+    show::{Checkpointing, Keeper, Kept, Release, checkpoint},
+    testing::{PATIENCE, still_pending},
 };
 
 const RATE: u32 = 48_000;
@@ -39,7 +41,13 @@ async fn promote(before_cue: Vec<u8>) -> anyhow::Result<(Option<Sealed>, Option<
     assert!(keeping.offer(&pcm, RATE));
     pcm.extend(iter::repeat_n(0, 2 * SECOND));
     keeping.classify(&mut speech, &pcm, &heard);
-    assert!(keeping.finish(&pcm, RATE, AudioEnding::Complete));
+    let (events, warnings) = async_channel::unbounded();
+    let mut tail = keeping
+        .close(&pcm, RATE, AudioEnding::Complete, SessionId::FIRST, &events)
+        .context("Kept audio has no tail")?;
+    assert!(tail.flush(Duration::MAX));
+    drop(tail);
+    assert!(warnings.is_empty());
     assert!(incoming.is_closed());
     let checkpoint = keeper
         .close()
@@ -82,9 +90,15 @@ async fn promoted_speech_replays_to_the_same_sealed_audio() -> anyhow::Result<()
     Ok(())
 }
 
-#[tokio::test]
-async fn stopping_just_after_promotion_flushes_more_audio_than_the_lane_can_hold()
--> anyhow::Result<()> {
+struct Backlog {
+    root: tempfile::TempDir,
+    release: std::sync::mpsc::Sender<()>,
+    keeper: Keeper,
+    tail: AudioTail,
+    pcm: Vec<u8>,
+}
+
+fn backlog() -> anyhow::Result<Backlog> {
     let root = tempfile::tempdir()?;
     let parent = root.path().to_owned();
     let (release, wait) = std::sync::mpsc::channel();
@@ -107,24 +121,68 @@ async fn stopping_just_after_promotion_flushes_more_audio_than_the_lane_can_hold
         language: "en".into(),
     })
     .map_err(|_refused| anyhow::anyhow!("Synthetic checkpoint was refused"))?;
-    let (entered, finishing) = async_channel::bounded(1);
-    let flushed = tokio::task::spawn_blocking(move || {
-        let mut keeping = Keeping::new(&incoming);
-        let pcm = vec![1; 9 << 20];
-        let offered = keeping.offer(&pcm, RATE);
-        entered.try_send(())?;
-        Ok::<_, anyhow::Error>(offered && keeping.finish(&pcm, RATE, AudioEnding::Complete))
-    });
-    finishing.recv().await?;
-    tokio::time::sleep(Duration::from_millis(75)).await;
+    let mut keeping = Keeping::new(&incoming);
+    let pcm = vec![1; 9 << 20];
+    assert!(keeping.offer(&pcm, RATE));
+    let (events, warnings) = async_channel::unbounded();
+    let mut tail = keeping
+        .close(&pcm, RATE, AudioEnding::Complete, SessionId::FIRST, &events)
+        .context("Kept audio has no tail")?;
+    assert!(warnings.is_empty());
+    assert!(
+        !tail.flush(Duration::ZERO),
+        "The audio lane held the whole backlog, so this test proves nothing"
+    );
+    Ok(Backlog {
+        root,
+        release,
+        keeper,
+        tail,
+        pcm,
+    })
+}
+
+#[tokio::test]
+async fn stopping_just_after_promotion_flushes_more_audio_than_the_lane_can_hold()
+-> anyhow::Result<()> {
+    let Backlog {
+        root: _root,
+        release,
+        keeper,
+        mut tail,
+        pcm,
+    } = backlog()?;
+    let flushed = tokio::task::spawn_blocking(move || tail.flush(Duration::MAX));
     release.send(())?;
-    assert!(flushed.await??);
+    assert!(flushed.await?);
     let checkpoint = keeper
         .close()
         .await?
         .context("Fixture checkpoint is missing")?;
     let audio = checkpoint.audio()?.context("Fixture audio is missing")?;
-    assert_eq!(audio.pcm.len(), 9 << 20);
+    assert!(*audio.pcm == pcm, "The flush lost audio beyond the lane");
     assert!(audio.complete);
+    Ok(())
+}
+
+#[tokio::test]
+async fn discarding_a_show_ends_its_backlogged_audio_flush_unwritten() -> anyhow::Result<()> {
+    let Backlog {
+        root,
+        release,
+        keeper,
+        mut tail,
+        ..
+    } = backlog()?;
+    let flushed = tokio::task::spawn_blocking(move || tail.flush(Duration::MAX));
+    let discarded = Checkpointing::Writing(keeper).release(Release::Discard);
+    tokio::pin!(discarded);
+    assert!(still_pending(discarded.as_mut()).await);
+    release.send(())?;
+    let flushed = timeout(PATIENCE, flushed).await??;
+    timeout(PATIENCE, discarded).await??;
+    assert!(!flushed, "A discarded Show kept flushing its audio");
+    let listing = checkpoint::list(root.path(), SystemTime::now());
+    assert!(listing.shows.is_empty() && listing.problems.is_empty());
     Ok(())
 }

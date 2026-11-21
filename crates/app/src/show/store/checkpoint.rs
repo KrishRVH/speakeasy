@@ -10,7 +10,7 @@ use std::{
 
 use anyhow::Context as _;
 pub(crate) use audio::{KeptAudio, MAX_CUES};
-pub(crate) use keeper::{AudioEnding, AudioLog, FrameLog, Keeper, Kept};
+pub(crate) use keeper::{AudioEnding, AudioLog, AudioTail, FrameLog, Keeper, Kept};
 use speakeasy_show::{Bundle, Moment, Narration, NarrationLoss, Take, log};
 
 use super::{
@@ -600,6 +600,9 @@ impl Checkpointing {
     }
 
     pub(crate) async fn release(self, release: Release) -> anyhow::Result<()> {
+        if let (Self::Writing(keeper), Release::Discard) = (&self, &release) {
+            keeper.stop();
+        }
         let Some(checkpoint) = self.close().await? else {
             return Ok(());
         };

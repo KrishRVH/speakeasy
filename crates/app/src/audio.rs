@@ -47,7 +47,10 @@ use crate::{
     runtime::ports::{
         CaptureEvent, Capturing, Listening, Lost, MicrophoneSource, Partition, Sealed,
     },
-    show::{AudioLog, checkpoint::AudioEnding},
+    show::{
+        AudioLog,
+        checkpoint::{AudioEnding, AudioTail},
+    },
 };
 
 const INITIAL_RESERVATION: Duration = Duration::from_secs(10);
@@ -59,6 +62,7 @@ const QUIETEST_METER_CEILING_DBFS: f32 = -30.0;
 const LOUDEST_METER_CEILING_DBFS: f32 = -10.0;
 const METER_CEILING_RELEASE_DB_PER_SECOND: f32 = 6.0;
 const CAPTURE_STOPPED: &str = "Microphone stopped unexpectedly. Try recording again.";
+const CHECKPOINT_FLUSH: Duration = Duration::from_secs(5);
 
 pub(crate) struct Capture {
     signal: Signal,
@@ -86,16 +90,21 @@ impl Capture {
                 control,
             ) {
                 Ok(recorder) => {
-                    let Captured { outcome, device } =
-                        recorder.record(id, events, control, requests);
+                    let Captured {
+                        outcome,
+                        device,
+                        tail,
+                    } = recorder.record(id, events, control, requests);
                     Ok(Captured {
                         outcome,
                         device: Some(device),
+                        tail,
                     })
                 },
                 Err(Startup::Stopped) => Ok(Captured {
                     outcome: Outcome::Finished(Ok(None)),
                     device: None,
+                    tail: None,
                 }),
                 Err(Startup::Failed(error)) => Err(error),
             },
@@ -128,10 +137,14 @@ impl Capture {
                 let ran =
                     panic::catch_unwind(AssertUnwindSafe(|| work(&events, &control, &requests)));
                 drop(requests);
-                let (outcome, device) = match ran {
-                    Ok(Ok(Captured { outcome, device })) => (outcome, Some(device)),
-                    Ok(Err(error)) => (Outcome::Finished(Err(error)), None),
-                    Err(_) => (Outcome::Finished(Err(anyhow!(CAPTURE_STOPPED))), None),
+                let (outcome, device, tail) = match ran {
+                    Ok(Ok(Captured {
+                        outcome,
+                        device,
+                        tail,
+                    })) => (outcome, Some(device), tail),
+                    Ok(Err(error)) => (Outcome::Finished(Err(error)), None, None),
+                    Err(_) => (Outcome::Finished(Err(anyhow!(CAPTURE_STOPPED))), None, None),
                 };
                 #[expect(
                     clippy::let_underscore_must_use,
@@ -140,6 +153,13 @@ impl Capture {
                 let _ = events.send_blocking(outcome.report(id));
 
                 drop(device);
+                if let Some(mut tail) = tail {
+                    #[expect(
+                        clippy::let_underscore_must_use,
+                        reason = "The session has its outcome; audio that misses the flush deadline stays marked incomplete in the checkpoint"
+                    )]
+                    let _ = tail.flush(CHECKPOINT_FLUSH);
+                }
             }
         })?;
         let signal = Signal {
@@ -245,6 +265,7 @@ impl<E: Into<anyhow::Error>> From<E> for Startup {
 struct Captured<D> {
     outcome: Outcome,
     device: D,
+    tail: Option<AudioTail>,
 }
 
 enum Outcome {
@@ -377,10 +398,9 @@ impl<D> Recorder<D> {
         } else {
             AudioEnding::Interrupted
         };
-        if !abandoned(control, events) && !keeping.finish(self.pcm.audio(), self.rate, ending) {
-            keeping.warn(id, events);
-        }
-        drop(keeping);
+        let tail = (!abandoned(control, events))
+            .then(|| keeping.close(self.pcm.audio(), self.rate, ending, id, events))
+            .flatten();
         let Self {
             pcm,
             mut speech,
@@ -409,7 +429,11 @@ impl<D> Recorder<D> {
             },
             Err(error) => Outcome::Finished(Err(error)),
         };
-        Captured { outcome, device }
+        Captured {
+            outcome,
+            device,
+            tail,
+        }
     }
 
     fn drain(

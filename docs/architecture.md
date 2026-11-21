@@ -664,8 +664,10 @@ module unless a test file is named.
   capture; frame or audio failure cannot release its lock. The frame lane queues at most 512
   events/64 MiB and its log caps at 1 GiB/200,000 events. The audio lane queues at most 64 events/8
   MiB and its checksummed PCM log caps at 128 MiB; a backlog stays in capture's existing PCM buffer.
-  Final audio flush waits for available credits within a bounded deadline. Only ordinary stop writes
-  an audio end record; a disconnected or stalled microphone leaves a recoverable prefix.
+  Capture reports its outcome and closes the microphone before the final audio flush, which then
+  waits up to five seconds for credits; a discarded checkpoint stops its keeper, which ends a waiting
+  flush unwritten. Only ordinary stop writes an audio end record; a disconnected or stalled
+  microphone leaves a recoverable prefix.
   [Audio checkpointing](../crates/app/src/audio/checkpoint.rs) preserves cue boundaries before and
   after promotion, so recovery seals through the same speech gate and trimming. Narration is
   atomically written and synced while audio remains recoverable. Successful transcription copies a

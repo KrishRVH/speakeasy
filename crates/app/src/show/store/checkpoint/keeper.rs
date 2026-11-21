@@ -13,7 +13,7 @@ use std::{
 use anyhow::Context as _;
 use async_channel::{Receiver, Sender};
 use movie::Writing;
-pub(crate) use producers::{AudioEnding, AudioLog, FrameLog};
+pub(crate) use producers::{AudioEnding, AudioLog, AudioTail, FrameLog};
 use producers::{Credit, Producer};
 use speakeasy_platform::{MovieTarget, StoppableThread};
 use speakeasy_show::{Framing, Size, TakeEvent, log};
@@ -94,6 +94,10 @@ impl Keeper {
             frames: FrameLog::new(frames),
             audio: AudioLog::new(audio),
         })
+    }
+
+    pub(crate) fn stop(&self) {
+        self.thread.request_stop();
     }
 
     pub(crate) async fn close(self) -> anyhow::Result<Option<Checkpoint>> {
@@ -210,13 +214,21 @@ async fn write(
     let mut movie: Option<Writing> = None;
     let mut stopped = false;
     while frames.is_some() || audio.is_some() || movie.is_some() {
+        if !stopped && stopping.is_closed() {
+            stopped = true;
+            if let Some(input) = frames.take() {
+                input.finish(false);
+            }
+            if let Some(input) = audio.take() {
+                input.finish(false);
+            }
+            if let Some(movie) = &movie {
+                movie.stop();
+            }
+            continue;
+        }
         tokio::select! {
-            _stop = stopping.recv(), if !stopped => {
-                stopped = true;
-                if let Some(input) = frames.take() { input.finish(false); }
-                if let Some(input) = audio.take() { input.finish(false); }
-                if let Some(movie) = &movie { movie.stop(); }
-            },
+            _stop = stopping.recv(), if !stopped => {},
             event = movie::next(movie.as_ref()) => {
                 match event {
                     Some(event) => if let Some(movie) = &mut movie { movie.event(directory, event); },

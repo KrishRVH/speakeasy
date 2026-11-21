@@ -315,6 +315,7 @@ async fn sealed_audio_is_reported_before_device_teardown_and_retirement_waits() 
                 entered,
                 release: waiting,
             },
+            tail: None,
         })
     })?;
     let tearing_down = timeout(PATIENCE, teardown.recv()).await;
@@ -339,6 +340,7 @@ async fn capture_retirement_signals_cancel_and_waits_for_teardown() -> anyhow::R
         Ok(Captured {
             outcome: Outcome::Finished(Ok(None)),
             device: (),
+            tail: None,
         })
     })?;
     let control = starting.recv().await?;
@@ -399,6 +401,7 @@ async fn consumer_wakes(cancel: bool, wake_before_park: bool) -> anyhow::Result<
         Ok(Captured {
             outcome: Outcome::Finished(Ok(None)),
             device: (),
+            tail: None,
         })
     })?;
     let consumer = timeout(PATIENCE, arming.recv()).await??;
@@ -446,6 +449,7 @@ async fn closing_audio_events_unblocks_owned_capture_retirement() -> anyhow::Res
         Ok(Captured {
             outcome: Outcome::Finished(Ok(None)),
             device: (),
+            tail: None,
         })
     })?;
     let retirement = capture.retire();
@@ -492,6 +496,7 @@ async fn a_finished_capture_refuses_a_late_show_checkpoint() -> anyhow::Result<(
         Ok(Captured {
             outcome: Outcome::Finished(Ok(None)),
             device: Device(waiting),
+            tail: None,
         })
     })?;
     let report = timeout(PATIENCE, audio.recv()).await??;
@@ -586,12 +591,75 @@ async fn a_disconnected_microphone_keeps_its_final_samples_without_an_audio_endi
     let recorder = recorder(&samples, Some(cpal::ErrorKind::DeviceNotAvailable))?;
     let captured = recorder.record(SessionId::FIRST, &events, &Control::default(), &requests);
     assert!(matches!(captured.outcome, Outcome::Lost(..)));
+    let mut tail = captured.tail.context("Kept audio has no tail")?;
+    assert!(tail.flush(PATIENCE));
+    drop(tail);
     let checkpoint = keeper
         .close()
         .await?
         .context("Fixture checkpoint is missing")?;
     let audio = checkpoint.audio()?.context("Fixture audio is missing")?;
     assert_eq!(audio.pcm.len(), samples.len() * 2);
+    assert!(!audio.complete);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_lost_microphone_reports_before_waiting_on_its_backlogged_checkpoint()
+-> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let parent = root.path().to_owned();
+    let (release, wait) = std::sync::mpsc::channel();
+    let Kept {
+        keeper,
+        frames,
+        audio,
+    } = Keeper::start(
+        move || {
+            wait.recv()?;
+            Ok(parent)
+        },
+        SystemTime::now(),
+    )?;
+    drop(frames);
+    let (keep, incoming) = async_channel::bounded(1);
+    keep.try_send(checkpoint::Keep {
+        log: audio,
+        start: Duration::ZERO,
+        language: "en".into(),
+    })
+    .map_err(|_refused| anyhow!("Synthetic checkpoint was refused"))?;
+    let requests = Requests {
+        keep: incoming,
+        ..no_requests()
+    };
+    let mut samples = spoken();
+    samples.resize(9 << 19, 0.0);
+    let recorder = recorder(&samples, Some(cpal::ErrorKind::DeviceNotAvailable))?;
+    let (events, reports) = async_channel::bounded(64);
+    let capture = Capture::spawn(SessionId::FIRST, events, move |events, control, _| {
+        Ok(recorder.record(SessionId::FIRST, events, control, &requests))
+    })?;
+    let lost = loop {
+        match timeout(Duration::from_secs(30), reports.recv()).await?? {
+            CaptureEvent::Lost(SessionId::FIRST, ..) => break true,
+            CaptureEvent::Finished(..) => break false,
+            _ => {},
+        }
+    };
+    release.send(())?;
+    timeout(PATIENCE, capture.retire()).await?;
+    let checkpoint = keeper
+        .close()
+        .await?
+        .context("Fixture checkpoint is missing")?;
+    let audio = checkpoint.audio()?.context("Fixture audio is missing")?;
+    assert!(lost, "The disconnected microphone was not reported lost");
+    assert_eq!(
+        audio.pcm.len(),
+        samples.len() * 2,
+        "The lost report waited for a checkpoint flush that gave up"
+    );
     assert!(!audio.complete);
     Ok(())
 }

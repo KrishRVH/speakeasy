@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     sync::mpsc,
     time::{Duration, Instant},
 };
@@ -8,8 +9,6 @@ use speakeasy_show::{Framing, Size, TakeEvent};
 use zeroize::Zeroizing;
 
 use super::{FrameRecord, audio};
-
-const FINISH_WAIT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy, Default)]
 pub(super) struct Credit {
@@ -78,22 +77,12 @@ impl<T> Producer<T> {
         }
     }
 
-    fn offer_until(&mut self, mut record: T, bytes: usize, deadline: Instant) -> Offered<T> {
-        loop {
-            match self.offer(record, bytes) {
-                Offered::Busy(pending) => {
-                    let Ok(credit) = self
-                        .credits
-                        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-                    else {
-                        return Offered::Stopped;
-                    };
-                    self.settle(credit);
-                    record = pending;
-                },
-                offered => return offered,
-            }
-        }
+    fn await_credit(&mut self, wait: Duration) -> bool {
+        let Ok(credit) = self.credits.recv_timeout(wait) else {
+            return false;
+        };
+        self.settle(credit);
+        true
     }
 
     fn settle(&mut self, credit: Credit) {
@@ -191,49 +180,62 @@ impl AudioLog {
         self.threshold = usize::try_from(rate)
             .unwrap_or(usize::MAX)
             .clamp(2, 64 << 10);
-        self.send(
-            audio::Record::Begin {
-                rate,
-                start,
-                language,
-            },
-            None,
-        )
+        self.send(audio::Record::Begin {
+            rate,
+            start,
+            language,
+        })
     }
 
     pub(crate) fn offer(&mut self, pcm: &[u8], cues: &[(usize, usize)]) -> bool {
         if !self.complete {
             return false;
         }
-        self.chunk(pcm, cues, None);
+        self.chunk(pcm, cues);
         self.complete
     }
 
-    pub(crate) fn finish(
-        mut self,
+    pub(crate) fn close(
+        self,
         pcm: &[u8],
         cues: &[(usize, usize)],
         ending: AudioEnding,
-    ) -> bool {
-        let now = Instant::now();
-        let deadline = now.checked_add(FINISH_WAIT).unwrap_or(now);
-        while self.complete && (self.offered < pcm.len() || self.cues < cues.len()) {
-            let before = (self.offered, self.cues);
-            self.chunk(pcm, cues, Some(deadline));
-            if before == (self.offered, self.cues) {
-                self.complete = false;
+    ) -> AudioTail {
+        let mut tail = AudioTail {
+            records: VecDeque::new(),
+            complete: self.complete,
+            producer: self.producer,
+        };
+        let (mut offered, mut cue) = (self.offered, self.cues);
+        while tail.complete && (offered < pcm.len() || cue < cues.len()) {
+            let progress = (offered, cue);
+            let end =
+                offered.saturating_add(pcm.len().saturating_sub(offered).min(audio::CHUNK_BYTES));
+            while let Some(&(before, at)) = cues.get(cue).filter(|&&(_, at)| at <= end) {
+                tail.records.push_back(audio::Record::Cue { before, at });
+                cue = cue.saturating_add(1);
             }
+            if let Some(samples) = pcm.get(offered..end).filter(|samples| !samples.is_empty()) {
+                tail.records
+                    .push_back(audio::Record::Samples(Zeroizing::new(samples.to_vec())));
+                offered = end;
+            }
+            tail.complete = progress != (offered, cue);
         }
-        self.complete
-            && match ending {
-                AudioEnding::Complete => self.send(audio::Record::End, Some(deadline)),
-                AudioEnding::Interrupted => true,
-            }
+        if tail.complete && matches!(ending, AudioEnding::Complete) {
+            tail.records.push_back(audio::Record::End);
+        }
+        tail
     }
 
-    fn chunk(&mut self, pcm: &[u8], cues: &[(usize, usize)], deadline: Option<Instant>) {
+    #[cfg(test)]
+    pub(crate) fn finish(self, pcm: &[u8], cues: &[(usize, usize)], ending: AudioEnding) -> bool {
+        self.close(pcm, cues, ending).flush(Duration::MAX)
+    }
+
+    fn chunk(&mut self, pcm: &[u8], cues: &[(usize, usize)]) {
         let pending = pcm.len().saturating_sub(self.offered);
-        let end = if deadline.is_some() || pending >= self.threshold {
+        let end = if pending >= self.threshold {
             self.offered.saturating_add(pending.min(audio::CHUNK_BYTES))
         } else {
             self.offered
@@ -242,29 +244,22 @@ impl AudioLog {
             if at > end {
                 break;
             }
-            if !self.send(audio::Record::Cue { before, at }, deadline) {
+            if !self.send(audio::Record::Cue { before, at }) {
                 return;
             }
             self.cues = self.cues.saturating_add(1);
         }
         if end > self.offered
             && let Some(bytes) = pcm.get(self.offered..end)
-            && self.send(
-                audio::Record::Samples(Zeroizing::new(bytes.to_vec())),
-                deadline,
-            )
+            && self.send(audio::Record::Samples(Zeroizing::new(bytes.to_vec())))
         {
             self.offered = end;
         }
     }
 
-    fn send(&mut self, record: audio::Record, deadline: Option<Instant>) -> bool {
+    fn send(&mut self, record: audio::Record) -> bool {
         let bytes = record.bytes();
-        let offered = match deadline {
-            Some(deadline) => self.producer.offer_until(record, bytes, deadline),
-            None => self.producer.offer(record, bytes),
-        };
-        match offered {
+        match self.producer.offer(record, bytes) {
             Offered::Sent => true,
             Offered::Busy(_) => false,
             Offered::Stopped => {
@@ -273,6 +268,47 @@ impl AudioLog {
                 false
             },
         }
+    }
+}
+
+pub(crate) struct AudioTail {
+    producer: Producer<audio::Record>,
+    records: VecDeque<audio::Record>,
+    complete: bool,
+}
+
+impl AudioTail {
+    #[must_use]
+    pub(crate) fn flush(&mut self, wait: Duration) -> bool {
+        let started = Instant::now();
+        while self.send_ready() {
+            if !self
+                .producer
+                .await_credit(wait.saturating_sub(started.elapsed()))
+            {
+                return false;
+            }
+        }
+        self.complete
+    }
+
+    fn send_ready(&mut self) -> bool {
+        while let Some(record) = self.records.pop_front() {
+            let bytes = record.bytes();
+            match self.producer.offer(record, bytes) {
+                Offered::Sent => {},
+                Offered::Busy(record) => {
+                    self.records.push_front(record);
+                    return true;
+                },
+                Offered::Stopped => {
+                    self.complete = false;
+                    self.records.clear();
+                    return false;
+                },
+            }
+        }
+        false
     }
 }
 
