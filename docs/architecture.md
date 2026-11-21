@@ -716,33 +716,35 @@ module unless a test file is named.
   when that voice lacks its end record, as after a final flush that missed its deadline; audio too
   damaged to read is left out of voice rather than blocking the frames and narration. Publication
   binds durable checkpoint and bundle markers before rename; the marker distinguishes narrated
-  publication so a crash before checkpoint deletion cannot offer duplicate recovery. Publication and
-  cleanup retire a checkpoint only after syncing the Shows folder that holds its bundle, so recovery
-  files never outlive a rename the disk may lose. A retry's marker also names the pending bundle it
-  supersedes, which stays the checkpoint's owner for recovery and deletion until the new bundle
-  lands. If checkpoint storage never opens, in-memory footage remains publishable. A lost checkpoint
-  completion stops publication; an unknown checkpoint state cannot become an apparently complete
-  bundle. Untranscribed audio or saved narration keeps a published checkpoint visible as Narration
-  pending; publication keeps one for retry only when its audio is not damaged and its frame log
-  replays a frame; one with neither retires, and a retry whose kept audio holds no speech retires it
-  and says so, and the Shows window rereads its library after any failed recovery so a retired row
-  stops offering Retry; a retry whose transcription yields no words saves no copy and stays. Saved
-  narration that cannot be read fails recovery and stays; damaged narration, including an empty
-  file, falls back to the kept audio, as does a retry's saved narration without words. Kept audio
-  that cannot be read then fails recovery with access advice, and only audio that is absent,
-  damaged, or holds no speech leaves the retry listed for explicit discard. A silent microphone's
-  audio holds nothing to retry or export, so its checkpoint records that disposition and retires
-  without keeping voice; recovery treats complete, all-zero audio of any length without saved
-  narration the same way. Unfinished cancellation records discard when its keeper receives it,
-  before the native movie lease closes, so a kill during teardown cannot return cancelled footage;
-  an emergency drop leaves the checkpoint recoverable; private audio, narration, frame, and movie
-  files are removed before the lock, so blocked deletion remains available to cleanup. Audio retains
-  the original seven-day expiry regardless of a saved bundle's Keep marker. Discovery isolates
-  damaged checkpoints so healthy entries remain visible and saved bundles still expire. A pending
-  checkpoint whose audio is damaged or unreadable stays listed as a problem, and `show discard`
-  still removes it by ID or path; only an empty or partly written audio header counts as no audio.
-  [checkpoint/tests.rs](../crates/app/src/show/store/checkpoint/tests.rs) exercises damaged
-  siblings, expiry, lock ownership, and durable discard/publication markers.
+  publication so a crash before checkpoint deletion cannot offer duplicate recovery. On Unix,
+  publication and cleanup retire a checkpoint only after syncing the Shows folder that holds its
+  bundle, so recovery files never outlive a rename the disk may lose; Windows issues no directory
+  sync, so there a power loss soon after retirement can still lose the rename. A retry's marker also
+  names the pending bundle it supersedes, which stays the checkpoint's owner for recovery and
+  deletion until the new bundle lands. If checkpoint storage never opens, in-memory footage remains
+  publishable. A lost checkpoint completion stops publication; an unknown checkpoint state cannot
+  become an apparently complete bundle. Untranscribed audio or saved narration keeps a published
+  checkpoint visible as Narration pending; publication keeps one for retry only when its audio is
+  not damaged and its frame log replays a frame; one with neither retires, and a retry whose kept
+  audio holds no speech retires it and says so, and the Shows window rereads its library after any
+  failed recovery so a retired row stops offering Retry; a retry whose transcription yields no words
+  saves no copy and stays. Saved narration that cannot be read fails recovery and stays; damaged
+  narration, including an empty file, falls back to the kept audio, as does a retry's saved
+  narration without words. Kept audio that cannot be read then fails recovery with access advice,
+  and only audio that is absent, damaged, or holds no speech leaves the retry listed for explicit
+  discard. A silent microphone's audio holds nothing to retry or export, so its checkpoint records
+  that disposition and retires without keeping voice; recovery treats complete, all-zero audio of
+  any length without saved narration the same way. Unfinished cancellation records discard when its
+  keeper receives it, before the native movie lease closes, so a kill during teardown cannot return
+  cancelled footage; an emergency drop leaves the checkpoint recoverable; private audio, narration,
+  frame, and movie files are removed before the lock, so blocked deletion remains available to
+  cleanup. Audio retains the original seven-day expiry regardless of a saved bundle's Keep marker.
+  Discovery isolates damaged checkpoints so healthy entries remain visible and saved bundles still
+  expire. A pending checkpoint whose audio is damaged or unreadable stays listed as a problem, and
+  `show discard` still removes it by ID or path; audio counts as absent when no intact sample record
+  follows its header, which covers a torn first append but also a first record that later fails its
+  checksum. [checkpoint/tests.rs](../crates/app/src/show/store/checkpoint/tests.rs) exercises
+  damaged siblings, expiry, lock ownership, and durable discard/publication markers.
   [journal/log.rs](../crates/show/src/journal/log.rs) shares live/replay admission, thinning, and
   pointer folding; its header records the budget, surface, and framing, so recovery crops as the
   live Show would; checksums and bounded records stop replay at its first damaged event. Property
