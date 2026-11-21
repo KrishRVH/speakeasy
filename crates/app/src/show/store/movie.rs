@@ -292,7 +292,7 @@ pub(super) fn open(directory: &Path) -> anyhow::Result<Option<Reading>> {
 }
 
 fn open_from(directory: &ReadDirectory) -> anyhow::Result<Option<Reading>> {
-    let Some(mut file) = found(recall::open_file(directory, FILE, MoviePrefix::FILE_LIMIT))? else {
+    let Some((mut file, information)) = found(directory.stable_file(Path::new(FILE)))? else {
         anyhow::ensure!(
             found(directory.file(Path::new(HEADER)))?.is_none(),
             "Movie timing exists without its video"
@@ -300,7 +300,7 @@ fn open_from(directory: &ReadDirectory) -> anyhow::Result<Option<Reading>> {
         return Ok(None);
     };
     let mut metadata = read_metadata(directory)?;
-    let length = file.metadata()?.len();
+    let length = information.len();
     let prefix = MoviePrefix::read(length, |range| {
         let length = range
             .end

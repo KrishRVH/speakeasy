@@ -13,6 +13,8 @@ use std::{
     ptr::NonNull,
 };
 
+use super::OpenKind;
+
 const FLAGS: libc::c_int = libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK;
 
 pub(super) fn directory(path: &Path) -> io::Result<File> {
@@ -22,7 +24,8 @@ pub(super) fn directory(path: &Path) -> io::Result<File> {
         .open(path)
 }
 
-pub(super) fn child(parent: &File, name: &OsStr, directory: bool) -> io::Result<File> {
+pub(super) fn child(parent: &File, name: &OsStr, kind: OpenKind) -> io::Result<File> {
+    let directory = matches!(kind, OpenKind::Directory);
     let name = CString::new(name.as_bytes())?;
     let flags = FLAGS | libc::O_RDONLY | if directory { libc::O_DIRECTORY } else { 0 };
     let fd = unsafe { libc::openat(parent.as_raw_fd(), name.as_ptr(), flags) };
@@ -49,7 +52,7 @@ pub(super) fn same(first: &File, second: &File) -> io::Result<bool> {
 }
 
 pub(super) fn visit(directory: &File, mut visit: impl FnMut(OsString)) -> io::Result<()> {
-    let fd = child(directory, OsStr::new("."), true)?.into_raw_fd();
+    let fd = child(directory, OsStr::new("."), OpenKind::Directory)?.into_raw_fd();
     let Some(entries) = NonNull::new(unsafe { libc::fdopendir(fd) }) else {
         let error = io::Error::last_os_error();
         drop(unsafe { File::from_raw_fd(fd) });

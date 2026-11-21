@@ -138,7 +138,8 @@ before reading. Windows opens a single child name with `NtOpenFile` relative to 
 rejects reparse points and alternate data streams, and transfers the handle to `File` only after a
 successful open. Unix uses `fdopendir` on an independent directory open, and Windows uses an empty
 relative name with `NtOpenFile` and `NtQueryDirectoryFile`, so listing owns its cursor. Readers
-validate size, type, and bytes through the same handle.
+validate size, type, and bytes through the same handle. Ordinary reads permit concurrent editing on
+Windows. Movie reads exclude writers while a validated prefix is in use.
 
 ## Linux desktop and transfer ownership
 

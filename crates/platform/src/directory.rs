@@ -12,6 +12,13 @@ mod native;
 #[path = "directory/windows.rs"]
 mod native;
 
+#[derive(Clone, Copy)]
+enum OpenKind {
+    Directory,
+    File,
+    StableFile,
+}
+
 #[derive(Debug)]
 pub struct ReadDirectory(File);
 
@@ -26,7 +33,7 @@ impl ReadDirectory {
     }
 
     pub fn child(&self, name: &OsStr) -> io::Result<Self> {
-        let (file, metadata) = self.open_child(name, true)?;
+        let (file, metadata) = self.open_child(name, OpenKind::Directory)?;
         if !metadata.is_dir() {
             return Err(io::Error::other("not a plain directory"));
         }
@@ -34,6 +41,14 @@ impl ReadDirectory {
     }
 
     pub fn file(&self, name: &Path) -> io::Result<(File, Metadata)> {
+        self.open_file(name, OpenKind::File)
+    }
+
+    pub fn stable_file(&self, name: &Path) -> io::Result<(File, Metadata)> {
+        self.open_file(name, OpenKind::StableFile)
+    }
+
+    fn open_file(&self, name: &Path, kind: OpenKind) -> io::Result<(File, Metadata)> {
         let mut parts = name.components();
         let Some(Component::Normal(name)) = parts.next_back() else {
             return Err(io::ErrorKind::InvalidInput.into());
@@ -44,7 +59,7 @@ impl ReadDirectory {
             };
             parent.as_ref().unwrap_or(self).child(folder).map(Some)
         })?;
-        let (file, metadata) = parent.as_ref().unwrap_or(self).open_child(name, false)?;
+        let (file, metadata) = parent.as_ref().unwrap_or(self).open_child(name, kind)?;
         if !metadata.is_file() {
             return Err(io::Error::other("not a regular file"));
         }
@@ -63,12 +78,12 @@ impl ReadDirectory {
         self.0.try_clone().map(Self)
     }
 
-    fn open_child(&self, name: &OsStr, directory: bool) -> io::Result<(File, Metadata)> {
+    fn open_child(&self, name: &OsStr, kind: OpenKind) -> io::Result<(File, Metadata)> {
         if !matches!(Path::new(name).components().next(), Some(Component::Normal(part)) if part == name)
         {
             return Err(io::ErrorKind::InvalidInput.into());
         }
-        let file = native::child(&self.0, name, directory)?;
+        let file = native::child(&self.0, name, kind)?;
         let metadata = file.metadata()?;
         if native::linked(&metadata) {
             return Err(io::Error::other("linked entry"));
@@ -134,6 +149,25 @@ mod tests {
         let mut text = String::new();
         file.read_to_string(&mut text)?;
         assert_eq!(text, "original");
+        Ok(())
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn only_stable_reads_exclude_writers() -> anyhow::Result<()> {
+        let root = tempfile::tempdir()?;
+        let name = Path::new("content");
+        let path = root.path().join(name);
+        let writer = File::create_new(&path)?;
+        let directory = ReadDirectory::open(root.path())?;
+        assert!(directory.file(name).is_ok());
+        assert!(directory.stable_file(name).is_err());
+        drop(writer);
+
+        let (reading, _) = directory.stable_file(name)?;
+        assert!(fs::OpenOptions::new().write(true).open(&path).is_err());
+        drop(reading);
+        assert!(fs::OpenOptions::new().write(true).open(&path).is_ok());
         Ok(())
     }
 

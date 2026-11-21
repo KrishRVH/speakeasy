@@ -35,6 +35,8 @@ use windows_sys::{
     },
 };
 
+use super::OpenKind;
+
 const SHARE: u32 = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
 
 pub(super) fn directory(path: &Path) -> io::Result<File> {
@@ -44,7 +46,7 @@ pub(super) fn directory(path: &Path) -> io::Result<File> {
         .open(path)
 }
 
-pub(super) fn child(parent: &File, name: &OsStr, directory: bool) -> io::Result<File> {
+pub(super) fn child(parent: &File, name: &OsStr, kind: OpenKind) -> io::Result<File> {
     let mut text: Vec<_> = name.encode_wide().collect();
     if text.iter().any(|unit| [0, u16::from(b':')].contains(unit)) {
         return Err(io::ErrorKind::InvalidInput.into());
@@ -72,15 +74,14 @@ pub(super) fn child(parent: &File, name: &OsStr, directory: bool) -> io::Result<
     let mut handle = ptr::null_mut();
     let flags = FILE_OPEN_REPARSE_POINT
         | FILE_SYNCHRONOUS_IO_NONALERT
-        | if directory {
+        | if matches!(kind, OpenKind::Directory) {
             FILE_DIRECTORY_FILE
         } else {
             FILE_NON_DIRECTORY_FILE
         };
-    let share = if directory {
-        SHARE
-    } else {
-        FILE_SHARE_READ | FILE_SHARE_DELETE
+    let share = match kind {
+        OpenKind::Directory | OpenKind::File => SHARE,
+        OpenKind::StableFile => FILE_SHARE_READ | FILE_SHARE_DELETE,
     };
     let result = unsafe {
         NtOpenFile(
@@ -126,7 +127,7 @@ pub(super) fn same(first: &File, second: &File) -> io::Result<bool> {
 struct DirectoryBuffer([u8; 16 << 10]);
 
 pub(super) fn visit(directory: &File, mut visit: impl FnMut(OsString)) -> io::Result<()> {
-    let directory = child(directory, OsStr::new(""), true)?;
+    let directory = child(directory, OsStr::new(""), OpenKind::Directory)?;
     let mut buffer = DirectoryBuffer([0; 16 << 10]);
     let capacity =
         u32::try_from(buffer.0.len()).map_err(|_overflow| io::ErrorKind::InvalidInput)?;
