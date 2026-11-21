@@ -383,10 +383,29 @@ impl<Host> Runtime<Host> {
     pub(crate) fn adopt(&self, config: ValidConfig) -> Receiver<Adopted> {
         let (answer, receipt) = async_channel::bounded(1);
         self.direct(Directive::Adopt {
-            config: Box::new(config),
+            config: Box::new(config.into_inner()),
             answer: Adopting(answer),
         });
         receipt
+    }
+
+    pub(crate) fn revert(&self, saved: Config) -> Option<(Config, Receiver<Adopted>)> {
+        let seen = self.configuration.borrow().clone();
+        if seen.change_to(&saved) < Change::Session {
+            return None;
+        }
+        let (answer, receipt) = async_channel::bounded(1);
+        self.direct(Directive::Adopt {
+            config: Box::new(saved),
+            answer: Adopting(answer),
+        });
+        Some((seen, receipt))
+    }
+
+    pub(crate) fn settle_reverted(&self, seen: &Config, saved: Config) {
+        if *self.configuration.borrow() == *seen {
+            self.configuration.send_replace(saved);
+        }
     }
 
     pub(crate) fn settle(&self, config: ValidConfig) {
@@ -585,7 +604,7 @@ enum Directive {
         call: Call,
     },
     Adopt {
-        config: Box<ValidConfig>,
+        config: Box<Config>,
         answer: Adopting,
     },
 }

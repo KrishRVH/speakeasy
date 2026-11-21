@@ -1,6 +1,6 @@
 use gpui::{
-    AppContext as _, Context, Div, Entity, Focusable as _, FontWeight, Window, div, prelude::*, px,
-    rgb,
+    App, AppContext as _, Context, Div, Entity, Focusable as _, FontWeight, Window, div,
+    prelude::*, px, rgb,
 };
 
 use super::{
@@ -17,11 +17,9 @@ use crate::{
     controls::{Weight, icon},
     gpui_ext::EntityUpdate as _,
     icons,
-    shell::choices::Used,
+    shell::choices::{USE_OVERTAKEN, Used},
     theme::Theme,
 };
-
-const USE_OVERTAKEN: &str = "Speech settings changed before the preset was ready, so it was not used. Use it again to apply it.";
 
 pub(super) struct Editor {
     name: Entity<TextField>,
@@ -144,7 +142,15 @@ impl Settings {
             return;
         }
         let started = self.config.clone();
-        match cx.update_global::<Services, _>(|services, cx| services.use_preset(selected, cx)) {
+        let view = cx.entity().downgrade();
+        let drafted = started.clone();
+        let current = move |cx: &App| {
+            view.read_with(cx, |view, _| presets::same_choices(&drafted, &view.config))
+                .unwrap_or(false)
+        };
+        match cx
+            .update_global::<Services, _>(|services, cx| services.use_preset(selected, current, cx))
+        {
             Ok(used) => {
                 self.using = Some(cx.spawn(async move |this, cx| {
                     let used = used.recv().await.ok();
@@ -167,7 +173,7 @@ impl Settings {
         self.using = None;
         match used {
             Some(Ok(_)) if !presets::same_choices(started, &self.config) => {
-                cx.update_global::<Services, _>(|services, _| services.restore_owner());
+                cx.update_global::<Services, _>(|services, cx| services.restore_owner(cx));
                 self.notice = Some(Notice::Problem(USE_OVERTAKEN.into()));
             },
             Some(Ok(config)) => {

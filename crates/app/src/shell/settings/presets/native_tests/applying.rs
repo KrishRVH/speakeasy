@@ -293,12 +293,7 @@ async fn resolved(
 
     let switched = settings.update(cx, |view, window, cx| {
         view.edit_preset(Edit::Use(1), window, cx);
-        let other = if view.config.engine == Engine::Whisper {
-            Engine::Nemo
-        } else {
-            Engine::Whisper
-        };
-        view.act(Action::Engine(other), window, cx);
+        view.act(Action::Engine(other_engine(&view.config)), window, cx);
         view.config.clone()
     })?;
     until(cx, "Use did not finish", |cx| {
@@ -346,7 +341,7 @@ async fn redrafted(
             cx.update_global::<Services, _>(|services, cx| {
                 services.config = library.clone();
                 services.choices.selected = None;
-                services.use_preset(french, cx)
+                services.use_preset(french, |_| true, cx)
             })
         })
         .map_err(anyhow::Error::msg)?;
@@ -397,7 +392,7 @@ async fn resumed(library: &Config, cx: &mut AsyncApp) -> anyhow::Result<()> {
                 services.config = library.clone();
                 services.choices.selected = None;
                 services.launch = crate::shell::services::Launch::Fake;
-                services.use_preset(french, cx)
+                services.use_preset(french, |_| true, cx)
             })
         })
         .map_err(anyhow::Error::msg)?;
@@ -459,6 +454,127 @@ async fn resumed(library: &Config, cx: &mut AsyncApp) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn other_engine(config: &Config) -> Engine {
+    if config.engine == Engine::Whisper {
+        Engine::Nemo
+    } else {
+        Engine::Whisper
+    }
+}
+
+#[expect(
+    clippy::future_not_send,
+    reason = "Native acceptance drives Services, a fake owner, and the owned Settings window on GPUI's UI thread"
+)]
+async fn stale_use(
+    settings: WindowHandle<Settings>,
+    path: &Path,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<()> {
+    const UNTOUCHED: &str = "The owner has not stepped";
+    let draft = settings.read_with(cx, |view, _| view.config.clone())?;
+    let switched = settings.update(cx, |view, window, cx| {
+        cx.global::<Services>()
+            .output
+            .send_modify(|snapshot| snapshot.message = UNTOUCHED.into());
+        view.edit_preset(Edit::Use(1), window, cx);
+        view.act(Action::Engine(other_engine(&view.config)), window, cx);
+        view.config.clone()
+    })?;
+    until(cx, "Use did not finish", |cx| {
+        settings.read_with(cx, |view, _| view.using.is_none())
+    })
+    .await?;
+    settle(cx).await;
+    let untouched = snapshot(cx).message == UNTOUCHED;
+    let (kept, warned) = settings.update(cx, |view, _, _| {
+        (
+            view.config == switched,
+            view.notice.take().is_some_and(|notice| notice.is_problem()),
+        )
+    })?;
+    ensure!(
+        untouched && kept && warned,
+        "A Use overtaken while it validated still reached the owner"
+    );
+
+    let input = cx
+        .update(|cx| {
+            cx.global::<Services>()
+                .runtime()
+                .map(|runtime| runtime.input.clone())
+        })
+        .context("The fake owner stopped")?;
+    settings.update(cx, |view, _, cx| {
+        view.config = draft.clone();
+        view.saves = SaveQueue::new(path.to_owned(), draft.clone());
+        cx.notify();
+    })?;
+    let updates = cx.update(|cx| cx.global::<Services>().output.subscribe());
+    let mut adopting = false;
+    let mut armed = Some(input.clone());
+    let observation = cx.update(|cx| {
+        cx.observe_global::<Services>(move |cx| {
+            if cx.global::<Services>().choices.is_applying() {
+                adopting = true;
+                return;
+            }
+            if !adopting {
+                return;
+            }
+            let Some(input) = armed.take() else {
+                return;
+            };
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "The acceptance reads the draft from Settings; a closed window already failed it"
+            )]
+            let _ = settings.update(cx, |view, window, cx| {
+                view.act(Action::Engine(other_engine(&view.config)), window, cx);
+            });
+            input.deliver(Input::Press);
+            let began = Instant::now();
+            while updates.borrow().phase != Phase::Recording && began.elapsed() < PATIENCE {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        })
+    });
+    settings.update(cx, |view, window, cx| {
+        view.edit_preset(Edit::Use(1), window, cx);
+    })?;
+    until(cx, "Use did not finish", |cx| {
+        settings.read_with(cx, |view, _| view.using.is_none())
+    })
+    .await?;
+    drop(observation);
+    settle(cx).await;
+    settle(cx).await;
+    let recording = snapshot(cx).phase == Phase::Recording;
+    input.deliver(Input::Cancel);
+    until(cx, "The recording did not end", |cx| {
+        Ok(!snapshot(cx).phase.is_active())
+    })
+    .await?;
+    cx.update(|cx| {
+        let services = cx.global::<Services>();
+        if let Some(runtime) = services.runtime() {
+            runtime.restore(services.config.clone());
+        }
+    });
+    settings.update(cx, |view, _, cx| {
+        view.config = draft.clone();
+        view.saves = SaveQueue::new(path.to_owned(), draft);
+        view.notice = None;
+        cx.notify();
+    })?;
+    settle(cx).await;
+    ensure!(
+        recording,
+        "A stale Use rolled the owner back over a recording started after it adopted the preset"
+    );
+    Ok(())
+}
+
 #[expect(
     clippy::future_not_send,
     reason = "Native acceptance drives Services and a fake owner on GPUI's UI thread"
@@ -482,8 +598,9 @@ async fn unavailable(settings: WindowHandle<Settings>, cx: &AsyncApp) -> anyhow:
             let Some((missing, tried)) = armed.take() else {
                 return;
             };
-            let used =
-                cx.update_global::<Services, _>(|services, cx| services.use_preset(missing, cx));
+            let used = cx.update_global::<Services, _>(|services, cx| {
+                services.use_preset(missing, |_| true, cx)
+            });
             #[expect(
                 clippy::let_underscore_must_use,
                 reason = "The acceptance fails below when the attempt never arrives"
@@ -522,6 +639,7 @@ async fn running(
         Ok(snapshot(cx).model == ModelState::Ready)
     })
     .await?;
+    stale_use(settings, path, cx).await?;
 
     let overtaken = settings.update(cx, |view, window, cx| {
         let (call, receipt) = Call::new(Command::Preset {
@@ -724,7 +842,9 @@ async fn running(
     english.language = "en".into();
     let used = cx
         .update(|cx| {
-            cx.update_global::<Services, _>(|services, cx| services.use_preset(english, cx))
+            cx.update_global::<Services, _>(|services, cx| {
+                services.use_preset(english, |_| true, cx)
+            })
         })
         .map_err(anyhow::Error::msg)?;
     ensure!(

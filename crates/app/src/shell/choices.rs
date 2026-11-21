@@ -14,6 +14,8 @@ const UNACKNOWLEDGED: &str =
 
 const USE_BUSY: &str = "Finish the current session or preset selection before using a preset.";
 
+pub(super) const USE_OVERTAKEN: &str = "Speech settings changed before the preset was ready, so it was not used. Use it again to apply it.";
+
 const USE_UNAVAILABLE: &str =
     "This preset's engine or model is unavailable. Choose them again, then update this preset.";
 
@@ -264,6 +266,7 @@ impl Services {
     pub(super) fn use_preset(
         &mut self,
         candidate: Config,
+        current: impl Fn(&App) -> bool + 'static,
         cx: &App,
     ) -> Result<Receiver<Used>, &'static str> {
         if self.output.borrow().phase.is_active() {
@@ -276,8 +279,10 @@ impl Services {
             .spawn(async move { candidate.validated(&path) });
         self.choices.using = Some(cx.spawn(async move |cx| {
             let result = validation.await;
-            let admission =
-                cx.update_global::<Self, _>(|services, cx| services.admit_use(result, cx));
+            let admission = cx.update_global::<Self, _>(|services, cx| {
+                let current = current(cx);
+                services.admit_use(result, current, cx)
+            });
             let outcome = match admission {
                 Ok(Admission::Ready(config)) => Ok(config),
                 Ok(Admission::Waiting(config, receipt)) => {
@@ -290,7 +295,7 @@ impl Services {
                 Err(reason) => Err(reason),
             };
             if answer.try_send(outcome).is_err() {
-                cx.update_global::<Self, _>(|services, _| services.restore_owner());
+                cx.update_global::<Self, _>(|services, cx| services.restore_owner(cx));
             }
         }));
         Ok(used)
@@ -302,18 +307,40 @@ impl Services {
         }
     }
 
-    pub(super) fn restore_owner(&mut self) {
+    pub(super) fn restore_owner(&mut self, cx: &App) {
         self.admitted = None;
-        if let Some(runtime) = self.runtime() {
-            runtime.restore(self.config.clone());
-        }
+        let saved = self.config.clone();
+        let Some((seen, reverted)) = self
+            .runtime()
+            .and_then(|runtime| runtime.revert(saved.clone()))
+        else {
+            return;
+        };
+        let generation = self.choices.generation;
+        cx.spawn(async move |cx| {
+            if !reverted.recv().await.is_ok_and(|adopted| adopted.is_ok()) {
+                return;
+            }
+            cx.update_global::<Self, _>(|services, _| {
+                if services.choices.generation == generation
+                    && let Some(runtime) = services.runtime()
+                {
+                    runtime.settle_reverted(&seen, saved);
+                }
+            });
+        })
+        .detach();
     }
 
     fn admit_use(
         &mut self,
         result: anyhow::Result<ValidConfig>,
+        current: bool,
         cx: &App,
     ) -> Result<Admission, &'static str> {
+        if !current {
+            return Err(USE_OVERTAKEN);
+        }
         let config = result.map_err(|_unavailable| USE_UNAVAILABLE)?;
         let unsettled = self.choices.supersede();
         let Some(runtime) = self.live_runtime() else {

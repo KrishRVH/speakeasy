@@ -85,18 +85,20 @@ module unless a test file is named.
   while idle and while Settings still waits for it, in order with queued preset commands, and marks
   the saved baseline it then receives as already applied; only then does Settings save it. A session
   that starts while that save is written therefore survives its completion, and a refused or
-  unavailable preset changes neither dictation nor the settings file. If that save fails, or
-  Settings closes before the owner's answer reaches it, the owner returns to the saved settings. A
-  change to any setting a preset keeps, made while the candidate validates, outlasts it: Settings
-  drops the Use with a notice and returns the owner to the saved settings. Settings disables Use
-  during a session. Without a live owner, including one that stopped on its own, a valid candidate
-  clears the transient selection and restarts a pending Resume check. One that changes the session
-  becomes the configuration Resume starts on, following each newer draft Settings writes, until the
-  newest of those saves lands; that save therefore keeps a session or Show started after Resume. A
-  transient selection takes precedence in the Settings indicator, which follows Services as well as
-  snapshots, while its row still holds the definition that was chosen. Capturing a preset requires
-  both speech paths; a stored preset missing one still loads with its settings, and Use on it asks
-  for an engine and model without changing dictation.
+  unavailable preset changes neither dictation nor the settings file. A change to any setting a
+  preset keeps, made while the candidate validates, outlasts it: the owner never sees the candidate,
+  and Settings drops the Use with a notice. If such a change comes after the owner adopted it, if
+  the save fails, or if Settings closes before the owner's answer reaches it, the owner returns to
+  the saved settings only while idle; a preset callback never cancels a session, so one in progress
+  keeps the preset until the next save or Resume. Settings disables Use during a session. Without a
+  live owner, including one that stopped on its own, a valid candidate clears the transient
+  selection and restarts a pending Resume check. One that changes the session becomes the
+  configuration Resume starts on, following each newer draft Settings writes, until the newest of
+  those saves lands; that save therefore keeps a session or Show started after Resume. A transient
+  selection takes precedence in the Settings indicator, which follows Services as well as snapshots,
+  while its row still holds the definition that was chosen. Capturing a preset requires both speech
+  paths; a stored preset missing one still loads with its settings, and Use on it asks for an engine
+  and model without changing dictation.
 - **Audio capture**: [audio.rs](../crates/app/src/audio.rs) with
   [control.rs](../crates/app/src/audio/control.rs), [stream.rs](../crates/app/src/audio/stream.rs),
   [pcm.rs](../crates/app/src/audio/pcm.rs), [speech.rs](../crates/app/src/audio/speech.rs), and

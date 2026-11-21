@@ -48,7 +48,7 @@ impl<P: Ports> World<P> {
             }),
             Directive::Adopt { config, answer } if idle && answer.is_live() => {
                 answer.answer(Ok(()));
-                let config = config.into_inner();
+                let config = *config;
                 self.adopted = Some(config.clone());
                 Some(Event::Configure(config))
             },
