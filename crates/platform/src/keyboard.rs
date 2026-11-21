@@ -561,20 +561,20 @@ impl Windows {
     }
 
     fn f13_tracked(&mut self) -> bool {
-        self.f13_down().is_some_and(|tracked| *tracked)
+        self.chord_key_down(Self::F13).is_some_and(|down| *down)
     }
 
     fn forget_f13_down(&mut self) {
-        if let Some(tracked) = self.f13_down() {
-            *tracked = false;
+        if let Some(down) = self.chord_key_down(Self::F13) {
+            *down = false;
         }
     }
 
-    fn f13_down(&mut self) -> Option<&mut bool> {
+    fn chord_key_down(&mut self, key: u16) -> Option<&mut bool> {
         Self::CHORD_KEYS
             .into_iter()
             .zip(&mut self.chord_keys_down)
-            .find_map(|(key, tracked)| (key == Self::F13).then_some(tracked))
+            .find_map(|(chord_key, down)| (chord_key == key).then_some(down))
     }
 
     pub(super) fn types(key: u32, down: bool, decision: &Decision) -> bool {
@@ -641,11 +641,7 @@ impl Windows {
         if !self.shortcut.holds(key) {
             return None;
         }
-        let tracked = Self::CHORD_KEYS
-            .into_iter()
-            .zip(&mut self.chord_keys_down)
-            .find_map(|(chord_key, tracked)| (chord_key == key).then_some(tracked))?;
-        let was_down = mem::replace(tracked, down);
+        let was_down = mem::replace(self.chord_key_down(key)?, down);
         if was_down != down {
             self.taps.interrupt();
         }
