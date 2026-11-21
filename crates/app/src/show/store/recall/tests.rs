@@ -117,6 +117,29 @@ fn expiry_between_discovery_and_reading_removes_only_that_entry() -> anyhow::Res
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+fn a_shows_folder_that_cannot_be_searched_fails_discovery_without_a_show_to_open()
+-> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let root = tempfile::tempdir()?;
+    let exported = write(root.path(), "exported-show")?;
+    let access = fs::metadata(root.path())?.permissions();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o600))?;
+    let unrestricted = fs::symlink_metadata(&exported).is_ok();
+    let listed = list(root.path()).map(Iterator::count);
+    fs::set_permissions(root.path(), access)?;
+    if unrestricted {
+        return Ok(());
+    }
+    assert_eq!(
+        listed.map_err(|error| error.kind()),
+        Err(io::ErrorKind::PermissionDenied)
+    );
+    Ok(())
+}
+
 #[test]
 fn a_directory_in_place_of_the_manifest_is_damage() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;

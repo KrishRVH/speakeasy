@@ -142,6 +142,8 @@ pub(crate) fn directories(parent: &Path) -> io::Result<Vec<PathBuf>> {
     let Some(entries) = found(fs::read_dir(parent))? else {
         return Ok(Vec::new());
     };
+    #[cfg(unix)]
+    let _searchable = found(fs::symlink_metadata(parent.join(".")))?;
     let mut shows = Vec::new();
     for entry in entries {
         let entry = entry?;
