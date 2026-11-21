@@ -637,9 +637,10 @@ module unless a test file is named.
   bundles, and [store/recall.rs](../crates/app/src/show/store/recall.rs) reads a saved one back; it
   also discovers and inspects saved Shows without changing them. It reports Keep from the presence
   of a `.pinned` entry of any type, as cleanup does, without opening the marker or listing the
-  folder. After reading, it attaches a managed ID, and with it a retention date, only when the
-  directory handle that was read is still the Shows folder's entry of the same name; CLI inspection,
-  listing, `show wait`, and MCP all read Shows through it.
+  folder. After reading, it attaches a managed ID, and with it a retention date, only when the path
+  names a folder directly in the Shows folder, not a link to one, as Keep requires, and the
+  directory handle that was read is still that entry; CLI inspection, listing, `show wait`, and MCP
+  all read saved Shows through this module.
   [store/export.rs](../crates/app/src/show/store/export.rs) streams a format-owned inventory into a
   new ZIP, preserves the edited summary, and adds a relative-path guide. It excludes audio and
   retention markers, bounds input to 2 GiB, reports failed staging cleanup, and publishes with

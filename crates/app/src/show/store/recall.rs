@@ -197,7 +197,7 @@ fn read(
 }
 
 fn managed_id(parent: &Path, directory: &Path, files: &ReadDirectory) -> Option<ShowId> {
-    let id = directory.file_name()?.to_str().and_then(ShowId::parse)?;
+    let id = super::address::managed_id(parent, directory).ok()??;
     files.is_at(&parent.join(id.as_str())).ok()?.then_some(id)
 }
 

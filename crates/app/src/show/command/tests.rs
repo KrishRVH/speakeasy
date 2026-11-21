@@ -175,6 +175,39 @@ fn an_inspected_show_claims_its_managed_id_only_for_the_directory_it_read() -> a
 }
 
 #[test]
+fn an_inspected_link_to_a_managed_show_claims_no_id_as_keep_refuses_it() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let shows = root.path().join("shows");
+    fs::create_dir(&shows)?;
+    let managed = shows.join("20261020T143205Z-2");
+    demo(Some(managed.clone()), &mut io::sink())?;
+    let elsewhere = root.path().join("elsewhere");
+    fs::create_dir(&elsewhere)?;
+    let link = elsewhere.join("20261020T143205Z-2");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&managed, &link)?;
+    #[cfg(windows)]
+    assert!(
+        std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&link)
+            .arg(&managed)
+            .stdout(std::process::Stdio::null())
+            .status()?
+            .success()
+    );
+    assert!(retention::set_kept(&shows, &link, true).is_err());
+    let value = inspected(&recall::Entry::open(&link, Some(&shows))?)?;
+    assert!(
+        value["id"].is_null() && value["expiresAt"].is_null(),
+        "{value}"
+    );
+    let value = inspected(&recall::Entry::open(&managed, Some(&shows))?)?;
+    assert_eq!(value["id"], "20261020T143205Z-2");
+    Ok(())
+}
+
+#[test]
 fn metadata_reports_exact_managed_identity_and_expiry_without_claiming_moved_bundles()
 -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
