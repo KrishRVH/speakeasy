@@ -353,19 +353,18 @@ module unless a test file is named.
 - **Updates**: [updates.rs](../crates/app/src/updates.rs) owns cancellable discovery and Windows
   preparation. Discovery uses system TLS and connect and read deadlines; only a numeric release
   version forms a repository link. [install.rs](../crates/app/src/updates/install.rs) checks the
-  release's `update.json` against its Ed25519 signature and the key the build embeds, then
-  downloads the installer it names and refuses bytes beyond its size or with another SHA-256. Each
-  preparation first clears installers staged by earlier ones.
+  release's `update.json` against its Ed25519 signature and the key the build embeds, then downloads
+  the installer it names and refuses bytes beyond its size or with another SHA-256. Each preparation
+  first clears installers staged by earlier ones.
   [settings/updates.rs](../crates/app/src/shell/settings/updates.rs) owns the operation and requires
   separate installation consent. Shutdown hands the installer to main only after work and saves
   drain; main releases the instance and exits GPUI before launching it. The installer waits for that
   process to exit, protects both running images, and relaunches only after success. Tests beside
   discovery and preparation cover version comparison, signatures, a mismatched installer, and
-  cancellation. Owned-window
-  [shutdown tests](../crates/app/src/shell/shutdown/native_tests.rs) hold an accepted Show write to
-  check graceful handoff and forced teardown. `scripts/check-installer.ps1` exercises installation
-  on CI runners without Speakeasy state. [Build and verify](../README.md#build-and-verify) owns
-  signing setup.
+  cancellation. Owned-window [shutdown tests](../crates/app/src/shell/shutdown/native_tests.rs) hold
+  an accepted Show write to check graceful handoff and forced teardown.
+  `scripts/check-installer.ps1` exercises installation on CI runners without Speakeasy state.
+  [Build and verify](../README.md#build-and-verify) owns signing setup.
 - **Pause, reconfigure, quit, and saves**: [shell.rs](../crates/app/src/shell.rs),
   [services.rs](../crates/app/src/shell/services.rs),
   [core/src/lifecycle.rs](../crates/core/src/lifecycle.rs),
@@ -410,9 +409,9 @@ module unless a test file is named.
 - **Setup**: [setup.rs](../crates/app/src/setup.rs) and [setup/](../crates/app/src/setup) choose,
   download, verify, and unpack engines and report which managed models are already downloaded. A
   download resumes after a pause and is checked against its pinned SHA-256 before it takes its final
-  name, which later setups trust without hashing it again; a full install test is opt-in. Setup and update preparation report each step through
-  [progress.rs](../crates/app/src/progress.rs), with a byte count only when the step's total is
-  known.
+  name, which later setups trust without hashing it again; a full install test is opt-in. Setup and
+  update preparation report each step through [progress.rs](../crates/app/src/progress.rs), with a
+  byte count only when the step's total is known.
 - **Reset**: [reset.rs](../crates/app/src/reset.rs) deletes the engines, models, downloads, and
   updates folders, then the settings file, following a settings symlink to its target. Shows and the
   finished-guide marker stay, and a repeated purge succeeds. Services pauses dictation, retires the
