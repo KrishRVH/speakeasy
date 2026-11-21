@@ -67,7 +67,7 @@ the EIS modifier events as
 key from the advertised layout. Shortcut deactivation alone is insufficient. A paused EI keyboard or
 a keymap Speakeasy cannot read yields an explicit manual-paste result. X11 automatic paste requires
 the first keyboard layout with an unshifted V key; other layouts receive manual-paste guidance.
-Clipboard writes are followed by ownership and cancellation checks; cleanup never restores a stale
+Clipboard writes are followed by ownership, content, and cancellation checks; cleanup never restores a stale
 clipboard payload. Submitted synthetic keys receive release cleanup even after partial failure. X11
 queues each paste and its releases before one server synchronization and checks every submission.
 Manual copy skips the modifier wait. Wayland serves bounded, asynchronous clipboard transfers while

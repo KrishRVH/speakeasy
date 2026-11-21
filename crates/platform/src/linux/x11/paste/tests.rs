@@ -144,9 +144,10 @@ fn focus_moving_to_speakeasy_during_the_last_clipboard_check_refuses_the_paste()
     };
     let refused = authorize_paste(
         &request,
-        || true,
-        || Ok(false),
-        || {
+        &mut (),
+        |()| true,
+        |()| Ok(false),
+        |()| {
             report.settle(7, true);
             Ok(true)
         },

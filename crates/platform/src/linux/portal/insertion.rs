@@ -214,7 +214,7 @@ impl<'a> Insertions<'a> {
                 confirm_selection(self.selecting, permit).boxed_local()
             },
             Ok(Prepared::Copied { owner }) => {
-                prepare_x11_paste(self.worker, owner, permit).boxed_local()
+                prepare_x11_paste(self.worker, owner, request.text.clone(), permit).boxed_local()
             },
             Ok(Prepared::Ownership { owned }) => {
                 query_focus(self.worker, permit, Route::PortalPaste { owned }).boxed_local()
@@ -401,9 +401,10 @@ async fn confirm_selection(
 async fn prepare_x11_paste(
     worker: &x11::ClipboardWorker,
     selection_window: Window,
+    text: String,
     permit: InsertPermit,
 ) -> anyhow::Result<Prepared> {
-    let (external, owned) = worker.paste_target(selection_window, permit).await?;
+    let (external, owned) = worker.paste_target(selection_window, text, permit).await?;
     Ok(Prepared::Target {
         external,
         route: Route::X11Paste { owned },

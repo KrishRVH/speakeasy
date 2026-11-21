@@ -144,7 +144,7 @@ impl Paster {
         let previous_owner = self.clipboard.owner()?;
         let shortcut_held = keys.is_some()
             && wait_for_released_modifiers(&request.permit, MODIFIER_WAIT, || {
-                self.modifiers_held()
+                modifiers_held(&self.clipboard, &self.keyboard)
             })?;
         let owner_changed = self.clipboard.owner()? != previous_owner;
 
@@ -172,13 +172,8 @@ impl Paster {
         Ok(ControlFlow::Continue((owner, keys)))
     }
 
-    fn modifiers_held(&self) -> anyhow::Result<bool> {
-        let keys = self.clipboard.connection.query_keymap()?.reply()?.keys;
-        Ok(self.keyboard.held_modifiers(&keys) & !self.keyboard.lock_modifiers() != 0)
-    }
-
     fn paste_copied(
-        &self,
+        &mut self,
         request: &Insertion,
         owner: Window,
         keys: PasteKeys,
@@ -188,28 +183,26 @@ impl Paster {
         else {
             return Ok(NO_PASTE_BINDING);
         };
-        let connection = &self.clipboard.connection;
-        if !uses_first_layout(connection).unwrap_or(false) {
+        if !uses_first_layout(&self.clipboard.connection).unwrap_or(false) {
             return Ok(Inserted::Copied(
                 "Text copied. Automatic paste needs your first keyboard layout; paste manually with the current layout.",
             ));
         }
-        if !self.clipboard.owns(owner)? {
+        if !self.clipboard.holds(owner, &request.text)? {
             return Ok(CLIPBOARD_CHANGED);
         }
+        let keyboard = &self.keyboard;
         if let ControlFlow::Break(outcome) = authorize_paste(
             request,
-            || {
-                self.clipboard
-                    .external_target(HostSession::X11)
-                    .unwrap_or(false)
-            },
-            || self.modifiers_held(),
-            || self.clipboard.owns(owner),
+            &mut self.clipboard,
+            |clipboard| clipboard.external_target(HostSession::X11).unwrap_or(false),
+            |clipboard| modifiers_held(clipboard, keyboard),
+            |clipboard| clipboard.holds(owner, &request.text),
         )? {
             return Ok(outcome);
         }
 
+        let connection = &self.clipboard.connection;
         let submitted = submit_paste(
             chord,
             |kind, code| Ok(connection.xtest_fake_input(kind, code, 0, 0, 0, 0, 0)?),
@@ -239,15 +232,21 @@ fn uses_first_layout(connection: &XCBConnection) -> anyhow::Result<bool> {
     Ok(state.group == xkb::Group::M1)
 }
 
-fn authorize_paste(
+fn modifiers_held(clipboard: &Clipboard, keyboard: &Keyboard) -> anyhow::Result<bool> {
+    let keys = clipboard.connection.query_keymap()?.reply()?.keys;
+    Ok(keyboard.held_modifiers(&keys) & !keyboard.lock_modifiers() != 0)
+}
+
+fn authorize_paste<C>(
     request: &Insertion,
-    external_target: impl FnOnce() -> bool,
-    modifiers_held: impl FnOnce() -> anyhow::Result<bool>,
-    owns_clipboard: impl FnOnce() -> anyhow::Result<bool>,
+    clipboard: &mut C,
+    external_target: impl FnOnce(&C) -> bool,
+    modifiers_held: impl FnOnce(&C) -> anyhow::Result<bool>,
+    holds_text: impl FnOnce(&mut C) -> anyhow::Result<bool>,
 ) -> anyhow::Result<ControlFlow<Inserted>> {
-    let external = external_target();
-    let released = !modifiers_held()?;
-    let owned = owns_clipboard();
+    let external = external_target(clipboard);
+    let released = !modifiers_held(clipboard)?;
+    let owned = holds_text(clipboard);
     if let Some(outcome) =
         Delivery::Paste.preflight(external && !request.own_focus.held(), released)
     {
