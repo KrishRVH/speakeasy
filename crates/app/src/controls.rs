@@ -92,20 +92,22 @@ impl<'a> Kit<'a> {
         let enabled = on_click.is_some();
         let label = label.into();
         let clear = alpha(palette.ink, 0.0);
-        let (fill, edge, ink) = match weight {
-            Weight::Primary => (rgb(palette.lamp), rgb(palette.lamp), palette.room),
-            Weight::Secondary => (rgb(palette.raise), palette.edge(), palette.ink),
-            Weight::Quiet => (clear, clear, palette.muted),
-            Weight::Destroy => (clear, alpha(palette.warn, 0.55), palette.warn),
-            Weight::ConfirmDestroy => (rgb(palette.warn), rgb(palette.warn), palette.room),
-        };
-        let focus = if matches!(
-            weight,
-            Weight::Primary | Weight::Secondary | Weight::ConfirmDestroy
-        ) {
-            Focus::Ring
-        } else {
-            Focus::Tint
+        let (fill, edge, ink, focus) = match weight {
+            Weight::Primary => (
+                rgb(palette.lamp),
+                rgb(palette.lamp),
+                palette.room,
+                Focus::Ring,
+            ),
+            Weight::Secondary => (rgb(palette.raise), palette.edge(), palette.ink, Focus::Ring),
+            Weight::Quiet => (clear, clear, palette.muted, Focus::Tint),
+            Weight::Destroy => (clear, alpha(palette.warn, 0.55), palette.warn, Focus::Tint),
+            Weight::ConfirmDestroy => (
+                rgb(palette.warn),
+                rgb(palette.warn),
+                palette.room,
+                Focus::Ring,
+            ),
         };
         self.pressable(id, label.clone(), Role::Button, focus, on_click)
             .h(HEIGHT)
