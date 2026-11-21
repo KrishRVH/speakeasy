@@ -137,7 +137,7 @@ identical content is unchanged, and a differing installed guide is never overwri
 When the user requests a narrated or annotated video, use
 `speakeasy show video "BUNDLE_PATH" --out NEW.mp4 --captions --json`. It requires local FFmpeg 5.1
 or newer with H.264 and AAC support. To export a focused clip, add `--at`, `--mark`, or `--phrase`
-with optional `--around MS` and `--match K` as above. It preserves the original bundle and refuses
+with optional `--around MS` and `--match N` as above. It preserves the original bundle and refuses
 existing output paths. Read the report: absent or expired voice produces a silent video, incomplete
 voice and annotation gaps remain explicit, and captions require timed narration. Exported videos
 include private screen content and voice and do not expire automatically; sending them requires the

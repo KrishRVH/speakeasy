@@ -47,11 +47,12 @@ module unless a test file is named.
   `Payload` names what the machine carries without reading it: the app's audio, text, and permits,
   or nothing in the explorer. [session/tests.rs](../crates/core/src/machine/session/tests.rs) and
   [recognition/tests.rs](../crates/core/src/machine/recognition/tests.rs) check a session's stages
-  and early recognition, and [machine/tests.rs](../crates/core/src/machine/tests.rs) which saved
-  Show is remembered; [explore.rs](../crates/core/src/machine/explore.rs) tries every ordering of
-  events and answers within the bounds [exhaustive exploration](#exhaustive-exploration) lists,
-  checking [invariants.rs](../crates/core/src/machine/explore/invariants.rs) at each state and
-  transition.
+  and early recognition, and [machine/tests.rs](../crates/core/src/machine/tests.rs) checks which
+  saved Show is remembered, the shield before an explicit Show's microphone, preset acceptance,
+  script-capture promotion, and a Show's microphone-loss notice across a worker reload;
+  [explore.rs](../crates/core/src/machine/explore.rs) tries every ordering of events and answers
+  within the bounds [exhaustive exploration](#exhaustive-exploration) lists, checking
+  [invariants.rs](../crates/core/src/machine/explore/invariants.rs) at each state and transition.
 - **Session owner**: [runtime.rs](../crates/app/src/runtime.rs) and
   [runtime/owner.rs](../crates/app/src/runtime/owner.rs) interpret the machine: the owner answers
   its queries and performs its effects through the [ports.rs](../crates/app/src/runtime/ports.rs)
@@ -103,7 +104,7 @@ module unless a test file is named.
   loads with its settings, and Use on it asks for an engine and model without changing dictation.
 - **Audio capture**: [audio.rs](../crates/app/src/audio.rs) with
   [control.rs](../crates/app/src/audio/control.rs), [stream.rs](../crates/app/src/audio/stream.rs),
-  [pcm.rs](../crates/app/src/audio/pcm.rs), [speech.rs](../crates/app/src/audio/speech.rs), and
+  [pcm.rs](../crates/app/src/audio/pcm.rs), [speech.rs](../crates/app/src/audio/speech.rs),
   [cuts.rs](../crates/app/src/audio/cuts.rs), and [live.rs](../crates/app/src/audio/live.rs)
   capture, meter, and seal a trimmed WAV before driver teardown;
   [microphones.rs](../crates/app/src/audio/microphones.rs) lists the input devices Settings offers.
