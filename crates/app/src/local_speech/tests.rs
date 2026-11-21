@@ -452,15 +452,16 @@ async fn an_engine_that_died_while_idle_names_the_remedy_its_exit_proves() -> an
     .await?;
     let wav = audio::silent_wav(16_000, Duration::from_secs(1))?;
     let transcribed = speech.transcribe(wav, "en", &Terms::default()).await;
-    speech.stop().await;
-    let error = transcribed.err().context("The exited engine transcribed")?;
-    assert!(error.to_string().contains("CPU instructions"), "{error}");
-    timeout(
+    let ended = timeout(
         PATIENCE,
         until(|| process_state(member).is_none_or(|state| state == 'Z')),
     )
     .await
-    .context("A process of the exited engine's group kept running")?;
+    .is_ok();
+    speech.stop().await;
+    let error = transcribed.err().context("The exited engine transcribed")?;
+    assert!(error.to_string().contains("CPU instructions"), "{error}");
+    assert!(ended, "A process of the exited engine's group kept running");
     Ok(())
 }
 
