@@ -42,6 +42,7 @@ pub(super) struct Choices {
     pub selected: Option<Selected>,
     generation: u64,
     task: Option<Task<()>>,
+    using: Option<Task<()>>,
     applying: bool,
 }
 
@@ -49,6 +50,7 @@ impl Choices {
     pub(super) fn cancel(&mut self) {
         self.generation = self.generation.wrapping_add(1);
         self.task = None;
+        self.using = None;
         self.applying = false;
     }
 
@@ -58,7 +60,9 @@ impl Choices {
         if let Some(acknowledging) = acknowledging {
             acknowledging.detach();
         }
-        self.cancel();
+        self.generation = self.generation.wrapping_add(1);
+        self.task = None;
+        self.applying = false;
         unsettled
     }
 
@@ -266,15 +270,14 @@ impl Services {
             return Err(USE_BUSY);
         }
         let path = self.path.clone();
-        let unsettled = self.choices.supersede();
         let (answer, used) = async_channel::bounded(1);
         let validation = cx
             .background_executor()
             .spawn(async move { candidate.validated(&path) });
-        self.choices.task = Some(cx.spawn(async move |cx| {
+        self.choices.using = Some(cx.spawn(async move |cx| {
             let result = validation.await;
-            let admission = cx
-                .update_global::<Self, _>(|services, cx| services.admit_use(result, unsettled, cx));
+            let admission =
+                cx.update_global::<Self, _>(|services, cx| services.admit_use(result, cx));
             let outcome = match admission {
                 Ok(Admission::Ready(config)) => Ok(config),
                 Ok(Admission::Waiting(config, receipt)) => {
@@ -309,10 +312,10 @@ impl Services {
     fn admit_use(
         &mut self,
         result: anyhow::Result<ValidConfig>,
-        unsettled: bool,
         cx: &App,
     ) -> Result<Admission, &'static str> {
         let config = result.map_err(|_unavailable| USE_UNAVAILABLE)?;
+        let unsettled = self.choices.supersede();
         let Some(runtime) = self.live_runtime() else {
             if self.config.change_to(&config) >= Change::Session {
                 self.admitted = Some(config.clone().into_inner());

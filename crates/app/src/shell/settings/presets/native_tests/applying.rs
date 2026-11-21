@@ -461,6 +461,56 @@ async fn resumed(library: &Config, cx: &mut AsyncApp) -> anyhow::Result<()> {
 
 #[expect(
     clippy::future_not_send,
+    reason = "Native acceptance drives Services and a fake owner on GPUI's UI thread"
+)]
+async fn unavailable(settings: WindowHandle<Settings>, cx: &AsyncApp) -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let missing = settings.read_with(cx, |view, _| Config {
+        model: directory.path().join("missing.gguf"),
+        ..view.config.clone()
+    })?;
+    let (call, acknowledging) = Call::new(Command::Preset {
+        name: "French".into(),
+    });
+    let (tried, attempt) = std::sync::mpsc::channel();
+    let mut armed = Some((missing, tried));
+    let observation = cx.update(|cx| {
+        cx.observe_global::<Services>(move |cx| {
+            if !cx.global::<Services>().choices.is_applying() {
+                return;
+            }
+            let Some((missing, tried)) = armed.take() else {
+                return;
+            };
+            let used =
+                cx.update_global::<Services, _>(|services, cx| services.use_preset(missing, cx));
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "The acceptance fails below when the attempt never arrives"
+            )]
+            let _ = tried.send(used);
+        })
+    });
+    cx.update(|cx| cx.update_global::<Services, _>(|services, cx| services.control(call, cx)));
+    let answered = acknowledging.recv().await?;
+    let used = attempt
+        .recv_timeout(PATIENCE)?
+        .map_err(anyhow::Error::msg)?
+        .recv()
+        .await?;
+    drop(observation);
+    settle(cx).await;
+    ensure!(
+        answered.result == Disposition::Ok
+            && used.is_err()
+            && preset_name(cx).as_deref() == Some("French"),
+        "An unavailable Use erased a tray preset the owner had accepted"
+    );
+    Ok(())
+}
+
+#[expect(
+    clippy::future_not_send,
     reason = "Native acceptance drives Services, a fake owner, and the owned Settings window on GPUI's UI thread"
 )]
 async fn running(
@@ -485,14 +535,16 @@ async fn running(
         settings.read_with(cx, |view, _| view.using.is_none())
     })
     .await?;
-    let overtook = overtaken
-        .recv()
-        .await
-        .is_ok_and(|reply| reply.result == Disposition::Ok);
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "Use replaces the tray choice whether the owner applied it first or never saw it"
+    )]
+    let _ = overtaken.recv().await;
     ensure!(
-        !overtook && preset_name(cx).is_none() && snapshot(cx).preset.is_none(),
+        preset_name(cx).is_none() && snapshot(cx).preset.is_none(),
         "A tray preset chosen just before Use overtook it"
     );
+    unavailable(settings, cx).await?;
 
     let (call, acknowledging) = Call::new(Command::Preset {
         name: "French".into(),
