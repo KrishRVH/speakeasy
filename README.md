@@ -964,8 +964,8 @@ every ordering of events against both within the bounds
   opens owned demo windows. It holds an accepted Show write during external, nested, repeated, and
   app-owned quit requests, then checks rendering callbacks, configuration preservation, and instance
   release. It uses no microphone, capture, input injection, or clipboard. The Check workflow's
-  `mac_updates` input runs this on the self-hosted Mac mini. Default builds and release packages
-  omit the acceptance entry points.
+  `mac_updates` input runs this on a GitHub-hosted Mac, whose desktop session the headless Mac mini
+  runner lacks. Default builds and release packages omit the acceptance entry points.
 - `scripts/check-demo-windows.ps1 -Executable <speakeasy.exe>` checks that the demo pill stays
   non-activating and passes clicks through, and that closing Shows keeps Settings open. It also
   checks Settings through Windows UI Automation with synthetic Unicode input: roles, selection,
