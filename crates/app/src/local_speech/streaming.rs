@@ -4,18 +4,9 @@ use anyhow::{Context as _, bail, ensure};
 use futures_util::{SinkExt as _, StreamExt as _};
 use serde::Deserialize;
 use tokio::{net::TcpStream, time::timeout};
-use tokio_tungstenite::{
-    WebSocketStream, client_async_with_config,
-    tungstenite::{
-        Message, client::IntoClientRequest as _, http::HeaderValue, protocol::WebSocketConfig,
-    },
-};
-use zeroize::Zeroizing;
+use tokio_tungstenite::{WebSocketStream, client_async, tungstenite::Message};
 
-use super::{
-    CONNECT_TIMEOUT, INFERENCE_TIMEOUT, LOOPBACK, LocalSpeech, MAX_RESPONSE_BYTES, PARAKEET_RATES,
-    Protocol,
-};
+use super::{CONNECT_TIMEOUT, INFERENCE_TIMEOUT, LOOPBACK, LocalSpeech, PARAKEET_RATES, Protocol};
 use crate::{recognition_terms::Terms, runtime::ports::LiveAudio};
 
 const FAILED: &str = "Continuous recognition stopped.";
@@ -23,7 +14,7 @@ const FINAL_TIMEOUT: Duration = Duration::from_secs(10);
 type Socket = WebSocketStream<TcpStream>;
 
 pub(super) async fn transcribe(
-    speech: &mut LocalSpeech,
+    speech: &LocalSpeech,
     audio: LiveAudio,
     language: &str,
     terms: &Terms,
@@ -32,30 +23,13 @@ pub(super) async fn transcribe(
         speech.protocol == Protocol::Nemotron && PARAKEET_RATES.contains(&audio.rate),
         FAILED
     );
-    speech.verify_listener().await?;
     let connection = within(CONNECT_TIMEOUT, TcpStream::connect((LOOPBACK, speech.port))).await?;
     connection.set_nodelay(true).ok().context(FAILED)?;
-    speech.verify_listener().await?;
-    let mut request = format!(
+    let url = format!(
         "ws://{LOOPBACK}:{}/v1/audio/transcriptions/realtime",
         speech.port
-    )
-    .into_client_request()
-    .ok()
-    .context(FAILED)?;
-    let mut authorization = HeaderValue::from_str(&format!("Bearer {}", speech.secret))
-        .ok()
-        .context(FAILED)?;
-    authorization.set_sensitive(true);
-    request.headers_mut().insert("Authorization", authorization);
-    let limits = WebSocketConfig::default()
-        .max_message_size(Some(MAX_RESPONSE_BYTES))
-        .max_frame_size(Some(MAX_RESPONSE_BYTES));
-    let (mut socket, _) = within(
-        CONNECT_TIMEOUT,
-        client_async_with_config(request, connection, Some(limits)),
-    )
-    .await?;
+    );
+    let (mut socket, _) = within(CONNECT_TIMEOUT, client_async(url, connection)).await?;
     within(CONNECT_TIMEOUT, async {
         expect(&mut socket, Kind::Created).await?;
         let session = serde_json::json!({
@@ -76,7 +50,7 @@ pub(super) async fn transcribe(
 async fn recognize(socket: &mut Socket, mut audio: LiveAudio) -> anyhow::Result<Option<String>> {
     let mut committed = false;
     let mut final_seen = false;
-    let mut text = Zeroizing::new(String::new());
+    let mut text = String::new();
     let chunk_size = usize::try_from(audio.rate / 10)?.saturating_mul(2);
     ensure!(chunk_size > 0, FAILED);
     let deadline = tokio::time::sleep(FINAL_TIMEOUT);
@@ -116,11 +90,6 @@ async fn recognize(socket: &mut Socket, mut audio: LiveAudio) -> anyhow::Result<
                         match kind {
                             Kind::Completed => {
                                 let words = transcript.as_deref().context(FAILED)?.trim();
-                                ensure!(
-                                    words.len().saturating_add(1)
-                                        <= MAX_RESPONSE_BYTES.saturating_sub(text.len()),
-                                    FAILED
-                                );
                                 if !text.is_empty() && !words.is_empty() {
                                     text.push(' ');
                                 }
@@ -129,7 +98,7 @@ async fn recognize(socket: &mut Socket, mut audio: LiveAudio) -> anyhow::Result<
                             },
                             Kind::Committed => {
                                 ensure!(committed && final_seen, FAILED);
-                                return Ok(Some(mem::take(&mut *text)));
+                                return Ok(Some(text));
                             },
                             Kind::Error => bail!(FAILED),
                             Kind::Created | Kind::Updated | Kind::Ignored => {},

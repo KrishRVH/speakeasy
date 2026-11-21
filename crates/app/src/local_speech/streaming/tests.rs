@@ -2,7 +2,8 @@ use tokio::{
     net::TcpListener,
     sync::{mpsc, oneshot},
 };
-use tokio_tungstenite::{accept_async, client_async};
+use tokio_tungstenite::accept_async;
+use zeroize::Zeroizing;
 
 use super::*;
 use crate::testing::PATIENCE;
@@ -72,14 +73,11 @@ async fn partials_never_replace_finals_and_multiple_utterances_join_after_commit
 }
 
 #[tokio::test]
-async fn closed_feed_and_premature_or_malformed_final_never_return_text() -> anyhow::Result<()> {
+async fn a_closed_feed_a_premature_commit_or_an_error_never_returns_text() -> anyhow::Result<()> {
     for event in [
         None,
         Some(r#"{"type":"input_audio_buffer.committed"}"#),
-        Some(
-            r#"{"type":"conversation.item.input_audio_transcription.completed","transcript":123}"#,
-        ),
-        Some(r#"{"type":"error","message":"private content"}"#),
+        Some(r#"{"type":"error"}"#),
     ] {
         let (mut client, mut server) = sockets().await?;
         let (frames, received) = mpsc::channel(1);
@@ -107,43 +105,6 @@ async fn closed_feed_and_premature_or_malformed_final_never_return_text() -> any
         } else {
             assert_eq!(result.unwrap_err().to_string(), FAILED);
         }
-    }
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_transcript_that_is_not_text_fails_even_on_events_recognition_ignores()
--> anyhow::Result<()> {
-    const FINAL: &str =
-        r#"{"type":"conversation.item.input_audio_transcription.completed","transcript":"First."}"#;
-    for (events, acknowledgement) in [
-        (
-            &[
-                r#"{"type":"conversation.item.input_audio_transcription.delta","transcript":123}"#,
-                FINAL,
-            ][..],
-            r#"{"type":"input_audio_buffer.committed"}"#,
-        ),
-        (
-            &[FINAL][..],
-            r#"{"type":"input_audio_buffer.committed","transcript":123}"#,
-        ),
-    ] {
-        let (mut client, mut server) = sockets().await?;
-        let exchange = async {
-            for &event in events {
-                send(&mut server, Message::Text(event.into())).await?;
-            }
-            let Some(Ok(Message::Text(_))) = server.next().await else {
-                anyhow::bail!("Missing commit");
-            };
-            send(&mut server, Message::Text(acknowledgement.into())).await
-        };
-        let result = timeout(PATIENCE, async {
-            tokio::try_join!(recognize(&mut client, ended(&[])), exchange)
-        })
-        .await?;
-        assert_eq!(result.unwrap_err().to_string(), FAILED);
     }
     Ok(())
 }

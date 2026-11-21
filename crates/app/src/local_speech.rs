@@ -2,19 +2,14 @@ mod streaming;
 
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
-use std::{
-    fmt, iter, net::TcpListener, ops::RangeInclusive, path::Path, process::ExitStatus,
-    time::Duration,
-};
+use std::{fmt, iter, net::TcpListener, ops::RangeInclusive, process::ExitStatus, time::Duration};
 
 use anyhow::{Context as _, anyhow, bail, ensure};
 use reqwest::{Client, RequestBuilder, multipart};
 use serde::{Deserialize, de::DeserializeOwned};
-use speakeasy_platform::{LoopbackListener, ProcessGroup};
+use speakeasy_platform::ProcessGroup;
 use speakeasy_show::{Moment, Narration, Span, Word};
 use tokio::{
-    io::{AsyncReadExt as _, AsyncWriteExt as _},
-    net::TcpStream,
     process::{Child, Command},
     sync::watch,
     time::{sleep, timeout},
@@ -37,10 +32,8 @@ const HEALTH_POLL: Duration = Duration::from_millis(25);
 pub(crate) const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 
 const INFERENCE_TIMEOUT: Duration = Duration::from_mins(30);
-const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const PARAKEET_RATES: RangeInclusive<u32> = 8_000..=96_000;
 const STOPPED: &str = "Transcription stopped. Check the selected model and engine, then try again.";
-const TAKEN: &str = "Another program took the speech engine's port. Try again.";
 
 const EXIT_GRACE: Duration = Duration::from_millis(500);
 const SIGILL: i32 = 4;
@@ -55,9 +48,7 @@ pub(crate) struct LocalSpeech {
     group: ProcessGroup,
     child: Child,
     port: u16,
-    secret: String,
     client: Client,
-    _directory: tempfile::TempDir,
 }
 
 impl LocalSpeech {
@@ -66,15 +57,9 @@ impl LocalSpeech {
         mut cancelled: watch::Receiver<bool>,
     ) -> anyhow::Result<Self> {
         ensure!(!*cancelled.borrow(), STARTUP_CANCELLED);
-        let listener = TcpListener::bind((LOOPBACK, 0))?;
-        let port = listener.local_addr()?.port();
-        let directory = served_directory()?;
-        let secret = random_token()?;
-        let mut command = server_command(&config, port, &secret, directory.path());
+        let port = TcpListener::bind((LOOPBACK, 0))?.local_addr()?.port();
         let client = engine_client()?;
-
-        drop(listener);
-        let mut child = command.spawn().context(
+        let mut child = server_command(&config, port).spawn().context(
             "Cannot start the speech engine. Check the selected engine executable and its native dependencies.",
         )?;
         let group = contain(&mut child).await?;
@@ -88,9 +73,7 @@ impl LocalSpeech {
             group,
             child,
             port,
-            secret,
             client,
-            _directory: directory,
         };
         if let Err(error) = speech.become_ready(&config, &mut cancelled).await {
             speech.stop().await;
@@ -126,7 +109,7 @@ impl LocalSpeech {
     }
 
     async fn wait_until_serving(&mut self) -> anyhow::Result<()> {
-        let health = self.route(match self.protocol {
+        let health = self.url(match self.protocol {
             Protocol::Whisper => "health",
             Protocol::Nemo | Protocol::Nemotron => "ready",
         });
@@ -135,24 +118,14 @@ impl LocalSpeech {
                 self.group.terminate();
                 bail!(startup_exit(self.child.wait().await?));
             }
-            if healthy(self.port, &health, || self.holds_port()).await? {
+            let probe = self.client.get(&health).timeout(HEALTH_TIMEOUT).send();
+            if probe
+                .await
+                .is_ok_and(|response| response.status().is_success())
+            {
                 return Ok(());
             }
             sleep(HEALTH_POLL).await;
-        }
-    }
-
-    fn listener(&self) -> anyhow::Result<LoopbackListener> {
-        self.group
-            .loopback_listener(self.port)
-            .context("Cannot verify the speech engine's process. Try again.")
-    }
-
-    fn holds_port(&self) -> anyhow::Result<bool> {
-        match self.listener()? {
-            LoopbackListener::Missing => Ok(false),
-            LoopbackListener::Owned => Ok(true),
-            LoopbackListener::Foreign => bail!(TAKEN),
         }
     }
 
@@ -166,27 +139,8 @@ impl LocalSpeech {
         self.child.try_wait().map(|status| status.is_some())
     }
 
-    fn route(&self, endpoint: &str) -> String {
-        match self.protocol {
-            Protocol::Whisper => format!("/{}/{endpoint}", self.secret),
-            Protocol::Nemo | Protocol::Nemotron => format!("/{endpoint}"),
-        }
-    }
-
     fn url(&self, endpoint: &str) -> String {
-        format!("http://{LOOPBACK}:{}{}", self.port, self.route(endpoint))
-    }
-
-    async fn verify_listener(&mut self) -> anyhow::Result<()> {
-        if !matches!(self.leader_exited(), Ok(false)) {
-            return Err(self.terminate_with_cause().await);
-        }
-        ensure!(
-            self.listener()
-                .is_ok_and(|listener| listener == LoopbackListener::Owned),
-            STOPPED
-        );
-        Ok(())
+        format!("http://{LOOPBACK}:{}/{endpoint}", self.port)
     }
 
     async fn request<R: Reply>(
@@ -195,7 +149,9 @@ impl LocalSpeech {
         language: &str,
         terms: &Terms,
     ) -> anyhow::Result<R> {
-        self.verify_listener().await?;
+        if !matches!(self.leader_exited(), Ok(false)) {
+            return Err(self.terminate_with_cause().await);
+        }
         let request = match self.protocol {
             Protocol::Whisper => {
                 let mut form = recording_form(wav, R::FORMAT)?
@@ -230,7 +186,6 @@ impl LocalSpeech {
                 }
                 self.client
                     .post(self.url("v1/audio/transcriptions"))
-                    .bearer_auth(&self.secret)
                     .multipart(form)
             },
         };
@@ -475,30 +430,7 @@ fn joined(tokens: Vec<Token>) -> Vec<Heard> {
     words
 }
 
-fn served_directory() -> anyhow::Result<tempfile::TempDir> {
-    tempfile::Builder::new()
-        .prefix("speakeasy-")
-        .tempdir()
-        .map_err(|error| {
-            let reason = error.raw_os_error().map_or_else(
-                || error.kind().to_string(),
-                |code| std::io::Error::from_raw_os_error(code).to_string(),
-            );
-            anyhow!(
-                "Cannot use the temporary folder {}: {reason}. {}",
-                std::env::temp_dir().display(),
-                crate::paths::remedy(&error)
-            )
-        })
-}
-
-fn random_token() -> anyhow::Result<String> {
-    let mut bytes = [0_u8; 16];
-    getrandom::fill(&mut bytes)?;
-    Ok(format!("{:032x}", u128::from_le_bytes(bytes)))
-}
-
-fn server_command(config: &Config, port: u16, secret: &str, served: &Path) -> Command {
+fn server_command(config: &Config, port: u16) -> Command {
     let port = port.to_string();
     let mut command = hidden_command(&config.engine_executable);
     match config.engine {
@@ -518,29 +450,19 @@ fn server_command(config: &Config, port: u16, secret: &str, served: &Path) -> Co
                     "--threads",
                     "1",
                     "--asr.batching.enabled=false",
-                ])
-                .env("NEMO_SPEECH_HTTP_API_KEY", secret);
+                ]);
         },
         Engine::Whisper => {
-            command
-                .arg("--model")
-                .arg(&config.model)
-                .args([
-                    "--host",
-                    LOOPBACK,
-                    "--port",
-                    &port,
-                    "--request-path",
-                    &format!("/{secret}"),
-                    "--public",
-                ])
-                .arg(served)
-                .args([
-                    "--threads",
-                    &config.threads.to_string(),
-                    "--language",
-                    crate::models::whisper_language(&config.language),
-                ]);
+            command.arg("--model").arg(&config.model).args([
+                "--host",
+                LOOPBACK,
+                "--port",
+                &port,
+                "--threads",
+                &config.threads.to_string(),
+                "--language",
+                crate::models::whisper_language(&config.language),
+            ]);
             if !config.use_gpu {
                 command.arg("--no-gpu");
             }
@@ -556,7 +478,6 @@ fn server_command(config: &Config, port: u16, secret: &str, served: &Path) -> Co
 fn engine_client() -> anyhow::Result<Client> {
     Ok(client_builder(Trust::Nobody)?
         .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(CONNECT_TIMEOUT)
         .pool_max_idle_per_host(0)
         .build()?)
@@ -572,85 +493,6 @@ async fn contain(child: &mut Child) -> anyhow::Result<ProcessGroup> {
             ))
         },
     }
-}
-
-async fn healthy(
-    port: u16,
-    route: &str,
-    mut holds_port: impl FnMut() -> anyhow::Result<bool>,
-) -> anyhow::Result<bool> {
-    if !holds_port()? {
-        return Ok(false);
-    }
-    let Ok(Ok(connection)) = timeout(HEALTH_TIMEOUT, TcpStream::connect((LOOPBACK, port))).await
-    else {
-        return Ok(false);
-    };
-    Ok(holds_port()?
-        && matches!(
-            timeout(HEALTH_TIMEOUT, succeeds(connection, port, route)).await,
-            Ok(Ok(true))
-        ))
-}
-
-async fn succeeds(mut connection: TcpStream, port: u16, route: &str) -> std::io::Result<bool> {
-    const HEAD_LIMIT: u64 = 8 * 1024;
-    let request =
-        format!("GET {route} HTTP/1.1\r\nHost: {LOOPBACK}:{port}\r\nConnection: close\r\n\r\n");
-    connection.write_all(request.as_bytes()).await?;
-    let mut head = Vec::new();
-    let mut reply = connection.take(HEAD_LIMIT);
-    while reply.read_buf(&mut head).await? > 0 {
-        if let Some(end) = head.windows(4).position(|window| window == b"\r\n\r\n") {
-            return Ok(head.get(..end).is_some_and(answers_success));
-        }
-    }
-    Ok(false)
-}
-
-fn answers_success(head: &[u8]) -> bool {
-    let mut lines = head.split_inclusive(|&byte| byte == b'\n').map(|line| {
-        line.strip_suffix(b"\r\n")
-            .or_else(|| line.strip_suffix(b"\n"))
-            .unwrap_or(line)
-    });
-    let line = lines.next().unwrap_or_default();
-    let Some(status) = line
-        .strip_prefix(b"HTTP/1.1 ")
-        .or_else(|| line.strip_prefix(b"HTTP/1.0 "))
-    else {
-        return false;
-    };
-    let succeeded = match status {
-        [b'2', tens, ones, reason @ ..] => {
-            tens.is_ascii_digit()
-                && ones.is_ascii_digit()
-                && match reason {
-                    [] => true,
-                    [b' ', phrase @ ..] => is_field_text(phrase),
-                    _ => false,
-                }
-        },
-        _ => false,
-    };
-    succeeded && lines.all(is_header_field)
-}
-
-fn is_header_field(line: &[u8]) -> bool {
-    let mut parts = line.splitn(2, |&byte| byte == b':');
-    let name = parts.next().unwrap_or_default();
-    parts.next().is_some_and(|value| {
-        !name.is_empty()
-            && name
-                .iter()
-                .all(|&byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte))
-            && is_field_text(value)
-    })
-}
-
-fn is_field_text(text: &[u8]) -> bool {
-    text.iter()
-        .all(|&byte| byte == b'\t' || !byte.is_ascii_control())
 }
 
 async fn unless_cancelled<T>(
@@ -674,7 +516,7 @@ fn recording_form(wav: Vec<u8>, format: &'static str) -> reqwest::Result<multipa
 }
 
 async fn exchange(request: RequestBuilder) -> Result<Vec<u8>, Unanswered> {
-    let mut response = request.timeout(INFERENCE_TIMEOUT).send().await?;
+    let response = request.timeout(INFERENCE_TIMEOUT).send().await?;
     let status = response.status();
     if !status.is_success() {
         return Err(Unanswered::Failed(anyhow!(
@@ -682,16 +524,7 @@ async fn exchange(request: RequestBuilder) -> Result<Vec<u8>, Unanswered> {
             status.as_u16()
         )));
     }
-    let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await? {
-        if chunk.len() > MAX_RESPONSE_BYTES.saturating_sub(body.len()) {
-            return Err(Unanswered::Failed(anyhow!(
-                "The speech engine sent a reply too large to read. Check the selected model and engine, then try again."
-            )));
-        }
-        body.extend_from_slice(&chunk);
-    }
-    Ok(body)
+    Ok(response.bytes().await?.to_vec())
 }
 
 enum Unanswered {

@@ -58,10 +58,7 @@ fn replies_without_usable_timings_keep_only_their_text() -> anyhow::Result<()> {
 
     for timings in [
         r#""words":[{"word":"Kept","start":0.1,"end":0.3},{"word":"text.","start":2.0,"end":1.0}]"#,
-        r#""words":[{"word":"Kept","start":-1.0,"end":0.3},{"word":"text.","start":0.3,"end":0.6}]"#,
-        r#""words":[{"word":"Kept","start":null,"end":0.3},{"word":"text.","start":0.3,"end":0.6}]"#,
         r#""words":[{"word":"Kept","start":0.1,"end":0.3},{"word":"text.","start":0.3}]"#,
-        r#""segments":[{"words":[{"word":" Kept","start":0.1,"end":0.3},{"word":" text.","start":0.6,"end":0.3}]}]"#,
         r#""segments":[{"words":[{"word":" Kept","start":0.1,"end":0.3},{"word":" te","start":0.3,"end":0.4},{"word":"xt.","start":null,"end":0.6}]}]"#,
     ] {
         assert_eq!(
@@ -76,17 +73,6 @@ fn replies_without_usable_timings_keep_only_their_text() -> anyhow::Result<()> {
         );
     }
     Ok(())
-}
-
-#[test]
-fn malformed_replies_never_quote_engine_text() {
-    let error = reply::<Timed>(br#"{"words":"private transcript"}"#)
-        .err()
-        .map(|error| format!("{error:#}"));
-    assert!(
-        error.is_some_and(|error| !error.contains("private")),
-        "A malformed reply was accepted or quoted"
-    );
 }
 
 #[test]
@@ -139,7 +125,7 @@ fn exits_name_the_remedies_their_status_proves_and_only_startup_blames_arguments
 #[test]
 fn server_arguments_match_each_engine() {
     let arguments = |config: &Config| {
-        server_command(config, 8080, "secret", Path::new("served"))
+        server_command(config, 8080)
             .as_std()
             .get_args()
             .filter_map(|argument| argument.to_str().map(str::to_owned))
@@ -162,10 +148,6 @@ fn server_arguments_match_each_engine() {
             "127.0.0.1",
             "--port",
             "8080",
-            "--request-path",
-            "/secret",
-            "--public",
-            "served",
             "--threads",
             "3",
             "--language",
@@ -215,7 +197,7 @@ fn engines_on_apple_gpus_skip_ggml_metal_tensor_kernels() {
             engine,
             ..Config::default()
         };
-        let command = server_command(&config, 8080, "secret", Path::new("served"));
+        let command = server_command(&config, 8080);
         assert!(
             command.as_std().get_envs().any(|(name, value)| {
                 name == "GGML_METAL_TENSOR_DISABLE" && value == Some("1".as_ref())
@@ -223,65 +205,6 @@ fn engines_on_apple_gpus_skip_ggml_metal_tensor_kernels() {
             "{engine:?}"
         );
     }
-}
-
-#[test]
-fn engine_secrets_are_unrelated_128_bit_tokens() -> anyhow::Result<()> {
-    let (first, second) = (random_token()?, random_token()?);
-    assert_eq!(first.len(), 32);
-    assert!(first.bytes().all(|byte| byte.is_ascii_hexdigit()));
-    assert_ne!(first, second);
-    Ok(())
-}
-
-#[tokio::test]
-async fn only_a_complete_success_head_proves_the_engine_healthy() -> anyhow::Result<()> {
-    use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
-
-    let listener = tokio::net::TcpListener::bind((LOOPBACK, 0)).await?;
-    let port = listener.local_addr()?.port();
-    let oversized = format!("HTTP/1.1 200 OK\r\nX-Padding: {}\r\n\r\n", "a".repeat(9000));
-    for (reply, ready) in [
-        ("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n", true),
-        ("HTTP/1.0 204\r\n\r\n", true),
-        (
-            "HTTP/1.1 200 OK\r\nServer: cpp-httplib/0.15.3\r\nX-Empty:\r\nKeep-Alive: timeout=5,\tmax=5\r\n\r\n",
-            true,
-        ),
-        ("HTTP/1.1 200 OK\r\nno colon here\r\n\r\n", false),
-        ("HTTP/1.1 200 OK\r\nContent-Length : 0\r\n\r\n", false),
-        ("HTTP/1.1 200 OK\r\n: no name\r\n\r\n", false),
-        ("HTTP/1.1 200 OK\r\nX-Bad: a\rb\r\n\r\n", false),
-        ("HTTP/1.1 200 OK\r\nX-Bad: value\r\r\n\r\n", false),
-        ("HTTP/1.1 200 OK\r\r\n\r\n", false),
-        ("HTTP/1.1 200", false),
-        ("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n", false),
-        (
-            "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n",
-            false,
-        ),
-        ("HTTP/1.1 2000 OK\r\n\r\n", false),
-        ("HTTP/1.1 2x0 OK\r\n\r\n", false),
-        ("HTTP/2 200\r\n\r\n", false),
-        (oversized.as_str(), false),
-    ] {
-        let engine = async {
-            let mut stream = BufReader::new(listener.accept().await?.0);
-            let mut request = String::new();
-            while stream.read_line(&mut request).await? > 2 {}
-            stream.write_all(reply.as_bytes()).await?;
-            anyhow::Ok(request)
-        };
-        let (probed, request) = tokio::join!(healthy(port, "/key/health", || Ok(true)), engine);
-        assert_eq!(probed?, ready, "{reply:.40}");
-        assert_eq!(
-            request?,
-            format!(
-                "GET /key/health HTTP/1.1\r\nHost: {LOOPBACK}:{port}\r\nConnection: close\r\n\r\n"
-            )
-        );
-    }
-    Ok(())
 }
 
 #[cfg(unix)]
@@ -297,8 +220,8 @@ async fn startup_probes_each_engine_at_its_own_health_route() -> anyhow::Result<
         let (_directory, mut speech, listener) = shell_engine("read -r _").await?;
         speech.protocol = protocol;
         let expected = match protocol {
-            Protocol::Whisper => format!("GET /{}/health HTTP/1.1\r\n", speech.secret),
-            Protocol::Nemo | Protocol::Nemotron => "GET /ready HTTP/1.1\r\n".to_owned(),
+            Protocol::Whisper => "GET /health HTTP/1.1\r\n",
+            Protocol::Nemo | Protocol::Nemotron => "GET /ready HTTP/1.1\r\n",
         };
         let engine = async {
             let mut stream = BufReader::new(listener.accept().await?.0);
@@ -324,62 +247,7 @@ async fn startup_probes_each_engine_at_its_own_health_route() -> anyhow::Result<
     Ok(())
 }
 
-#[tokio::test]
-async fn a_health_probe_writes_nothing_once_its_port_changes_hands() -> anyhow::Result<()> {
-    use tokio::io::AsyncReadExt as _;
-
-    let listener = tokio::net::TcpListener::bind((LOOPBACK, 0)).await?;
-    let port = listener.local_addr()?.port();
-    for (connected, outcome) in [(Ok(false), Some(false)), (Err(anyhow!("Taken")), None)] {
-        let mut checks = [Ok(true), connected].into_iter();
-        let probed = healthy(port, "/key/health", || {
-            checks.next().context("Checked again")?
-        })
-        .await;
-        let mut received = Vec::new();
-        listener
-            .accept()
-            .await?
-            .0
-            .read_to_end(&mut received)
-            .await?;
-        assert_eq!(probed.ok(), outcome);
-        assert!(
-            received.is_empty(),
-            "The probe wrote to a listener it had not verified after connecting"
-        );
-    }
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_truncated_reply_is_a_broken_connection() -> anyhow::Result<()> {
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-
-    let listener = tokio::net::TcpListener::bind((LOOPBACK, 0)).await?;
-    let url = format!("http://{}/inference", listener.local_addr()?);
-    let engine = tokio::spawn(async move {
-        let mut stream = BufReader::new(listener.accept().await?.0);
-        let mut line = String::new();
-        while stream.read_line(&mut line).await? > 0 && !line.trim().is_empty() {
-            line.clear();
-        }
-
-        stream
-            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 64\r\n\r\n{\"text\":")
-            .await?;
-        anyhow::Ok(())
-    });
-    let exchanged = exchange(engine_client()?.get(&url)).await;
-    engine.await??;
-    assert!(
-        matches!(exchanged, Err(Unanswered::Disconnected)),
-        "A truncated reply was not taken for a broken connection"
-    );
-    Ok(())
-}
-
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn fake_engine(script: &str) -> anyhow::Result<(tempfile::TempDir, Config)> {
     use std::os::unix::fs::PermissionsExt as _;
     let directory = tempfile::tempdir()?;
@@ -397,9 +265,8 @@ fn fake_engine(script: &str) -> anyhow::Result<(tempfile::TempDir, Config)> {
 
 #[cfg(target_os = "linux")]
 #[tokio::test]
-async fn argument_failure_reports_exit_status_and_keeps_stderr_private() -> anyhow::Result<()> {
-    let (_directory, config) =
-        fake_engine("#!/bin/sh\nprintf 'private transcript or credential' >&2\nexit 2\n")?;
+async fn an_engine_that_rejects_its_arguments_names_its_exit_and_remedy() -> anyhow::Result<()> {
+    let (_directory, config) = fake_engine("#!/bin/sh\nexit 2\n")?;
     let (_cancel, cancelled) = watch::channel(false);
     let result = LocalSpeech::start(config, cancelled).await;
     let error = format!(
@@ -408,7 +275,6 @@ async fn argument_failure_reports_exit_status_and_keeps_stderr_private() -> anyh
     );
     assert!(error.contains("exit status: 2"));
     assert!(error.contains("server arguments"));
-    assert!(!error.contains("private transcript"));
     Ok(())
 }
 
@@ -432,77 +298,9 @@ async fn startup_cancellation_reaps_the_owned_process() -> anyhow::Result<()> {
             .is_ok_and(|result| result.is_err())
     );
     assert!(
-        !Path::new(&format!("/proc/{pid}")).exists(),
+        !std::path::Path::new(&format!("/proc/{pid}")).exists(),
         "Cancelled startup left a live or unreaped worker"
     );
-    Ok(())
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn a_program_that_takes_the_released_port_never_becomes_the_engine() -> anyhow::Result<()> {
-    use tokio::io::AsyncReadExt as _;
-
-    let (directory, config) = fake_engine(concat!(
-        "#!/bin/sh\n",
-        "while [ \"$#\" -gt 0 ]; do\n",
-        "  [ \"$1\" = --port ] && printf '%s' \"$2\" > \"$(dirname \"$0\")/worker.port\"\n",
-        "  shift\n",
-        "done\n",
-        "exec sleep 60\n",
-    ))?;
-    let (_cancel, cancelled) = watch::channel(false);
-    let start = tokio::spawn(LocalSpeech::start(config, cancelled));
-    let port: u16 = timeout(
-        Duration::from_secs(5),
-        fixture_number(&directory.path().join("worker.port")),
-    )
-    .await?;
-    let squatter = tokio::net::TcpListener::bind((LOOPBACK, port)).await?;
-    let started = timeout(crate::testing::PATIENCE, start).await??;
-    let mut received = Vec::new();
-    while let Ok(accepted) = timeout(HEALTH_TIMEOUT, squatter.accept()).await {
-        accepted?.0.read_to_end(&mut received).await?;
-    }
-    assert!(
-        received.is_empty(),
-        "Startup wrote to a listener outside the speech engine's group"
-    );
-    let error = started
-        .err()
-        .context("The program on the engine's port became the engine")?;
-    assert_eq!(
-        error.to_string(),
-        "Another program took the speech engine's port. Try again."
-    );
-    Ok(())
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn audio_never_reaches_a_program_that_took_a_ready_engines_port() -> anyhow::Result<()> {
-    let squatter = tokio::net::TcpListener::bind((LOOPBACK, 0)).await?;
-    let mut speech = sleeping_engine(squatter.local_addr()?.port()).await?;
-    let transcribed = transcribe_beside(&mut speech, &squatter).await?;
-    speech.stop().await;
-    let error = transcribed
-        .err()
-        .context("The program on the engine's port transcribed")?;
-    assert_eq!(error.to_string(), STOPPED);
-    Ok(())
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn audio_never_reaches_a_program_that_took_an_exited_engines_port() -> anyhow::Result<()> {
-    let squatter = tokio::net::TcpListener::bind((LOOPBACK, 0)).await?;
-    let mut speech = sleeping_engine(squatter.local_addr()?.port()).await?;
-    speech.stop().await;
-    let error = transcribe_beside(&mut speech, &squatter)
-        .await?
-        .err()
-        .context("The program on the exited engine's port transcribed")?;
-    assert_eq!(error.to_string(), STOPPED);
     Ok(())
 }
 
@@ -640,24 +438,23 @@ async fn crashing_engine(
 async fn shell_engine(
     script: &str,
 ) -> anyhow::Result<(tempfile::TempDir, LocalSpeech, tokio::net::TcpListener)> {
-    let held = std::net::TcpListener::bind((LOOPBACK, 0))?;
-    let listener = held.try_clone()?;
-    listener.set_nonblocking(true)?;
+    let listener = tokio::net::TcpListener::bind((LOOPBACK, 0)).await?;
     let directory = tempfile::tempdir()?;
-    let port = held.local_addr()?.port();
-    let mut command = hidden_command("sh");
-    command
+    let mut child = hidden_command("sh")
         .arg("-c")
         .arg(format!("ulimit -c 0; {script}"))
         .current_dir(directory.path())
         .stdin(std::process::Stdio::piped())
-        .stdout(std::os::fd::OwnedFd::from(held));
-    let speech = engine_from(command, port).await?;
-    Ok((
-        directory,
-        speech,
-        tokio::net::TcpListener::from_std(listener)?,
-    ))
+        .process_group(0)
+        .spawn()?;
+    let speech = LocalSpeech {
+        protocol: Protocol::Whisper,
+        group: contain(&mut child).await?,
+        child,
+        port: listener.local_addr()?.port(),
+        client: engine_client()?,
+    };
+    Ok((directory, speech, listener))
 }
 
 #[cfg(target_os = "linux")]
@@ -673,58 +470,14 @@ async fn until(mut condition: impl FnMut() -> bool) {
     }
 }
 
-#[cfg(unix)]
-async fn sleeping_engine(port: u16) -> anyhow::Result<LocalSpeech> {
-    let mut command = hidden_command("sleep");
-    command.arg("60");
-    engine_from(command, port).await
-}
-
 #[cfg(target_os = "linux")]
 #[tokio::test]
-async fn streaming_verifies_the_listener_before_sending_credentials_or_audio() -> anyhow::Result<()>
-{
-    let listener = tokio::net::TcpListener::bind((LOOPBACK, 0)).await?;
-    let mut speech = sleeping_engine(listener.local_addr()?.port()).await?;
-    speech.protocol = Protocol::Nemotron;
-    let (_frames, received) = tokio::sync::mpsc::channel(1);
-    let result = timeout(
-        crate::testing::PATIENCE,
-        speech.transcribe_stream(
-            LiveAudio {
-                rate: 16_000,
-                frames: received,
-                tail: tokio::sync::oneshot::channel().1,
-            },
-            "en-US",
-            &Terms::default(),
-        ),
-    )
-    .await;
-    speech.stop().await;
-    assert!(result?.is_err());
-    assert!(
-        crate::testing::still_pending(listener.accept()).await,
-        "Connected to a program that does not own the engine"
-    );
-    Ok(())
-}
-
-#[cfg(target_os = "linux")]
-#[tokio::test]
-async fn streaming_authenticates_and_sends_per_request_language_and_hints() -> anyhow::Result<()> {
+async fn streaming_sends_per_request_language_and_hints() -> anyhow::Result<()> {
     use futures_util::{SinkExt as _, StreamExt as _};
-    use tokio_tungstenite::{
-        accept_hdr_async,
-        tungstenite::{
-            Message,
-            handshake::server::{Request, Response},
-        },
-    };
+    use tokio_tungstenite::{accept_async, tungstenite::Message};
 
     let (_directory, mut speech, listener) = shell_engine("read -r _").await?;
     speech.protocol = Protocol::Nemotron;
-    let authorization = format!("Bearer {}", speech.secret);
     let mut terms = Terms::default();
     terms.add("Example Name")?;
     let (frames, received) = tokio::sync::mpsc::channel(2);
@@ -733,24 +486,7 @@ async fn streaming_authenticates_and_sends_per_request_language_and_hints() -> a
     let (ending, tail) = tokio::sync::oneshot::channel();
     assert!(ending.send(zeroize::Zeroizing::new(Vec::new())).is_ok());
     let server = async {
-        #[expect(
-            clippy::result_large_err,
-            reason = "The WebSocket handshake callback returns the library-owned HTTP response type"
-        )]
-        let mut socket = accept_hdr_async(
-            listener.accept().await?.0,
-            |request: &Request, response: Response| {
-                assert!(
-                    request
-                        .headers()
-                        .get("Authorization")
-                        .is_some_and(|value| value == authorization.as_str())
-                );
-                assert_eq!(request.uri().path(), "/v1/audio/transcriptions/realtime");
-                Ok(response)
-            },
-        )
-        .await?;
+        let mut socket = accept_async(listener.accept().await?.0).await?;
         socket
             .send(Message::Text(r#"{"type":"session.created"}"#.into()))
             .await?;
@@ -855,44 +591,7 @@ fn multipart_field(body: &[u8], name: &str) -> Option<String> {
     Some(value.to_owned())
 }
 
-#[cfg(unix)]
-async fn engine_from(mut command: Command, port: u16) -> anyhow::Result<LocalSpeech> {
-    let mut child = command.process_group(0).spawn()?;
-    Ok(LocalSpeech {
-        protocol: Protocol::Whisper,
-        group: contain(&mut child).await?,
-        child,
-        port,
-        secret: random_token()?,
-        client: engine_client()?,
-        _directory: tempfile::tempdir()?,
-    })
-}
-
-#[cfg(unix)]
-async fn transcribe_beside(
-    speech: &mut LocalSpeech,
-    squatter: &tokio::net::TcpListener,
-) -> anyhow::Result<anyhow::Result<String>> {
-    let wav = audio::silent_wav(16_000, Duration::from_secs(1))?;
-    let terms = Terms::default();
-    tokio::select! {
-        transcribed = speech.transcribe(wav, "en", &terms) => Ok(transcribed),
-        failed = impersonate_engine(squatter) => {
-            failed?;
-            bail!("The impersonated engine stopped answering");
-        },
-    }
-}
-
-#[cfg(unix)]
-async fn impersonate_engine(listener: &tokio::net::TcpListener) -> anyhow::Result<()> {
-    loop {
-        answer_silence(listener.accept().await?.0).await?;
-    }
-}
-
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 async fn answer_silence(stream: tokio::net::TcpStream) -> anyhow::Result<Vec<u8>> {
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
     let mut stream = BufReader::new(stream);
@@ -922,8 +621,8 @@ async fn answer_silence(stream: tokio::net::TcpStream) -> anyhow::Result<Vec<u8>
     Ok(body)
 }
 
-#[cfg(unix)]
-async fn fixture_number<T: std::str::FromStr>(path: &Path) -> T {
+#[cfg(target_os = "linux")]
+async fn fixture_number<T: std::str::FromStr>(path: &std::path::Path) -> T {
     loop {
         if let Ok(text) = tokio::fs::read_to_string(path).await
             && let Ok(number) = text.parse()

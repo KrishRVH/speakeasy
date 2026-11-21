@@ -734,9 +734,7 @@ and switching is always explicit. **Whisper** runs a local whisper.cpp server wi
 known-good Windows build is
 [whisper.cpp b5130](https://github.com/ggml-org/whisper.cpp/releases/tag/b5130): extract the
 complete runtime and choose `Release/whisper-server.exe`. Turn off **Prefer GPU** for a CPU-only
-build. The `threads` setting applies to Whisper and defaults to four. On shared Linux machines,
-prefer Parakeet: other accounts can read Whisper's
-[request route](docs/architecture.md#local-recognition-and-privacy).
+build. The `threads` setting applies to Whisper and defaults to four.
 
 The worker stays warm on loopback. With a GPU, one silent request initializes its kernels before the
 first dictation; Linux CPU workers also validate inference before readiness. Cancelling before final

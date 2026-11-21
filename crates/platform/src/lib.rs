@@ -57,7 +57,7 @@ pub use self::{
     movie::{MovieControl, MovieEvent, MovieFrame, MovieTarget, read_movie_frame},
     owned_thread::{OwnedThread, StoppableThread},
     permissions::{Permission, Permissions},
-    process::{LoopbackListener, ProcessGroup},
+    process::ProcessGroup,
     screen::{
         Display, Frame, Part, PlacedWindow, PointerMonitor, PointerSample, Scope, ScreenCapture,
         ScreenEvent, Target, Unstopped, WindowGone, WindowLayer, WindowLayout, WindowWatch,
