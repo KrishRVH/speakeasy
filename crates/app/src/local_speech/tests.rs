@@ -243,6 +243,14 @@ async fn only_a_complete_success_head_proves_the_engine_healthy() -> anyhow::Res
     for (reply, ready) in [
         ("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n", true),
         ("HTTP/1.0 204\r\n\r\n", true),
+        (
+            "HTTP/1.1 200 OK\r\nServer: cpp-httplib/0.15.3\r\nX-Empty:\r\nKeep-Alive: timeout=5,\tmax=5\r\n\r\n",
+            true,
+        ),
+        ("HTTP/1.1 200 OK\r\nno colon here\r\n\r\n", false),
+        ("HTTP/1.1 200 OK\r\nContent-Length : 0\r\n\r\n", false),
+        ("HTTP/1.1 200 OK\r\n: no name\r\n\r\n", false),
+        ("HTTP/1.1 200 OK\r\nX-Bad: a\rb\r\n\r\n", false),
         ("HTTP/1.1 200", false),
         ("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n", false),
         (

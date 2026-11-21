@@ -1047,7 +1047,7 @@ and can panic. Clippy catches the named constructors but cannot name those `Defa
 implementations.
 
 The speech worker listens on loopback only. Speakeasy declares the worker ready only after a health
-probe answers with a complete success header. On Linux and Windows, each probe, streaming
+probe answers with a well-formed success header. On Linux and Windows, each probe, streaming
 connection, and request first checks that the worker's own process group, a job object on Windows,
 holds every listener a connection to its loopback port can reach: wildcard, IPv6 dual-stack, and
 v4-mapped listeners included. Neither system's table shows whether an IPv6 wildcard listener is
