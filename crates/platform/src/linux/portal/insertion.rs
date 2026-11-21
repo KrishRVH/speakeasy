@@ -203,13 +203,12 @@ impl<'a> Insertions<'a> {
     }
 
     fn advance_preparation(&mut self, prepared: anyhow::Result<Prepared>) -> anyhow::Result<()> {
-        let replacing = self
-            .in_flight
-            .as_ref()
-            .is_some_and(|in_flight| matches!(in_flight.phase, Phase::ReplacingSelection(_)));
-        let InFlight { request, .. } = self
+        let (request, replacing) = self
             .in_flight
             .take()
+            .map(|InFlight { request, phase }| {
+                (request, matches!(phase, Phase::ReplacingSelection(_)))
+            })
             .context("Missing clipboard preparation")?;
         let permit = request.permit.clone();
         let phase = match prepared {

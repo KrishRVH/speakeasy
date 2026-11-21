@@ -200,7 +200,7 @@ impl Item {
     async fn new_tool_tip(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 #[repr(i32)]
 enum MenuEntry {
     Status = 1,
