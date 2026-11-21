@@ -60,7 +60,7 @@ pub(super) fn definitions() -> Value {
          "inputSchema": {"type": "object", "properties": {"cursor": {"type": "string", "maxLength": PATH_LIMIT}}, "additionalProperties": false}, "annotations": annotations},
         {"name": Tool::Read.name(), "description": format!("Read one exact Show's edited summary and metadata. Optionally include bounded recorded narration and one time, mark, or phrase lookup. Multiple phrase matches remain ambiguous unless match is given. Text truncation and missing or untimed narration are disclosed. {DISCLOSURE}"),
          "inputSchema": {"type": "object", "properties": {"show": show, "narration": {"type": "boolean", "default": false}, "at": at, "mark": positive, "phrase": phrase, "match": positive}, "required": ["show"], "additionalProperties": false}, "annotations": annotations},
-        {"name": Tool::Image.name(), "description": format!("Read exactly one PNG, at most 8 MiB. Choose one sheet, keyframe, time, mark, or phrase (with match if ambiguous). Sheet/keyframe numbers start at 1. Time/mark/phrase reads the retained source image at or before the selection, or the first sample if capture began later, with actual sample time. Source images have no ink. Missing retained source is an error; no fallback or file writes. {DISCLOSURE}"),
+        {"name": Tool::Image.name(), "description": format!("Read exactly one PNG, at most 8 MiB. Choose one sheet, keyframe, time, mark, or phrase (with match if ambiguous). Sheet/keyframe numbers start at 1. Time/mark/phrase reads the retained source image at or before the selection, or the first sample if capture began later; sampledMs reports its actual time and requestedMs the selection. Source images have no ink. Missing retained source is an error; no fallback or file writes. {DISCLOSURE}"),
          "inputSchema": {"type": "object", "properties": {"show": show, "sheet": positive, "keyframe": positive, "at": at, "mark": positive, "phrase": phrase, "match": positive}, "required": ["show"], "oneOf": [{"required": ["sheet"]}, {"required": ["keyframe"]}, {"required": ["at"]}, {"required": ["mark"]}, {"required": ["phrase"]}], "additionalProperties": false}, "annotations": annotations}
     ])
 }
@@ -291,7 +291,7 @@ fn source_image(
         .image
         .encode_png()
         .map_err(|_private| "Cannot encode the retained source image")?;
-    let metadata = json!({"show": folder.path, "location": found, "sampleAtMs": frame.at.as_millis(), "requestedAtMs": span.start().as_millis(), "sampleAfterRequest": frame.at > span.start(), "samplingStride": index.stride(), "longestGapMs": source::longest_gap(&index), "annotations": false});
+    let metadata = json!({"show": folder.path, "location": found, "sampledMs": frame.at.as_millis(), "requestedMs": span.start().as_millis(), "samplingStride": index.stride(), "longestGapMs": source::longest_gap(&index), "annotations": false});
     Ok((png, metadata))
 }
 
