@@ -53,6 +53,9 @@ pub(super) fn steps(
         .map(Event::Report),
     );
     events.extend(CONFIGS.map(Event::Configure));
+    if machine.is_idle() && machine.practice().is_none() {
+        events.extend(CONFIGS.map(Event::Revert));
+    }
     controls(&mut events, machine);
     if let Some(session) = &machine.session {
         captures(&mut events, session, mode);
