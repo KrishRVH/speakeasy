@@ -117,11 +117,6 @@ fn sparse_settings_need_no_presets_and_invalid_libraries_are_rejected_even_witho
             serde_json::json!({"presets": [invalid]})
         },
         {
-            let mut invalid = preset.clone();
-            invalid["model"] = "".into();
-            serde_json::json!({"presets": [invalid]})
-        },
-        {
             let mut invalid = preset;
             invalid["name"] = "PRIVATE_NAME\n".into();
             serde_json::json!({"presets": [invalid]})

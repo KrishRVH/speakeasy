@@ -83,9 +83,9 @@ module unless a test file is named.
   settings: the draft validates off the UI thread and compares in canonical form, and the owner
   restores only while idle, in order with queued preset commands, so a restore never abandons a
   recording. Settings disables Use during a session. Without a running owner, Use clears the
-  transient selection and restarts a pending Resume check. A transient selection takes precedence
-  in the Settings indicator, which follows Services as well as snapshots. Capturing or loading a
-  preset requires both speech paths.
+  transient selection and restarts a pending Resume check. A transient selection takes precedence in
+  the Settings indicator, which follows Services as well as snapshots. Capturing a preset requires
+  both speech paths.
 - **Audio capture**: [audio.rs](../crates/app/src/audio.rs) with
   [control.rs](../crates/app/src/audio/control.rs), [stream.rs](../crates/app/src/audio/stream.rs),
   [pcm.rs](../crates/app/src/audio/pcm.rs), [speech.rs](../crates/app/src/audio/speech.rs), and
@@ -237,22 +237,21 @@ module unless a test file is named.
   runs one engine job at a time: an open file choice, a model setup, and a pausing setup each refuse
   the others, and a file chosen for an engine the user has since left is dropped.
   [config/presets.rs](../crates/app/src/config/presets.rs) stores bounded named dictation choices,
-  validates them without opening inactive model paths, rejects one without both speech paths, loads
-  them into the settings, and matches them against the current settings. Its snapshot excludes
-  microphone, delivery, shortcuts, sound, and presentation options.
-  [settings/presets.rs](../crates/app/src/shell/settings/presets.rs) uses, updates, and stores
-  presets by position, and ignores those changes during model setup or file selection. A preset's
-  menu keeps Update in place, unavailable during that work, so its keyboard cursor stays on the
-  entry it chose. The save queue applies used choices; library-only changes leave sessions running.
-  [text_field.rs](../crates/app/src/shell/settings/text_field.rs) owns native selection and IME
-  composition. Tab and GPUI focus loss commit the marked text. While a composition is marked, a
-  click or an accessible selection leaves the caret to the input method: macOS offers the click to
-  the input context first, X11 and Wayland end the composition before delivering a press, and
-  Windows keeps composing. X11 window focus loss resets XIM and deletes the marked text, so
-  switching windows on X11 discards an uncommitted composition. Only the bare primary modifier
-  edits, so Windows AltGr stays available for character input. The pure edit state tests Unicode
-  boundaries, and [native_tests.rs](../crates/app/src/shell/settings/native_tests.rs) checks
-  owned-window composition and save draining. The
+  validates them without opening inactive model paths, loads them into the settings, and matches
+  them against the current settings. Its snapshot excludes microphone, delivery, shortcuts, sound,
+  and presentation options. [settings/presets.rs](../crates/app/src/shell/settings/presets.rs) uses,
+  updates, and stores presets by position, and ignores those changes during model setup or file
+  selection. A preset's menu keeps Update in place, unavailable during that work, so its keyboard
+  cursor stays on the entry it chose. The save queue applies used choices; library-only changes
+  leave sessions running. [text_field.rs](../crates/app/src/shell/settings/text_field.rs) owns
+  native selection and IME composition. Tab and GPUI focus loss commit the marked text. While a
+  composition is marked, a click or an accessible selection leaves the caret to the input method:
+  macOS offers the click to the input context first, X11 and Wayland end the composition before
+  delivering a press, and Windows keeps composing. X11 window focus loss resets XIM and deletes the
+  marked text, so switching windows on X11 discards an uncommitted composition. Only the bare
+  primary modifier edits, so Windows AltGr stays available for character input. The pure edit state
+  tests Unicode boundaries, and [native_tests.rs](../crates/app/src/shell/settings/native_tests.rs)
+  checks owned-window composition and save draining. The
   [native interaction test](../crates/app/src/shell/settings/native_interaction.rs) checks dropdown
   keyboard navigation, focus restoration, Parakeet's English cleanup switch, presets, and private
   practice cleanup through the borrowed-window close callback.
@@ -402,17 +401,16 @@ module unless a test file is named.
   cancel/toggle bindings remain responsive while a receipt waits; shutdown drains every task.
   [control.rs](../crates/app/src/control.rs) rejects malformed commands without echoing input. Unix
   instance, setup, and update leases use owner-only regular files and tighten the permissions of
-  previously created lock files.
-  [owner/commands.rs](../crates/app/src/runtime/owner/commands.rs) admits actions only for live
-  callers and acknowledges actual owner decisions. Stop/cancel tokens combine the runtime
-  incarnation with the session ID and exclude Shows and practice. Style is acknowledged by its
-  Services owner without inventing a session-status observation; ordinary status is observed by the
-  session owner. A lost receipt is unknown, never proof of refusal. Capture and print are refused
-  before the machine unless `print_to_scripts` is on; changing it is a session change, so turning it
-  off ends a running capture. A capture (`start --print`) marks its session's handoff; a print
-  stores its call in that session, which answers it with the text in place of insertion or refuses
-  it when the session ends without text, so one session answers one print at most. Show promotion
-  leaves these private dictations in their original session.
+  previously created lock files. [owner/commands.rs](../crates/app/src/runtime/owner/commands.rs)
+  admits actions only for live callers and acknowledges actual owner decisions. Stop/cancel tokens
+  combine the runtime incarnation with the session ID and exclude Shows and practice. Style is
+  acknowledged by its Services owner without inventing a session-status observation; ordinary status
+  is observed by the session owner. A lost receipt is unknown, never proof of refusal. Capture and
+  print are refused before the machine unless `print_to_scripts` is on; changing it is a session
+  change, so turning it off ends a running capture. A capture (`start --print`) marks its session's
+  handoff; a print stores its call in that session, which answers it with the text in place of
+  insertion or refuses it when the session ends without text, so one session answers one print at
+  most. Show promotion leaves these private dictations in their original session.
   [tests/printing.rs](../crates/app/src/runtime/tests/printing.rs) covers that handoff.
   [tests/control.rs](../crates/app/src/runtime/tests/control.rs) covers stale authority, busy
   admission, per-session style, and preset adoption.
