@@ -239,9 +239,9 @@ fn cli_parsing_keeps_config_separate_and_rejects_ambiguous_calls() -> anyhow::Re
 
 #[test]
 fn printed_text_fits_its_reply_or_is_refused_without_the_text() {
-    let words = "fixture ".repeat(2_000);
+    let words = Zeroizing::new("fixture ".repeat(2_000));
     let reply = Reply::printed(words.clone());
-    assert_eq!(reply.text.as_deref(), Some(words.as_str()));
+    assert_eq!(reply.text.as_ref(), Some(&words));
     let encoded = reply.encode().unwrap();
     assert!(encoded.len() > MAX_BYTES);
     assert_eq!(
@@ -249,8 +249,15 @@ fn printed_text_fits_its_reply_or_is_refused_without_the_text() {
         Some(words)
     );
 
-    let refused = Reply::printed("\u{1}".repeat(MAX_REPLY_BYTES));
+    let refused = Reply::printed(Zeroizing::new("\u{1}".repeat(MAX_REPLY_BYTES)));
     assert_eq!(refused.result, Disposition::Refused);
     assert!(refused.text.is_none());
     assert!(!format!("{refused:?}").contains('\u{1}'));
+
+    let framing = Reply::printed(Zeroizing::default()).encode().unwrap().len();
+    let filling = "a".repeat(MAX_REPLY_BYTES.checked_sub(framing).unwrap());
+    let full = Reply::printed(Zeroizing::new(filling.clone()));
+    assert_eq!(full.encode().unwrap().len(), MAX_REPLY_BYTES);
+    let over = Reply::printed(Zeroizing::new(filling + "a"));
+    assert_eq!(over.result, Disposition::Refused);
 }

@@ -46,7 +46,10 @@ async fn a_captured_dictation_answers_its_caller_and_pastes_nothing() -> anyhow:
     h.transcribe_next_as("Fixture words.").await?;
     let reply = receive(&printed).await?;
     assert_eq!(reply.result, Disposition::Ok);
-    assert_eq!(reply.text.as_deref(), Some("Fixture words."));
+    assert_eq!(
+        reply.text.as_deref().map(String::as_str),
+        Some("Fixture words.")
+    );
     h.phase(Phase::Done).await?;
     assert!(h.pasted.try_recv().is_err());
     assert!(h.entered.try_recv().is_err());
@@ -134,7 +137,7 @@ async fn a_second_print_is_refused_while_the_first_still_gets_the_words() -> any
     assert!(second.text.is_none());
     answer(job, "Fixture words.")?;
     assert_eq!(
-        receive(&first).await?.text.as_deref(),
+        receive(&first).await?.text.as_deref().map(String::as_str),
         Some("Fixture words.")
     );
     h.close().await

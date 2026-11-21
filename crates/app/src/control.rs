@@ -8,7 +8,8 @@ use std::{
 
 use anyhow::{Context as _, anyhow, bail, ensure};
 use async_channel::{Receiver, Sender};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use zeroize::Zeroizing;
 
 use crate::{config::presets::validate_name, paths, transcript::style::Style};
 
@@ -96,8 +97,13 @@ pub(crate) struct Reply {
     pub session: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<Status>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub text: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_text",
+        deserialize_with = "deserialize_text"
+    )]
+    pub text: Option<Zeroizing<String>>,
 }
 
 impl fmt::Debug for Reply {
@@ -131,7 +137,7 @@ impl Reply {
         }
     }
 
-    pub(crate) fn printed(text: String) -> Self {
+    pub(crate) fn printed(text: Zeroizing<String>) -> Self {
         let reply = Self {
             text: Some(text),
             ..Self::accepted()
@@ -179,12 +185,18 @@ impl Reply {
         Ok(())
     }
 
-    pub(crate) fn encode(&self) -> Result<Vec<u8>, &'static str> {
-        let bytes =
-            serde_json::to_vec(self).map_err(|_error| "Cannot encode the control reply.")?;
-        if bytes.len() > MAX_REPLY_BYTES {
-            return Err("The control reply exceeds its size limit.");
-        }
+    pub(crate) fn encode(&self) -> Result<Zeroizing<Vec<u8>>, &'static str> {
+        let mut bytes = Zeroizing::new(vec![0; MAX_REPLY_BYTES]);
+        let mut unwritten = bytes.as_mut_slice();
+        serde_json::to_writer(&mut unwritten, self).map_err(|error| {
+            if error.is_io() {
+                "The control reply exceeds its size limit."
+            } else {
+                "Cannot encode the control reply."
+            }
+        })?;
+        let written = MAX_REPLY_BYTES.saturating_sub(unwritten.len());
+        bytes.truncate(written);
         Ok(bytes)
     }
 
@@ -193,6 +205,23 @@ impl Reply {
             .ok()
             .filter(|reply| reply.v == VERSION)
     }
+}
+
+#[expect(
+    clippy::ref_option,
+    reason = "serde's serialize_with passes the Option field by reference"
+)]
+fn serialize_text<S: Serializer>(
+    text: &Option<Zeroizing<String>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    text.as_deref().serialize(serializer)
+}
+
+fn deserialize_text<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Zeroizing<String>>, D::Error> {
+    Ok(Option::<String>::deserialize(deserializer)?.map(Zeroizing::new))
 }
 
 pub(crate) struct Call {

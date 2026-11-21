@@ -599,7 +599,7 @@ impl<P: Ports> Env<Native> for World<P> {
                 } else if !call.is_live() {
                     Inserted::Unavailable(ORPHANED)
                 } else {
-                    let reply = Reply::printed(mem::take(&mut *text));
+                    let reply = Reply::printed(text);
                     let printed = reply.text.is_some();
                     call.respond(reply);
                     if printed {

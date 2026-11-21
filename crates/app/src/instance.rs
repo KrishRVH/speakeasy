@@ -20,6 +20,7 @@ use tokio::{
     runtime::Runtime,
     task::{AbortHandle, Id, JoinError, JoinSet},
 };
+use zeroize::Zeroizing;
 
 use crate::control::{self, Call, Command, Reply};
 
@@ -557,14 +558,14 @@ impl Read for ReplyDeadline<'_> {
     }
 }
 
-fn read_frame(reader: &mut impl Read) -> io::Result<Vec<u8>> {
+fn read_frame(reader: &mut impl Read) -> io::Result<Zeroizing<Vec<u8>>> {
     let mut length = [0; 2];
     reader.read_exact(&mut length)?;
     let length = usize::from(u16::from_be_bytes(length));
     if length > control::MAX_REPLY_BYTES {
         return Err(io::ErrorKind::InvalidData.into());
     }
-    let mut bytes = vec![0; length];
+    let mut bytes = Zeroizing::new(vec![0; length]);
     reader.read_exact(&mut bytes)?;
     Ok(bytes)
 }
@@ -618,8 +619,10 @@ async fn write_reply(stream: &mut AsyncStream, reply: Reply) -> io::Result<()> {
         .encode()
         .or_else(|_| Reply::unknown(UNCONFIRMED).encode())
         .map_err(|_error| io::ErrorKind::InvalidData)?;
-    let mut frame = Vec::new();
-    write_frame(&mut frame, &bytes)?;
+    let mut frame = Zeroizing::new(Vec::with_capacity(
+        bytes.len().saturating_add(size_of::<u16>()),
+    ));
+    write_frame(&mut *frame, &bytes)?;
     tokio::time::timeout(IO_TIMEOUT, stream.write_all(&frame))
         .await
         .map_err(|_error| io::ErrorKind::TimedOut)?
