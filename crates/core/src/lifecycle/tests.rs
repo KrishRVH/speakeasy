@@ -132,7 +132,7 @@ fn settings_saved_after_a_fresh_start_enable_dictation_as_on_a_new_install() {
     let mut lifecycle = Lifecycle::<(), ()>::default();
     assert!(!lifecycle.pause());
     assert!(!lifecycle.save_may_enable(lifecycle.epoch(), |()| false));
-    lifecycle.start_fresh();
+    lifecycle.forget_pause();
     assert!(
         lifecycle.save_may_enable(lifecycle.epoch(), |()| false),
         "Setup after a reset left dictation paused"

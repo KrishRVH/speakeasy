@@ -760,7 +760,7 @@ impl Services {
         if !self.is_quitting() {
             match result {
                 Ok(()) => {
-                    self.lifecycle.start_fresh();
+                    self.lifecycle.forget_pause();
                     announce(&self.output, UNCONFIGURED);
                 },
                 Err(_) if self.config.needs_engine() => {

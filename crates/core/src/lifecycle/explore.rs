@@ -12,7 +12,7 @@ enum Operation {
     Start { launches: bool },
     Queue,
     Pause,
-    StartFresh,
+    ForgetPause,
     Quit,
     Retired,
 }
@@ -26,7 +26,7 @@ const OPERATIONS: [Operation; 11] = [
     Operation::Start { launches: false },
     Operation::Queue,
     Operation::Pause,
-    Operation::StartFresh,
+    Operation::ForgetPause,
     Operation::Quit,
     Operation::Retired,
 ];
@@ -49,8 +49,8 @@ impl Operation {
                 lifecycle.queue(token)
             },
             Self::Pause => lifecycle.pause(),
-            Self::StartFresh => {
-                lifecycle.start_fresh();
+            Self::ForgetPause => {
+                lifecycle.forget_pause();
                 false
             },
             Self::Quit => lifecycle.quit(),

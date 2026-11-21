@@ -178,7 +178,7 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
         started
     }
 
-    pub const fn start_fresh(&mut self) {
+    pub const fn forget_pause(&mut self) {
         self.held = false;
     }
 
