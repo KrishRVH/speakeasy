@@ -71,7 +71,7 @@ impl InputSender {
         self.sender.is_closed()
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn closed(&self) -> impl Future<Output = ()> {
         self.sender.closed()
     }

@@ -231,13 +231,17 @@ The event tap, its borrowed policy/context and run-loop source live on the same 
 run-loop entry observer's stack context outlives the loop and is removed before returning. Entry
 publication is necessary because stopping a not-yet-entered loop is not a reliable future stop. The
 tap port is published once before events can run, allowing disabled-tap recovery. Lifecycle
-callbacks can arrive on the posting thread; they touch only the synchronized policy and input lane.
-Policy decisions and delivery occur under one lock to preserve event order. Callback panics close
-the lane and stop the loop. The event tap passes the current key through and disables itself when
-the input lane closes. Notification tokens remain retained until removal. A swallowed hold key stays
-suppressed until its own release or a fresh press of it, which shows that the release went unseen,
-so a key held through a tap outage, lifecycle interrupt or missed chord release never repeats into
-the app. The Mac tap tells a fresh press from a repeat by the event's autorepeat field.
+callbacks can arrive on the posting thread; they touch only the synchronized policy, the input lane
+and the monitor's stop request. Policy decisions and delivery occur under one lock to preserve event
+order. Callback panics close the lane and stop the loop. The monitor thread registers a waker on the
+input lane's closure, so a lane closed from any thread, including by its receiver, stops the run
+loop without waiting for another event. The waker only stops the loop and takes no lock, so a lane
+closed under the policy or monitor lock cannot deadlock. The event tap passes the current key
+through and disables itself when the input lane closes. Notification tokens remain retained until
+removal. A swallowed hold key stays suppressed until its own release or a fresh press of it, which
+shows that the release went unseen, so a key held through a tap outage, lifecycle interrupt or
+missed chord release never repeats into the app. The Mac tap tells a fresh press from a repeat by
+the event's autorepeat field.
 
 Mac F13 uses key code 105 and the event's autorepeat field. Its initial press and release establish
 the pre-event hold explicitly; unrelated events reconcile against HID-system physical key state. The

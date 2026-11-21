@@ -10,8 +10,10 @@ use std::{
     io,
     os::{fd::AsFd as _, unix::fs::MetadataExt as _},
     panic::{self, AssertUnwindSafe},
+    pin::pin,
     ptr::NonNull,
     sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc},
+    task::{Context, Wake, Waker},
     time::{Duration, Instant},
 };
 
@@ -280,11 +282,31 @@ fn run_event_loop(
     run_loop.add_source(&source, modes);
     run_loop.add_observer(&observer, modes);
     tap.enable();
-    CFRunLoop::run_current();
+    run_while_open(input);
     port.set_enabled(false);
     run_loop.remove_observer(&observer, modes);
     run_loop.remove_source(&source, modes);
     Ok(())
+}
+
+struct StopOnClose(CFRunLoop);
+
+impl Wake for StopOnClose {
+    fn wake(self: Arc<Self>) {
+        self.0.stop();
+    }
+}
+
+fn run_while_open(input: &InputSender) {
+    let waker = Waker::from(Arc::new(StopOnClose(CFRunLoop::get_current())));
+    let mut closed = pin!(input.closed());
+    if closed
+        .as_mut()
+        .poll(&mut Context::from_waker(&waker))
+        .is_pending()
+    {
+        CFRunLoop::run_current();
+    }
 }
 
 #[derive(Default)]
@@ -723,5 +745,56 @@ pub(super) fn show_startup_error(message: &str) {
         alert.setMessageText(ns_string!("Speakeasy could not start"));
         alert.setInformativeText(&NSString::from_str(message));
         alert.runModal();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core_foundation::{
+        date::CFDate,
+        runloop::{CFRunLoopTimer, CFRunLoopTimerContext, CFRunLoopTimerRef},
+    };
+
+    use super::*;
+
+    extern "C" fn running(_: CFRunLoopTimerRef, info: *mut c_void) {
+        let running = unsafe { &*info.cast::<mpsc::Sender<()>>() };
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "A test that stopped listening has already failed"
+        )]
+        let _ = running.send(());
+    }
+
+    #[test]
+    fn closing_an_idle_input_lane_from_another_thread_stops_the_monitor_loop() {
+        let (sender, events) = async_channel::bounded(1);
+        let input = InputSender::new(sender);
+        let (entered, inside) = mpsc::channel::<()>();
+        let (returned, stopped) = mpsc::channel();
+        let monitor = std::thread::spawn(move || {
+            let mut context = CFRunLoopTimerContext {
+                version: 0,
+                info: (&raw const entered).cast_mut().cast(),
+                retain: None,
+                release: None,
+                copyDescription: None,
+            };
+            let soon = CFDate::now().abs_time() + 0.05;
+            let timer = CFRunLoopTimer::new(soon, 3600.0, 0, 0, running, &raw mut context);
+            let run_loop = CFRunLoop::get_current();
+            let modes = unsafe { kCFRunLoopCommonModes };
+            run_loop.add_timer(&timer, modes);
+            run_while_open(&input);
+            run_loop.remove_timer(&timer, modes);
+            returned.send(()).unwrap();
+        });
+        inside.recv_timeout(crate::PATIENCE).unwrap();
+        drop(events);
+        assert!(
+            stopped.recv_timeout(crate::PATIENCE).is_ok(),
+            "The monitor kept running after its input lane closed"
+        );
+        monitor.join().unwrap();
     }
 }
