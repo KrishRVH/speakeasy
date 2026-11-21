@@ -679,9 +679,10 @@ module unless a test file is named.
   the new bundle lands. If checkpoint storage never
   opens, in-memory footage remains publishable. A lost checkpoint completion stops publication; an
   unknown checkpoint state cannot become an apparently complete bundle. Untranscribed audio or saved
-  narration keeps a published checkpoint visible as Narration pending; one with neither retires. A
-  silent microphone's audio holds nothing to retry or export, so its checkpoint records that
-  disposition and retires without keeping voice. Unfinished cancellation
+  narration keeps a published checkpoint visible as Narration pending; one with neither retires, and
+  a retry whose kept audio holds no speech retires it and says so. A silent microphone's audio holds
+  nothing to retry or export, so its checkpoint records that disposition and retires without keeping
+  voice; recovery treats complete, all-zero audio without saved narration the same way. Unfinished cancellation
   records discard before deletion; private audio, narration, frame, and movie files are removed
   before the lock, so blocked deletion remains available to cleanup. Audio retains the original
   seven-day expiry regardless of a saved bundle's Keep marker. Discovery isolates damaged

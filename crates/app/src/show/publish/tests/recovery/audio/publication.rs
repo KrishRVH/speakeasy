@@ -309,45 +309,34 @@ async fn failed_silent_show_recovery_preserves_the_silence_notice_without_voice(
 }
 
 #[tokio::test]
-async fn a_pending_show_without_sealable_speech_cannot_publish_an_unnarrated_copy()
+async fn a_pending_show_without_speech_retires_its_retry_and_keeps_the_saved_show()
 -> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let checkpoint = with_pcm(
-        root.path(),
-        &[1, 0, 2, 0],
-        crate::show::checkpoint::AudioEnding::Interrupted,
-    )
-    .await?;
-    let show = save_live(
-        root.path(),
-        checkpoint,
-        Narration::default(),
-        Some(NarrationLoss::AudioStopped),
-    )?;
-    let mut listing = store::checkpoint::list(root.path(), SystemTime::now());
-    let reopened = reopen_with(listing.shows.remove(0))?;
-    assert!(reopened.speech.is_none());
-    let (_input, active) = permit();
-    assert!(
-        publish_with(
-            Handoff::default(),
-            reopened.footage,
-            Origin::Recovered {
-                checkpoint: reopened.checkpoint,
-                pending: reopened.pending
-            },
-            &active,
-            || panic!("An unnarrated copy was staged"),
-            uncopied,
-        )
-        .is_err()
-    );
-    assert!(show.directory().exists());
-    assert_eq!(
-        store::checkpoint::list(root.path(), SystemTime::now())
-            .shows
-            .len(),
-        1
-    );
+    for (pcm, ending) in [
+        (
+            vec![1, 0, 2, 0],
+            crate::show::checkpoint::AudioEnding::Interrupted,
+        ),
+        (
+            vec![0; 16_000],
+            crate::show::checkpoint::AudioEnding::Complete,
+        ),
+    ] {
+        let root = tempfile::tempdir()?;
+        let checkpoint = with_pcm(root.path(), &pcm, ending).await?;
+        let show = save_live(
+            root.path(),
+            checkpoint,
+            Narration::default(),
+            Some(NarrationLoss::AudioStopped),
+        )?;
+        let mut listing = store::checkpoint::list(root.path(), SystemTime::now());
+        let Err(error) = reopen_with(listing.shows.remove(0)) else {
+            bail!("A pending Show without speech was offered for another retry");
+        };
+        assert!(error.to_string().contains("holds no speech"), "{error:#}");
+        assert!(show.directory().exists());
+        let listing = store::checkpoint::list(root.path(), SystemTime::now());
+        assert!(listing.shows.is_empty() && listing.problems.is_empty());
+    }
     Ok(())
 }

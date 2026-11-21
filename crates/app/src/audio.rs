@@ -31,7 +31,7 @@ use speakeasy_platform::OwnedThread;
 #[cfg(test)]
 pub(crate) use self::pcm::wav_duration;
 pub(crate) use self::{
-    checkpoint::seal_kept,
+    checkpoint::{seal_kept, silent_kept},
     microphones::{InputDevice, MicrophoneScan},
     pcm::{silent_wav, wav_sample_rate, wav_tail},
     stream::MAX_SAMPLE_RATE,

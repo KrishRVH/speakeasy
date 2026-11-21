@@ -13,6 +13,9 @@ use super::{
 };
 use crate::runtime::ports::{Footage, PUBLISH_STOPPED, Preservation, Published, Sealed};
 
+const NO_SPEECH: &str = "Narration could not be recovered because the kept audio holds no speech. \
+                         The saved Show is unchanged; its narration retry is removed from Shows.";
+
 pub(crate) struct Publication {
     pub footage: Footage,
     pub origin: Origin<Checkpointing>,
@@ -226,13 +229,12 @@ fn reopen_with(interrupted: Interrupted) -> anyhow::Result<Reopened> {
                         incomplete,
                     });
                 } else if pending {
-                    recording.narration_lost = Some(if incomplete {
-                        NarrationLoss::AudioStopped
-                    } else {
-                        NarrationLoss::NotTranscribed
-                    });
+                    checkpoint.discard()?;
+                    anyhow::bail!(NO_SPEECH);
                 } else if incomplete {
                     recording.narration_lost = Some(NarrationLoss::Incomplete);
+                } else if crate::audio::silent_kept(&audio) {
+                    recording.narration_lost = Some(NarrationLoss::AudioSilent);
                 }
             },
             Ok(None) | Err(_) => recording.narration_lost = Some(NarrationLoss::NotTranscribed),
