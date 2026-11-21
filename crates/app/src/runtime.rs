@@ -372,11 +372,14 @@ impl<Host> Runtime<Host> {
 
     pub(crate) fn configure(&mut self, config: ValidConfig) {
         let config = config.into_inner();
+        let read = reads_differently(&self.baseline, &config);
         let changed = self.baseline.change_to(&config) >= Change::Session;
         self.baseline.clone_from(&config);
-        if changed {
+        if read {
             self.input.cancel();
             self.direct(Directive::Apply(Box::new(config)));
+        } else if changed {
+            self.direct(Directive::Revert(Box::new(config)));
         }
     }
 
@@ -441,6 +444,16 @@ impl<Host> Drop for Runtime<Host> {
     fn drop(&mut self) {
         self.request_stop();
     }
+}
+
+fn reads_differently(baseline: &Config, config: &Config) -> bool {
+    let rebound = Config {
+        linux: config.linux.clone(),
+        mac_shortcut: config.mac_shortcut,
+        windows_shortcut: config.windows_shortcut,
+        ..baseline.clone()
+    };
+    rebound.change_to(config) >= Change::Session
 }
 
 struct Desktop {
