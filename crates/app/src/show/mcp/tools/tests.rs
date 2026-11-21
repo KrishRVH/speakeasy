@@ -344,3 +344,56 @@ fn a_fifo_in_place_of_a_show_file_is_refused_without_waiting_for_a_writer() -> a
     }
     Ok(())
 }
+
+#[cfg(unix)]
+#[test]
+fn a_fifo_swapped_in_after_validation_never_waits_for_a_writer() -> anyhow::Result<()> {
+    use std::{
+        process::Command,
+        sync::mpsc::{self, RecvTimeoutError, TryRecvError},
+        thread,
+        time::{Duration, Instant},
+    };
+    let root = tempfile::tempdir()?;
+    let summary = fixture(root.path(), "exact")?.join("summary.md");
+    let pipe = root.path().join("pipe");
+    assert!(Command::new("mkfifo").arg(&pipe).status()?.success());
+    let roots = Roots::open(&[root.path().to_owned()], None).map_err(anyhow::Error::msg)?;
+    let (stop, stopped) = mpsc::channel::<()>();
+    let next = root.path().join("next");
+    let flipper = thread::spawn(move || -> std::io::Result<()> {
+        while matches!(stopped.try_recv(), Err(TryRecvError::Empty)) {
+            fs::write(&next, "synthetic summary")?;
+            fs::rename(&next, &summary)?;
+            fs::hard_link(&pipe, &next)?;
+            fs::rename(&next, &summary)?;
+        }
+        Ok(())
+    });
+    let (sender, receiver) = mpsc::channel();
+    let reader = thread::spawn(move || {
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_secs(1)
+            && sender
+                .send(call(&roots, Tool::Read, json!({"show": "exact"})))
+                .is_ok()
+        {}
+    });
+    let (mut read, mut refused) = (0_u32, 0_u32);
+    let outcome = loop {
+        match receiver.recv_timeout(Duration::from_secs(10)) {
+            Ok(response) if response["isError"] == false => read = read.saturating_add(1),
+            Ok(_refused) => refused = refused.saturating_add(1),
+            Err(RecvTimeoutError::Disconnected) => break Ok(()),
+            Err(RecvTimeoutError::Timeout) => {
+                break Err(anyhow::anyhow!("a read waited for a FIFO writer"));
+            },
+        }
+    };
+    drop(stop);
+    flipper.join().unwrap()?;
+    outcome?;
+    reader.join().unwrap();
+    assert!(read > 0 && refused > 0, "{read} read, {refused} refused");
+    Ok(())
+}
