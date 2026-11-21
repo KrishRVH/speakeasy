@@ -145,12 +145,13 @@ impl Paster {
         request: &Insertion,
     ) -> anyhow::Result<ControlFlow<Inserted, (Window, PasteKeys)>> {
         let keys = PasteKeys::of(self.paste);
-        let previous_owner = self.clipboard.owner()?;
-        let shortcut_held = keys.is_some()
-            && wait_for_released_modifiers(&request.permit, MODIFIER_WAIT, || {
-                modifiers_held(&self.clipboard, &self.keyboard)
-            })?;
-        let owner_changed = self.clipboard.owner()? != previous_owner;
+        let keyboard = &self.keyboard;
+        let (shortcut_held, owner_changed) = self.clipboard.watching_owner(|clipboard| {
+            Ok(keys.is_some()
+                && wait_for_released_modifiers(&request.permit, MODIFIER_WAIT, || {
+                    modifiers_held(clipboard, keyboard)
+                })?)
+        })?;
 
         if !request.permit.active() {
             return Ok(ControlFlow::Break(Inserted::Cancelled));

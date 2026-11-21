@@ -3,11 +3,16 @@ use std::panic::{self, AssertUnwindSafe};
 use anyhow::Context as _;
 use async_channel::{Receiver, Sender};
 use x11rb::{
-    protocol::xproto::{Atom, ConnectionExt as _, Window},
+    connection::Connection as _,
+    protocol::{
+        Event,
+        xfixes::{ConnectionExt as _, SelectionEventMask},
+        xproto::{Atom, ConnectionExt as _, Window},
+    },
     xcb_ffi::XCBConnection,
 };
 
-use super::{has_external_target, intern};
+use super::{connect_with_root, has_external_target, intern};
 use crate::{
     InputSender, InsertPermit, OwnedThread,
     clipboard::copy_when,
@@ -205,18 +210,56 @@ pub(in crate::linux) trait ClipboardAccess {
 pub(super) struct Clipboard {
     pub(super) connection: XCBConnection,
     native: Option<arboard::Clipboard>,
+    root: Window,
     selection: Atom,
 }
 
 impl Clipboard {
     pub(super) fn open() -> anyhow::Result<Self> {
-        let (connection, _) = XCBConnection::connect(None)?;
+        let (connection, root) = connect_with_root()?;
+        connection.xfixes_query_version(5, 0)?.reply()?;
         let selection = intern(&connection, b"CLIPBOARD")?;
         Ok(Self {
             connection,
             native: None,
+            root,
             selection,
         })
+    }
+
+    pub(super) fn watching_owner<T>(
+        &self,
+        during: impl FnOnce(&Self) -> anyhow::Result<T>,
+    ) -> anyhow::Result<(T, bool)> {
+        self.watch_owner(
+            SelectionEventMask::SET_SELECTION_OWNER
+                | SelectionEventMask::SELECTION_WINDOW_DESTROY
+                | SelectionEventMask::SELECTION_CLIENT_CLOSE,
+        )?;
+        self.owner_changed()?;
+        let during = during(self);
+        let stopped = self.watch_owner(SelectionEventMask::default());
+        let changed = self.owner_changed()?;
+        stopped?;
+        Ok((during?, changed))
+    }
+
+    fn watch_owner(&self, changes: SelectionEventMask) -> anyhow::Result<()> {
+        self.connection
+            .xfixes_select_selection_input(self.root, self.selection, changes)?
+            .check()?;
+        Ok(())
+    }
+
+    fn owner_changed(&self) -> anyhow::Result<bool> {
+        let mut changed = false;
+        while let Some(event) = self.connection.poll_for_event()? {
+            changed |= matches!(
+                event,
+                Event::XfixesSelectionNotify(notify) if notify.selection == self.selection
+            );
+        }
+        Ok(changed)
     }
 
     fn native(&mut self) -> anyhow::Result<&mut arboard::Clipboard> {

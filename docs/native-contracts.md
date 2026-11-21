@@ -224,7 +224,9 @@ The insertion loop polls method replies and new insertions ahead of transfer req
 desktop thread's single-threaded runtime a signal stream refills only between polls, at most
 `SIGNAL_BACKLOG` messages at a time, so transfer requests cannot hold off an insertion. The portal
 clipboard serves bytes only after the permit commits to paste or manual copy. Selection loss
-invalidates its transfer payloads. Writes and reporting have deadlines. X11 clipboard serving and
+invalidates its transfer payloads. Writes and reporting have deadlines. An X11 copy that waits for
+released keys watches XFixes selection-owner notifications during the wait and refuses to overwrite
+any copy made meanwhile, even one from an app that keeps its owner window. X11 clipboard serving and
 insertion have separate owners; before committing paste, the X11 paste confirms that the clipboard
 still holds the dictated text from the same owner and only then samples focus, layout, and held
 modifiers, because a clipboard manager can take seconds to answer that read. A content check that

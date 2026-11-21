@@ -145,23 +145,7 @@ fn a_fresh_clipboard_owns_its_first_copy() -> anyhow::Result<()> {
     if !on_private_display("a_fresh_clipboard_owns_its_first_copy")? {
         return Ok(());
     }
-    let (connection, root) = connect_with_root()?;
-    let other = connection.generate_id()?;
-    connection
-        .create_window(
-            x11rb::COPY_DEPTH_FROM_PARENT,
-            other,
-            root,
-            0,
-            0,
-            1,
-            1,
-            0,
-            xproto::WindowClass::INPUT_ONLY,
-            x11rb::COPY_FROM_PARENT,
-            &xproto::CreateWindowAux::new(),
-        )?
-        .check()?;
+    let (connection, other) = selection_owner()?;
     let selection = intern(&connection, b"CLIPBOARD")?;
     let (events, _received) = async_channel::bounded(1);
     let input = InputSender::new(events);
@@ -205,6 +189,58 @@ fn an_owner_that_keeps_its_window_but_changes_its_text_no_longer_holds_the_copy(
         "An owner that kept its window but changed its text still held the copy"
     );
     Ok(())
+}
+
+#[test]
+#[ignore = "Takes the clipboard of a private Xvfb display it starts, never the current one"]
+fn a_copy_while_the_shortcut_is_held_counts_even_from_the_same_owner_window() -> anyhow::Result<()>
+{
+    if !on_private_display(
+        "a_copy_while_the_shortcut_is_held_counts_even_from_the_same_owner_window",
+    )? {
+        return Ok(());
+    }
+    let (connection, owner) = selection_owner()?;
+    let selection = intern(&connection, b"CLIPBOARD")?;
+    let copy = || -> anyhow::Result<()> {
+        connection
+            .set_selection_owner(owner, selection, x11rb::CURRENT_TIME)?
+            .check()?;
+        Ok(())
+    };
+    copy()?;
+    let clipboard = Clipboard::open()?;
+    let ((), quiet) = clipboard.watching_owner(|_| Ok(()))?;
+    ensure!(!quiet, "An untouched clipboard counted as changed");
+    let ((), recopied) = clipboard.watching_owner(|_| copy())?;
+    ensure!(
+        recopied,
+        "A new copy from the same owner window went unseen"
+    );
+    let ((), after) = clipboard.watching_owner(|_| Ok(()))?;
+    ensure!(!after, "An earlier copy counted against a later wait");
+    Ok(())
+}
+
+fn selection_owner() -> anyhow::Result<(XCBConnection, xproto::Window)> {
+    let (connection, root) = connect_with_root()?;
+    let window = connection.generate_id()?;
+    connection
+        .create_window(
+            x11rb::COPY_DEPTH_FROM_PARENT,
+            window,
+            root,
+            0,
+            0,
+            1,
+            1,
+            0,
+            xproto::WindowClass::INPUT_ONLY,
+            x11rb::COPY_FROM_PARENT,
+            &xproto::CreateWindowAux::new(),
+        )?
+        .check()?;
+    Ok((connection, window))
 }
 
 fn on_private_display(test: &str) -> anyhow::Result<bool> {

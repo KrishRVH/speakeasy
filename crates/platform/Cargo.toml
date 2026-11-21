@@ -22,7 +22,7 @@ futures-util.workspace = true
 libloading.workspace = true
 # The same system libwayland GPUI loads, so the startup probe meets the compositor GPUI will.
 wayland-client = { workspace = true, features = ["dlopen", "system"] }
-x11rb = { workspace = true, features = ["allow-unsafe-code", "shape", "xinput", "xkb", "xtest"] }
+x11rb = { workspace = true, features = ["allow-unsafe-code", "shape", "xfixes", "xinput", "xkb", "xtest"] }
 xkbcommon.workspace = true
 tempfile.workspace = true
 # `net` provides `tokio::io::unix::AsyncFd`, which waits on the X11, libei, and portal transfer
