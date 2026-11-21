@@ -99,6 +99,69 @@ pub(crate) fn snapshot<Kind, Data>(
     (!saved.is_empty()).then_some(saved)
 }
 
+#[cfg(any(target_os = "macos", test))]
+pub(crate) trait Pasteboard {
+    type Saved;
+    type Items;
+
+    fn snapshot(&self) -> Option<Self::Saved>;
+
+    fn prepare(&self, saved: &Self::Saved) -> anyhow::Result<Self::Items>;
+
+    fn change_count(&self) -> isize;
+
+    fn clear(&self) -> isize;
+
+    fn write(&self, items: &Self::Items) -> bool;
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn save<P: Pasteboard>(board: &P) -> Option<P::Saved> {
+    let before = board.change_count();
+    board.snapshot().filter(|_| board.change_count() == before)
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn publish<P: Pasteboard>(
+    board: &P,
+    items: &P::Items,
+    previous: Option<&P::Saved>,
+) -> anyhow::Result<isize> {
+    let cleared = board.clear();
+    if board.write(items) {
+        return Ok(board.change_count());
+    }
+    if let Some(previous) = previous.and_then(|saved| board.prepare(saved).ok())
+        && board.change_count() == cleared
+    {
+        board.clear();
+        board.write(&previous);
+    }
+    Err(anyhow::anyhow!(
+        "Cannot place the complete copy on the clipboard"
+    ))
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn restore<P: Pasteboard>(
+    board: &P,
+    saved: Option<&P::Saved>,
+    mark: isize,
+) -> anyhow::Result<()> {
+    let items = saved.map(|saved| board.prepare(saved)).transpose()?;
+    if board.change_count() != mark {
+        return Ok(());
+    }
+    board.clear();
+    if let Some(items) = items {
+        ensure!(
+            board.write(&items),
+            "Cannot place the complete copy on the clipboard"
+        );
+    }
+    Ok(())
+}
+
 pub(crate) fn copy_when<L>(
     authorized: impl FnOnce() -> bool,
     acquire: impl FnOnce() -> anyhow::Result<L>,

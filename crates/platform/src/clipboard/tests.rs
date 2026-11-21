@@ -1,4 +1,4 @@
-use std::io::Cursor;
+use std::{cell::Cell, io::Cursor};
 
 use super::*;
 use crate::InputSender;
@@ -108,4 +108,124 @@ fn clipboard_refusal_is_not_reported_as_a_completed_copy() {
         |()| anyhow::bail!("Clipboard refused the image"),
     );
     assert!(result.unwrap_err().to_string().contains("refused"));
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Held {
+    Previous,
+    Dictation,
+    Empty,
+    Newer,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    Snapshot,
+    Prepare,
+}
+
+#[expect(
+    clippy::disallowed_types,
+    reason = "The fake stands in for AppKit's general pasteboard, which other apps change behind the lease, so its methods take &self like NSPasteboard's"
+)]
+struct Board {
+    count: Cell<isize>,
+    held: Cell<Held>,
+    failing_writes: Cell<u8>,
+    copies_during: Option<Phase>,
+}
+
+impl Board {
+    #[expect(
+        clippy::disallowed_types,
+        reason = "Builds the cells through which the fake pasteboard changes behind a shared borrow, as another app changes AppKit's"
+    )]
+    fn new(failing_writes: u8, copies_during: Option<Phase>) -> Self {
+        Self {
+            count: Cell::new(1),
+            held: Cell::new(Held::Previous),
+            failing_writes: Cell::new(failing_writes),
+            copies_during,
+        }
+    }
+
+    fn change(&self, held: Held) -> isize {
+        self.count.set(self.count.get().wrapping_add(1));
+        self.held.set(held);
+        self.count.get()
+    }
+
+    fn copies_during(&self, phase: Phase) {
+        if self.copies_during == Some(phase) {
+            self.change(Held::Newer);
+        }
+    }
+}
+
+impl Pasteboard for Board {
+    type Items = Held;
+    type Saved = Held;
+
+    fn snapshot(&self) -> Option<Held> {
+        let read = self.held.get();
+        self.copies_during(Phase::Snapshot);
+        Some(read)
+    }
+
+    fn prepare(&self, saved: &Held) -> anyhow::Result<Held> {
+        self.copies_during(Phase::Prepare);
+        Ok(*saved)
+    }
+
+    fn change_count(&self) -> isize {
+        self.count.get()
+    }
+
+    fn clear(&self) -> isize {
+        self.change(Held::Empty)
+    }
+
+    fn write(&self, items: &Held) -> bool {
+        let failing = self.failing_writes.get();
+        if failing > 0 {
+            self.failing_writes.set(failing.saturating_sub(1));
+            return false;
+        }
+        self.held.set(*items);
+        true
+    }
+}
+
+#[test]
+fn a_failed_pasteboard_write_puts_back_only_what_no_one_has_replaced() {
+    let board = Board::new(1, None);
+    assert!(publish(&board, &Held::Dictation, Some(&Held::Previous)).is_err());
+    assert_eq!(board.held.get(), Held::Previous);
+
+    let board = Board::new(1, Some(Phase::Prepare));
+    assert!(publish(&board, &Held::Dictation, Some(&Held::Previous)).is_err());
+    assert_eq!(
+        board.held.get(),
+        Held::Newer,
+        "A copy made while the previous one was rebuilt was cleared"
+    );
+
+    let board = Board::new(0, Some(Phase::Prepare));
+    let mark = publish(&board, &Held::Dictation, None).unwrap();
+    restore(&board, Some(&Held::Previous), mark).unwrap();
+    assert_eq!(
+        board.held.get(),
+        Held::Newer,
+        "A restore replaced a copy made while it was rebuilt"
+    );
+}
+
+#[test]
+fn a_pasteboard_snapshot_that_changed_while_it_was_read_is_dropped() {
+    assert_eq!(save(&Board::new(0, None)), Some(Held::Previous));
+    assert_eq!(
+        save(&Board::new(0, Some(Phase::Snapshot))),
+        None,
+        "A snapshot outlived by a newer copy would be restored over it"
+    );
 }

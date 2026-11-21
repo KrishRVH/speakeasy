@@ -195,13 +195,15 @@ module unless a test file is named.
   application's. On Windows and macOS, `copy_text` writes a Show's summary through the paste's own
   clipboard write, so both carry the same private markers.
   [clipboard.rs](../crates/platform/src/clipboard.rs) prepares bounded PNG/bitmap representations
-  from the displayed BGRA pixels and checks copy authorization after native acquisition.
-  [macos/clipboard.rs](../crates/platform/src/macos/clipboard.rs) serializes native writes with a
-  process-local lease because AppKit has no exclusive clipboard lease; one pasteboard item carries
-  every format. Windows holds its native lease through every format; a write that fails partway puts
-  back what a dictation replaced, or removes its partial copy, before releasing the lease.
-  [clipboard/tests.rs](../crates/platform/src/clipboard/tests.rs) checks image channels,
-  orientation, transparency, bounds, failure reporting, and a newer recording during acquisition.
+  from the displayed BGRA pixels, checks copy authorization after native acquisition, and keeps the
+  macOS change-count checks of a save, a failed write's rollback and a restore behind a `Pasteboard`
+  seam. [macos/clipboard.rs](../crates/platform/src/macos/clipboard.rs) serializes native writes
+  with a process-local lease because AppKit has no exclusive clipboard lease; one pasteboard item
+  carries every format. Windows holds its native lease through every format; a write that fails
+  partway puts back what a dictation replaced, or removes its partial copy, before releasing the
+  lease. [clipboard/tests.rs](../crates/platform/src/clipboard/tests.rs) checks image channels,
+  orientation, transparency, bounds, failure reporting, a newer recording during acquisition, and a
+  newer copy made while a pasteboard snapshot is read or rebuilt.
   [insertion/tests.rs](../crates/platform/src/insertion/tests.rs),
   [insertion/commit/tests.rs](../crates/platform/src/insertion/commit/tests.rs), and the input, X11,
   portal, and EI modules test them. An opt-in test in
