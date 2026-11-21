@@ -107,7 +107,7 @@ impl Entry {
     }
 
     pub(crate) fn file(&self, name: &str) -> PathBuf {
-        bundle_path(&self.directory, name)
+        self.directory.join(name.split('/').collect::<PathBuf>())
     }
 }
 
@@ -218,10 +218,6 @@ pub(super) fn open_file(directory: &ReadDirectory, name: &str, limit: u64) -> io
         return Err(io::Error::other(Empty));
     }
     Ok(file)
-}
-
-fn bundle_path(directory: &Path, name: &str) -> PathBuf {
-    directory.join(name.split('/').collect::<PathBuf>())
 }
 
 pub(crate) fn read_file(directory: &Path, name: &str, limit: u64) -> io::Result<Vec<u8>> {

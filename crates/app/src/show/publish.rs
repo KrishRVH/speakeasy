@@ -167,8 +167,7 @@ fn publish_with(
             Audio::Settled
         }
     };
-    let result = persist(handoff, footage, checkpoint, completion, permit, parent);
-    match result {
+    match persist(handoff, footage, checkpoint, completion, permit, parent) {
         Ok(Some(Persisted {
             show,
             summary,

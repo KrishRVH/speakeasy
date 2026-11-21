@@ -541,8 +541,7 @@ pub(crate) fn resolve(parent: &Path, target: &Path) -> anyhow::Result<Interrupte
         .find(|directory| named(directory))
         .context(UNMATCHED)?;
     let checkpoint = found(lock(&directory))?.context(UNMATCHED)?.context(BUSY)?;
-    let now = SystemTime::now();
-    anyhow::ensure!(!checkpoint.retired(now)?, UNMATCHED);
+    anyhow::ensure!(!checkpoint.retired(SystemTime::now())?, UNMATCHED);
     Ok(Interrupted {
         recorded: checkpoint.recorded()?,
         pending: checkpoint.publication()? == Some(Publication::Pending),
