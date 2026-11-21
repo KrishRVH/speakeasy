@@ -443,6 +443,31 @@ impl Admission {
     fn admits(&self, composed: Instant) -> bool {
         composed >= self.clean_from
     }
+
+    fn confirms(
+        &mut self,
+        observed: Result<Option<Part>, WindowGone>,
+        part: Part,
+    ) -> Result<bool, WindowGone> {
+        let confirmed = observed? == Some(part);
+        if !confirmed {
+            self.measured = false;
+        }
+        Ok(confirmed)
+    }
+}
+
+fn read_confirmed<T>(
+    admission: &mut Admission,
+    part: Part,
+    mut observe: impl FnMut() -> Result<Option<Part>, WindowGone>,
+    read: impl FnOnce() -> Result<T, Failure>,
+) -> Result<Option<T>, Failure> {
+    if !admission.confirms(observe(), part)? {
+        return Ok(None);
+    }
+    let image = read()?;
+    Ok(admission.confirms(observe(), part)?.then_some(image))
 }
 
 struct Pacer {
@@ -607,23 +632,24 @@ impl Capture {
         let Some(PendingFrame { frame, at, part }) = self.pending.take() else {
             return Ok(None);
         };
-        if current_part(self.target)? != Some(part) {
-            return Ok(None);
-        }
-        let surface: IDirect3DDxgiInterfaceAccess = frame.Surface()?.cast()?;
-
-        let texture: ID3D11Texture2D = unsafe { surface.GetInterface()? };
+        let target = self.target;
         let crop = pixel_box(part, self.content);
-        let source = crop_size(crop);
-        if source != self.readback.source() {
-            self.readback = Readback::new(&self.device, source, self.longest_edge)?;
-        }
-        let [left, top, ..] = crop;
-        let image = self.readback.read(&self.context, &texture, [left, top])?;
-        if current_part(self.target)? != Some(part) {
-            return Ok(None);
-        }
-        Ok(Some(Frame {
+        let image = read_confirmed(
+            &mut self.admission,
+            part,
+            || current_part(target),
+            || {
+                let surface: IDirect3DDxgiInterfaceAccess = frame.Surface()?.cast()?;
+                let texture: ID3D11Texture2D = unsafe { surface.GetInterface()? };
+                let source = crop_size(crop);
+                if source != self.readback.source() {
+                    self.readback = Readback::new(&self.device, source, self.longest_edge)?;
+                }
+                let [left, top, ..] = crop;
+                Ok(self.readback.read(&self.context, &texture, [left, top])?)
+            },
+        )?;
+        Ok(image.map(|image| Frame {
             at,
             image,
             part: part_of_box(crop, self.content),
@@ -907,6 +933,66 @@ mod tests {
         assert_eq!(
             admission.observe(Err(WindowGone::Closed), at(600)),
             Err(WindowGone::Closed)
+        );
+    }
+
+    #[test]
+    fn a_readback_check_that_loses_the_window_holds_back_frames_composed_before_it_returns() {
+        let start = Instant::now();
+        let at = |milliseconds| {
+            start
+                .checked_add(Duration::from_millis(milliseconds))
+                .unwrap()
+        };
+        let before = Part::WHOLE;
+        let after = Part {
+            left: 0.5,
+            ..Part::WHOLE
+        };
+        let lost_before_reading = [Ok(None)];
+        let lost_after_reading = [Ok(Some(before)), Ok(None)];
+        let moved_while_reading = [Ok(Some(before)), Ok(Some(after))];
+        for observations in [
+            &lost_before_reading[..],
+            &lost_after_reading[..],
+            &moved_while_reading[..],
+        ] {
+            let mut admission = Admission::after(at(0));
+            assert_eq!(
+                admission.observe(Ok(Some(before)), at(100)),
+                Ok(Some(before))
+            );
+            let mut observed = observations.iter().copied();
+            let read = read_confirmed(
+                &mut admission,
+                before,
+                || observed.next().unwrap(),
+                || Ok(()),
+            );
+            assert!(matches!(read, Ok(None)), "{observations:?} kept the frame");
+            assert_eq!(admission.observe(Ok(Some(after)), at(300)), Ok(Some(after)));
+            assert!(
+                !admission.admits(at(250)),
+                "{observations:?}: a frame composed while the readback lost the window took the new rectangle"
+            );
+            assert!(admission.admits(at(350)));
+        }
+
+        let mut admission = Admission::after(at(0));
+        assert_eq!(
+            admission.observe(Ok(Some(before)), at(100)),
+            Ok(Some(before))
+        );
+        let mut steady = [Ok(Some(before)); 2].into_iter();
+        let read = read_confirmed(&mut admission, before, || steady.next().unwrap(), || Ok(7));
+        assert!(matches!(read, Ok(Some(7))));
+        assert_eq!(
+            admission.observe(Ok(Some(before)), at(300)),
+            Ok(Some(before))
+        );
+        assert!(
+            admission.admits(at(150)),
+            "A confirmed readback moved the composition cutoff"
         );
     }
 }

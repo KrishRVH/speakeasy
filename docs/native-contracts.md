@@ -353,11 +353,12 @@ Pending Windows frames retain their observed target rectangle and are rejected w
 before or after GPU readback differ. While DWM cannot report the frame bounds of a window that still
 exists on screen, Windows discards its frames instead of ending the Show; when the bounds return, it
 crops only frames composed after a fresh composition margin, so a frame from the unmeasured interval
-never takes the new rectangle. Mac window stills are admitted only when the target rectangle
-observed after the request equals that attached to the image. A still rejected because the
-measurable target rectangle changed refreshes the response clock; unknown geometry does not. Neither
-platform's sampled observations establish exact composition-time window geometry or detect every
-move-away-and-back.
+never takes the new rectangle. A readback whose before or after observation finds the bounds
+unreadable or changed counts as the same loss, so the next measured bounds also start a fresh
+margin. Mac window stills are admitted only when the target rectangle observed after the request
+equals that attached to the image. A still rejected because the measurable target rectangle changed
+refreshes the response clock; unknown geometry does not. Neither platform's sampled observations
+establish exact composition-time window geometry or detect every move-away-and-back.
 
 Mac `Source` may cross threads because its retained ScreenCaptureKit filter is immutable and lacks
 thread affinity; no AppKit object is moved with it. The filter excludes the whole application,
