@@ -220,9 +220,10 @@ module unless a test file is named.
   native acceptance. Mac F13 uses key events and physical key-state reconciliation; Fn and the right
   modifiers use modifier events. Windows F13 presumes a lost release only from silence beyond the
   user's repeat settings, which
-  [keyboard/typematic.rs](../crates/platform/src/keyboard/typematic.rs) reads. Only right modifiers defer quick application combinations.
-  Insertion waits for the configured shortcut through the same native adapter that rechecks it
-  before delivery; selecting F13 never reserves it for another shortcut setting.
+  [keyboard/typematic.rs](../crates/platform/src/keyboard/typematic.rs) reads. Only right modifiers
+  defer quick application combinations. Insertion waits for the configured shortcut through the same
+  native adapter that rechecks it before delivery; selecting F13 never reserves it for another
+  shortcut setting.
 - **Pill and motion**: [pill.rs](../crates/app/src/pill.rs) and [pill/](../crates/app/src/pill),
   [core/src/motion.rs](../crates/core/src/motion.rs), [gpui_ext.rs](../crates/app/src/gpui_ext.rs),
   [icons.rs](../crates/app/src/icons.rs), and [theme.rs](../crates/app/src/theme.rs) animate the
@@ -259,9 +260,9 @@ module unless a test file is named.
   updates, and stores presets by position, and ignores those changes during model setup or file
   selection. A preset's menu keeps Update in place, unavailable during that work, so its keyboard
   cursor stays on the entry it chose. Use loads the validated engine and model paths, so a preset
-  that spells the saved files differently neither queues a save that could overwrite an outside
-  edit nor keeps offering Use once applied. The save queue applies used choices; library-only
-  changes leave sessions running. [text_field.rs](../crates/app/src/shell/settings/text_field.rs) owns
+  that spells the saved files differently neither queues a save that could overwrite an outside edit
+  nor keeps offering Use once applied. The save queue applies used choices; library-only changes
+  leave sessions running. [text_field.rs](../crates/app/src/shell/settings/text_field.rs) owns
   native selection and IME composition. Tab and GPUI focus loss commit the marked text. While a
   composition is marked, a click or an accessible selection leaves the caret to the input method:
   macOS offers the click to the input context first, X11 and Wayland end the composition before
@@ -362,19 +363,19 @@ module unless a test file is named.
 - **First run**: [settings/onboarding.rs](../crates/app/src/shell/settings/onboarding.rs) owns the
   guide's four steps; [its view](../crates/app/src/shell/settings/render/onboarding.rs) presents
   local setup, dictation permissions, private practice, and completion. Saved model configuration
-  that passed its file check unlocks permission assistance even when native shortcut access
-  prevents the runtime from starting; settings whose engine or model failed that check at startup
-  or Resume offer automatic setup instead of reporting local speech ready. Setup that leaves the
-  saved speech paths unchanged checks them again, since no save follows.
-  A nonblank private result unlocks completion; leaving practice clears its receipt and text. The
-  guide never asks for Show permissions or claims to verify external text delivery. Skip and Finish
-  write an empty marker, the selected settings file's name plus `.onboarded`, beside it on an owned
-  worker, without saving or replacing settings. Failed writes remain visible and retryable; shutdown
-  drains an accepted write. Startup opens an unfinished guide even after automatic model setup saved
-  a valid configuration. Replay preserves settings. Demo replay uses synthetic text without
-  microphone access or a completion write. State and file tests cover blocked transitions and marker
-  failures; the Settings native interaction test walks the simulated guide and checks text cleanup
-  and preservation of edits.
+  that passed its file check unlocks permission assistance even when native shortcut access prevents
+  the runtime from starting; settings whose engine or model failed that check at startup or Resume
+  offer automatic setup instead of reporting local speech ready. Setup that leaves the saved speech
+  paths unchanged checks them again, since no save follows. A nonblank private result unlocks
+  completion; leaving practice clears its receipt and text. The guide never asks for Show
+  permissions or claims to verify external text delivery. Skip and Finish write an empty marker, the
+  selected settings file's name plus `.onboarded`, beside it on an owned worker, without saving or
+  replacing settings. Failed writes remain visible and retryable; shutdown drains an accepted write.
+  Startup opens an unfinished guide even after automatic model setup saved a valid configuration.
+  Replay preserves settings. Demo replay uses synthetic text without microphone access or a
+  completion write. State and file tests cover blocked transitions and marker failures; the Settings
+  native interaction test walks the simulated guide and checks text cleanup and preservation of
+  edits.
 - **Setup**: [setup.rs](../crates/app/src/setup.rs) and [setup/](../crates/app/src/setup) choose,
   download, verify, and unpack engines and report which managed models are already downloaded; a
   full install is opt-in. Setup and update preparation report each step through
@@ -699,47 +700,46 @@ module unless a test file is named.
   unwind. The independent movie lane durably saves the original-session origin before accepting
   capture; frame or audio failure cannot release its lock. The frame lane queues at most 512
   events/64 MiB and its log caps at 1 GiB/200,000 events. The audio lane queues at most 64 events/8
-  MiB and its checksummed PCM log caps at 128 MiB. While capture runs, a backlog stays in its existing
-  PCM buffer; ending copies the unsent remainder once into the final flush, which holds at most the
-  rest of one five-minute recording at the device rate until that flush ends.
-  Capture reports its outcome and closes the microphone before the final audio flush, which then
-  waits up to five seconds for credits. Cancellation after Finish, as when Quit retires a finished
-  Show's microphone, still collects the remaining samples and writes that flush; a discarded checkpoint stops its keeper, which ends a waiting
-  flush unwritten. Only ordinary stop writes an audio end record; a disconnected or stalled
-  microphone, including one whose fatal error races the stop, leaves a recoverable prefix.
-  [Audio checkpointing](../crates/app/src/audio/checkpoint.rs) preserves cue boundaries before and
-  after promotion, so recovery seals through the same speech gate and trimming. Narration is
-  atomically written and synced while audio remains recoverable. Successful transcription copies a
-  valid voice prefix into the staged bundle before checkpoint retirement, and the saved Show says
-  when that voice lacks its end record, as after a final flush that missed its deadline; audio too damaged to read
-  is left out of voice rather than blocking the frames and narration. Publication binds durable
-  checkpoint and bundle markers before rename; the marker distinguishes narrated publication so a
-  crash before checkpoint deletion cannot offer duplicate recovery. Publication and cleanup retire
-  a checkpoint only after syncing the Shows folder that holds its bundle, so recovery files never
-  outlive a rename the disk may lose. A retry's marker also names the
-  pending bundle it supersedes, which stays the checkpoint's owner for recovery and deletion until
-  the new bundle lands. If checkpoint storage never
-  opens, in-memory footage remains publishable. A lost checkpoint completion stops publication; an
-  unknown checkpoint state cannot become an apparently complete bundle. Untranscribed audio or saved
-  narration keeps a published checkpoint visible as Narration pending; publication keeps one for
-  retry only when its audio is not damaged and its frame log replays a frame; one with neither retires, and
-  a retry whose kept audio holds no speech retires it and says so, and the Shows window rereads its
-  library after any failed recovery so a retired row stops offering Retry; a retry whose transcription
-  yields no words saves no copy and stays. Saved narration that cannot be
-  read fails recovery and stays; damaged narration falls back to the kept audio, and a retry with
-  neither stays listed for explicit discard. A silent microphone's audio holds
-  nothing to retry or export, so its checkpoint records that disposition and retires without keeping
-  voice; recovery treats complete, all-zero audio of any length without saved narration the same way. Unfinished cancellation
-  records discard when its keeper receives it, before the native movie lease closes, so a kill
-  during teardown cannot return cancelled footage; an emergency drop leaves the checkpoint
-  recoverable; private audio, narration, frame, and movie files are removed
-  before the lock, so blocked deletion remains available to cleanup. Audio retains the original
-  seven-day expiry regardless of a saved bundle's Keep marker. Discovery isolates damaged
-  checkpoints so healthy entries remain visible and saved bundles still expire. A pending checkpoint
-  whose audio is damaged or unreadable stays listed as a problem, and `show discard` still removes
-  it by ID or path; only an empty or partly written audio header counts as no audio.
-  [checkpoint/tests.rs](../crates/app/src/show/store/checkpoint/tests.rs) exercises damaged
-  siblings, expiry, lock ownership, and durable discard/publication markers.
+  MiB and its checksummed PCM log caps at 128 MiB. While capture runs, a backlog stays in its
+  existing PCM buffer; ending copies the unsent remainder once into the final flush, which holds at
+  most the rest of one five-minute recording at the device rate until that flush ends. Capture
+  reports its outcome and closes the microphone before the final audio flush, which then waits up to
+  five seconds for credits. Cancellation after Finish, as when Quit retires a finished Show's
+  microphone, still collects the remaining samples and writes that flush; a discarded checkpoint
+  stops its keeper, which ends a waiting flush unwritten. Only ordinary stop writes an audio end
+  record; a disconnected or stalled microphone, including one whose fatal error races the stop,
+  leaves a recoverable prefix. [Audio checkpointing](../crates/app/src/audio/checkpoint.rs)
+  preserves cue boundaries before and after promotion, so recovery seals through the same speech
+  gate and trimming. Narration is atomically written and synced while audio remains recoverable.
+  Successful transcription copies a valid voice prefix into the staged bundle before checkpoint
+  retirement, and the saved Show says when that voice lacks its end record, as after a final flush
+  that missed its deadline; audio too damaged to read is left out of voice rather than blocking the
+  frames and narration. Publication binds durable checkpoint and bundle markers before rename; the
+  marker distinguishes narrated publication so a crash before checkpoint deletion cannot offer
+  duplicate recovery. Publication and cleanup retire a checkpoint only after syncing the Shows
+  folder that holds its bundle, so recovery files never outlive a rename the disk may lose. A
+  retry's marker also names the pending bundle it supersedes, which stays the checkpoint's owner for
+  recovery and deletion until the new bundle lands. If checkpoint storage never opens, in-memory
+  footage remains publishable. A lost checkpoint completion stops publication; an unknown checkpoint
+  state cannot become an apparently complete bundle. Untranscribed audio or saved narration keeps a
+  published checkpoint visible as Narration pending; publication keeps one for retry only when its
+  audio is not damaged and its frame log replays a frame; one with neither retires, and a retry
+  whose kept audio holds no speech retires it and says so, and the Shows window rereads its library
+  after any failed recovery so a retired row stops offering Retry; a retry whose transcription
+  yields no words saves no copy and stays. Saved narration that cannot be read fails recovery and
+  stays; damaged narration falls back to the kept audio, and a retry with neither stays listed for
+  explicit discard. A silent microphone's audio holds nothing to retry or export, so its checkpoint
+  records that disposition and retires without keeping voice; recovery treats complete, all-zero
+  audio of any length without saved narration the same way. Unfinished cancellation records discard
+  when its keeper receives it, before the native movie lease closes, so a kill during teardown
+  cannot return cancelled footage; an emergency drop leaves the checkpoint recoverable; private
+  audio, narration, frame, and movie files are removed before the lock, so blocked deletion remains
+  available to cleanup. Audio retains the original seven-day expiry regardless of a saved bundle's
+  Keep marker. Discovery isolates damaged checkpoints so healthy entries remain visible and saved
+  bundles still expire. A pending checkpoint whose audio is damaged or unreadable stays listed as a
+  problem, and `show discard` still removes it by ID or path; only an empty or partly written audio
+  header counts as no audio. [checkpoint/tests.rs](../crates/app/src/show/store/checkpoint/tests.rs)
+  exercises damaged siblings, expiry, lock ownership, and durable discard/publication markers.
   [journal/log.rs](../crates/show/src/journal/log.rs) shares live/replay admission, thinning, and
   pointer folding; its header records the budget, surface, and framing, so recovery crops as the
   live Show would; checksums and bounded records stop replay at its first damaged event. Property
@@ -776,18 +776,18 @@ module unless a test file is named.
   crossing an unobserved interval. A take finished before its first frame waits up to three seconds
   for one, never past the session's five-minute limit. The recorder arms that limit from session
   start, ends there even when the owner's Finish arrives late, and admits no observation stamped at
-  or after it; a capture that would start past the limit fails as recording no frames. Finishing drains observations and
-  queued pins through the chosen end after the producers stop, each pin after the samples up to its
-  release, as the live order would judge it; teardown adds no annotations. Checkpoint replay preserves these same gaps. Pointer
-  events also carry their source display rectangle. The tracker retains one coordinate-space proof
-  per stroke and pin: mixed strokes and groups across resizes or gaps have none. A pin takes the
-  last pointer sample at or before its second tap's release, with that sample's proof, however late
-  the taps arrive, and samples from before an accepted pin start no ink. Stroke cuts preserve the
-  carried joint’s proof. A recording
-  without spaces, such as the scripted demo, has unknown provenance. Geometry, overlay timing, and
-  the area drag run on every host; native capture is opt-in, and window lookup and the picker's
-  clicks need native acceptance. On Windows, an opt-in acceptance test stops an owned window's
-  capture as it hides, minimizes, cloaks, moves away, and closes. The
+  or after it; a capture that would start past the limit fails as recording no frames. Finishing
+  drains observations and queued pins through the chosen end after the producers stop, each pin
+  after the samples up to its release, as the live order would judge it; teardown adds no
+  annotations. Checkpoint replay preserves these same gaps. Pointer events also carry their source
+  display rectangle. The tracker retains one coordinate-space proof per stroke and pin: mixed
+  strokes and groups across resizes or gaps have none. A pin takes the last pointer sample at or
+  before its second tap's release, with that sample's proof, however late the taps arrive, and
+  samples from before an accepted pin start no ink. Stroke cuts preserve the carried joint’s proof.
+  A recording without spaces, such as the scripted demo, has unknown provenance. Geometry, overlay
+  timing, and the area drag run on every host; native capture is opt-in, and window lookup and the
+  picker's clicks need native acceptance. On Windows, an opt-in acceptance test stops an owned
+  window's capture as it hides, minimizes, cloaks, moves away, and closes. The
   [recording owner](../crates/platform/src/movie/recording.rs) writes silent H.264 fragments from
   admitted frames through the [Windows codec](../crates/platform/src/windows/movie/encoder.rs) or
   [Mac codec](../crates/platform/src/macos/movie/encode.rs). Its non-cloneable
@@ -941,13 +941,13 @@ No single module owns these rules; a change to any party keeps them.
   publication without deleting its checkpoint. The same holds while finished footage awaits
   transcription. A Show finishes when the user finishes it or its capture ends, including where its
   audio stopped; Quit first applies capture events already queued, so a capture ending that raced
-  Quit still finishes the Show. The session decides checkpoint disposition; stale reports hold only in-memory
-  footage. Cancelling unfinished capture, choosing no target, or a screen failure before the first
-  frame discards its checkpoint. A recorder unwind preserves a finished session's checkpoint because
-  it may contain surviving frames. Recovery waits for an idle session, reopens files off the owner
-  thread, and uses the existing local worker with the original language and current text
-  corrections. It opens no capture devices and has no clipboard action. Quit or reconfiguration
-  retains a recovery checkpoint.
+  Quit still finishes the Show. The session decides checkpoint disposition; stale reports hold only
+  in-memory footage. Cancelling unfinished capture, choosing no target, or a screen failure before
+  the first frame discards its checkpoint. A recorder unwind preserves a finished session's
+  checkpoint because it may contain surviving frames. Recovery waits for an idle session, reopens
+  files off the owner thread, and uses the existing local worker with the original language and
+  current text corrections. It opens no capture devices and has no clipboard action. Quit or
+  reconfiguration retains a recovery checkpoint.
   [runtime/tests/recovery.rs](../crates/app/src/runtime/tests/recovery.rs) tests ownership and
   revocation; [recorder/tests/checkpoint.rs](../crates/app/src/show/recorder/tests/checkpoint.rs)
   tests durable frame handoff, independent storage failure, and invalid-event prefix preservation.
