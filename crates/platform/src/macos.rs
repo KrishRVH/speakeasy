@@ -578,11 +578,27 @@ impl insertion::NativeInsert for Insert {
     fn text_keys(&mut self, text: &str) -> anyhow::Result<Vec<CGEvent>> {
         let source = private_event_source()?;
         let mut events = Vec::new();
-        for chunk in insertion::utf16_chunks(text, TEXT_EVENT_UNITS) {
-            let press = own_key_event(&source, 0, true).context("Cannot create text event")?;
-            press.set_string(chunk);
-            let release = own_key_event(&source, 0, false).context("Cannot create text release")?;
-            events.extend([press, release]);
+        for typed in insertion::split_line_breaks(text) {
+            match typed {
+                insertion::Typed::Text(run) => {
+                    for chunk in insertion::utf16_chunks(run, TEXT_EVENT_UNITS) {
+                        let press =
+                            own_key_event(&source, 0, true).context("Cannot create text event")?;
+                        press.set_string(chunk);
+                        let release = own_key_event(&source, 0, false)
+                            .context("Cannot create text release")?;
+                        events.extend([press, release]);
+                    }
+                },
+                insertion::Typed::LineBreak => {
+                    for down in [true, false] {
+                        let event = own_key_event(&source, KeyCode::RETURN, down)
+                            .context("Cannot create line break event")?;
+                        event.set_flags(CGEventFlags::CGEventFlagShift);
+                        events.push(event);
+                    }
+                },
+            }
         }
         Ok(events)
     }

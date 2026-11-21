@@ -75,7 +75,8 @@ around it; "open paren"/"close paren", "open bracket"/"close bracket", "open bra
 or "open quote"/"close quote" to enclose words; and "backtick" before and after a span to quote it
 as code. "A new line of products" keeps its words. Verbatim and the case styles keep every word, and
 turning off **Spoken symbols** under Writing keeps them in Prose too. Pasting keeps line breaks as
-text; with Type instead of paste, an app may treat a typed line break as Return.
+text. With Type instead of paste, Windows and Mac type each line break as Shift+Enter, so a chat app
+starts a new line instead of sending; on Linux the desktop decides how a typed line break lands.
 
 **Return during the hold** finishes the dictation like releasing the shortcut, types it, and then
 presses Return, so a chat or an agent's prompt sends it. It applies to that dictation only, and only

@@ -1,7 +1,8 @@
 use anyhow::Context as _;
 
 use super::{
-    Delivery, FocusReport, Inserted, MODIFIER_WAIT, utf16_chunks, wait_for_released_modifiers,
+    Delivery, FocusReport, Inserted, MODIFIER_WAIT, Typed, split_line_breaks, utf16_chunks,
+    wait_for_released_modifiers,
 };
 use crate::InputSender;
 
@@ -100,6 +101,25 @@ fn utf16_chunks_count_code_units_and_keep_surrogate_pairs_whole() {
         [format!("{}😀", "a".repeat(15)), "b".to_owned()]
     );
     assert_eq!(utf16_chunks("", 16).count(), 0);
+}
+
+#[test]
+fn each_line_break_spelling_types_as_one_line_break() {
+    let typed = |text| {
+        split_line_breaks(text)
+            .map(|typed| match typed {
+                Typed::Text(run) => run,
+                Typed::LineBreak => "⏎",
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        typed("one\r\ntwo\rthree\nfour"),
+        ["one", "⏎", "two", "⏎", "three", "⏎", "four"]
+    );
+    assert_eq!(typed("\n\r\n\r\r\n"), ["⏎", "⏎", "⏎", "⏎"]);
+    assert_eq!(typed("🦀\n"), ["🦀", "⏎"]);
+    assert_eq!(split_line_breaks("").count(), 0);
 }
 
 #[cfg(target_os = "linux")]

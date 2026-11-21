@@ -6,43 +6,89 @@ use windows_sys::Win32::{
     System::StationsAndDesktops::{
         CreateDesktopW, CreateWindowStationW, SetProcessWindowStation, SetThreadDesktop,
     },
+    UI::Input::KeyboardAndMouse::KEYEVENTF_UNICODE,
 };
 
 use super::*;
-use crate::windows::{ok_or_last_error, to_wide};
+use crate::windows::{OWN_INPUT, ok_or_last_error, to_wide};
 
 const PRIVATE_STATION: &str = "SPEAKEASY_PRIVATE_WINDOW_STATION";
 const TEXT: &str = "fixture\ntext";
 
-#[test]
-fn direct_typing_uses_return_for_line_breaks_and_preserves_utf16() -> anyhow::Result<()> {
-    let mut insert = Insert {
+const UNICODE: u32 = KEYEVENTF_UNICODE;
+const UP: u32 = KEYEVENTF_KEYUP;
+
+fn strokes(input: &[INPUT]) -> Vec<(u16, u16, u32)> {
+    input
+        .iter()
+        .map(|input| {
+            let key = unsafe { input.Anonymous.ki };
+            assert_eq!(
+                key.dwExtraInfo, OWN_INPUT,
+                "A synthetic key lacks the own-input marker"
+            );
+            (key.wVk, key.wScan, key.dwFlags)
+        })
+        .collect()
+}
+
+fn insert() -> Insert {
+    Insert {
         shortcut: crate::WindowsShortcut::default(),
         typed: crate::insertion::KeyCount::default(),
-    };
-    let Keys::Text(keys) = insert.text_keys("a\r\n🦀\nb")? else {
-        anyhow::bail!("Direct typing did not produce keyboard input");
-    };
-    let keys: Vec<_> = keys
-        .into_iter()
-        .map(|event| unsafe { (event.Anonymous.ki.wVk, event.Anonymous.ki.wScan) })
-        .collect();
+    }
+}
+
+#[test]
+fn typed_line_breaks_are_shift_enter_and_text_keeps_utf16() -> anyhow::Result<()> {
+    let line_break = [
+        (VK_SHIFT, 0, 0),
+        (VK_RETURN, 0, 0),
+        (VK_RETURN, 0, UP),
+        (VK_SHIFT, 0, UP),
+    ];
+    let typed = |unit| [(0, unit, UNICODE), (0, unit, UNICODE | UP)];
+    let expected: Vec<_> = [
+        typed(97).as_slice(),
+        &line_break,
+        &typed(0xD83E),
+        &typed(0xDD80),
+        &line_break,
+        &typed(98),
+        &line_break,
+    ]
+    .concat();
     assert_eq!(
-        keys,
-        [
-            (0, 97),
-            (0, 97),
-            (VK_RETURN, 0),
-            (VK_RETURN, 0),
-            (0, 0xD83E),
-            (0, 0xD83E),
-            (0, 0xDD80),
-            (0, 0xDD80),
-            (VK_RETURN, 0),
-            (VK_RETURN, 0),
-            (0, 98),
-            (0, 98),
-        ]
+        strokes(&insert().text_keys("a\r\n🦀\rb\n")?.input),
+        expected
+    );
+    Ok(())
+}
+
+#[test]
+fn input_cut_short_releases_every_key_it_left_down() -> anyhow::Result<()> {
+    let keys = insert().text_keys("a\nb")?;
+    let shift_up = (VK_SHIFT, 0, UP);
+    for (sent, released) in [
+        (0, vec![]),
+        (1, vec![(0, 97, UNICODE | UP)]),
+        (2, vec![]),
+        (3, vec![shift_up]),
+        (4, vec![(VK_RETURN, 0, UP), shift_up]),
+        (5, vec![shift_up]),
+        (6, vec![]),
+        (7, vec![(0, 98, UNICODE | UP)]),
+    ] {
+        assert_eq!(
+            strokes(&still_down(&keys.input[..sent])),
+            released,
+            "Input cut short after {sent} keys"
+        );
+    }
+    let paste = insert().paste_keys()?;
+    assert_eq!(
+        strokes(&still_down(&paste.input[..2])),
+        [(0x56, 0, UP), (VK_CONTROL, 0, UP)]
     );
     Ok(())
 }

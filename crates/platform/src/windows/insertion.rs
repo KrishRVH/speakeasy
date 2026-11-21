@@ -8,17 +8,20 @@ use anyhow::Context as _;
 use windows_sys::Win32::{
     Foundation::{ERROR_SUCCESS, GetLastError, SetLastError},
     UI::{
-        Input::KeyboardAndMouse::{INPUT, VK_CONTROL, VK_RETURN, VK_V},
+        Input::KeyboardAndMouse::{
+            INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VK_CONTROL, VK_RETURN, VK_SHIFT,
+            VK_V,
+        },
         WindowsAndMessaging::GetForegroundWindow,
     },
 };
 use zeroize::Zeroizing;
 
-use super::{modifiers, press, release, send_input, type_unit, window_process};
+use super::{modifiers, press, release, send_input, synthetic_key, type_unit, window_process};
 use crate::{
     ClipboardContent, Inserted,
     clipboard::{self, Screen},
-    insertion::NativeInsert,
+    insertion::{self, NativeInsert, Typed},
 };
 
 const PRIVATE_FORMATS: [&str; 2] = ["CanIncludeInClipboardHistory", "CanUploadToCloudClipboard"];
@@ -156,10 +159,9 @@ pub(super) struct Insert {
     pub(super) typed: crate::insertion::KeyCount,
 }
 
-pub(super) enum Keys {
-    Paste,
-    Return,
-    Text(Vec<INPUT>),
+pub(super) struct Keys {
+    input: Vec<INPUT>,
+    blocked: Inserted,
 }
 
 impl NativeInsert for Insert {
@@ -210,23 +212,43 @@ impl NativeInsert for Insert {
     }
 
     fn paste_keys(&mut self) -> anyhow::Result<Keys> {
-        Ok(Keys::Paste)
+        Ok(Keys {
+            input: vec![
+                press(VK_CONTROL),
+                press(VK_V),
+                release(VK_V),
+                release(VK_CONTROL),
+            ],
+            blocked: Inserted::Copied("Text copied. This app blocked paste; press Ctrl+V."),
+        })
     }
 
     fn text_keys(&mut self, text: &str) -> anyhow::Result<Keys> {
-        Ok(Keys::Text(
-            text.replace("\r\n", "\n")
-                .encode_utf16()
-                .flat_map(|unit| match unit {
-                    10 | 13 => [press(VK_RETURN), release(VK_RETURN)],
-                    _ => type_unit(unit),
-                })
-                .collect(),
-        ))
+        let mut input = Vec::new();
+        for typed in insertion::split_line_breaks(text) {
+            match typed {
+                Typed::Text(run) => input.extend(run.encode_utf16().flat_map(type_unit)),
+                Typed::LineBreak => input.extend([
+                    press(VK_SHIFT),
+                    press(VK_RETURN),
+                    release(VK_RETURN),
+                    release(VK_SHIFT),
+                ]),
+            }
+        }
+        Ok(Keys {
+            input,
+            blocked: Inserted::Unavailable(
+                "Typing was blocked or cut short. Turn off “Type instead of paste” in Settings.",
+            ),
+        })
     }
 
     fn return_keys(&mut self) -> anyhow::Result<Keys> {
-        Ok(Keys::Return)
+        Ok(Keys {
+            input: vec![press(VK_RETURN), release(VK_RETURN)],
+            blocked: Inserted::Unavailable("This app blocked Return."),
+        })
     }
 
     fn external_focus(&mut self) -> bool {
@@ -249,66 +271,38 @@ impl NativeInsert for Insert {
     }
 
     fn send(&mut self, keys: Keys) -> anyhow::Result<Inserted> {
-        match keys {
-            Keys::Paste => {
-                let shortcut = [
-                    press(VK_CONTROL),
-                    press(VK_V),
-                    release(VK_V),
-                    release(VK_CONTROL),
-                ];
-                let sent = send_input(&shortcut)?;
-                if sent == shortcut.len() {
-                    return Ok(Inserted::Sent);
-                }
-                if sent > 0 {
-                    #[expect(
-                        clippy::let_underscore_must_use,
-                        reason = "Release stuck synthetic modifiers after partial input even if the target also blocks cleanup"
-                    )]
-                    let _ = send_input(&[release(VK_V), release(VK_CONTROL)]);
-                }
-                Ok(Inserted::Copied(
-                    "Text copied. This app blocked paste; press Ctrl+V.",
-                ))
-            },
-            Keys::Return => {
-                let keys = [press(VK_RETURN), release(VK_RETURN)];
-                let sent = send_input(&keys)?;
-                if sent == keys.len() {
-                    return Ok(Inserted::Sent);
-                }
-                if sent > 0 {
-                    #[expect(
-                        clippy::let_underscore_must_use,
-                        reason = "Release a stuck synthetic Return after partial input even if the target also blocks cleanup"
-                    )]
-                    let _ = send_input(&[release(VK_RETURN)]);
-                }
-                Ok(Inserted::Unavailable("This app blocked Return."))
-            },
-            Keys::Text(input) => {
-                let sent = send_input(&input)?;
-                if sent != input.len() {
-                    if sent % 2 == 1
-                        && input
-                            .get(sent.saturating_sub(1))
-                            .is_some_and(|key| unsafe { key.Anonymous.ki.wVk == VK_RETURN })
-                    {
-                        #[expect(
-                            clippy::let_underscore_must_use,
-                            reason = "Release a partial synthetic line break even if the target blocks cleanup"
-                        )]
-                        let _ = send_input(&[release(VK_RETURN)]);
-                    }
-                    return Ok(Inserted::Unavailable(
-                        "Typing was blocked or cut short. Turn off “Type instead of paste” in Settings.",
-                    ));
-                }
-                Ok(Inserted::Sent)
-            },
+        let sent = send_input(&keys.input)?;
+        if sent == keys.input.len() {
+            return Ok(Inserted::Sent);
+        }
+        let left_down = still_down(keys.input.get(..sent).unwrap_or_default());
+        if !left_down.is_empty() {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "Release the keys that cut-short input left down even if the target also blocks the cleanup"
+            )]
+            let _ = send_input(&left_down);
+        }
+        Ok(keys.blocked)
+    }
+}
+
+fn still_down(sent: &[INPUT]) -> Vec<INPUT> {
+    let mut down: Vec<KEYBDINPUT> = Vec::new();
+    for key in sent
+        .iter()
+        .filter(|input| input.r#type == INPUT_KEYBOARD)
+        .map(|input| unsafe { input.Anonymous.ki })
+    {
+        down.retain(|held| (held.wVk, held.wScan) != (key.wVk, key.wScan));
+        if key.dwFlags & KEYEVENTF_KEYUP == 0 {
+            down.push(key);
         }
     }
+    down.into_iter()
+        .rev()
+        .map(|key| synthetic_key(key.wVk, key.wScan, key.dwFlags | KEYEVENTF_KEYUP))
+        .collect()
 }
 
 fn windows_line_endings(text: &str) -> String {

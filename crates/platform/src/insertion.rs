@@ -230,6 +230,32 @@ pub(crate) fn holds_text(read: Result<String, arboard::Error>, text: &str) -> an
     }
 }
 
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+pub(crate) enum Typed<'text> {
+    Text(&'text str),
+    LineBreak,
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+pub(crate) fn split_line_breaks(text: &str) -> impl Iterator<Item = Typed<'_>> {
+    let mut rest = text;
+    std::iter::from_fn(move || {
+        if rest.is_empty() {
+            return None;
+        }
+        if let Some(tail) = ["\r\n", "\r", "\n"]
+            .into_iter()
+            .find_map(|line_break| rest.strip_prefix(line_break))
+        {
+            rest = tail;
+            return Some(Typed::LineBreak);
+        }
+        let (run, tail) = rest.split_at_checked(rest.find(['\r', '\n']).unwrap_or(rest.len()))?;
+        rest = tail;
+        Some(Typed::Text(run))
+    })
+}
+
 #[cfg(any(target_os = "macos", test))]
 pub(crate) fn utf16_chunks(text: &str, units: usize) -> impl Iterator<Item = &str> {
     let mut rest = text;
