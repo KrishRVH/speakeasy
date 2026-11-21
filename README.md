@@ -73,10 +73,11 @@ containing only removed fillers sends nothing.
 between pauses, for a line break; "underscore", "forward slash", or "backslash" to join the words
 around it; "open paren"/"close paren", "open bracket"/"close bracket", "open brace"/"close brace",
 or "open quote"/"close quote" to enclose words; and "backtick" before and after a span to quote it
-as code. "A new line of products" keeps its words. Verbatim and the case styles keep every word, and
-turning off **Spoken symbols** under Writing keeps them in Prose too. Pasting keeps line breaks as
-text. With Type instead of paste, Windows and Mac type each line break as Shift+Enter, so a chat app
-starts a new line instead of sending; on Linux the desktop decides how a typed line break lands.
+as code. "A new line of products" keeps its words. Verbatim and the case styles leave symbol names
+as words, and turning off **Spoken symbols** under Writing does the same in Prose. Pasting keeps
+line breaks as text. With Type instead of paste, Windows and Mac type each line break as
+Shift+Enter, so a chat app starts a new line instead of sending; on Linux the desktop decides how a
+typed line break lands.
 
 **Return during the hold** finishes the dictation like releasing the shortcut, types it, and then
 presses Return, so a chat or an agent's prompt sends it. It applies to that dictation only, and only
@@ -94,12 +95,12 @@ restarts or the app quits, and never writes ordinary dictation to disk. Each req
 cancellation authority; it cannot retract text already delivered.
 
 Choose **Dictation style** in the Windows/Mac tray, or run `speakeasy style STYLE` with `prose`,
-`verbatim`, `camel`, `pascal`, `snake`, `kebab`, or `constant`. **Prose** uses your filler setting;
-**Verbatim** preserves fillers. Both still apply phrase corrections. The other styles produce
-`camelCase`, `PascalCase`, `snake_case`, `kebab-case`, or `CONSTANT_CASE` locally. They join
-recognized words without rewriting their meaning. The non-Prose choice appears in the pill. A style
-change applies to the next recording, survives Pause, and resets to Prose when the app restarts.
-Shows keep ordinary narration regardless of the selected dictation style.
+`verbatim`, `camel`, `pascal`, `snake`, `kebab`, or `constant`. **Verbatim** preserves fillers;
+**Prose** and the case styles use your filler setting. Every style applies phrase corrections. The
+case styles produce `camelCase`, `PascalCase`, `snake_case`, `kebab-case`, or `CONSTANT_CASE`
+locally, joining recognized words without rewriting their meaning. The non-Prose choice appears in
+the pill. A style change applies to the next recording, survives Pause, and resets to Prose when the
+app restarts. Shows keep ordinary narration regardless of the selected dictation style.
 
 ### Reading the pill
 
@@ -244,8 +245,8 @@ and when. A microphone that stops after it starts listening ends the Show there 
 keeps the narration it heard: the pill says **Show copied with partial narration** and why. When the
 microphone stopped before you spoke, sent only silence, or your speech can't be transcribed, the
 Show is saved without narration rather than lost: the pill says **Show copied without narration**
-and what went wrong. The summary tells your agent why; when recovery audio survived, **Transcribe
-narration** in Shows can save a narrated copy.
+and what went wrong. The summary tells your agent why. When recovery audio survived a stop or a
+failed transcription, **Transcribe narration** in Shows can save a narrated copy.
 
 On Windows and Mac, the menu's **Copy last Show** copies the latest Show's `summary.md` again as it
 reads now, edits included, and **Open last Show** opens its folder. Speakeasy remembers only that
@@ -298,10 +299,10 @@ its actual timestamp, retrieval context, edited summary, and recorded words. Sum
 original narration remain separate sections. Untimed, missing, incomplete, and truncated narration
 are labeled; `show.json` retains all recorded words. If the combined text would exceed the clipboard
 limit, the summary becomes a labeled excerpt; the complete edit remains in `summary.md`. **Copy
-summary** copies only the current `summary.md`, including your edits. Copying preserves the bundle
-and is available between recordings. Windows offers PNG and a native bitmap; Mac offers PNG. The
-receiving app chooses which formats it accepts, so some apps paste only the image or only the text.
-Receiving both still depends on that app.
+summary** on Windows/Mac copies only the current `summary.md`, including your edits. Copying
+preserves the bundle and is available between recordings. Windows offers PNG and a native bitmap;
+Mac offers PNG. The receiving app chooses which formats it accepts, so some apps paste only the
+image or only the text. Receiving both still depends on that app.
 
 Copies carry the same clipboard-history and device-sync privacy markers as dictation. A new
 recording, closing the requesting window, or a settings/lifecycle change cancels a copy that has not
@@ -478,16 +479,17 @@ Manifests are limited to 16 MiB and summaries to 1 MiB. Only the current format,
 written; unknown fields are ignored. Other formats are reported as unsupported and left untouched.
 
 For MCP clients, run `speakeasy show mcp --setup` to print Claude Code, Codex, and generic setup
-snippets. The stdio server requires explicit `--root PATH` arguments: each root is one saved Show or
-a folder containing Shows. `show_list`, `show_read`, and `show_image` expose only those roots;
-requests cannot add folders. Tools can read the edited summary, bounded narration, saved images, and
-retained source frames by time, mark, or phrase. They report actual sample times and gaps. They do
-not expose ordinary dictation or export video. Requested content reaches the calling agent and may
-reach its model provider. Setup prints configuration without changing client settings. On Windows
-with a WSL distribution, setup also prints a stanza for an agent running in WSL: WSL interop starts
-the Windows `speakeasy-cli.exe`, so roots and Show paths stay Windows paths, and Show IDs work
-unchanged. The server's initialization instructions carry the disclosure above and the reading guide
-that `speakeasy show skill` prints.
+snippets. The stdio server requires one to 16 explicit `--root PATH` arguments: each root is one
+saved Show or a folder containing Shows. `show_list`, `show_read`, and `show_image` expose only
+those roots; requests cannot add folders. Tools can read the edited summary, bounded narration,
+saved images, and retained source frames by time, mark, or phrase. They report actual sample times
+and gaps. They do not expose ordinary dictation or export video. Requested content reaches the
+calling agent and may reach its model provider. Setup prints configuration without changing client
+settings. On Windows with a WSL distribution, setup also prints a stanza for an agent running in
+WSL: WSL interop starts the Windows `speakeasy-cli.exe`, so roots and Show paths stay Windows paths,
+and Show IDs work unchanged. When interop, drive mounting, or a lettered drive is missing, setup
+says so instead. The server's initialization instructions carry the disclosure above and the reading
+guide that `speakeasy show skill` prints.
 
 `show skill` prints the [agent reading guide](skills/speakeasy-show/SKILL.md) embedded in the
 installed binary. `show skill --install DIR` writes it to `DIR/speakeasy-show/SKILL.md` for an agent
@@ -540,9 +542,9 @@ replaces the app; uninstalling keeps your settings, downloaded models, and Shows
 not change your PATH. Add its folder yourself if you want to run `speakeasy-cli` by name.
 
 Keep the Windows package together: `speakeasy.exe` opens the app, and `speakeasy-cli.exe` runs Show
-commands from a terminal or agent, returning output and exit status to the caller. The CLI accepts
-`show`, `status`, `dictation`, `paste-last`, `style`, `preset`, `--version`, and `--help`; launching
-it without arguments prints help.
+and script commands from a terminal or agent, returning output and exit status to the caller. The
+CLI accepts `show`, `status`, `dictation`, `paste-last`, `style`, `preset`, `--version`, and
+`--help`; launching it without arguments prints help.
 
 On a Mac, allow Microphone and Accessibility access when asked, and Screen & System Audio Recording
 for Shows. If macOS says it cannot verify Speakeasy, open **System Settings › Privacy & Security**
@@ -553,7 +555,7 @@ remove Speakeasy from that list with − and add it again.
 The first launch guides you through local speech setup, dictation access, private practice, and a
 ready screen. Speakeasy checks the machine, downloads the matching
 [NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp) build and NVIDIA's Parakeet v3 model,
-about 0.8 GB in all, and turns dictation on:
+0.7 to 0.8 GB in all, and turns dictation on:
 
 | Machine                                         | Engine build                                    | Speech runs on |
 | ----------------------------------------------- | ----------------------------------------------- | -------------- |
@@ -726,8 +728,8 @@ forcing replacement text. Add a name or phrase; it applies right away. Up to 100
 locally; each allows six words and 64 characters. Nemotron boosts them as it decodes, and Whisper
 reads the newest hints that fit in 600 characters as its prompt; with two or more hints, a reply
 under a second of sound that only repeats them is dropped. Parakeet's engine has no way to bias it,
-so Parakeet ignores hints while they stay saved. Use **Corrections** when you want a deterministic
-replacement.
+so Parakeet ignores hints while they stay saved, and Words shows them only while the engine reads
+hints or some are saved. Use **Corrections** when you want a deterministic replacement.
 
 **Your own engine**, under **Dictation → Speech model**, runs a whisper.cpp or NeMo-Speech.cpp build
 you installed. Choose **whisper.cpp** or **NeMo-Speech**, then the program and model file for that
@@ -792,12 +794,12 @@ only when needed; text-only choices reuse it. An unavailable preset leaves the c
 intact.
 
 Preset-library, theme, reduced-motion, and Start at login changes keep a recording running;
-microphone, language, filler removal, recognition hints, phrase correction, delivery, and sound
-changes end it but keep the model loaded. Changing the Windows or Mac shortcut, Linux Shortcuts, or
-most Linux **Insert text by** choices restarts dictation, which reloads the model. Saving stays
-responsive and preserves edits made while the save is running. Changes made while dictation is
-paused are saved without resuming it, and pausing during a save keeps it paused; Quit finishes
-requested saves.
+microphone, language, filler removal, recognition hints, phrase correction, spoken symbols,
+delivery, sound, and script-reading changes end it but keep the model loaded. Changing the Windows
+or Mac shortcut, Linux Shortcuts, or most Linux **Insert text by** choices restarts dictation, which
+reloads the model. Saving stays responsive and preserves edits made while the save is running.
+Changes made while dictation is paused are saved without resuming it, and pausing during a save
+keeps it paused; Quit finishes requested saves.
 
 <p align="center">
   <img src="docs/assets/themes.png"
@@ -838,9 +840,10 @@ the tray brings it back.
 The tray icon shows whether Speakeasy is ready, recording, working (for example loading the model or
 transcribing), paused, or needs attention. The Mac menu bar icon is monochrome, so it marks
 recording with a badge instead of red. The menu pauses or resumes dictation, starts or finishes a
-recording, cancels, opens Settings, and quits; on Windows and Mac it also starts a Show of the
-screen or of an area and opens the Shows library. **Pause dictation**, or **Pause** in Settings,
-releases the shortcut and the model until you resume.
+recording, cancels, pastes the last dictation, opens Settings, and quits; on Windows and Mac it also
+picks the dictation style and preset, starts a Show of the screen or of an area, copies or opens the
+last Show, and opens the Shows library. **Pause dictation**, or **Pause** in Settings, releases the
+shortcut and the model until you resume.
 
 ### Text delivery
 
@@ -880,18 +883,18 @@ commands targeting Shows or private practice are refused. Read status after an u
 instead of blindly retrying. `style` changes the next-recording default; `dictation start --style`
 overrides only that recording.
 
-`dictation start --print` works only after you turn on **Scripts can read their dictations** in
-Settings, Dictation, Writing; until then it is refused. It records the same hands-free dictation,
-but its words never reach the focused app, and the pill says To script while it records. The switch
-records your consent; it is not a security boundary, because any program running as you can also
-change your settings. `dictation stop TOKEN --print` finishes it, waits up to two minutes for
-recognition, and returns the text as the reply's `text` field, cleaned up like any dictation in its
-style. A printed dictation pastes nothing; Paste last dictation can still paste it. Stopping it
-without `--print`, or finishing it with the shortcut, pastes nothing and says so. Printing a
-dictation started without `--print` is refused, as is printing one twice, and one that ends empty,
-cancelled, or failed refuses its caller. Keyboard dictations, Shows, practice, and earlier
-dictations can never be read back. Text over the 64 KiB reply limit is refused; paste it instead.
-These explicit commands work on all three platforms; Linux's desktop-binding `--toggle` and
+`dictation start --print` works only after you turn on **Scripts can read their dictations** under
+**Dictation → Writing** in Settings; until then it is refused. It records the same hands-free
+dictation, but its words never reach the focused app, and the pill says **To script** while it
+records. The switch records your consent; it is not a security boundary, because any program running
+as you can also change your settings. `dictation stop TOKEN --print` finishes it, waits up to two
+minutes for recognition, and returns the text as the reply's `text` field, cleaned up like any
+dictation in its style. A printed dictation pastes nothing; Paste last dictation can still paste it.
+Stopping it without `--print`, or finishing it with the shortcut, pastes nothing and says so.
+Printing a dictation started without `--print` is refused, as is printing one twice, and one that
+ends empty, cancelled, or failed refuses its caller. Keyboard dictations, Shows, practice, and
+earlier dictations can never be read back. Text too long for the 64 KiB reply is refused; paste it
+instead. These explicit commands work on all three platforms; Linux's desktop-binding `--toggle` and
 `--cancel` still require Desktop bindings.
 
 ## Build and verify
@@ -1016,9 +1019,9 @@ every ordering of events against both within the bounds
   the five-minute limit. It accesses no microphone, screen, input, or clipboard. The Check
   workflow's optional `movie` input also encodes a synthetic color-and-motion clip on Windows and
   normalizes its fragment headers into the published format and checks the retained prefix through
-  the Mac reader, including HD neutral midtones, without accessing live devices. `movie_fixture_run`
-  reuses the synthetic Windows artifact from a specified run for a focused Mac check; it skips the
-  normal native matrix.
+  the Mac reader, including HD neutral midtones, without accessing live devices. With `movie`,
+  `movie_fixture_run` reuses the synthetic Windows artifact from a specified run for a focused Mac
+  check; it skips the normal native matrix.
 - On macOS, set `SPEAKEASY_MAC_MOVIE_DIRECTORY` to a new artifact directory and run
   `cargo test --locked -p speakeasy-platform native_mac_movie_encoding -- --ignored --test-threads=1`.
   It checks native H.264 fragments, held and irregular timing, resized content, colors, bounded
