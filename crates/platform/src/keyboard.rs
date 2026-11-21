@@ -11,6 +11,9 @@ const SHIFT_TAP_GAP: Duration = Duration::from_millis(400);
 
 const APPLICATION_SHORTCUT: Duration = Duration::from_millis(250);
 
+#[cfg(any(target_os = "windows", test))]
+const SLOWEST_AUTOREPEAT: Duration = Duration::from_millis(2_500);
+
 #[derive(Default)]
 struct Chord {
     hold: Hold,
@@ -30,8 +33,12 @@ impl Chord {
         (mem::take(&mut self.hold) == Hold::Held).then_some(Action::Release)
     }
 
-    fn hold_key(&mut self, key: HoldKey, down: bool) -> Decision {
+    fn hold_key(&mut self, key: HoldKey, stroke: Stroke) -> Decision {
         let bit = key.bit();
+        if stroke == Stroke::Press {
+            self.swallowing &= !bit;
+        }
+        let down = stroke != Stroke::Release;
         let acts = down
             && self.hold == Hold::Held
             && (!matches!(key, HoldKey::PasteLast | HoldKey::Submit) || self.swallowing & bit == 0);
@@ -64,12 +71,7 @@ impl Chord {
 
     fn interrupt_recording(&mut self, input: &InputSender) {
         Action::Interrupt.deliver(input);
-        self.miss_events();
-    }
-
-    fn miss_events(&mut self) -> bool {
-        self.swallowing = 0;
-        self.interrupt()
+        self.interrupt();
     }
 
     #[cfg(any(target_os = "macos", test))]
@@ -78,11 +80,25 @@ impl Chord {
     }
 
     fn reconcile(&mut self, held: bool) -> bool {
-        if held || self.hold == Hold::Released {
-            return false;
+        !held && self.release().is_some()
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Stroke {
+    Press,
+    Repeat,
+    Release,
+}
+
+impl Stroke {
+    #[cfg(any(target_os = "macos", test))]
+    const fn new(down: bool, repeat: bool) -> Self {
+        match (down, repeat) {
+            (false, _) => Self::Release,
+            (true, false) => Self::Press,
+            (true, true) => Self::Repeat,
         }
-        self.swallowing = 0;
-        self.release().is_some()
     }
 }
 
@@ -368,6 +384,26 @@ pub(super) struct Windows {
     chord: Chord,
     chord_keys_down: [bool; 5],
     taps: ShiftTaps,
+    latest: Option<LatestPress>,
+}
+
+#[cfg(any(target_os = "windows", test))]
+#[derive(Clone, Copy)]
+struct LatestPress {
+    key: u16,
+    at: Instant,
+    repeating: bool,
+}
+
+#[cfg(any(target_os = "windows", test))]
+impl LatestPress {
+    fn repeated_by(self, key: u16, at: Instant) -> bool {
+        self.key == key && at.saturating_duration_since(self.at) <= SLOWEST_AUTOREPEAT
+    }
+
+    fn stopped_repeating(self, key: u16, at: Instant) -> bool {
+        self.key == key && self.repeating && !self.repeated_by(key, at)
+    }
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -437,9 +473,35 @@ impl Windows {
         physical: Physical,
         at: Instant,
     ) -> Decision {
-        let missed_release = self.reconcile(physical.chord_keys);
-        self.decide(key, down, physical, at)
+        let key = u16::try_from(key).unwrap_or(u16::MAX);
+        let previous = self.latest;
+        let stroke = self.stroke(key, down, at);
+        let f13_released = if key == Self::F13 {
+            stroke == Stroke::Press
+        } else {
+            previous.is_some_and(|latest| latest.stopped_repeating(Self::F13, at))
+        };
+        let missed_release = self.reconcile(physical.chord_keys, f13_released);
+        self.decide(key, stroke, physical, at)
             .after_missed_release(missed_release)
+    }
+
+    fn stroke(&mut self, key: u16, down: bool, at: Instant) -> Stroke {
+        if !down {
+            if self.latest.is_some_and(|latest| latest.key == key) {
+                self.latest = None;
+            }
+            return Stroke::Release;
+        }
+        let repeating = self
+            .latest
+            .is_some_and(|latest| latest.repeated_by(key, at));
+        self.latest = Some(LatestPress { key, at, repeating });
+        if repeating {
+            Stroke::Repeat
+        } else {
+            Stroke::Press
+        }
     }
 
     pub(super) fn types(key: u32, down: bool, decision: &Decision) -> bool {
@@ -447,13 +509,17 @@ impl Windows {
             && u16::try_from(key).is_ok_and(|key| !Self::MODIFIERS.contains(&key))
     }
 
-    fn reconcile(&mut self, chord_keys: [bool; 5]) -> bool {
+    fn reconcile(&mut self, chord_keys: [bool; 5], f13_released: bool) -> bool {
         for ((key, tracked), physically_down) in Self::CHORD_KEYS
             .into_iter()
             .zip(self.chord_keys_down.iter_mut())
             .zip(chord_keys)
         {
-            *tracked &= physically_down || key == Self::F13;
+            *tracked &= if key == Self::F13 {
+                !f13_released
+            } else {
+                physically_down
+            };
         }
         self.chord.reconcile(self.chord_held())
     }
@@ -462,8 +528,8 @@ impl Windows {
         self.shortcut.held(self.chord_keys_down)
     }
 
-    fn decide(&mut self, key: u32, down: bool, physical: Physical, at: Instant) -> Decision {
-        let key = u16::try_from(key).unwrap_or(u16::MAX);
+    fn decide(&mut self, key: u16, stroke: Stroke, physical: Physical, at: Instant) -> Decision {
+        let down = stroke != Stroke::Release;
         if Self::SHIFT_KEYS.contains(&key) {
             let pinned = self.taps.shift(down, physical.other_shortcut, at);
             return Decision::pass(pinned.map(Action::Pin));
@@ -485,7 +551,7 @@ impl Windows {
         if down && self.defers_to_applications(at) {
             return self.chord.other_key(true);
         }
-        self.chord.hold_key(hold_key, down)
+        self.chord.hold_key(hold_key, stroke)
     }
 
     fn chord_key(
@@ -664,7 +730,7 @@ impl Mac {
 
     pub(super) fn missed_events(&mut self, input: &InputSender) {
         self.taps.interrupt();
-        if self.chord.miss_events() {
+        if self.chord.interrupt() {
             Action::Interrupt.deliver(input);
         }
     }
@@ -731,13 +797,15 @@ impl Mac {
                 self.taps.interrupt();
                 Decision::pass(None)
             },
-            MacEvent::Key { code, down, .. } => {
+            MacEvent::Key {
+                code, down, repeat, ..
+            } => {
                 self.taps.interrupt();
                 match Self::hold_key(code) {
                     Some(_) if down && self.defers_to_applications(at) => {
                         self.chord.other_key(true)
                     },
-                    Some(key) => self.chord.hold_key(key, down),
+                    Some(key) => self.chord.hold_key(key, Stroke::new(down, repeat)),
                     None if code == Self::ESCAPE => Decision::pass(down.then_some(Action::Escape)),
                     None => self.chord.other_key(down),
                 }

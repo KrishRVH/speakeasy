@@ -143,17 +143,21 @@ fn mac_holding() -> Mac {
 #[test]
 fn paste_last_is_a_single_held_press_and_its_release_stays_swallowed() {
     let mut chord = Chord::default();
-    assert!(!chord.hold_key(HoldKey::PasteLast, true).swallows());
+    assert!(!chord.hold_key(HoldKey::PasteLast, Stroke::Press).swallows());
     chord.press();
-    let first = chord.hold_key(HoldKey::PasteLast, true);
+    let first = chord.hold_key(HoldKey::PasteLast, Stroke::Press);
     assert!(first.swallows());
     assert_eq!(first.action, Some(Action::PasteLast));
-    let repeat = chord.hold_key(HoldKey::PasteLast, true);
+    let repeat = chord.hold_key(HoldKey::PasteLast, Stroke::Repeat);
     assert!(repeat.swallows());
     assert_eq!(repeat.action, None);
     chord.release();
-    assert!(chord.hold_key(HoldKey::PasteLast, false).swallows());
-    assert!(!chord.hold_key(HoldKey::PasteLast, true).swallows());
+    assert!(
+        chord
+            .hold_key(HoldKey::PasteLast, Stroke::Release)
+            .swallows()
+    );
+    assert!(!chord.hold_key(HoldKey::PasteLast, Stroke::Press).swallows());
 }
 
 #[test]
@@ -818,8 +822,9 @@ fn a_missed_release_lets_s_reach_the_app() {
 #[test]
 fn a_show_key_whose_release_went_unseen_reaches_the_app_outside_a_hold() {
     let (mut policy, both) = windows_holding();
-    policy.observe(LETTER_S, true, both, now());
-    let typed = policy.observe(LETTER_S, true, NONE_HELD, now());
+    let start = now();
+    policy.observe(LETTER_S, true, both, start);
+    let typed = policy.observe(LETTER_S, true, NONE_HELD, start + SLOWEST_AUTOREPEAT * 2);
     assert_eq!(delivered(&typed), [Action::Release]);
     assert!(!typed.swallows());
 
@@ -837,13 +842,89 @@ fn a_show_key_whose_release_went_unseen_reaches_the_app_outside_a_hold() {
 }
 
 #[test]
-fn a_lifecycle_interrupt_forgets_swallowed_hold_keys() {
+fn windows_takes_a_press_as_autorepeat_only_while_it_is_the_latest_at_repeat_pace() {
+    let start = now();
+    let at = |millis| start + Duration::from_millis(millis);
+    let (mut policy, both) = windows_holding();
+    assert_eq!(
+        delivered(&policy.observe(SPACE, true, both, at(0))),
+        [Action::Lock]
+    );
+    assert_eq!(
+        delivered(&policy.observe(LEFT_WINDOWS, false, both, at(100))),
+        [Action::Release]
+    );
+    for millis in [1_000, 3_000, 5_000] {
+        assert!(
+            policy
+                .observe(SPACE, true, NONE_HELD, at(millis))
+                .swallows(),
+            "A held Space repeated into the editor at {millis} ms"
+        );
+    }
+    assert!(
+        !policy.observe(SPACE, true, NONE_HELD, at(8_000)).swallows(),
+        "A Space pressed long after its unseen release was swallowed"
+    );
+
+    let (mut policy, both) = windows_holding();
+    assert!(policy.observe(SPACE, true, both, at(0)).swallows());
+    policy.observe(LEFT_WINDOWS, false, both, at(100));
+    policy.observe(LETTER_Q, true, NONE_HELD, at(200));
+    policy.observe(LETTER_Q, false, NONE_HELD, at(250));
+    assert!(
+        !policy.observe(SPACE, true, NONE_HELD, at(300)).swallows(),
+        "A Space pressed after other typing was taken as a repeat"
+    );
+}
+
+#[test]
+fn mac_takes_autorepeat_from_the_event_for_hold_keys() {
+    let mut mac = mac_holding();
+    assert_eq!(
+        delivered(&mac.observe(key(MAC_SPACE, true, FN_HELD), keyboard_fn_up, now())),
+        [Action::Lock]
+    );
+    assert_eq!(
+        delivered(&mac.observe(function(false), keyboard_fn_up, now())),
+        [Action::Release]
+    );
+    let repeat = MacEvent::Key {
+        code: MAC_SPACE,
+        down: true,
+        repeat: true,
+        held: NO_MODIFIERS,
+    };
+    assert!(
+        mac.observe(repeat, keyboard_fn_up, now()).swallows(),
+        "A held Space repeated into the editor"
+    );
+    assert!(
+        !mac.observe(key(MAC_SPACE, true, NO_MODIFIERS), keyboard_fn_up, now())
+            .swallows(),
+        "A fresh Space after its unseen release was swallowed"
+    );
+}
+
+#[test]
+fn a_lifecycle_interrupt_keeps_a_held_key_swallowed_until_a_fresh_press() {
     let (sender, _events) = async_channel::bounded(4);
     let input = InputSender::new(sender);
     let (mut policy, both) = windows_holding();
-    assert!(policy.observe(SPACE, true, both, now()).swallows());
+    let start = now();
+    assert!(policy.observe(SPACE, true, both, start).swallows());
     policy.interrupt(&input);
-    assert!(!policy.observe(SPACE, true, both, now()).swallows());
+    let repeat = start + Duration::from_millis(500);
+    assert!(
+        policy.observe(SPACE, true, both, repeat).swallows(),
+        "A Space held through the interrupt repeated into the editor"
+    );
+    assert!(
+        !policy
+            .observe(SPACE, true, NONE_HELD, repeat + SLOWEST_AUTOREPEAT * 2)
+            .swallows(),
+        "A fresh Space after its release went unseen was swallowed"
+    );
 }
 
 #[test]
@@ -1036,23 +1117,32 @@ fn mac_function_space_and_escape_are_observed_without_native_events() {
 }
 
 #[test]
-fn hands_free_space_stays_swallowed_until_its_release() {
-    let mut chord = Chord::default();
-    assert_eq!(chord.press(), Some(Action::Press));
-    assert!(chord.hold_key(HoldKey::Space, true).swallows());
-    assert!(
-        chord.hold_key(HoldKey::Space, true).swallows(),
-        "A held shortcut must swallow Space repeats"
-    );
-    assert_eq!(chord.release(), Some(Action::Release));
-    assert!(
-        chord.hold_key(HoldKey::Space, true).swallows(),
-        "Releasing the shortcut must not leak a held Space into the editor"
-    );
-    assert!(chord.hold_key(HoldKey::Space, false).swallows());
-    assert!(
-        !chord.hold_key(HoldKey::Space, true).swallows(),
-        "A fresh Space belongs to the editor"
-    );
-    assert!(!chord.hold_key(HoldKey::Space, false).swallows());
+fn a_held_hold_key_stays_swallowed_however_the_hold_ends_until_it_is_released_or_pressed_afresh() {
+    type Ending = (&'static str, fn(&mut Chord));
+    let ends: [Ending; 3] = [
+        ("a release", |chord| assert!(chord.release().is_some())),
+        ("a missed release", |chord| assert!(chord.reconcile(false))),
+        ("an interrupt", |chord| assert!(chord.interrupt())),
+    ];
+    for key in [HoldKey::Space, HoldKey::Submit] {
+        for (ending, end) in ends {
+            let mut chord = Chord::default();
+            assert_eq!(chord.press(), Some(Action::Press));
+            assert!(chord.hold_key(key, Stroke::Press).swallows());
+            assert!(
+                chord.hold_key(key, Stroke::Repeat).swallows(),
+                "A held shortcut must swallow repeats"
+            );
+            end(&mut chord);
+            assert!(
+                chord.hold_key(key, Stroke::Repeat).swallows(),
+                "After {ending}, a held key repeated into the editor"
+            );
+            assert!(
+                !chord.hold_key(key, Stroke::Press).swallows(),
+                "After {ending}, a fresh press whose release went unseen was swallowed"
+            );
+            assert!(!chord.hold_key(key, Stroke::Release).swallows());
+        }
+    }
 }
