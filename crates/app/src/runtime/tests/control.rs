@@ -174,6 +174,7 @@ async fn ordinary_control_cannot_finish_a_show_or_start_over_practice() -> anyho
     h.close().await
 }
 
+mod configuration;
 mod presets;
 
 #[tokio::test(start_paused = true)]

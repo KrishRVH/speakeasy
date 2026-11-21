@@ -751,7 +751,11 @@ impl<P: Payload> Machine<P> {
             },
             Event::Revert(config) => {
                 let outcome = mem::replace(&mut self.outcome, Outcome::Idle);
+                let lost = self
+                    .notice
+                    .take_if(|notice| matches!(notice, Notice::NarrationLost(_)));
                 self.configure(config, outcome, env);
+                self.notice = lost.or_else(|| self.notice.take());
                 None
             },
             Event::Control { call, command } => return self.control(now, call, command, env),
