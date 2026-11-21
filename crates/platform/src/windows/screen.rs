@@ -528,12 +528,12 @@ impl Capture {
         if unsafe { self.device.GetDeviceRemovedReason() }.is_err() {
             return Err(Failure::DeviceLost);
         }
-        let part = self.part()?;
+        let part = current_part(self.target)?;
         let mut newest = None;
         while let Some(frame) = self.next_frame()? {
             newest = Some(frame);
         }
-        let Some(frame) = newest else {
+        let Some((part, frame)) = part.zip(newest) else {
             return Ok(false);
         };
         let size = frame.ContentSize()?;
@@ -570,7 +570,7 @@ impl Capture {
         let Some(PendingFrame { frame, at, part }) = self.pending.take() else {
             return Ok(None);
         };
-        if self.part()? != part {
+        if current_part(self.target)? != Some(part) {
             return Ok(None);
         }
         let surface: IDirect3DDxgiInterfaceAccess = frame.Surface()?.cast()?;
@@ -583,7 +583,7 @@ impl Capture {
         }
         let [left, top, ..] = crop;
         let image = self.readback.read(&self.context, &texture, [left, top])?;
-        if self.part()? != part {
+        if current_part(self.target)? != Some(part) {
             return Ok(None);
         }
         Ok(Some(Frame {
@@ -591,10 +591,6 @@ impl Capture {
             image,
             part: part_of_box(crop, self.content),
         }))
-    }
-
-    fn part(&self) -> Result<Part, WindowGone> {
-        current_part(self.target)?.ok_or(WindowGone::Closed)
     }
 }
 
