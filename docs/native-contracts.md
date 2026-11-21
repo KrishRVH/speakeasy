@@ -181,10 +181,11 @@ Context/device/event references are adopted and released once; device references
 context. The EIS descriptor transfers to libei, while readiness and keymap access own duplicates.
 The sender and native pointers remain on their desktop thread/LocalSet. Prepared input borrows the
 sender exclusively from capability/modifier validation through submission, so queued dispatch cannot
-replace the selected device during that interval. EIS modifier events govern paste readiness; a
-paused device returns to neutral and resuming preserves the last reported state. Global shortcut
-signals can arrive out of order with those events and never reset the modifier state. A disconnect
-ends the service even though later dispatch calls may succeed.
+replace the selected device during that interval. EIS modifier events govern paste readiness. A
+keyboard starts neutral and returns to neutral when paused, so a resumed keyboard with a usable
+layout can paste before its first modifier event; resuming preserves the last reported state. Global
+shortcut signals can arrive out of order with those events and never reset the modifier state. A
+disconnect ends the service even though later dispatch calls may succeed.
 
 Portal transfer descriptors are owned, set nonblocking before AsyncFd registration and retained
 until the transfer future drops. Portal signal match rules name the portal's unique bus name rather
