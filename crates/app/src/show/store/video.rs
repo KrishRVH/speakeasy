@@ -17,7 +17,6 @@ pub(crate) const CANCELLED: &str = "Video export cancelled";
 
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Options {
-    pub span: Option<Span>,
     pub captions: bool,
 }
 
@@ -61,12 +60,14 @@ pub(crate) fn write(
     directory: &Path,
     destination: &Path,
     options: Options,
+    clip: impl FnOnce(&Manifest) -> anyhow::Result<Option<Span>>,
     cancelled: impl Fn() -> bool + Sync,
 ) -> anyhow::Result<Exported> {
     write_with(
         directory,
         destination,
         options,
+        clip,
         cancelled,
         super::private_directory,
     )
@@ -76,6 +77,7 @@ fn write_with(
     directory: &Path,
     destination: &Path,
     options: Options,
+    clip: impl FnOnce(&Manifest) -> anyhow::Result<Option<Span>>,
     cancelled: impl Fn() -> bool + Sync,
     scratch: impl FnOnce() -> anyhow::Result<PathBuf>,
 ) -> anyhow::Result<Exported> {
@@ -87,10 +89,11 @@ fn write_with(
         Manifest::FILE,
         recall::MANIFEST_LIMIT,
     )?)?;
+    let span = clip(&manifest)?;
     let mut reading = movie::Reading::required(directory, manifest.recording().duration)?;
     let voice = voice::read(directory, SystemTime::now())?;
     let audio = voice.audio();
-    let timing = timeline::Timing::new(&reading.movie, options.span, audio)?;
+    let timing = timeline::Timing::new(&reading.movie, span, audio)?;
     let scene = Annotations::new(manifest.recording(), manifest.marks())?;
     let work = super::staging(&scratch()?).context(
         "Cannot create private video scratch space; check the Shows folder's space and permissions",

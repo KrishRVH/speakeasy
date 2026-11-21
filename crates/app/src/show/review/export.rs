@@ -72,13 +72,16 @@ impl Review {
         let (edit, receipt, cancel) = match kind {
             Kind::Video => {
                 let (cancel, cancelled) = async_channel::bounded(1);
-                let options = video::Options {
-                    captions: true,
-                    ..video::Options::default()
-                };
+                let options = video::Options { captions: true };
                 let (edit, receipt) = Edit::new(move || {
-                    video::write(&show, &destination, options, || cancelled.is_closed())
-                        .map(|exported| exported.note())
+                    video::write(
+                        &show,
+                        &destination,
+                        options,
+                        |_| Ok(None),
+                        || cancelled.is_closed(),
+                    )
+                    .map(|exported| exported.note())
                 });
                 (edit, receipt, Some(cancel))
             },

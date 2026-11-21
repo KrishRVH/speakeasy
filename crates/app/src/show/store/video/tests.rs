@@ -144,15 +144,27 @@ fn refusal_and_cancellation_never_replace_an_existing_file() -> anyhow::Result<(
     fs::create_dir(&show)?;
     let destination = root.path().join("kept.mp4");
     fs::write(&destination, b"existing user edit")?;
-    let error = write(&show, &destination, Options::default(), || false)
-        .err()
-        .expect("An existing export must be refused");
+    let error = write(
+        &show,
+        &destination,
+        Options::default(),
+        |_| Ok(None),
+        || false,
+    )
+    .err()
+    .expect("An existing export must be refused");
     assert!(error.to_string().contains("choose a new MP4 file"));
     assert_eq!(fs::read(&destination)?, b"existing user edit");
     let destination = root.path().join("cancelled.mp4");
-    let error = write(&show, &destination, Options::default(), || true)
-        .err()
-        .expect("Cancellation must stop before opening private content");
+    let error = write(
+        &show,
+        &destination,
+        Options::default(),
+        |_| Ok(None),
+        || true,
+    )
+    .err()
+    .expect("Cancellation must stop before opening private content");
     assert_eq!(error.to_string(), "Video export cancelled");
     assert!(!destination.exists());
     Ok(())
@@ -203,6 +215,39 @@ fn a_clip_after_the_last_image_is_bounded_by_the_voice_and_names_the_end() -> an
             )
         );
     }
+    Ok(())
+}
+
+#[test]
+fn a_clip_is_chosen_from_the_show_the_export_reads_even_if_its_path_is_replaced()
+-> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let show = root.path().join("show");
+    fs::create_dir(&show)?;
+    let manifest = br#"{
+        "version":3,"duration":500,"surface":{"width":4,"height":2},
+        "strokes":[],"pins":[],"actions":[],"narration":{"words":[]},"marks":[],
+        "keyframes":[{"index":1,"at":250,"reason":"middle","event":"fixture","marks":[0,0]}]
+    }"#;
+    fs::write(show.join(Manifest::FILE), manifest)?;
+    movie::tests::recovered_movie(&show, Moment::from_millis(500))?;
+    let scratch = root.path().join("scratch");
+    let error = write_with(
+        &show,
+        &root.path().join("clip.mp4"),
+        Options::default(),
+        |_| {
+            fs::rename(&show, root.path().join("moved"))?;
+            fs::create_dir(&show)?;
+            fs::write(show.join(Manifest::FILE), manifest)?;
+            Ok(None)
+        },
+        || scratch.exists(),
+        || Ok(scratch.clone()),
+    )
+    .err()
+    .context("The export finished instead of stopping at its cancellation check")?;
+    assert_eq!(error.to_string(), CANCELLED);
     Ok(())
 }
 
@@ -311,10 +356,8 @@ fn synthetic_ffmpeg_export_preserves_voice_ink_captions_and_clip_timing() -> any
     let report = write_with(
         &directory,
         &destination,
-        Options {
-            captions: true,
-            ..Options::default()
-        },
+        Options { captions: true },
+        |_| Ok(None),
         || false,
         || Ok(scratch.clone()),
     )?;
@@ -396,12 +439,12 @@ fn synthetic_ffmpeg_export_preserves_voice_ink_captions_and_clip_timing() -> any
     let report = write_with(
         &directory,
         &clipped,
-        Options {
-            span: Some(Span::new(
+        Options { captions: true },
+        |_| {
+            Ok(Some(Span::new(
                 Moment::from_millis(1000),
                 Moment::from_millis(2000),
-            )),
-            captions: true,
+            )))
         },
         || false,
         || Ok(scratch.clone()),
@@ -428,6 +471,7 @@ fn synthetic_ffmpeg_export_preserves_voice_ink_captions_and_clip_timing() -> any
         &directory,
         &unpainted,
         Options::default(),
+        |_| Ok(None),
         || false,
         || Ok(scratch.clone()),
     )?;
@@ -455,6 +499,7 @@ fn synthetic_ffmpeg_export_preserves_voice_ink_captions_and_clip_timing() -> any
             &directory,
             &cancelled,
             Options::default(),
+            |_| Ok(None),
             || {
                 if checks.try_recv().is_ok() {
                     return false;

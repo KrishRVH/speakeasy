@@ -1,18 +1,10 @@
-use std::{
-    ffi::OsString,
-    io,
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{ffi::OsString, io, path::PathBuf, time::Duration};
 
 use anyhow::Context as _;
-use speakeasy_show::Span;
+use speakeasy_show::{Manifest, Span};
 
 use super::{AROUND, output};
-use crate::show::{
-    evidence::query::Query,
-    store::{recall, video},
-};
+use crate::show::{evidence::query::Query, store::video};
 
 #[derive(PartialEq, Eq)]
 pub(crate) struct Request {
@@ -73,10 +65,7 @@ pub(super) fn parse(mut args: impl Iterator<Item = OsString>) -> anyhow::Result<
 impl Request {
     pub(super) fn write(self, out: &mut impl io::Write) -> anyhow::Result<()> {
         let directory = super::locate(&self.directory)?;
-        let span = self
-            .focus
-            .map(|focus| widened(&directory, &focus, self.around))
-            .transpose()?;
+        let (focus, around) = (self.focus, self.around);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
@@ -84,8 +73,12 @@ impl Request {
             directory,
             self.destination,
             video::Options {
-                span,
                 captions: self.captions,
+            },
+            move |manifest| {
+                focus
+                    .map(|focus| widened(manifest, &focus, around))
+                    .transpose()
             },
         ))?;
         if self.json {
@@ -97,12 +90,12 @@ impl Request {
     }
 }
 
-fn widened(directory: &Path, focus: &Query, around: Duration) -> anyhow::Result<Span> {
+fn widened(manifest: &Manifest, focus: &Query, around: Duration) -> anyhow::Result<Span> {
     let span = if let Query::At(at) = focus {
         Span::at(*at)
     } else {
         focus
-            .resolve(&recall::Entry::open(directory, None)?.show?.manifest)?
+            .resolve(manifest)?
             .selected
             .context("Several phrases match; select one with --match K before exporting")?
     };
@@ -116,6 +109,7 @@ async fn export(
     directory: PathBuf,
     destination: PathBuf,
     options: video::Options,
+    clip: impl FnOnce(&Manifest) -> anyhow::Result<Option<Span>> + Send + 'static,
 ) -> anyhow::Result<video::Exported> {
     let interrupt = tokio::signal::ctrl_c();
     tokio::pin!(interrupt);
@@ -125,7 +119,9 @@ async fn export(
     }
     let (cancel, receiver) = async_channel::bounded::<()>(1);
     let mut work = tokio::task::spawn_blocking(move || {
-        video::write(&directory, &destination, options, || receiver.is_closed())
+        video::write(&directory, &destination, options, clip, || {
+            receiver.is_closed()
+        })
     });
     tokio::select! {
         result = &mut work => result.map_err(|_private_panic| anyhow::anyhow!("Video export stopped"))?,

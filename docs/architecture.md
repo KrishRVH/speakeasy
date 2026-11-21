@@ -660,7 +660,8 @@ module unless a test file is named.
   contain only intersecting words. The plain-text subtitle decoder receives neutral style resets
   after braces and backslashes so markup-like narration stays literal through `mov_text` encoding.
   Missing voice and annotation coverage are reported. The
-  [`show video` command](../crates/app/src/show/command/video.rs) and Review share this exporter;
+  [`show video` command](../crates/app/src/show/command/video.rs) and Review share this exporter,
+  which resolves a `--mark` or `--phrase` focus against the manifest it read through its handle;
   cancellation kills and reaps both FFmpeg children before staging is removed. Raw audio, captions,
   and source copies use the managed Shows folder's private staging; the existing one-hour sweep
   reclaims crash leftovers. Only the final MP4 stages beside its chosen destination for publication

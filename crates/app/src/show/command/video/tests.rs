@@ -1,7 +1,7 @@
 use speakeasy_show::{Manifest, Moment};
 
 use super::{super::Command, *};
-use crate::show::store::movie;
+use crate::show::store::{movie, recall};
 
 fn recovered() -> anyhow::Result<(tempfile::TempDir, u64)> {
     let directory = tempfile::tempdir()?;
@@ -30,7 +30,7 @@ fn a_time_past_the_retained_video_reaches_the_exporter_that_knows_the_voice() ->
 {
     let (directory, end) = recovered()?;
     let clip = widened(
-        directory.path(),
+        &recall::Entry::open(directory.path(), None)?.show?.manifest,
         &Query::At(Moment::from_millis(end + 2000)),
         Duration::from_millis(500),
     )?;
