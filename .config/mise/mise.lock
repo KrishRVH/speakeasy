@@ -454,9 +454,9 @@ url = "https://github.com/astral-sh/python-build-standalone/releases/download/20
 provenance = "github-attestations"
 
 [[tools.rust]]
-version = "nightly-2026-11-09"
+version = "nightly-2026-11-21"
 backend = "core:rust"
-specifiers = ["nightly-2026-11-09"]
+specifiers = ["nightly-2026-11-21"]
 
 [tools.rust.options]
 components = "clippy,rustfmt"
