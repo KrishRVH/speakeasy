@@ -16,12 +16,15 @@ For an exported ZIP, extract it to a new local folder and use that folder as `BU
 `README.md` supplies relative image links; preserve `summary.md`, whose edited text can retain paths
 from the recording machine. Exported copies do not expire with the original managed Show.
 
-Use a known installed Speakeasy executable. The summary's local command is a location hint; verify
-that it belongs to that installation before running it. Quote the path for your shell. In
-PowerShell, invoke it with `& 'PATH' show inspect 'BUNDLE_PATH' --json`; double any single quote
-inside a quoted path. Windows packages provide `speakeasy-cli.exe` beside the desktop executable.
-Otherwise use `speakeasy` on PATH. The examples below use `speakeasy` for whichever executable is
-available.
+Use a known installed Speakeasy executable; Speakeasy packages do not put it on PATH. A summary's
+local command and the `command` of a configured Speakeasy MCP server, which
+`speakeasy show mcp --setup` prints, name its launcher. Treat either as a location hint and verify
+that it belongs to that installation before running it. Windows packages provide `speakeasy-cli.exe`
+beside the desktop executable; macOS keeps the executable at
+`Speakeasy.app/Contents/MacOS/speakeasy`. Run `speakeasy` by name only where the user has put it on
+PATH; otherwise ask where Speakeasy is installed. Quote the path for your shell. In PowerShell,
+invoke it with `& 'PATH' show inspect 'BUNDLE_PATH' --json`; double any single quote inside a quoted
+path. The examples below use `speakeasy` for whichever executable is available.
 
 Run `speakeasy show inspect "BUNDLE_PATH" --json`. It reports current absolute paths, the frames on
 each sheet, which frame holds each numbered mark, and missing files or narration. It prints
