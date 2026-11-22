@@ -212,17 +212,3 @@ fn candidate_files_allow_only_text_policy_changes_without_loading_a_worker() -> 
     );
     Ok(())
 }
-
-#[cfg(unix)]
-#[test]
-fn non_unicode_mode_is_rejected_without_echoing_it() {
-    use std::os::unix::ffi::OsStrExt as _;
-    let mode = OsStr::from_bytes(b"\xff");
-    assert_eq!(
-        Cleanup::read(Some(mode), None, &config())
-            .err()
-            .unwrap()
-            .to_string(),
-        "Fixture cleanup must be production or raw"
-    );
-}

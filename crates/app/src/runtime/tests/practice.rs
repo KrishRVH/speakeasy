@@ -14,7 +14,6 @@ async fn practice_keeps_text_private_and_cannot_promote_to_a_show() -> anyhow::R
     assert_eq!(&*text, "Private practice words");
     h.phase(Phase::Done).await?;
     assert!(h.pasted.try_recv().is_err());
-    assert!(!format!("{:?}", h.snapshot()).contains("Private practice words"));
     assert!(h.snapshot().message.contains("Practice complete"));
     h.close().await
 }

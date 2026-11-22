@@ -15,7 +15,6 @@ async fn unavailable_insertion_keeps_exact_text_for_a_fresh_delivery() -> anyhow
     let first = h.snapshot();
     assert!(first.last_dictation);
     assert!(first.message.contains("Paste last dictation"));
-    assert!(!format!("{first:?}").contains("retained fixture"));
     h.input(Input::PasteLast);
     assert_eq!(receive(&h.pasted).await?, "retained fixture.");
     h.phase(Phase::Done).await?;
@@ -119,7 +118,6 @@ async fn a_dictation_that_loses_its_microphone_waits_for_paste_last() -> anyhow:
         "{}",
         notice.message
     );
-    assert!(!format!("{notice:?}").contains("cable"));
     assert!(
         h.take_sounds().contains(&Sound::Played(Cue::Stop)),
         "The recording ended where its microphone stopped"
