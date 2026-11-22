@@ -184,8 +184,8 @@ instead. With nothing to point at, the front window frames the keyframe, along w
 changed beside it. Edges move clear of nearby text, never past the framed window. A keyframe whose
 crop would cover most of the screen stays whole. Window and area Shows keep the framing you chose.
 To frame windows, a screen Show notes where windows sit and which belong to the same app; never
-their titles, app names, or contents. Only the private recovery checkpoint keeps those positions.
-The summary names cropped frames, `show.json` gives each keyframe's `crop` as left, top, right, and
+their titles, app names, or contents. Only the recovery checkpoint keeps those positions. The
+summary names cropped frames, `show.json` gives each keyframe's `crop` as left, top, right, and
 bottom fractions of the screen, and the retained frames still hold the whole screen. The pill says
 **Show copied** and the summary is on the clipboard: paste it into your agent, and the summary tells
 the agent how to read the Show. Shows record on Windows, and experimentally on Mac, but not on
@@ -199,8 +199,8 @@ five-minute limit. Resized windows fit inside a fixed canvas; a quiet ending hol
 The video has no audio or drawn annotations. Its timing file, `recording.json`, records the session
 origin, surviving video coverage, timed content rectangles, and the separate horizon of marks and
 narration. Changing the display size, position, or scale ends capture; start a new Show. Capture or
-disk failure can shorten video coverage. Recovery retains only complete fragments; if none were
-written, the stills save with a video-loss notice. A failed copy of surviving video keeps the
+disk failure can shorten video coverage. Recovery retains only complete fragments; if the video
+cannot be read, the stills save with a video-loss notice. A failed copy of surviving video keeps the
 checkpoint for recovery. Mac window Shows retain sampled frames only.
 
 <p align="center">
@@ -315,10 +315,10 @@ selected Show from expiring. **Allow expiry** restores its original expiry date,
 recording; for an already overdue Show the button says **Allow cleanup**, and cleanup can remove it
 on its next pass. Keeping a Show changes only its `.pinned` marker, even when Speakeasy cannot read
 the Show. Choose **More actions → Delete Show…** to permanently delete the selected Show, including
-a kept or unreadable one. Confirmation names the Show and removes its saved files and associated
-recovery audio; exported copies stay. Cancel or Escape dismisses the confirmation. If its audio is
-still recording or recovering, let that work finish and try deletion again. Keep, Discard, and
-confirmed deletion finish even if you close the window; Quit waits for accepted writes.
+a kept or unreadable one. Confirmation names the Show and removes its saved files; exported copies
+stay, and pending recovery audio stays listed until you discard it or it expires. Cancel or Escape
+dismisses the confirmation. Keep, Discard, and confirmed deletion finish even if you close the
+window; Quit waits for accepted writes.
 
 **More actions → Export ZIP…** saves a portable copy to a new path you choose. It includes the saved
 summary, manifest with narration, contact sheets, keyframes, and, when available, retained source
@@ -350,18 +350,17 @@ narrated copy without changing your earlier Show or edits. A failed retry keeps 
 creating another copy. **Discard audio** removes its recovery checkpoint and leaves the saved Show
 alone. Discard always requires confirmation.
 
-During an explicit Show, a private checkpoint records frames, pointer events, and audio on one
-background writer. Promotion to a Show includes the narration already buffered since the press.
-Recovery uses the last complete event; a crash, storage failure, or a full bounded write queue can
-leave a shorter recording. Recording continues in memory if checkpointing stops, with a local
-notice. Recognized narration and export voice are saved before the checkpoint is retired. A save
-failure leaves the checkpoint available for recovery; a copy failure leaves the saved bundle
-available in the library. Cancelling, quitting, pausing, changing settings, or losing access to
-desktop input during an unfinished recording discards its checkpoint. Once you finish a Show, those
-interruptions leave its checkpoint recoverable, including while capture stops, the checkpoint
-flushes, narration transcribes, or publication saves the bundle. Cleanup deletes an expired Show's
-folder; one it cannot finish deleting, such as a Show with a file open on Windows, is retried on its
-next pass.
+During an explicit Show, a checkpoint in the Shows folder records frames, pointer events, and audio
+on one background writer. Promotion to a Show includes the narration already buffered since the
+press. Recovery uses the last complete event; a crash, storage failure, or a full bounded write
+queue can leave a shorter recording. Recording continues in memory if checkpointing stops, with a
+local notice. A save failure leaves the checkpoint available for recovery; a copy failure leaves the
+saved bundle available in the library. Cancelling, quitting, pausing, changing settings, or losing
+access to desktop input during an unfinished recording discards its checkpoint. Once you finish a
+Show, those interruptions leave its checkpoint recoverable, including while capture stops, the
+checkpoint flushes, narration transcribes, or publication saves the bundle. Cleanup deletes an
+expired Show's folder; one it cannot finish deleting, such as a Show with a file open on Windows, is
+retried on its next pass.
 
 An agent on the same machine can inspect a Show without launching the app or opening the microphone.
 A summary names its Show's exact ID when Speakeasy saved it in the Shows folder; `show demo --out`
@@ -512,12 +511,12 @@ select an interrupted Show with the same timestamp. Recover through the native S
 - The screen is recorded only during a Show you start, and Speakeasy's own windows stay out of it. A
   Show is written to the `shows` folder beside the engine and model. Speakeasy deletes Shows and
   interrupted checkpoints over seven days old when it starts and hourly while it runs; a file named
-  `.pinned` in a saved Show's folder keeps it. A checkpoint holds up to 1 GiB of frames and pointer
-  events, 128 MiB of audio, and 384 MiB of silent video. After transcription, saved Shows retain
-  private voice for explicit video export; it expires with its Show, and a kept Show keeps its
-  voice. Pending recovery audio is removed on cancellation, discard, or expiry. Ordinary dictation
-  stays in memory. Saved bundles can include up to 512 MiB of retained source frames and 384 MiB of
-  video in addition to their selected images and private voice.
+  `.pinned` in a saved Show's folder keeps it. A checkpoint holds at most five minutes of frames,
+  pointer events, and audio, and up to 384 MiB of silent video. After transcription, saved Shows
+  retain private voice for explicit video export; it expires with its Show, and a kept Show keeps
+  its voice. Pending recovery audio is removed on cancellation, discard, or expiry. Ordinary
+  dictation stays in memory. Saved bundles can include up to 512 MiB of retained source frames and
+  384 MiB of video in addition to their selected images and private voice.
 - Windows clipboard history and cloud clipboard skip what Speakeasy puts on the clipboard, pasted
   dictation, the copy it puts back, and Show summaries alike, as do Universal Clipboard and Mac
   clipboard managers that honor transient data.

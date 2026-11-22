@@ -687,65 +687,37 @@ module unless a test file is named.
   [retention.rs](../crates/app/src/show/store/retention.rs) owns Keep changes and deletion. Keep
   writes the `.pinned` marker and Allow expiry removes it. Cleanup deletes each expired, unpinned
   Show's folder and reports the first it could not delete; the next hourly pass retries. Explicit
-  deletion accepts a managed directory, including kept or unreadable Shows. It first discards
-  associated recovery data only after reciprocal publication markers agree and checkpoint ownership
-  is available; damaged or active ownership refuses deletion. Exported copies and unrelated
-  checkpoints are untouched. Its [tests](../crates/app/src/show/store/retention/tests.rs) exercise
-  original expiry dates, managed-folder checks, and preserved edits.
-  [checkpoint.rs](../crates/app/src/show/store/checkpoint.rs) owns private live logs and exclusive
-  cross-process locks. The session owns a
+  deletion accepts a managed directory, including kept or unreadable Shows, and removes only that
+  folder; exported copies and interrupted checkpoints are untouched. Its
+  [tests](../crates/app/src/show/store/retention/tests.rs) exercise original expiry dates,
+  managed-folder checks, and preserved edits.
+  [checkpoint.rs](../crates/app/src/show/store/checkpoint.rs) owns the live logs under
+  `.checkpoints/` and their exclusive cross-process locks. The session owns a
   [keeper](../crates/app/src/show/store/checkpoint/keeper.rs) from explicit Show promotion. One
-  writer drains independent bounded frame and audio lanes; a stream failure leaves the other usable.
-  Frame close acknowledges its flush without waiting for audio; the checkpoint lock releases only
-  after both producers close and the native movie lease acknowledges file closure, including on
-  unwind. The independent movie lane durably saves the original-session origin before accepting
-  capture; frame or audio failure cannot release its lock. The frame lane queues at most 512
-  events/64 MiB and its log caps at 1 GiB/200,000 events. The audio lane queues at most 64 events/8
-  MiB and its checksummed PCM log caps at 128 MiB. While capture runs, a backlog stays in its
-  existing PCM buffer; ending copies the unsent remainder once into the final flush, which holds at
-  most the rest of one five-minute recording at the device rate until that flush ends. Capture
-  reports its outcome and closes the microphone before the final audio flush, which then waits up to
-  five seconds for credits. Cancellation after Finish, as when Quit retires a finished Show's
-  microphone, still collects the remaining samples, reads microphone errors after quiescence as
-  ordinary stop does, and writes that flush; a discarded checkpoint stops its keeper, which ends a
-  waiting flush unwritten. Only ordinary stop writes an audio end record; a disconnected or stalled
-  microphone, including one whose fatal error races the stop, leaves a recoverable prefix.
+  writer drains a frame lane of at most 512 events and an audio lane of at most 64 into buffered
+  files and flushes each whenever its lane runs empty; a failed write closes only its own lane while
+  capture continues in memory. The keeper returns the checkpoint only after both producers close and
+  the native movie lease acknowledges file closure, including on unwind. The movie lane saves the
+  original-session origin before accepting capture. While capture runs, an audio backlog stays in
+  its existing PCM buffer; ending copies the unsent remainder once into a final tail, which capture
+  writes after it reports its outcome and closes the microphone. Only ordinary stop writes an audio
+  end record; a disconnected or stalled microphone leaves a recoverable prefix. Discarding stops the
+  keeper: it drops both lanes, stops the movie, and removes the folder once the lease closes.
   [Audio checkpointing](../crates/app/src/audio/checkpoint.rs) preserves cue boundaries before and
-  after promotion, so recovery seals through the same speech gate and trimming. Narration is
-  atomically written and synced while audio remains recoverable. Successful transcription copies a
-  valid voice prefix into the staged bundle before checkpoint retirement, and the saved Show says
-  when that voice lacks its end record, as after a final flush that missed its deadline; audio too
-  damaged to read is left out of voice rather than blocking the frames and narration. Publication
-  binds durable checkpoint and bundle markers before rename; the marker distinguishes narrated
-  publication so a crash before checkpoint deletion cannot offer duplicate recovery. On Unix,
-  publication and cleanup retire a checkpoint only after syncing the Shows folder that holds its
-  bundle, so recovery files never outlive a rename the disk may lose; Windows issues no directory
-  sync, so there a power loss soon after retirement can still lose the rename. A retry's marker also
-  names the pending bundle it supersedes, which stays the checkpoint's owner for recovery and
-  deletion until the new bundle lands. If checkpoint storage never opens, in-memory footage remains
-  publishable. A lost checkpoint completion stops publication; an unknown checkpoint state cannot
-  become an apparently complete bundle. Untranscribed audio or saved narration keeps a published
-  checkpoint visible as Narration pending; publication keeps one for retry only when its audio is
-  not damaged and its frame log replays a frame; one with neither retires, and a retry whose kept
-  audio holds no speech retires it and says so, and the Shows window rereads its library after any
-  failed recovery so a retired row stops offering retry; a retry whose transcription yields no words
-  saves no copy and stays. Saved narration that cannot be read fails recovery and stays; damaged
-  narration, including an empty file, falls back to the kept audio, as does a retry's saved
-  narration without words. Kept audio that cannot be read then fails recovery with access advice,
-  and only audio that is absent, damaged, or holds no speech leaves the retry listed for explicit
-  discard. A silent microphone's audio holds nothing to retry or export, so its checkpoint records
-  that disposition and retires without keeping voice; recovery treats complete, all-zero audio of
-  any length without saved narration the same way. Unfinished cancellation records discard when its
-  keeper receives it, before the native movie lease closes, so a kill during teardown cannot return
-  cancelled footage; an emergency drop leaves the checkpoint recoverable; private audio, narration,
-  frame, and movie files are removed before the lock, so blocked deletion remains available to
-  cleanup. Audio retains the original seven-day expiry regardless of a saved bundle's Keep marker.
-  Discovery isolates damaged checkpoints so healthy entries remain visible and saved bundles still
-  expire. A pending checkpoint whose audio is damaged or unreadable stays listed as a problem, and
-  `show discard` still removes it by ID or path; audio counts as absent when no intact sample record
-  follows its header, which covers a torn first append but also a first record that later fails its
-  checksum. [checkpoint/tests.rs](../crates/app/src/show/store/checkpoint/tests.rs) exercises
-  damaged siblings, expiry, lock ownership, and durable discard/publication markers.
+  after promotion, so recovery seals through the same speech gate and trimming. Publication stages
+  the bundle in a temporary folder and renames it into place. Narrated publication copies the
+  checkpoint's audio into the bundle as voice, and the saved Show says when that voice lacks its end
+  record. A saved Show discards its checkpoint unless its narration was lost to stopped audio or
+  failed transcription and the checkpoint holds audio; then a `pending` marker keeps the checkpoint
+  listed as Narration pending until it is discarded or expires seven days after recording, whatever
+  the saved Show's Keep marker says. Recovering a pending checkpoint transcribes its audio and saves
+  a narrated copy beside the unchanged original; a retry that hears no words saves nothing and
+  stays. If checkpoint storage never opens, in-memory footage remains publishable; a keeper that
+  never returns its checkpoint stops publication. Recovery reads audio up to its first torn or
+  failed-checksum record; audio that cannot be read leaves the recovered Show without narration.
+  Listing skips folders it cannot lock, including checkpoints another process holds.
+  [checkpoint/tests.rs](../crates/app/src/show/store/checkpoint/tests.rs) exercises listing, lock
+  ownership, torn logs, expiry, and interrupted IDs.
   [journal/log.rs](../crates/show/src/journal/log.rs) shares live/replay admission, thinning, and
   pointer folding; its header records the budget, surface, and framing, so recovery crops as the
   live Show would; checksums and bounded records stop replay at its first damaged event. Property
@@ -799,52 +771,50 @@ module unless a test file is named.
   writes silent H.264 fragments from admitted frames through the
   [Windows codec](../crates/platform/src/windows/movie/encoder.rs) or
   [Mac codec](../crates/platform/src/macos/movie/encode.rs). Its non-cloneable
-  [lease](../crates/platform/src/movie.rs) waits for a durable origin acknowledgment before opening
-  the file and closes only after native file handles release. It bounds its canvas to 2560 pixels
-  per edge, its reported native input queue to 64 MiB, and actual file writes to 384 MiB. Those
-  bounds do not cover memory allocated internally by the system codec. Resized windows fit inside a
-  cleared fixed canvas. Display size, position, or scale changes end capture, since the pointer
-  coordinate grid is no longer valid. An explicit 30 Hz clock submits the latest eligible capture
-  and holds it through quiet periods; contiguous input prevents the native converter from filling a
-  gap with a future image. Captures sharing an unsubmitted tick coalesce. Before presenting a
-  changed content or source rectangle, the encoder waits for its durable, checksummed geometry
-  receipt. The first receipt starts at sample zero; coalesced inputs never create unpresented
-  layouts. Cancellation after acceptance still prevents submission; failed persistence reports a
-  video failure. Every read image reaches the movie before quiet advancement, including images read
-  for the still lane. Cancellation is checked between submissions, and a catch-up burst stops after
-  60 samples instead of monopolizing the capture thread. A failure retains the committed output
-  count and presentation horizon separately from the last capture time. Finalization adds no
-  samples. The original session deadline bounds capture and held output. Windows Shows and Mac
-  screen and area Shows save video beside their sampled lossless frames; Mac window Shows retain
-  sampled frames only. The [Mac stream](../crates/platform/src/macos/screen/stream.rs) keeps an
-  immutable display crop, excludes Speakeasy's application, and copies complete BGRA frames into a
-  two-slot lane. It maps native display timestamps through a bounded host-clock calibration and
-  rechecks display geometry before admitting each queued frame. Native screen output has no audio or
-  cursor. A separate terminal lane reports failure before cleanup waits; successful stop, an
-  already-stopped native error, or the native stopped notification must acknowledge termination
-  before output removal and callback-queue drainage. After an acknowledged stop, the movie lease
-  stays owned through that cleanup and codec finalization. If stop fails, codec finalization
-  releases the movie lease before the stream retries stop and drains its callbacks. The Mac codec
-  receives no file URL: its delegate serializes complete segment writes within the file cap, syncs
-  each segment, and latches failures before releasing the output lock.
-  [show/src/movie.rs](../crates/show/src/movie.rs) validates bounded, single-track fragment metadata
-  and returns only the complete prefix. It checks sample byte ranges and timing, not compressed
-  picture decoding. Inspection also identifies Media Foundation's undeclared fragment-header
-  padding. Publication and ZIP export declare that zero word as a default size only when every
-  affected sample has an explicit size and no later header field can change meaning. This changes
-  one flag byte per affected fragment; picture bytes, timestamps, offsets, and the source file stay
-  intact. Mac reads use the published bytes directly.
+  [lease](../crates/platform/src/movie.rs) waits for an origin acknowledgment before opening the
+  file and closes only after native file handles release. It bounds its canvas to 2560 pixels per
+  edge, its reported native input queue to 64 MiB, and actual file writes to 384 MiB. Those bounds
+  do not cover memory allocated internally by the system codec. Resized windows fit inside a cleared
+  fixed canvas. Display size, position, or scale changes end capture, since the pointer coordinate
+  grid is no longer valid. An explicit 30 Hz clock submits the latest eligible capture and holds it
+  through quiet periods; contiguous input prevents the native converter from filling a gap with a
+  future image. Captures sharing an unsubmitted tick coalesce. Before presenting a changed content
+  or source rectangle, the encoder waits for its checksummed geometry receipt. The first receipt
+  starts at sample zero; coalesced inputs never create unpresented layouts. Cancellation after
+  acceptance still prevents submission; failed persistence reports a video failure. Every read image
+  reaches the movie before quiet advancement, including images read for the still lane. Cancellation
+  is checked between submissions, and a catch-up burst stops after 60 samples instead of
+  monopolizing the capture thread. A failure retains the committed output count and presentation
+  horizon separately from the last capture time. Finalization adds no samples. The original session
+  deadline bounds capture and held output. Windows Shows and Mac screen and area Shows save video
+  beside their sampled lossless frames; Mac window Shows retain sampled frames only. The
+  [Mac stream](../crates/platform/src/macos/screen/stream.rs) keeps an immutable display crop,
+  excludes Speakeasy's application, and copies complete BGRA frames into a two-slot lane. It maps
+  native display timestamps through a bounded host-clock calibration and rechecks display geometry
+  before admitting each queued frame. Native screen output has no audio or cursor. A separate
+  terminal lane reports failure before cleanup waits; successful stop, an already-stopped native
+  error, or the native stopped notification must acknowledge termination before output removal and
+  callback-queue drainage. After an acknowledged stop, the movie lease stays owned through that
+  cleanup and codec finalization. If stop fails, codec finalization releases the movie lease before
+  the stream retries stop and drains its callbacks. The Mac codec receives no file URL: its delegate
+  serializes complete segment writes within the file cap, syncs each segment, and latches failures
+  before releasing the output lock. [show/src/movie.rs](../crates/show/src/movie.rs) validates
+  bounded, single-track fragment metadata and returns only the complete prefix. It checks sample
+  byte ranges and timing, not compressed picture decoding. Inspection also identifies Media
+  Foundation's undeclared fragment-header padding. Publication and ZIP export declare that zero word
+  as a default size only when every affected sample has an explicit size and no later header field
+  can change meaning. This changes one flag byte per affected fragment; picture bytes, timestamps,
+  offsets, and the source file stay intact. Mac reads use the published bytes directly.
   [store/movie.rs](../crates/app/src/show/store/movie.rs) copies that prefix before publication
-  commits and records the separate annotation horizon. A failed copy preserves the checkpoint. A
-  missing or incomplete first fragment permits still-only publication with an explicit video-loss
-  notice; other damaged video stays recoverable with a concrete manual remedy. Saved-bundle
-  inspection and export accept only movie metadata version 2. A sparse geometry table is published
-  inside that metadata; the bounded checkpoint journal stays private. A required random identifier
-  pairs the header with that journal; it does not authenticate MP4 bytes. A damaged journal retains
-  geometry only through the last complete change’s first sample, clipping against surviving video
-  after computing this bound. Missing geometry preserves uncropped video. ZIP export copies the same
-  normalized prefix and its metadata. The viewer offers Windows and macOS video scrubbing,
-  switchable saved annotations, and playback in the system player.
+  commits and records the separate annotation horizon. A failed copy preserves the checkpoint. Video
+  that cannot be read permits still-only publication with an explicit video-loss notice.
+  Saved-bundle inspection and export accept only movie metadata version 2. A sparse geometry table
+  is published inside that metadata; the bounded checkpoint journal stays private. A required random
+  identifier pairs the header with that journal; it does not authenticate MP4 bytes. A damaged
+  journal retains geometry only through the last complete change’s first sample, clipping against
+  surviving video after computing this bound. Missing geometry preserves uncropped video. ZIP export
+  copies the same normalized prefix and its metadata. The viewer offers Windows and macOS video
+  scrubbing, switchable saved annotations, and playback in the system player.
   [draw/video.rs](../crates/show/src/draw/video.rs) renders only observed ink prefixes, completed
   marks, and completed actions whose coordinate proofs match the decoded sample. Pins retain their
   actual observation time; action proofs include the release position. Every saved pin proof
@@ -962,7 +932,7 @@ No single module owns these rules; a change to any party keeps them.
   clipboard action. Quit or reconfiguration retains a recovery checkpoint.
   [runtime/tests/recovery.rs](../crates/app/src/runtime/tests/recovery.rs) tests ownership and
   revocation; [recorder/tests/checkpoint.rs](../crates/app/src/show/recorder/tests/checkpoint.rs)
-  tests durable frame handoff, independent storage failure, and invalid-event prefix preservation.
+  tests frame handoff, independent storage failure, and a failed writer's single notice.
 - **The last Show outlives each owner.** Only a saved Show replaces the one the owner remembers,
   only a report that finds that same Show gone forgets it, and every snapshot presents it. The
   shell's announcements keep it and a new owner starts from the one presented, so Pause and
@@ -997,7 +967,7 @@ stateDiagram-v2
     [*] --> Queued
     [*] --> Reopening: idle owner accepts recovery
     Reopening --> Recognizing: recovered audio
-    Reopening --> AwaitingFootage: stored narration or no recoverable audio
+    Reopening --> AwaitingFootage: no recoverable audio
     Queued --> Opening: microphone free
     Opening --> Recording: first samples
     Opening --> Stopping: first samples after finish

@@ -68,12 +68,12 @@ remaining window, range selection, trimming, capacity reclamation, and WAV encod
 microphone teardown, inference, and insertion. The synthetic `profile_show_pipeline` probe measures
 the recorder's per-frame fingerprint and journal costs on 2560 × 1440 desktops that stay still,
 type, scroll, open a dialog, or play video, with journal megabytes per frame. It also measures
-checkpoint queuing, final storage acknowledgement, log size, and replay. Publication of a one-minute
-Show measures selection, page composition (including keyframe rebuilding and PNG encoding), file
-assembly, and the private write including retained source frames. `profile_real_screen_recording`
-records the real screen for ten seconds on Windows or Mac, keeping no pixels; on Windows, run the
-test binary directly and sample its process, not Cargo's, with `profile-windows.ps1`. Use ordinary
-native profilers rather than a permanent benchmark suite.
+checkpoint queuing, closing, log size, and replay. Publication of a one-minute Show measures
+selection, page composition (including keyframe rebuilding and PNG encoding), file assembly, and the
+private write including retained source frames. `profile_real_screen_recording` records the real
+screen for ten seconds on Windows or Mac, keeping no pixels; on Windows, run the test binary
+directly and sample its process, not Cargo's, with `profile-windows.ps1`. Use ordinary native
+profilers rather than a permanent benchmark suite.
 
 ## Public corpus replay
 

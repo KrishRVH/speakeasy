@@ -383,8 +383,8 @@ callback.
 Owners: `crates/platform/src/movie.rs`, `movie/canvas.rs`, `movie/encode.rs`, `movie/recording.rs`.
 
 One recorder owns presentation scheduling, canvas, native codec and checkpoint lease. Geometry is
-durably acknowledged before the first submitted sample using it. All grid points earlier than a
-newly captured image use the previous canvas; quiet periods repeat already captured pixels. Windows
+acknowledged before the first submitted sample using it. All grid points earlier than a newly
+captured image use the previous canvas; quiet periods repeat already captured pixels. Windows
 quantizes to 100 ns and Mac keeps nanoseconds while native samples retain their rational 30 Hz
 timing. Per-advance catch-up, total sample, canvas and disk bounds remain independent. Coverage
 records an accepted sample before a later checkpoint error can occur. A held image never claims a
