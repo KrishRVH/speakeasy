@@ -4,6 +4,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use windows::Win32::Media::MediaFoundation::MF_MT_FRAME_SIZE;
+
 use super::*;
 
 #[test]
@@ -23,8 +25,7 @@ fn video_media_types_may_omit_the_default_stride() -> anyhow::Result<()> {
         }
         format
     };
-    assert_eq!(format_stride(&format, [320, 240])?, -1280);
-    assert!(format_stride(&format, [640, 240]).is_err());
+    assert_eq!(format_stride(&format, width)?, -1280);
     Ok(())
 }
 

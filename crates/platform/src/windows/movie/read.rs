@@ -5,10 +5,9 @@ use windows::{
     Win32::{
         Media::MediaFoundation::{
             IMFMediaType, IMFSample, IMFSourceReader, IMFSourceReaderEx, MF_E_ATTRIBUTENOTFOUND,
-            MF_MT_DEFAULT_STRIDE, MF_MT_FRAME_SIZE, MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE,
-            MF_MT_TRANSFER_FUNCTION, MF_MT_VIDEO_NOMINAL_RANGE, MF_MT_VIDEO_PRIMARIES,
-            MF_SOURCE_READER_ALL_STREAMS, MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING,
-            MF_SOURCE_READER_FIRST_VIDEO_STREAM, MF_SOURCE_READERF_ALLEFFECTSREMOVED,
+            MF_MT_DEFAULT_STRIDE, MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE, MF_MT_TRANSFER_FUNCTION,
+            MF_MT_VIDEO_NOMINAL_RANGE, MF_MT_VIDEO_PRIMARIES, MF_SOURCE_READER_ALL_STREAMS,
+            MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING, MF_SOURCE_READER_FIRST_VIDEO_STREAM,
             MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED, MF_SOURCE_READERF_ENDOFSTREAM,
             MF_SOURCE_READERF_ERROR, MF_XVP_DISABLE_FRC, MFCreateAttributes, MFCreateMediaType,
             MFCreateSourceReaderFromByteStream, MFGetStrideForBitmapInfoHeader, MFMediaType_Video,
@@ -137,27 +136,12 @@ fn preserve_timestamps(reader: &IMFSourceReader) -> anyhow::Result<()> {
     anyhow::bail!("Movie decoder exceeded its processing limit")
 }
 
-fn format_stride(format: &IMFMediaType, expected: [u32; 2]) -> anyhow::Result<i32> {
+fn format_stride(format: &IMFMediaType, width: u32) -> anyhow::Result<i32> {
     unsafe {
-        let packed = format.GetUINT64(&MF_MT_FRAME_SIZE)?;
-        let size = [
-            u32::try_from(packed >> 32)?,
-            u32::try_from(packed & u64::from(u32::MAX))?,
-        ];
-        ensure!(
-            size == expected && format.GetGUID(&MF_MT_SUBTYPE)? == MFVideoFormat_RGB32,
-            "Decoded video canvas differs from its validated container"
-        );
-        for (attribute, value) in &COLOR_FORMAT {
-            ensure!(
-                format.GetUINT32(attribute)? == *value,
-                "Decoded video color format changed"
-            );
-        }
         match format.GetUINT32(&MF_MT_DEFAULT_STRIDE) {
             Ok(stride) => Ok(stride.cast_signed()),
             Err(error) if error.code() == MF_E_ATTRIBUTENOTFOUND => Ok(
-                MFGetStrideForBitmapInfoHeader(MFVideoFormat_RGB32.data1, size[0])?,
+                MFGetStrideForBitmapInfoHeader(MFVideoFormat_RGB32.data1, width)?,
             ),
             Err(error) => Err(error.into()),
         }
@@ -176,9 +160,9 @@ fn select(
     requested: i64,
     cancelled: &dyn Fn() -> bool,
 ) -> anyhow::Result<Option<Decoded>> {
-    let mut stride = format_stride(&unsafe { reader.GetCurrentMediaType(STREAM)? }, size)?;
+    let mut stride = format_stride(&unsafe { reader.GetCurrentMediaType(STREAM)? }, size[0])?;
     let mut previous: Option<Decoded> = None;
-    for _ in 0..10_802 {
+    loop {
         if cancelled() {
             return Ok(None);
         }
@@ -195,22 +179,14 @@ fn select(
             )?;
         }
         ensure!(
-            flags
-                & (MF_SOURCE_READERF_ERROR.0 | MF_SOURCE_READERF_ALLEFFECTSREMOVED.0)
-                    .cast_unsigned()
-                == 0,
-            "Video failed or lost its color processor during decoding"
+            flags & MF_SOURCE_READERF_ERROR.0.cast_unsigned() == 0,
+            "Video failed during decoding"
         );
         if flags & MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED.0.cast_unsigned() != 0 {
-            stride = format_stride(&unsafe { reader.GetCurrentMediaType(STREAM)? }, size)?;
+            stride = format_stride(&unsafe { reader.GetCurrentMediaType(STREAM)? }, size[0])?;
         }
         if let Some(sample) = sample {
             let at = unsafe { sample.GetSampleTime()? };
-            ensure!(
-                (0..=3_600_000_000).contains(&at)
-                    && previous.as_ref().is_none_or(|last| at > last.at),
-                "Video sample timestamps are invalid"
-            );
             let decoded = Decoded { at, sample, stride };
             if at > requested {
                 return Ok(Some(previous.unwrap_or(decoded)));
@@ -223,7 +199,6 @@ fn select(
                 .context("Video contains no decodable samples");
         }
     }
-    anyhow::bail!("Video decoder exceeded the sample limit")
 }
 
 #[cfg(test)]

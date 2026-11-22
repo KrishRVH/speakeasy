@@ -19,7 +19,6 @@ use crate::{
     movie::{
         canvas,
         encode::{Encoder as Timeline, End},
-        recording::Movie,
         tests::frame,
     },
 };

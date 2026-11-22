@@ -9,13 +9,13 @@ use std::{
 
 use windows::Win32::{
     Foundation::{
-        E_FAIL, E_NOTIMPL, E_POINTER, S_FALSE, S_OK, STG_E_ACCESSDENIED, STG_E_INVALIDFUNCTION,
-        STG_E_MEDIUMFULL, STG_E_READFAULT, STG_E_SEEKERROR, STG_E_WRITEFAULT,
+        E_FAIL, E_NOTIMPL, E_POINTER, S_FALSE, S_OK, STG_E_INVALIDFUNCTION, STG_E_MEDIUMFULL,
+        STG_E_READFAULT, STG_E_SEEKERROR, STG_E_WRITEFAULT,
     },
     Media::MediaFoundation::{IMFByteStream, MFCreateMFByteStreamOnStream},
     System::Com::{
         ISequentialStream_Impl, IStream, IStream_Impl, LOCKTYPE, STATFLAG, STATSTG, STGC,
-        STGM_READ, STGM_READWRITE, STGTY_STREAM, STREAM_SEEK, STREAM_SEEK_CUR, STREAM_SEEK_END,
+        STGM_READWRITE, STGTY_STREAM, STREAM_SEEK, STREAM_SEEK_CUR, STREAM_SEEK_END,
         STREAM_SEEK_SET,
     },
 };
@@ -23,7 +23,6 @@ use windows_core::{Error, HRESULT, Ref, Result};
 
 pub(super) struct Stream {
     pub(super) native: IMFByteStream,
-    pub(super) sync: File,
     _closed: Closed,
 }
 
@@ -52,15 +51,9 @@ impl Drop for ReadStream {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Access {
-    Read,
-    Write,
-}
-
 pub(super) fn read(mut file: File, limit: u64) -> anyhow::Result<ReadStream> {
     file.rewind()?;
-    let (native, closed) = byte_stream(file, limit, Access::Read)?;
+    let (native, closed) = byte_stream(file, limit)?;
     Ok(ReadStream {
         native,
         _closed: closed,
@@ -73,11 +66,9 @@ pub(super) fn create(path: &Path, limit: u64) -> anyhow::Result<Stream> {
         .read(true)
         .write(true)
         .open(path)?;
-    let sync = file.try_clone()?;
-    let (native, closed) = byte_stream(file, limit, Access::Write)?;
+    let (native, closed) = byte_stream(file, limit)?;
     Ok(Stream {
         native,
-        sync,
         _closed: closed,
     })
 }
@@ -86,12 +77,11 @@ pub(super) fn create(path: &Path, limit: u64) -> anyhow::Result<Stream> {
     clippy::disallowed_types,
     reason = "Media Foundation reads, seeks and writes on its own I/O threads; each callback holds the file's one cursor and cap check across its operation"
 )]
-fn byte_stream(file: File, limit: u64, access: Access) -> anyhow::Result<(IMFByteStream, Closed)> {
+fn byte_stream(file: File, limit: u64) -> anyhow::Result<(IMFByteStream, Closed)> {
     let (released, closed) = async_channel::bounded(1);
     let stream: IStream = CappedFile {
         file: Mutex::new(file),
         limit,
-        access,
         _released: released,
     }
     .into();
@@ -120,7 +110,7 @@ impl Drop for Closed {
 mod com {
     use windows_core::implement;
 
-    use super::{Access, File, IStream, Infallible, Mutex};
+    use super::{File, IStream, Infallible, Mutex};
 
     #[implement(IStream)]
     pub(super) struct CappedFile {
@@ -130,7 +120,6 @@ mod com {
         )]
         pub(super) file: Mutex<File>,
         pub(super) limit: u64,
-        pub(super) access: Access,
         pub(super) _released: async_channel::Sender<Infallible>,
     }
 }
@@ -162,13 +151,7 @@ impl ISequentialStream_Impl for CappedFile_Impl {
                 return Err(Error::from_hresult(E_POINTER));
             }
             let mut file = self.file()?;
-            let available = match self.access {
-                Access::Read => self
-                    .limit
-                    .saturating_sub(file.stream_position().map_err(io_error(STG_E_READFAULT))?),
-                Access::Write => u64::from(count),
-            };
-            let length = usize::try_from(u64::from(count).min(available))
+            let length = usize::try_from(count)
                 .map_err(|_invalid_count| Error::from_hresult(STG_E_READFAULT))?;
 
             let bytes = unsafe {
@@ -191,9 +174,6 @@ impl ISequentialStream_Impl for CappedFile_Impl {
         let result = (|| {
             if !written.is_null() {
                 unsafe { written.write(0) };
-            }
-            if self.access == Access::Read {
-                return Err(Error::from_hresult(STG_E_ACCESSDENIED));
             }
             if count == 0 {
                 return Ok(());
@@ -230,7 +210,6 @@ impl IStream_Impl for CappedFile_Impl {
         let base = match origin {
             STREAM_SEEK_SET => 0,
             STREAM_SEEK_CUR => file.stream_position().map_err(io_error(STG_E_SEEKERROR))?,
-            STREAM_SEEK_END if self.access == Access::Read => self.limit,
             STREAM_SEEK_END => file.metadata().map_err(io_error(STG_E_READFAULT))?.len(),
             _ => return Err(Error::from_hresult(STG_E_INVALIDFUNCTION)),
         };
@@ -248,9 +227,6 @@ impl IStream_Impl for CappedFile_Impl {
     }
 
     fn SetSize(&self, length: u64) -> Result<()> {
-        if self.access == Access::Read {
-            return Err(Error::from_hresult(STG_E_ACCESSDENIED));
-        }
         if length > self.limit {
             return Err(Error::from_hresult(STG_E_MEDIUMFULL));
         }
@@ -260,33 +236,24 @@ impl IStream_Impl for CappedFile_Impl {
     }
 
     fn Commit(&self, _: &STGC) -> Result<()> {
-        if self.access == Access::Read {
-            return Ok(());
-        }
-        self.file()?.sync_data().map_err(io_error(STG_E_WRITEFAULT))
+        Ok(())
     }
 
     fn Stat(&self, output: *mut STATSTG, _: &STATFLAG) -> Result<()> {
         if output.is_null() {
             return Err(Error::from_hresult(E_POINTER));
         }
-        let size = match self.access {
-            Access::Read => self.limit,
-            Access::Write => self
-                .file()?
-                .metadata()
-                .map_err(io_error(STG_E_READFAULT))?
-                .len(),
-        };
+        let size = self
+            .file()?
+            .metadata()
+            .map_err(io_error(STG_E_READFAULT))?
+            .len();
 
         unsafe {
             output.write(STATSTG {
                 r#type: STGTY_STREAM.0.cast_unsigned(),
                 cbSize: size,
-                grfMode: match self.access {
-                    Access::Read => STGM_READ,
-                    Access::Write => STGM_READWRITE,
-                },
+                grfMode: STGM_READWRITE,
                 ..STATSTG::default()
             });
         };
@@ -316,73 +283,7 @@ impl IStream_Impl for CappedFile_Impl {
 
 #[cfg(test)]
 mod tests {
-    use windows::Win32::System::Com::STATFLAG_NONAME;
-
     use super::*;
-
-    #[test]
-    fn native_read_access_preserves_bytes_and_bounds_seeks() -> anyhow::Result<()> {
-        let mut file = tempfile::tempfile()?;
-        file.write_all(&[1, 2, 3, 4])?;
-        file.rewind()?;
-        let mut growing = file.try_clone()?;
-        let (released, closed) = async_channel::bounded(1);
-        #[expect(
-            clippy::disallowed_types,
-            reason = "The test supplies a writable file so the native adapter, rather than the OS handle, must enforce read-only access"
-        )]
-        let stream: IStream = CappedFile {
-            file: Mutex::new(file),
-            limit: 4,
-            access: Access::Read,
-            _released: released,
-        }
-        .into();
-        growing.seek(SeekFrom::End(0))?;
-        growing.write_all(&[5, 6, 7, 8])?;
-        drop(growing);
-        let mut bytes = [0_u8; 4];
-        let mut count = 0;
-
-        unsafe {
-            stream.Seek(0, STREAM_SEEK_SET, None)?;
-            assert_eq!(
-                stream.Write(bytes.as_ptr().cast(), 4, Some(&raw mut count)),
-                STG_E_ACCESSDENIED
-            );
-            assert_eq!(count, 0);
-            assert_eq!(stream.SetSize(0).unwrap_err().code(), STG_E_ACCESSDENIED);
-            assert!(stream.Seek(5, STREAM_SEEK_SET, None).is_err());
-            stream
-                .Read(bytes.as_mut_ptr().cast(), 4, Some(&raw mut count))
-                .ok()?;
-            assert_eq!(bytes, [1, 2, 3, 4]);
-            assert_eq!(count, 4);
-            bytes.fill(0xFF);
-            assert_eq!(
-                stream.Read(bytes.as_mut_ptr().cast(), 4, Some(&raw mut count)),
-                S_FALSE
-            );
-            assert_eq!(count, 0);
-            assert_eq!(bytes, [0xFF; 4]);
-            stream.Seek(2, STREAM_SEEK_SET, None)?;
-            assert_eq!(
-                stream.Read(bytes.as_mut_ptr().cast(), 4, Some(&raw mut count)),
-                S_FALSE
-            );
-            assert_eq!(count, 2);
-            assert_eq!(bytes, [3, 4, 0xFF, 0xFF]);
-            let mut metadata = STATSTG::default();
-            stream.Stat(&raw mut metadata, STATFLAG_NONAME)?;
-            assert_eq!(metadata.cbSize, 4);
-            let mut end = 0;
-            stream.Seek(0, STREAM_SEEK_END, Some(&raw mut end))?;
-            assert_eq!(end, 4);
-        }
-        drop(stream);
-        assert!(closed.is_closed());
-        Ok(())
-    }
 
     #[test]
     fn native_stream_caps_every_write_and_retains_its_file_until_the_last_reference()
@@ -398,7 +299,6 @@ mod tests {
         let stream: IStream = CappedFile {
             file: Mutex::new(file),
             limit: 16,
-            access: Access::Write,
             _released: released,
         }
         .into();

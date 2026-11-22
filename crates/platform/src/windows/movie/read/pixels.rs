@@ -61,10 +61,7 @@ pub(super) fn read(sample: &IMFSample, stride: i32, size: [u32; 2]) -> anyhow::R
         };
         (lock, offset)
     };
-    ensure!(
-        !start.is_null() && length <= 128 << 20,
-        "Decoded video buffer is invalid"
-    );
+    ensure!(!start.is_null(), "Decoded video buffer is invalid");
     let length = usize::try_from(length)?;
 
     let bytes = unsafe { std::slice::from_raw_parts(start, length) };
@@ -82,10 +79,6 @@ fn copy(
     let row = usize::try_from(width)?
         .checked_mul(4)
         .context("Video row is too large")?;
-    ensure!(
-        usize::try_from(pitch.unsigned_abs())? >= row,
-        "Video rows overlap"
-    );
     let mut pixels = Vec::with_capacity(
         row.checked_mul(usize::try_from(height)?)
             .context("Video canvas is too large")?,
@@ -123,7 +116,6 @@ mod tests {
         assert_eq!(copy(&bytes, 8, -8, [1, 2])?, [4, 5, 6, 255, 1, 2, 3, 255]);
         assert!(copy(&bytes, 0, -8, [1, 2]).is_err());
         assert!(copy(&bytes, 8, 8, [1, 2]).is_err());
-        assert!(copy(&bytes, 0, 3, [1, 2]).is_err());
         Ok(())
     }
 }

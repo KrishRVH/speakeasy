@@ -1,15 +1,15 @@
 use std::mem::ManuallyDrop;
 
-use anyhow::{Context as _, ensure};
+use anyhow::Context as _;
 use windows::Win32::{
     Media::MediaFoundation::{
-        CLSID_VideoProcessorMFT, IMFMediaType, IMFSample, IMFTransform, MF_E_ATTRIBUTENOTFOUND,
-        MF_E_TRANSFORM_NEED_MORE_INPUT, MF_TRANSFORM_ASYNC, MF_XVP_DISABLE_FRC,
-        MFCreateAlignedMemoryBuffer, MFCreateSample, MFT_MESSAGE_COMMAND_DRAIN,
-        MFT_MESSAGE_COMMAND_FLUSH, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING,
-        MFT_MESSAGE_NOTIFY_END_OF_STREAM, MFT_MESSAGE_NOTIFY_END_STREAMING,
-        MFT_MESSAGE_NOTIFY_START_OF_STREAM, MFT_OUTPUT_DATA_BUFFER,
-        MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES, MFT_OUTPUT_STREAM_PROVIDES_SAMPLES,
+        CLSID_VideoProcessorMFT, IMFMediaType, IMFSample, IMFTransform,
+        MF_E_TRANSFORM_NEED_MORE_INPUT, MF_XVP_DISABLE_FRC, MFCreateAlignedMemoryBuffer,
+        MFCreateSample, MFT_MESSAGE_COMMAND_DRAIN, MFT_MESSAGE_COMMAND_FLUSH,
+        MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, MFT_MESSAGE_NOTIFY_END_OF_STREAM,
+        MFT_MESSAGE_NOTIFY_END_STREAMING, MFT_MESSAGE_NOTIFY_START_OF_STREAM,
+        MFT_OUTPUT_DATA_BUFFER, MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES,
+        MFT_OUTPUT_STREAM_PROVIDES_SAMPLES,
     },
     System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance},
 };
@@ -27,17 +27,10 @@ impl Converter {
             let native: IMFTransform =
                 CoCreateInstance(&CLSID_VideoProcessorMFT, None, CLSCTX_INPROC_SERVER)?;
             let converter = Self(native);
-            let attributes = converter.0.GetAttributes()?;
-            let asynchronous = match attributes.GetUINT32(&MF_TRANSFORM_ASYNC) {
-                Ok(value) => value != 0,
-                Err(error) if error.code() == MF_E_ATTRIBUTENOTFOUND => false,
-                Err(error) => return Err(error.into()),
-            };
-            ensure!(
-                !asynchronous,
-                "Video conversion requires synchronous processing"
-            );
-            attributes.SetUINT32(&MF_XVP_DISABLE_FRC, 1)?;
+            converter
+                .0
+                .GetAttributes()?
+                .SetUINT32(&MF_XVP_DISABLE_FRC, 1)?;
             converter.0.SetInputType(0, input, 0)?;
             converter.0.SetOutputType(0, output, 0)?;
             converter
@@ -53,22 +46,7 @@ impl Converter {
 
     pub(super) fn frame(&mut self, input: &IMFSample) -> anyhow::Result<IMFSample> {
         unsafe { self.0.ProcessInput(0, input, 0)? };
-        let sample = self
-            .output()?
-            .context("Video conversion delayed its frame")?;
-        ensure!(
-            self.output()?.is_none(),
-            "Video conversion duplicated its frame"
-        );
-
-        unsafe {
-            ensure!(
-                sample.GetSampleTime()? == input.GetSampleTime()?
-                    && sample.GetSampleDuration()? == input.GetSampleDuration()?,
-                "Video conversion changed its sample clock"
-            );
-        }
-        Ok(sample)
+        self.output()?.context("Video conversion delayed its frame")
     }
 
     pub(super) fn finish(&mut self) -> anyhow::Result<()> {
@@ -76,10 +54,6 @@ impl Converter {
             self.0.ProcessMessage(MFT_MESSAGE_NOTIFY_END_OF_STREAM, 0)?;
             self.0.ProcessMessage(MFT_MESSAGE_COMMAND_DRAIN, 0)?;
         }
-        ensure!(
-            self.output()?.is_none(),
-            "Video conversion retained an unsubmitted frame"
-        );
         Ok(())
     }
 
@@ -89,11 +63,6 @@ impl Converter {
             | MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES.0)
             .cast_unsigned();
         let supplied = if info.dwFlags & native_allocation == 0 {
-            ensure!(
-                (1..=64 << 20).contains(&info.cbSize),
-                "Video conversion buffer is out of range"
-            );
-
             unsafe {
                 let sample = MFCreateSample()?;
                 sample.AddBuffer(&MFCreateAlignedMemoryBuffer(
@@ -123,10 +92,6 @@ impl Converter {
             Err(error) if error.code() == MF_E_TRANSFORM_NEED_MORE_INPUT => return Ok(None),
             result => result?,
         }
-        ensure!(
-            status == 0 && output.0.dwStatus == 0,
-            "Video conversion changed its output contract"
-        );
         output
             .0
             .pSample

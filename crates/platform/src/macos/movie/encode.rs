@@ -126,10 +126,6 @@ impl encode::Codec for Codec {
         Ok(ControlFlow::Continue(()))
     }
 
-    fn checkpoint(&mut self, _: Duration) -> anyhow::Result<()> {
-        self.output.check()
-    }
-
     fn finish(mut self) -> anyhow::Result<()> {
         ensure!(self.frames > 0, "The movie contains no frames");
         self.output.check()?;

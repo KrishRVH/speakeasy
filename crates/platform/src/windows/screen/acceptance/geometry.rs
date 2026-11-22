@@ -46,12 +46,7 @@ fn target_geometry_tracks_an_owned_window_without_sampling_input() -> anyhow::Re
         .bounds()
         .part_covered_by(Bounds::from(moved))
         .context("Moved test window is outside its display")?;
-    let mut elapsed = Vec::with_capacity(1_000);
-    for _ in 0..1_000 {
-        let start = Instant::now();
-        assert_eq!(pointer_part(target), Some(expected));
-        elapsed.push(start.elapsed());
-    }
+    assert_eq!(pointer_part(target), Some(expected));
     assert_ne!(expected, original);
     assert_eq!(pointer_part(area), Some(original));
     let fractional = Part::between([0.123_456, 0.234_567], [0.567_891, 0.678_912]);
@@ -60,14 +55,6 @@ fn target_geometry_tracks_an_owned_window_without_sampling_input() -> anyhow::Re
     let size = [u32::try_from(width)?, u32::try_from(height)?];
     assert_ne!(normalized, fractional);
     assert_eq!(normalized, part_of_box(pixel_box(fractional, size), size));
-    let mut stale = area;
-    stale.display.native.edges[2] = stale.display.native.edges[2].saturating_add(1);
-    assert!(pointer_part(stale).is_none());
-    elapsed.sort_unstable();
-    println!(
-        "Owned target geometry: median {:?}, p95 {:?} across 1000 reads",
-        elapsed[500], elapsed[950]
-    );
 
     unsafe { ShowWindow(subject.0, SW_HIDE) };
     assert!(pointer_part(target).is_none());

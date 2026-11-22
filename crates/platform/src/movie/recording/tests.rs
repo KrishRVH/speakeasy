@@ -29,10 +29,6 @@ impl Codec for Accepting {
         Ok(ControlFlow::Continue(()))
     }
 
-    fn checkpoint(&mut self, _: Duration) -> anyhow::Result<()> {
-        Ok(())
-    }
-
     fn finish(self) -> anyhow::Result<()> {
         Ok(())
     }
@@ -54,10 +50,6 @@ impl Codec for Refusing {
         _: &mut dyn FnMut() -> bool,
     ) -> anyhow::Result<ControlFlow<()>> {
         anyhow::bail!("The synthetic writer refused a frame")
-    }
-
-    fn checkpoint(&mut self, _: Duration) -> anyhow::Result<()> {
-        Ok(())
     }
 
     fn finish(self) -> anyhow::Result<()> {

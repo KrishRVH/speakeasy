@@ -29,8 +29,7 @@ pub(crate) struct Codec {
     writer: IMFSinkWriter,
     converter: Converter,
     _sink: Sink,
-    stream: file::Stream,
-    synced: Duration,
+    _stream: file::Stream,
     _foundation: Foundation,
 }
 
@@ -102,8 +101,7 @@ impl encode::Codec for Codec {
             writer,
             converter,
             _sink: sink,
-            stream,
-            synced: Duration::ZERO,
+            _stream: stream,
             _foundation: foundation,
         })
     }
@@ -135,19 +133,10 @@ impl encode::Codec for Codec {
         Ok(ControlFlow::Continue(()))
     }
 
-    fn checkpoint(&mut self, at: Duration) -> anyhow::Result<()> {
-        if at.saturating_sub(self.synced) >= Duration::from_secs(1) {
-            unsafe { self.stream.native.Flush()? };
-            self.synced = at;
-        }
-        Ok(())
-    }
-
     fn finish(mut self) -> anyhow::Result<()> {
         self.converter.finish()?;
 
         unsafe { self.writer.Finalize()? };
-        self.stream.sync.sync_data()?;
         Ok(())
     }
 }

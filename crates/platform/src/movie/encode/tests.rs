@@ -6,7 +6,6 @@ use crate::movie::tests::frame;
 #[derive(Default)]
 struct Tape {
     shades: Vec<u8>,
-    checkpoints: Vec<Duration>,
 }
 
 impl Codec for Tape {
@@ -27,11 +26,6 @@ impl Codec for Tape {
     ) -> anyhow::Result<ControlFlow<()>> {
         self.shades.extend(pixels.first());
         Ok(ControlFlow::Continue(()))
-    }
-
-    fn checkpoint(&mut self, at: Duration) -> anyhow::Result<()> {
-        self.checkpoints.push(at);
-        Ok(())
     }
 
     fn finish(self) -> anyhow::Result<()> {
@@ -78,7 +72,6 @@ fn each_tick_presents_the_newest_capture_at_or_before_it() -> anyhow::Result<()>
         "A tick presented a capture from its future"
     );
     let ticks: Vec<Duration> = (0..4).map(|index| Tape::CLOCK.time(index)).collect();
-    assert_eq!(encoder.codec.checkpoints, ticks);
     let coverage = encoder.coverage().context("No sample was written")?;
     assert_eq!(
         (coverage.last, coverage.at, coverage.frames),

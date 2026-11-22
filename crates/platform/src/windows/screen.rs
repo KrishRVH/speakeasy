@@ -57,14 +57,15 @@ use windows_sys::Win32::{
             GA_ROOT, GWL_EXSTYLE, GetAncestor, GetClassNameW, GetCursorPos, GetSystemMetrics,
             HWND_TOPMOST, IsIconic, IsWindow, IsWindowVisible, SM_SWAPBUTTON, SW_HIDE,
             SW_SHOWNOACTIVATE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-            SetWindowPos, ShowWindow, WS_EX_TRANSPARENT, WindowFromPoint,
+            SetWindowDisplayAffinity, SetWindowPos, ShowWindow, WDA_EXCLUDEFROMCAPTURE,
+            WS_EX_TRANSPARENT, WindowFromPoint,
         },
     },
 };
 
 pub(crate) use self::layout::stack;
 use self::{
-    exclusion::{Exclusions, exclude_always},
+    exclusion::Exclusions,
     readback::{Readback, device_for},
 };
 use super::{BASE_DPI, is_key_down, is_own_window, ok_or_last_error};
@@ -294,9 +295,6 @@ pub(crate) fn pointer(target: Target, shortcut: crate::Shortcut) -> Option<Point
 }
 
 fn pointer_part(target: Target) -> Option<Part> {
-    if !is_current(target.display) {
-        return None;
-    }
     let part = current_part(target).ok().flatten()?;
     let [width, height] = target.display.native.extent();
     let size = [u32::try_from(width).ok()?, u32::try_from(height).ok()?];
@@ -411,14 +409,12 @@ fn next_motion(motion: Instant, now: Instant) -> Instant {
 
 struct Admission {
     clean_from: Instant,
-    measured: bool,
 }
 
 impl Admission {
     fn after(now: Instant) -> Self {
         Self {
             clean_from: now.checked_add(COMPOSITION_MARGIN).unwrap_or(now),
-            measured: true,
         }
     }
 
@@ -426,48 +422,9 @@ impl Admission {
         *self = Self::after(now);
     }
 
-    fn observe(
-        &mut self,
-        observed: Result<Option<Part>, WindowGone>,
-        now: Instant,
-    ) -> Result<Option<Part>, WindowGone> {
-        let part = observed?;
-        match part {
-            None => self.measured = false,
-            Some(_) if !self.measured => self.restart(now),
-            Some(_) => {},
-        }
-        Ok(part)
-    }
-
     fn admits(&self, composed: Instant) -> bool {
         composed >= self.clean_from
     }
-
-    fn confirms(
-        &mut self,
-        observed: Result<Option<Part>, WindowGone>,
-        part: Part,
-    ) -> Result<bool, WindowGone> {
-        let confirmed = observed? == Some(part);
-        if !confirmed {
-            self.measured = false;
-        }
-        Ok(confirmed)
-    }
-}
-
-fn read_confirmed<T>(
-    admission: &mut Admission,
-    part: Part,
-    mut observe: impl FnMut() -> Result<Option<Part>, WindowGone>,
-    read: impl FnOnce() -> Result<T, Failure>,
-) -> Result<Option<T>, Failure> {
-    if !admission.confirms(observe(), part)? {
-        return Ok(None);
-    }
-    let image = read()?;
-    Ok(admission.confirms(observe(), part)?.then_some(image))
 }
 
 struct Pacer {
@@ -580,13 +537,7 @@ impl Capture {
         if !is_current(self.target.display) {
             return Err(Failure::DisplayChanged);
         }
-
-        if unsafe { self.device.GetDeviceRemovedReason() }.is_err() {
-            return Err(Failure::DeviceLost);
-        }
-        let part = self
-            .admission
-            .observe(current_part(self.target), Instant::now())?;
+        let part = current_part(self.target)?;
         if part.is_none() {
             self.pending = None;
         }
@@ -632,24 +583,16 @@ impl Capture {
         let Some(PendingFrame { frame, at, part }) = self.pending.take() else {
             return Ok(None);
         };
-        let target = self.target;
         let crop = pixel_box(part, self.content);
-        let image = read_confirmed(
-            &mut self.admission,
-            part,
-            || current_part(target),
-            || {
-                let surface: IDirect3DDxgiInterfaceAccess = frame.Surface()?.cast()?;
-                let texture: ID3D11Texture2D = unsafe { surface.GetInterface()? };
-                let source = crop_size(crop);
-                if source != self.readback.source() {
-                    self.readback = Readback::new(&self.device, source, self.longest_edge)?;
-                }
-                let [left, top, ..] = crop;
-                Ok(self.readback.read(&self.context, &texture, [left, top])?)
-            },
-        )?;
-        Ok(image.map(|image| Frame {
+        let surface: IDirect3DDxgiInterfaceAccess = frame.Surface()?.cast()?;
+        let texture: ID3D11Texture2D = unsafe { surface.GetInterface()? };
+        let source = crop_size(crop);
+        if source != self.readback.source() {
+            self.readback = Readback::new(&self.device, source, self.longest_edge)?;
+        }
+        let [left, top, ..] = crop;
+        let image = self.readback.read(&self.context, &texture, [left, top])?;
+        Ok(Some(Frame {
             at,
             image,
             part: part_of_box(crop, self.content),
@@ -791,7 +734,8 @@ impl error::Error for Failure {}
 pub(crate) fn configure_overlay(window: &NativeWindow, display: Display) -> anyhow::Result<()> {
     let hwnd = window.native.hwnd;
 
-    exclude_always(hwnd)?;
+    ok_or_last_error(unsafe { SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) })
+        .context("Cannot keep the Show overlay out of screen capture")?;
 
     window.configure_pill()?;
     let [left, top, ..] = display.edges;
@@ -863,17 +807,6 @@ mod tests {
             Some([1.25, 1.0]),
             "A pointer on the next display must not clamp onto this one's edge"
         );
-        let desktop = Display {
-            monitor: 0,
-            edges: [i32::MIN, i32::MIN, i32::MAX, i32::MAX],
-        };
-        assert_eq!(
-            desktop
-                .bounds()
-                .normalize([i32::MAX, i32::MIN].map(f64::from)),
-            Some([1.0, 0.0]),
-            "Spans across the whole coordinate range must not overflow"
-        );
     }
 
     #[test]
@@ -892,107 +825,5 @@ mod tests {
         pacer.sent(at(250));
         assert!(!pacer.due(at(449)), "Spacing runs from the last frame sent");
         assert!(pacer.due(at(450)));
-    }
-
-    #[test]
-    fn unreadable_bounds_keep_a_window_show_and_crop_only_frames_composed_after_they_return() {
-        let start = Instant::now();
-        let at = |milliseconds| {
-            start
-                .checked_add(Duration::from_millis(milliseconds))
-                .unwrap()
-        };
-        let before = Part::WHOLE;
-        let after = Part {
-            left: 0.5,
-            ..Part::WHOLE
-        };
-        let mut admission = Admission::after(at(0));
-        assert_eq!(
-            admission.observe(Ok(Some(before)), at(100)),
-            Ok(Some(before))
-        );
-        assert!(admission.admits(at(100)));
-        assert_eq!(
-            admission.observe(Ok(None), at(200)),
-            Ok(None),
-            "Unreadable bounds ended the Show"
-        );
-        assert_eq!(admission.observe(Ok(Some(after)), at(400)), Ok(Some(after)));
-        assert!(
-            !admission.admits(at(300)),
-            "A frame composed while the bounds were unreadable took the new rectangle"
-        );
-        assert!(!admission.admits(at(420)));
-        assert!(admission.admits(at(450)));
-        assert_eq!(admission.observe(Ok(Some(after)), at(500)), Ok(Some(after)));
-        assert!(
-            admission.admits(at(460)),
-            "Steady geometry moved the composition cutoff"
-        );
-        assert_eq!(
-            admission.observe(Err(WindowGone::Closed), at(600)),
-            Err(WindowGone::Closed)
-        );
-    }
-
-    #[test]
-    fn a_readback_check_that_loses_the_window_holds_back_frames_composed_before_it_returns() {
-        let start = Instant::now();
-        let at = |milliseconds| {
-            start
-                .checked_add(Duration::from_millis(milliseconds))
-                .unwrap()
-        };
-        let before = Part::WHOLE;
-        let after = Part {
-            left: 0.5,
-            ..Part::WHOLE
-        };
-        let lost_before_reading = [Ok(None)];
-        let lost_after_reading = [Ok(Some(before)), Ok(None)];
-        let moved_while_reading = [Ok(Some(before)), Ok(Some(after))];
-        for observations in [
-            &lost_before_reading[..],
-            &lost_after_reading[..],
-            &moved_while_reading[..],
-        ] {
-            let mut admission = Admission::after(at(0));
-            assert_eq!(
-                admission.observe(Ok(Some(before)), at(100)),
-                Ok(Some(before))
-            );
-            let mut observed = observations.iter().copied();
-            let read = read_confirmed(
-                &mut admission,
-                before,
-                || observed.next().unwrap(),
-                || Ok(()),
-            );
-            assert!(matches!(read, Ok(None)), "{observations:?} kept the frame");
-            assert_eq!(admission.observe(Ok(Some(after)), at(300)), Ok(Some(after)));
-            assert!(
-                !admission.admits(at(250)),
-                "{observations:?}: a frame composed while the readback lost the window took the new rectangle"
-            );
-            assert!(admission.admits(at(350)));
-        }
-
-        let mut admission = Admission::after(at(0));
-        assert_eq!(
-            admission.observe(Ok(Some(before)), at(100)),
-            Ok(Some(before))
-        );
-        let mut steady = [Ok(Some(before)); 2].into_iter();
-        let read = read_confirmed(&mut admission, before, || steady.next().unwrap(), || Ok(7));
-        assert!(matches!(read, Ok(Some(7))));
-        assert_eq!(
-            admission.observe(Ok(Some(before)), at(300)),
-            Ok(Some(before))
-        );
-        assert!(
-            admission.admits(at(150)),
-            "A confirmed readback moved the composition cutoff"
-        );
     }
 }

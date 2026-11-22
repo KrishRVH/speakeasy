@@ -7,7 +7,7 @@ use std::{
     sync::{Mutex, MutexGuard, PoisonError},
 };
 
-use anyhow::{Context as _, bail, ensure};
+use anyhow::{Context as _, ensure};
 use objc2::{AllocAnyThread as _, DefinedClass as _, define_class, msg_send, rc::Retained};
 use objc2_av_foundation::{AVAssetSegmentType, AVAssetWriter, AVAssetWriterDelegate};
 use objc2_foundation::{NSData, NSObject, NSObjectProtocol};
@@ -43,10 +43,10 @@ define_class!(
 
     unsafe impl AVAssetWriterDelegate for Output {
         #[unsafe(method(assetWriter:didOutputSegmentData:segmentType:))]
-        fn segment(&self, _: &AVAssetWriter, data: &NSData, kind: AVAssetSegmentType) {
+        fn segment(&self, _: &AVAssetWriter, data: &NSData, _: AVAssetSegmentType) {
             let mut sink = self.sink();
             if !matches!(
-                catch_unwind(AssertUnwindSafe(|| sink.write(data, kind))),
+                catch_unwind(AssertUnwindSafe(|| sink.write(data))),
                 Ok(Ok(()))
             ) {
                 sink.progress = Progress::Failed;
@@ -90,8 +90,7 @@ impl Output {
 
     pub(super) fn close(&self) -> anyhow::Result<()> {
         let mut sink = self.sink();
-        let file = sink.file.take().context("Movie output already closed")?;
-        file.sync_all()?;
+        sink.file.take().context("Movie output already closed")?;
         ensure!(
             sink.progress == Progress::Initialized,
             "Movie segment output failed"
@@ -123,13 +122,8 @@ impl Output {
 }
 
 impl Sink {
-    fn write(&mut self, data: &NSData, kind: AVAssetSegmentType) -> anyhow::Result<()> {
-        let expected = match self.progress {
-            Progress::Uninitialized => AVAssetSegmentType::Initialization,
-            Progress::Initialized => AVAssetSegmentType::Separable,
-            Progress::Failed => bail!("Movie output has failed"),
-        };
-        ensure!(kind == expected, "Movie segments arrived out of order");
+    fn write(&mut self, data: &NSData) -> anyhow::Result<()> {
+        ensure!(self.progress != Progress::Failed, "Movie output has failed");
         let end = self
             .bytes
             .checked_add(u64::try_from(data.length())?)
@@ -138,7 +132,6 @@ impl Sink {
         let file = self.file.as_mut().context("Movie output has closed")?;
 
         file.write_all(unsafe { data.as_bytes_unchecked() })?;
-        file.sync_data()?;
         self.bytes = end;
         self.progress = Progress::Initialized;
         Ok(())

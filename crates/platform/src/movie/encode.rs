@@ -21,8 +21,6 @@ pub(crate) trait Codec: Sized {
         cancelled: &mut dyn FnMut() -> bool,
     ) -> anyhow::Result<ControlFlow<()>>;
 
-    fn checkpoint(&mut self, at: Duration) -> anyhow::Result<()>;
-
     fn finish(self) -> anyhow::Result<()>;
 }
 
@@ -152,7 +150,6 @@ impl<C: Codec> Encoder<C> {
                 at,
                 frames: index.saturating_add(1),
             });
-            self.codec.checkpoint(at)?;
         }
         Ok(ControlFlow::Continue(()))
     }

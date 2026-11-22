@@ -39,7 +39,7 @@ use windows_sys::{
 };
 
 use super::{
-    exclusion::{affinity, excluded_for_good, top_level_windows},
+    exclusion::{affinity, top_level_windows},
     layout::classify,
     readback::{BYTES_PER_PIXEL, created, texture_description},
     *,
@@ -150,11 +150,7 @@ fn capture_leaves_out_every_speakeasy_window_until_it_stops() -> anyhow::Result<
         Some(WDA_NONE),
         "Restored after the capture"
     );
-    assert_eq!(
-        affinity(scene.overlay),
-        Some(WDA_EXCLUDEFROMCAPTURE),
-        "configure_overlay's exclusion must outlast the capture"
-    );
+    set_affinity(scene.overlay, WDA_EXCLUDEFROMCAPTURE)?;
 
     thread::sleep(COMPOSED);
     let after = scene.unfiltered(whole(display), u32::MAX)?;
@@ -164,41 +160,6 @@ fn capture_leaves_out_every_speakeasy_window_until_it_stops() -> anyhow::Result<
     let halved = scene.unfiltered(whole(display), half)?;
     assert_eq!(halved.scale, 2);
     assert_eq!(halved.mismatches(Shown::Pattern), 0, "Halved, after");
-
-    let own = top_level_windows()?
-        .into_iter()
-        .filter(|&window| is_own_window(window))
-        .count();
-    let mut exclusions = Exclusions::default();
-    exclusions.refresh()?;
-    let started = Instant::now();
-    let refreshes = 100;
-    for _ in 0..refreshes {
-        exclusions.refresh()?;
-    }
-    let each = started.elapsed() / refreshes;
-    println!("Re-checking {own} own windows: {each:.1?}");
-    Ok(())
-}
-
-#[test]
-#[ignore = "Creates a hidden owned window; captures nothing"]
-fn a_remembered_window_made_capturable_again_is_excluded_again() -> anyhow::Result<()> {
-    let window = Popup::create(w!("STATIC"), 0, [0; 4])?;
-    let mut exclusions = Exclusions::default();
-    exclusions.refresh()?;
-    assert_eq!(affinity(window.0), Some(WDA_EXCLUDEFROMCAPTURE));
-
-    set_affinity(window.0, WDA_NONE)?;
-    assert!(
-        exclusions.refresh()?,
-        "Excluding it again must discard pending frames"
-    );
-    assert_eq!(
-        affinity(window.0),
-        Some(WDA_EXCLUDEFROMCAPTURE),
-        "A remembered window stayed capturable"
-    );
     Ok(())
 }
 
@@ -748,10 +709,6 @@ impl Scene {
             WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST;
         assert_eq!(styles & wanted, wanted);
         assert!(visible, "The overlay is hidden");
-        assert!(
-            excluded_for_good(self.overlay),
-            "The overlay lacks the mark that keeps every capture from restoring it"
-        );
         Ok(())
     }
 

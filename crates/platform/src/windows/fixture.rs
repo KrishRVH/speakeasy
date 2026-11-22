@@ -1,9 +1,6 @@
 use std::{
-    convert::Infallible,
     num::NonZeroIsize,
     ptr::{null, null_mut},
-    sync::mpsc,
-    thread,
 };
 
 use anyhow::{Context as _, ensure};
@@ -14,12 +11,11 @@ use windows_sys::{
         Graphics::Gdi::HBRUSH,
         System::LibraryLoader::GetModuleHandleW,
         UI::WindowsAndMessaging::{
-            CreateWindowExW, DestroyWindow, HWND_MESSAGE, RegisterClassW, SW_SHOWNOACTIVATE,
-            ShowWindow, UnregisterClassW, WNDCLASSW, WNDPROC, WS_POPUP,
+            CreateWindowExW, DestroyWindow, RegisterClassW, SW_SHOWNOACTIVATE, ShowWindow,
+            UnregisterClassW, WNDCLASSW, WNDPROC, WS_POPUP,
         },
     },
     core::PCWSTR,
-    w,
 };
 
 use crate::NativeWindow;
@@ -29,48 +25,6 @@ pub(super) unsafe fn native_window(hwnd: HWND) -> anyhow::Result<NativeWindow> {
     let raw = RawWindowHandle::Win32(Win32WindowHandle::new(raw));
 
     NativeWindow::new(unsafe { WindowHandle::borrow_raw(raw) })
-}
-
-pub(super) fn with_foreign_window<O: Send, T>(
-    on_owner: impl FnOnce(HWND) -> O + Send,
-    elsewhere: impl FnOnce(HWND) -> T,
-) -> anyhow::Result<(O, T)> {
-    thread::scope(|scope| {
-        let (created, window) = mpsc::channel();
-        let (release, released) = mpsc::channel::<Infallible>();
-        let owner = scope.spawn(move || -> anyhow::Result<()> {
-            let hwnd = unsafe {
-                CreateWindowExW(
-                    0,
-                    w!("STATIC"),
-                    null(),
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    HWND_MESSAGE,
-                    null_mut(),
-                    GetModuleHandleW(null()),
-                    null(),
-                )
-            };
-            ensure!(!hwnd.is_null(), "Cannot create the test window");
-            if created.send((hwnd as isize, on_owner(hwnd))).is_ok() {
-                let Err(_released) = released.recv();
-            }
-
-            unsafe { DestroyWindow(hwnd) };
-            Ok(())
-        });
-        let shared = window.recv().map(|(hwnd, from_owner)| {
-            let from_here = elsewhere(hwnd as HWND);
-            drop(release);
-            (from_owner, from_here)
-        });
-        owner.join().expect("The window's owner thread panicked")?;
-        Ok(shared?)
-    })
 }
 
 pub(super) struct Class(PCWSTR);

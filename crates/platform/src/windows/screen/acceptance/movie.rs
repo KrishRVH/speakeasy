@@ -50,8 +50,6 @@ fn a_movie_survives_still_backpressure_and_closes_at_the_session_deadline() -> a
         );
         scene.check_owned(area)?;
 
-        let receipt = std::fs::File::create_new(directory.path().join("origin-receipt"))?;
-        receipt.sync_all()?;
         assert!(accepted.send(true).is_ok());
         let Some(crate::MovieEvent::Geometry {
             sample, accepted, ..
