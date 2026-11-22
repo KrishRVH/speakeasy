@@ -31,8 +31,8 @@ const RECOVERY_AUDIO: &str = "Recovery leaves your clipboard alone. Recovered vo
     even if you keep the Show.";
 const RECOVERY_PREFIX: &str = "A crash or a slow or full disk can leave a shorter recording. \
     Recovery preserves the original expiry date.";
-const DELETE_SHOW: &str = "This removes its images, video, summary, narration, and associated \
-    recovery audio, even if kept. Exported copies stay.";
+const DELETE_SHOW: &str = "This removes its images, video, summary, narration, and voice, even if \
+    kept. Exported copies and pending recovery audio stay.";
 const RECORD_HINT: &str =
     "Hold your shortcut and press S, W, or A to record your screen, a window, or an area.";
 
