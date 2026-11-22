@@ -1,6 +1,6 @@
 use gpui::{
-    App, AppContext as _, Context, Div, Entity, Focusable as _, FontWeight, Window, div,
-    prelude::*, px, rgb,
+    AppContext as _, Context, Div, Entity, Focusable as _, FontWeight, Window, div, prelude::*, px,
+    rgb,
 };
 
 use super::{
@@ -11,13 +11,13 @@ use super::{
 };
 use crate::{
     config::{
-        Change, Config,
+        Config,
         presets::{self, LIMIT, Preset},
     },
     controls::{Weight, icon},
     gpui_ext::EntityUpdate as _,
     icons,
-    shell::choices::{USE_OVERTAKEN, Used},
+    shell::choices::Used,
     theme::Theme,
 };
 
@@ -141,46 +141,21 @@ impl Settings {
             self.load_preset(&preset, cx);
             return;
         }
-        let started = self.config.clone();
-        let view = cx.entity().downgrade();
-        let drafted = started.clone();
-        let current = move |cx: &App| {
-            view.read_with(cx, |view, _| {
-                drafted.change_to(&view.config) < Change::Session
-            })
-            .unwrap_or(false)
-        };
-        match cx
-            .update_global::<Services, _>(|services, cx| services.use_preset(selected, current, cx))
-        {
+        match cx.update_global::<Services, _>(|services, cx| services.use_preset(selected, cx)) {
             Ok(used) => {
                 self.using = Some(cx.spawn(async move |this, cx| {
                     let used = used.recv().await.ok();
-                    this.update_if_alive(cx, |view, cx| {
-                        view.finish_use(&preset, &started, used, cx);
-                    });
+                    this.update_if_alive(cx, |view, cx| view.finish_use(&preset, used, cx));
                 }));
             },
             Err(reason) => self.notice = Some(Notice::Problem(reason.into())),
         }
     }
 
-    fn finish_use(
-        &mut self,
-        preset: &Preset,
-        started: &Config,
-        used: Option<Used>,
-        cx: &mut Context<'_, Self>,
-    ) {
+    fn finish_use(&mut self, preset: &Preset, used: Option<Used>, cx: &mut Context<'_, Self>) {
         self.using = None;
         match used {
-            Some(Ok(applied)) if !presets::same_choices(started, &self.config) => {
-                applied.load();
-                cx.update_global::<Services, _>(|services, cx| services.restore_owner(cx));
-                self.notice = Some(Notice::Problem(USE_OVERTAKEN.into()));
-            },
-            Some(Ok(applied)) => {
-                let config = applied.load();
+            Some(Ok(config)) => {
                 let resolved = Preset::capture(preset.name(), &config)
                     .unwrap_or_else(|_unchanged| preset.clone());
                 self.presets.resolved = Some((preset.clone(), resolved.clone()));

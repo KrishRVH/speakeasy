@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::{Context as _, anyhow};
 use gpui::{App, BorrowAppContext, Global, Task, WindowHandle};
 use speakeasy_core::{
-    lifecycle::{ConfigEpoch, Lifecycle},
+    lifecycle::Lifecycle,
     machine::{ModelState, Phase},
 };
 use speakeasy_platform::{FocusReport, Input, InputMonitor, OwnedThread};
@@ -60,12 +60,6 @@ enum Restart {
     Reset(Box<Purge>),
 }
 
-#[derive(Clone, Copy)]
-pub(super) enum Landing {
-    Saved,
-    Overtaken,
-}
-
 type Purged = Result<(), String>;
 pub(super) type ResetReceipt = async_channel::Receiver<Purged>;
 
@@ -83,46 +77,8 @@ struct Before {
 
 struct Owners {
     runtime: Runtime,
-    monitor: Monitor,
+    monitor: InputMonitor,
     launched: Config,
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Launch {
-    Desktop,
-    Fake,
-}
-
-enum Monitor {
-    Desktop(InputMonitor),
-    #[cfg(test)]
-    Fake {
-        _reports: runtime::FakeReports,
-    },
-}
-
-impl Monitor {
-    fn request_stop(&self) {
-        match self {
-            Self::Desktop(monitor) => monitor.request_stop(),
-            #[cfg(test)]
-            Self::Fake { .. } => (),
-        }
-    }
-
-    fn stopped(&self) -> impl Future<Output = ()> + use<> {
-        let stopped = match self {
-            Self::Desktop(monitor) => Some(monitor.stopped()),
-            #[cfg(test)]
-            Self::Fake { .. } => None,
-        };
-        async move {
-            if let Some(stopped) = stopped {
-                stopped.await;
-            }
-        }
-    }
 }
 
 impl Owners {
@@ -166,8 +122,6 @@ pub(crate) struct Services {
     pub config: Config,
     pub(super) speech_checked: bool,
     pub(super) admitted: Option<Config>,
-    #[cfg(test)]
-    pub(super) launch: Launch,
     styles: watch::Sender<Style>,
     pub(super) choices: super::choices::Choices,
     pub output: watch::Sender<Snapshot>,
@@ -224,8 +178,6 @@ impl Services {
             config,
             speech_checked: false,
             admitted: None,
-            #[cfg(test)]
-            launch: Launch::Desktop,
             styles: watch::channel(Style::default()).0,
             choices: super::choices::Choices::default(),
             output,
@@ -266,10 +218,6 @@ impl Services {
     pub(crate) fn is_running(&self) -> bool {
         self.lifecycle
             .is_running(|owners| owners.runtime.is_running())
-    }
-
-    pub(super) const fn config_epoch(&self) -> ConfigEpoch {
-        self.lifecycle.epoch()
     }
 
     pub(super) fn is_quitting(&self) -> bool {
@@ -420,11 +368,7 @@ impl Services {
     }
 
     pub(crate) fn apply(&mut self, config: ValidConfig, cx: &App) -> anyhow::Result<()> {
-        self.land(config, Landing::Saved, cx)
-    }
-
-    fn land(&mut self, config: ValidConfig, landing: Landing, cx: &App) -> anyhow::Result<()> {
-        if !self.lifecycle.reconfigure() {
+        if self.is_quitting() {
             return Ok(());
         }
         self.show_copies.cancel();
@@ -432,8 +376,7 @@ impl Services {
         self.reset_choice_for(&config);
         if self.lifecycle.active().is_some_and(|owners| {
             !owners.runtime.is_running()
-                || (matches!(landing, Landing::Saved)
-                    && owners.launched.change_to(&config) == Change::Desktop
+                || (owners.launched.change_to(&config) == Change::Desktop
                     && owners.runtime.baseline().change_to(&config) == Change::Desktop)
         }) {
             self.pause(cx);
@@ -445,12 +388,7 @@ impl Services {
             return Ok(());
         }
         if let Some(runtime) = self.runtime_mut() {
-            match landing {
-                Landing::Saved => runtime.configure(config),
-                Landing::Overtaken => {
-                    runtime.revert(config.into_inner());
-                },
-            }
+            runtime.configure(config);
             self.restart_when_idle(cx);
             return Ok(());
         }
@@ -464,10 +402,7 @@ impl Services {
 
     fn start(&mut self, config: ValidConfig, baseline: Config) -> anyhow::Result<()> {
         self.show_copies.cancel();
-        self.choices.supersede();
         let launched = Config::clone(&config);
-        #[cfg(test)]
-        let launch = self.launch;
         let preset = self.preset_name().map(str::to_owned);
         let Self {
             lifecycle,
@@ -482,21 +417,6 @@ impl Services {
         let started = lifecycle.start(|| {
             announce(output, runtime::LOADING);
             output.send_modify(|snapshot| snapshot.preset.clone_from(&preset));
-            #[cfg(test)]
-            if launch == Launch::Fake {
-                let (runtime, reports) = Runtime::fake(
-                    config.into_inner(),
-                    baseline,
-                    styles.subscribe(),
-                    output.clone(),
-                    meter.clone(),
-                )?;
-                return anyhow::Ok(Owners {
-                    runtime,
-                    monitor: Monitor::Fake { _reports: reports },
-                    launched,
-                });
-            }
             let (runtime, monitor) = Runtime::start(
                 config,
                 baseline,
@@ -509,7 +429,7 @@ impl Services {
             )?;
             anyhow::Ok(Owners {
                 runtime,
-                monitor: Monitor::Desktop(monitor),
+                monitor,
                 launched,
             })
         });
@@ -520,33 +440,17 @@ impl Services {
         started.map(|_| ())
     }
 
-    pub(super) fn adopt_saved(
-        &mut self,
-        submitted: &Config,
-        config: ValidConfig,
-        saved_at: ConfigEpoch,
-        landing: Landing,
-        cx: &App,
-    ) -> anyhow::Result<()> {
+    pub(super) fn adopt_saved(&mut self, config: ValidConfig, cx: &App) -> anyhow::Result<()> {
         #[cfg(target_os = "windows")]
         let start_at_login = config.start_at_login;
-        let superseded = self
-            .admitted
-            .as_ref()
-            .is_some_and(|admitted| admitted != submitted);
-        if !superseded {
-            self.admitted = None;
-        }
-        let adopted = if !superseded
-            && self
-                .lifecycle
-                .save_may_enable(saved_at, |owners| owners.runtime.is_running())
+        self.admitted = None;
+        let adopted = if self
+            .lifecycle
+            .save_may_enable(|owners| owners.runtime.is_running())
         {
-            self.land(config, landing, cx)
+            self.apply(config, cx)
         } else {
-            if !superseded {
-                self.reset_choice_for(&config);
-            }
+            self.reset_choice_for(&config);
             self.config = config.into_inner();
             self.speech_checked = true;
             Ok(())
@@ -600,35 +504,6 @@ impl Services {
         self.validate(cx);
     }
 
-    #[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
-    pub(super) fn run_fake_owner(&mut self) -> anyhow::Result<()> {
-        let preset = self.preset_name().map(str::to_owned);
-        self.output
-            .send_modify(|snapshot| snapshot.preset.clone_from(&preset));
-        let (runtime, reports) = Runtime::fake(
-            self.config.clone(),
-            self.config.clone(),
-            self.styles.subscribe(),
-            self.output.clone(),
-            self.meter.clone(),
-        )?;
-        let launched = self.config.clone();
-        let started = self.lifecycle.start(|| {
-            anyhow::Ok(Owners {
-                runtime,
-                monitor: Monitor::Fake { _reports: reports },
-                launched,
-            })
-        })?;
-        anyhow::ensure!(started, "Services was not ready to start the fake owner");
-        Ok(())
-    }
-
-    #[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
-    pub(super) fn launched(&self) -> Option<&Config> {
-        self.lifecycle.active().map(|owners| &owners.launched)
-    }
-
     fn candidate(&self) -> &Config {
         self.choices.selected.as_ref().map_or_else(
             || self.admitted.as_ref().unwrap_or(&self.config),
@@ -637,11 +512,10 @@ impl Services {
     }
 
     fn validate(&mut self, cx: &App) {
-        let Some(epoch) = self.lifecycle.validate() else {
+        if !self.lifecycle.validate() {
             return;
-        };
-        let checked = self.candidate().clone();
-        let config = checked.clone();
+        }
+        let config = self.candidate().clone();
         let path = self.path.clone();
         let validation = cx
             .background_executor()
@@ -649,25 +523,16 @@ impl Services {
         announce(&self.output, CHECKING);
         self.validation = Some(cx.spawn(async move |cx| {
             let result = validation.await;
-            cx.update(|cx| Self::validation_complete(epoch, &checked, result, cx));
+            cx.update(|cx| Self::validation_complete(result, cx));
         }));
     }
 
-    fn validation_complete(
-        epoch: ConfigEpoch,
-        checked: &Config,
-        result: anyhow::Result<ValidConfig>,
-        cx: &mut App,
-    ) {
+    fn validation_complete(result: anyhow::Result<ValidConfig>, cx: &mut App) {
         let applied = cx.update_global::<Self, _>(|services, cx| {
-            if !services.lifecycle.validated(epoch) {
+            if !services.lifecycle.validated() {
                 return Ok(());
             }
             services.validation = None;
-            if services.candidate() != checked {
-                services.validate(cx);
-                return Ok(());
-            }
             if result.is_err() && services.choices.selected.is_none() {
                 services.speech_checked = false;
             }
@@ -758,7 +623,6 @@ impl Services {
             },
             done,
         };
-        self.choices.outdate();
         self.choices.forget();
         self.admitted = None;
         self.pause(cx);

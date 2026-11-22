@@ -119,16 +119,12 @@ impl Settings {
                                     .child(note.text())
                             }),
                     )
-                    .child(
-                        kit.button(
-                            "onboarding-primary",
-                            label,
-                            Weight::Primary,
-                            action
-                                .filter(|_| self.onboarding_completion.is_none())
-                                .map(|action| ui.press(action)),
-                        ),
-                    ),
+                    .child(kit.button(
+                        "onboarding-primary",
+                        label,
+                        Weight::Primary,
+                        action.map(|action| ui.press(action)),
+                    )),
             )
     }
 

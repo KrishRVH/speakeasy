@@ -160,10 +160,6 @@ impl Preset {
     }
 }
 
-pub(crate) fn same_choices(config: &Config, other: &Config) -> bool {
-    Preset::take("", config).matches(other)
-}
-
 pub(crate) fn validate(presets: &[Preset]) -> anyhow::Result<()> {
     ensure!(
         presets.len() <= LIMIT,

@@ -252,25 +252,6 @@ impl Runtime {
         )
     }
 
-    #[cfg(test)]
-    pub(crate) fn fake(
-        config: Config,
-        baseline: Config,
-        styles: watch::Receiver<Style>,
-        snapshots: watch::Sender<Snapshot>,
-        meter: watch::Sender<Meter>,
-    ) -> anyhow::Result<(Self, FakeReports)> {
-        tests::fake_runtime(
-            Configuration {
-                effective: config,
-                saved: baseline,
-                styles,
-            },
-            snapshots,
-            meter,
-        )
-    }
-
     pub(crate) fn is_running(&self) -> bool {
         !self.input.is_closed() && !self.host.is_finished()
     }
@@ -692,5 +673,3 @@ fn input_lane() -> (InputSender, Receiver<Input>) {
 mod fixture;
 #[cfg(test)]
 mod tests;
-#[cfg(test)]
-pub(crate) use tests::Reports as FakeReports;

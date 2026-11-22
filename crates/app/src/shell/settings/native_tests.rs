@@ -8,39 +8,15 @@ use super::{
     native_interaction::{activate, draw, wait_for},
     *,
 };
-use crate::{config::valid_config, theme::Theme};
 
 #[test]
 #[ignore = "Opt-in owned windows; Linux requires a private X11 display. No microphone, input, or clipboard"]
-fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() -> anyhow::Result<()>
-{
+fn native_phrase_editor_handles_ime() -> anyhow::Result<()> {
     let (completed, outcome) = std::sync::mpsc::channel();
     let (application, _) = crate::application::new().unwrap();
     application.run(move |cx| {
         cx.spawn(async move |cx| {
             let result = async {
-                let directory = tempfile::tempdir()?;
-                let path = directory.path().join("settings.json");
-                let config = valid_config(directory.path())?;
-                let mut saves = SaveQueue::new(path.clone(), config.clone());
-                ensure!(
-                    saves
-                        .submit(config.clone(), ConfigEpoch::default())
-                        .is_some(),
-                    "The first settings save did not start"
-                );
-                ensure!(
-                    saves
-                        .submit(
-                            Config {
-                                threads: 8,
-                                ..config.clone()
-                            },
-                            ConfigEpoch::default()
-                        )
-                        .is_none(),
-                    "The pending settings save started before the first finished"
-                );
                 let window = cx.open_window(
                     WindowOptions {
                         window_bounds: Some(WindowBounds::Windowed(Bounds::new(
@@ -51,60 +27,6 @@ fn native_phrase_editor_handles_ime_and_settings_drop_finishes_queued_saves() ->
                     },
                     synthetic_field,
                 )?;
-                let view = window.update(cx, |_, window, cx| {
-                    cx.new(|cx| Settings {
-                        vocabulary: vocabulary::Editor::new(config.theme, window, cx),
-                        recognition: recognition::Editor::new(config.theme, window, cx),
-                        presets: presets::Editor::new(config.theme, window, cx),
-                        menus: menu::Menus::new(cx),
-                        navigation: navigation::Navigation::new(cx),
-                        practice: practice::Practice::default(),
-                        onboarding: None,
-                        onboarding_focus: cx.focus_handle(),
-                        onboarding_completion: None,
-                        permissions: None,
-                        update: Update::Idle,
-                        config,
-                        presentation: Presentation {
-                            indicator: Indicator::Paused,
-                            shortcut: Arc::from(""),
-                            cancel_shortcut: Arc::from(""),
-                            message: String::new(),
-                            model: None,
-                            preset: None,
-                            chosen: None,
-                            in_session: false,
-                        },
-                        notice: None,
-                        microphones: Vec::new(),
-                        microphone_listing: None,
-                        preview: None,
-                        engine_work: super::EngineWork::Idle,
-                        saving: None,
-                        using: None,
-                        saves,
-                        saved: None,
-                        _updates: Task::ready(()),
-                        unreadable: false,
-                        reset: super::Reset::Idle,
-                        downloaded: Vec::new(),
-                        own_engine: false,
-                        choosing_model: false,
-                        shows_help: false,
-                        keyboard: false,
-                        startup_apps_off: false,
-                        #[cfg(target_os = "linux")]
-                        desktop_command: SharedString::default(),
-                        #[cfg(target_os = "windows")]
-                        minimize_to_tray: None,
-                    })
-                })?;
-                drop(view);
-                cx.update(|_| {});
-                ensure!(
-                    Config::read(&path)?.threads == 8,
-                    "Settings drop lost the queued save"
-                );
                 window.update(cx, |field, window, cx| {
                     field.set_text("🦀 café ".into(), cx);
                     field.replace_and_mark_text_in_range(None, "日本", Some(1..2), window, cx);

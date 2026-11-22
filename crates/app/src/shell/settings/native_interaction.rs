@@ -63,16 +63,11 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                 onboarding::native_tests::exercise(settings, cx)?;
                 onboarding::native_tests::setup_rechecks_unchanged_settings(settings, cx).await?;
                 presets::native_tests::exercise(settings, cx)?;
-                presets::native_tests::applying::exercise(settings, cx).await?;
                 settings.update(cx, |view, _, cx| {
                     let applied = cx.global::<Services>().config.language.clone();
                     view.config.language = "de".into();
                     view.own_engine = true;
-                    view.finish_save(
-                        SaveOutcome::Failed("Synthetic save failure".into()),
-                        ConfigEpoch::default(),
-                        cx,
-                    );
+                    view.finish_save(SaveOutcome::Failed("Synthetic save failure".into()), cx);
                     ensure!(
                         view.config.language == applied
                             && !view.own_engine

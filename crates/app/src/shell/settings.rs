@@ -15,15 +15,14 @@ use std::{mem, path::PathBuf, sync::Arc, time::Duration};
 
 use async_channel::Receiver;
 use gpui::{App, BorrowAppContext, Context, ElementId, SharedString, Task, Window};
-use speakeasy_core::{lifecycle::ConfigEpoch, machine::ModelState};
+use speakeasy_core::machine::ModelState;
 use speakeasy_platform::{FileFilter, Permissions};
 use tokio::sync::watch;
 use updates::Update;
 
 use super::{
     Services, demo, request_quit,
-    save::{SaveOutcome, SaveProgress, SaveQueue, SavedConfig, Written},
-    services::Landing,
+    save::{SaveOutcome, SaveProgress, SaveQueue, SavedConfig},
     window::choose_file,
 };
 use crate::{
@@ -66,7 +65,6 @@ pub(super) struct Settings {
     practice: practice::Practice,
     onboarding: Option<onboarding::Step>,
     onboarding_focus: gpui::FocusHandle,
-    onboarding_completion: Option<onboarding::Completion>,
     update: Update,
     _updates: Task<()>,
     unreadable: bool,
@@ -172,7 +170,6 @@ impl Settings {
             practice: practice::Practice::default(),
             onboarding,
             onboarding_focus: cx.focus_handle(),
-            onboarding_completion: None,
             update: Update::Idle,
             _updates: follow(updates, cx, |_| (), |view, (), cx| view.present(cx)),
             unreadable,
@@ -410,9 +407,8 @@ impl Settings {
         {
             return;
         }
-        let epoch = services.config_epoch();
         cx.update_global::<Services, _>(|services, _| services.follow_draft(&self.config));
-        if let Some(progress) = self.saves.submit(self.config.clone(), epoch) {
+        if let Some(progress) = self.saves.submit(self.config.clone()) {
             self.advance_save(progress, cx);
         }
     }
@@ -691,9 +687,9 @@ impl Settings {
     fn advance_save(&mut self, progress: SaveProgress, cx: &mut Context<'_, Self>) {
         match progress {
             SaveProgress::Writing(result) => self.saving = Some(Self::follow_write(result, cx)),
-            SaveProgress::Finished { outcome, epoch } => {
+            SaveProgress::Finished(outcome) => {
                 self.saving = None;
-                self.finish_save(outcome, epoch, cx);
+                self.finish_save(outcome, cx);
             },
         }
     }
@@ -709,14 +705,7 @@ impl Settings {
                 ))
             });
             this.update_if_alive(cx, |view, cx| {
-                let Written {
-                    overtaken,
-                    epoch,
-                    next,
-                } = view.saves.finish(completed);
-                if let Some(saved) = overtaken {
-                    view.land_overtaken(saved, epoch, cx);
-                }
+                let next = view.saves.finish(completed);
                 view.advance_save(next, cx);
                 cx.notify();
             });
@@ -726,42 +715,15 @@ impl Settings {
     fn land_save(
         &mut self,
         saved: Box<SavedConfig>,
-        epoch: ConfigEpoch,
-        landing: Landing,
         cx: &mut Context<'_, Self>,
     ) -> anyhow::Result<()> {
         saved.update_draft(&mut self.config);
-        let SavedConfig {
-            submitted,
-            validated,
-        } = *saved;
-        cx.update_global::<Services, _>(|services, cx| {
-            services.adopt_saved(&submitted, validated, epoch, landing, cx)
-        })
+        cx.update_global::<Services, _>(|services, cx| services.adopt_saved(saved.validated, cx))
     }
 
-    fn land_overtaken(
-        &mut self,
-        saved: Box<SavedConfig>,
-        epoch: ConfigEpoch,
-        cx: &mut Context<'_, Self>,
-    ) {
-        if let Err(error) = self.land_save(saved, epoch, Landing::Overtaken, cx) {
-            self.notice = Some(Notice::Problem(error.to_string().into()));
-        }
-        present_appearance(cx);
-    }
-
-    fn finish_save(
-        &mut self,
-        outcome: SaveOutcome,
-        epoch: ConfigEpoch,
-        cx: &mut Context<'_, Self>,
-    ) {
+    fn finish_save(&mut self, outcome: SaveOutcome, cx: &mut Context<'_, Self>) {
         let (applied, error) = match outcome {
-            SaveOutcome::Saved(saved) => {
-                (Some(self.land_save(saved, epoch, Landing::Saved, cx)), None)
-            },
+            SaveOutcome::Saved(saved) => (Some(self.land_save(saved, cx)), None),
             SaveOutcome::Failed(error) => (None, Some(error)),
         };
         if error.is_some() {
@@ -807,10 +769,7 @@ impl Settings {
         if self.engine_work.setup().is_some_and(Setup::is_finished) {
             self.engine_work = EngineWork::Idle;
         }
-        !self.engine_work.is_busy()
-            && self.onboarding_completion.is_none()
-            && self.saves.is_idle()
-            && update_drained
+        !self.engine_work.is_busy() && self.saves.is_idle() && update_drained
     }
 }
 
@@ -818,8 +777,6 @@ impl Drop for Settings {
     fn drop(&mut self) {
         self.update.cancel();
         self.request_setup_stop();
-
-        self.saves.flush();
     }
 }
 

@@ -1,29 +1,16 @@
 use std::mem;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct ConfigEpoch(u64);
-
-impl ConfigEpoch {
-    #[must_use]
-    pub const fn next(self) -> Self {
-        Self(self.0.wrapping_add(1))
-    }
-}
-
 #[derive(Debug)]
-#[cfg_attr(test, derive(Clone))]
 pub struct Lifecycle<Owners, Restart> {
     state: State<Owners, Restart>,
-    epoch: ConfigEpoch,
     held: bool,
 }
 
 #[derive(Debug, Default)]
-#[cfg_attr(test, derive(Clone))]
 enum State<Owners, Restart> {
     #[default]
     Disabled,
-    Validating(ConfigEpoch),
+    Validating,
     Running(Owners),
     Stopping {
         owners: Owners,
@@ -36,53 +23,35 @@ impl<Owners, Restart> Default for Lifecycle<Owners, Restart> {
     fn default() -> Self {
         Self {
             state: State::Disabled,
-            epoch: ConfigEpoch::default(),
             held: false,
         }
     }
 }
 
 impl<Owners, Restart> Lifecycle<Owners, Restart> {
-    pub const fn epoch(&self) -> ConfigEpoch {
-        self.epoch
-    }
-
     pub fn is_running(&self, live: impl FnOnce(&Owners) -> bool) -> bool {
         match &self.state {
             State::Running(owners) => live(owners),
-            State::Validating(epoch) => *epoch == self.epoch,
+            State::Validating => true,
             State::Disabled | State::Stopping { .. } | State::Quitting(_) => false,
         }
     }
 
-    pub fn save_may_enable(
-        &self,
-        saved_at: ConfigEpoch,
-        live: impl FnOnce(&Owners) -> bool,
-    ) -> bool {
-        (!self.held && saved_at == self.epoch) || self.is_running(live) || self.has_pending()
+    pub fn save_may_enable(&self, live: impl FnOnce(&Owners) -> bool) -> bool {
+        !self.held || self.is_running(live) || self.has_pending()
     }
 
-    pub fn reconfigure(&mut self) -> bool {
-        if self.is_quitting() {
+    pub fn validate(&mut self) -> bool {
+        if !self.may_start() {
             return false;
         }
-        self.epoch = self.epoch.next();
+        self.state = State::Validating;
+        self.held = false;
         true
     }
 
-    pub fn validate(&mut self) -> Option<ConfigEpoch> {
-        if !self.may_start() {
-            return None;
-        }
-        self.epoch = self.epoch.next();
-        self.state = State::Validating(self.epoch);
-        self.held = false;
-        Some(self.epoch)
-    }
-
-    pub fn validated(&mut self, epoch: ConfigEpoch) -> bool {
-        if !matches!(self.state, State::Validating(current) if current == epoch) {
+    pub fn validated(&mut self) -> bool {
+        if !matches!(self.state, State::Validating) {
             return false;
         }
         self.state = State::Disabled;
@@ -102,29 +71,25 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
     pub const fn active(&self) -> Option<&Owners> {
         match &self.state {
             State::Running(owners) => Some(owners),
-            State::Disabled
-            | State::Validating(_)
-            | State::Stopping { .. }
-            | State::Quitting(_) => None,
+            State::Disabled | State::Validating | State::Stopping { .. } | State::Quitting(_) => {
+                None
+            },
         }
     }
 
     pub const fn active_mut(&mut self) -> Option<&mut Owners> {
         match &mut self.state {
             State::Running(owners) => Some(owners),
-            State::Disabled
-            | State::Validating(_)
-            | State::Stopping { .. }
-            | State::Quitting(_) => None,
+            State::Disabled | State::Validating | State::Stopping { .. } | State::Quitting(_) => {
+                None
+            },
         }
     }
 
     pub const fn retiring(&self) -> Option<&Owners> {
         match &self.state {
             State::Stopping { owners, .. } | State::Quitting(Some(owners)) => Some(owners),
-            State::Disabled | State::Validating(_) | State::Running(_) | State::Quitting(None) => {
-                None
-            },
+            State::Disabled | State::Validating | State::Running(_) | State::Quitting(None) => None,
         }
     }
 
@@ -157,7 +122,7 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
     }
 
     const fn may_start(&self) -> bool {
-        matches!(self.state, State::Disabled | State::Validating(_))
+        matches!(self.state, State::Disabled | State::Validating)
     }
 
     pub fn pause(&mut self) -> bool {
@@ -176,14 +141,13 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
                 },
                 false,
             ),
-            State::Disabled | State::Validating(_) => (State::Disabled, false),
+            State::Disabled | State::Validating => (State::Disabled, false),
             quitting @ State::Quitting(_) => {
                 self.state = quitting;
                 return false;
             },
         };
         self.state = state;
-        self.epoch = self.epoch.next();
         self.held = true;
         started
     }
@@ -199,10 +163,9 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
                 self.state = quitting;
                 return false;
             },
-            State::Disabled | State::Validating(_) => None,
+            State::Disabled | State::Validating => None,
         };
         self.state = State::Quitting(owners);
-        self.epoch = self.epoch.next();
         true
     }
 
@@ -217,12 +180,10 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
                 *owners = None;
                 None
             },
-            State::Disabled | State::Validating(_) | State::Running(_) => None,
+            State::Disabled | State::Validating | State::Running(_) => None,
         }
     }
 }
 
-#[cfg(test)]
-mod explore;
 #[cfg(test)]
 mod tests;

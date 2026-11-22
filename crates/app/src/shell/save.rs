@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use async_channel::Receiver;
-use speakeasy_core::lifecycle::ConfigEpoch;
 use speakeasy_platform::OwnedThread;
 
 use crate::config::{Config, ValidConfig};
@@ -25,10 +24,7 @@ impl SavedConfig {
 
 pub(super) enum SaveProgress {
     Writing(Receiver<anyhow::Result<SavedConfig>>),
-    Finished {
-        outcome: SaveOutcome,
-        epoch: ConfigEpoch,
-    },
+    Finished(SaveOutcome),
 }
 
 pub(super) enum SaveOutcome {
@@ -36,18 +32,11 @@ pub(super) enum SaveOutcome {
     Failed(String),
 }
 
-pub(super) struct Written {
-    pub(super) overtaken: Option<Box<SavedConfig>>,
-    pub(super) epoch: ConfigEpoch,
-    pub(super) next: SaveProgress,
-}
-
 pub(super) struct SaveQueue {
     path: PathBuf,
     writing: Option<Running>,
     held: [Config; 2],
     opened: Option<Config>,
-    epoch: ConfigEpoch,
 }
 
 impl SaveQueue {
@@ -58,7 +47,6 @@ impl SaveQueue {
             writing: None,
             held: [held.clone(), held],
             opened: Some(draft),
-            epoch: ConfigEpoch::default(),
         }
     }
 
@@ -70,8 +58,7 @@ impl SaveQueue {
         }
     }
 
-    pub(super) fn submit(&mut self, draft: Config, epoch: ConfigEpoch) -> Option<SaveProgress> {
-        self.epoch = epoch;
+    pub(super) fn submit(&mut self, draft: Config) -> Option<SaveProgress> {
         if let Some(running) = &mut self.writing {
             running.queued = Some(draft);
             return None;
@@ -79,111 +66,65 @@ impl SaveQueue {
         Some(self.start(draft))
     }
 
-    pub(super) fn finish(&mut self, result: anyhow::Result<SavedConfig>) -> Written {
+    pub(super) fn finish(&mut self, result: anyhow::Result<SavedConfig>) -> SaveProgress {
         let queued = self.writing.take().and_then(|running| running.queued);
         if let Ok(saved) = &result {
             self.held = saved.held();
             self.opened = None;
         }
-        let (overtaken, next) = match queued {
-            Some(draft) => (result.ok().map(Box::new), self.start(draft)),
-            None => (None, self.finished(result)),
-        };
-        Written {
-            overtaken,
-            epoch: self.epoch,
-            next,
+        match queued {
+            Some(draft) => self.start(draft),
+            None => finished(result),
         }
     }
 
     fn start(&mut self, draft: Config) -> SaveProgress {
-        match SaveWork::start(self.held.clone(), draft.clone(), self.path.clone()) {
-            Ok(work) => {
-                let running = self.writing.insert(Running {
-                    work,
+        let (held, path, submitted) = (self.held.clone(), self.path.clone(), draft.clone());
+        let (complete, result) = async_channel::bounded(1);
+        let thread = OwnedThread::spawn("settings-save", move || {
+            let write = || -> anyhow::Result<SavedConfig> {
+                let validated = submitted.validated(&path)?;
+                Config::save_changes(&held.each_ref(), &submitted, &validated, &path)?;
+                Ok(SavedConfig {
+                    submitted,
+                    validated,
+                })
+            };
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "A closed result receiver needs no completion; the requested write still runs"
+            )]
+            let _ = complete.try_send(write());
+        });
+        match thread {
+            Ok(thread) => {
+                self.writing = Some(Running {
+                    _thread: thread,
                     draft,
                     queued: None,
                 });
-                SaveProgress::Writing(running.work.result.clone())
+                SaveProgress::Writing(result)
             },
-            Err(error) => self.finished(Err(error)),
-        }
-    }
-
-    fn finished(&self, result: anyhow::Result<SavedConfig>) -> SaveProgress {
-        SaveProgress::Finished {
-            outcome: result.map_or_else(
-                |error| SaveOutcome::Failed(format!("{error:#}")),
-                |saved| SaveOutcome::Saved(Box::new(saved)),
-            ),
-            epoch: self.epoch,
+            Err(error) => finished(Err(error.into())),
         }
     }
 
     pub(super) fn is_idle(&self) -> bool {
         self.writing.is_none()
     }
+}
 
-    pub(super) fn flush(&mut self) {
-        let Some(Running {
-            work: SaveWork { thread, result },
-            queued,
-            ..
-        }) = self.writing.take()
-        else {
-            return;
-        };
-        drop(thread);
-
-        if let Ok(Ok(saved)) = result.try_recv() {
-            self.held = saved.held();
-        }
-        if let Some(queued) = queued {
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "Dropping the work joins its thread; a closing view has no one to tell of a failed start"
-            )]
-            let _ = SaveWork::start(self.held.clone(), queued, self.path.clone());
-        }
-    }
+fn finished(result: anyhow::Result<SavedConfig>) -> SaveProgress {
+    SaveProgress::Finished(result.map_or_else(
+        |error| SaveOutcome::Failed(format!("{error:#}")),
+        |saved| SaveOutcome::Saved(Box::new(saved)),
+    ))
 }
 
 struct Running {
-    work: SaveWork,
+    _thread: OwnedThread,
     draft: Config,
     queued: Option<Config>,
-}
-
-struct SaveWork {
-    thread: OwnedThread,
-    result: Receiver<anyhow::Result<SavedConfig>>,
-}
-
-impl SaveWork {
-    fn start(held: [Config; 2], draft: Config, path: PathBuf) -> anyhow::Result<Self> {
-        Self::spawn(move || {
-            let validated = draft.validated(&path)?;
-            Config::save_changes(&held.each_ref(), &draft, &validated, &path)?;
-            Ok(SavedConfig {
-                submitted: draft,
-                validated,
-            })
-        })
-    }
-
-    fn spawn(
-        write: impl FnOnce() -> anyhow::Result<SavedConfig> + Send + 'static,
-    ) -> anyhow::Result<Self> {
-        let (complete, result) = async_channel::bounded(1);
-        let thread = OwnedThread::spawn("settings-save", move || {
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "A closed result receiver needs no completion; the requested durable write still runs"
-            )]
-            let _ = complete.try_send(write());
-        })?;
-        Ok(Self { thread, result })
-    }
 }
 
 #[cfg(test)]

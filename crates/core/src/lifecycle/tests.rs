@@ -1,6 +1,6 @@
 use std::sync::mpsc;
 
-use super::{Lifecycle, State};
+use super::Lifecycle;
 
 fn live<Owners, Restart>(owners: Owners) -> Lifecycle<Owners, Restart> {
     let mut lifecycle = Lifecycle::default();
@@ -20,14 +20,14 @@ fn validating_and_starting_never_discard_live_or_retiring_owners() {
 
     let (drops, dropped) = mpsc::channel();
     let mut lifecycle = live::<_, ()>(Owner(drops.clone()));
-    assert!(lifecycle.validate().is_none());
+    assert!(!lifecycle.validate());
     assert_eq!(
         lifecycle.start(|| Ok::<_, ()>(Owner(drops.clone()))),
         Ok(false)
     );
     assert!(dropped.try_recv().is_err());
     assert!(lifecycle.pause());
-    assert!(lifecycle.validate().is_none());
+    assert!(!lifecycle.validate());
     assert_eq!(lifecycle.start(|| Ok::<_, ()>(Owner(drops))), Ok(false));
     assert!(dropped.try_recv().is_err());
     lifecycle.retired();
@@ -37,21 +37,21 @@ fn validating_and_starting_never_discard_live_or_retiring_owners() {
 #[test]
 fn a_resume_check_counts_as_running_until_quit_ends_it() {
     let mut lifecycle = Lifecycle::<(), ()>::default();
-    let checking = lifecycle.validate().unwrap();
+    assert!(lifecycle.validate());
     assert!(lifecycle.is_running(|()| false));
     assert!(lifecycle.quit());
     assert!(!lifecycle.is_running(|()| false));
-    assert!(!lifecycle.validated(checking));
-    assert!(lifecycle.validate().is_none());
+    assert!(!lifecycle.validated());
+    assert!(!lifecycle.validate());
     assert_eq!(lifecycle.start(|| Ok::<_, ()>(())), Ok(false));
 }
 
 #[test]
 fn pause_invalidates_validation_and_repeated_pause_discards_resume() {
     let mut lifecycle = Lifecycle::<(), u8>::default();
-    let checking = lifecycle.validate().unwrap();
+    assert!(lifecycle.validate());
     assert!(!lifecycle.pause());
-    assert!(!lifecycle.validated(checking));
+    assert!(!lifecycle.validated());
     lifecycle = live(());
     assert!(lifecycle.pause());
     assert!(lifecycle.queue(1));
@@ -76,7 +76,6 @@ fn retirement_applies_only_latest_request_once_and_quit_is_terminal() {
     assert!(!lifecycle.quit());
     assert!(!lifecycle.queue(4));
     assert!(!lifecycle.pause());
-    assert!(!lifecycle.reconfigure());
     assert_eq!(lifecycle.retired(), None);
     assert!(lifecycle.is_quitting());
     assert!(lifecycle.active().is_none());
@@ -86,35 +85,24 @@ fn retirement_applies_only_latest_request_once_and_quit_is_terminal() {
 #[test]
 fn a_pause_after_save_keeps_dictation_off_unless_resumed() {
     let mut lifecycle = live::<_, ()>(());
-    let saved_at = lifecycle.epoch();
     assert!(lifecycle.pause());
     assert!(
-        !lifecycle.save_may_enable(saved_at, |()| true),
-        "A save requested before Pause would restart the owners Pause is retiring"
+        !lifecycle.save_may_enable(|()| true),
+        "A save would restart the owners Pause is retiring"
     );
     assert_eq!(lifecycle.retired(), None);
     assert!(
-        !lifecycle.save_may_enable(saved_at, |()| true),
-        "A save requested before Pause would enable dictation after it"
-    );
-    assert!(
-        !lifecycle.save_may_enable(lifecycle.epoch(), |()| true),
+        !lifecycle.save_may_enable(|()| true),
         "A setting changed while paused would resume dictation"
     );
-    lifecycle.validate().unwrap();
+    assert!(lifecycle.validate());
     assert!(
-        lifecycle.save_may_enable(saved_at, |()| true),
-        "A deliberate Resume after Pause still receives the durable settings"
+        lifecycle.save_may_enable(|()| true),
+        "A deliberate Resume after Pause still receives the saved settings"
     );
     lifecycle = Lifecycle::default();
-    lifecycle.validate().unwrap();
-    let saved_at = lifecycle.epoch();
-    assert!(!lifecycle.pause());
-    assert!(!lifecycle.save_may_enable(saved_at, |()| true));
-    assert!(!lifecycle.save_may_enable(lifecycle.epoch(), |()| true));
-    lifecycle = Lifecycle::default();
     assert!(
-        lifecycle.save_may_enable(lifecycle.epoch(), |()| false),
+        lifecycle.save_may_enable(|()| false),
         "Saving the first complete settings must enable dictation"
     );
     lifecycle = live(());
@@ -122,7 +110,7 @@ fn a_pause_after_save_keeps_dictation_off_unless_resumed() {
     assert!(lifecycle.queue(()));
     assert_eq!(lifecycle.retired(), Some(()));
     assert!(
-        lifecycle.save_may_enable(lifecycle.epoch(), |()| false),
+        lifecycle.save_may_enable(|()| false),
         "A restart that applies settings is not a user pause"
     );
 }
@@ -131,35 +119,10 @@ fn a_pause_after_save_keeps_dictation_off_unless_resumed() {
 fn settings_saved_after_a_reset_enable_dictation_as_on_a_new_install() {
     let mut lifecycle = Lifecycle::<(), ()>::default();
     assert!(!lifecycle.pause());
-    assert!(!lifecycle.save_may_enable(lifecycle.epoch(), |()| false));
+    assert!(!lifecycle.save_may_enable(|()| false));
     lifecycle.forget_pause();
     assert!(
-        lifecycle.save_may_enable(lifecycle.epoch(), |()| false),
+        lifecycle.save_may_enable(|()| false),
         "Setup after a reset left dictation paused"
     );
-}
-
-#[test]
-fn a_save_during_a_resume_check_supersedes_the_check() {
-    let mut lifecycle = Lifecycle::<u8, ()>::default();
-    let checking = lifecycle.validate().unwrap();
-    assert!(lifecycle.save_may_enable(lifecycle.epoch(), |_| false));
-    assert!(lifecycle.reconfigure());
-    assert!(!lifecycle.queue(()));
-    assert_eq!(lifecycle.start(|| Ok::<_, ()>(1)), Ok(true));
-    assert!(!lifecycle.validated(checking));
-    assert_eq!(lifecycle.active(), Some(&1));
-}
-
-#[test]
-fn owners_that_fail_to_start_still_end_the_check_they_superseded() {
-    let mut lifecycle = Lifecycle::<u8, ()>::default();
-    let checking = lifecycle.validate().unwrap();
-    assert!(lifecycle.reconfigure());
-    assert_eq!(lifecycle.start(|| Err::<u8, _>(())), Err(()));
-    assert!(
-        !lifecycle.validated(checking),
-        "A check outlived newer settings whose owners failed to start"
-    );
-    assert!(matches!(lifecycle.state, State::Disabled));
 }

@@ -6,7 +6,7 @@ use super::{
     *,
 };
 use crate::{
-    config::{Config, ValidConfig},
+    config::Config,
     recognition_terms::Terms,
     transcript::vocabulary::{Correction, Vocabulary},
 };
@@ -112,13 +112,6 @@ pub(in crate::shell::settings) fn exercise(
                 && after_removal.presets.first().map(Preset::name) == Some("Other"),
             "Deleting a preset changed dictation choices or another preset"
         );
-        for stale in [Edit::Use(1), Edit::Update(1), Edit::Delete(1)] {
-            view.edit_preset(stale, window, cx);
-            ensure!(
-                view.config == after_removal,
-                "An out-of-range preset action changed settings"
-            );
-        }
         view.edit_preset(Edit::Use(0), window, cx);
         ensure!(
             view.config.language == "en",
@@ -195,5 +188,3 @@ fn menu_cursor_survives_engine_work(
     );
     Ok(())
 }
-
-pub(in crate::shell::settings) mod applying;

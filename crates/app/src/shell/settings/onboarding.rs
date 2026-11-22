@@ -3,11 +3,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use gpui::{App, Context, Task, Window, point, px};
-use speakeasy_platform::OwnedThread;
+use gpui::{App, Context, Window, point, px};
 
 use super::{Action as SettingsAction, Notice, Settings, is_demo};
-use crate::{gpui_ext::EntityUpdate as _, shell::Services};
+use crate::shell::Services;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Step {
@@ -68,11 +67,6 @@ pub(super) enum Action {
     Next,
     Back,
     Finish,
-}
-
-pub(super) struct Completion {
-    _thread: OwnedThread,
-    _follow: Task<()>,
 }
 
 pub(crate) fn pending(settings: &Path) -> bool {
@@ -155,9 +149,6 @@ impl Settings {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if self.onboarding_completion.is_some() {
-            return;
-        }
         if action == Action::Finish {
             self.finish_onboarding(cx);
             return;
@@ -186,44 +177,14 @@ impl Settings {
 
     fn finish_onboarding(&mut self, cx: &Context<'_, Self>) {
         self.practice.stop();
-        if is_demo(cx) {
-            self.onboarding = None;
-            return;
-        }
-        let settings = cx.global::<Services>().path.clone();
-        let (sender, receiver) = async_channel::bounded(1);
-        let Ok(thread) = OwnedThread::spawn("onboarding-save", move || {
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "The completion marker still writes when its settings window has closed"
-            )]
-            let _ = sender.try_send(complete(&settings));
-        }) else {
+        if !is_demo(cx) && complete(&cx.global::<Services>().path).is_err() {
             self.notice = Some(Notice::Problem(
-                "Cannot remember setup completion. Try again.".into(),
+                "Cannot remember setup completion. Check that the settings folder is writable, then try again.".into(),
             ));
             return;
-        };
-        self.notice = Some(Notice::Note("Remembering setup completion…".into()));
-        let follow = cx.spawn(async move |this, cx| {
-            let completed = matches!(receiver.recv().await, Ok(Ok(())));
-            this.update_if_alive(cx, |view, cx| {
-                view.onboarding_completion = None;
-                if completed {
-                    view.onboarding = None;
-                    view.notice = None;
-                } else {
-                    view.notice = Some(Notice::Problem(
-                        "Cannot remember setup completion. Check that the settings folder is writable, then try again.".into(),
-                    ));
-                }
-                cx.notify();
-            });
-        });
-        self.onboarding_completion = Some(Completion {
-            _thread: thread,
-            _follow: follow,
-        });
+        }
+        self.onboarding = None;
+        self.notice = None;
     }
 }
 
@@ -273,17 +234,6 @@ mod tests {
         complete(&settings)?;
         assert_eq!(fs::read(&settings)?, b"user settings");
         assert!(pending(&settings.with_file_name("other.json")));
-        Ok(())
-    }
-
-    #[test]
-    fn failed_completion_remains_pending() -> anyhow::Result<()> {
-        let directory = tempfile::tempdir()?;
-        let parent = directory.path().join("file");
-        fs::write(&parent, [])?;
-        let settings = parent.join("settings.json");
-        assert!(complete(&settings).is_err());
-        assert!(pending(&settings));
         Ok(())
     }
 }

@@ -208,10 +208,6 @@ pub(in crate::shell::settings) fn exercise(
             view.onboarding.is_none(),
             "Skip waited for model installation"
         );
-        ensure!(
-            view.onboarding_completion.is_none(),
-            "Demo wrote an onboarding marker"
-        );
         view.config.threads = 17;
         view.act(SettingsAction::Onboarding(Action::Replay), window, cx);
         ensure!(
