@@ -10,6 +10,7 @@ pub use normalization::MovieNormalization;
 
 const HEADER_LIMIT: u64 = 1 << 20;
 const SAMPLE_LIMIT: usize = 10_801;
+const DURATION_LIMIT: Duration = Duration::from_secs(360);
 
 const NON_SYNC_SAMPLE: u32 = 0x0001_0000;
 
@@ -71,7 +72,6 @@ pub struct MovieSample {
 }
 
 impl MoviePrefix {
-    pub const DURATION_LIMIT: Duration = Duration::from_secs(360);
     pub const FILE_LIMIT: u64 = 1 << 30;
 
     #[must_use]
@@ -458,8 +458,7 @@ fn fragment(
                 .checked_add(u64::from(duration))
                 .ok_or(MovieError::Invalid("Movie decode time overflows"))?;
             require(
-                end <= u64::from(track.timescale)
-                    .saturating_mul(MoviePrefix::DURATION_LIMIT.as_secs()),
+                end <= u64::from(track.timescale).saturating_mul(DURATION_LIMIT.as_secs()),
                 "Movie duration exceeds its limit",
             )?;
             result.times.push(result.decoded);
