@@ -6,9 +6,6 @@ mod status_item;
 use std::{
     cell::OnceCell,
     ffi::c_void,
-    fs::{self, File},
-    io,
-    os::{fd::AsFd as _, unix::fs::MetadataExt as _},
     panic::{self, AssertUnwindSafe},
     pin::pin,
     ptr::NonNull,
@@ -701,18 +698,7 @@ fn secure_input_from_worker() -> Option<bool> {
 
 pub(super) fn attach_stdio() -> bool {
     const LAUNCHD: u32 = 1;
-    std::os::unix::process::parent_id() != LAUNCHD || !discards_stderr()
-}
-
-fn discards_stderr() -> bool {
-    let stderr = io::stderr()
-        .as_fd()
-        .try_clone_to_owned()
-        .and_then(|fd| File::from(fd).metadata());
-    let (Ok(stderr), Ok(null)) = (stderr, fs::metadata("/dev/null")) else {
-        return true;
-    };
-    (stderr.dev(), stderr.ino()) == (null.dev(), null.ino())
+    std::os::unix::process::parent_id() != LAUNCHD
 }
 
 pub(super) fn show_startup_error(message: &str) {

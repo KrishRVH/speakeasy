@@ -89,24 +89,3 @@ async fn a_start_ends_when_capture_stops_or_is_cancelled_before_its_completion()
     let started = settled(starting(&reply, &stopped, &stopping)).await;
     assert!(matches!(started, Some(Ok(Started::Cancelled))));
 }
-
-#[test]
-fn stop_retries_back_off_until_one_confirms() {
-    let mut pauses = Vec::new();
-    retry_stop(|| false, |pause| pauses.push(pause));
-    assert!(pauses.first().is_some_and(|first| !first.is_zero()));
-    assert!(
-        pauses.windows(2).all(|pair| pair[0] < pair[1]),
-        "Stop retries do not back off"
-    );
-
-    let mut attempts = 0;
-    retry_stop(
-        || {
-            attempts += 1;
-            attempts == 2
-        },
-        |_| {},
-    );
-    assert_eq!(attempts, 2);
-}

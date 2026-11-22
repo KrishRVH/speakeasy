@@ -5,7 +5,7 @@ use anyhow::ensure;
 use super::canvas::Canvas;
 use crate::Frame;
 
-pub(crate) const FRAME_LIMIT: u32 = 9_000;
+const FRAME_LIMIT: u32 = 9_000;
 
 const CATCH_UP_LIMIT: u32 = 60;
 

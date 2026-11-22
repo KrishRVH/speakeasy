@@ -1,7 +1,6 @@
 use std::{
-    fs::{File, OpenOptions},
+    fs::File,
     io::Write as _,
-    os::unix::fs::OpenOptionsExt as _,
     panic::{AssertUnwindSafe, catch_unwind},
     path::Path,
     sync::{Mutex, MutexGuard, PoisonError},
@@ -61,11 +60,7 @@ impl Output {
         reason = "The synchronized file lease serializes native callbacks with explicit owner closure"
     )]
     pub(super) fn new(path: &Path, limit: u64) -> anyhow::Result<Retained<Self>> {
-        let file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(path)?;
+        let file = File::create_new(path)?;
         let this = Self::alloc().set_ivars(State {
             sink: Mutex::new(Sink {
                 file: Some(file),
@@ -108,16 +103,6 @@ impl Output {
             .sink
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-    }
-
-    #[cfg(test)]
-    pub(super) fn file_identity(&self) -> (std::os::fd::RawFd, std::fs::Metadata) {
-        use std::os::fd::AsRawFd as _;
-        let sink = self.sink();
-        let file = sink.file.as_ref().unwrap();
-        let identity = (file.as_raw_fd(), file.metadata().unwrap());
-        drop(sink);
-        identity
     }
 }
 

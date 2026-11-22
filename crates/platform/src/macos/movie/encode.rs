@@ -21,10 +21,7 @@ use objc2_av_foundation::{
 use objc2_core_media::CMTime;
 use objc2_uniform_type_identifiers::UTType;
 
-use crate::movie::{
-    encode::{self, FRAME_LIMIT},
-    is_canvas,
-};
+use crate::movie::encode;
 
 pub(crate) struct Codec {
     native: Retained<AVAssetWriter>,
@@ -39,7 +36,6 @@ impl encode::Codec for Codec {
     const CLOCK: encode::Clock = encode::Clock::Nanoseconds;
 
     fn open(path: &Path, size: [u32; 2], limit: u64) -> anyhow::Result<Self> {
-        ensure!(is_canvas(size), "Video canvas is invalid");
         let output = output::Output::new(path, limit)?;
         let buffers = buffers::Buffers::new(size)?;
         let settings = settings::video(size)?;
@@ -86,10 +82,6 @@ impl encode::Codec for Codec {
         index: u32,
         cancelled: &mut dyn FnMut() -> bool,
     ) -> anyhow::Result<ControlFlow<()>> {
-        ensure!(
-            index == self.frames && index < FRAME_LIMIT,
-            "The movie reached its recording limit"
-        );
         let began = Instant::now();
         loop {
             if cancelled() {
@@ -112,7 +104,7 @@ impl encode::Codec for Codec {
             );
             std::thread::sleep(Duration::from_millis(2));
         }
-        let sample = self.buffers.sample(bgra, self.frames)?;
+        let sample = self.buffers.sample(bgra, index)?;
         if cancelled() {
             return Ok(ControlFlow::Break(()));
         }

@@ -5,21 +5,17 @@ use std::{
     sync::{Mutex, MutexGuard, PoisonError},
 };
 
-use anyhow::{Context as _, ensure};
+use anyhow::Context as _;
 use dispatch2::{DispatchQueue, DispatchRetained};
 use objc2::{
-    AllocAnyThread, DefinedClass, define_class, msg_send,
-    rc::Retained,
-    runtime::{AnyObject, ProtocolObject},
+    AllocAnyThread, DefinedClass, define_class, msg_send, rc::Retained, runtime::ProtocolObject,
 };
 use objc2_av_foundation::{
-    AVAssetReferenceRestrictions, AVAssetResourceLoader, AVAssetResourceLoaderDelegate,
+    AVAssetResourceLoader, AVAssetResourceLoaderDelegate,
     AVAssetResourceLoadingContentInformationRequest, AVAssetResourceLoadingDataRequest,
-    AVAssetResourceLoadingRequest, AVFileTypeMPEG4, AVURLAsset, AVURLAssetReferenceRestrictionsKey,
+    AVAssetResourceLoadingRequest, AVFileTypeMPEG4, AVURLAsset,
 };
-use objc2_foundation::{
-    NSData, NSDictionary, NSError, NSNumber, NSObject, NSObjectProtocol, NSURL, ns_string,
-};
+use objc2_foundation::{NSData, NSError, NSObject, NSObjectProtocol, NSURL, ns_string};
 use speakeasy_show::MoviePrefix;
 
 const RESOURCE: &str = "speakeasy-movie://local/recording.mp4";
@@ -39,7 +35,6 @@ impl Input {
     fn read(&self, buffer: &mut [u8], at: u64) -> anyhow::Result<()> {
         let lease = self.lease();
         let file = lease.as_ref().context("Video input has closed")?;
-        ensure!(file.metadata()?.len() == self.bytes, "Video length changed");
         let result = file.read_exact_at(buffer, at);
         drop(lease);
         result?;
@@ -101,13 +96,6 @@ impl Reader {
     }
 
     fn respond(&self, request: &AVAssetResourceLoadingRequest) -> anyhow::Result<()> {
-        let url = unsafe { request.request() }
-            .URL()
-            .and_then(|url| url.absoluteString());
-        ensure!(
-            url.is_some_and(|url| *url == *ns_string!(RESOURCE)),
-            "Video requested an unsupported resource"
-        );
         if let Some(info) = unsafe { request.contentInformationRequest() } {
             self.describe(&info)?;
         }
@@ -125,12 +113,6 @@ impl Reader {
         info: &AVAssetResourceLoadingContentInformationRequest,
     ) -> anyhow::Result<()> {
         let kind = unsafe { AVFileTypeMPEG4 }.context("The native MP4 type is unavailable")?;
-        ensure!(
-            unsafe { info.allowedContentTypes() }.is_none_or(
-                |types| types.is_empty() || types.iter().any(|allowed| *allowed == *kind)
-            ),
-            "Video requested an unsupported content type"
-        );
         let length = i64::try_from(self.ivars().bytes)?;
         unsafe {
             info.setContentType(Some(kind));
@@ -157,7 +139,6 @@ impl Reader {
                 .context("Video byte range overflowed")?
                 .min(input.bytes)
         };
-        ensure!(position >= start, "Video byte range moved backwards");
         let mut buffer = vec![0; READ_CHUNK];
         while position < end && !unsafe { request.isCancelled() } {
             let count = usize::try_from(end.saturating_sub(position))?.min(READ_CHUNK);
@@ -186,14 +167,9 @@ impl Asset {
         let queue = DispatchQueue::new("Speakeasy movie input", None);
         let url = NSURL::URLWithString(ns_string!(RESOURCE))
             .context("Cannot create the local movie resource")?;
-        let restrictions = NSNumber::new_usize(AVAssetReferenceRestrictions::ForbidAll.0);
 
         let native = unsafe {
-            let options = NSDictionary::from_slices(
-                &[AVURLAssetReferenceRestrictionsKey],
-                &[&*restrictions as &AnyObject],
-            );
-            let asset = AVURLAsset::URLAssetWithURL_options(&url, Some(&options));
+            let asset = AVURLAsset::URLAssetWithURL_options(&url, None);
             asset
                 .resourceLoader()
                 .setDelegate_queue(Some(ProtocolObject::from_ref(&*reader)), Some(&queue));

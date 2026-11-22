@@ -28,13 +28,6 @@ use crate::{
     screen::{Unstopped, geometry::Bounds},
 };
 
-const STOP_PAUSES: [Duration; 4] = [
-    Duration::from_millis(100),
-    Duration::from_millis(400),
-    Duration::from_secs(1),
-    Duration::from_secs(2),
-];
-
 pub(super) fn capture(
     target: Target,
     interval: Duration,
@@ -88,7 +81,6 @@ pub(super) fn capture(
             report(events, failure);
         }
         movie.stop(ended);
-        retry_stop(|| stream.stop().is_ok(), thread::sleep);
     }
     drop(stream);
     movie.stop(ended);
@@ -125,9 +117,6 @@ fn record(
         }
         let mut movie_failed = false;
         while let Ok(frame) = stream.frames.try_recv() {
-            if Geometry::read(target.display.native.id) != geometry {
-                return Err(Failure::DisplayLost);
-            }
             if stopping.is_closed() || events.is_closed() {
                 return Ok(());
             }
@@ -198,16 +187,15 @@ impl Stream {
         let configuration = source.configuration(part).ok_or(Failure::DisplayLost)?;
         let nanos = i64::try_from(interval.as_nanos()).map_err(|_overflow| Failure::Unstarted)?;
 
-        let size = unsafe {
+        unsafe {
             configuration.setMinimumFrameInterval(CMTime::new(nanos, 1_000_000_000));
             configuration.setQueueDepth(3);
             configuration.setCapturesAudio(false);
-            [configuration.width(), configuration.height()]
-        };
+        }
         let (frames, received) = async_channel::bounded(2);
         let (failures, failed) = async_channel::bounded(1);
         let (confirm, stopped) = async_channel::bounded(1);
-        let output = output::Output::new(part, size, frames, failures, confirm.clone())?;
+        let output = output::Output::new(part, frames, failures, confirm.clone())?;
         let queue = DispatchQueue::new("speakeasy.screen", None);
 
         let native = unsafe {
@@ -365,15 +353,6 @@ async fn acknowledged(
         () = tokio::time::sleep(patience) => Err(Failure::Stalled),
     };
     if stopped.is_closed() { Ok(()) } else { waited }
-}
-
-fn retry_stop(mut stop: impl FnMut() -> bool, mut pause: impl FnMut(Duration)) {
-    for wait in STOP_PAUSES {
-        pause(wait);
-        if stop() {
-            return;
-        }
-    }
 }
 
 fn completion_result(error: Option<&NSError>, operation: Operation) -> Result<(), Failure> {

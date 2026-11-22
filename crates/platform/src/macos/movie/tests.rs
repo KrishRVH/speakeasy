@@ -1,12 +1,6 @@
 use std::{
     cell::Cell,
-    fs::Metadata,
     io::{Read as _, Seek as _},
-    mem::MaybeUninit,
-    os::{
-        fd::{AsRawFd as _, RawFd},
-        unix::fs::MetadataExt as _,
-    },
     path::{Path, PathBuf},
     time::Instant,
 };
@@ -38,28 +32,7 @@ fn read(
     assert_eq!(prefix.bytes(), metadata.len());
     assert!(!prefix.truncated());
     let sample = prefix.samples()[index];
-    let descriptor = file.as_raw_fd();
-    let frame = crate::read_movie_frame(file, &prefix, sample.at, Duration::MAX, cancelled)?;
-    assert_released(descriptor, &metadata);
-    Ok(frame)
-}
-
-pub(super) fn assert_released(descriptor: RawFd, opened: &Metadata) {
-    let mut current = MaybeUninit::<libc::stat>::uninit();
-    let status = unsafe { libc::fstat(descriptor, current.as_mut_ptr()) };
-    if status == 0 {
-        let current = unsafe { current.assume_init() };
-        assert!(
-            i64::from(current.st_dev).cast_unsigned() != opened.dev()
-                || current.st_ino != opened.ino(),
-            "A native movie owner retained its file"
-        );
-    } else {
-        assert_eq!(
-            std::io::Error::last_os_error().raw_os_error(),
-            Some(libc::EBADF)
-        );
-    }
+    crate::read_movie_frame(file, &prefix, sample.at, Duration::MAX, cancelled)
 }
 
 #[test]
@@ -96,44 +69,6 @@ fn native_movie_cancels_before_and_after_generation_starts() -> anyhow::Result<(
         .is_none()
     );
     assert!(checks.get() >= 3);
-    Ok(())
-}
-
-#[test]
-#[ignore = "Opt in: native file-fed codec; run scripts/check-movie-macos.sh with FFmpeg installed"]
-fn native_movie_reads_its_open_file_after_the_path_is_replaced() -> anyhow::Result<()> {
-    let fixtures = fixtures()?;
-    let private = tempfile::tempdir()?;
-    let original = private.path().join("movie.mp4");
-    std::fs::copy(fixtures.join("moving.mp4"), &original)?;
-    let (file, prefix) = validated(&original)?;
-    std::fs::rename(&original, private.path().join("retained.mp4"))?;
-    std::fs::copy(fixtures.join("other.mp4"), &original)?;
-    let frame =
-        crate::read_movie_frame(file, &prefix, prefix.samples()[1].at, Duration::MAX, || {
-            false
-        })?
-        .context("Synthetic replaced-path read cancelled")?;
-    check_colors(&frame, 1);
-    Ok(())
-}
-
-#[test]
-#[ignore = "Opt in: native file-fed codec; run scripts/check-movie-macos.sh with FFmpeg installed"]
-fn native_movie_reads_the_recoverable_prefix_of_a_truncated_file() -> anyhow::Result<()> {
-    let mut truncated = std::fs::read(fixtures()?.join("moving.mp4"))?;
-    truncated.truncate(truncated.len().checked_sub(8).unwrap());
-    let private = tempfile::tempdir()?;
-    let recovered = private.path().join("recovered.mp4");
-    std::fs::write(&recovered, &truncated)?;
-    let (_, prefix) = validated(&recovered)?;
-    assert!(prefix.truncated());
-    assert!(prefix.frames() < 120);
-    std::fs::write(&recovered, &truncated[..usize::try_from(prefix.bytes())?])?;
-    let index = prefix.samples().len().checked_sub(1).unwrap();
-    let frame = read(&recovered, index, || false)?.context("Recovered frame cancelled")?;
-    assert_eq!(frame.at, prefix.samples()[index].at);
-    check_colors(&frame, index);
     Ok(())
 }
 

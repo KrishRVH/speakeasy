@@ -11,7 +11,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context as _, anyhow, bail, ensure};
+use anyhow::{Context as _, anyhow, bail};
 use block2::RcBlock;
 use objc2::rc::{Retained, autoreleasepool};
 use objc2_av_foundation::{AVAssetImageGenerator, AVAssetImageGeneratorApertureModeEncodedPixels};
@@ -20,7 +20,7 @@ use objc2_core_graphics::{
     CGBitmapContextCreate, CGColorSpace, CGContext, CGImage, CGImageAlphaInfo,
     CGImageByteOrderInfo, kCGColorSpaceSRGB,
 };
-use objc2_core_media::{CMTime, CMTimeFlags};
+use objc2_core_media::CMTime;
 use objc2_foundation::{NSError, NSUnderlyingErrorKey};
 use speakeasy_show::MoviePrefix;
 
@@ -46,6 +46,7 @@ pub(crate) fn frame(
 struct Sample {
     ticks: u64,
     timescale: u32,
+    at: Duration,
 }
 
 impl Sample {
@@ -55,41 +56,11 @@ impl Sample {
             .partition_point(|sample| sample.at <= at)
             .saturating_sub(1);
         let sample = samples.get(index).context("Movie has no retained sample")?;
-        ensure!(
-            (1..=1_000_000_000).contains(&prefix.timescale())
-                && sample.ticks
-                    <= u64::from(prefix.timescale())
-                        .saturating_mul(MoviePrefix::DURATION_LIMIT.as_secs()),
-            "Movie sample timestamp is out of range"
-        );
         Ok(Self {
             ticks: sample.ticks,
             timescale: prefix.timescale(),
+            at: sample.at,
         })
-    }
-
-    fn timestamp(self, time: CMTime) -> anyhow::Result<Duration> {
-        ensure!(
-            time.flags.contains(CMTimeFlags::Valid)
-                && !time.flags.intersects(CMTimeFlags::ImpliedValueFlagsMask)
-                && time.epoch == 0
-                && time.value >= 0
-                && time.timescale > 0,
-            "Video sample timestamp is invalid"
-        );
-        let ticks = u128::try_from(time.value)?;
-        let scale = u128::try_from(time.timescale)?;
-        ensure!(
-            ticks.checked_mul(u128::from(self.timescale))
-                == u128::from(self.ticks).checked_mul(scale),
-            "Video decoder returned a different sample"
-        );
-        Ok(Duration::from_nanos(u64::try_from(
-            ticks
-                .checked_mul(1_000_000_000)
-                .and_then(|nanos| nanos.checked_div(scale))
-                .context("Video timestamp overflowed")?,
-        )?))
     }
 }
 
@@ -106,20 +77,18 @@ impl Request {
         let timescale = i32::try_from(sample.timescale)?;
         let time = unsafe { CMTime::new(ticks, timescale) };
         let (sender, reply) = mpsc::sync_channel(1);
-        let handler = RcBlock::new(
-            move |image: *mut CGImage, at: CMTime, error: *mut NSError| {
-                let (image, error) = unsafe { (image.as_ref(), error.as_ref()) };
-                let result = catch_unwind(AssertUnwindSafe(|| {
-                    autoreleasepool(|_| decoded(image, at, error, size, sample))
-                }))
-                .unwrap_or_else(|_| Err(anyhow!("Video frame conversion failed")));
-                #[expect(
-                    clippy::let_underscore_must_use,
-                    reason = "The owning request drains this completion on cancellation and unwind; a departed receiver needs no second notification"
-                )]
-                let _ = sender.send(result);
-            },
-        );
+        let handler = RcBlock::new(move |image: *mut CGImage, _: CMTime, error: *mut NSError| {
+            let (image, error) = unsafe { (image.as_ref(), error.as_ref()) };
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                autoreleasepool(|_| decoded(image, error, size, sample))
+            }))
+            .unwrap_or_else(|_| Err(anyhow!("Video frame conversion failed")));
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "The owning request drains this completion on cancellation and unwind; a departed receiver needs no second notification"
+            )]
+            let _ = sender.send(result);
+        });
 
         let native = unsafe {
             let native = AVAssetImageGenerator::assetImageGeneratorWithAsset(&asset.native);
@@ -181,14 +150,13 @@ impl Drop for Request {
 
 fn decoded(
     image: Option<&CGImage>,
-    at: CMTime,
     error: Option<&NSError>,
     size: [u32; 2],
     sample: Sample,
 ) -> anyhow::Result<MovieFrame> {
     let image = image.ok_or_else(|| undecodable(error))?;
     Ok(MovieFrame {
-        at: sample.timestamp(at)?,
+        at: sample.at,
         image: pixels(image, size)?,
     })
 }
@@ -212,10 +180,6 @@ fn undecodable(error: Option<&NSError>) -> anyhow::Error {
 
 fn pixels(image: &CGImage, size: [u32; 2]) -> anyhow::Result<BgraImage> {
     let [width, height] = size.map(|edge| edge as usize);
-    ensure!(
-        CGImage::width(Some(image)) == width && CGImage::height(Some(image)) == height,
-        "Decoded video canvas differs from its validated container"
-    );
     let stride = width.checked_mul(4).context("Video row size overflowed")?;
     let mut pixels = vec![
         0;

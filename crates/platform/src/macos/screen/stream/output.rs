@@ -11,13 +11,11 @@ use objc2::{
 };
 use objc2_core_foundation::{CFArray, CFDictionary, CFNumber, CFRetained, CFString, CFType};
 use objc2_core_media::{CMClock, CMSampleBuffer, CMTime, CMTimeFlags};
-use objc2_core_video::{CVPixelBufferGetHeight, CVPixelBufferGetWidth};
 use objc2_foundation::{NSError, NSObject, NSObjectProtocol, NSString};
 use objc2_screen_capture_kit::{
     SCFrameStatus, SCStream, SCStreamDelegate, SCStreamFrameInfoDisplayTime,
     SCStreamFrameInfoStatus, SCStreamOutput, SCStreamOutputType,
 };
-use speakeasy_show::MAX_FRAME_EDGE;
 
 use super::super::{Failure, frame, refused};
 use crate::{Frame, Part};
@@ -27,7 +25,6 @@ pub(super) struct State {
     failures: Sender<Failure>,
     stopped: Sender<Infallible>,
     part: Part,
-    size: [usize; 2],
     clock: Clock,
 }
 
@@ -70,23 +67,15 @@ define_class!(
 impl Output {
     pub(super) fn new(
         part: Part,
-        size: [usize; 2],
         frames: Sender<Frame>,
         failures: Sender<Failure>,
         stopped: Sender<Infallible>,
     ) -> Result<Retained<Self>, Failure> {
-        if !size
-            .into_iter()
-            .all(|edge| (1..=MAX_FRAME_EDGE as usize).contains(&edge))
-        {
-            return Err(Failure::DisplayLost);
-        }
         let this = Self::alloc().set_ivars(State {
             frames,
             failures,
             stopped,
             part,
-            size,
             clock: Clock::new()?,
         });
 
@@ -128,14 +117,6 @@ impl Output {
             return Ok(());
         };
 
-        let buffer = unsafe { sample.image_buffer() }.ok_or(Failure::Stalled)?;
-        if [
-            CVPixelBufferGetWidth(&buffer),
-            CVPixelBufferGetHeight(&buffer),
-        ] != state.size
-        {
-            return Err(Failure::DisplayLost);
-        }
         let frame = frame(sample, state.part, at).ok_or(Failure::Stalled)?;
         #[expect(
             clippy::let_underscore_must_use,
@@ -166,24 +147,10 @@ struct Clock {
 
 impl Clock {
     fn new() -> Result<Self, Failure> {
-        for _ in 0..4 {
-            let before = Instant::now();
-
-            let origin = unsafe { CMClock::host_time_clock().time() };
-            if let Some(clock) = Self::anchored(origin, before, Instant::now()) {
-                return Ok(clock);
-            }
-        }
-        Err(Failure::Unstarted)
-    }
-
-    fn anchored(origin: CMTime, before: Instant, after: Instant) -> Option<Self> {
-        if after.checked_duration_since(before)? > Duration::from_millis(1) {
-            return None;
-        }
-        Some(Self {
-            origin: host_time(origin)?,
-            instant: after,
+        let origin = host_time(unsafe { CMClock::host_time_clock().time() });
+        Ok(Self {
+            origin: origin.ok_or(Failure::Unstarted)?,
+            instant: Instant::now(),
         })
     }
 

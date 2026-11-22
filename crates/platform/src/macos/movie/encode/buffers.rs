@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::{Context as _, ensure};
-use objc2_core_foundation::{CFDictionary, CFNumber, CFRetained, CFString};
+use objc2_core_foundation::{CFDictionary, CFNumber, CFRetained};
 use objc2_core_media::{
     CMSampleBuffer, CMSampleTimingInfo, CMTime, CMVideoFormatDescriptionCreateForImageBuffer,
     kCMTimeInvalid,
@@ -16,16 +16,12 @@ use objc2_core_video::{
     kCVImageBufferColorPrimaries_ITU_R_709_2, kCVImageBufferColorPrimariesKey,
     kCVImageBufferTransferFunction_sRGB, kCVImageBufferTransferFunctionKey,
     kCVImageBufferYCbCrMatrix_ITU_R_709_2, kCVImageBufferYCbCrMatrixKey, kCVPixelBufferHeightKey,
-    kCVPixelBufferPixelFormatTypeKey, kCVPixelBufferPoolAllocationThresholdKey,
-    kCVPixelBufferWidthKey, kCVPixelFormatType_32BGRA, kCVReturnSuccess,
+    kCVPixelBufferPixelFormatTypeKey, kCVPixelBufferWidthKey, kCVPixelFormatType_32BGRA,
+    kCVReturnSuccess,
 };
-
-const BUDGET: usize = 64 << 20;
 
 pub(super) struct Buffers {
     pool: CFRetained<CVPixelBufferPool>,
-    threshold: CFRetained<CFDictionary<CFString, CFNumber>>,
-    bytes: usize,
     size: [u32; 2],
 }
 
@@ -56,36 +52,7 @@ impl Buffers {
             );
             CFRetained::from_raw(NonNull::new(pool).context("Native video pool is missing")?)
         };
-        let mut buffer = ptr::null_mut();
-
-        let buffer = unsafe {
-            ensure!(
-                CVPixelBufferPool::create_pixel_buffer(None, &pool, NonNull::from(&mut buffer))
-                    == kCVReturnSuccess,
-                "Cannot size native video buffers"
-            );
-            CFRetained::from_raw(NonNull::new(buffer).context("Native video buffer is missing")?)
-        };
-        let bytes = CVPixelBufferGetDataSize(&buffer);
-        ensure!(
-            (1..=BUDGET).contains(&bytes),
-            "Native video buffer exceeds its budget"
-        );
-        let count = CFNumber::new_i64(i64::try_from(
-            BUDGET
-                .checked_div(bytes)
-                .context("Native video buffer is empty")?,
-        )?);
-
-        let threshold = unsafe {
-            CFDictionary::from_slices(&[kCVPixelBufferPoolAllocationThresholdKey], &[&*count])
-        };
-        Ok(Self {
-            pool,
-            threshold,
-            bytes,
-            size,
-        })
+        Ok(Self { pool, size })
     }
 
     pub(super) fn sample(
@@ -105,20 +72,15 @@ impl Buffers {
 
         let buffer = unsafe {
             ensure!(
-                CVPixelBufferPool::create_pixel_buffer_with_aux_attributes(
+                CVPixelBufferPool::create_pixel_buffer(
                     None,
                     &self.pool,
-                    Some(self.threshold.as_opaque()),
                     NonNull::from(&mut buffer)
                 ) == kCVReturnSuccess,
-                "Native video buffers reached their budget"
+                "Cannot create a native video buffer"
             );
             CFRetained::from_raw(NonNull::new(buffer).context("Native video buffer is missing")?)
         };
-        ensure!(
-            CVPixelBufferGetDataSize(&buffer) == self.bytes,
-            "Native video buffer size changed"
-        );
         let stride = CVPixelBufferGetBytesPerRow(&buffer);
         ensure!(stride >= row, "Native video stride is too short");
         let length = stride
