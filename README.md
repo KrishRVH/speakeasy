@@ -354,8 +354,8 @@ During an explicit Show, a private checkpoint records frames, pointer events, an
 background writer. Promotion to a Show includes the narration already buffered since the press.
 Recovery uses the last complete event; a crash, storage failure, or a full bounded write queue can
 leave a shorter recording. Recording continues in memory if checkpointing stops, with a local
-notice. Recognized narration and export voice are saved durably before the checkpoint is retired. A
-save failure leaves the checkpoint available for recovery; a copy failure leaves the saved bundle
+notice. Recognized narration and export voice are saved before the checkpoint is retired. A save
+failure leaves the checkpoint available for recovery; a copy failure leaves the saved bundle
 available in the library. Cancelling, quitting, pausing, changing settings, or losing access to
 desktop input during an unfinished recording discards its checkpoint. Once you finish a Show, those
 interruptions leave its checkpoint recoverable, including while capture stops, the checkpoint
@@ -510,14 +510,14 @@ select an interrupted Show with the same timestamp. Recover through the native S
 - The microphone opens only while you dictate. Audio, transcripts, and engine output are never
   logged.
 - The screen is recorded only during a Show you start, and Speakeasy's own windows stay out of it. A
-  Show is written to the `shows` folder beside the engine and model, readable only by you. Speakeasy
-  deletes Shows and interrupted checkpoints over seven days old when it starts and hourly while it
-  runs; a file named `.pinned` in a saved Show's folder keeps it. A checkpoint holds up to 1 GiB of
-  frames and pointer events, 128 MiB of audio, and 384 MiB of silent video. After transcription,
-  saved Shows retain private voice for explicit video export; it expires with its Show, and a kept
-  Show keeps its voice. Pending recovery audio is removed on cancellation, discard, or expiry.
-  Ordinary dictation stays in memory. Saved bundles can include up to 512 MiB of retained source
-  frames and 384 MiB of video in addition to their selected images and private voice.
+  Show is written to the `shows` folder beside the engine and model. Speakeasy deletes Shows and
+  interrupted checkpoints over seven days old when it starts and hourly while it runs; a file named
+  `.pinned` in a saved Show's folder keeps it. A checkpoint holds up to 1 GiB of frames and pointer
+  events, 128 MiB of audio, and 384 MiB of silent video. After transcription, saved Shows retain
+  private voice for explicit video export; it expires with its Show, and a kept Show keeps its
+  voice. Pending recovery audio is removed on cancellation, discard, or expiry. Ordinary dictation
+  stays in memory. Saved bundles can include up to 512 MiB of retained source frames and 384 MiB of
+  video in addition to their selected images and private voice.
 - Windows clipboard history and cloud clipboard skip what Speakeasy puts on the clipboard, pasted
   dictation, the copy it puts back, and Show summaries alike, as do Universal Clipboard and Mac
   clipboard managers that honor transient data.

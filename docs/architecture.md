@@ -515,17 +515,17 @@ module unless a test file is named.
   [preview owner](../crates/app/src/show/preview.rs) retains one blocking reader through native
   cleanup; a replacement waits for that acknowledgement, and the view keeps only its latest pending
   seek. Closing cancels its receipt; Quit cancels and drains the owner.
-  [preview/frame.rs](../crates/app/src/show/preview/frame.rs) caps PNG files at 32 MiB and
-  dimensions at 4096 pixels per side. It decodes off the UI thread, leaves private pixels out of
-  GPUI's asset cache, and passes source and video BGRA directly to the renderer. `Image` owns
-  premultiplied RGBA; `into_bgra` consumes it into straight-alpha BGRA, reusing opaque pixel
-  storage. GPUI's `RenderImage` expects BGRA bytes inside `image::Frame` despite the buffer's RGBA
-  type. Decoder errors never include content. Services owns accepted Keep/Discard/Delete writes
-  through [edits.rs](../crates/app/src/show/edits.rs); Quit awaits them, and an immutable fixture
-  lease keeps preview storage alive until completion. The view runs one library write (Keep,
-  Recover, Discard, or Delete) at a time, and each write's control is enabled by the same check its
-  action applies. A running discard keeps its confirmation, which Cancel and Escape leave in place,
-  until the discard finishes or a selection change or refresh clears it. Recovery enters the session
+  [preview/frame.rs](../crates/app/src/show/preview/frame.rs) caps PNG dimensions at 4096 pixels per
+  side. It decodes off the UI thread, leaves private pixels out of GPUI's asset cache, and passes
+  source and video BGRA directly to the renderer. `Image` owns premultiplied RGBA; `into_bgra`
+  consumes it into straight-alpha BGRA, reusing opaque pixel storage. GPUI's `RenderImage` expects
+  BGRA bytes inside `image::Frame` despite the buffer's RGBA type. Decoder errors never include
+  content. Services owns accepted Keep/Discard/Delete writes through
+  [edits.rs](../crates/app/src/show/edits.rs); Quit awaits them, and an immutable fixture lease
+  keeps preview storage alive until completion. The view runs one library write (Keep, Recover,
+  Discard, or Delete) at a time, and each write's control is enabled by the same check its action
+  applies. A running discard keeps its confirmation, which Cancel and Escape leave in place, until
+  the discard finishes or a selection change or refresh clears it. Recovery enters the session
   owner's shielded publication stage through a bounded request lane. Recovering retained audio uses
   the configured local speech worker; recovery opens no microphone and performs no clipboard work.
   The [video timeline](../crates/app/src/show/review/timeline.rs) uses complete fragment sample
@@ -670,20 +670,20 @@ module unless a test file is named.
   [`show video` command](../crates/app/src/show/command/video.rs) and Review share this exporter,
   which resolves a `--mark` or `--phrase` focus against the manifest it read; cancellation kills and
   reaps both FFmpeg children before the temporary folder is removed. Raw audio, captions, and source
-  copies use the system temporary folder. Only the final MP4 stages beside its chosen destination
-  for publication without overwriting. The CLI registers Ctrl-C before staging and awaits its
-  blocking export worker on cancellation. Review owns its cancel sender; closing cancels video
-  export, while Quit drains the edit owner. FFmpeg diagnostics are never exposed. Output is
-  published without overwriting. [video/tests.rs](../crates/app/src/show/store/video/tests.rs)
-  checks timing and refusal; its opt-in FFmpeg fixture verifies actual ink, voice and subtitle
-  tracks without devices. [voice.rs](../crates/app/src/show/store/voice.rs) copies checksummed audio
-  into the bundle, where it expires with the Show.
-  [store/tests.rs](../crates/app/src/show/store/tests.rs) checks publication, expiry, and edited
-  summaries; [recall/tests.rs](../crates/app/src/show/store/recall/tests.rs) checks discovery,
-  unreadable Shows, Keep markers, and moved bundles. [age.rs](../crates/app/src/show/store/age.rs)
-  parses the folder timestamp for review and property-checks it against naming and expiry
-  boundaries. [address.rs](../crates/app/src/show/store/address.rs) resolves exact IDs independently
-  from paths; moved bundles never advertise a managed ID.
+  copies stage in a temporary folder beside the chosen destination, where the final MP4 publishes
+  without overwriting. The CLI registers Ctrl-C before staging and awaits its blocking export worker
+  on cancellation. Review owns its cancel sender; closing cancels video export, while Quit drains
+  the edit owner. FFmpeg diagnostics are never exposed. Output is published without overwriting.
+  [video/tests.rs](../crates/app/src/show/store/video/tests.rs) checks timing and refusal; its
+  opt-in FFmpeg fixture verifies actual ink, voice and subtitle tracks without devices.
+  [voice.rs](../crates/app/src/show/store/voice.rs) copies checksummed audio into the bundle, where
+  it expires with the Show. [store/tests.rs](../crates/app/src/show/store/tests.rs) checks
+  publication, expiry, and edited summaries;
+  [recall/tests.rs](../crates/app/src/show/store/recall/tests.rs) checks discovery, unreadable
+  Shows, Keep markers, and moved bundles. [age.rs](../crates/app/src/show/store/age.rs) parses the
+  folder timestamp for review and property-checks it against naming and expiry boundaries.
+  [address.rs](../crates/app/src/show/store/address.rs) resolves exact IDs independently from paths;
+  moved bundles never advertise a managed ID.
   [retention.rs](../crates/app/src/show/store/retention.rs) owns Keep changes and deletion. Keep
   writes the `.pinned` marker and Allow expiry removes it. Cleanup deletes each expired, unpinned
   Show's folder and reports the first it could not delete; the next hourly pass retries. Explicit
