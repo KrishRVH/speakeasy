@@ -2,7 +2,7 @@ pub(crate) mod presets;
 
 use std::{
     fs,
-    io::{self, ErrorKind},
+    io::{self, ErrorKind, Write as _},
     ops::Deref,
     path::{Path, PathBuf},
 };
@@ -532,7 +532,10 @@ fn replace(target: &Path, contents: &[u8]) -> io::Result<()> {
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(directory)?;
-    fs::write(target, contents)
+    let mut file = tempfile::NamedTempFile::new_in(directory)?;
+    file.write_all(contents)?;
+    file.persist(target)?;
+    Ok(())
 }
 
 #[cfg(test)]
