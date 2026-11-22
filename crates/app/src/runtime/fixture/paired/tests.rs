@@ -164,7 +164,6 @@ fn summaries_keep_per_tag_damage_and_silence_errors() {
         .map(|tag| {
             serde_json::json!({
                 "id": tag, "tags": [tag], "wav": "unused", "reference": "unused",
-                "wav_sha256": "unused", "reference_sha256": "unused",
             })
         })
         .collect();

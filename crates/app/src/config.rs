@@ -541,11 +541,6 @@ pub(crate) fn valid_config(directory: &Path) -> anyhow::Result<Config> {
     let model = directory.join("model.gguf");
     fs::write(&engine_executable, b"fake engine")?;
     fs::write(&model, b"fake model")?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        fs::set_permissions(&engine_executable, fs::Permissions::from_mode(0o700))?;
-    }
     Ok(Config {
         engine_executable,
         model,

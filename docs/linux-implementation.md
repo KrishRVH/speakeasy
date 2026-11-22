@@ -134,7 +134,7 @@ responsiveness and speech quality as constraints.
 Configuration uses `$XDG_CONFIG_HOME/speakeasy`, downloads use `$XDG_DATA_HOME/speakeasy`, and
 credentials use `$XDG_STATE_HOME/speakeasy`, with standard home-directory defaults. Setup shares
 resumable, size- and hash-checked downloads, accelerator selection, locking, extraction, and child
-reaping. It preserves complete engine runtime layouts and validates executable permissions.
+reaping. It preserves complete engine runtime layouts.
 
 The pinned upstream Linux CPU engine has a reported illegal-instruction failure on AVX2 hardware
 without AVX-512. The engine's `doctor` report or model loading alone cannot prove inference
