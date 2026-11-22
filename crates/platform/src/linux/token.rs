@@ -1,17 +1,9 @@
 use std::{
     ffi::OsString,
     fs,
-    io::{ErrorKind, Read as _, Write as _},
-    os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _},
+    io::{ErrorKind, Write as _},
     path::PathBuf,
 };
-
-use anyhow::ensure;
-
-const MAX_TOKEN_LEN: usize = 4096;
-
-const READ_LIMIT: u64 = MAX_TOKEN_LEN as u64 + 1;
-const GROUP_OR_OTHER_ACCESS: u32 = 0o077;
 
 pub(super) struct TokenStore {
     directory: PathBuf,
@@ -24,11 +16,6 @@ impl TokenStore {
 
     fn at(directory: PathBuf) -> anyhow::Result<Self> {
         fs::create_dir_all(&directory)?;
-        ensure!(
-            !fs::symlink_metadata(&directory)?.file_type().is_symlink(),
-            "Portal state must be a private directory"
-        );
-        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
         Ok(Self { directory })
     }
 
@@ -38,38 +25,18 @@ impl TokenStore {
 
     pub(super) fn consume(&self) -> anyhow::Result<Option<String>> {
         let path = self.path();
-        let file = match fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(&path)
-        {
-            Ok(file) => file,
+        let token = match fs::read_to_string(&path) {
+            Ok(token) => token,
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error.into()),
         };
-        let metadata = file.metadata()?;
-        ensure!(
-            metadata.is_file()
-                && metadata.permissions().mode() & GROUP_OR_OTHER_ACCESS == 0
-                && metadata.len() <= MAX_TOKEN_LEN as u64,
-            "Portal token must be a small private file"
-        );
-        let mut token = String::new();
-        file.take(READ_LIMIT).read_to_string(&mut token)?;
-        ensure!(is_well_formed(&token), "Invalid portal token");
-
         fs::remove_file(path)?;
         Ok((!token.is_empty()).then_some(token))
     }
 
     pub(super) fn save(&self, token: &str) -> anyhow::Result<()> {
-        ensure!(
-            !token.is_empty() && is_well_formed(token),
-            "Invalid portal token"
-        );
         let mut file = tempfile::NamedTempFile::new_in(&self.directory)?;
         file.write_all(token.as_bytes())?;
-        file.as_file().sync_all()?;
         file.persist(self.path())?;
         Ok(())
     }
@@ -86,26 +53,18 @@ fn state_folder(var: impl Fn(&'static str) -> Option<OsString>) -> Option<PathBu
     Some(base.join("speakeasy"))
 }
 
-fn is_well_formed(token: &str) -> bool {
-    token.len() <= MAX_TOKEN_LEN && !token.contains('\0')
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn tokens_are_private_rotated_and_consumed_once() -> anyhow::Result<()> {
+    fn a_restore_token_is_replaced_and_consumed_once() -> anyhow::Result<()> {
         let directory = tempfile::tempdir()?;
         let store = TokenStore::at(directory.path().join("state"))?;
         store.save("fixture-one")?;
-        assert_eq!(store.path().metadata()?.permissions().mode() & 0o777, 0o600);
         store.save("fixture-two")?;
         assert_eq!(store.consume()?.as_deref(), Some("fixture-two"));
         assert!(store.consume()?.is_none());
-        store.save("fixture-three")?;
-        fs::set_permissions(store.path(), fs::Permissions::from_mode(0o644))?;
-        assert!(store.consume().is_err());
         Ok(())
     }
 

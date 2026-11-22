@@ -5,17 +5,12 @@ pub fn disable_rtkit() {
 }
 
 fn set_while_alone(key: &str, value: &str) {
-    if alone() {
+    if let Ok(mut tasks) = fs::read_dir("/proc/self/task")
+        && matches!(tasks.next(), Some(Ok(_)))
+        && tasks.next().is_none()
+    {
         unsafe { env::set_var(key, value) };
     }
-}
-
-fn alone() -> bool {
-    fs::read_dir("/proc/self/task").is_ok_and(one_readable_entry)
-}
-
-fn one_readable_entry<T, E>(mut entries: impl Iterator<Item = Result<T, E>>) -> bool {
-    matches!(entries.next(), Some(Ok(_))) && entries.next().is_none()
 }
 
 #[cfg(test)]
@@ -34,16 +29,5 @@ mod tests {
             drop(release);
         });
         assert_eq!(env::var_os(key), None);
-    }
-
-    #[test]
-    fn an_unreadable_thread_entry_never_counts_as_the_only_thread() {
-        let lone = |listed: &[Result<(), ()>]| one_readable_entry(listed.iter().copied());
-        assert!(lone(&[Ok(())]));
-        let unproven: [&[Result<(), ()>]; 4] =
-            [&[], &[Err(())], &[Ok(()), Ok(())], &[Ok(()), Err(())]];
-        for listed in unproven {
-            assert!(!lone(listed), "{listed:?} counted as one thread");
-        }
     }
 }

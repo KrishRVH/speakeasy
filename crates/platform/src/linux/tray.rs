@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt, time::Duration};
+use std::{collections::HashMap, time::Duration};
 
 use anyhow::Context as _;
 use async_channel::{Receiver, Sender};
@@ -34,24 +34,11 @@ pub enum TrayAction {
     Quit,
 }
 
+#[derive(Debug)]
 pub struct TrayPresentation {
     pub rgba: Vec<u8>,
     pub description: String,
     pub menu: TrayMenu,
-}
-
-impl fmt::Debug for TrayPresentation {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self {
-            rgba: _,
-            description,
-            menu,
-        } = self;
-        f.debug_struct("TrayPresentation")
-            .field("description", description)
-            .field("menu", menu)
-            .finish_non_exhaustive()
-    }
 }
 
 #[derive(Debug)]

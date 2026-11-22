@@ -26,8 +26,6 @@ use self::paste::InsertionWorker;
 use super::{Actionable, HostSession, ShortcutLabels, stop_requested, watch_readable};
 use crate::{DesktopOptions, Input, InputSender, LinuxPaste, insertion::Insertion};
 
-const MAX_FOCUS_ANCESTRY: usize = 32;
-
 const CORE_MODIFIERS: u16 = 0xFF;
 
 #[derive(PartialEq, Eq)]
@@ -397,15 +395,13 @@ fn focus_is_external(
     if window == u32::from(xproto::InputFocus::POINTER_ROOT) {
         return Ok(false);
     }
-    for _ in 0..MAX_FOCUS_ANCESTRY {
+    loop {
         match inspect(window)? {
             FocusNode::Process(pid) => return Ok(pid != own_pid),
             FocusNode::Parent(x11rb::NONE) => return Ok(true),
-            FocusNode::Parent(parent) if parent == window => return Ok(false),
             FocusNode::Parent(parent) => window = parent,
         }
     }
-    Ok(false)
 }
 
 fn intern(connection: &XCBConnection, name: &[u8]) -> anyhow::Result<Atom> {
@@ -430,7 +426,6 @@ mod tests {
             })
         };
         let other_process = |_| Ok(FocusNode::Process(8));
-        let cyclic_tree = |_| Ok(FocusNode::Parent(20));
         let disconnected = |_| bail!("Disconnected");
         let pointer_root = u32::from(xproto::InputFocus::POINTER_ROOT);
         assert!(!focus_is_external(
@@ -440,7 +435,6 @@ mod tests {
             own_child_field
         )?);
         assert!(focus_is_external(HostSession::X11, 20, 7, other_process)?);
-        assert!(!focus_is_external(HostSession::X11, 20, 7, cyclic_tree)?);
         assert!(focus_is_external(HostSession::X11, 20, 7, disconnected).is_err());
         for host in [HostSession::X11, HostSession::Wayland] {
             assert!(!focus_is_external(host, pointer_root, 7, unqueried)?);

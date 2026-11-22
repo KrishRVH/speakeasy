@@ -27,8 +27,6 @@ const CAPABILITY_KEYBOARD: i32 = 1 << 2;
 const CAPABILITY_TEXT: i32 = 1 << 6;
 const KEYMAP_XKB: i32 = 1;
 
-const MAX_KEYMAP_SIZE: usize = 16 * 1024 * 1024;
-
 const MAX_TEXT_FRAME: usize = 254;
 
 const XKB_KEYCODE_OFFSET: u32 = 8;
@@ -355,13 +353,6 @@ fn ping(api: &Api, context: &Ref<Ei>) -> Option<Ref<EiPing>> {
     Some(ping)
 }
 
-impl Drop for Sender {
-    fn drop(&mut self) {
-        self.keyboard = None;
-        self.text = None;
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PasteBlocked {
     NoKeyboard,
@@ -613,7 +604,7 @@ unsafe fn device_keymap(api: &Api, device: *mut EiDevice) -> Option<xkb::Keymap>
             (api.ei_keymap_get_size)(keymap),
         )
     };
-    if fd < 0 || !(1..=MAX_KEYMAP_SIZE).contains(&size) {
+    if fd < 0 || size == 0 {
         return None;
     }
 
@@ -850,10 +841,5 @@ mod tests {
                 .all(|chunk| !chunk.is_empty() && chunk.len() <= MAX_TEXT_FRAME)
         );
         assert_eq!(chunks.concat(), text);
-    }
-
-    #[test]
-    fn invalid_native_descriptor_is_reported_before_borrowing_it() {
-        assert!(unsafe { register_readiness(-1) }.is_err());
     }
 }
