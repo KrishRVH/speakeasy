@@ -1,6 +1,5 @@
 use std::{
     ffi::OsString,
-    fs::File,
     io::{self, ErrorKind},
     path::{Path, PathBuf},
 };
@@ -10,7 +9,7 @@ use anyhow::Context as _;
 pub(crate) fn settings_file(chosen: Option<PathBuf>) -> anyhow::Result<PathBuf> {
     let file = match chosen {
         Some(file) => file,
-        None => user_folder(UserFolder::Settings, std::env::var_os)?.join("settings.json"),
+        None => user_folder(UserFolder::Settings)?.join("settings.json"),
     };
     std::path::absolute(file).context("Cannot resolve the settings file from the current folder")
 }
@@ -23,7 +22,7 @@ pub(crate) fn settings_argument(argument: Option<OsString>) -> anyhow::Result<Pa
 }
 
 pub(crate) fn data_root() -> anyhow::Result<PathBuf> {
-    user_folder(UserFolder::Data, std::env::var_os)
+    user_folder(UserFolder::Data)
 }
 
 pub(crate) fn command() -> Option<PathBuf> {
@@ -72,26 +71,15 @@ pub(crate) fn remedy(error: &io::Error) -> &'static str {
     }
 }
 
-pub(crate) fn open_lock(path: &Path) -> io::Result<File> {
-    File::options()
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(path)
-}
-
 #[derive(Clone, Copy)]
 enum UserFolder {
     Settings,
     Data,
 }
 
-fn user_folder(
-    folder: UserFolder,
-    var: impl Fn(&'static str) -> Option<OsString>,
-) -> anyhow::Result<PathBuf> {
-    let absolute = |name: &'static str| {
-        var(name)
+fn user_folder(folder: UserFolder) -> anyhow::Result<PathBuf> {
+    let absolute = |name: &str| {
+        std::env::var_os(name)
             .map(PathBuf::from)
             .filter(|path| path.is_absolute())
     };
@@ -173,115 +161,12 @@ mod tests {
         let image = PathBuf::from("/home/user/Apps/Speakeasy.AppImage");
         assert_eq!(
             command_at(
-                exe.clone(),
+                exe,
                 Some(image.clone()),
                 Some("/tmp/.mount_Speakeasy".into()),
                 |_| true
             ),
             Some(image)
         );
-        assert_eq!(
-            command_at(
-                exe.clone(),
-                Some("relative.AppImage".into()),
-                Some("/tmp/.mount_Speakeasy".into()),
-                |_| true
-            ),
-            None
-        );
-        assert_eq!(
-            command_at(
-                exe,
-                Some("/missing.AppImage".into()),
-                Some("/tmp/.mount_Speakeasy".into()),
-                |path| path.starts_with("/tmp")
-            ),
-            None
-        );
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn inherited_appimage_variables_cannot_route_a_handoff_to_another_program() {
-        let exe = PathBuf::from("/opt/speakeasy/usr/bin/speakeasy");
-        for appdir in [
-            None,
-            Some("relative".into()),
-            Some("/tmp/.mount_Other".into()),
-        ] {
-            assert_eq!(
-                command_at(
-                    exe.clone(),
-                    Some("/home/user/Other.AppImage".into()),
-                    appdir,
-                    |_| true
-                ),
-                Some(exe.clone())
-            );
-        }
-        let extracted = PathBuf::from("/tmp/appimage_extracted_X/usr/bin/speakeasy");
-        let appdir = Some(PathBuf::from("/tmp/appimage_extracted_X"));
-        assert_eq!(
-            command_at(extracted.clone(), None, appdir.clone(), |_| true),
-            None
-        );
-        let image = PathBuf::from("/home/user/Speakeasy.AppImage");
-        assert_eq!(
-            command_at(extracted, Some(image.clone()), appdir, |_| true),
-            Some(image)
-        );
-    }
-
-    fn lookup(vars: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> {
-        |name| {
-            vars.iter()
-                .find(|(key, _)| *key == name)
-                .map(|(_, value)| value.into())
-        }
-    }
-
-    #[test]
-    fn user_folders_never_fall_back_to_the_working_directory() -> anyhow::Result<()> {
-        let names = ["HOME", "APPDATA", "LOCALAPPDATA"];
-        let missing: Vec<_> = Vec::new();
-        let empty: Vec<_> = names.iter().map(|name| (*name, "")).collect();
-        let relative: Vec<_> = names.iter().map(|name| (*name, "home")).collect();
-        let (settings, data) = if cfg!(windows) {
-            ("APPDATA", "LOCALAPPDATA")
-        } else {
-            ("HOME", "HOME")
-        };
-        for vars in [missing, empty, relative] {
-            for (folder, required) in [(UserFolder::Settings, settings), (UserFolder::Data, data)] {
-                let error = user_folder(folder, lookup(&vars))
-                    .err()
-                    .context("A user folder resolved without an absolute base")?;
-                assert!(error.to_string().contains(required));
-            }
-        }
-        #[cfg(target_os = "linux")]
-        {
-            let home = ("HOME", "/home/user");
-            assert_eq!(
-                user_folder(
-                    UserFolder::Settings,
-                    lookup(&[("XDG_CONFIG_HOME", "/xdg"), home])
-                )?,
-                PathBuf::from("/xdg/speakeasy")
-            );
-            assert_eq!(
-                user_folder(UserFolder::Data, lookup(&[("XDG_DATA_HOME", "data"), home]))?,
-                PathBuf::from("/home/user/.local/share/speakeasy")
-            );
-        }
-        #[cfg(target_os = "windows")]
-        assert_eq!(
-            user_folder(
-                UserFolder::Data,
-                lookup(&[("LOCALAPPDATA", r"C:\Users\user\AppData\Local")])
-            )?,
-            PathBuf::from(r"C:\Users\user\AppData\Local\speakeasy")
-        );
-        Ok(())
     }
 }

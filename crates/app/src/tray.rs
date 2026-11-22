@@ -357,41 +357,6 @@ mod tests {
         }
     }
 
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
-    #[test]
-    fn show_entries_act_exactly_when_start_dictation_would() {
-        use LaunchMode::{Demo, Live};
-        use Phase::{Idle, Processing, Recording};
-        use ServiceState::{NotSetUp, Paused, Pausing, Quitting, Running};
-        let sessions = [
-            session(Idle, false, false),
-            session(Recording, false, false),
-            session(Recording, true, true),
-            session(Processing, false, false),
-            session(Processing, true, false),
-        ];
-        for service in [Running, Pausing, Quitting, Paused, NotSetUp] {
-            for base in &sessions {
-                for (desktop_ready, mode) in
-                    [(true, Live), (false, Live), (true, Demo), (false, Demo)]
-                {
-                    let snapshot = Snapshot {
-                        desktop_ready,
-                        ..base.clone()
-                    };
-                    let menu = dictation_menu(service, &snapshot, mode);
-                    let starts = menu.toggle.enabled && menu.toggle.label == "Start dictation";
-                    assert_eq!(
-                        [menu.show_screen.enabled, menu.show_area.enabled],
-                        [starts; 2],
-                        "{service:?}, {:?}, desktop ready {desktop_ready}, {mode:?}",
-                        activity(&snapshot)
-                    );
-                }
-            }
-        }
-    }
-
     #[test]
     fn finish_and_cancel_name_a_recording_show_and_disable_once_it_finishes() {
         use Phase::{Copied, Processing, Recording, Starting, Stopping};

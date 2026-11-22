@@ -61,7 +61,11 @@ impl Instance {
         fs::create_dir_all(directory)
             .with_context(|| format!("Cannot create {}", directory.display()))?;
         let lock_file = directory.join(LOCK_FILE);
-        let lock = crate::paths::open_lock(&lock_file)
+        let lock = File::options()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_file)
             .with_context(|| format!("Cannot open {}", lock_file.display()))?;
         match lock.try_lock() {
             Ok(()) => {},

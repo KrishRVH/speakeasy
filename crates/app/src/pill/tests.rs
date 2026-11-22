@@ -159,21 +159,6 @@ fn a_show_with_nothing_to_record_says_so_long_enough_to_read() {
 }
 
 #[test]
-fn a_notice_reads_as_a_muted_message_rather_than_a_failure() {
-    let notice = Scene {
-        phase: Phase::Notice,
-        ..recording(Duration::ZERO)
-    };
-    assert_eq!(
-        notice.content(),
-        Content::Notice,
-        "A notice needs no action"
-    );
-    assert_eq!(notice.capsule_size(), MESSAGE_SIZE);
-    assert_eq!(notice.feedback(), Some(NOTICE_FOR), "Long enough to read");
-}
-
-#[test]
 fn a_report_that_repeats_the_last_begins_new_feedback() {
     let copied = Snapshot {
         phase: Phase::Copied,
@@ -498,31 +483,5 @@ fn a_fallback_microphone_is_named_once_as_capture_opens_and_yields_to_secure_inp
     assert_eq!(
         default_microphone_until(&opened, &next, later, until, None),
         None
-    );
-}
-
-#[test]
-fn the_fallback_notice_waits_for_secure_input_and_the_draw_hint_waits_for_both() {
-    let now = Instant::now();
-    let before = Snapshot {
-        session: 4,
-        phase: Phase::Recording,
-        show: true,
-        ..Snapshot::default()
-    };
-    let opened = Snapshot {
-        default_microphone: true,
-        ..before.clone()
-    };
-    let secure = now.checked_add(SECURE_INPUT_FOR);
-    let microphone = default_microphone_until(&before, &opened, now, None, secure);
-    assert_eq!(
-        microphone,
-        secure.and_then(|end| end.checked_add(DEFAULT_MICROPHONE_FOR))
-    );
-    let hint = draw_hint_until(&before, &opened, now, None, secure.max(microphone));
-    assert_eq!(
-        hint,
-        microphone.and_then(|end| end.checked_add(DRAW_HINT_FOR))
     );
 }

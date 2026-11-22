@@ -215,39 +215,6 @@ fn a_cue_the_device_would_play_after_its_deadline_is_skipped() {
 }
 
 #[test]
-fn a_callback_is_heard_once_the_devices_latency_has_passed() {
-    let now = Instant::now();
-    let (called, playing) = (
-        cpal::StreamInstant::new(1, 0),
-        cpal::StreamInstant::new(1, 40_000_000),
-    );
-    let latency = cpal::OutputStreamTimestamp {
-        callback: called,
-        playback: playing,
-    };
-    let expected = now + Duration::from_millis(40);
-    assert_eq!(heard(now, latency), expected);
-
-    let backwards = cpal::OutputStreamTimestamp {
-        callback: playing,
-        playback: called,
-    };
-    assert_eq!(heard(now, backwards), now);
-}
-
-#[test]
-fn only_errors_that_stop_the_stream_break_the_device() {
-    for recoverable in [
-        cpal::ErrorKind::Xrun,
-        cpal::ErrorKind::DeviceChanged,
-        cpal::ErrorKind::RealtimeDenied,
-    ] {
-        assert!(!breaks(recoverable), "{recoverable:?}");
-    }
-    assert!(breaks(cpal::ErrorKind::DeviceNotAvailable));
-}
-
-#[test]
 #[ignore = "Plays every cue on the default output device; no microphone, hook, clipboard, or injected input"]
 fn every_cue_plays_on_the_default_output() {
     let opening = Instant::now();

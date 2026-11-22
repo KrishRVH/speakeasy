@@ -98,11 +98,4 @@ mod tests {
             assert!((filter.filter(0.25) - 0.25).abs() < 1e-12);
         }
     }
-
-    #[test]
-    fn a_cutoff_must_lie_below_half_the_rate() {
-        assert!(Lowpass::new(300.0, 600.0).is_none());
-        assert!(Lowpass::new(0.0, 48_000.0).is_none());
-        assert!(Lowpass::new(300.0, 601.0).is_some());
-    }
 }

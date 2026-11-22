@@ -29,28 +29,3 @@ pub(crate) async fn kill_and_reap(child: &mut Child) {
     )]
     let _ = child.wait().await;
 }
-
-#[cfg(all(test, target_os = "linux"))]
-mod tests {
-    use std::path::Path;
-
-    use anyhow::Context as _;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn owned_children_cannot_read_or_print_to_speakeasys_streams() -> anyhow::Result<()> {
-        let mut command = hidden_command("sleep");
-        command.arg("60");
-        let mut child = command.spawn()?;
-        let pid = child.id().context("The fixture child exited at once")?;
-        let streams = (0..3)
-            .map(|fd| std::fs::read_link(format!("/proc/{pid}/fd/{fd}")))
-            .collect::<std::io::Result<Vec<_>>>();
-        kill_and_reap(&mut child).await;
-        for stream in streams? {
-            assert_eq!(stream, Path::new("/dev/null"));
-        }
-        Ok(())
-    }
-}

@@ -23,9 +23,7 @@ pub(super) struct Pcm16 {
 impl Pcm16 {
     pub(super) fn from_kept(audio: &[u8]) -> Self {
         let samples = audio.len() / SAMPLE_BYTES;
-        let mut bytes = Vec::with_capacity(
-            audio.len().saturating_add(WAV_HEADER_BYTES),
-        );
+        let mut bytes = Vec::with_capacity(audio.len().saturating_add(WAV_HEADER_BYTES));
         bytes.resize(WAV_HEADER_BYTES, 0);
         bytes.extend_from_slice(audio);
         Self {
@@ -35,9 +33,7 @@ impl Pcm16 {
     }
 
     pub(super) fn with_reservation(reserved: usize, limit: usize) -> Self {
-        let mut bytes = Vec::with_capacity(
-            WAV_HEADER_BYTES.saturating_add(bytes_in(reserved)),
-        );
+        let mut bytes = Vec::with_capacity(WAV_HEADER_BYTES.saturating_add(bytes_in(reserved)));
         bytes.resize(WAV_HEADER_BYTES, 0);
         Self { bytes, limit }
     }
@@ -149,9 +145,7 @@ impl Pcm16 {
 
 fn encode(audio: &[u8], rate: u32) -> anyhow::Result<Vec<u8>> {
     let header = wav_header(audio.len(), rate).context(UNSUPPORTED_FORMAT)?;
-    let mut wav = Vec::with_capacity(
-        WAV_HEADER_BYTES.saturating_add(audio.len()),
-    );
+    let mut wav = Vec::with_capacity(WAV_HEADER_BYTES.saturating_add(audio.len()));
     wav.extend_from_slice(&header);
     wav.extend_from_slice(audio);
     Ok(wav)

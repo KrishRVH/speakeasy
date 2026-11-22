@@ -579,12 +579,7 @@ impl<P: Ports> Env<Native> for World<P> {
         self.worker.transcribe(config, request);
     }
 
-    fn compose(
-        &mut self,
-        heard: String,
-        style: Style,
-        config: &Config,
-    ) -> Option<String> {
+    fn compose(&mut self, heard: String, style: Style, config: &Config) -> Option<String> {
         let text = transcript::for_dictation(&heard, style, config.writing(), &config.vocabulary);
         (!text.is_empty()).then_some(text)
     }
@@ -621,12 +616,9 @@ impl<P: Ports> Env<Native> for World<P> {
                 return;
             },
         };
-        let insertion = self.ports.insert(
-            text,
-            permit.clone(),
-            config.delivery(),
-            enter,
-        );
+        let insertion = self
+            .ports
+            .insert(text, permit.clone(), config.delivery(), enter);
         self.delivery = Some(tokio::spawn(
             async move { Delivered::Inserted(insertion.await) },
         ));
