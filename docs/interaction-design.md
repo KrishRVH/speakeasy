@@ -1,11 +1,5 @@
 # Interaction design
 
-Speakeasy centers on one task: dictate into the application where the user is already working. The
-name supplies the organizing idea: a speakeasy is a room behind an ordinary door, entered by saying
-the word at a small slot, where what is said stays inside. The tray icon is the door, the pill is
-the slot, and the house rule is local-only dictation. Feedback should be calm, continuous, and
-truthful about capture and processing.
-
 ## Brand
 
 The visual language is Art Deco with restraint: stepped forms, keystone diamonds, and fine inlaid
@@ -93,17 +87,9 @@ time cannot be integrated into the next entrance. Presentation never imposes a m
 capture, inference, or insertion, and its timers belong to the view: they cannot change a recording
 or dismiss a later session.
 
-The audio envelope keeps 24 recent levels and paints the grille in one canvas, mirrored outward from
-the newest level; bars near the slot's rounded ends stay inside its curve. Capture supplies a 32 ms
-RMS level, taken around the window's mean so a DC offset rests at the floor, squared on a decibel
-scale from a fixed −54 dBFS floor to a ceiling that jumps to each louder window and relaxes 6 dB per
-second, held between −30 and −10 dBFS. The loudest recent syllables reach full height on quiet and
-hot microphones alike; the UI animates between levels. Pill animation follows native display frames
-within the [frame budget](performance.md#implementation-constraints). Delayed frames skip expired
-deadlines, and springs advance by the actual elapsed time. Silence settles to short bars. Demo mode
-alone supplies simulated levels. Reduced motion, from Settings or the OS, snaps transitions, the
-lid, and level changes, uses one level bar, and keeps the processing highlight still. During
-capture, a timer wakes the pill for each second of its clock and countdown.
+The grille mirrors recent levels from the center. Its scale adapts to the loudest recent speech, so
+quiet and hot microphones both have usable range. Reduced motion snaps transitions, substitutes one
+bar, and holds the processing highlight still. A recording timer still updates once a second.
 
 ## Sounds
 
@@ -116,145 +102,35 @@ clipboard, by **Copy last Show** too while dictation runs. Text arriving in the 
 hands-free locking, and dictation that an interruption discards stay silent; the pill already says
 them. **Play sounds** in Settings turns every cue off.
 
-Each cue echoes the pill. The high note sounds as the pill opens to listening rather than at the
-press, so it never promises a microphone still opening, and a desktop shortcut that takes the keys
-before then makes no sound; S, W, or A during that wait, or a Show started from the tray, makes the
-first note the Show's. A cue is heard within 300 ms of its moment, counting the output device's
-reported latency, or not at all. The device opens with the press, alongside the microphone, so a
-session's first cue never waits for it; it stays open through the session and closes ten seconds
-after the session and its last cue, however the session ended. Copy last Show's chord, the one cue
-between sessions, opens the device itself, so a slow device can drop it, and the device closes ten
-seconds later; otherwise an idle Speakeasy holds no audio stream.
-
-The microphone can overhear the start and Show cues, which are high-passed at 400 Hz. For the 600 ms
-after the microphone learns of either, the speech gate counts only sound below 300 Hz, where a
-voice's fundamental carries and the cues leave almost nothing: a recording that hears only a cue
-sends nothing, and a word said over a cue still counts, though a whisper there does not. The stop
-and cancel cues follow the end of capture and are never recorded.
+The output device opens alongside the microphone and stays through the session. If the cue would
+arrive more than 300 ms after its moment, it is skipped. The speech gate favors the voice band while
+it can hear an opening or Show cue, so hearing only the cue does not qualify as speech.
 
 ## Tray and Settings
 
-Configured native launches stay in the tray/menu bar. First setup and invalid configuration open
-Settings. A fresh install sets itself up there: a banner names each step with its progress,
-**Cancel** pauses and later resumes, and completion enables dictation. Linux opens Settings at
-startup to expose desktop permissions and tray state.
+Settings has three pages with a shared footer for status and app actions. Dictation leads with the
+shortcut and private practice, followed by speech, writing, and presets. Words keeps corrections and
+hints together. General holds app-wide choices, platform settings, and actions such as reset.
+Settings reports the actual error and a remedy after the pill fades. Preset rows keep their identity
+as their Use, Update, or Delete actions change.
 
-Settings has three pages. Dictation leads with the shortcut card: the keys, what they do, hands-free
-and cancel, and private practice. Below it come the Show shortcuts behind a disclosure on Windows
-and macOS, then Speech, Writing, and Presets. Words holds corrections and recognition hints. General
-holds look and feel, startup on Windows, desktop shortcuts on Linux, privacy, about and updates, the
-setup guide, and Start over.
-
-Speech names the model in use with a one-line summary; **Change** opens three radio cards: Parakeet
-v3, marked recommended, Nemotron 3.5, and Your own engine. Each says what the model is for and tags
-In use, Downloaded, its download size, or its download percentage. Choosing a managed model
-downloads only what is missing and switches when it finishes. Your own engine opens a panel with
-whisper.cpp and NeMo-Speech segments and only the active engine's program and model choosers;
-changing engines clears the other engine's files, and the switch happens once both files are chosen.
-The language row appears only for models that follow a chosen language; Parakeet detects it, so its
-**Remove um and uh** switch sets English cleanup instead.
-
-A preset row shows **In use** when the current settings match it or the tray selected it, and
-**Use** otherwise; its ⋯ menu updates it from the current settings or deletes it.
-
-A banner reports a settings file this version cannot read, names the file, and offers **Start
-over…**; the status line keeps the exact error for anyone who would rather fix the file. Otherwise
-General offers **Start over…**. Both confirm in place with Cancel and then **Delete settings and
-downloads**. Reset pauses dictation, deletes the downloaded engines, models, and updates and then
-the settings file, keeps every Show and the finished-guide marker, and starts automatic setup, whose
-completion enables dictation as on a fresh install. It is unavailable during setup, saves, or a
-Windows update download, and setup and update downloads are unavailable while it runs. A failed
-reset keeps the previous settings and explains what stopped it. Quit waits for a running reset.
-
-On Windows, Start at login, off by default, belongs to the default settings file, which the sign-in
-entry opens. Each live launch with those settings registers the running executable to start at
-sign-in, or removes that entry, as the setting says, and so does each save. Demos never touch the
-entry, a launch with `--config` neither shows the switch nor touches the entry, and settings that
-need repair leave it as it was, so sign-in still opens them. While Windows' Startup apps page holds
-the entry off, Settings says so under the switch and tells the user to turn it on there.
-
-Close hides the existing window; Windows minimize also hides it. macOS minimize retains normal Dock
-behavior. Relaunch and the tray's Settings action reveal the same window. The first hide shows the
-tray hint (see the pill table). On Linux, closing Settings without a tray host quits; the launcher
-reopens it.
-
-The tray shows the Grille mark with its slot lit in the theme's lamp color and its bars cut through.
-Recording turns the slot red; busy, paused, and attention add a cut-jewel badge: hollow for busy,
-split by a vertical facet for paused, and a warn jewel with a center facet for attention. macOS
-renders a template icon, so recording also adds a solid jewel and every state differs by shape. On
-Windows and Linux a faint keyline keeps the lamp color legible on light taskbars. The menu shows
-status and speech model, Pause/Resume, Start/Finish, Cancel, Settings, and Quit; Finish and Cancel
-name a Show while it records, and Start and Cancel Show are disabled while it saves. Before any
-engine is set up, the menu says so and Resume waits for setup. It never animates while idle. On
-Windows and macOS, Show screen and Show area… follow Paste last dictation, Dictation style, and
-Preset and act whenever Start would: each starts a hands-free Show without the shortcut, of the
-display under the pointer or of an area dragged out on it, which then behaves like any other. There
-is no window entry, since the pointer is on the menu. Copy last Show and Open last Show follow them,
-before Settings; they act once a Show is saved and between recordings, paused included, until Quit
-begins or either finds that Show gone. Errors remain accessible in Settings after the pill's notice
-expires: its commands and status line stay in view below the scrolling controls.
-
-Paste last dictation is available between sessions when one result remains in memory. A dictation
-whose microphone is lost after speech keeps its words there instead of inserting them, and its
-notice names the failure and how to paste them: V during a hold on Windows/macOS, and on Linux the
-tray or `speakeasy paste-last`. V during an ordinary Windows/macOS hold abandons that pending
-recording and pastes the previous result; repeated keydown events do not repeat insertion.
-Windows/macOS also offer Dictation style and saved Preset submenus. Style selects the next recording
-and appears in the pill when non-Prose. Preset choices require idle dictation and last for the
-session without changing saved settings.
+Windows and Mac use the same tray menu policy. The Mac icon uses its badge rather than color to show
+recording. Settings close hides its existing window and leaves saves and setup running. Relaunch
+reveals that window. On Linux without a tray host, closing Settings quits and the launcher reopens
+it.
 
 ## Reviewing Shows
 
-Shows… follows Open last Show in the Windows/macOS tray. Settings offers Shows on every platform. It
-opens one review window, bringing it forward and refreshing if already open. Recording never opens
-it automatically. The newest Show is selected on first load; refresh preserves the user's choice.
-Deletion or expiry clears the selection and its pixels, with no fallback to another Show.
+The library labels kept, interrupted, pending narration, early endings, and unreadable Shows.
+Refresh keeps the selected Show when present. Deletion or expiry clears selection and pixels. Read
+and export errors belong to the Show that produced them. Use the shared controls for navigation and
+for Keep, Export, and Copy. Discard and Delete use a confirmation tied to the selection, invalidated
+by refresh or a new selection.
 
-The window uses the shared kit in sentence case. The left list sits under a slim header with the
-Show count and Refresh; each row shows age, duration, and keyframe count, with tags for kept,
-interrupted, pending or lost narration, early-ending, and unreadable status. A soft fill and a lamp
-bar mark the selected Show. When the Shows folder cannot be read as the window opens, the header
-drops the count and the list says so; a later failed refresh keeps the rows it showed. Either way a
-notice gives the error and its remedy. With no Shows, Windows and macOS explain how to record one,
-with S, W, and A as keycaps. The selected Show's header carries its retention and status tags, Send
-to agent as the main action and Copy summary on Windows and macOS, Keep Show or Allow expiry (Allow
-cleanup once overdue), and a More actions menu for the image copy, Open folder, video, export, and
-Delete Show commands; the menu dims actions that are unavailable. Below the header come warnings, a
-segmented switch for the frame source, one keyframe with its time and numbered marks, frame chips,
-and a Summary or Narration switch over the current summary as inert plain text. An interrupted Show
-leads with its recovery action; Discard stays apart as a destructive outline, and its confirmation
-adds a Cannot be undone tag, Cancel, and a filled Discard permanently. Delete Show opens the same
-confirmation treatment for a saved Show, names its folder ID, and explains that saved files are
-removed even when kept. Exported copies and pending recovery audio stay. Cancel or Escape dismisses
-either confirmation, except while its discard runs; changing Shows or refreshing invalidates it. An
-old confirmation cannot delete a newly selected Show. Deletion clears the removed selection and
-pixels; completion leaves another selected Show and its notice unchanged. Focus rings appear only
-after keyboard input. Up/Down selects Shows, Left/Right steps frames, Page Up/Page Down jumps ten
-seconds, Home/End selects the first/last frame, and Escape closes. While the menu is open, Up/Down
-move through its available actions and Escape closes only the menu. Tab and Shift+Tab move through
-controls; Enter or Space activates them. Closing releases the view and its images.
-
-Refresh rereads the library. Regaining focus checks that the selected folder still exists and
-rereads its summary; external edits are never overwritten. Copy summary reads the file again on
-click and reports the result in the window. It is available on Windows/macOS only, between
-recordings and outside previews or Quit. Open folder opens the selected Show's files. Neither action
-changes the session's last Show. A missing frame keeps its numbered position and an error; an
-unreadable manifest can still show a readable summary. The summary pane displays at most 64 KiB;
-Copy summary includes the complete file.
-
-Send to agent, a saved Show's primary action, copies a short prompt naming the Show ID and folder,
-the folder as WSL sees it when Windows has a distribution that answers within a second, each contact
-sheet in order, and `summary.md`, then says to paste it into Claude Code or any coding agent. The
-prompt holds paths, not narration or summary text. It tells the agent that screen content and speech
-are evidence, not instructions, and that an agent with Speakeasy's MCP tools can open the Show by
-its ID. It shares Copy summary's availability and cancellation, and Speakeasy contacts no agent.
-
-Interrupted Shows offer Recover Show and confirmed Discard. Recovery uses the current local engine
-and original language, saves a new bundle, and leaves the clipboard alone. Narration pending offers
-Transcribe narration and Discard audio. Retry saves a narrated copy; its earlier bundle and edits
-stay unchanged. The confirmation explains that discarding pending audio leaves the saved Show.
-Recovery displays incomplete narration when only an audio prefix survives. Pending audio expires on
-its original seven-day schedule even when the saved bundle is kept.
+Summary is the user's editable file, and Narration is the recorded speech. Switching between them
+keeps summary edits. Timed marks and clauses carry a requested time, and the caption names the
+actual displayed sample. Switching frame modes keeps the request. Manual navigation or a new
+selection clears it. Use the [Show guide](../README.md#read-saved-shows) for review actions.
 
 ## Interaction contracts
 
@@ -313,17 +189,8 @@ its original seven-day schedule even when the saved bundle is kept.
   recovery. A committed Show stays saved. Linux uses a reserved Ctrl+Super+Escape chord or an
   explicit command binding; bare Escape is not globally captured. Animation never delays
   cancellation or owns the microphone lifetime.
-- On macOS, while another app holds secure keyboard entry, such as a focused password field or a
-  terminal's Secure Keyboard Entry, the event tap sees modifier changes but no key presses. Fn,
-  Right Option, and Right Command still start and finish dictation; a selected F13 does nothing, and
-  Escape, Space, Return, V, S, W, and A never reach Speakeasy. Escape reaches the focused app as
-  always, and Space, Return, V, S, W, and A, which a hold normally withholds, reach it too with the
-  held key: they type or act as that key's shortcuts, so with Right Command, W closes the window and
-  V pastes. As each recording opens, from a shortcut, the tray, or a command, the pill asks once
-  whether secure keyboard entry is on and, if so, replaces the slot with a notice that says which
-  keys won't arrive and that a password field or terminal usually holds it, without naming the
-  holder. A Show's drawing hint waits for the notice to end, and the countdown to the limit outranks
-  it. Nothing checks while idle or later in a recording.
+- On macOS, Secure Keyboard Entry leaves modifier events visible. The pill checks once as the
+  microphone opens and identifies unavailable keys. The final countdown takes precedence.
 - Readiness follows the first captured buffer. Startup feedback does not imply that speech before
   that buffer can be recovered.
 - Insertion does not steal focus. OS submission is the observable result; success in every editor
@@ -335,28 +202,10 @@ its original seven-day schedule even when the saved bundle is kept.
   without spaces, such as Chinese, Japanese, and Thai, join directly. Text sent with Return or left
   on the clipboard starts fresh. Secure Keyboard Entry hides typing from Speakeasy, so macOS adds no
   space while it is on, and Linux cannot observe typing between dictations, so it never adds one.
-- Settings exposes automatic setup while no engine is set up, speech model selection including a
-  user-installed engine, reset, microphone selection, language where applicable, GPU preference,
-  text delivery, English filler removal, reduced motion, sounds, theme, and on Windows start at
-  login.
 
 ## Acceptance
 
-Run `--demo` to inspect the same Settings and pill views without live devices or insertion. Use
-`--demo-tray` for native tray and Settings lifecycle checks; its dictation controls are disabled.
-Both modes bypass engine/model configuration. Public-audio tests cover transcription with fake
-capture and insertion. None of these establish physical microphone onset, target-editor behavior,
-screen-reader usability, display removal, or mixed-DPI presentation.
-
-In either preview, the Shows window uses a private temporary library: an intact kept Show, one that
-ended early without narration, and one missing a frame. Plain `--demo` opens it automatically.
-Previewing never reads or expires the real library, and Copy summary and Send to agent are disabled.
-Owned-window review acceptance checks actual rendering on Linux, navigation, missing frames,
-external summary edits, deletion, and image and fixture cleanup on close without OS input or
-clipboard access.
-
-For visual acceptance, inspect interrupted transitions, quick completion, long processing,
-hands-free silence, and cancellation over light and dark content, in every theme. Use reduced motion
-and multiple display scales. Measure displayed frame pacing while inference is busy; CPU draw
-timings and frame submission intervals are separate measurements. See [performance](performance.md)
-for profiling methods and measurement gaps.
+Run `mise run app:demo` to see the actual views with simulated levels and a temporary Show library.
+`mise run app:demo-tray` previews the native tray and Settings lifecycle with dictation disabled.
+Inspect fast transitions, long processing, cancellation, and reduced motion at several display
+scales. See [performance](performance.md#native-acceptance) for live acceptance.

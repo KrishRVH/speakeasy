@@ -2,1121 +2,359 @@
 
 <p align="center">
   <strong>Private dictation for Windows, macOS, and Linux.</strong><br>
-  Hold a shortcut, speak, and your words appear wherever you are typing.<br>
-  Local speech engines. No account, no automatic upload, no dictation history.
+  Hold a shortcut, speak, and your words appear wherever you're typing.<br>
+  Speech runs on your machine, with no account, automatic upload, or dictation history.
 </p>
 
-<p align="center">
-  <a href="#show-your-coding-agent">Shows</a>&nbsp;&nbsp;◆&nbsp;&nbsp;
-  <a href="#get-started">Get started</a>&nbsp;&nbsp;◆&nbsp;&nbsp;
-  <a href="#speech-engines">Speech engines</a>&nbsp;&nbsp;◆&nbsp;&nbsp;
-  <a href="#everyday-use">Everyday use</a>&nbsp;&nbsp;◆&nbsp;&nbsp;
-  <a href="#build-and-verify">Build and verify</a>&nbsp;&nbsp;◆&nbsp;&nbsp;
-  <a href="docs/architecture.md">Architecture</a>
-</p>
-
-## Say the word
-
-A speakeasy was a room behind an ordinary door. You spoke at a small slot, the door opened, and what
-was said inside stayed inside. Speakeasy works the same way: it waits in the tray, opens a small
-slot on screen while you speak, and recognizes every word on your machine.
+[Get started](#get-started) · [Shows](#show-your-coding-agent) · [Linux](#linux-experimental) ·
+[Build and verify](#build-and-verify)
 
 <p align="center">
   <img src="docs/assets/pill.png"
-    alt="The pill opening the microphone, listening, hands-free with a lock and timer, and a check for typed text"
+    alt="The dictation pill opening the microphone, listening, showing hands-free mode, then confirming submission"
     width="760">
 </p>
-
-| Gesture                                          | Windows                                                     | Mac                                                         |
-| ------------------------------------------------ | ----------------------------------------------------------- | ----------------------------------------------------------- |
-| Dictate while held; release to type              | <kbd>Ctrl</kbd> + <kbd>Win</kbd>                            | <kbd>Fn</kbd>                                               |
-| Hands-free; press the shortcut again to finish   | <kbd>Ctrl</kbd> + <kbd>Win</kbd> + <kbd>Space</kbd>         | <kbd>Fn</kbd> + <kbd>Space</kbd>                            |
-| Cancel dictation; the key still reaches your app | <kbd>Escape</kbd>                                           | <kbd>Escape</kbd>                                           |
-| Finish, type, and press Return to send           | <kbd>Enter</kbd> during the hold                            | <kbd>Return</kbd> during the hold                           |
-| Paste the last dictation                         | <kbd>V</kbd> during the hold                                | <kbd>V</kbd> during the hold                                |
-| Show the screen, a window, or an area; see below | <kbd>S</kbd>, <kbd>W</kbd>, or <kbd>A</kbd> during the hold | <kbd>S</kbd>, <kbd>W</kbd>, or <kbd>A</kbd> during the hold |
-
-The shortcuts match Wispr Flow's defaults, and double-tapping the shortcut also starts hands-free.
-Settings and the setup guide offer Ctrl + Win, Right Ctrl, or F13 on Windows, and Fn, F13, Right
-Option, or Right Command on Mac. With a right modifier, hold it for a quarter-second before adding
-Space, Return, S, W, A, or V; quick combinations keep their usual action, so Right Ctrl + C still
-copies. Left Ctrl, Left Option, and Left Command remain ordinary modifiers. On Windows, PowerToys
-Keyboard Manager can turn a spare key, such as Caps Lock, into F13; Speakeasy withholds F13 from
-other apps while dictation is enabled.
-
-For Fn, set **System Settings › Keyboard › Press 🌐 key to** to **Do Nothing** so Fn only dictates.
-
-**External Mac keyboards:** a keyboard's Fn key may switch its own layers without sending anything
-to macOS. For example, the Keychron Q6 Ultra 8K's Fn is a
-[firmware layer switch](https://github.com/Keychron/zmk/blob/7f8d16732a3782e237915bff30a1f67de09268b7/app/boards/shields/keychron_q6_ultra_ansi/keychron_q6_ultra_ansi.keymap#L209).
-Choose **F13** in Speakeasy and use the keyboard's F13 key, or map a spare key to F13 in the
-keyboard's software. The Q6 Ultra 8K already provides F13; keeping Fn as its layer switch preserves
-its keyboard controls. F13 supports the same hold, double-tap, and Show gestures without the
-right-modifier delay, and Speakeasy withholds it from other apps while dictation is enabled. Right
-Option and Right Command also work without remapping. Speakeasy cannot observe a key that the
-keyboard does not send.
-
-**Secure keyboard entry on Mac:** while a password field has focus, or a terminal's **Secure
-Keyboard Entry** is on, macOS hides key presses from other apps. Fn, Right Option, and Right Command
-still dictate, but F13 cannot start dictation, and Escape, Space, Return, V, S, W, and A don't reach
-Speakeasy. Space, Return, V, S, W, and A go to your app with the key you hold instead, so with Right
-Command, W closes the window and V pastes. The pill says so as a recording starts. Leave the
-password field, or turn Secure Keyboard Entry off in the terminal's app menu.
-
-**Remove um and uh** removes standalone English hesitation words locally. With Nemotron or Whisper
-it applies, and starts on, once English is the chosen language; other languages keep every word.
-Parakeet detects the language as you speak, so the switch starts off and turning it on tells it to
-clean up English; leave it off if you also dictate in a language where "um" is a word. Speech
-containing only removed fillers sends nothing.
-
-**Spoken symbols** write what you name in Prose. Say "new line" or "new paragraph" on its own,
-between pauses, for a line break; "underscore", "forward slash", or "backslash" to join the words
-around it; "open paren"/"close paren", "open bracket"/"close bracket", "open brace"/"close brace",
-or "open quote"/"close quote" to enclose words; and "backtick" before and after a span to quote it
-as code. "A new line of products" keeps its words. Verbatim and the case styles leave symbol names
-as words, and turning off **Spoken symbols** under Writing does the same in Prose. Pasting keeps
-line breaks as text. With Type instead of paste, Windows and Mac type each line break as
-Shift+Enter, so a chat app starts a new line instead of sending; on Linux the desktop decides how a
-typed line break lands.
-
-**Return during the hold** finishes the dictation like releasing the shortcut, types it, and then
-presses Return, so a chat or an agent's prompt sends it. It applies to that dictation only, and only
-while the shortcut is held. Return while the shortcut is down for any other reason is held back and
-does nothing, and Return with the shortcut up reaches your app as usual. Release the shortcut within
-five seconds. If focus moves to another window on Windows, or another app on Mac, before Return
-would go, Speakeasy leaves the text unsent and says so. A sent dictation stays on the clipboard
-instead of the earlier copy coming back, so a slow app can never paste and send the earlier copy.
-
-**Paste last dictation** in the tray, or V during the shortcut hold on Windows and Mac, inserts
-exactly the last completed text again; V abandons the hold's own recording. It can recover text when
-insertion failed or when the microphone was lost partway through a dictation, whose words Speakeasy
-keeps instead of typing. Speakeasy keeps one result in memory, clears it when dictation pauses or
-restarts or the app quits, and never writes ordinary dictation to disk. Each request has fresh
-cancellation authority; it cannot retract text already delivered.
-
-Choose **Dictation style** in the Windows/Mac tray, or run `speakeasy style STYLE` with `prose`,
-`verbatim`, `camel`, `pascal`, `snake`, `kebab`, or `constant`. **Verbatim** preserves fillers;
-**Prose** and the case styles use your filler setting. Every style applies phrase corrections. The
-case styles produce `camelCase`, `PascalCase`, `snake_case`, `kebab-case`, or `CONSTANT_CASE`
-locally, joining recognized words without rewriting their meaning. The non-Prose choice appears in
-the pill. A style change applies to the next recording, survives Pause, and resets to Prose when the
-app restarts. Shows keep ordinary narration regardless of the selected dictation style.
-
-### Reading the pill
-
-The pill sits at the bottom of the screen, never takes focus, and lets clicks through to the app
-underneath. Hold the shortcut and the slot opens; the red waveform follows your voice. Hands-free
-adds a lock and the elapsed time. Near the five-minute limit, while it works, and once you finish,
-the pill shows:
-
-<p align="center">
-  <img src="docs/assets/pill-states.png"
-    alt="Pill states: 0:26 left in gold, the working lamp, No speech detected, Text copied, and a microphone error"
-    width="760">
-</p>
-
-- **Time left.** Recordings stop at five minutes. The last 30 seconds count down in gold, and at
-  zero the recording finishes and its text is delivered as usual. On Windows and macOS the computer
-  stays awake from the start of a recording until its words are delivered, and a Show also keeps the
-  display on.
-- **Working.** The lamp slides through the slot while your speech is transcribed on this machine.
-- **Typed.** A check, shown above, means the text was submitted to your app.
-- **No speech detected.** Nothing was sent. A microphone that sends only digital silence, for
-  example while muted or blocked in privacy settings, or no audio at all for two seconds, gets an
-  error that says so instead.
-- **Text copied.** The text is on the clipboard but was not pasted, for example because the shortcut
-  keys were still held or Speakeasy itself had focus. Paste it where you want it.
-- **Microphone lost.** The microphone disconnected, failed, or stopped sending audio after you
-  spoke. Speakeasy transcribes what it heard but doesn't type it; the pill says what happened and
-  how to paste the words with Paste last dictation. A brief audio dropout only leaves a gap.
-- **Default microphone.** If the microphone you chose in Settings isn't connected when you start,
-  Speakeasy records from the system default instead and says so for a few seconds.
-- **Needs attention.** An error says what to do next and stays in Settings after the pill fades.
-
-Soft kalimba notes mark the moments you may not be watching: a high note once Speakeasy is
-listening, a lower one when you finish, the five-minute limit does, or the microphone stops after
-you speak, a muted low note when you cancel, two rising notes when a Show starts, and a short chord
-when text or a Show you just recorded is copied, or **Copy last Show** copies one while dictation
-runs. Speakeasy listens beneath its own cues, so a recording that hears only a cue sends nothing,
-while a word said over one still counts. Turn them off with **Play sounds** in Settings.
-
-### Show your coding agent
-
-A Show is a narrated screen recording a coding agent can read. While holding the shortcut, press
-<kbd>S</kbd> to record the display under the pointer, <kbd>W</kbd> for the window under the pointer,
-followed as it moves, or <kbd>A</kbd> to drag out an area of the display; a click there instead
-cancels. Speakeasy records it along with your voice, keeping what you said since you pressed the
-shortcut, and a thin red line marks the window or area while it records. The pill shows a red screen
-mark and **Hold Shift to draw**, then the elapsed time. Release the shortcut and keep talking. To
-draw circles and arrows, hold <kbd>Shift</kbd> and move the pointer without clicking; double-tap
-<kbd>Shift</kbd> to drop a pin where the pointer is. Each mark and pin is numbered ① ② ③ beside it,
-on screen and in the bundle, so you and the agent can refer to it by number. The ink fades as you
-go. Click through your app as usual, then press and release the shortcut to finish. Without the
-shortcut, for example on a Mac keyboard with no Fn key, choose **Show screen** or **Show area…** in
-the tray to start a Show and **Finish Show** to end it. Escape alone stays with your app: to cancel,
-hold the shortcut and press <kbd>Escape</kbd>, or choose **Cancel Show** in the tray. Pressing
-another shortcut while you hold Speakeasy's, locking the screen, or sleeping finishes the Show
-rather than discarding it. Once you finish, the Show is saved even if you press Escape.
-
-In this example, a Show reports bugs in a made-up settings app, and `speakeasy show demo` writes the
-same bundle.
-
-<p align="center">
-  <img src="docs/assets/show.png"
-    alt="A Show of the made-up app: numbered ink circles the theme picker and points at Save above the pill"
-    width="760">
-</p>
-
-<p align="center">
-  <img src="docs/assets/show-pill.png"
-    alt="The pill starting a Show with a screen mark and Hold Shift to draw, recording at 0:06, then Show copied"
-    width="760">
-</p>
-
-Speakeasy picks the keyframes your ink, clicks, and words point at, annotates them, and writes a
-bundle of keyframes, contact sheets, `summary.md`, and `show.json`. A Show keeps up to 36 keyframes
-spread across the whole recording, at most six to a sheet, and the summary names each sheet's
-frames. A screen Show crops each keyframe to where you worked. When your ink, pins, clicks, and
-drags fall in one or two windows, the keyframe frames those windows whole, where they stand at that
-moment, with their app's open menus and dialogs, so a label beside the control you clicked stays in
-frame. Inside a maximized window, the crop gives your input and what it changed room around them
-instead. With nothing to point at, the front window frames the keyframe, along with a window that
-changed beside it. Edges move clear of nearby text, never past the framed window. A keyframe whose
-crop would cover most of the screen stays whole. Window and area Shows keep the framing you chose.
-To frame windows, a screen Show notes where windows sit and which belong to the same app; never
-their titles, app names, or contents. Only the recovery checkpoint keeps those positions. The
-summary names cropped frames, `show.json` gives each keyframe's `crop` as left, top, right, and
-bottom fractions of the screen, and the retained frames still hold the whole screen. The pill says
-**Show copied** and the summary is on the clipboard: paste it into your agent, and the summary tells
-the agent how to read the Show. Shows record on Windows, and experimentally on Mac, but not on
-Linux. On Windows, streaming and screen-sharing apps such as Sunshine, OBS, or a video-call app
-don't see Speakeasy's windows or ink while a Show records; the keyframes still carry the ink.
-
-Windows Shows and Mac screen and area Shows also save silent H.264 video in `recording.mp4`,
-targeting 30 frames per second at up to 2560 pixels per edge. Windows video follows the chosen
-screen, window, or area; Mac video uses a fixed display region. Both stop at the recording's
-five-minute limit. Resized windows fit inside a fixed canvas; a quiet ending holds the last image.
-The video has no audio or drawn annotations. Its timing file, `recording.json`, records the session
-origin, surviving video coverage, timed content rectangles, and the separate horizon of marks and
-narration. Changing the display size, position, or scale ends capture; start a new Show. Capture or
-disk failure can shorten video coverage. Recovery retains only complete fragments; if the video
-cannot be read, the stills save with a video-loss notice. A failed copy of surviving video keeps the
-checkpoint for recovery. Mac window Shows retain sampled frames only.
-
-<p align="center">
-  <img src="docs/assets/show-sheet.png"
-    alt="The made-up app's contact sheet: a click, a circle and arrow numbered 1 and 2, pin 3 and a click, and a drag"
-    width="760">
-</p>
-
-On Windows with WSL installed, the summary for that contact sheet reads as follows. A recorded Show
-with retained samples also names the local command that retrieves them:
-
-```text
-Screen recording (0:20, 5 keyframes): `…\speakeasy\shows\20261020T143205Z`
-From WSL, the same files are under `/mnt/c/…/speakeasy/shows/20261020T143205Z`.
-Before acting, open the contact sheet, then the full-size frames that matter: they show what the words leave out. Speech recognition can mishear a name; where the screen spells it differently, trust the screen. Cite frames as #N and marks by their circled numbers.
-Contact sheet: `…\speakeasy\shows\20261020T143205Z\contact-sheet.png`
-- #1 (0:02) “Here's the settings window.”
-- #2 (0:02) [clicked] “When I open Appearance,”
-- #3 (0:09) [① circled, ② drew an arrow] “the theme picker is here, but look, this label runs under the save button.”
-- #4 (0:12) [③ pinned, clicked] “Now I click reduce motion and nothing happens.”
-- #5 (0:17) [dragged right] “Dragging the text size slider works, though.”
-Full-size keyframes: `…\speakeasy\shows\20261020T143205Z\frames\frame-01.png` to `…\speakeasy\shows\20261020T143205Z\frames\frame-05.png`. Timeline: `…\speakeasy\shows\20261020T143205Z\show.json`.
-Every keyframe is cropped to the area the user worked in; the timeline gives each crop as a fraction of the screen.
-Show ID: `20261020T143205Z`. An agent with Speakeasy's MCP tools can open this Show by that ID.
-```
-
-Each keyframe quotes what you said around it. When the speech engine returns no word times, no
-keyframe quotes you: the summary lists the narration once, in its own labeled untimed section. Its
-`Show ID` line names the ID an agent with Speakeasy's MCP tools can open. On Windows, when a WSL
-distribution is installed, the summary also gives the Show folder as the default distribution sees
-it, under the drive mount its `/etc/wsl.conf` sets (`/mnt/` unless changed), so an agent running in
-WSL opens the same files. Finding that setting can start WSL, so Speakeasy looks once per run, when
-you first record a Show or open Shows; if WSL has not answered within a second of saving, that Show
-has no WSL line. A Show on a network share, or a distribution with drive mounting turned off, gets
-no WSL line.
-
-A Show records only what you name. With no window to record under the pointer, or if you finish
-before dragging out an area, it is cancelled, narration and all: nothing is pasted or saved, and the
-pill says why. If screen capture stops before you finish, or the window closes or goes off screen,
-the Show ends there with what it recorded: the pill says why, and the summary's second line says why
-and when. A microphone that stops after it starts listening ends the Show there too, and the Show
-keeps the narration it heard: the pill says **Show copied with partial narration** and why. When the
-microphone stopped before you spoke, sent only silence, or your speech can't be transcribed, the
-Show is saved without narration rather than lost: the pill says **Show copied without narration**
-and what went wrong. The summary tells your agent why. When recovery audio survived a stop or a
-failed transcription, **Transcribe narration** in Shows can save a narrated copy.
-
-On Windows and Mac, the menu's **Copy last Show** copies the latest Show's `summary.md` again as it
-reads now, edits included, and **Open last Show** opens its folder. Speakeasy remembers only that
-one Show, and only until it quits. Once that Show expires or is deleted, either entry says so and
-both turn off until your next Show; neither reaches for an older one. If a finished Show cannot be
-copied, it stays saved and the pill points you to Copy last Show.
-
-### Read saved Shows
-
-Open **Shows** in Settings, or **Shows…** in the Windows/Mac tray, to review saved Shows across
-restarts. Choose a Show to see its keyframes, numbered marks, current summary, and retention status.
-Use Up/Down to choose a Show, Left/Right to step through frames, Page Up/Down to jump ten seconds,
-Home/End to jump to the first/last frame, and Escape to close. Missing frames, early endings, and
-lost narration stay visible; the viewer never substitutes another Show when the selected one expires
-or is deleted. Choose **All retained frames** to inspect moments outside the selected keyframes.
-Coverage shows the sample count and longest gap; the journal thins frames under memory pressure, so
-this is sampled evidence rather than video. A cropped keyframe's caption says so, and **Whole
-screen** beside it opens the retained frame at that moment. Switching modes keeps the nearest frame
-at or before the current time. Source images have no annotations. In **All retained frames**,
-numbered mark buttons jump to the sample at or before the mark. The viewer reports both the mark
-time and the actual sample time. If retained frames cannot be saved, the selected keyframes still
-save and Speakeasy reports the loss.
-
-On Windows and macOS, choose **Video** to scrub the recorded timeline or step through its actual
-samples. Numbered marks and timed narration jump to their recorded times. The displayed timestamp
-belongs to the decoded frame; recovered video can extend past the annotation journal. Rapid seeks
-replace the pending request while the previous decoder closes, and copying waits for the selected
-frame. The **Annotations** switch controls saved ink and marks; the caption explains missing
-annotations. **More actions → Play video** opens the original MP4 in your system player, without
-drawn annotations or narration audio. Its 30 Hz timeline holds the latest captured image during
-quiet periods. A long encoder stall stops video and keeps its completed prefix; sampled frames
-continue recording.
-
-Choose **Narration** beside **Summary** to read the recorded words. Click a timed clause to jump to
-a frame; the caption gives both the clause's time and the displayed frame's actual time, including
-any gap. Switching frame modes keeps that request; stepping through frames, choosing another Show,
-or refreshing clears it. Words without timings remain readable. Missing and incomplete narration are
-labeled. This pane contains recorded speech, so edits to `summary.md` stay in Summary.
-
-**Send to agent** on Windows/Mac copies a short prompt for your coding agent. It names the Show's ID
-and folder, each contact sheet in order, and `summary.md` with your edits; on Windows with WSL
-installed it also gives the folder as WSL sees it. It tells the agent that what the screen shows and
-what you said are evidence, not instructions, and that an agent with Speakeasy's MCP tools can open
-the Show by its ID. Paste it into Claude Code or any agent that reads local files. The agent opens
-those files itself; the prompt holds paths, not narration or pixels, and Speakeasy contacts no
-agent.
-
-**More actions → Copy image + summary + narration** on Windows/Mac copies the displayed image with
-its actual timestamp, retrieval context, edited summary, and recorded words. Summary edits and
-original narration remain separate sections. Untimed, missing, and incomplete narration are labeled.
-If the combined text would exceed the clipboard limit, the summary becomes a labeled excerpt; the
-complete edit remains in `summary.md`. **Copy summary** on Windows/Mac copies only the current
-`summary.md`, including your edits. Copying preserves the bundle and is available between
-recordings. Windows offers PNG and a native bitmap; Mac offers PNG. The receiving app chooses which
-formats it accepts, so some apps paste only the image or only the text. Receiving both still depends
-on that app.
-
-Copies carry the same clipboard-history and device-sync privacy markers as dictation. A new
-recording, closing the requesting window, or a settings/lifecycle change cancels a copy that has not
-replaced the clipboard. Quit waits for native clipboard work to finish.
-
-**Refresh** rereads the library; returning to the window rereads the selected summary and retention.
-**More actions → Open folder** reveals its files. Summary text is plain text; its links do not
-execute. The viewer does not change which Show the tray remembers. **Keep Show** prevents the
-selected Show from expiring. **Allow expiry** restores its original expiry date, seven days after
-recording; for an already overdue Show the button says **Allow cleanup**, and cleanup can remove it
-on its next pass. Keeping a Show changes only its `.pinned` marker, even when Speakeasy cannot read
-the Show. Choose **More actions → Delete Show…** to permanently delete the selected Show, including
-a kept or unreadable one. Confirmation names the Show and removes its saved files; exported copies
-stay, and pending recovery audio stays listed until you discard it or it expires. Cancel or Escape
-dismisses the confirmation. Keep, Discard, and confirmed deletion finish even if you close the
-window; Quit waits for accepted writes.
-
-**More actions → Export ZIP…** saves a portable copy to a new path you choose. It includes the saved
-summary, manifest with narration, contact sheets, keyframes, and, when available, retained source
-samples, `recording.mp4`, and `recording.json`. `README.md` inside the archive links to those files
-by relative path; the edited summary stays as it was, including paths on the recording machine.
-Unzip the archive before opening its files on another machine. Recovery audio, saved voice,
-retention markers, and unrelated files are excluded. Export does not upload anything, and exported
-copies do not expire automatically. Closing the window leaves an accepted ZIP export running; Quit
-waits for it.
-
-**More actions → Export video…** creates a new MP4 with timed ink, marks, original voice when
-available, and a selectable caption track when narration has word timings. Install FFmpeg 5.1 or
-newer with H.264 and AAC support, put `ffmpeg` on PATH, then restart Speakeasy. macOS also checks
-the standard Homebrew and MacPorts locations. Export runs locally on all platforms with retained
-video. The original recording stays unchanged. **Cancel export** or closing the window cancels the
-video export; Quit waits for cleanup. Shows without saved voice export silently, with a notice.
-Explicitly exported videos do not expire automatically.
-
-An **Interrupted Show** offers **Recover Show** and **Discard**. Recovery restores checkpointed
-frames, ink, marks, and narration into a new bundle, using your configured local speech engine and
-the original language. It waits for any active recording to finish, opens no microphone, and leaves
-the clipboard untouched; resume Speakeasy first if it is paused. Missing or damaged audio leaves a
-Show without narration; a recovered audio prefix is marked incomplete. Recovery preserves the
-original seven-day expiry date.
-
-If transcription fails, the frames are saved and the entry becomes **Narration pending**.
-**Transcribe narration** retries with the current local engine and text corrections, saving a
-narrated copy without changing your earlier Show or edits. A failed retry keeps the audio without
-creating another copy. **Discard audio** removes its recovery checkpoint and leaves the saved Show
-alone. Discard always requires confirmation.
-
-During an explicit Show, a checkpoint in the Shows folder records frames, pointer events, and audio
-on one background writer. Promotion to a Show includes the narration already buffered since the
-press. Recovery uses the last complete event; a crash, storage failure, or a full bounded write
-queue can leave a shorter recording. Recording continues in memory if checkpointing stops, with a
-local notice. A save failure leaves the checkpoint available for recovery; a copy failure leaves the
-saved bundle available in the library. Cancelling, quitting, pausing, changing settings, or losing
-access to desktop input during an unfinished recording discards its checkpoint. Once you finish a
-Show, those interruptions leave its checkpoint recoverable, including while capture stops, the
-checkpoint flushes, narration transcribes, or publication saves the bundle. Cleanup deletes an
-expired Show's folder; one it cannot finish deleting, such as a Show with a file open on Windows, is
-retried on its next pass.
-
-An agent on the same machine can inspect a Show without launching the app or opening the microphone.
-A summary names its Show's exact ID when Speakeasy saved it in the Shows folder; `show demo --out`
-writes a summary that names only its folder. When retained samples and a usable command are
-available, a summary also names the local executable. Quote that executable path for your shell; the
-app does not install it on PATH. In Windows PowerShell, use `& 'PATH\speakeasy-cli.exe' show …` for
-the commands below. If the package moves, use its new path. A moved Show uses its explicit folder
-path instead of its ID.
-
-```sh
-speakeasy show list --json
-speakeasy show inspect "PATH_TO_SHOW" --json
-speakeasy show inspect 20261020T143205Z --json
-speakeasy show wait --timeout 900 --json
-speakeasy show frames 20261020T143205Z --json
-speakeasy show frame 20261020T143205Z --at 0:12.500 --out /path/to/new-frame.png --json
-speakeasy show frame 20261020T143205Z --video --at 0:12.500 --out /path/to/new-video-frame.png --json
-speakeasy show frames 20261020T143205Z --phrase "save button" --json
-speakeasy show frames 20261020T143205Z --mark 2 --crop --out /path/to/new-sheet.png --json
-speakeasy show keep 20261020T143205Z
-speakeasy show keep 20261020T143205Z --off --json
-speakeasy show export 20261020T143205Z --out /path/to/new-show.zip --json
-speakeasy show video 20261020T143205Z --out /path/to/new-show.mp4 --captions --json
-speakeasy show video 20261020T143205Z --phrase "save button" --around 2000 --out /path/to/clip.mp4
-speakeasy show skill --install /path/to/agent/skills
-speakeasy show skill
-```
-
-`wait` lets an agent ask you to show it something: it waits for the first Show you save after it
-starts and prints that Show's inspection. It never starts recording; you still make the Show with
-the gesture. It gives up after 600 seconds unless `--timeout` asks for up to 3600.
-
-`list` finds interrupted Shows first, then saved Shows newest first, including ones it cannot read.
-It lists the timestamp-named folders in Speakeasy's Shows folder; use `inspect` with an explicit
-path for a moved or exported Show. A bare timestamp name, including a same-second suffix such as
-`-2`, is an exact Show ID in Speakeasy's Shows folder. IDs never fall back to another folder or a
-partial name; use `./ID` to force a relative path. These commands also work without a desktop on
-Linux. `list` and `inspect` leave files, edits, permissions, and retention unchanged. There is no
-implicit latest Show.
-
-`export` writes only a new ZIP outside the original bundle and leaves the original and its retention
-unchanged. It copies the manifest's file inventory without decoding image payloads; a missing file
-or a video whose annotation timing disagrees with the manifest fails the export. Encoded image and
-video data are preserved; MP4 fragment headers are normalized for playback. It writes a temporary
-file beside the destination, then publishes the complete archive without overwriting an existing
-path. JSON output contains the export path, file count, byte count, and whether retained samples are
-included; it contains no private text.
-
-`show video` composes a separate 30 fps H.264 MP4 with AAC voice and optional selectable subtitles
-(`--captions`). It accepts the same focus queries as frame export; without a focus it exports the
-entire retained video and available voice, holding the first or last image where voice extends
-beyond screen coverage. Reports describe the selected session interval, voice availability, caption
-count, and missing annotation coverage. It never overwrites an existing file. Inspection validates
-complete fragment ranges and their timing; it does not decode compressed video.
-
-`frames` accepts a time, mark, or spoken phrase to locate surrounding evidence. Phrases match
-recorded narration after corrections, ignoring case and punctuation; summary edits are separate.
-Repeated phrases return all matching spans. Choose `--match N` before exporting one occurrence;
-untimed narration cannot locate a phrase. Phrase arguments can be visible in local process listings.
-`--around` widens the span by 1000 ms on each side by default, up to 10000 ms. A sheet exports at
-most six distinct samples by default (`--most` accepts 1–12), with millisecond sample times on each
-cell. `--crop` focuses on a numbered mark with surrounding context, and refuses sheets spanning a
-surface resize. Reports include the requested window, carried-in sample, sampling gaps, actual
-times, and source crop pixels. Exports require new paths and preserve the saved bundle.
-
-`frames` reports retained timestamps, sampling stride, and the longest gap. `frame` requires an
-explicit focus (`--at`, `--mark`, or `--phrase`) and a new PNG path; it exports the image at or
-before the resolved time, or the first image when the request precedes capture. Its metadata reports
-both requested and actual times. It refuses times after the Show ends and never overwrites a file.
-These commands cannot retrieve discarded frames or retry lost narration.
-
-On Windows and macOS, `frame --video` retrieves a moment from `recording.mp4` by time, mark, or
-phrase. Times use the original recording's clock. The report distinguishes the requested time from
-the actual decoded sample and includes video coverage and the separate annotation horizon. Recovered
-video can extend beyond the sampled-frame journal. Add `--crop` with `--mark` to focus on a mark
-with surrounding context. The crop uses the actual decoded frame’s content rectangle and requires a
-matching saved coordinate space for every point in the mark. Mixed, missing, or mismatched geometry
-refuses the crop; the uncropped video remains available. Add `--annotated` to draw saved ink
-progressively, label completed marks, and show completed pointer actions. The viewer's Annotations
-switch uses the same rendering, and copied evidence includes the setting in its retrieval command.
-Drawn pixels stay within the captured content; crops follow annotation rendering. Unknown or
-incompatible marks are omitted and counted in the report. Explicit annotated exports require video
-geometry and annotation coverage; the viewer explains when it shows original video instead. These
-saved annotations do not reproduce live overlay fades. Video contact sheets are not supported. Linux
-can open the movie in its system player.
-
-`keep` accepts an ID or an explicit path directly inside Speakeasy's Shows folder. `--off` allows
-expiry at the original date; it does not grant another seven days. These actions never recreate a
-missing Show, change the tray's last Show, or modify summaries and manifests. An exported or moved
-folder outside managed storage does not expire and cannot be kept through this command. `--json`
-reports the resulting `pinned` flag and `expiresAt` date.
-
-`inspect` maps each contact sheet to its frames and each numbered mark to its saved frame. Its paths
-point to the bundle's current location, even if the summary still names the original folder. Read
-every contact sheet, then the user's current `summary.md`, then the relevant full-size frames.
-Inspection prints metadata and paths, never narration, spoken cues, or screen content. It reads the
-manifest and any retained video's timing without opening images; `ok` means those parsed, not that
-every image exists or decodes. A mark with no saved frame is reported without substituting another
-image.
-
-`list` and `inspect` offer readable text without `--json`. Their JSON reports each Show's `id`,
-`status`, `pinned`, and `expiresAt`. Status is `ok` or `unreadable`, with the reason in `error`;
-`list` can also report `interrupted` or `narrationPending`. An ID is non-null only when the
-directory is confirmed to be a managed Show. `expiresAt` is the UTC time the Show becomes eligible
-for cleanup, or null when kept, unmanaged, or unavailable; deletion occurs during a later cleanup
-pass. The `pinned` field describes retention, not numbered pin marks. If the manifest cannot be
-read, duration and counts are null, and inspection omits its detail fields and frame tables.
-Inspection exits with status 1 for an unreadable Show, after printing its findings. A listing
-succeeds even when individual Shows cannot be read. An unreadable Shows folder fails the command; a
-missing one is an empty listing. `narrationLost` is `audioStopped`, `audioSilent`, `notTranscribed`,
-or `incomplete`; with no reported loss, `show.json` omits it and `inspect` reports null.
-`incomplete` means recovery transcribed the surviving audio prefix; its text and timings cover only
-that prefix.
-
-Only the current format, 3, is read and written; unknown fields are ignored. Other formats are
-reported as unreadable and left untouched.
-
-For MCP clients, run `speakeasy show mcp --setup` to print Claude Code, Codex, and generic setup
-snippets. The stdio server requires at least one explicit `--root PATH` argument: each root is one
-saved Show or a folder containing Shows. `show_list`, `show_read`, and `show_image` expose only
-those roots; requests cannot add folders. Tools can read the edited summary, bounded narration,
-saved images, and retained source frames by time, mark, or phrase. They report actual sample times
-and gaps. They do not expose ordinary dictation or export video. Requested content reaches the
-calling agent and may reach its model provider. Setup prints configuration without changing client
-settings. On Windows with a WSL distribution, setup also prints a stanza for an agent running in
-WSL: WSL interop starts the Windows `speakeasy-cli.exe`, so roots and Show paths stay Windows paths,
-and Show IDs work unchanged. When interop, drive mounting, or a lettered drive is missing, setup
-says so instead. The server's initialization instructions carry the disclosure above and the reading
-guide that `speakeasy show skill` prints, without its front matter.
-
-`show skill` prints the [agent reading guide](skills/speakeasy-show/SKILL.md) embedded in the
-installed binary. `show skill --install DIR` writes it to `DIR/speakeasy-show/SKILL.md` for an agent
-that loads skills from `DIR`; it leaves an identical copy alone and never overwrites an edited one.
-The guide explains the reading order, numbered references, private-file handling, and source-frame
-retrieval. `speakeasy show --help` lists every Show command's options.
-
-`list` gives interrupted Shows distinct `interrupted:ID` identifiers and null duration/frame counts;
-it does not replay their logs. `speakeasy show discard "interrupted:ID" --json` permanently removes
-that explicit checkpoint; an exact checkpoint path from `list` also works. A saved Show ID cannot
-select an interrupted Show with the same timestamp. Recover through the native Shows window.
-
-## What's said here stays here
-
-- Speech runs in a local NeMo-Speech.cpp or whisper.cpp process that Speakeasy owns and stops. Setup
-  downloads the engine and model once; recognition uploads nothing.
-- The microphone opens only while you dictate. Audio, transcripts, and engine output are never
-  logged.
-- The screen is recorded only during a Show you start, and Speakeasy's own windows stay out of it. A
-  Show is written to the `shows` folder beside the engine and model. Speakeasy deletes Shows and
-  interrupted checkpoints over seven days old when it starts and hourly while it runs; a file named
-  `.pinned` in a saved Show's folder keeps it. A checkpoint holds at most five minutes of frames,
-  pointer events, and audio, and up to 384 MiB of silent video. After transcription, saved Shows
-  retain private voice for explicit video export; it expires with its Show, and a kept Show keeps
-  its voice. Pending recovery audio is removed on cancellation, discard, or expiry. Ordinary
-  dictation stays in memory. Saved bundles can include up to 512 MiB of retained source frames and
-  384 MiB of video in addition to their selected images and private voice.
-- Windows clipboard history and cloud clipboard skip what Speakeasy puts on the clipboard, pasted
-  dictation, the copy it puts back, and Show summaries alike, as do Universal Clipboard and Mac
-  clipboard managers that honor transient data.
-- There are no accounts, telemetry, or dictation history. An agent you hand a Show to, by MCP
-  request or a pasted **Send to agent** prompt, reads that Show's evidence, and its model provider
-  may receive it.
 
 ## Get started
 
-Download Speakeasy from the [latest release](https://github.com/KrishRVH/speakeasy/releases/latest).
-Choose the Windows installer or Mac disk image when offered; otherwise unpack the portable ZIP. The
-Windows installer needs no administrator access; on Mac, drag Speakeasy to Applications. Linux's
-experimental AppImage and tar packages are described below.
+Download the [latest release](https://github.com/KrishRVH/speakeasy/releases/latest). Speakeasy
+supports Windows 11 x64, macOS 14 or newer on Apple silicon, and experimental Linux x86_64 with
+glibc 2.35 or newer.
 
-The Windows installer is unsigned. If SmartScreen warns, use **More info › Run anyway** only for the
-installer you downloaded from this repository's release page. Quit Speakeasy from its tray menu
-before upgrading or uninstalling; the installer asks you to do so if its files are in use.
+- **Windows.** Run the per-user installer or unpack the ZIP. If SmartScreen warns about the unsigned
+  installer, use **More info → Run anyway** after checking that you got it from the release page.
+  Quit from the tray before upgrading or uninstalling. Uninstall preserves settings, models, and
+  Shows. Keep `speakeasy-cli.exe` beside `speakeasy.exe` to run commands from a terminal.
+- **macOS.** Drag Speakeasy to Applications. Allow Microphone and Accessibility for dictation and
+  Screen & System Audio Recording for Shows. If Gatekeeper asks, use **Privacy & Security → Open
+  Anyway**. Replacing a locally signed build may require granting permissions again.
+- **Linux.** See [Linux installation](#linux-experimental).
 
-Windows installs into your local Programs folder and adds a Start menu entry. Installing an update
-replaces the app; uninstalling keeps your settings, downloaded models, and Shows. The installer does
-not change your PATH. Add its folder yourself if you want to run `speakeasy-cli` by name.
-
-Keep the Windows package together: `speakeasy.exe` opens the app, and `speakeasy-cli.exe` runs Show
-and script commands from a terminal or agent, returning output and exit status to the caller. The
-CLI accepts `show`, `status`, `dictation`, `paste-last`, `style`, `preset`, `--version`, and
-`--help`; launching it without arguments prints help.
-
-On a Mac, allow Microphone and Accessibility access when asked, and Screen & System Audio Recording
-for Shows. If macOS says it cannot verify Speakeasy, open **System Settings › Privacy & Security**
-and choose **Open Anyway**. Check permissions after replacing the app: locally signed builds can
-require Accessibility and Screen & System Audio Recording grants again. If either stops working,
-remove Speakeasy from that list with − and add it again.
-
-The first launch guides you through local speech setup, dictation access, private practice, and a
-ready screen. Speakeasy checks the machine, downloads the matching
-[NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp) build and NVIDIA's Parakeet v3 model,
-0.7 to 0.8 GB in all, and turns dictation on:
-
-| Machine                                         | Engine build                                    | Speech runs on |
-| ----------------------------------------------- | ----------------------------------------------- | -------------- |
-| Windows, NVIDIA GPU with 6 GB or more           | CUDA                                            | GPU            |
-| Windows, another discrete GPU with 6 GB or more | Vulkan                                          | GPU            |
-| Any other Windows PC                            | Vulkan, or CPU without a Vulkan driver          | CPU            |
-| Mac with Apple silicon                          | Metal                                           | GPU            |
-| Linux x86_64                                    | CUDA, Vulkan, or CPU after compatibility checks | GPU or CPU     |
-
-The guide shows your configured shortcut and microphone activity, then waits for recognized words
-before offering the ready screen. Practice stays private; the final screen explains how to check
-text delivery in your own editor. **Skip setup** returns to Settings without stopping an active
-download. Unfinished setup opens again on launch; **General → Setup guide → Replay** brings the
-guide back without resetting your settings; Replay is unavailable in `--demo`.
-
-Then hold <kbd>Ctrl</kbd> + <kbd>Win</kbd> (Windows), <kbd>Fn</kbd> (Mac), or <kbd>Ctrl</kbd> +
-<kbd>Super</kbd> + <kbd>Space</kbd> (Linux) in an editor and speak.
-
-Settings opens on **Dictation**: your shortcut with a private practice area, the Show shortcuts on
-Windows and Mac, the speech model, language, microphone, writing options, and presets. **Words**
-holds phrase corrections and recognition hints. **General** holds the theme, motion and sounds,
-permissions, updates, the setup guide, and **Start over…**. Leaving Dictation ends private practice
-and clears its text. To fix a word Speakeasy keeps mishearing, practice saying it, then choose that
-word in the result; choose a neighboring word to make it a phrase. A correction row opens right
-there with what you said, so you only type what to write. Adding it ends practice; practice again to
-hear the correction.
-
-**General → Privacy** shows microphone access, screen access for Shows on Windows and Mac, and
-Accessibility on Mac, without prompting or capturing anything. Permission status refreshes when
-Settings comes to the front, and a blocked Mac permission offers **Open System Settings** for its
-system page. Windows and Linux access stays **Checked when used**, because a privacy setting alone
-cannot prove access. The setup guide's permission step offers **Open Windows Settings** or **Open
-System Settings**, and Linux's **Microphone help** opens this README's Linux section. An allowed
-permission does not prove the hardware or another app works. **Start practice** under your shortcut
-lets you use the real shortcut and microphone while your words appear only in Settings. Nothing is
-pasted, copied, or saved, and practice cannot record a Show. **End practice**, hiding the window,
-losing focus, or changing settings ends practice and clears its text. To check delivery, end
-practice and dictate into an editor; practice does not verify another app's input or clipboard
-behavior.
-
-**Check for updates** under General contacts the repository's latest-release endpoint on GitHub only
-when clicked. It sends no recordings, settings, or device details. **Release notes** opens that
-version's official download page; checking never installs or runs an update.
-
-Windows builds with a configured update signing key also offer **Download**. It works for an
-installed copy; a portable or moved copy reports that it updates from the release page. The download
-checks the installer against the release's signed metadata before offering **Install and restart**.
-Finish or cancel recording first; installation waits for pending work and settings saves to finish.
-It preserves the installation folder and selected settings file. Downloading and installing always
-require separate actions. Builds without an embedded signing key offer the release page only.
-
-Downloads come from pinned GitHub and Hugging Face URLs and are checked against their SHA-256 before
-use. They live in `%LOCALAPPDATA%\speakeasy` on Windows and
-`~/Library/Application Support/speakeasy` on Mac. **Cancel** pauses setup, and the next attempt
-resumes where it stopped.
+The setup guide downloads Parakeet and its local engine, helps you grant permissions, and opens a
+private practice area. **Cancel** pauses a download and the next attempt resumes it. Use **General →
+Setup guide → Replay** to reopen the guide while keeping your settings. To try delivery, finish
+practice and dictate into an editor.
 
 <p align="center">
-  <img src="docs/assets/setup.png"
-    alt="Settings during first-launch setup, downloading the Parakeet model with a progress bar and Cancel"
-    width="530">
+  <img src="docs/assets/setup.png" alt="The setup guide downloading the Parakeet model" width="460">
 </p>
-
-<details>
-<summary>Build from source</summary>
-
-<br>
-
-Speakeasy targets Windows 11 x64, macOS 14+ on Apple silicon, and experimental Linux x86_64 builds
-with glibc 2.35 or later. `mise install` installs the pinned nightly Rust toolchain and the project
-tools. Windows builds need the Visual Studio C++ Build Tools and the Windows SDK; macOS builds need
-the Xcode command line tools.
-
-```sh
-mise run app:demo       # simulated preview
-mise run app:run        # the app
-mise run app:show-demo  # a scripted Show bundle
-```
-
-`app:demo` runs the app with `--demo`, which uses simulated audio without the microphone, global
-shortcut, model, or clipboard. It previews hands-free, the countdown, submission, a Show with its
-ink on Windows and Mac, interrupted dismissal, cancellation, silence, copied text, and an error.
-`app:demo-tray` runs it with `--demo-tray`, which adds the tray and the Settings hide-and-reopen
-behavior with dictation disabled. Both modes use a temporary synthetic Show library and leave saved
-Shows alone. `--demo` opens that library automatically; `--demo-tray` opens it through Shows.
-`app:show-demo` writes a scripted Show bundle and prints its summary. Linux has experimental desktop
-support; see the Linux instructions below. Linux builds need `pkg-config` and the ALSA, fontconfig,
-FreeType, X11/XCB, xkbcommon, and Vulkan development packages. On Ubuntu:
-
-```sh
-sudo apt-get install libasound2-dev libfontconfig1-dev libfreetype6-dev libx11-dev libxcb1-dev \
-  libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev pkg-config
-```
-
-</details>
-
-## Linux (experimental)
-
-Download the x86_64 AppImage or tar archive from the release. The application targets glibc 2.35 or
-later and needs a Wayland compositor with layer shell (KDE Plasma, sway, Hyprland, niri) or X11 or
-Xwayland, plus Vulkan and desktop audio support. Dictation on Wayland also needs Xwayland, which
-Speakeasy uses to check focus. It shares audio, engines, the session owner, Settings and the pill
-with Windows and Mac. Native GNOME/KDE/X11 acceptance is pending; see
-[implementation and acceptance](docs/linux-implementation.md) for support limits.
-
-The defaults are **Ctrl+Super+Space** to hold or double-tap for hands-free and **Ctrl+Super+Escape**
-to cancel. Linux's cancel chord is reserved; bare Escape is not globally captured. Wayland requests
-desktop shortcut and keyboard permissions; Settings shows the actual accepted bindings. Install the
-supplied `io.github.krvh.speakeasy.desktop` file in `~/.local/share/applications` (or the
-corresponding XDG data directory), and make the executable available as `speakeasy` on your PATH.
-Portals use this installed launcher identity. For source builds, `mise run linux:install` builds the
-release app, links it as `~/.local/bin/speakeasy`, and installs the desktop file into the XDG data
-directory.
-
-For the tar package, link its absolute `Speakeasy.AppDir/AppRun` path instead, and install the
-desktop file from `usr/share/applications` inside that directory. For AppImage, make it executable,
-link its absolute path as `speakeasy`, and install the desktop file from this repository or its
-`--appimage-extract` output. The executable stays in the chosen location. On Wayland, automatic
-paste needs libei and the compositor's EI keyboard, and typing needs EI direct text support; X11
-pastes through XTest and cannot type. Settings' **Insert text by** control chooses **Paste
-(Ctrl+V)**, **Paste (Ctrl+Shift+V)** for terminals, **Type (keeps clipboard)**, or **Copy for manual
-paste** if automatic insertion is unavailable. X11 automatic paste needs the first keyboard layout
-active and an unshifted V key in it; otherwise Speakeasy copies the text and explains how to paste
-it.
-
-For a desktop without suitable shortcut permissions, set **General → Desktop → Shortcuts** to
-**Desktop bindings** and assign the two commands Settings shows in your desktop's shortcut settings:
-`speakeasy --toggle` and `speakeasy --cancel`, with `--config` when you use another settings file.
-This mode starts/finishes hands-free. Set **Insert text by** to **Copy for manual paste** as well to
-avoid requesting keyboard-control access. The optional `linux` settings object holds the `shortcut`
-and `cancel` chords in portal syntax, such as `CTRL+LOGO+space`: X11 grabs them, and Wayland
-requests them as preferred triggers. It also holds `external_shortcut`, which Shortcuts sets. The
-top-level `text_delivery` setting holds the **Insert text by** choice: `paste`, `terminal_paste`,
-`type`, or `copy`. After rebinding Speakeasy's shortcuts in your desktop's settings or changing the
-keyboard map, pause and resume dictation.
-
-A tray host is optional: without one, closing Settings quits and the launcher reopens the app.
-Configuration lives under `$XDG_CONFIG_HOME/speakeasy`, downloads under `$XDG_DATA_HOME/speakeasy`,
-and portal restore tokens under `$XDG_STATE_HOME/speakeasy`, with standard home directory defaults.
-Some CPUs without AVX-512 cannot run the pinned Linux CPU engine; Speakeasy checks before readiness
-and explains how to choose another engine in Settings
-([details](docs/linux-implementation.md#setup-and-distribution)).
-
-## Speech engines
-
-**Parakeet** is the default: NVIDIA's Parakeet TDT 0.6B v3, run by NeMo-Speech.cpp. It detects the
-language automatically and needs microphone audio at 8–96 kHz. Setup chooses its build, and **Prefer
-GPU** switches between the GPU and the CPU. The GPU worker keeps its memory between recordings until
-**Pause** releases it. The model is by NVIDIA, under
-[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
-
-Long Parakeet dictation starts recognition at pauses while you keep speaking, reducing the work left
-after release. Text still arrives once, when you finish, with phrase corrections applied across the
-whole dictation.
-
-**Nemotron** is an optional 742 MB download under **Dictation → Speech model**. NVIDIA's Nemotron
-3.5 ASR Streaming 0.6B supports 32 locales, including Hindi, Japanese, Korean, and Mandarin. Choose
-a language or automatic detection. It performs continuous inference during ordinary dictation and
-practice; final text arrives once, after release. If continuous recognition fails, Speakeasy retries
-the complete recording with the same model. Parakeet remains the default; choosing Nemotron
-downloads what is missing and switches when the download finishes. Whisper and Show narration use
-whole-recording recognition.
-
-**Recognition hints** under Words helps Nemotron and Whisper recognize names and jargon without
-forcing replacement text. Add a name or phrase; it applies right away. Up to 100 hints are stored
-locally; each allows six words and 64 characters. Nemotron boosts them as it decodes, and Whisper
-reads the newest hints that fit in 600 characters as its prompt; with two or more hints, a reply
-under a second of sound that only repeats them is dropped. Parakeet's engine has no way to bias it,
-so Parakeet ignores hints while they stay saved, and Words shows them only while the engine reads
-hints or some are saved. Use **Corrections** when you want a deterministic replacement.
-
-**Your own engine**, under **Dictation → Speech model**, runs a whisper.cpp or NeMo-Speech.cpp build
-you installed. Choose **whisper.cpp** or **NeMo-Speech**, then the program and model file for that
-engine; Speakeasy switches once both are chosen. Switching engines clears the other engine's files,
-and switching is always explicit. **Whisper** runs a local whisper.cpp server with a GGML model. The
-known-good Windows build is
-[whisper.cpp b5130](https://github.com/ggml-org/whisper.cpp/releases/tag/b5130): extract the
-complete runtime and choose `Release/whisper-server.exe`. Turn off **Prefer GPU** for a CPU-only
-build. The `threads` setting applies to Whisper and defaults to four.
-
-The worker stays warm on loopback. With a GPU, one silent request initializes its kernels before the
-first dictation; Linux CPU workers also validate inference before readiness. Cancelling before final
-recognition discards early Parakeet results while their worker finishes. Cancelling a Nemotron
-stream closes it and reuses the worker after a bounded recovery check. Cancelling final GPU
-inference keeps a healthy worker and replaces it if a two-second recovery check fails; cancelling
-final CPU inference replaces the worker. On Mac and Linux, force-quitting Speakeasy can leave the
-worker running; quit from its menu instead. Relative engine and model paths resolve beside the
-settings file.
 
 ## Everyday use
 
-### Settings
+| Gesture                                 | Windows                             | macOS                               | Linux                          |
+| --------------------------------------- | ----------------------------------- | ----------------------------------- | ------------------------------ |
+| Hold to dictate, release to finish      | Ctrl+Win                            | Fn                                  | Ctrl+Super+Space               |
+| Start hands-free, press again to finish | Double-tap or add Space during hold | Double-tap or add Space during hold | Double-tap                     |
+| Cancel                                  | Escape                              | Escape                              | Ctrl+Super+Escape              |
+| Finish and send with Return             | Enter during hold                   | Return during hold                  |                                |
+| Paste last dictation                    | V during hold or tray               | V during hold or tray               | Tray or `speakeasy paste-last` |
+| Show the screen, window, or area        | S, W, or A during hold              | S, W, or A during hold              |                                |
 
-Settings shows your shortcuts and the speech model in use, and lets you choose the shortcut key on
-Windows and Mac, the microphone, language, recognition hints, GPU use, filler removal, spoken
-symbols, how text is delivered, reduced motion, sounds, theme, phrase corrections, and on Windows
-whether Speakeasy starts at login. Changes apply as you make them. **Pause** or **Resume**,
-**Shows**, **Quit**, and the status line stay at the bottom while the rest scrolls. The status says
-whether dictation is ready, confirms **Saved**, or shows the latest error or notice; problems show
-in the attention color.
-
-On Windows, assistive tools can read and operate the main Settings buttons, page tabs, switches, and
-phrase-correction and recognition-hint fields. Native acceptance checks their values, focus,
-actions, grapheme text selection, visible text ranges, scrolling text into view, and hide/reopen
-behavior. Scrolling text into view preserves selection and focus and holds across a resize; text
-replacements and reopening Settings retire prior ranges. Native selection is unavailable during
-active IME composition. Scrolling the Settings page and complete screen-reader navigation remain
-unfinished. On macOS and Linux, Settings publishes the same accessibility tree, but it stays
-published while Settings is hidden and no native acceptance checks it.
-
-**Corrections** under Words replaces recurring recognition mistakes in dictation and Show narration.
-Enter what the engine hears and the spelling you want, then choose **Add**; **Edit** changes one in
-place. Matching is case-insensitive, uses whole words, and prefers the longest phrase; replacements
-do not trigger other rules. Timed narration retains the original word span. This changes recognized
-text, not the speech model, and does not provide live transcription. Up to 200 rules are stored
-locally in `vocabulary`, for example `[{"heard": "speak easy", "written": "Speakeasy"}]`. Each side
-allows up to six words and 64 characters.
-
-**Presets** on the Dictation page keep named combinations of engine, model, language, recognition
-hints, phrase corrections, filler cleanup, thread count, and GPU preference. **Save current settings
-as a preset** names the current choices. **Use** applies a preset and keeps it; the matching preset
-shows **In use**. Its **⋯** menu offers **Update with current settings** and **Delete**. Up to 16
-presets are stored locally in `presets`, with distinct names of up to 48 characters. An unavailable
-model can remain in a preset; using it reports what to fix and leaves dictation as it was.
-
-The Windows/Mac tray's **Preset** menu and `speakeasy preset "NAME"` apply a preset for the current
-session while idle, without changing your settings; Settings marks it **In use**. That selection
-survives Pause but resets on restart or a dictation-settings change. Model choices reload the engine
-only when needed; text-only choices reuse it. An unavailable preset leaves the current configuration
-intact.
-
-Preset-library, theme, reduced-motion, and Start at login changes keep a recording running;
-microphone, language, filler removal, recognition hints, phrase correction, spoken symbols,
-delivery, sound, and script-reading changes end it but keep the model loaded. Changing the Windows
-or Mac shortcut, Linux Shortcuts, or most Linux **Insert text by** choices restarts dictation, which
-reloads the model. Saving stays responsive and preserves edits made while the save is running. A
-failed save returns Settings to the saved settings, and a save that a newer one follows waits like
-it: dictation follows once no recording or Show is running, restarting then if the shortcut or
-**Insert text by** changed. Changes made while dictation is paused are saved without resuming it,
-and pausing during a save keeps it paused; Quit finishes requested saves.
+Escape still reaches the focused app on Windows and macOS. The pill listens without taking focus,
+shows progress and errors, and counts down the last 30 seconds of the five-minute limit. If the
+microphone drops out after speech, use **Paste last dictation** to recover the words Speakeasy
+heard. It keeps one result in memory until Pause, a dictation restart, or Quit.
 
 <p align="center">
-  <img src="docs/assets/themes.png"
-    alt="Settings in the four themes: Jet & Champagne, Emerald Lounge, Iris, and Midnight Chrome" width="760">
-</p>
-
-The theme colors Settings, the pill, and the Windows and Linux tray icon: **Jet & Champagne**,
-**Emerald Lounge**, **Iris**, or **Midnight Chrome**.
-
-On Windows, **Start at login** opens Speakeasy in the tray when you sign in; it is off by default.
-While it is on, each launch registers the copy you run, so a moved or updated Speakeasy keeps
-starting; turn it off before you delete Speakeasy. If Windows' Startup apps page, in Settings or
-Task Manager, has turned Speakeasy off, Settings says so under the switch: turn it on there. Start
-at login belongs to the default settings file, which sign-in opens, so a launch with `--config`
-neither shows nor changes it.
-
-Settings live in `%APPDATA%\speakeasy\settings.json` on Windows and
-`~/Library/Application Support/speakeasy/settings.json` on Mac. The Windows and Mac packages include
-`settings.example.json`, the settings a first launch starts from; pass `--config <path>` to use
-another file. Saving writes only the settings you changed, so edits you make to the file by hand
-stay. When a settings file from another Speakeasy version cannot be read, Settings and the setup
-guide offer **Start over…**, which **General** also offers at any time. After you confirm, it
-deletes the downloaded engines, models, and updates and then the settings file, with its phrase
-corrections, hints, and presets, and downloads Parakeet again. Every Show stays. If something cannot
-be removed, the settings stay and Speakeasy says what to close or fix. On Windows and Mac,
-configured launches go straight to the tray or menu bar; Linux opens Settings at startup. Closing
-Settings hides it; Windows minimize also hides it. Reopening Speakeasy or choosing **Settings…** in
-the tray brings it back.
-
-### Tray
-
-<p align="center">
-  <img src="docs/assets/tray.png"
-    alt="Tray icon: ready, red while recording, a ring while working, a pause badge, an attention badge"
+  <img src="docs/assets/pill-states.png"
+    alt="Time remaining, working, no speech detected, text copied, and a microphone error"
     width="760">
 </p>
 
-The tray icon shows whether Speakeasy is ready, recording, working (for example loading the model or
-transcribing), paused, or needs attention. The Mac menu bar icon is monochrome, so it marks
-recording with a badge instead of red. The menu pauses or resumes dictation, starts or finishes a
-recording, cancels, pastes the last dictation, opens Settings, and quits; on Windows and Mac it also
-picks the dictation style and preset, starts a Show of the screen or of an area, copies or opens the
-last Show, and opens the Shows library. **Pause dictation**, or **Pause** in Settings, releases the
-shortcut and the model until you resume.
+Choose **Right Ctrl** or **F13** on Windows, and **F13**, **Right Option**, or **Right Command** on
+Mac, when the default conflicts with another app or an external keyboard's Fn stays in firmware.
+With a right modifier, wait a quarter-second before adding a hold key so quick chords such as Right
+Ctrl+C still copy. For Mac Fn, set **System Settings → Keyboard → Press 🌐 key to** to **Do
+Nothing**. When Secure Keyboard Entry is active, Mac modifier shortcuts still record, and F13 and
+the hold keys are unavailable to Speakeasy. The pill shows a notice.
 
-### Text delivery
+By default, text is pasted. Windows and macOS restore the prior clipboard after half a second when
+they can copy it back and the clipboard is still unchanged. A paste followed by Return leaves the
+dictated text there. Release the shortcut within five seconds for Return-to-send, and keep focus in
+the same window on Windows or app on Mac. **Type instead of paste** keeps the clipboard untouched.
+The pill reports submission to the OS. If it says **Text copied**, paste manually.
 
-By default the text is pasted through the clipboard. On Windows and Mac, Speakeasy then puts back
-what the clipboard held half a second after the paste, unless something else changed the clipboard
-in the meantime. It leaves the dictated text there instead when the clipboard was empty or held
-something it cannot copy back, such as a Windows metafile. **Paste last dictation** pastes the text
-again either way. **Type instead of paste** types the text as direct input, which never touches the
-clipboard but some editors reject. On Linux the pasted text stays on the clipboard; **Insert text
-by**, described above, chooses the method. Protected fields and elevated Windows apps may refuse
-either method, and no OS submission can confirm that an editor accepted the text.
+<p align="center">
+  <img src="docs/assets/tray.png" alt="The tray's ready, recording, working, paused, and attention states" width="760">
+</p>
+
+### Settings
+
+**Dictation** offers shortcut, practice, speech, microphone, writing, and presets. **Words** holds
+recognition hints and phrase corrections. **General** holds appearance, sounds, permissions,
+updates, and **Start over…**. Changes save as you make them. Closing Settings hides it to the tray
+when one is available. **Pause** releases the shortcut and the model. **Start over…** resets
+settings and downloads while preserving Shows.
+
+A preset saves the speech and cleanup choices you use together. **Use** applies it to Settings. The
+Windows and Mac tray or `speakeasy preset "NAME"` applies a preset while idle for the current run
+without saving it. **Dictation style** in the tray or `speakeasy style STYLE` sets the next
+recording's style. Choose `prose`, `verbatim`, `camel`, `pascal`, `snake`, `kebab`, or `constant`.
+Verbatim preserves fillers. Phrase corrections apply in every style, and Prose can write spoken
+symbols such as “new line”, “underscore”, or “open paren”. Shows use their usual narration.
+
+<p align="center">
+  <img src="docs/assets/themes.png" alt="Settings in all four color themes" width="760">
+</p>
+
+Use `--config PATH` for another settings file. The defaults are `%APPDATA%\speakeasy\settings.json`
+on Windows and `~/Library/Application Support/speakeasy/settings.json` on Mac. Windows offers
+**Start at login** for the default settings. **General → Check for updates** checks GitHub on
+request. Installed Windows builds with an update key can download a verified installer and offer
+**Install and restart** as a separate action.
+
+On Windows, assistive tools can read and operate Settings' main controls and text fields. Full
+screen-reader navigation and page scrolling remain unfinished.
 
 ### Scripts
 
-Scripts can control a running desktop app. Only a dictation a script starts with `--print` returns
-its words, and only to `dictation stop TOKEN --print`:
+Commands control a running app. On Windows invoke the packaged console executable, for example
+`& 'PATH\speakeasy-cli.exe' status` in PowerShell.
 
 ```sh
 speakeasy status
 speakeasy dictation start --style snake
 speakeasy dictation stop "TOKEN_FROM_START"
-speakeasy dictation start --print
-speakeasy dictation stop "TOKEN_FROM_START" --print
 speakeasy dictation cancel "TOKEN_FROM_START"
 speakeasy paste-last
 speakeasy style prose
 speakeasy preset "Coding"
 ```
 
-Each command accepts `--config PATH` for that app instance and returns JSON. Exit 0 means the owner
-acknowledged the action, 1 means refused, and 2 means unavailable or uncertain; an acknowledgement
-does not prove transcription or insertion completed. Invalid arguments print an error instead of
-JSON and also exit 2. Start creates a hands-free ordinary dictation; stop and cancel require its
-exact session token, which expires with that session or app restart. Busy starts, stale tokens, and
-commands targeting Shows or private practice are refused. Read status after an uncertain result
-instead of blindly retrying. `style` changes the next-recording default; `dictation start --style`
-overrides only that recording.
+Pass `--config PATH` for the selected instance. The JSON commands exit 0 for acknowledgement, 1 for
+refusal, and 2 for unavailable or uncertain. Usage errors also exit 2 and print to stderr. Read
+status after an uncertain result. The start token applies to that ordinary dictation only.
 
-`dictation start --print` works only after you turn on **Scripts can read their dictations** under
-**Dictation → Writing** in Settings; until then it is refused. It records the same hands-free
-dictation, but its words never reach the focused app, and the pill says **To script** while it
-records. The switch records your consent; it is not a security boundary, because any program running
-as you can also change your settings. `dictation stop TOKEN --print` finishes it, waits up to two
-minutes for recognition, and returns the text as the reply's `text` field, cleaned up like any
-dictation in its style. A printed dictation pastes nothing; Paste last dictation can still paste it.
-Stopping it without `--print`, or finishing it with the shortcut, pastes nothing and says so.
-Printing a dictation started without `--print` is refused, as is printing one twice, and one that
-ends empty, cancelled, or failed refuses its caller. Keyboard dictations, Shows, practice, and
-earlier dictations can never be read back. These explicit commands work on all three platforms;
-Linux's desktop-binding `--toggle` and `--cancel` still require Desktop bindings.
+Enable **Scripts can read their dictations** under **Dictation → Writing** to use
+`speakeasy dictation start --print` followed by `speakeasy dictation stop TOKEN --print`. This
+capture delivers its result in the reply's `text` field instead of pasting. The stop command waits
+up to two minutes. The switch limits the feature to explicit script captures. Shows, practice, and
+keyboard dictation have separate destinations.
+
+## Speech engines
+
+- **Parakeet** is the default. It detects language automatically and starts recognition during
+  pauses in long dictations. Setup chooses the local NeMo-Speech.cpp build. **Prefer GPU** lets you
+  switch between GPU and CPU.
+- **Nemotron** is an optional download in the model picker. It recognizes continuously during
+  dictation or practice and delivers text once at the end. A failed stream retries the whole
+  recording with the same model.
+- **Your own engine** accepts a program and model from a local
+  [whisper.cpp](https://github.com/ggml-org/whisper.cpp) or
+  [NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp) installation. For Whisper on Windows,
+  extract the full runtime and select `whisper-server.exe`. CPU-only builds need **Prefer GPU** off.
+
+Recognition hints guide Nemotron and Whisper toward names and jargon. Corrections replace whole
+words or phrases in the output and apply to Show narration too. **Remove um and uh** applies to
+English in Nemotron and Whisper. With Parakeet, turn it on to opt into English cleanup.
+
+## Show your coding agent
+
+A Show records a screen, window, or area with your narration. On Windows and Mac, hold the dictation
+shortcut and press **S** for the display under the pointer, **W** for its window, or **A** to drag
+an area. Release the shortcut and keep speaking. Hold **Shift** and move the pointer to draw
+numbered marks, or double-tap **Shift** to drop a pin. A fresh hold and release finishes. The tray
+can start screen or area Shows and finish or cancel them. To cancel with the keyboard, hold the
+shortcut and press Escape.
+
+<p align="center">
+  <img src="docs/assets/show.png" alt="Numbered Show annotations around settings in a sample app" width="760">
+</p>
+
+Speakeasy leaves its windows out of capture, saves keyframes, contact sheets, `summary.md`, and
+`show.json`, and copies the summary. Screen Shows frame the area you worked in. Window and area
+Shows use your chosen framing. Windows Shows and Mac screen and area Shows also save silent video. A
+Show that ends early can still save its footage and report missing or partial narration.
+
+<p align="center">
+  <img src="docs/assets/show-pill.png" alt="The pill starting, recording, and copying a Show" width="760">
+</p>
+
+### Read saved Shows
+
+Open **Shows** to review keyframes, **All retained frames**, **Video** where available, and
+**Summary** or **Narration**. A timed mark or clause jumps to its position. When the actual sample
+differs from the requested time, the caption shows both. Video annotations may end before recovered
+video does.
+
+<p align="center">
+  <img src="docs/assets/show-sheet.png" alt="A contact sheet with numbered circles, arrows, and a pin" width="760">
+</p>
+
+On Windows and Mac, **Send to agent** copies paths and the ID in a prompt you can paste into an
+agent. **Copy image + summary + narration** copies the displayed image with its time, your edited
+summary, and the recorded words. **Copy last Show** in the tray rereads the latest Show's summary,
+including edits, until you quit or the Show is removed. A Windows summary can include the path under
+the default WSL distribution's drive mount.
+
+Managed Shows and their saved voice expire seven days after recording unless you choose **Keep
+Show**. **Allow expiry** restores the original expiry date. **Delete Show…** removes the selected
+bundle after confirmation, with exported copies and any pending recovery audio left in place.
+
+- **Export ZIP…** writes a portable copy of the evidence and edited summary. Saved voice and
+  recovery audio stay in Speakeasy.
+- **Export video…** writes a new MP4 with saved ink, voice, and optional captions where available.
+  Install FFmpeg 5.1 or later with H.264 and AAC support, put `ffmpeg` on PATH, then restart
+  Speakeasy.
+- **Recover Show** restores surviving footage and audio from an interrupted recording as a new
+  bundle, using your configured engine and the original language. It keeps the original expiry.
+  **Transcribe narration** retries pending audio and saves a new copy. Pending audio follows its
+  original seven-day expiry even if you keep the earlier bundle.
+
+### Show commands and MCP
+
+```sh
+speakeasy show list --json
+speakeasy show wait --timeout 900 --json
+speakeasy show inspect "PATH_OR_SHOW_ID" --json
+speakeasy show frames "PATH_OR_SHOW_ID" --phrase "save button" --json
+speakeasy show frame "PATH_OR_SHOW_ID" --at 0:12.500 --out new-frame.png --json
+speakeasy show frame "PATH_OR_SHOW_ID" --video --mark 2 --out new-video-frame.png --json
+speakeasy show keep "PATH_OR_SHOW_ID"
+speakeasy show export "PATH_OR_SHOW_ID" --out new-show.zip
+speakeasy show video "PATH_OR_SHOW_ID" --captions --out new-show.mp4
+speakeasy show skill --install /path/to/agent/skills
+speakeasy show mcp --setup
+```
+
+`wait` waits for the first Show saved after it starts. `inspect` gives current paths and maps
+contact sheets and marks to their frames. It reports an unreadable manifest or movie timing in
+`error` with `status: "unreadable"`, then exits 1. Images are opened when viewed or exported. Choose
+a full managed ID from `list` or an explicit path for a moved bundle. `show keep --off` restores
+expiry, and `show discard "interrupted:ID"` discards an explicit checkpoint. `speakeasy show --help`
+lists all options. The [agent reading guide](skills/speakeasy-show/SKILL.md) covers evidence
+retrieval, sampling gaps, and export.
+
+`show mcp --setup` prints client configuration. Run the stdio server with one or more `--root PATH`
+arguments to expose specific Shows or folders of Shows to `show_list`, `show_read`, and
+`show_image`. From WSL, the Windows console executable takes Windows roots and Show paths. Content
+requested by an agent may reach its model provider.
+
+## Linux (experimental)
+
+Use the x86_64 AppImage or bundled tar. The app needs a working Vulkan driver, desktop audio, and a
+layer-shell Wayland compositor or X11/Xwayland. The Wayland dictation adapter also uses Xwayland for
+focus. See [Linux implementation](docs/linux-implementation.md) for desktop support and pending
+acceptance.
+
+Put `speakeasy` on PATH, linking to the executable AppImage or to `Speakeasy.AppDir/AppRun` from the
+tar. Install [the desktop file](packaging/linux/io.github.krvh.speakeasy.desktop) under
+`~/.local/share/applications` or its XDG equivalent for the desktop portals. Source builds can use
+`mise run linux:install`.
+
+Wayland asks the desktop to approve shortcut and keyboard access. Settings shows the accepted
+bindings. Other desktops can use **General → Desktop → Shortcuts → Desktop bindings**. Assign the
+displayed `speakeasy --toggle` and `speakeasy --cancel` commands to shortcuts in your desktop
+settings. This mode provides hands-free dictation.
+
+**Insert text by** offers paste, terminal paste, direct typing, or manual copy. Automatic paste uses
+EI on Wayland and XTest on X11. X11 needs the first keyboard layout with an unshifted V. Typing
+requires EI direct text support. Choose **Copy for manual paste** if your desktop lacks those
+capabilities. After rebinding shortcuts in the desktop or changing the keyboard map, pause and
+resume. Closing Settings quits when there's no tray host. Linux can read saved Shows. Show recording
+is available on Windows and Mac.
 
 ## Build and verify
 
 ```sh
 mise install
 mise run standards:check
+mise run app:demo
+mise run app:run
+mise run app:show-demo
 ```
 
-The pinned toolchain and lockfiles make local checks reproducible. `mise run standards` applies safe
-formatters and autofixes; `mise run fmt`, `mise run lint`, and `mise run test` format, lint, or test
-every language; and `mise tasks` lists the focused checks, including the opt-in native checks below.
+Build on Windows with the Visual Studio C++ Build Tools and Windows SDK, or on macOS with Xcode
+command line tools. Linux needs `pkg-config` and development packages for ALSA, fontconfig,
+FreeType, X11/XCB, xkbcommon, and Vulkan. On Ubuntu:
 
-Default tests drive the real session owner with mocked microphone, inference, and insertion, and a
-paused clock exercises gesture deadlines and the five-minute cap.
-[AGENTS.md](AGENTS.md#tests-and-review) sets what they may touch. Every session decision lives in
-one state machine, and every pause, restart, and quit decision in the service lifecycle. Tests try
-every ordering of events against both within the bounds
-[exhaustive exploration](docs/architecture.md#exhaustive-exploration) lists, and
-`mise run rust:explore` runs the full session search. See the
-[architecture change and test map](docs/architecture.md#change-and-test-map), and
-[verification](docs/architecture.md#verification) for opt-in tests and their fixtures.
+```sh
+sudo apt-get install libasound2-dev libfontconfig1-dev libfreetype6-dev libx11-dev libxcb1-dev \
+  libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev pkg-config
+```
+
+`app:demo` previews simulated dictation and Shows. `mise run app:demo-tray` previews tray and window
+behavior with dictation disabled. Use `mise tasks` for focused checks and `mise run rust:explore`
+when changing the session machine. See
+[the change and test map](docs/architecture.md#change-and-test-map).
 
 <details>
-<summary>Packaging and native checks</summary>
+<summary>Packaging and signing</summary>
 
-<br>
+- Run `scripts/package-windows.ps1` with Inno Setup 6 for an installer and ZIP,
+  `bash scripts/package-macos.sh` for a DMG and ZIP, or `bash scripts/package-linux.sh` for an
+  AppImage and tar. Linux distribution builds target Ubuntu 22.04's glibc 2.35. Use `--native-tar`
+  for an unbundled local build. Outputs go in `artifacts/`.
+- For Windows publisher signing, provision a certificate with private-key access in
+  `CurrentUser\My`. Set `SPEAKEASY_WINDOWS_SIGN_CERT_SHA1` and `SPEAKEASY_WINDOWS_SIGN_TIMESTAMP` to
+  its thumbprint and HTTPS RFC 3161 endpoint. The script signs and checks the packages. For Mac
+  distribution, set `SPEAKEASY_MAC_SIGN_IDENTITY` to a Developer ID Application identity and
+  `SPEAKEASY_MAC_NOTARY_PROFILE` to a stored notarytool profile. The script signs, notarizes, and
+  checks both the app and disk image. Release CI uses unsigned Windows packages and locally signed
+  Mac packages.
+- Verified Windows updates use a separate Ed25519 key. Commit the 32-byte hexadecimal public key in
+  `packaging/update-key.pub`. Store the PKCS#8 PEM private key in `SPEAKEASY_UPDATE_PRIVATE_KEY` as
+  an Actions secret. Release CI checks the key matches before tagging and signs the exact
+  `update.json` bytes, including the installer size and SHA-256. Keep signing credentials out of Git
+  and logs. Ship a replacement public key in a separately distributed build if the key changes.
+- `bash scripts/check-package.sh <package>` checks the actual portable package without devices or a
+  display. CI checks the Windows installer on a fresh runner with
+  `scripts/check-installer.ps1 -Installer <setup.exe>`.
 
-- `scripts/package-windows.ps1`, `bash scripts/package-macos.sh`, and
-  `bash scripts/package-linux.sh` package the app into `artifacts/`; `--native-tar` makes an
-  unbundled Linux archive for the current machine. The Windows and Mac scripts hold a lock in
-  `artifacts/` while they run, so a second run of either stops before touching its outputs, and a
-  failed run leaves none of its outputs behind. Each script generates the package's third-party
-  notices with the `cargo about` that `mise install` provides. Packages carry no engine or model;
-  setup downloads them on first launch. Windows packaging also requires Inno Setup 6 and emits a
-  per-user installer beside the portable ZIP. The installer registers KrishRVH, not Speakeasy, as
-  publisher: winget matches an installed app it does not manage by name and publisher, and its
-  `Speakeasy.speakeasy` package is an unrelated CLI that `winget upgrade` would otherwise offer. Mac
-  packaging emits a drag-to-Applications DMG and ZIP. For Windows publisher signing, provision a
-  certificate and its private-key access in the build user's `CurrentUser\My` certificate store, set
-  `SPEAKEASY_WINDOWS_SIGN_CERT_SHA1` to its thumbprint and `SPEAKEASY_WINDOWS_SIGN_TIMESTAMP` to an
-  HTTPS RFC 3161 timestamp endpoint. Packaging signs both executables before archiving, and Inno
-  Setup signs the installer and its embedded uninstaller; its sign command reads the endpoint from
-  the environment, so a token in the endpoint stays out of the build log. Packaging rejects a failed
-  signature, wrong signer, or missing timestamp. With neither setting it builds unsigned local
-  packages. Authenticode identifies the publisher; SmartScreen reputation is separate. The Mac
-  bundle carries its microphone usage declaration and a local signature by default; grant its
-  permissions as [Get started](#get-started) describes. For distribution, set both
-  `SPEAKEASY_MAC_SIGN_IDENTITY` to a Developer ID Application identity already in the keychain and
-  `SPEAKEASY_MAC_NOTARY_PROFILE` to a stored `notarytool` keychain profile. Packaging then signs
-  with hardened runtime and the microphone entitlement, submits to Apple, staples the accepted
-  ticket, and checks Gatekeeper before emitting the ZIP and DMG. Incomplete settings or rejected
-  notarization fail the build. The release workflow provisions neither publisher credential, so it
-  builds unsigned Windows and locally signed Mac packages; no credentials belong in the repository.
-  Moving from a local signature to Developer ID can require granting microphone, Accessibility, and
-  screen recording permissions again; check them after replacing the app.
-- Verified Windows updates use an Ed25519 key independently of publisher signing. Commit only the
-  32-byte public key as hexadecimal in `packaging/update-key.pub`; store its PKCS#8 PEM private key
-  as the repository's `SPEAKEASY_UPDATE_PRIVATE_KEY` Actions secret, with a maintainer-held backup.
-  `python3 scripts/sign_update.py artifacts/speakeasy-windows-x64-setup.exe <version> --private-key <local-key-file>`
-  binds the version, target, filename, size, and SHA-256 in `update.json` and signs its exact bytes
-  in `update.json.sig`. Release publication checks that the secret matches the embedded key and
-  fails before tagging if it is absent or wrong. Installed builds trust only the key they embed:
-  retain the current key or distribute a build with a replacement key manually. Never commit a
-  private key.
-- `bash scripts/check-package.sh <package>` unpacks a package and checks, with no display or model,
-  that it prints its version and help, answers a mistyped option on stderr with status 2, and that
-  `show demo` writes a bundle with its summary and contact sheet. It inspects the bundle, prints the
-  embedded agent skill, and checks that a missing frame produces findings and a failure status. The
-  release workflow runs it on the portable packages and Mac DMG before upload.
-  `scripts/check-installer.ps1 -Installer <setup.exe>` tests both running executables, parent wait
-  and timeout, staged-file retention, upgrade/relaunch, and uninstall on a GitHub Actions Windows
-  runner. It refuses a runner that already has Speakeasy data or a sign-in entry, and removes what
-  it creates. It uses owned demo windows without devices and preserves settings, model files, edited
-  Shows, and other copies' sign-in entries. Release packaging runs it, and the Check workflow's
-  optional `installer` input runs it with the current packaged build.
-- On macOS, `bash scripts/check-update-macos.sh` builds the opt-in `native-acceptance` feature and
-  opens owned demo windows. It holds an accepted Show write during external, nested, repeated, and
-  app-owned quit requests, then checks rendering callbacks, configuration preservation, and instance
-  release. It uses no microphone, capture, input injection, or clipboard. The Check workflow's
-  `mac_updates` input runs this on a GitHub-hosted Mac, whose desktop session the headless Mac mini
-  runner lacks. Default builds and release packages omit the acceptance entry points.
-- `scripts/check-demo-windows.ps1 -Executable <speakeasy.exe>` checks that the demo pill stays
-  non-activating and passes clicks through, and that closing Shows keeps Settings open. It also
-  checks Settings through Windows UI Automation with synthetic Unicode input: roles, selection,
-  switches, invocation, focus, input limits, bounds, hide/minimize, and retired providers.
-  `mise run windows:accessibility` builds the app test executable and passes its path to the same
-  script with `-StaticAccessibility` to check nonactivating and normal reopen without animation or
-  unrelated redraws, stale field edits and text ranges, and the provider after window destruction.
-  It also checks that scrolling text into view keeps selection and focus, that retained ranges
-  survive field resizing, and that a reveal requested before a resize is painted lands in the
-  resized layout. `scripts/check-tray-windows.ps1 -Executable <speakeasy.exe>` checks minimize,
-  close, relaunch, and configuration preservation with owned `--demo-tray` windows.
-  `mise run ps:syntax` parses the Windows scripts on a native PowerShell host.
-- On Linux, `mise run linux:demo` builds the release app and runs `scripts/check_demo_linux.py` on
-  it. The script opens a private Xvfb display, checks rendered Settings and Shows, and checks that
-  the preview shows and then hides the pill. It needs Xvfb, x11-utils, and a Vulkan driver.
-  `bash scripts/check-rendering-linux.sh` runs, in an Ubuntu 26.04 Docker container with stock Mesa,
-  the opt-in `native_pill_` tests of the pill's window hints, input shape, visibility, and
-  reopening, the Show review and Settings acceptance tests below, the native rendering example, and
-  that demo check on a release binary it builds; `--packages` checks the AppImage and tar launchers
-  that `package-linux.sh` builds instead.
-  [Linux implementation](docs/linux-implementation.md#setup-and-distribution) explains the Mesa
-  requirement.
-- `mise run native:rendering` opens an owned non-activating window, renders an embedded SVG with
-  alternating path and pathless frames, resizes, and repeats show/hide. It runs on the process main
-  thread for AppKit. On Linux, this task and every Linux owned-window task below run on a private
-  `xvfb-run -a` display with `WAYLAND_DISPLAY` unset, so that GPUI cannot choose a layer-shell
-  Wayland desktop; Windows and Mac use their native desktop. It accesses no microphone, global hook,
-  or clipboard.
-- `mise run native:review`, on Windows or Linux, checks synthetic Show navigation, damage, edited
-  summaries, expiry, ZIP export, visual-copy requests through a fake, and image cleanup on close.
-  Linux also checks the owned window's rendered frame pixels. It uses no microphone, global input,
-  screen capture, or clipboard.
-- `mise run native:settings`, on Windows or Linux, checks Settings IME composition, then language
-  and page navigation, focus restoration, permission refresh using fake observations, private
-  practice cleanup, and the simulated onboarding journey, including Skip, Replay, and recognition
-  before completion. Each check runs in its own process, which owns one GPUI application.
-- On macOS with FFmpeg installed, `bash scripts/check-movie-macos.sh` generates synthetic silent
-  movies and checks exact-frame pixels, cancellation, and a seek near the five-minute limit. It
-  accesses no microphone, screen, input, or clipboard. The Check workflow's optional `movie` input
-  also encodes a synthetic color-and-motion clip on Windows with `mise run windows:movie:colors`,
-  normalizes its fragment headers into the published format, and checks the retained prefix through
-  the Mac reader with `mise run macos:movie:from-windows`, including HD neutral midtones, without
-  accessing live devices. With `movie`, `movie_fixture_run` reuses the synthetic Windows artifact
-  from a specified run for a focused Mac check; it skips the normal native matrix.
-- On macOS, set `SPEAKEASY_MAC_MOVIE_DIRECTORY` to a new artifact directory and run
-  `mise run macos:movie:encode`. It checks native H.264 fragments, held and irregular timing,
-  resized content, colors, bounded output, cancellation, and file closure using generated pixels.
-  The Check workflow's `movie` input includes this check. On Windows,
-  `mise run windows:movie:from-mac` reads those same fixtures from `SPEAKEASY_MAC_MOVIE_DIRECTORY`.
-- `mise run macos:capture` explicitly opts into Mac screen capture on a host with one active
-  display. Two owned processes show a changing synthetic window and an overlapping excluded window.
-  It checks their pixels in memory, presentation timestamps, and stop/restart; it writes no pixels
-  and accesses no microphone, clipboard, or input hooks. Set both `movie=true` and `screen=true` in
-  the Check workflow to run it on the self-hosted Mac mini. Screen Recording permission is required.
-- On Windows, set `SPEAKEASY_MOVIE_PROBE_DIRECTORY` to an empty artifact directory and run
-  `mise run windows:movie:encode`. It exercises the native movie adapter with generated pixels,
-  checks motion and quiet-tail timing through the native reader, and forces storage failure. It then
-  checks irregular capture timing, coalescing, quiet fragments before finalization, cancellation
-  during catch-up, the surviving prefix after a stall, and, as the Check workflow's `movie` input
-  also does on macOS, cancellation and file release. Last, it writes `geometry.mp4` and
-  `geometry.csv` to the same directory: synthetic resized frames and the layouts they present. These
-  checks use generated pixels and access no microphone, screen, input, or clipboard.
-- On Windows, `mise run windows:geometry` moves and hides an owned window, verifies current target
-  bounds against a fixed area, and reports geometry lookup timings. It accesses no microphone,
-  screen pixels, input, or clipboard.
-- On Windows, `mise run windows:capture` captures only an owned, blacked-out scene into a temporary
-  movie. It changes that scene after filling the still queue and checks later video submissions, the
-  original deadline, and file release. It accesses no microphone, input, or clipboard.
-- On any host, set `SPEAKEASY_MOVIE_FIXTURES` to the synthetic codec probe directory and
-  `SPEAKEASY_MOVIE_PREFIX_OUT` to a new output directory, then run `mise run movie:prefixes`. It
-  validates native fragment timing and writes recovered prefixes for independent decoder checks.
-  These fixtures contain generated pixels only.
-- On Windows, set `SPEAKEASY_MOVIE_READ_DIRECTORY` to those recovered synthetic prefixes and run
-  `mise run windows:movie:read`. It checks native seeks, pixel orientation, cancellation, file
-  replacement, and command exports beyond the annotation journal without microphone, screen, input,
-  or clipboard access.
-- With the same Windows fixtures, `mise run windows:movie:review` checks the owned review window's
-  rapid seeks, scrubber, keyboard and narration navigation, exact copied evidence retrieval, and
-  cleanup on close. It injects events into that window without installing hooks, recording the
-  screen, or touching the clipboard.
-- On Windows, set `SPEAKEASY_MOVIE_GEOMETRY_DIRECTORY` to the directory where `windows:movie:encode`
-  wrote `geometry.mp4` and `geometry.csv`, keep `SPEAKEASY_MOVIE_READ_DIRECTORY`, and run
-  `mise run windows:movie:crops`. It checks that mark crops match the presented pixels, that
-  annotated exports match full-canvas crops, and that incompatible coordinate spaces and uncovered
-  samples are refused, using generated pixels only.
+</details>
 
-Live microphone, editor, and screen acceptance is tracked under
-[verification](docs/architecture.md#verification).
+<details>
+<summary>Native checks</summary>
+
+- Run `mise run native:rendering` for owned-window rendering. On Windows or Linux, use
+  `mise run native:settings` and `mise run native:review` for Settings and synthetic Show
+  interactions. Linux uses private Xvfb. `mise run linux:demo` checks the release preview and
+  `bash scripts/check-rendering-linux.sh` checks rendering in a Docker container.
+- On Windows, `mise run windows:accessibility` checks a static UI Automation fixture.
+  `scripts/check-demo-windows.ps1 -Executable <speakeasy.exe>` checks the simulated pill and
+  Settings. `scripts/check-tray-windows.ps1 -Executable <speakeasy.exe>` checks hide and reopen.
+  `mise run windows:clipboard` uses a private window station.
+- On Mac, `bash scripts/check-update-macos.sh` checks shutdown with owned windows.
+  `bash scripts/check-movie-macos.sh` uses FFmpeg to generate synthetic codec fixtures. The Check
+  workflow's `mac_updates` and `movie` inputs exercise these paths.
+- For Windows codec acceptance, run `mise run windows:movie:encode` with
+  `SPEAKEASY_MOVIE_PROBE_DIRECTORY` set to an empty folder. Pass that folder as
+  `SPEAKEASY_MOVIE_FIXTURES` to `mise run movie:prefixes` and set `SPEAKEASY_MOVIE_PREFIX_OUT` to a
+  new output folder. Set `SPEAKEASY_MOVIE_READ_DIRECTORY` to the recovered prefixes for
+  `windows:movie:read`, `windows:movie:review`, or `windows:movie:crops`. For crops also set
+  `SPEAKEASY_MOVIE_GEOMETRY_DIRECTORY` to the original encode folder.
+- The remaining movie tasks name their synthetic fixture directories in `mise tasks`.
+  `mise run windows:geometry` checks an owned window without recording pixels.
+  `mise run windows:capture` and `mise run macos:capture` explicitly opt into screen capture with
+  owned windows. Mac capture needs Screen Recording permission.
+- Live microphone and editor behavior require native acceptance. See
+  [performance and acceptance](docs/performance.md#native-acceptance).
 
 </details>
 
 ## Versions
 
-Speakeasy is a preview, versioned `0.MINOR.PATCH` under [SemVer](https://semver.org) as
-[Cargo reads](https://doc.rust-lang.org/cargo/reference/semver.html) major version zero: MINOR marks
-breaking changes. The version reaches 1.0.0 only when the maintainer declares the public surface
-stable.
+Speakeasy is a preview. Until 1.0, support the current version of settings, CLI, MCP, and Shows,
+including the current Show format, 3. Replace obsolete readers and report unsupported formats as
+errors.
 
-Until the official 1.0.0 release, only the latest Speakeasy version and its current formats, files,
-settings, and protocols are supported. Optimize for agentic development with one clear, idiomatic
-implementation of current behavior. Replace obsolete code, schemas, tests, and documentation; remove
-compatibility readers, migrations, aliases, transition shims, and old-version upgrade scaffolding.
-Unsupported formats produce an error. Breaking preview changes use a MINOR release under the rules
-below.
-
-The public surface is what people, scripts, and coding agents rely on from one release to the next:
-
-- the gestures: hold-to-talk, double-tap hands-free, cancelling, and a Show's S, W, A, and Shift;
-- the command line: `speakeasy` options, `speakeasy show` commands, and `speakeasy dictation` script
-  commands, including what `speakeasy-cli` relays and the JSON each prints;
-- the Show MCP server: its tools, their arguments, and the JSON they return;
-- saved settings and what each one means;
-- Show bundles: their files, the `show.json` format with its `version`, and their retention;
-- the supported platforms, their requirements, and the release packages.
-
-The look and sound of the app, its timings, messages, performance, and Rust crates are not part of
-it. Each release raises one number of the latest release, by its largest change since that tag:
-
-- **MINOR**, as in 0.5.2 to 0.6.0, when the surface loses something or changes meaning: a gesture,
-  option, or command is removed or does something else; a saved setting is no longer honored as
-  written; a `show.json` reader must change, which also raises the format's `version`; or a platform
-  or package is dropped or a requirement raised.
-- **PATCH**, as in 0.5.2 to 0.5.3, for every other release: added gestures, options, settings, and
-  bundle fields that existing readers can ignore, fixes, and performance.
-
-Versions carry no pre-release or build suffix, and a released version and its tag never change.
+The public surface includes gestures, CLI and MCP commands and replies, saved settings, Show formats
+and retention, and supported platforms and packages. Bump **MINOR** for a breaking change to that
+surface, and **PATCH** for additions, fixes, and performance. A breaking bundle reader change also
+raises the Show format version. Use `0.MINOR.PATCH` without suffixes and keep released versions and
+tags fixed.
 
 ## Documentation
 
-- [Architecture](docs/architecture.md): the change and test map, cross-module invariants,
-  recognition, privacy, and verification.
-- [Interaction design](docs/interaction-design.md): the brand, the pill, sounds, the tray and
-  Settings, and interaction contracts.
-- [Linux implementation](docs/linux-implementation.md): desktop adapters, packaging, and the native
-  acceptance Linux still needs.
-- [Native contracts](docs/native-contracts.md): FFI, callback and handle lifetimes, and
-  native-thread ownership.
-- [Performance](docs/performance.md): constraints, profiling methods, and native measurement limits.
-- [Remote dictation](docs/remote-dictation.md): routing a remote microphone to Speakeasy.
+- [Architecture](docs/architecture.md) and [native contracts](docs/native-contracts.md) for changes
+  to owners, interfaces, and OS resource lifetimes.
+- [Interaction design](docs/interaction-design.md) for gestures, feedback, and presentation.
+- [Performance](docs/performance.md) for profiling and fixture replay.
+- [Remote dictation](docs/remote-dictation.md) for routing a microphone to a Windows host.
 
 ## License
 
-Speakeasy is free and open source under the [MIT License](LICENSE). Josefin Sans is under the
-[SIL Open Font License](crates/app/assets/JosefinSans-OFL.txt), the cue sounds are cut from
-hollandm's CC0 [kalimba recordings](https://freesound.org/people/hollandm/packs/38696/) on
-Freesound, `speakeasy-show` adapts MIT-licensed code credited in its
-[notice](crates/show/NOTICE.md), and the patched crates under `vendor/` keep their upstream
-licenses: [Apache 2.0](vendor/gpui-pre/LICENSE-APACHE) for GPUI, and MIT or Apache 2.0 with
-BSD-3-Clause for [AccessKit's Windows adapter](vendor/accesskit_windows/Cargo.toml). Every package
-includes `LICENSE`, the font license, that notice, and `THIRD-PARTY-NOTICES.txt`, which packaging
-generates with `cargo about` from the crates built for that platform and the licenses
-[packaging/about.toml](packaging/about.toml) accepts.
+[MIT](LICENSE). Packages include the [font license](crates/app/assets/JosefinSans-OFL.txt), the
+[Show notice](crates/show/NOTICE.md), and third-party crate notices. Cues come from
+[CC0 kalimba recordings](https://freesound.org/people/hollandm/packs/38696/), and the patched
+dependencies retain their [upstream licenses](vendor/README.md).

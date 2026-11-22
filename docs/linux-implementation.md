@@ -1,250 +1,62 @@
 # Linux implementation
 
-Linux support is experimental. The x86_64 AppImage and bundled tar target glibc 2.35 or later.
-Native GNOME, KDE, and X11 desktop acceptance is pending; building the package does not establish
-compositor or editor compatibility.
+Linux shares capture, speech, the session machine, and the shell. It reads saved Shows. For
+installation and bindings see the [Linux section of the README](../README.md#linux-experimental).
 
-## Shared behavior and desktop adapters
+## Desktop and insertion
 
-Linux shares everything but its native adapters with Windows and macOS: audio, speech, session
-ownership, Settings, the pill, and tray policy. Linux records no Shows: its screen adapter reports
-them unavailable. [Architecture](architecture.md) maps the modules and the invariants they share.
+Rendering and input select their adapters independently.
+[Display selection](../crates/platform/src/linux/display_server.rs) probes layer shell before GPUI
+opens a window. Without it GPUI uses X11 or Xwayland. An available `DISPLAY` can be Xwayland even
+when the input adapter needs Wayland portal permissions. The pill uses a passive layer surface or an
+X11 notification window with an empty input shape. Show and hide through the same GPUI display
+connection. Hiding a Wayland pill unmaps its surface so the compositor can choose the output again
+on show.
 
-Linux selects its input adapter from the host session. An available `DISPLAY` can belong to Xwayland
-and does not establish desktop-wide X11 input access. Rendering and input use separate connections
-and can use different protocols. The Wayland path still needs Xwayland: it checks focus through an
-owned X connection, which also copies text when the Clipboard portal is unavailable, and **Desktop
-bindings** with **Copy for manual paste** use the X11 adapter outright.
+[Linux desktop](../crates/platform/src/linux.rs) routes X11 to passive chord grabs and XI2 release
+observation. Wayland uses GlobalShortcuts for accepted bindings and keyboard-only RemoteDesktop for
+libei, with optional Clipboard access. Desktop bindings bypass shortcut registration. Manual paste
+also bypasses keyboard consent. Restore tokens belong in the XDG state directory and rotate when the
+desktop returns a replacement. Pause must retire native requests and sessions before resuming.
 
-| Desktop path             | Shortcut handling                                                     | Insertion                                                         |
-| ------------------------ | --------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| X11                      | Passive chord grabs, XI2 release observation                          | Clipboard copy and XTest paste                                    |
-| Wayland                  | GlobalShortcuts portal with accepted bindings                         | Keyboard-only RemoteDesktop, optional Clipboard portal, and libei |
-| Desktop command bindings | `speakeasy --toggle` and `speakeasy --cancel`, as Settings shows them | Explicit automatic or manual-paste preference                     |
+Both input paths check GPUI's own-window activation alongside X11/Xwayland focus. On layer shell the
+GPUI report is necessary to identify Speakeasy's own windows. Wayland modifier readiness comes from
+EI. X11 reads the X server's key state. Shortcut deactivation alone cannot stand in for modifier
+release. Direct typing requires an EI text device. See
+[native contracts](native-contracts.md#linux-desktop-and-transfer-ownership) for ordering and
+transfer lifetime.
 
-Gestures, the default **Ctrl+Super+Space** and reserved **Ctrl+Super+Escape** chords, and command
-bindings follow the [interaction contracts](interaction-design.md#interaction-contracts).
-
-Settings shows the actual accepted dictate and cancel bindings. A chord another X11 app already
-grabs stops desktop access with an error naming that shortcut, dictation or cancel. X11 releases its
-active keyboard grab immediately after a trigger, returning unrelated keys to the focused editor.
-Portal activations and deactivations are consumed in message order, with repeated activations
-ignored while held. Settings applies binding changes automatically. After rebinding Speakeasy's
-shortcuts in the desktop's own settings or changing the keyboard map, pause and resume dictation;
-desktop command bindings with manual paste depend on no keyboard map.
-
-## Owned preparation and insertion
-
-Desktop preparation runs outside the UI thread. Shortcut input is enabled after the adapter reports
-readiness; capture can proceed while the model loads. Pause cancels pending consent and closes owned
-portal requests and sessions, awaiting their cleanup before any replacement opens. Permission loss
-produces an actionable error rather than a background consent loop.
-
-Portals use the installed `io.github.krvh.speakeasy.desktop` launcher identity. The adapter
-registers it before other portal calls; a portal that predates the host registry identifies
-Speakeasy from its launcher. See the [installation instructions](../README.md#linux-experimental).
-
-Except with **Copy for manual paste**, which opens no RemoteDesktop session, Wayland requests
-keyboard access and optional Clipboard access, and never screen capture. Restore tokens are consumed
-once and replaced with the token the desktop returns. Frontend restart, session closure, device
-pause, and disconnect invalidate usable state.
-
-Insertion follows the shared commit permit and cancellation rules in
-[cross-module invariants](architecture.md#cross-module-invariants). Immediately before submitting
-input, both paths refuse while GPUI reports one of Speakeasy's windows active, and they follow
-X11/Xwayland focus ancestors to the first window that publishes `_NET_WM_PID`; when Speakeasy's own
-windows or a failed lookup hold focus, nothing is submitted. Paste leaves the text copied for manual
-paste, and typing reports the target unavailable with the clipboard untouched. Under Wayland, X
-focus None means a native Wayland window took focus: another application's editor, or Settings or
-Shows on a layer-shell desktop, which GPUI's report already refused. PointerRoot stays refused. The
-portal path queries focus on the owned X clipboard worker, which keeps cancellation responsive and
-opens the clipboard only for a copy.
-
-Automatic paste requires released modifiers. X11 queries the X server's key state; Wayland follows
-the EIS modifier events as
-[native contracts](native-contracts.md#linux-desktop-and-transfer-ownership) state and needs a paste
-key from the advertised layout. Shortcut deactivation alone is insufficient. A paused EI keyboard or
-a keymap Speakeasy cannot read yields an explicit manual-paste result. X11 automatic paste requires
-the first keyboard layout with an unshifted V key; other layouts receive manual-paste guidance.
-Manual copy skips the modifier wait. X11 copies text once before submitting XTEST keys. Wayland
-serves committed clipboard text asynchronously while receiving input and cancellation. Clipboard
-calls through Xwayland run on an owned worker. A committed portal selection remains available until
-the desktop accepts a replacement, ownership changes, or the service retires. A copy the portal
-declines leaves the previous selection available.
-
-Settings' **Insert text by** control offers **Paste (Ctrl+V)**, **Paste (Ctrl+Shift+V)** for
-terminals, **Type (keeps clipboard)**, and **Copy for manual paste**. The `text_delivery` setting
-stores one choice: `paste`, `terminal_paste`, `type`, or `copy`. Typing requires advertised EI text
-support on Wayland; X11 reports it as unavailable. The terminal chord is the user's choice;
-Speakeasy never infers it from the focused application.
-
-## Presentation and lifecycle
-
-GPUI's Wayland and X11 platforms supply Settings, Shows, and the pill;
-[the vendor index](../vendor/README.md) records Speakeasy's patches to them. Before opening a
-window, Speakeasy asks the compositor named by `WAYLAND_DISPLAY` for its globals. A compositor that
-offers `zwlr_layer_shell_v1`, such as KDE Plasma, sway, Hyprland, or niri, gets native Wayland
-windows. Otherwise Speakeasy uses the X server named by `DISPLAY`, which is Xwayland on GNOME and
-WSLg. A Wayland desktop with neither, or a session with neither variable, stops startup with an
-error that names the missing piece. The choice holds until Speakeasy quits.
-
-On Wayland the pill is an overlay layer surface in the `speakeasy-pill` namespace, anchored 50 px
-above the bottom of the output the compositor chooses, with no keyboard interactivity and an empty
-input region. The layer surface exists only while the pill shows: GPUI creates it on each show and
-draws on its first configure, so the compositor picks the output each time. Hiding the pill destroys
-the layer surface and commits a null buffer, so the compositor has nothing of the idle pill to draw,
-configure, or close. When the compositor closes a shown pill, for example because its output went
-away, Speakeasy opens a new pill at once. The new pill shows an active session but not feedback that
-began before it opened, so a closed pill never repeats an old result or error. If that one closes
-too, the next one waits for a display change, so a compositor that refuses the pill cannot start a
-reopen loop. Closing Settings with a tray host hides it as GTK and Qt hide a window: GPUI destroys
-the toplevel's roles and commits a null buffer, which unmaps the surface while the window, its view,
-and any model or update download stay alive. Showing it gives the same surface a new toplevel with
-the saved title and decoration request, and the compositor's configure maps it again.
-
-On X11 the pill is a pop-up: override-redirect, a notification window type, no keyboard focus, and
-an empty XShape input shape before mapping. It maps only while shown, and closing Settings with a
-tray host unmaps that window. On both servers the pill, Settings, and Shows show and hide only
-through GPUI's `Window::set_window_visible`, on GPUI's own display connection, so a map or unmap
-stays ordered with GPUI's other requests for that window. Stacking over fullscreen windows, mixed
-scaling, and focus need native acceptance on both servers.
-
-Private-Xvfb presentation checks exercise actual Settings rendering, pill startup and reopened
-visibility, input shape, and simulated show/hide without microphone, shortcuts, or clipboard access;
-on a layer-shell desktop, unset `WAYLAND_DISPLAY` so they use the private display. They cover queued
-XCB startup events, which must be drained even when checked requests leave no unread bytes in the
-socket. Opt-in X11 input tests start their own Xvfb display, then check there that shortcuts survive
-a keyboard switch, which X announces as a mapping change, that an actual remap stops them, that a
-chord another client already grabs stops them with an error naming the shortcut, and that a first
-copy owns the clipboard. Virtual-desktop checks do not establish compositor, desktop input, or
-editor compatibility. Default portal clipboard tests need `dbus-daemon`: they serve a fake portal on
-a private bus, never the session bus or the user's clipboard.
-
-The StatusNotifier/DBusMenu adapter reuses shared tray states and menu policy, with subscriptions
-limited to relevant host changes. [Tray and Settings](interaction-design.md#tray-and-settings)
-covers Linux's Settings at startup and without a tray host.
-
-Animation follows native frames within the shared
-[frame budget](performance.md#implementation-constraints).
-[Performance profiling](performance.md#native-process-sampling) separates app and worker costs, with
-responsiveness and speech quality as constraints.
+The tray uses StatusNotifier and DBusMenu. Without a host, closing Settings quits. With one, closing
+Settings hides the view without ending a setup or save.
 
 ## Setup and distribution
 
 Configuration uses `$XDG_CONFIG_HOME/speakeasy`, downloads use `$XDG_DATA_HOME/speakeasy`, and
-credentials use `$XDG_STATE_HOME/speakeasy`, with standard home-directory defaults. Setup shares
-resumable, size- and hash-checked downloads, accelerator selection, locking, extraction, and child
-reaping. It preserves complete engine runtime layouts.
+portal restore tokens use `$XDG_STATE_HOME/speakeasy`, with home directory defaults. Setup uses the
+shared download and extraction path and preserves the engine's complete runtime layout.
 
-The pinned upstream Linux CPU engine has a reported illegal-instruction failure on AVX2 hardware
-without AVX-512. The engine's `doctor` report or model loading alone cannot prove inference
-compatibility. Linux CPU workers run synthetic inference before readiness; failure stops the worker
-and explains how to select a compatible engine. This catches decode failures without supplying a
-portable engine or establishing broad CPU coverage. GPU builds also require compatible host drivers.
+The pinned Linux CPU engine has an illegal-instruction failure on some CPUs without AVX-512. Model
+loading alone cannot catch it. [Local speech](../crates/app/src/local_speech.rs) runs synthetic
+inference before reporting Linux CPU readiness and names the remedy on failure.
 
-`package-linux.sh` builds AppImage and bundled tar packages with a glibc 2.35 check for the app and
-bundled libraries. `--native-tar` produces an unbundled development archive for the builder's ABI.
-The release workflow builds Linux on Ubuntu 22.04. Local native graphics checks run the built
-binaries, or with `--packages` both packaged launchers, in an Ubuntu 26.04 container with stock Mesa
-and a private virtual display. They cover rendered Settings and Shows, synthetic Show navigation and
-image cleanup, simulated pill show/hide, and hidden-window display disconnect; the tar launcher
-checks startup and rendering of Settings and Shows only. The software driver needs the X11
-presentation-depth fix included in [Mesa 24.1](https://docs.mesa3d.org/relnotes/24.1.0.html); Ubuntu
-22.04's Mesa 23 can present black windows under Xvfb without DRI3. This fixture limitation does not
-establish compatibility of hardware drivers or desktop compositors. Models and engines remain
-separate downloads.
-
-## Native interface contracts
-
-Treat rendering, shortcuts, modifier feedback, and insertion as separate capabilities. Xwayland's
-isolation means an X11 window and `DISPLAY` do not prove access to a focused Wayland editor. See the
-[Xwayland architecture](https://wayland.freedesktop.org/docs/book/Xwayland.html) and
-[XI2 protocol](https://xorg.freedesktop.org/archive/X11R7.7/doc/inputproto/XI2proto.txt).
-
-The
-[GlobalShortcuts interface](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.GlobalShortcuts.html)
-returns accepted bindings, their descriptions, and activation/deactivation events. It does not
-expose a passive Escape or physical modifier stream. Follow the
-[shortcut syntax](https://specifications.freedesktop.org/shortcuts/latest/) and probe actual
-interfaces and permissions. InputCapture's compositor-controlled pointer barriers do not satisfy
-passive background keyboard observation; see the
-[InputCapture interface](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.InputCapture.html).
-
-[RemoteDesktop](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.RemoteDesktop.html)
-owns keyboard consent, pending requests, restore tokens, and the EI connection. After
-`ConnectToEIS`, D-Bus `Notify*` injection cannot be used on that session.
-[Clipboard](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.Clipboard.html)
-extends an approved session: request it before Start and check `clipboard_enabled`. Its transfer
-serial identifies a request. See
-[native contracts](native-contracts.md#linux-desktop-and-transfer-ownership) for selection and
-transfer lifetimes.
-
-EI sender feedback reports logical XKB masks, not a passive physical key stream. Parse the device
-keymap and inspect relevant modifier indices; Caps/Num Lock alone must not block insertion. A client
-assumes every modifier lifted when a device pauses, the EIS reports any nonzero state after it
-resumes, and sender sync does not order the separate shortcut D-Bus stream. Compositor support needs
-native validation; compare the pinned
-[Mutter 50 implementation](https://raw.githubusercontent.com/GNOME/mutter/50.0/src/backends/meta-eis-client.c),
-[Mutter 49 implementation](https://raw.githubusercontent.com/GNOME/mutter/49.0/src/backends/meta-eis-client.c),
-and [KDE modifier-feedback change](https://kde.org/announcements/changelogs/plasma/6/6.6.5-6.6.90/).
-The owning contracts are the
-[EI keyboard protocol](https://libinput.pages.freedesktop.org/libei/interfaces/ei_keyboard/index.html)
-and [XKB state interpretation](https://xkbcommon.org/doc/current/group__state.html).
-
-The dynamic adapter follows the
-[libei C header](https://libinput.pages.freedesktop.org/libei/api/libei_8h_source.html), and its
-code states the ownership and lifetime rules it relies on. Optional text symbols do not prove
-compositor or editor support. See
-[EI text](https://libinput.pages.freedesktop.org/libei/interfaces/ei_text/index.html),
-[seat binding](https://libinput.pages.freedesktop.org/libei/api/group__libei-seat.html),
-[device keymaps](https://libinput.pages.freedesktop.org/libei/api/group__libei-device.html), and
-[sender lifetime](https://libinput.pages.freedesktop.org/libei/api/group__libei-sender.html).
-
-A Wayland surface keeps its first role for its lifetime, so the pill is created as a layer-shell
-surface through GPUI's
-[`WindowKind::LayerShell`](https://docs.rs/crate/gpui-pre/0.3.13/source/src/platform/layer_shell.rs),
-and the display server is chosen before any window opens: GPUI on X11 opens a layer-shell request as
-an ordinary window instead of failing. The compositor picks a layer surface's output when it is
-created and may close it at any time. A surface whose role object is destroyed keeps that role type
-and may take a new object of the same role, which is how a hidden pill or toplevel comes back. A
-layer surface may only be created on a surface with no buffer attached or committed, and its first
-commit carries no buffer and asks for the configure that the first buffer must follow. Events the
-compositor sent to a destroyed object are discarded by the client, so a hidden window never
-acknowledges a configure meant for its previous role. See
-[Wayland roles](https://wayland.freedesktop.org/docs/html/apa.html#protocol-spec-wl_surface),
-[xdg-shell unmapping](https://gitlab.freedesktop.org/wayland/wayland-protocols/-/blob/main/stable/xdg-shell/xdg-shell.xml),
-and
-[layer-shell](https://raw.githubusercontent.com/swaywm/wlr-protocols/master/unstable/wlr-layer-shell-unstable-v1.xml).
-X11 pill hints follow [EWMH](https://specifications.freedesktop.org/wm/latest/ar01s05.html) and the
-[X Shape protocol](https://xorg.freedesktop.org/archive/X11R7.7/doc/xextproto/shape.html).
-
-The
-[host Registry contract](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.host.portal.Registry.html)
-describes registration for unsandboxed applications. Package and engine ABI checks are distinct: the
-pinned
-[NeMo requirements](https://raw.githubusercontent.com/NVIDIA/NeMo-Speech.cpp/v0.2.0/docs/install.md)
-describe host GPU drivers, while a
-[CPU artifact report](https://github.com/NVIDIA/NeMo-Speech.cpp/issues/23) shows why model loading
-does not establish inference compatibility. Preserve the
-[installer layout](https://github.com/NVIDIA/NeMo-Speech.cpp/blob/v0.2.0/scripts/install.sh) and
-[RPATH definitions](https://github.com/NVIDIA/NeMo-Speech.cpp/blob/v0.2.0/CMakeLists.txt);
-`setup.rs` owns the models' URLs and checksums, and `setup/engine.rs` owns the engines'.
+[Linux packaging](../scripts/package-linux.sh) checks glibc 2.35 for the app and bundled libraries.
+It relies on RUNPATH to locate bundled libraries and keeps the host environment for desktop
+services. The release builder uses Ubuntu 22.04. The opt-in
+[rendering check](../scripts/check-rendering-linux.sh) runs the binaries with stock Mesa in an
+Ubuntu 26.04 container. The private display needs Mesa's X11 presentation-depth fix, which the older
+builder driver lacks.
 
 ## Native acceptance still required
 
-| Environment                      | Required checks                                                                                                                                                      | Status  |
-| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| X11 desktop                      | Hold/double-tap, keymaps, automatic and manual paste, focus and click-through                                                                                        | Pending |
-| GNOME Wayland                    | Accepted bindings, EI modifier/text support, portal denial/revocation, no-tray behavior, focus loss to a native Wayland editor                                       | Pending |
-| KDE Wayland                      | Accepted bindings, EI state, permission recovery, layer-shell pill over fullscreen windows, Settings close and tray reopening, focus loss to a native Wayland editor | Pending |
-| sway, Hyprland, or niri          | Layer-shell pill placement, idle unmapping, and output hotplug, direct scanout of fullscreen windows beneath the idle pill, Settings close and reopening             | Pending |
-| Desktop without suitable portals | Command bindings, manual paste, launcher reopening                                                                                                                   | Pending |
-| Baseline distro and CPU          | Public-fixture inference, host driver requirements, engine instruction set                                                                                           | Pending |
+| Desktop                  | Checks                                                                                               |
+| ------------------------ | ---------------------------------------------------------------------------------------------------- |
+| X11                      | Held shortcuts, layout changes, automatic and manual paste, focus, and click-through                 |
+| GNOME Wayland            | Accepted shortcuts, EI modifier and text support, denial and revocation, focus, and no-tray behavior |
+| KDE Wayland              | Layer-shell pill over fullscreen windows, EI state, permission recovery, and tray reopen             |
+| sway, Hyprland, niri     | Pill placement and idle unmapping, output hotplug, and fullscreen presentation                       |
+| Desktop command bindings | Hands-free, cancel, manual paste, and launcher reopening                                             |
 
-Also verify mixed-DPI placement, display removal, idle pill unmapping on KDE, cancellation cleanup,
-native Wayland and X11 editors, terminals, and memory/resource return after Pause and Quit. Hold the
-microphone open through PipeWire's ALSA plugin under a Realtime portal that grants no budget to
-confirm the [realtime opt-out](native-contracts.md#linux-realtime-opt-out). Measure startup, idle,
-capture, inference, and displayed frame pacing under competing load.
-
-WSL checks do not establish desktop routing or native audio quality.
+Default portal transfer tests use a private `dbus-daemon`. The private-Xvfb checks exercise owned
+window rendering and X11 paths. Real desktops are needed for compositor and editor acceptance.
+Confirm capture with PipeWire's ALSA plugin where the Realtime portal offers no budget. See
+[the realtime opt-out](native-contracts.md#linux-realtime-opt-out).
