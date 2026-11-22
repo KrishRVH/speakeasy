@@ -1,20 +1,17 @@
 use std::{
-    fs::File,
-    io::{self, Read as _, Seek, Write as _},
+    fs::{self, File},
+    io::{self, Seek, Write as _},
     path::{Path, PathBuf},
 };
 
 use anyhow::Context as _;
 use serde::Serialize;
-use speakeasy_platform::ReadDirectory;
-use speakeasy_show::{Bundle, Manifest, Source};
+use speakeasy_show::Manifest;
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
-use super::{movie, recall, source};
+use super::{movie, source};
 
 const GUIDE: &str = "README.md";
-
-const CONTENT_LIMIT: u64 = 2 << 30;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -39,7 +36,7 @@ pub(crate) fn write(directory: &Path, destination: &Path) -> anyhow::Result<Expo
 }
 
 pub(super) struct Target {
-    pub show: ReadDirectory,
+    pub show: PathBuf,
     pub path: PathBuf,
     folder: PathBuf,
     kind: &'static str,
@@ -52,9 +49,9 @@ impl Target {
             .context("Cannot open the Show to export")?;
         let path = std::path::absolute(destination)?;
         anyhow::ensure!(
-            path.symlink_metadata()
-                .is_err_and(|error| error.kind() == io::ErrorKind::NotFound),
-            "The export path exists or cannot be inspected; choose a new {kind} file"
+            !path.exists(),
+            "{} already exists; choose a new {kind} file",
+            path.display()
         );
         let folder = path
             .parent()
@@ -67,7 +64,6 @@ impl Target {
                 .starts_with(&show),
             "Choose an export location outside the original Show"
         );
-        let show = ReadDirectory::open(&show).context("Cannot open the Show to export")?;
         Ok(Self {
             show,
             path,
@@ -85,113 +81,57 @@ impl Target {
             .prefix(prefix)
             .tempfile_in(&self.folder)
             .context("Cannot create the export; check the destination folder and free space")?;
-        let written = write(&mut staging).and_then(|value| {
-            staging
-                .as_file()
-                .sync_all()
-                .context("Cannot flush the export")?;
-            Ok((value, staging.as_file().metadata()?.len()))
-        });
-        let written = match written {
-            Ok(written) => written,
-            Err(error) => return Err(failed(staging, error)),
-        };
-        match staging.persist_noclobber(&self.path) {
-            Ok(_published) => Ok(written),
-            Err(error) => Err(failed(
-                error.file,
-                anyhow::Error::from(error.error).context(format!(
+        let value = write(&mut staging)?;
+        let bytes = staging.as_file().metadata()?.len();
+        staging
+            .persist_noclobber(&self.path)
+            .map_err(|error| error.error)
+            .with_context(|| {
+                format!(
                     "Cannot save the export; choose a new {} path and check free space",
                     self.kind
-                )),
-            )),
-        }
-    }
-}
-
-fn failed(staging: tempfile::NamedTempFile, error: anyhow::Error) -> anyhow::Error {
-    let path = staging.path().to_owned();
-    match staging.close() {
-        Ok(()) => error,
-        Err(cleanup) => error.context(format!(
-            "Remove the unfinished export at {}: {cleanup}",
-            path.display()
-        )),
+                )
+            })?;
+        Ok((value, bytes))
     }
 }
 
 fn archive(
-    directory: &ReadDirectory,
+    directory: &Path,
     writer: &mut (impl io::Write + Seek),
 ) -> anyhow::Result<(usize, bool)> {
-    let bytes = recall::read_from(directory, Manifest::FILE, recall::MANIFEST_LIMIT)
-        .context("Cannot export show.json")?;
+    let bytes = fs::read(directory.join(Manifest::FILE)).context("Cannot export show.json")?;
     let manifest = Manifest::parse(&bytes)?;
     let mut archive = ZipWriter::new(writer);
-
-    let options = SimpleFileOptions::default()
-        .compression_method(CompressionMethod::Stored)
-        .unix_permissions(0o600);
-    let mut remaining = CONTENT_LIMIT;
+    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
     let mut files = 0_usize;
     for name in manifest.files() {
         archive.start_file(&name, options)?;
         if name == Manifest::FILE {
             archive.write_all(&bytes)?;
-            remaining = remaining.saturating_sub(u64::try_from(bytes.len())?);
         } else {
-            let limit = if name == Bundle::SUMMARY {
-                recall::SUMMARY_LIMIT
-            } else {
-                recall::IMAGE_LIMIT
-            }
-            .min(remaining);
-            let copied = recall::open_file(directory, &name, limit)
-                .and_then(|file| copy(file, limit, &mut archive))
+            File::open(directory.join(&name))
+                .and_then(|mut file| io::copy(&mut file, &mut archive))
                 .with_context(|| format!("Cannot export {name}"))?;
-            remaining = remaining.saturating_sub(copied);
         }
         files = files.saturating_add(1);
     }
-    let retained = source::Reader::optional(directory)?;
-    let retained_frames = retained.is_some();
-    if let Some(mut reader) = retained {
-        let index = reader
-            .inspect()
-            .context("Cannot export damaged retained frames")?;
-        anyhow::ensure!(
-            index.duration() == manifest.recording().duration,
-            "Source and Show timelines differ; inspect the bundle before exporting"
-        );
+    let retained_frames = source::present(directory)?;
+    if retained_frames {
         archive.start_file(source::FILE, options)?;
-        let copied = copy(
-            reader.into_file(),
-            Source::FILE_LIMIT.min(remaining),
-            &mut archive,
-        )
-        .context("Cannot export retained frames")?;
-        anyhow::ensure!(
-            copied == index.bytes(),
-            "Retained frames changed during export; try again"
-        );
-        remaining = remaining.saturating_sub(copied);
+        io::copy(&mut File::open(directory.join(source::FILE))?, &mut archive)
+            .context("Cannot export retained frames")?;
         files = files.saturating_add(1);
     }
     let mut movie = movie::Reading::optional(directory, manifest.recording().duration)
         .context("Cannot export damaged video")?;
     if let Some(reading) = &mut movie {
         archive.start_file(movie::FILE, options)?;
-        let copied = reading
-            .copy_to(&mut archive, remaining)
+        reading
+            .copy_to(&mut archive)
             .context("Cannot export video")?;
-        remaining = remaining.saturating_sub(copied);
-        let metadata = serde_json::to_vec(&reading.movie.metadata)?;
-        anyhow::ensure!(
-            u64::try_from(metadata.len())? <= remaining,
-            "Movie timing exceeds the export size limit"
-        );
         archive.start_file(movie::HEADER, options)?;
-        archive.write_all(&metadata)?;
+        archive.write_all(&serde_json::to_vec(&reading.movie.metadata)?)?;
         files = files.saturating_add(2);
     }
     archive.start_file(GUIDE, options)?;
@@ -203,16 +143,6 @@ fn archive(
     )?;
     archive.finish()?.flush()?;
     Ok((files.saturating_add(1), retained_frames))
-}
-
-fn copy(mut file: File, limit: u64, out: &mut impl io::Write) -> io::Result<u64> {
-    let expected = file.metadata()?.len();
-    file.rewind()?;
-    let copied = io::copy(&mut file.take(limit.saturating_add(1)), out)?;
-    if copied != expected || copied > limit {
-        return Err(io::Error::other("file changed during export; try again"));
-    }
-    Ok(copied)
 }
 
 fn guide(

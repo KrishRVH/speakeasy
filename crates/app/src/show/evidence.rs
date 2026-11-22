@@ -11,7 +11,7 @@ use speakeasy_show::{Bundle, Ending, Manifest, NarrationLoss, Reason, Rect};
 
 use super::store::{
     checkpoint, movie,
-    recall::{Entry, FileProblem, Health, ReadError, ReadShow},
+    recall::{Entry, ReadShow},
     retention::Retention,
 };
 
@@ -19,28 +19,16 @@ use super::store::{
 #[serde(rename_all = "camelCase")]
 pub(super) enum Status {
     Ok,
-    Damaged,
-    Unsupported,
+    Unreadable,
     Interrupted,
     NarrationPending,
-}
-
-impl From<Health> for Status {
-    fn from(health: Health) -> Self {
-        match health {
-            Health::Ok => Self::Ok,
-            Health::Damaged => Self::Damaged,
-            Health::Unsupported => Self::Unsupported,
-        }
-    }
 }
 
 impl Status {
     pub(super) const fn text(self) -> &'static str {
         match self {
             Self::Ok => "ok",
-            Self::Damaged => "damaged",
-            Self::Unsupported => "unsupported",
+            Self::Unreadable => "unreadable",
             Self::Interrupted => "interrupted",
             Self::NarrationPending => "narration pending",
         }
@@ -68,11 +56,11 @@ pub(super) struct Problem {
 }
 
 impl Overview {
-    pub(super) fn damaged(directory: PathBuf, reason: String) -> Self {
+    pub(super) fn unreadable(directory: PathBuf, reason: String) -> Self {
         Self {
             id: None,
             directory: directory.clone(),
-            status: Status::Damaged,
+            status: Status::Unreadable,
             expires_at: None,
             pinned: None,
             duration_ms: None,
@@ -86,31 +74,28 @@ impl Overview {
     }
 
     pub(super) fn of(entry: &Entry) -> Self {
-        let file = |problem: &FileProblem| Problem {
-            file: entry.file(&problem.name),
-            reason: problem.reason.clone(),
-        };
-        let problems = match &entry.show {
-            Ok(show) => show.problems.iter().map(file).collect(),
-            Err(error @ ReadError::Folder) => vec![Problem {
+        let problems = entry
+            .show
+            .as_ref()
+            .err()
+            .map(|error| Problem {
                 file: entry.directory.clone(),
-                reason: error.to_string(),
-            }],
-            Err(ReadError::File(problem)) => vec![file(problem)],
-            Err(error @ ReadError::Manifest(_)) => vec![Problem {
-                file: entry.file(Manifest::FILE),
-                reason: error.to_string(),
-            }],
-        };
+                reason: format!("{error:#}"),
+            })
+            .into_iter()
+            .collect();
         let show = entry.show.as_ref().ok();
-        let id = entry.id();
-        let retention =
-            id.and_then(|id| entry.pinned().map(|kept| Retention::of(id.as_str(), kept)));
+        let id = entry.id.as_ref();
+        let retention = id.map(|id| Retention::of(id.as_str(), entry.pinned));
         Self {
             id: id.map(|id| id.as_str().to_owned()),
             directory: entry.directory.clone(),
-            status: entry.health().into(),
-            pinned: show.map(|show| show.pinned),
+            status: if show.is_some() {
+                Status::Ok
+            } else {
+                Status::Unreadable
+            },
+            pinned: Some(entry.pinned),
             expires_at: retention.and_then(Retention::expires_at),
             duration_ms: show.map(|show| show.manifest.recording().duration.as_millis()),
             keyframes: show.map(|show| show.manifest.keyframes().len()),
@@ -267,6 +252,6 @@ pub(super) fn list(
     let unreadable = found
         .problems
         .into_iter()
-        .map(|problem| Overview::damaged(problem.directory, problem.message));
+        .map(|problem| Overview::unreadable(problem.directory, problem.message));
     interrupted.chain(unreadable).map(Ok).chain(saved).collect()
 }

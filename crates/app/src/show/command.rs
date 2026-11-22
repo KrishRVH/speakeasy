@@ -46,12 +46,11 @@ speakeasy show mcp --setup
 speakeasy show skill [--install DIR]
 speakeasy show demo [--out NEW_DIR]
 
-list discovers interrupted and saved Shows, including damaged bundles.
+list discovers interrupted and saved Shows, including ones it cannot read.
 inspect checks an explicit bundle and maps its sheets, keyframes and marks.
 Both print metadata and current absolute paths, never narration or screen content.
 wait inspects the first Show saved after it starts, once you make one with the Show gesture.
 It never starts a recording, waits 600 seconds by default (at most 3600), and fails on timeout.
-Images are checked as files, not decoded. Missing files are reported, not repaired.
 frames lists retained source times and sampling coverage, without reading pixels.
 FOCUS is exactly one of --at M:SS.mmm, --mark N, or --phrase TEXT [--match K].
 Phrase queries search recorded words, not summary edits, and require word timings.
@@ -67,7 +66,7 @@ frame --video decodes the retained movie on Windows and macOS, using original se
 It reports actual decoded time and separate annotation coverage, including recovered video tails.
 --annotated adds timed saved ink, pins, and completed actions; reports list omitted annotations.
 It requires geometry and annotation coverage at the decoded sample. --crop needs matching geometry.
-inspect and wait exit with status 1 for a damaged or unsupported Show.
+inspect and wait exit with status 1 for a Show they cannot read.
 SHOW is an exact folder-name ID in Speakeasy's Shows folder, or an explicit path.
 Use ./ID to address a relative path. Commands never guess an earlier Show; wait reports a new one.
 keep prevents expiry; --off restores the original seven-day expiry date.
@@ -76,7 +75,7 @@ export writes a new ZIP with saved images, narration, retained samples, and a re
 It preserves summary edits, excludes recovery audio and unrelated files, and never overwrites.
 Exported copies do not expire automatically. Reports print paths and sizes, never private text.
 video uses FFmpeg from PATH to export timed annotations and original voice, when available.
-Voice expires seven days after recording even for kept Shows; unavailable voice exports silently.
+A Show without saved voice exports silently.
 --captions adds a selectable subtitle track from timed narration. Video reports missing coverage.
 Focus selects an interval; without FOCUS the entire retained video is exported.
 discard permanently removes an explicit interrupted:ID or checkpoint path from list,
@@ -370,8 +369,8 @@ fn matching(focus: Option<Query>, occurrence: Option<usize>) -> anyhow::Result<O
 fn inspect(entry: &recall::Entry, json: bool, out: &mut impl io::Write) -> anyhow::Result<()> {
     output::inspect(entry, json, out)?;
     anyhow::ensure!(
-        entry.health() == recall::Health::Ok,
-        "The Show is damaged or unsupported; inspection lists the problems."
+        entry.show.is_ok(),
+        "Speakeasy cannot read this Show; inspection names the problem."
     );
     Ok(())
 }
@@ -418,7 +417,7 @@ fn demo(chosen: Option<PathBuf>, out: &mut impl io::Write) -> anyhow::Result<()>
     let location = if let Some(directory) = &chosen {
         Location::unmanaged(directory, wsl.as_ref())
     } else {
-        fresh = store::fresh_directory(&store::private_directory()?, SystemTime::now())?;
+        fresh = store::fresh_directory(&store::directory()?, SystemTime::now())?;
         store::managed(&fresh, wsl.as_ref())?
     };
     let (_, summary) = store::stage(location, bundle, None)?.persist()?;

@@ -1,13 +1,12 @@
 use std::{
-    fs::{self, File, OpenOptions},
-    io,
+    fs, io,
     path::{Path, PathBuf},
     time::{Duration, SystemTime},
 };
 
 use anyhow::Context as _;
 
-use super::{PIN, age, found, pinned, remove_if_present};
+use super::{PIN, address, age, remove_if_present};
 
 pub(crate) struct Deleted {
     pub checkpoint: Option<PathBuf>,
@@ -15,22 +14,15 @@ pub(crate) struct Deleted {
 }
 
 pub(crate) fn delete(parent: &Path, directory: &Path) -> anyhow::Result<Deleted> {
-    let (retired, checkpoint) = {
-        let _lock = lock(parent)?;
-        let id = super::address::managed_id(parent, directory)?
-            .context("Only Shows in the managed Shows folder can be deleted here")?;
-        let checkpoint = super::checkpoint::discard_published(parent, directory)?;
-        let retired = super::retire(parent, directory, id.as_str())
-            .context("Cannot delete this Show. Close its open files, refresh, and try again")?;
-        (retired, checkpoint)
-    };
-    let cleanup = super::sync_directory(parent)
-        .and_then(|()| found(fs::remove_dir_all(&retired)))
-        .and_then(|_removed| super::sync_directory(parent))
-        .err();
+    address::managed_id(parent, directory)
+        .context("Only Shows in the managed Shows folder can be deleted here")?;
+    anyhow::ensure!(
+        directory.is_dir(),
+        "This Show is already gone. Refresh Shows."
+    );
     Ok(Deleted {
-        checkpoint,
-        cleanup,
+        checkpoint: super::checkpoint::discard_published(parent, directory)?,
+        cleanup: fs::remove_dir_all(directory).err(),
     })
 }
 
@@ -84,64 +76,20 @@ pub(crate) fn interval(duration: Duration) -> String {
     format!("{count} {unit}{}", if count == 1 { "" } else { "s" })
 }
 
-pub(in crate::show) const LOCK: &str = ".retention.lock";
-
-pub(super) fn lock(parent: &Path) -> io::Result<File> {
-    let path = parent.join(LOCK);
-    if found(fs::symlink_metadata(&path))?.is_some_and(|metadata| !metadata.is_file()) {
-        return Err(io::Error::other(format!(
-            "{} must be a regular file",
-            path.display()
-        )));
-    }
-    let mut options = OpenOptions::new();
-    options.read(true).write(true).create(true).truncate(false);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        options.mode(0o600);
-    }
-    let file = options.open(path)?;
-    file.lock()?;
-    Ok(file)
-}
-
 pub(crate) fn set_kept(parent: &Path, directory: &Path, kept: bool) -> io::Result<Retention> {
-    let _lock = lock(parent)?;
-    let id = super::address::managed_id(parent, directory)?.ok_or_else(|| {
+    let id = address::managed_id(parent, directory).ok_or_else(|| {
         io::Error::other(format!(
             "Only Shows directly in {} expire; this folder is not managed",
             parent.display()
         ))
     })?;
     let pin = directory.join(PIN);
-    if !kept {
-        remove_marker(&pin)?;
-    } else if !pinned(directory)? {
-        match File::create_new(pin) {
-            Ok(file) => file.sync_all()?,
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {},
-            Err(error) => return Err(error),
-        }
-    }
-    super::sync_directory(directory)?;
-    Ok(Retention::of(id.as_str(), pinned(directory)?))
-}
-
-fn remove_marker(pin: &Path) -> io::Result<()> {
-    let Some(marker) = found(fs::symlink_metadata(pin))? else {
-        return Ok(());
-    };
-    #[cfg(windows)]
-    let linked_folder = std::os::windows::fs::FileTypeExt::is_symlink_dir(&marker.file_type());
-    #[cfg(not(windows))]
-    let linked_folder = false;
-    if marker.is_dir() || linked_folder {
-        found(fs::remove_dir(pin))?;
+    if kept {
+        fs::write(pin, [])?;
     } else {
-        remove_if_present(pin)?;
+        remove_if_present(&pin)?;
     }
-    Ok(())
+    Ok(Retention::of(id.as_str(), kept))
 }
 
 #[cfg(test)]

@@ -1,9 +1,10 @@
 use super::*;
 use crate::audio::fixture::square_wave;
 
-fn saved_voice(directory: &Path) -> anyhow::Result<store::voice::Voice> {
-    let directory = speakeasy_platform::ReadDirectory::open(&directory.canonicalize()?)?;
-    store::voice::read(&directory, SystemTime::now())
+fn saved_voice(directory: &Path) -> anyhow::Result<store::voice::Status> {
+    Ok(store::voice::Status::of(
+        store::voice::read(directory)?.as_ref(),
+    ))
 }
 
 async fn with_audio(parent: &Path) -> anyhow::Result<Checkpoint> {

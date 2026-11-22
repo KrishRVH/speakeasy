@@ -1,6 +1,6 @@
 use speakeasy_show::{Image, Journal, Moment, Recording, Typeface, compose, select};
 
-use super::{recall::SUMMARY_LIMIT, *};
+use super::*;
 
 fn at(seconds: u64) -> SystemTime {
     SystemTime::UNIX_EPOCH
@@ -14,70 +14,6 @@ fn names(directory: &Path) -> io::Result<Vec<String>> {
         .collect::<io::Result<Vec<_>>>()?;
     names.sort();
     Ok(names)
-}
-
-#[test]
-fn abandoned_private_staging_expires_after_a_crash() -> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let work = staging(root.path())?;
-    fs::write(work.path().join("voice.pcm"), b"synthetic private voice")?;
-    fs::write(
-        work.path().join("captions.srt"),
-        b"synthetic private caption",
-    )?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        assert_eq!(work.path().metadata()?.permissions().mode() & 0o777, 0o700);
-    }
-    let abandoned = work.keep();
-    let now = SystemTime::now();
-    sweep(root.path(), now)?;
-    assert!(abandoned.exists(), "A live export must have time to finish");
-    sweep(root.path(), now + ABANDONED_AFTER + Duration::from_secs(1))?;
-    assert!(
-        !abandoned.exists(),
-        "Crash leftovers must not keep private voice indefinitely"
-    );
-    Ok(())
-}
-
-#[test]
-fn damaged_voice_expiry_cannot_keep_an_expired_show() -> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let now = SystemTime::now();
-    let expired = fresh_directory(root.path(), now - Duration::from_hours(8 * 24))?;
-    fs::create_dir(&expired)?;
-    fs::write(expired.join("voice.expires"), b"damaged")?;
-    fs::write(expired.join("voice.log"), b"synthetic private voice")?;
-    sweep(root.path(), now)?;
-    assert!(!expired.exists());
-    Ok(())
-}
-
-#[test]
-fn blocked_bundle_retirement_still_erases_expired_voice() -> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let now = SystemTime::now();
-    let name = utc_stamp(now - Duration::from_hours(8 * 24));
-    let expired = root.path().join(&name);
-    fs::create_dir(&expired)?;
-    fs::create_dir(root.path().join(format!("{EXPIRED_PREFIX}{name}")))?;
-    fs::write(expired.join("voice.expires"), 1_u64.to_le_bytes())?;
-    fs::write(expired.join("voice.log"), b"synthetic private voice")?;
-    let entry = fs::read_dir(root.path())?
-        .collect::<io::Result<Vec<_>>>()?
-        .into_iter()
-        .find(|entry| entry.path() == expired)
-        .unwrap();
-    let cutoff = utc_stamp(now - KEPT_FOR);
-    assert!(matches!(
-        retire_expired(root.path(), &entry, &cutoff, now)?,
-        Cleanup::Blocked
-    ));
-    assert!(expired.exists());
-    assert!(!expired.join("voice.log").exists());
-    Ok(())
 }
 
 #[test]
@@ -99,69 +35,18 @@ fn a_week_old_show_expires_unless_pinned() -> anyhow::Result<()> {
     written()?;
     written()?;
     let pinned = written()?;
-    let staging = format!("{STAGING_PREFIX}1");
-    for name in [days_ago(6), "notes".into(), staging.clone()] {
+    for name in [days_ago(6), "notes".into()] {
         fs::create_dir(parent.join(name))?;
     }
     fs::write(parent.join(&pinned).join(PIN), b"")?;
     fs::write(parent.join(days_ago(9)), b"not a Show")?;
-    #[cfg(unix)]
-    let elsewhere = {
-        let elsewhere = tempfile::tempdir()?;
-        std::os::unix::fs::symlink(elsewhere.path(), parent.join(days_ago(10)))?;
-        elsewhere
-    };
 
     sweep(parent, now)?;
-    let mut kept = vec![
-        ".retention.lock".into(),
-        staging.clone(),
-        days_ago(9),
-        days_ago(6),
-        pinned,
-        "notes".into(),
-    ];
-    #[cfg(unix)]
-    {
-        kept.push(days_ago(10));
-        assert!(
-            elsewhere.path().exists(),
-            "What a link named like an expired Show points to is left alone"
-        );
-    }
+    let mut kept = vec![days_ago(9), days_ago(6), pinned, "notes".into()];
     kept.sort();
     assert_eq!(names(parent)?, kept);
 
-    sweep(parent, now + 2 * ABANDONED_AFTER)?;
-    kept.retain(|name| *name != staging);
-    assert_eq!(names(parent)?, kept);
-
     sweep(&parent.join("missing"), now)
-}
-
-#[cfg(unix)]
-#[test]
-fn a_show_that_cannot_be_inspected_is_kept_and_fails_the_sweep() -> anyhow::Result<()> {
-    use std::os::unix::fs::PermissionsExt as _;
-    let root = tempfile::tempdir()?;
-    let parent = root.path();
-    let now = SystemTime::now();
-    let sealed = parent.join(utc_stamp(now - Duration::from_hours(8 * 24)));
-    let expired = parent.join(utc_stamp(now - Duration::from_hours(9 * 24)));
-    fs::create_dir(&sealed)?;
-    fs::create_dir(&expired)?;
-
-    fs::set_permissions(&sealed, fs::Permissions::from_mode(0o600))?;
-    let probe = fs::symlink_metadata(sealed.join(PIN)).map_err(|error| error.kind());
-
-    let swept = sweep(parent, now);
-    fs::set_permissions(&sealed, fs::Permissions::from_mode(0o700))?;
-    assert_eq!(probe.err(), Some(ErrorKind::PermissionDenied));
-    let message = format!("{:#}", swept.err().context("The sweep reports the Show")?);
-    assert!(message.contains("Cannot check every Show"), "{message}");
-    assert!(sealed.exists(), "A Show that may be pinned is kept");
-    assert!(!expired.exists(), "The rest of the folder still expires");
-    Ok(())
 }
 
 #[test]
@@ -225,40 +110,20 @@ fn a_bundle_appears_whole_under_a_fresh_name() -> anyhow::Result<()> {
     assert!(summary.contains(&first.display().to_string()));
     assert!(first.join("frames/frame-01.png").is_file());
     assert!(
-        stage(managed(&first, None)?, bundle()?, None).is_err(),
+        stage(managed(&first, None)?, bundle()?, None)?
+            .persist()
+            .is_err(),
         "An existing bundle is never replaced"
     );
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        assert_eq!(fs::metadata(&first)?.permissions().mode() & 0o777, 0o700);
-    }
     let second = fresh_directory(&parent, at(1_792_420_563))?;
     assert_eq!(second.file_name(), Some("20261019T143603Z-2".as_ref()));
     drop(stage(managed(&second, None)?, bundle()?, None)?);
     assert_eq!(
         names(&parent)?,
-        [retention::LOCK, "20261019T143603Z"],
+        ["20261019T143603Z"],
         "a bundle dropped before it persists, as a Show cancelled at commit drops it, leaves \
          nothing behind"
     );
-    Ok(())
-}
-
-#[cfg(unix)]
-#[test]
-fn a_dangling_link_holds_its_name_so_a_fresh_folder_can_still_be_created() -> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let now = at(1_792_420_563);
-    let taken = root.path().join(utc_stamp(now));
-    std::os::unix::fs::symlink(root.path().join("missing"), &taken)?;
-    assert!(
-        stage(managed(&taken, None)?, bundle()?, None).is_err(),
-        "A Show was staged over a dangling link"
-    );
-    let fresh = fresh_directory(root.path(), now)?;
-    assert_eq!(fresh.file_name(), Some("20261019T143603Z-2".as_ref()));
-    fs::create_dir(&fresh)?;
     Ok(())
 }
 
@@ -282,40 +147,10 @@ fn a_saved_show_reads_back_as_its_folder_holds_it_until_it_is_gone() -> anyhow::
     fs::write(&file, &edited)?;
     assert_eq!(show.summary()?, Some(edited), "The user's edit was lost");
 
-    let limit = usize::try_from(SUMMARY_LIMIT)?;
-    fs::write(&file, "a".repeat(limit))?;
-    assert_eq!(show.summary()?.map(|summary| summary.len()), Some(limit));
-    fs::write(&file, "a".repeat(limit.saturating_add(1)))?;
-    let message = show
-        .summary()
-        .err()
-        .context("An oversized summary was read")?
-        .to_string();
-    assert!(message.contains("too large to copy"), "{message}");
-
     fs::remove_dir_all(&folder)?;
     assert_eq!(show.folder()?, None, "A deleted Show's folder was found");
     assert_eq!(show.summary()?, None, "A deleted Show's summary was read");
     assert!(newer.summary()?.is_some(), "Only the deleted Show has gone");
-    Ok(())
-}
-
-#[cfg(unix)]
-#[test]
-fn a_saved_show_never_copies_through_a_linked_summary() -> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let folder = fresh_directory(&root.path().join("shows"), at(1_792_420_563))?;
-    let (show, _) = stage(managed(&folder, None)?, bundle()?, None)?.persist()?;
-    let elsewhere = root.path().join("elsewhere.md");
-    fs::write(&elsewhere, "Text that belongs to another file")?;
-    fs::remove_file(folder.join(Bundle::SUMMARY))?;
-    std::os::unix::fs::symlink(&elsewhere, folder.join(Bundle::SUMMARY))?;
-    let message = show
-        .summary()
-        .err()
-        .context("A linked summary was followed")?
-        .to_string();
-    assert!(message.contains("not a regular file"), "{message}");
     Ok(())
 }
 
@@ -337,29 +172,5 @@ fn a_show_that_cannot_be_saved_names_the_shows_folder_and_a_remedy() -> anyhow::
             && message.ends_with(", then try again."),
         "{message}"
     );
-    Ok(())
-}
-
-#[cfg(unix)]
-#[test]
-fn the_shows_folder_is_made_private_and_a_link_is_refused() -> anyhow::Result<()> {
-    use std::os::unix::fs::{PermissionsExt as _, symlink};
-    let mode = |path: &Path| -> anyhow::Result<u32> {
-        Ok(fs::metadata(path)?.permissions().mode() & 0o777)
-    };
-    let root = tempfile::tempdir()?;
-    let created = root.path().join("speakeasy/shows");
-    make_private(&created)?;
-    assert_eq!(mode(&created)?, 0o700);
-
-    let existing = root.path().join("existing");
-    fs::create_dir(&existing)?;
-    fs::set_permissions(&existing, fs::Permissions::from_mode(0o755))?;
-    let link = root.path().join("link");
-    symlink(&existing, &link)?;
-    assert!(make_private(&link).is_err(), "A link is never followed");
-    assert_eq!(mode(&existing)?, 0o755, "What a link names is left alone");
-    make_private(&existing)?;
-    assert_eq!(mode(&existing)?, 0o700, "An existing folder is tightened");
     Ok(())
 }

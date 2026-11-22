@@ -54,12 +54,13 @@ fn retry(
 async fn deleting_a_saved_show_removes_a_retry_whose_copy_never_landed() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let (show, pending) = pending_show(root.path()).await?;
-    let lock = root.path().join(store::retention::LOCK);
-    fs::remove_file(&lock)?;
-    fs::create_dir(&lock)?;
     let narration = Narration::Text("synthetic narration".into());
-    assert!(retry(root.path(), narration, || Ok(root.path().to_owned())).is_err());
-    fs::remove_dir(&lock)?;
+    assert!(
+        retry(root.path(), narration, || anyhow::bail!(
+            "synthetic unavailable folder"
+        ))
+        .is_err()
+    );
     let survivor = interrupted(root.path())?;
     assert!(
         survivor.narration_pending(),
@@ -520,7 +521,7 @@ async fn damaged_audio_does_not_block_saving_intact_frames_and_narration() -> an
         None,
     )?;
     assert!(matches!(
-        saved_voice(show.directory())?.status(),
+        saved_voice(show.directory())?,
         store::voice::Status::Absent
     ));
     assert_eq!(recoverable(root.path()), []);
@@ -580,7 +581,7 @@ async fn digital_silence_recovered_after_a_failed_save_stays_silent_without_voic
             bail!("Silent Show was not recovered");
         };
         assert!(matches!(
-            saved_voice(show.directory())?.status(),
+            saved_voice(show.directory())?,
             store::voice::Status::Absent
         ));
     }

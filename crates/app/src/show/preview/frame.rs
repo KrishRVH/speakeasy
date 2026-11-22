@@ -6,7 +6,7 @@ use image::{Rgba, RgbaImage};
 use speakeasy_show::{Annotations, Moment, Source, SourceFrame};
 
 use super::{AnnotationState, Content, Decoded, Request};
-use crate::show::store::{movie, recall, source};
+use crate::show::store::{movie, source};
 
 const LONGEST_EDGE: u32 = 4_096;
 
@@ -53,7 +53,7 @@ pub(super) fn read(request: Request, cancelled: &dyn Fn() -> bool) -> Result<Dec
 }
 
 fn png(directory: &Path, name: &str, cancelled: &dyn Fn() -> bool) -> Result<RgbaImage, String> {
-    let bytes = recall::read_file(directory, name, recall::IMAGE_LIMIT)
+    let bytes = std::fs::read(directory.join(name))
         .map_err(|error| format!("Cannot open {name}: {error}"))?;
     check_header(&bytes)?;
     if cancelled() {

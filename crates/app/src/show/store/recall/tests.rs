@@ -23,21 +23,18 @@ fn write(parent: &Path, name: &str) -> anyhow::Result<PathBuf> {
 }
 
 #[test]
-fn discovery_includes_damage_and_sorts_same_second_suffixes_numerically() -> anyhow::Result<()> {
+fn discovery_includes_unreadable_shows_and_sorts_same_second_suffixes_numerically()
+-> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let older = write(root.path(), "20261020T143205Z")?;
     let first = write(root.path(), "20261021T143205Z")?;
     let second = write(root.path(), "20261021T143205Z-2")?;
     let tenth = write(root.path(), "20261021T143205Z-10")?;
-    fs::write(older.join(PIN), b"")?;
-    fs::remove_file(first.join("frames/frame-01.png"))?;
+    fs::write(older.join(super::super::PIN), b"")?;
     fs::write(second.join(Manifest::FILE), b"not JSON")?;
     fs::write(tenth.join(Manifest::FILE), br#"{"version":4}"#)?;
-    write(root.path(), ".partial-interrupted")?;
     write(root.path(), "exported-show")?;
     fs::write(root.path().join("20261022T143205Z"), b"not a folder")?;
-    #[cfg(unix)]
-    std::os::unix::fs::symlink(&older, root.path().join("20261023T143205Z"))?;
     let found = list(root.path())?.collect::<io::Result<Vec<_>>>()?;
     assert_eq!(
         found
@@ -46,18 +43,9 @@ fn discovery_includes_damage_and_sorts_same_second_suffixes_numerically() -> any
             .collect::<Vec<_>>(),
         [&tenth, &second, &first, &older]
     );
-    assert!(matches!(
-        found[0].show,
-        Err(ReadError::Manifest(Unreadable::Unsupported(4)))
-    ));
-    assert!(matches!(
-        found[1].show,
-        Err(ReadError::Manifest(Unreadable::Malformed { .. }))
-    ));
-    let damaged = found[2].show.as_ref().unwrap();
-    assert_eq!(damaged.problems.len(), 1);
-    assert_eq!(damaged.problems[0].name, "frames/frame-01.png");
-    assert!(found[3].show.as_ref().unwrap().pinned);
+    assert!(found[0].show.is_err() && found[1].show.is_err());
+    assert!(found[2].show.is_ok() && !found[2].pinned);
+    assert!(found[3].show.is_ok() && found[3].pinned);
     Ok(())
 }
 
@@ -78,12 +66,11 @@ fn inspection_preserves_edits_and_a_moved_bundle_uses_its_current_directory() ->
     fs::rename(&directory, &moved)?;
     let entry = Entry::open(&moved, None)?;
     assert_eq!(entry.directory, std::path::absolute(&moved)?);
-    assert!(entry.show?.problems.is_empty());
+    assert!(entry.show.is_ok());
     assert!(list(root.path())?.next().is_none());
     for (name, bytes) in before {
         assert_eq!(fs::read(moved.join(name))?, bytes);
     }
-    assert!(!moved.join(PIN).exists());
     Ok(())
 }
 
@@ -96,178 +83,6 @@ fn missing_parent_is_not_created_and_missing_manifest_is_not_hidden() -> anyhow:
     fs::create_dir_all(parent.join("20261020T143205Z"))?;
     let found = list(&parent)?.collect::<io::Result<Vec<_>>>()?;
     assert_eq!(found.len(), 1);
-    assert!(matches!(found[0].show, Err(ReadError::File(_))));
-    Ok(())
-}
-
-#[test]
-fn expiry_between_discovery_and_reading_removes_only_that_entry() -> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let older = write(root.path(), "20261020T143205Z")?;
-    let newer = write(root.path(), "20261021T143205Z")?;
-    let listing = list(root.path())?;
-    fs::remove_dir_all(&newer)?;
-    let found = listing.collect::<io::Result<Vec<_>>>()?;
-    assert_eq!(found.len(), 1);
-    assert_eq!(found[0].directory, older);
-    assert!(
-        Entry::open(&newer, None).is_err(),
-        "Explicit inspection must not substitute another Show"
-    );
-    Ok(())
-}
-
-#[cfg(unix)]
-#[test]
-fn a_shows_folder_that_cannot_be_searched_fails_discovery_without_a_show_to_open()
--> anyhow::Result<()> {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    let root = tempfile::tempdir()?;
-    let exported = write(root.path(), "exported-show")?;
-    let access = fs::metadata(root.path())?.permissions();
-    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o600))?;
-    let unrestricted = fs::symlink_metadata(&exported).is_ok();
-    let listed = list(root.path()).map(Iterator::count);
-    fs::set_permissions(root.path(), access)?;
-    if unrestricted {
-        return Ok(());
-    }
-    assert_eq!(
-        listed.map_err(|error| error.kind()),
-        Err(io::ErrorKind::PermissionDenied)
-    );
-    Ok(())
-}
-
-#[test]
-fn a_directory_in_place_of_the_manifest_is_damage() -> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let directory = write(root.path(), "20261020T143205Z")?;
-    fs::remove_file(directory.join(Manifest::FILE))?;
-    fs::create_dir(directory.join(Manifest::FILE))?;
-    assert!(matches!(
-        Entry::open(&directory, None)?.show,
-        Err(ReadError::File(_))
-    ));
-    Ok(())
-}
-
-#[test]
-fn oversized_manifests_and_summaries_are_bounded() -> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let directory = write(root.path(), "20261020T143205Z")?;
-    fs::File::options()
-        .write(true)
-        .open(directory.join(Bundle::SUMMARY))?
-        .set_len(SUMMARY_LIMIT + 1)?;
-    let show = Entry::open(&directory, None)?.show?;
-    assert_eq!(show.problems.len(), 1);
-    assert_eq!(show.problems[0].name, Bundle::SUMMARY);
-    fs::File::options()
-        .write(true)
-        .open(directory.join(Manifest::FILE))?
-        .set_len(MANIFEST_LIMIT + 1)?;
-    let error = Entry::open(&directory, None)?.show.unwrap_err();
-    assert!(error.to_string().contains("too large"));
-    Ok(())
-}
-
-#[cfg(unix)]
-#[test]
-fn manifest_and_frame_links_are_not_followed() -> anyhow::Result<()> {
-    use std::os::unix::fs::symlink;
-    let root = tempfile::tempdir()?;
-    let directory = write(root.path(), "20261020T143205Z")?;
-    let other = write(root.path(), "elsewhere")?;
-    fs::remove_dir_all(directory.join("frames"))?;
-    symlink(other.join("frames"), directory.join("frames"))?;
-    assert_eq!(
-        Entry::open(&directory, None)?.show?.problems[0].name,
-        "frames/frame-01.png"
-    );
-    fs::remove_file(directory.join(Manifest::FILE))?;
-    symlink(other.join(Manifest::FILE), directory.join(Manifest::FILE))?;
-    assert!(matches!(
-        Entry::open(&directory, None)?.show,
-        Err(ReadError::File(_))
-    ));
-    Ok(())
-}
-
-#[test]
-fn five_minutes_of_dense_ink_has_room_in_the_read_limit() {
-    let mut value = manifest();
-
-    let points: Vec<_> = (0..37_500_u64)
-        .map(|sample| json!([0.123_456_78, 0.876_543_21, sample * 8]))
-        .collect();
-    value["duration"] = json!(300_000);
-    value["strokes"] = json!([points]);
-    let bytes = serde_json::to_vec_pretty(&value).unwrap();
-    assert!(u64::try_from(bytes.len()).unwrap() < MANIFEST_LIMIT / 2);
-    assert!(Manifest::parse(&bytes).is_ok());
-}
-
-#[test]
-fn an_emptied_summary_is_valid_and_an_undecodable_one_fails_privately() -> anyhow::Result<()> {
-    let show = tempfile::tempdir()?;
-    let summary_path = show.path().join("summary.md");
-    fs::write(&summary_path, b"")?;
-    assert!(
-        summary(show.path())?.is_empty(),
-        "An intentionally emptied summary is a valid edit"
-    );
-    fs::write(&summary_path, b"PRIVATE\xff")?;
-    assert!(
-        !summary(show.path())
-            .unwrap_err()
-            .to_string()
-            .contains("PRIVATE")
-    );
-    Ok(())
-}
-
-#[test]
-fn recall_agrees_with_cleanup_on_every_keep_marker_without_reading_it() -> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let directory = write(root.path(), "20261020T143205Z")?;
-    let recalled = |directory: &Path| -> anyhow::Result<bool> {
-        let entry = Entry::open(directory, None)?;
-        let kept = entry.pinned();
-        let show = entry.show?;
-        assert!(show.problems.is_empty());
-        assert_eq!(kept, Some(show.pinned));
-        Ok(show.pinned)
-    };
-    let agreed = || -> anyhow::Result<bool> {
-        let kept = super::super::pinned(&directory)?;
-        assert_eq!(recalled(&directory)?, kept);
-        Ok(kept)
-    };
-    for name in [PIN, ".PINNED"] {
-        let marker = directory.join(name);
-        fs::create_dir(&marker)?;
-        assert!(agreed()? || name != PIN, "{name} folder");
-        fs::remove_dir(&marker)?;
-        fs::write(&marker, b"")?;
-        assert!(agreed()? || name != PIN, "{name} file");
-        fs::remove_file(&marker)?;
-        #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink(root.path().join("absent"), &marker)?;
-            assert!(agreed()? || name != PIN, "{name} link");
-            fs::remove_file(&marker)?;
-        }
-    }
-    #[cfg(target_os = "linux")]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        std::os::unix::fs::symlink(root.path().join("absent"), directory.join(PIN))?;
-        fs::set_permissions(&directory, fs::Permissions::from_mode(0o300))?;
-        let searched = recalled(&directory);
-        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
-        assert!(searched?, "A Keep link in a folder that cannot be listed");
-    }
+    assert!(found[0].show.is_err());
     Ok(())
 }

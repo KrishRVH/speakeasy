@@ -1,7 +1,6 @@
 use std::{
-    collections::BTreeSet,
     fs,
-    io::{self, ErrorKind, Write as _},
+    io::{self, ErrorKind},
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, SystemTime},
@@ -13,27 +12,14 @@ use speakeasy_show::{Bundle, Journal, Location, Moment, Wsl};
 
 const KEPT_FOR: Duration = Duration::from_hours(7 * 24);
 
-const ABANDONED_AFTER: Duration = Duration::from_hours(1);
-
 const SWEEP_EVERY: Duration = Duration::from_hours(1);
 
 pub(super) const SAVED_AT: &str = ".saved-at";
 
 const PIN: &str = ".pinned";
 
-const STAGING_PREFIX: &str = ".partial-";
-
-const EXPIRED_PREFIX: &str = ".expired-";
-
 pub(super) fn directory() -> anyhow::Result<PathBuf> {
     Ok(crate::paths::data_root()?.join("shows"))
-}
-
-pub(super) fn private_directory() -> anyhow::Result<PathBuf> {
-    let directory = directory()?;
-    #[cfg(unix)]
-    make_private(&directory)?;
-    Ok(directory)
 }
 
 #[cfg(unix)]
@@ -64,7 +50,7 @@ pub(super) fn fresh_directory(parent: &Path, now: SystemTime) -> anyhow::Result<
             1 => parent.join(&stamp),
             _ => parent.join(format!("{stamp}-{attempt}")),
         })
-        .find(|candidate| fs::symlink_metadata(candidate).is_err())
+        .find(|candidate| !candidate.exists())
         .context("Too many Shows were written this second")
 }
 
@@ -86,21 +72,11 @@ pub(super) struct Staged {
 impl Staged {
     pub(super) fn persist(mut self) -> anyhow::Result<(SavedShow, String)> {
         let parent = self.directory.parent().unwrap_or(&self.directory);
-        let _publication = if self.managed {
-            let lock = retention::lock(parent).map_err(cannot_save(parent))?;
-            write_flushed(&self.staging.path().join(SAVED_AT), &[]).map_err(cannot_save(parent))?;
-            sync_directory(self.staging.path()).map_err(cannot_save(parent))?;
-            Some(lock)
-        } else {
-            None
-        };
+        if self.managed {
+            fs::write(self.staging.path().join(SAVED_AT), []).map_err(cannot_save(parent))?;
+        }
         fs::rename(self.staging.path(), &self.directory).map_err(cannot_save(parent))?;
         self.staging.disable_cleanup(true);
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "Rename already made the complete bundle visible; a failed directory sync cannot turn that saved Show into a failed publication"
-        )]
-        let _ = sync_directory(parent);
         Ok((SavedShow(self.directory.into()), self.summary))
     }
 }
@@ -137,14 +113,7 @@ fn cannot_save(parent: &Path) -> impl FnOnce(io::Error) -> anyhow::Error {
 
 fn staging(parent: &Path) -> io::Result<tempfile::TempDir> {
     fs::create_dir_all(parent)?;
-    let mut builder = tempfile::Builder::new();
-    builder.prefix(STAGING_PREFIX);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        builder.permissions(fs::Permissions::from_mode(0o700));
-    }
-    builder.tempdir_in(parent)
+    tempfile::tempdir_in(parent)
 }
 
 pub(super) fn stage(
@@ -157,11 +126,6 @@ pub(super) fn stage(
     let parent = directory
         .parent()
         .context("A Show's directory needs a parent")?;
-    anyhow::ensure!(
-        !entry_exists(directory).map_err(cannot_save(parent))?,
-        "{} already exists, and a Show never replaces one",
-        directory.display()
-    );
     let staging = staging(parent).map_err(cannot_save(parent))?;
     let source_lost = retained.as_ref().is_some_and(|retained| {
         source::write(staging.path(), retained.journal, retained.duration).is_err()
@@ -170,19 +134,12 @@ pub(super) fn stage(
         .and_then(|retained| retained.command)
         .filter(|_| !source_lost);
     let (summary, files) = bundle.into_files(location, command)?;
-    let folders: BTreeSet<PathBuf> = files
-        .iter()
-        .filter_map(|file| Some(staging.path().join(&file.name).parent()?.to_owned()))
-        .collect();
-    for folder in &folders {
-        fs::create_dir_all(folder).map_err(cannot_save(parent))?;
-    }
     for file in files {
-        write_flushed(&staging.path().join(&file.name), &file.contents)
-            .map_err(cannot_save(parent))?;
-    }
-    for folder in &folders {
-        sync_directory(folder).map_err(cannot_save(parent))?;
+        let path = staging.path().join(&file.name);
+        if let Some(folder) = path.parent() {
+            fs::create_dir_all(folder).map_err(cannot_save(parent))?;
+        }
+        fs::write(path, &file.contents).map_err(cannot_save(parent))?;
     }
     Ok(Staged {
         staging,
@@ -208,6 +165,7 @@ const fn sync_directory(_: &Path) -> io::Result<()> {
 }
 
 fn write_flushed(path: &Path, contents: &[u8]) -> io::Result<()> {
+    use std::io::Write as _;
     let mut file = fs::File::create_new(path)?;
     file.write_all(contents)?;
     file.sync_all()
@@ -234,119 +192,36 @@ pub(crate) fn attend(report: impl Fn(&anyhow::Error, &mut App) + 'static, cx: &A
 }
 
 pub(super) fn sweep(parent: &Path, now: SystemTime) -> anyhow::Result<()> {
-    let Some(entries) =
-        found(fs::read_dir(parent)).with_context(|| format!("Cannot read {}", parent.display()))?
-    else {
-        return Ok(());
-    };
     let checkpoints = checkpoint::sweep(parent, now);
     let cutoff = utc_stamp(now.checked_sub(KEPT_FOR).unwrap_or(SystemTime::UNIX_EPOCH));
-    let mut unchecked = None;
-    let mut stuck = false;
-    for entry in entries {
-        match entry.and_then(|entry| retire_expired(parent, &entry, &cutoff, now)) {
-            Ok(Cleanup::Remove(show)) => {
-                if found(fs::remove_dir_all(show)).is_err() {
-                    stuck = true;
-                }
-            },
-            Ok(Cleanup::Keep) => {},
-            Ok(Cleanup::Blocked) => stuck = true,
-            Err(error) if error.kind() == ErrorKind::NotFound => {},
-            Err(error) => {
-                unchecked.get_or_insert(error);
-            },
+    let shows =
+        recall::directories(parent).with_context(|| format!("Cannot read {}", parent.display()))?;
+    let mut stuck = None;
+    for show in shows {
+        let due = show
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(stamp)
+            .is_some_and(|stamp| stamp < cutoff.as_str());
+        if due
+            && !pinned(&show).unwrap_or(true)
+            && let Err(error) = fs::remove_dir_all(&show)
+        {
+            stuck.get_or_insert((show, error));
         }
     }
-    anyhow::ensure!(
-        !stuck,
-        "Cannot delete every expired Show in {}. Close any of their open files; \
-         Speakeasy tries again within the hour.",
-        parent.display()
-    );
-    if let Some(error) = unchecked {
+    if let Some((show, error)) = stuck {
         anyhow::bail!(
-            "Cannot check every Show in {} for expiry: {error}. {}",
-            parent.display(),
-            crate::paths::remedy(&error)
+            "Cannot delete the expired Show {}: {error}. Close its open files; Speakeasy tries \
+             again within the hour.",
+            show.display()
         );
     }
     checkpoints
 }
 
-enum Cleanup {
-    Keep,
-    Remove(PathBuf),
-    Blocked,
-}
-
-enum Expiry {
-    NotAFolder,
-    Live,
-    Leftover,
-    Due(String),
-}
-
-fn retire_expired(
-    parent: &Path,
-    entry: &fs::DirEntry,
-    cutoff: &str,
-    now: SystemTime,
-) -> io::Result<Cleanup> {
-    let _lock = retention::lock(parent)?;
-    let path = entry.path();
-    match expiry(entry, cutoff, now)? {
-        Expiry::NotAFolder => Ok(Cleanup::Keep),
-        Expiry::Live => {
-            voice::expire(&path, now)?;
-            Ok(Cleanup::Keep)
-        },
-        Expiry::Leftover => Ok(Cleanup::Remove(path)),
-        Expiry::Due(name) => match retire(parent, &path, &name) {
-            Ok(destination) => Ok(Cleanup::Remove(destination)),
-            Err(error) if error.kind() == ErrorKind::NotFound => Err(error),
-            Err(_blocked) => {
-                voice::expire(&path, now)?;
-                Ok(Cleanup::Blocked)
-            },
-        },
-    }
-}
-
-fn retire(parent: &Path, directory: &Path, name: &str) -> io::Result<PathBuf> {
-    let destination = parent.join(format!("{EXPIRED_PREFIX}{name}"));
-    if entry_exists(&destination)? {
-        return Err(ErrorKind::AlreadyExists.into());
-    }
-    fs::rename(directory, &destination)?;
-    Ok(destination)
-}
-
-fn expiry(entry: &fs::DirEntry, cutoff: &str, now: SystemTime) -> io::Result<Expiry> {
-    if !entry.file_type()?.is_dir() {
-        return Ok(Expiry::NotAFolder);
-    }
-    let Ok(name) = entry.file_name().into_string() else {
-        return Ok(Expiry::Live);
-    };
-    let retired = name
-        .strip_prefix(EXPIRED_PREFIX)
-        .is_some_and(|name| stamp(name).is_some());
-    let abandoned = name.starts_with(STAGING_PREFIX)
-        && now
-            .duration_since(entry.metadata()?.modified()?)
-            .is_ok_and(|age| age >= ABANDONED_AFTER);
-    Ok(if retired || abandoned {
-        Expiry::Leftover
-    } else if stamp(&name).is_some_and(|stamp| stamp < cutoff) && !pinned(&entry.path())? {
-        Expiry::Due(name)
-    } else {
-        Expiry::Live
-    })
-}
-
 pub(super) fn pinned(path: &Path) -> io::Result<bool> {
-    entry_exists(&path.join(PIN))
+    fs::exists(path.join(PIN))
 }
 
 fn found<T>(result: io::Result<T>) -> io::Result<Option<T>> {

@@ -11,17 +11,13 @@ use anyhow::Context as _;
 pub(crate) use frame::{AnnotationState, Crop, decoder_time};
 use serde::{Deserialize, Serialize};
 use speakeasy_core::gesture::RECORDING_LIMIT;
-use speakeasy_platform::ReadDirectory;
 use speakeasy_show::{Moment, MovieError, MoviePrefix};
 
-use super::{found, recall, sync_directory};
+use super::found;
 
 pub(crate) const FILE: &str = "recording.mp4";
 pub(crate) const HEADER: &str = "recording.json";
 const VERSION: u8 = 2;
-const HEADER_LIMIT: u64 = 4 << 20;
-const FRAME_SLACK_MS: u64 = 34;
-const SUBMITTED_LIMIT: u32 = 9_001;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -87,11 +83,7 @@ impl Metadata {
             coverage: None,
             geometry: None,
         };
-        let bytes = serde_json::to_vec(&metadata)?;
-        let mut file = File::create_new(directory.join(HEADER))?;
-        file.write_all(&bytes)?;
-        file.sync_all()?;
-        sync_directory(directory)?;
+        File::create_new(directory.join(HEADER))?.write_all(&serde_json::to_vec(&metadata)?)?;
         Ok((metadata, geometry))
     }
 
@@ -111,10 +103,6 @@ impl Metadata {
                 .min(RECORDING_LIMIT)
                 .as_millis(),
         )?;
-        anyhow::ensure!(
-            last_ms >= self.origin_ms && last_ms <= through_ms && submitted <= SUBMITTED_LIMIT,
-            "Movie completion is invalid"
-        );
         self.finished = Some(Finished {
             last_ms,
             through_ms,
@@ -125,18 +113,11 @@ impl Metadata {
     }
 
     fn replace(&self, directory: &Path) -> anyhow::Result<()> {
-        let bytes = serde_json::to_vec(self)?;
-        anyhow::ensure!(
-            u64::try_from(bytes.len())? <= HEADER_LIMIT,
-            "Movie metadata exceeds its size limit"
-        );
         let mut staging = tempfile::NamedTempFile::new_in(directory)?;
-        staging.write_all(&bytes)?;
-        staging.as_file().sync_all()?;
+        staging.write_all(&serde_json::to_vec(self)?)?;
         staging
             .persist(directory.join(HEADER))
             .map_err(|error| error.error)?;
-        sync_directory(directory)?;
         Ok(())
     }
 
@@ -180,22 +161,15 @@ pub(crate) struct Reading {
 
 impl Reading {
     pub(crate) fn open(directory: &Path, annotations: Moment) -> anyhow::Result<Self> {
-        Self::required(&recall::open_directory(directory)?, annotations)
-    }
-
-    pub(in crate::show::store) fn required(
-        directory: &ReadDirectory,
-        annotations: Moment,
-    ) -> anyhow::Result<Self> {
         Self::optional(directory, annotations)?
             .context("This Show has no retained video; use its source frames instead")
     }
 
     pub(in crate::show::store) fn optional(
-        directory: &ReadDirectory,
+        directory: &Path,
         annotations: Moment,
     ) -> anyhow::Result<Option<Self>> {
-        let Some(reading) = open_from(directory)? else {
+        let Some(reading) = open(directory)? else {
             return Ok(None);
         };
         let coverage = reading
@@ -214,10 +188,8 @@ impl Reading {
     pub(in crate::show::store) fn copy_to(
         &mut self,
         out: &mut impl std::io::Write,
-        limit: u64,
     ) -> anyhow::Result<u64> {
         let bytes = self.movie.prefix.bytes();
-        anyhow::ensure!(bytes <= limit, "Movie exceeds the export size limit");
         self.file.rewind()?;
         let mut position = 0_u64;
         let mut buffer = vec![0; 64 * 1024];
@@ -246,17 +218,14 @@ pub(super) enum CheckpointMovie {
 }
 
 pub(super) fn checkpoint(directory: &Path) -> anyhow::Result<CheckpointMovie> {
-    let absent = found(fs::symlink_metadata(directory.join(FILE)))?
-        .is_none_or(|metadata| metadata.is_file() && metadata.len() == 0);
+    let absent =
+        found(fs::metadata(directory.join(FILE)))?.is_none_or(|metadata| metadata.len() == 0);
     if absent {
-        let Some(header) = found(fs::symlink_metadata(directory.join(HEADER)))? else {
-            return Ok(CheckpointMovie::Absent);
-        };
-        anyhow::ensure!(
-            header.is_file() && header.len() <= HEADER_LIMIT,
-            "Movie timing must be a regular bounded file"
-        );
-        return Ok(CheckpointMovie::Unavailable);
+        return Ok(if fs::exists(directory.join(HEADER))? {
+            CheckpointMovie::Unavailable
+        } else {
+            CheckpointMovie::Absent
+        });
     }
     match open(directory) {
         Ok(Some(movie)) => Ok(CheckpointMovie::Present(Box::new(movie))),
@@ -273,34 +242,26 @@ pub(super) fn checkpoint(directory: &Path) -> anyhow::Result<CheckpointMovie> {
     }
 }
 
-fn read_metadata(directory: &ReadDirectory) -> anyhow::Result<Metadata> {
-    let bytes = recall::read_from(directory, HEADER, HEADER_LIMIT)?;
-    let metadata: Metadata = serde_json::from_slice(&bytes)
-        .map_err(|_private_content| anyhow::anyhow!("Movie timing metadata is damaged"))?;
+fn read_metadata(directory: &Path) -> anyhow::Result<Metadata> {
+    let metadata: Metadata = serde_json::from_slice(&fs::read(directory.join(HEADER))?)
+        .context("Movie timing metadata is damaged")?;
     anyhow::ensure!(
-        metadata.version == VERSION
-            && metadata.geometry.is_some() == metadata.coverage.is_some()
-            && metadata.origin_ms < u64::try_from(RECORDING_LIMIT.as_millis())?,
+        metadata.version == VERSION,
         "Movie timing metadata is unsupported"
     );
     Ok(metadata)
 }
 
 pub(super) fn open(directory: &Path) -> anyhow::Result<Option<Reading>> {
-    open_from(&recall::open_directory(directory)?)
-}
-
-fn open_from(directory: &ReadDirectory) -> anyhow::Result<Option<Reading>> {
-    let Some((mut file, information)) = found(directory.stable_file(Path::new(FILE)))? else {
+    let Some(mut file) = found(File::open(directory.join(FILE)))? else {
         anyhow::ensure!(
-            found(directory.file(Path::new(HEADER)))?.is_none(),
+            !fs::exists(directory.join(HEADER))?,
             "Movie timing exists without its video"
         );
         return Ok(None);
     };
     let mut metadata = read_metadata(directory)?;
-    let length = information.len();
-    let prefix = MoviePrefix::read(length, |range| {
+    let prefix = MoviePrefix::read(file.metadata()?.len(), |range| {
         let length = range
             .end
             .checked_sub(range.start)
@@ -310,57 +271,6 @@ fn open_from(directory: &ReadDirectory) -> anyhow::Result<Option<Reading>> {
         file.read_exact(&mut bytes)?;
         anyhow::Ok(bytes)
     })?;
-    anyhow::ensure!(
-        prefix.size() == metadata.size,
-        "Movie canvas differs from its timing metadata"
-    );
-    let limit = u64::try_from(RECORDING_LIMIT.as_millis())?;
-    let end_ms = metadata
-        .origin_ms
-        .saturating_add(u64::try_from(prefix.duration().as_millis())?);
-
-    anyhow::ensure!(
-        end_ms <= limit.saturating_add(FRAME_SLACK_MS),
-        "Movie exceeds the session recording limit"
-    );
-    if let Some(finished) = &metadata.finished {
-        anyhow::ensure!(
-            finished.submitted > 0
-                && (!finished.finalized
-                    || end_ms <= finished.through_ms.saturating_add(FRAME_SLACK_MS)),
-            "Movie fragments exceed the acknowledged capture end"
-        );
-        anyhow::ensure!(
-            finished.last_ms >= metadata.origin_ms,
-            "Movie completion precedes its origin"
-        );
-        anyhow::ensure!(
-            finished.last_ms <= finished.through_ms
-                && finished.through_ms <= limit
-                && finished.submitted <= SUBMITTED_LIMIT,
-            "Movie completion metadata is invalid"
-        );
-    }
-    if let Some(coverage) = &metadata.coverage {
-        anyhow::ensure!(
-            coverage.partial
-                || metadata
-                    .finished
-                    .as_ref()
-                    .is_some_and(|finish| finish.finalized),
-            "Movie has no finalized completion receipt"
-        );
-        anyhow::ensure!(
-            coverage.bytes == prefix.bytes()
-                && length == prefix.bytes()
-                && !prefix.truncated()
-                && coverage.frames == prefix.frames()
-                && coverage.end_ms == end_ms.min(limit)
-                && coverage.annotations_through_ms
-                    <= speakeasy_show::JOURNAL_DURATION_LIMIT.as_millis(),
-            "Saved movie coverage differs from its fragments"
-        );
-    }
     if metadata.coverage.is_none() {
         metadata.geometry = Some(geometry::recover(
             directory,
@@ -380,10 +290,7 @@ fn open_from(directory: &ReadDirectory) -> anyhow::Result<Option<Reading>> {
     }))
 }
 
-pub(super) fn saved(
-    directory: &ReadDirectory,
-    annotations: Moment,
-) -> anyhow::Result<Option<Inspected>> {
+pub(super) fn saved(directory: &Path, annotations: Moment) -> anyhow::Result<Option<Inspected>> {
     Ok(Reading::optional(directory, annotations)?.map(|reading| reading.movie))
 }
 
@@ -396,9 +303,7 @@ pub(in crate::show::store) fn retain(
         annotations <= speakeasy_show::JOURNAL_DURATION_LIMIT,
         "Movie annotation coverage exceeds the Show journal limit"
     );
-    let mut output = File::create_new(destination.join(FILE))?;
-    reading.copy_to(&mut output, MoviePrefix::FILE_LIMIT)?;
-    output.sync_all()?;
+    reading.copy_to(&mut File::create_new(destination.join(FILE))?)?;
     let mut movie = reading.movie;
     let end_ms = movie
         .metadata

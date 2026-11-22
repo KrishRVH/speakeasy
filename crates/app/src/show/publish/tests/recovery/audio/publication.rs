@@ -27,9 +27,17 @@ async fn durable_voiced_publication_retires_checkpoint_after_a_crash_before_disc
         store::checkpoint::list(root.path(), SystemTime::now()).shows,
         []
     );
-    let voice = saved_voice(saved.show.directory())?;
-    assert!(matches!(voice.status(), store::voice::Status::Available));
-    assert_eq!(voice.audio().unwrap().pcm.len(), 16_000);
+    assert!(matches!(
+        saved_voice(saved.show.directory())?,
+        store::voice::Status::Available
+    ));
+    assert_eq!(
+        store::voice::read(saved.show.directory())?
+            .unwrap()
+            .pcm
+            .len(),
+        16_000
+    );
     store::sweep(root.path(), SystemTime::now())?;
     assert!(!path.exists());
     assert!(saved.show.directory().join("voice.log").exists());
@@ -187,7 +195,7 @@ async fn only_audio_that_may_hold_speech_is_kept_for_retry_or_as_voice() -> anyh
         );
         let voice = saved_voice(show.directory())?;
         assert_eq!(
-            matches!(voice.status(), store::voice::Status::Available),
+            matches!(voice, store::voice::Status::Available),
             voiced,
             "{lost:?}"
         );
@@ -250,7 +258,7 @@ async fn an_audio_file_without_samples_does_not_block_publication_or_become_voic
             None,
         )?;
         let voice = saved_voice(show.directory())?;
-        assert!(matches!(voice.status(), store::voice::Status::Absent));
+        assert!(matches!(voice, store::voice::Status::Absent));
     }
     Ok(())
 }
@@ -302,7 +310,7 @@ async fn failed_silent_show_recovery_preserves_the_silence_notice_without_voice(
         bail!("Silent Show was not recovered");
     };
     assert!(matches!(
-        saved_voice(show.directory())?.status(),
+        saved_voice(show.directory())?,
         store::voice::Status::Absent
     ));
     Ok(())

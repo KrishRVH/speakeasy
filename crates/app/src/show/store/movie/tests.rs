@@ -49,12 +49,9 @@ fn publication_keeps_only_complete_video_and_separate_annotation_coverage() -> a
     let inspected = open(source.path())?.unwrap();
     assert!(inspected.movie.prefix.truncated());
     retain(destination.path(), inspected, Moment::from_millis(500))?;
-    let kept = saved(
-        &recall::open_directory(destination.path())?,
-        Moment::from_millis(500),
-    )?
-    .unwrap()
-    .metadata;
+    let kept = saved(destination.path(), Moment::from_millis(500))?
+        .unwrap()
+        .metadata;
     for path in ["/tmp/a``b/recording.mp4", "/tmp/Show video.mp4"] {
         let note = kept.note(Path::new(path))?;
         let fence = if path.contains('`') { "```" } else { "`" };
@@ -72,7 +69,7 @@ fn publication_keeps_only_complete_video_and_separate_annotation_coverage() -> a
 }
 
 #[test]
-fn lost_video_or_edited_coverage_never_passes_inspection_as_an_ordinary_show() -> anyhow::Result<()>
+fn newer_or_orphaned_video_timing_never_passes_inspection_as_an_ordinary_show() -> anyhow::Result<()>
 {
     let source = tempfile::tempdir()?;
     let destination = tempfile::tempdir()?;
@@ -84,68 +81,9 @@ fn lost_video_or_edited_coverage_never_passes_inspection_as_an_ordinary_show() -
     )?;
     metadata.version = VERSION + 1;
     metadata.replace(destination.path())?;
-    assert!(
-        saved(
-            &recall::open_directory(destination.path())?,
-            Moment::from_millis(500)
-        )
-        .is_err()
-    );
-    metadata.version = VERSION;
-    metadata.coverage.as_mut().unwrap().frames += 1;
-    metadata.replace(destination.path())?;
-    assert!(
-        saved(
-            &recall::open_directory(destination.path())?,
-            Moment::from_millis(500)
-        )
-        .is_err()
-    );
+    assert!(saved(destination.path(), Moment::from_millis(500)).is_err());
     fs::remove_file(destination.path().join(FILE))?;
     assert!(open(destination.path()).is_err());
-    Ok(())
-}
-
-#[test]
-fn a_refused_copy_preserves_its_source_and_a_replaced_path_cannot_substitute_video()
--> anyhow::Result<()> {
-    let source = tempfile::tempdir()?;
-    let destination = tempfile::tempdir()?;
-    checkpoint(source.path(), false)?;
-    let original = fs::read(source.path().join(FILE))?;
-    fs::create_dir(destination.path().join(FILE))?;
-    assert!(
-        retain(
-            destination.path(),
-            open(source.path())?.unwrap(),
-            Moment::START
-        )
-        .is_err()
-    );
-    assert_eq!(fs::read(source.path().join(FILE))?, original);
-    fs::remove_dir(destination.path().join(FILE))?;
-    let inspected = open(source.path())?.unwrap();
-    fs::rename(source.path().join(FILE), source.path().join("original.mp4"))?;
-    fs::write(source.path().join(FILE), vec![0; original.len()])?;
-    retain(destination.path(), inspected, Moment::START)?;
-    assert_eq!(fs::read(destination.path().join(FILE))?, original);
-    assert!(saved(&recall::open_directory(destination.path())?, Moment::START)?.is_some());
-    Ok(())
-}
-
-#[test]
-fn finalized_fragments_cannot_claim_time_beyond_the_native_capture_receipt() -> anyhow::Result<()> {
-    let directory = tempfile::tempdir()?;
-    checkpoint(directory.path(), false)?;
-    let mut metadata = read_metadata(&recall::open_directory(directory.path())?)?;
-    metadata.finished = Some(Finished {
-        last_ms: 500,
-        through_ms: 500,
-        submitted: 1,
-        finalized: true,
-    });
-    metadata.replace(directory.path())?;
-    assert!(open(directory.path()).is_err());
     Ok(())
 }
 
@@ -257,7 +195,7 @@ fn a_show_stopped_at_the_session_deadline_keeps_later_annotation_timing() -> any
     checkpoint(source.path(), false)?;
     let annotated = Moment::from_millis(300_005);
     retain(destination.path(), open(source.path())?.unwrap(), annotated)?;
-    let movie = saved(&recall::open_directory(destination.path())?, annotated)?.unwrap();
+    let movie = saved(destination.path(), annotated)?.unwrap();
     assert_eq!(
         movie.metadata.coverage.unwrap().annotations_through_ms,
         annotated.as_millis()

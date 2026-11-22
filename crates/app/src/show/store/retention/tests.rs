@@ -1,9 +1,5 @@
-use std::sync::mpsc;
-
 use super::*;
-use crate::show::store::{self, address, recall};
-
-mod deletion;
+use crate::show::store::{self, address};
 
 fn show(parent: &Path, at: SystemTime) -> io::Result<PathBuf> {
     let directory = parent.join(store::utc_stamp(at));
@@ -48,136 +44,50 @@ fn keeping_preserves_edits_and_allowing_expiry_uses_the_original_date() -> anyho
 }
 
 #[test]
-fn cleanup_checks_the_pin_only_after_acquiring_the_retention_lock() -> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let now = SystemTime::now();
-    let directory = show(root.path(), now - Duration::from_hours(8 * 24))?;
-    let held = lock(root.path())?;
-    let parent = root.path().to_owned();
-    let (started, starting) = mpsc::channel();
-    let (done, finished) = mpsc::channel();
-    let worker = std::thread::spawn(move || {
-        started.send(()).unwrap();
-        done.send(store::sweep(&parent, now)).unwrap();
-    });
-    starting.recv_timeout(Duration::from_secs(5))?;
-    let early = finished.recv_timeout(Duration::from_millis(100));
-    let pin = fs::write(directory.join(store::PIN), b"");
-    drop(held);
-    worker.join().unwrap();
-    pin?;
-    assert!(
-        matches!(early, Err(mpsc::RecvTimeoutError::Timeout)),
-        "Cleanup ran while retention was locked"
-    );
-    finished.recv_timeout(Duration::from_secs(5))??;
-    assert!(
-        directory.exists(),
-        "Cleanup used a pin check made before locking"
-    );
-    Ok(())
-}
-
-#[test]
-fn interrupted_deletion_stays_hidden_and_cleanup_retries_it() -> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let now = SystemTime::now();
-    let directory = show(root.path(), now - Duration::from_hours(8 * 24))?;
-    let entry = fs::read_dir(root.path())?.next().unwrap()?;
-    let store::Cleanup::Remove(retired) =
-        store::retire_expired(root.path(), &entry, &store::utc_stamp(now), now)?
-    else {
-        panic!("The expired Show was not retired");
-    };
-    assert!(!directory.exists());
-    fs::remove_file(retired.join("summary.md"))?;
-    assert_eq!(recall::list(root.path())?.count(), 0);
-    store::sweep(root.path(), now)?;
-    assert!(!retired.exists());
-    Ok(())
-}
-
-#[test]
-fn identity_and_mutation_do_not_follow_moved_missing_or_non_show_folders() -> anyhow::Result<()> {
+fn keep_and_delete_touch_only_shows_in_the_managed_folder() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let other = tempfile::tempdir()?;
     let now = SystemTime::now();
     let directory = show(root.path(), now)?;
     let moved = show(other.path(), now)?;
-    assert!(address::managed_id(root.path(), &directory)?.is_some());
-    assert!(address::managed_id(root.path(), &moved)?.is_none());
+    assert!(address::managed_id(root.path(), &directory).is_some());
+    assert!(address::managed_id(root.path(), &moved).is_none());
     assert!(set_kept(root.path(), &moved, true).is_err());
+    assert!(delete(root.path(), &moved).is_err());
     let notes = root.path().join("notes");
     fs::create_dir(&notes)?;
     assert!(set_kept(root.path(), &notes, true).is_err());
     let absent = root.path().join("absent");
     assert!(set_kept(&absent, &directory, true).is_err());
     assert!(!absent.exists());
-    assert!(!notes.join(store::PIN).exists() && !moved.join(store::PIN).exists());
+    assert!(moved.is_dir() && !notes.join(store::PIN).exists() && !moved.join(store::PIN).exists());
     Ok(())
 }
 
 #[test]
-fn allowing_expiry_removes_a_keep_marker_of_any_type() -> anyhow::Result<()> {
+fn deleting_a_kept_show_removes_its_files_and_preserves_other_shows() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
-    let directory = show(root.path(), SystemTime::now())?;
-    let marker = directory.join(store::PIN);
-    let allowed = || -> anyhow::Result<()> {
-        assert_eq!(set_kept(root.path(), &directory, true)?, Retention::Kept);
-        assert_ne!(set_kept(root.path(), &directory, false)?, Retention::Kept);
-        assert!(fs::symlink_metadata(&marker).is_err());
-        Ok(())
-    };
-    fs::create_dir(&marker)?;
-    allowed()?;
-    #[cfg(windows)]
-    {
-        let target = tempfile::tempdir()?;
-        let linked = std::process::Command::new("cmd")
-            .args(["/C", "mklink", "/J"])
-            .arg(&marker)
-            .arg(target.path())
-            .output()?;
-        anyhow::ensure!(linked.status.success(), "mklink could not link the marker");
-        allowed()?;
-        assert!(target.path().is_dir());
-    }
-    Ok(())
-}
-
-#[cfg(unix)]
-#[test]
-fn linked_folders_are_refused_and_linked_pins_never_change_their_target() -> anyhow::Result<()> {
-    use std::os::unix::fs::symlink;
-    let root = tempfile::tempdir()?;
-    let other = tempfile::tempdir()?;
     let now = SystemTime::now();
     let directory = show(root.path(), now)?;
-    let linked = root.path().join(format!("{}-2", store::utc_stamp(now)));
-    symlink(other.path(), &linked)?;
-    assert!(set_kept(root.path(), &linked, true).is_err());
-    let with_separator = std::path::PathBuf::from(format!("{}/", linked.display()));
-    assert!(set_kept(root.path(), &with_separator, true).is_err());
-    assert!(address::managed_id(root.path(), &with_separator)?.is_none());
-    assert!(!other.path().join(store::PIN).exists());
-    let target = other.path().join("private");
-    fs::write(&target, b"PRIVATE_TARGET")?;
-    symlink(&target, directory.join(store::PIN))?;
-    assert_eq!(set_kept(root.path(), &directory, true)?, Retention::Kept);
-    set_kept(root.path(), &directory, false)?;
-    assert_eq!(fs::read(&target)?, b"PRIVATE_TARGET");
-    assert!(!directory.join(store::PIN).exists());
+    let other = show(root.path(), now - Duration::from_secs(1))?;
+    fs::write(directory.join(store::PIN), b"")?;
+    fs::write(directory.join("voice.log"), b"synthetic audio")?;
+    assert!(delete(root.path(), &directory)?.cleanup.is_none());
+    assert!(!directory.exists());
+    assert!(other.join("summary.md").is_file());
+    assert!(delete(root.path(), &directory).is_err());
     Ok(())
 }
 
 #[cfg(target_os = "windows")]
 #[test]
-fn an_open_windows_file_reports_blocked_cleanup_without_damaging_the_show() -> anyhow::Result<()> {
+fn an_open_windows_file_reports_blocked_cleanup_and_the_next_sweep_finishes() -> anyhow::Result<()>
+{
     use std::os::windows::fs::OpenOptionsExt as _;
     let root = tempfile::tempdir()?;
     let now = SystemTime::now();
     let directory = show(root.path(), now - Duration::from_hours(8 * 24))?;
-    let held = OpenOptions::new()
+    let held = fs::OpenOptions::new()
         .read(true)
         .share_mode(0)
         .open(directory.join("summary.md"))?;
@@ -187,15 +97,7 @@ fn an_open_windows_file_reports_blocked_cleanup_without_damaging_the_show() -> a
         result
             .unwrap_err()
             .to_string()
-            .starts_with("Cannot delete every expired Show")
-    );
-    assert_eq!(
-        fs::read_to_string(directory.join("summary.md"))?,
-        "PRIVATE_EDIT"
-    );
-    assert_eq!(
-        fs::read_to_string(directory.join("show.json"))?,
-        "PRIVATE_MANIFEST"
+            .starts_with("Cannot delete the expired Show")
     );
     store::sweep(root.path(), now)?;
     assert!(!directory.exists());

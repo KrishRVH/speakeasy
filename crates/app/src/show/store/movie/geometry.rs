@@ -1,17 +1,19 @@
-use std::{fs::File, io::Write as _, path::Path};
+use std::{
+    fs::{self, File},
+    io::Write as _,
+    path::Path,
+};
 
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 use speakeasy_show::{Image, PixelRect, Rect, VideoViewport, locate};
 
-use super::super::{found, recall};
+use super::super::found;
 
 pub(in crate::show::store) const FILE: &str = "recording.geometry";
 const MAGIC: &[u8; 8] = b"SPKGEO01";
-const HEADER_BYTES: usize = 36;
 const RECORD_BYTES: usize = 40;
 const CHANGE_LIMIT: u32 = 9_000;
-const FILE_LIMIT: u64 = HEADER_BYTES as u64 + RECORD_BYTES as u64 * CHANGE_LIMIT as u64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -134,7 +136,6 @@ impl Writing {
     pub(super) fn create(directory: &Path, id: [u8; 16], size: [u32; 2]) -> anyhow::Result<Self> {
         let mut file = File::create_new(directory.join(FILE))?;
         file.write_all(&header(id, size))?;
-        file.sync_all()?;
         Ok(Self {
             file,
             size,
@@ -155,25 +156,20 @@ impl Writing {
         };
         validate(change, self.last, self.size)?;
         self.file.write_all(&encode(change))?;
-        self.file.sync_data()?;
         self.last = Some(change);
         Ok(())
     }
 }
 
 pub(super) fn recover(
-    directory: &speakeasy_platform::ReadDirectory,
+    directory: &Path,
     id: [u8; 16],
     size: [u32; 2],
     frames: u32,
 ) -> anyhow::Result<Geometry> {
-    let Some((file, metadata)) = found(directory.file(Path::new(FILE)))? else {
+    let Some(bytes) = found(fs::read(directory.join(FILE)))? else {
         return Ok(Geometry::default());
     };
-    if metadata.len() == 0 {
-        return Ok(Geometry::default());
-    }
-    let bytes = recall::read_bounded(file, FILE_LIMIT)?;
     let expected = header(id, size);
     let Some(records) = bytes.strip_prefix(expected.as_slice()) else {
         return Ok(Geometry::default());

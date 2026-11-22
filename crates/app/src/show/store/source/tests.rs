@@ -29,18 +29,3 @@ fn optional_source_roundtrips_without_modifying_earlier_exports() -> anyhow::Res
     assert!(inspect(root.path()).is_err());
     Ok(())
 }
-
-#[cfg(unix)]
-#[test]
-fn linked_sources_and_destinations_never_cross_the_bundle_boundary() -> anyhow::Result<()> {
-    use std::os::unix::fs::symlink;
-    let root = tempfile::tempdir()?;
-    let other = tempfile::NamedTempFile::new()?;
-    fs::write(other.path(), b"PRIVATE_PIXELS")?;
-    symlink(other.path(), root.path().join(FILE))?;
-    assert!(present(root.path()).is_err());
-    assert!(inspect(root.path()).is_err());
-    assert!(export(&root.path().join(FILE), b"replacement").is_err());
-    assert_eq!(fs::read(other.path())?, b"PRIVATE_PIXELS");
-    Ok(())
-}

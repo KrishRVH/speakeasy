@@ -345,10 +345,7 @@ fn a_show_publishes_a_complete_private_bundle() -> anyhow::Result<()> {
     let summary = clipboard.context("The summary was copied")?;
     assert!(!permit.active(), "Publishing spends the permit");
     let entries = fs::read_dir(&shows)?
-        .filter_map(|entry| match entry {
-            Ok(entry) if entry.file_name() == store::retention::LOCK => None,
-            other => Some(other.map(|entry| entry.path())),
-        })
+        .map(|entry| entry.map(|entry| entry.path()))
         .collect::<io::Result<Vec<_>>>()?;
     let [directory] = entries.as_slice() else {
         bail!("The Shows folder should contain one complete bundle");
@@ -390,12 +387,6 @@ fn a_show_publishes_a_complete_private_bundle() -> anyhow::Result<()> {
     assert!(sheet.0 > 0 && sheet.1 > 0);
     assert!(summary.contains(&directory.display().to_string()));
     assert!(summary.contains("dialog"), "Narration reaches the agent");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        let mode = fs::metadata(directory)?.permissions().mode();
-        assert_eq!(mode & 0o777, 0o700);
-    }
     Ok(())
 }
 

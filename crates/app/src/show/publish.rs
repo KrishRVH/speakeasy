@@ -113,7 +113,7 @@ pub(crate) async fn publish(
             footage,
             origin,
             &permit,
-            store::private_directory,
+            store::directory,
             speakeasy_platform::copy_text,
         )
     })

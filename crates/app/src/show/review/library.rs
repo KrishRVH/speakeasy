@@ -7,7 +7,7 @@ use std::{
 
 use speakeasy_show::{
     Annotations, Ending, Manifest, Moment, MoviePrefix, NarrationLoss, Recording, Source,
-    Unreadable, locate::Focus,
+    locate::Focus,
 };
 
 use super::{
@@ -19,7 +19,7 @@ use crate::show::{
     preview::Content,
     store::{
         age, checkpoint, movie,
-        recall::{self, Entry, Health, ReadError},
+        recall::{self, Entry},
         retention::{Retention, interval},
         source,
     },
@@ -42,7 +42,7 @@ pub(super) enum Kind {
 pub(super) struct Row {
     pub kind: Kind,
     pub directory: PathBuf,
-    pub health: Health,
+    pub readable: bool,
     pub duration: Option<Moment>,
     pub frames: usize,
     pub marks: usize,
@@ -53,16 +53,15 @@ pub(super) struct Row {
 
 impl Row {
     fn from_entry(entry: Entry) -> Self {
-        let health = entry.health();
         let show = entry.show.as_ref().ok();
         let recording = show.map(|show| show.manifest.recording());
         Self {
             kind: Kind::Saved,
-            health,
+            readable: show.is_some(),
             duration: recording.map(|recording| recording.duration),
             frames: show.map_or(0, |show| show.manifest.keyframes().len()),
             marks: show.map_or(0, |show| show.manifest.marks().len()),
-            pinned: entry.pinned(),
+            pinned: Some(entry.pinned),
             early: recording.is_some_and(|recording| recording.ending != Ending::Finished),
             narration_lost: recording.and_then(|recording| recording.narration_lost),
             directory: entry.directory,
@@ -114,7 +113,7 @@ pub(super) fn list(directory: &Path) -> io::Result<(Vec<Row>, Option<String>)> {
     let interrupted = found.shows.into_iter().map(|interrupted| Row {
         directory: interrupted.directory().to_owned(),
         kind: Kind::Interrupted(interrupted),
-        health: Health::Ok,
+        readable: true,
         duration: None,
         frames: 0,
         marks: 0,
@@ -199,12 +198,8 @@ impl Detail {
         let mut scene = None;
         let mut duration = None;
         match entry.show {
-            Err(ReadError::Manifest(Unreadable::Unsupported(version))) => warnings.push(format!(
-                "This Show uses format {version}. Update Speakeasy to view its frames. Its summary \
-                 may still be readable."
-            )),
             Err(error) => warnings.push(format!(
-                "Cannot read this Show's frame list: {error}. Its summary may still be readable."
+                "Cannot read this Show: {error:#}. Its summary may still be readable."
             )),
             Ok(show) => {
                 inspected = show.movie;
@@ -222,11 +217,6 @@ impl Detail {
                 narration = Narration::from_recording(recording);
                 warnings.extend(ending(recording));
                 warnings.extend(recording.narration_lost.map(lost));
-                warnings.extend(
-                    show.problems
-                        .into_iter()
-                        .map(|problem| format!("{}: {}", problem.name, problem.reason)),
-                );
                 for (index, mark) in manifest.marks().iter().enumerate() {
                     if let Ok(spans) = manifest.locate(Focus::Mark(mark.number))
                         && let Some(span) = spans.first()

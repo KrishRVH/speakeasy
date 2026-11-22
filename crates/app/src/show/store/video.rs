@@ -4,14 +4,13 @@ mod timeline;
 use std::{
     fs::File,
     path::{Path, PathBuf},
-    time::SystemTime,
 };
 
 use anyhow::Context as _;
 use serde::Serialize;
 use speakeasy_show::{Annotations, Manifest, Span};
 
-use super::{export, movie, recall, voice};
+use super::{export, movie, voice};
 
 pub(crate) const CANCELLED: &str = "Video export cancelled";
 
@@ -40,7 +39,6 @@ impl Exported {
             voice::Status::Available => "with original voice",
             voice::Status::Incomplete => "with partial voice (recording was interrupted)",
             voice::Status::Absent => "silent (this Show has no saved voice)",
-            voice::Status::Expired => "silent (voice expired after seven days)",
         };
         let annotations = if self.frames_without_annotations > 0 || self.omitted_annotations > 0 {
             " Some annotations could not be placed; see the saved Show for full context."
@@ -63,43 +61,20 @@ pub(crate) fn write(
     clip: impl FnOnce(&Manifest) -> anyhow::Result<Option<Span>>,
     cancelled: impl Fn() -> bool + Sync,
 ) -> anyhow::Result<Exported> {
-    write_with(
-        directory,
-        destination,
-        options,
-        clip,
-        cancelled,
-        super::private_directory,
-    )
-}
-
-fn write_with(
-    directory: &Path,
-    destination: &Path,
-    options: Options,
-    clip: impl FnOnce(&Manifest) -> anyhow::Result<Option<Span>>,
-    cancelled: impl Fn() -> bool + Sync,
-    scratch: impl FnOnce() -> anyhow::Result<PathBuf>,
-) -> anyhow::Result<Exported> {
     let target = export::Target::new(directory, destination, "MP4")?;
     anyhow::ensure!(!cancelled(), CANCELLED);
     let directory = &target.show;
-    let manifest = Manifest::parse(&recall::read_from(
-        directory,
-        Manifest::FILE,
-        recall::MANIFEST_LIMIT,
-    )?)?;
+    let manifest = Manifest::parse(&std::fs::read(directory.join(Manifest::FILE))?)?;
     let span = clip(&manifest)?;
-    let mut reading = movie::Reading::required(directory, manifest.recording().duration)?;
-    let voice = voice::read(directory, SystemTime::now())?;
-    let audio = voice.audio();
+    let mut reading = movie::Reading::open(directory, manifest.recording().duration)?;
+    let voice = voice::read(directory)?;
+    let audio = voice.as_ref();
     let timing = timeline::Timing::new(&reading.movie, span, audio)?;
     let scene = Annotations::new(manifest.recording(), manifest.marks())?;
-    let work = super::staging(&scratch()?).context(
-        "Cannot create private video scratch space; check the Shows folder's space and permissions",
-    )?;
+    let work = tempfile::tempdir()
+        .context("Cannot create video scratch space; check the temporary folder's free space")?;
     let mut source = File::create_new(work.path().join(encode::SOURCE))?;
-    reading.copy_to(&mut source, speakeasy_show::MoviePrefix::FILE_LIMIT)?;
+    reading.copy_to(&mut source)?;
     anyhow::ensure!(!cancelled(), CANCELLED);
     let rate = audio.map(|audio| audio.rate);
     if let Some(audio) = audio {
@@ -109,7 +84,7 @@ fn write_with(
             &mut File::create_new(work.path().join(encode::VOICE))?,
         )?;
     }
-    let voice_status = voice.status();
+    let voice_status = voice::Status::of(audio);
     drop(voice);
     let captions = if options.captions {
         timeline::captions(

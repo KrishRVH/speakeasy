@@ -77,7 +77,7 @@ impl Review {
                     self.clear_selection(cx);
                     self.notice = Some(deleted.cleanup.map_or_else(
                         || "Show deleted.".into(),
-                        |error| format!("Show removed from the library, but some files still need cleanup: {error}. Close open Show files; Speakeasy retries cleanup within the hour."),
+                        |error| format!("Some of this Show's files could not be deleted: {error}. Close open Show files, refresh, and delete it again."),
                     ));
                 }
             },

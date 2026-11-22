@@ -146,7 +146,7 @@ mod tests {
             .map_err(|_panic| anyhow::anyhow!("The waiter panicked"))??;
         assert_ne!(found.directory, std::path::absolute(&earlier)?);
         assert_eq!(found.directory, std::path::absolute(&fresh)?);
-        assert_eq!(found.health(), recall::Health::Ok);
+        assert!(found.show.is_ok());
         Ok(())
     }
 

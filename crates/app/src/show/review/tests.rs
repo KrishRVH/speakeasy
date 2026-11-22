@@ -6,11 +6,9 @@ use super::{
     library::{Row, list},
     *,
 };
-use crate::show::store::recall::{self, Health};
+use crate::show::store::recall;
 
 mod handoff;
-#[cfg(unix)]
-mod listing;
 mod narration;
 mod navigation;
 mod offers;
@@ -37,7 +35,7 @@ fn row(name: &str) -> Row {
     Row {
         kind: library::Kind::Saved,
         directory: name.into(),
-        health: Health::Ok,
+        readable: true,
         duration: None,
         frames: 2,
         marks: 0,
@@ -145,7 +143,6 @@ fn the_demo_is_an_isolated_set_of_pinned_early_and_damaged_shows() -> anyhow::Re
     assert_eq!(rows.len(), 3);
     assert_eq!(rows[0].pinned, Some(true));
     assert!(rows[1].early && rows[1].narration_lost.is_some());
-    assert_eq!(rows[2].health, Health::Damaged);
     Ok(())
 }
 

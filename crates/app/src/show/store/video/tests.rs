@@ -218,39 +218,6 @@ fn a_clip_after_the_last_image_is_bounded_by_the_voice_and_names_the_end() -> an
     Ok(())
 }
 
-#[test]
-fn a_clip_is_chosen_from_the_show_the_export_reads_even_if_its_path_is_replaced()
--> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let show = root.path().join("show");
-    fs::create_dir(&show)?;
-    let manifest = br#"{
-        "version":3,"duration":500,"surface":{"width":4,"height":2},
-        "strokes":[],"pins":[],"actions":[],"narration":{"words":[]},"marks":[],
-        "keyframes":[{"index":1,"at":250,"reason":"middle","event":"fixture","marks":[0,0]}]
-    }"#;
-    fs::write(show.join(Manifest::FILE), manifest)?;
-    movie::tests::recovered_movie(&show, Moment::from_millis(500))?;
-    let scratch = root.path().join("scratch");
-    let error = write_with(
-        &show,
-        &root.path().join("clip.mp4"),
-        Options::default(),
-        |_| {
-            fs::rename(&show, root.path().join("moved"))?;
-            fs::create_dir(&show)?;
-            fs::write(show.join(Manifest::FILE), manifest)?;
-            Ok(None)
-        },
-        || scratch.exists(),
-        || Ok(scratch.clone()),
-    )
-    .err()
-    .context("The export finished instead of stopping at its cancellation check")?;
-    assert_eq!(error.to_string(), CANCELLED);
-    Ok(())
-}
-
 fn ffmpeg(args: &[&str], path: &Path) -> anyhow::Result<Vec<u8>> {
     let result = Command::new("ffmpeg")
         .args(["-v", "error", "-nostdin"])
@@ -333,15 +300,6 @@ fn fixture(root: &Path) -> anyhow::Result<PathBuf> {
         log.extend(crc32fast::hash(&payload).to_le_bytes());
     }
     fs::write(directory.join("voice.log"), log)?;
-    fs::write(
-        directory.join("voice.expires"),
-        SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)?
-            .as_secs()
-            .checked_add(600)
-            .unwrap()
-            .to_le_bytes(),
-    )?;
     Ok(directory)
 }
 
@@ -350,16 +308,14 @@ fn fixture(root: &Path) -> anyhow::Result<PathBuf> {
 fn synthetic_ffmpeg_export_preserves_voice_ink_captions_and_clip_timing() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let directory = fixture(root.path())?;
-    let scratch = root.path().join("managed-shows");
     let original = fs::read(directory.join(movie::FILE))?;
     let destination = root.path().join("voiced.mp4");
-    let report = write_with(
+    let report = write(
         &directory,
         &destination,
         Options { captions: true },
         |_| Ok(None),
         || false,
-        || Ok(scratch.clone()),
     )?;
     assert_eq!(
         (
@@ -436,7 +392,7 @@ fn synthetic_ffmpeg_export_preserves_voice_ink_captions_and_clip_timing() -> any
     assert!(samples[..3000].iter().all(|&sample| sample < 100));
     assert!(samples[5000..7000].iter().any(|&sample| sample > 2000));
     let clipped = root.path().join("clip.mp4");
-    let report = write_with(
+    let report = write(
         &directory,
         &clipped,
         Options { captions: true },
@@ -447,7 +403,6 @@ fn synthetic_ffmpeg_export_preserves_voice_ink_captions_and_clip_timing() -> any
             )))
         },
         || false,
-        || Ok(scratch.clone()),
     )?;
     assert_eq!(
         (
@@ -467,13 +422,12 @@ fn synthetic_ffmpeg_export_preserves_voice_ink_captions_and_clip_timing() -> any
         serde_json::to_vec(&metadata)?,
     )?;
     let unpainted = root.path().join("unpainted.mp4");
-    let report = write_with(
+    let report = write(
         &directory,
         &unpainted,
         Options::default(),
         |_| Ok(None),
         || false,
-        || Ok(scratch.clone()),
     )?;
     assert_eq!(report.frames_without_annotations, report.frames);
     assert_eq!(report.omitted_annotations, 0);
@@ -495,33 +449,16 @@ fn synthetic_ffmpeg_export_preserves_voice_ink_captions_and_clip_timing() -> any
     calls.send_blocking(())?;
     let cancelled = root.path().join("cancelled.mp4");
     assert!(
-        write_with(
+        write(
             &directory,
             &cancelled,
             Options::default(),
             |_| Ok(None),
-            || {
-                if checks.try_recv().is_ok() {
-                    return false;
-                }
-                assert!(
-                    fs::read_dir(&scratch).unwrap().any(|entry| {
-                        entry
-                            .unwrap()
-                            .file_name()
-                            .to_string_lossy()
-                            .starts_with(super::super::STAGING_PREFIX)
-                    }),
-                    "Private intermediates must use managed, expiring staging"
-                );
-                true
-            },
-            || Ok(scratch.clone())
+            || checks.try_recv().is_err(),
         )
         .is_err()
     );
     assert!(!cancelled.exists());
-    assert_eq!(fs::read_dir(&scratch)?.count(), 0);
     assert!(!fs::read_dir(root.path())?.any(|entry| {
         entry
             .unwrap()

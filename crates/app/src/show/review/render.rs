@@ -18,10 +18,7 @@ use crate::{
         CONTROL_TEXT, DETAIL_LINE, DETAIL_TEXT, Focus, Kit, PANEL_CORNER, TITLE_TEXT, Tone, Weight,
     },
     icons,
-    show::{
-        Interrupted,
-        store::{recall::Health, retention::Retention},
-    },
+    show::{Interrupted, store::retention::Retention},
     theme::{Palette, alpha},
 };
 
@@ -986,11 +983,7 @@ fn status(row: &Row) -> impl Iterator<Item = (&'static str, Tone)> {
             | NarrationLoss::NotTranscribed => ("No narration", Tone::Muted),
         }),
         (row.early && matches!(row.kind, Kind::Saved)).then_some(("Ended early", Tone::Warn)),
-        match row.health {
-            Health::Ok => None,
-            Health::Unsupported => Some(("Can't open", Tone::Warn)),
-            Health::Damaged => Some(("Damaged", Tone::Warn)),
-        },
+        (!row.readable).then_some(("Can't open", Tone::Warn)),
     ]
     .into_iter()
     .flatten()

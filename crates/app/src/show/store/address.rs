@@ -1,5 +1,5 @@
 use std::{
-    fs, io,
+    io,
     path::{Path, PathBuf},
 };
 
@@ -27,28 +27,9 @@ pub(crate) fn resolve(
     std::path::absolute(target)
 }
 
-pub(crate) fn managed_id(parent: &Path, directory: &Path) -> io::Result<Option<ShowId>> {
-    let metadata = fs::symlink_metadata(directory)?;
-    if !metadata.is_dir() {
-        return Ok(None);
-    }
-    let Some(id) = directory
-        .file_name()
-        .and_then(|name| name.to_str())
-        .and_then(ShowId::parse)
-    else {
-        return Ok(None);
-    };
-    let Some(container) = directory.parent() else {
-        return Ok(None);
-    };
-    let Some(managed) = super::found(parent.canonicalize())? else {
-        return Ok(None);
-    };
-
-    Ok((container.canonicalize()? == managed
-        && directory.canonicalize()? == managed.join(id.as_str()))
-    .then_some(id))
+pub(crate) fn managed_id(parent: &Path, directory: &Path) -> Option<ShowId> {
+    let id = ShowId::parse(directory.file_name()?.to_str()?)?;
+    (directory.parent()? == parent).then_some(id)
 }
 
 #[cfg(test)]

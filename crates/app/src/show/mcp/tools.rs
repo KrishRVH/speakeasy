@@ -1,14 +1,13 @@
-use std::io;
+use std::{fs, io, path::Path};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use speakeasy_platform::ReadDirectory;
 use speakeasy_show::{Manifest, Narration};
 
 use super::{
     DISCLOSURE, Roots, protocol,
-    scope::{Folder, PAGE, PATH_LIMIT},
+    scope::{PAGE, PATH_LIMIT},
 };
 use crate::show::{
     evidence::{
@@ -112,26 +111,10 @@ struct ReadEvidence {
 fn read(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
     let request: Read = decode(arguments)?;
     let query = lookup(request.at, request.mark, request.phrase, request.occurrence)?;
-    let folder = roots.resolve(&request.show)?;
-    read_folder(
-        roots,
-        folder,
-        query.as_ref(),
-        request.narration,
-        recall::summary_from,
-    )
-}
-
-fn read_folder(
-    roots: &Roots,
-    folder: Folder,
-    query: Option<&Query>,
-    with_narration: bool,
-    summary: impl FnOnce(&ReadDirectory) -> io::Result<String>,
-) -> Result<Vec<Value>, String> {
+    let directory = roots.resolve(&request.show)?;
     let summary =
-        summary(&folder.files).map_err(|_private| "Cannot read that Show's edited summary")?;
-    let entry = recall::Entry::read_from(folder.path, &folder.files, roots.managed());
+        recall::summary(&directory).map_err(|_private| "Cannot read that Show's edited summary")?;
+    let entry = open(&directory, roots.managed())?;
     let manifest = manifest_of(&entry)?;
     let found = query
         .map(|query| query.resolve(manifest))
@@ -140,7 +123,7 @@ fn read_folder(
     let content = ReadEvidence {
         show: Inspection::of(&entry),
         summary: excerpt(&summary),
-        narration: with_narration.then(|| narration(manifest)),
+        narration: request.narration.then(|| narration(manifest)),
         location: found,
     };
     Ok(vec![text(&content)?])
@@ -204,18 +187,17 @@ fn image(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
         (None, None, Some(query)) => Picture::Source(query),
         _ => return Err("Choose exactly one sheet, keyframe, time, mark or phrase".to_owned()),
     };
-    let folder = roots.resolve(&request.show)?;
-    let entry = recall::Entry::read_from(folder.path.clone(), &folder.files, None);
+    let directory = roots.resolve(&request.show)?;
+    let entry = open(&directory, None)?;
     let manifest = manifest_of(&entry)?;
-    let directory = &folder.path;
     let (png, metadata) = match picture {
         Picture::Sheet(number) => {
             let (name, frames) = number
                 .checked_sub(1)
                 .and_then(|index| manifest.sheets().nth(index))
                 .ok_or("That Show has no sheet with that number")?;
-            let png = recall::read_from(&folder.files, &name, IMAGE_LIMIT)
-                .map_err(|_private| "That saved sheet is unavailable or exceeds 8 MiB")?;
+            let png = fs::read(directory.join(&name))
+                .map_err(|_private| "That saved sheet is unavailable")?;
             (
                 png,
                 json!({"show": directory, "sheet": number, "frames": frames.iter().map(|frame| frame.index).collect::<Vec<_>>(), "annotations": true}),
@@ -226,8 +208,8 @@ fn image(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
                 .checked_sub(1)
                 .and_then(|index| manifest.keyframes().get(index))
                 .ok_or("That Show has no keyframe with that number")?;
-            let png = recall::read_from(&folder.files, &frame.file(), IMAGE_LIMIT)
-                .map_err(|_private| "That saved keyframe is unavailable or exceeds 8 MiB")?;
+            let png = fs::read(directory.join(frame.file()))
+                .map_err(|_private| "That saved keyframe is unavailable")?;
             let marks: Vec<_> = manifest
                 .marks()
                 .get(frame.marks.clone())
@@ -240,7 +222,7 @@ fn image(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
                 json!({"show": directory, "keyframe": number, "atMs": frame.at.as_millis(), "marks": marks, "crop": frame.crop, "annotations": true}),
             )
         },
-        Picture::Source(query) => source_image(&folder, manifest, &query)?,
+        Picture::Source(query) => source_image(&directory, manifest, &query)?,
     };
     if !u64::try_from(png.len()).is_ok_and(|length| length <= IMAGE_LIMIT) {
         return Err("The selected image is not a PNG of at most 8 MiB".to_owned());
@@ -261,16 +243,20 @@ fn image(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
     ])
 }
 
+fn open(directory: &Path, managed: Option<&Path>) -> Result<recall::Entry, &'static str> {
+    recall::Entry::open(directory, managed).map_err(|_private| "Cannot open that Show")
+}
+
 fn manifest_of(entry: &recall::Entry) -> Result<&Manifest, &'static str> {
     entry
         .show
         .as_ref()
         .map(|show| &show.manifest)
-        .map_err(|_private| "That Show's manifest is damaged or unsupported")
+        .map_err(|_private| "Cannot read that Show's manifest")
 }
 
 fn source_image(
-    folder: &Folder,
+    directory: &Path,
     manifest: &Manifest,
     query: &Query,
 ) -> Result<(Vec<u8>, Value), String> {
@@ -279,7 +265,7 @@ fn source_image(
         .selected
         .ok_or("Several phrase matches exist; use show_read to list matches, then choose match")?;
     let unavailable = |_private| "Retained source frames are unavailable for that Show";
-    let mut source = source::Reader::open(&folder.files).map_err(unavailable)?;
+    let mut source = source::Reader::open(directory).map_err(unavailable)?;
     let index = source.inspect().map_err(unavailable)?;
     if index.duration() != manifest.recording().duration {
         return Err("Retained source timing disagrees with the Show manifest".to_owned());
@@ -291,7 +277,7 @@ fn source_image(
         .image
         .encode_png()
         .map_err(|_private| "Cannot encode the retained source image")?;
-    let metadata = json!({"show": folder.path, "location": found, "sampledMs": frame.at.as_millis(), "requestedMs": span.start().as_millis(), "samplingStride": index.stride(), "longestGapMs": source::longest_gap(&index), "annotations": false});
+    let metadata = json!({"show": directory, "location": found, "sampledMs": frame.at.as_millis(), "requestedMs": span.start().as_millis(), "samplingStride": index.stride(), "longestGapMs": source::longest_gap(&index), "annotations": false});
     Ok((png, metadata))
 }
 

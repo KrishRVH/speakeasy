@@ -153,61 +153,6 @@ fn inspected(entry: &recall::Entry) -> anyhow::Result<Value> {
 }
 
 #[test]
-fn an_inspected_show_claims_its_managed_id_only_for_the_directory_it_read() -> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let managed = root.path().join("20261020T143205Z-2");
-    demo(Some(managed.clone()), &mut io::sink())?;
-    let original = speakeasy_platform::ReadDirectory::open(&managed)?;
-    fs::rename(&managed, root.path().join("moved"))?;
-    demo(Some(managed.clone()), &mut io::sink())?;
-    let value = inspected(&recall::Entry::read_from(
-        managed.clone(),
-        &original,
-        Some(root.path()),
-    ))?;
-    assert!(
-        value["id"].is_null() && value["expiresAt"].is_null(),
-        "{value}"
-    );
-    let value = inspected(&recall::Entry::open(&managed, Some(root.path()))?)?;
-    assert_eq!(value["id"], "20261020T143205Z-2");
-    Ok(())
-}
-
-#[test]
-fn an_inspected_link_to_a_managed_show_claims_no_id_as_keep_refuses_it() -> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let shows = root.path().join("shows");
-    fs::create_dir(&shows)?;
-    let managed = shows.join("20261020T143205Z-2");
-    demo(Some(managed.clone()), &mut io::sink())?;
-    let elsewhere = root.path().join("elsewhere");
-    fs::create_dir(&elsewhere)?;
-    let link = elsewhere.join("20261020T143205Z-2");
-    #[cfg(unix)]
-    std::os::unix::fs::symlink(&managed, &link)?;
-    #[cfg(windows)]
-    assert!(
-        std::process::Command::new("cmd")
-            .args(["/C", "mklink", "/J"])
-            .arg(&link)
-            .arg(&managed)
-            .stdout(std::process::Stdio::null())
-            .status()?
-            .success()
-    );
-    assert!(retention::set_kept(&shows, &link, true).is_err());
-    let value = inspected(&recall::Entry::open(&link, Some(&shows))?)?;
-    assert!(
-        value["id"].is_null() && value["expiresAt"].is_null(),
-        "{value}"
-    );
-    let value = inspected(&recall::Entry::open(&managed, Some(&shows))?)?;
-    assert_eq!(value["id"], "20261020T143205Z-2");
-    Ok(())
-}
-
-#[test]
 fn metadata_reports_exact_managed_identity_and_expiry_without_claiming_moved_bundles()
 -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
@@ -292,27 +237,12 @@ fn a_demo_is_inspectable_and_output_never_contains_its_narration() -> anyhow::Re
 }
 
 #[test]
-fn inspection_reports_damage_before_failing_and_does_not_repair_it() -> anyhow::Result<()> {
+fn inspection_reports_an_unreadable_show_before_failing() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let directory = root.path().join("show");
     demo(Some(directory.clone()), &mut io::sink())?;
-    let missing = directory.join("frames/frame-01.png");
-    fs::remove_file(&missing)?;
-    let mut output = Vec::new();
-    assert!(
-        Command::Inspect {
-            directory: directory.clone(),
-            json: true
-        }
-        .write(&mut output)
-        .is_err()
-    );
-    let value: Value = serde_json::from_slice(&output)?;
-    assert_eq!(value["status"], "damaged");
-    assert_eq!(value["frames"].as_array().unwrap().len(), 5);
-    assert!(!missing.exists());
     fs::write(directory.join("show.json"), br#"{"version":99}"#)?;
-    output.clear();
+    let mut output = Vec::new();
     assert!(
         Command::Inspect {
             directory,
@@ -322,9 +252,8 @@ fn inspection_reports_damage_before_failing_and_does_not_repair_it() -> anyhow::
         .is_err()
     );
     let value: Value = serde_json::from_slice(&output)?;
-    assert_eq!(value["status"], "unsupported");
+    assert_eq!(value["status"], "unreadable");
     assert!(value["keyframes"].is_null());
-    assert!(value["pinned"].is_null());
     assert!(value.get("frames").is_none());
     Ok(())
 }
@@ -440,7 +369,7 @@ async fn checkpoint_damage_is_reported_beside_readable_saved_shows() -> anyhow::
     let listing: Vec<Value> = serde_json::from_slice(&bytes)?;
     assert_eq!(listing.len(), 2);
     assert!(
-        listing.iter().any(|entry| entry["status"] == "damaged"
+        listing.iter().any(|entry| entry["status"] == "unreadable"
             && entry["problems"].as_array().unwrap().len() == 1)
     );
     assert!(

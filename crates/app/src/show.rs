@@ -25,5 +25,5 @@ pub(crate) use self::{
 };
 
 pub(crate) fn keep(recorded: std::time::SystemTime) -> anyhow::Result<Kept> {
-    Keeper::start(store::private_directory, recorded)
+    Keeper::start(store::directory, recorded)
 }

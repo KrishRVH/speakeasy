@@ -14,8 +14,7 @@ async fn movie_recovery_retains_playable_prefix_beyond_the_annotation_journal() 
         bail!("Movie recovery did not publish");
     };
     let entry = store::recall::Entry::open(show.directory(), None)?;
-    assert_eq!(entry.health(), store::recall::Health::Ok);
-    let movie = entry.show.unwrap().movie.unwrap().metadata;
+    let movie = entry.show?.movie.unwrap().metadata;
     let coverage = movie.coverage.unwrap();
     assert_eq!(coverage.end_ms, 1_250);
     assert_eq!(coverage.annotations_through_ms, 500);
@@ -72,9 +71,10 @@ async fn movie_startup_failure_saves_stills_with_an_explicit_video_loss() -> any
             bail!("Still recovery did not publish");
         };
         assert!(movie_lost);
-        assert_eq!(
-            store::recall::Entry::open(show.directory(), None)?.health(),
-            store::recall::Health::Ok
+        assert!(
+            store::recall::Entry::open(show.directory(), None)?
+                .show
+                .is_ok()
         );
         assert!(!show.directory().join(store::movie::FILE).exists());
         assert!(!interrupted.directory().exists());

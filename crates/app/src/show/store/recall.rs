@@ -1,120 +1,47 @@
 use std::{
-    ffi::OsStr,
     fmt,
     fs::{self, File},
     io::{self, Read as _},
     path::{Path, PathBuf},
 };
 
-use serde::Serialize;
+use anyhow::Context as _;
 use speakeasy_platform::ReadDirectory;
-use speakeasy_show::{Bundle, Manifest, Unreadable};
+use speakeasy_show::{Bundle, Manifest};
 
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
 use super::SavedShow;
-use super::{PIN, address::ShowId, found, stamp};
-
-pub(super) const SUMMARY_LIMIT: u64 = 1 << 20;
-
-pub(super) const MANIFEST_LIMIT: u64 = 16 << 20;
-
-pub(crate) const IMAGE_LIMIT: u64 = 32 << 20;
+use super::{
+    address::{self, ShowId},
+    found, movie, stamp,
+};
 
 #[derive(Debug)]
 pub(crate) struct ReadShow {
     pub manifest: Manifest,
-    pub pinned: bool,
-    pub problems: Vec<FileProblem>,
-    pub movie: Option<super::movie::Inspected>,
+    pub movie: Option<movie::Inspected>,
 }
-
-#[derive(Debug)]
-pub(crate) struct FileProblem {
-    pub name: String,
-    pub reason: String,
-}
-
-#[derive(Debug)]
-pub(crate) enum ReadError {
-    Folder,
-    Manifest(Unreadable),
-    File(FileProblem),
-}
-
-impl fmt::Display for ReadError {
-    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Folder => out.write_str("Cannot open this folder"),
-            Self::Manifest(error) => error.fmt(out),
-            Self::File(problem) => write!(out, "{}: {}", problem.name, problem.reason),
-        }
-    }
-}
-
-impl std::error::Error for ReadError {}
 
 #[derive(Debug)]
 pub(crate) struct Entry {
     pub directory: PathBuf,
-    pub show: Result<ReadShow, ReadError>,
-    pinned: Option<bool>,
-    id: Option<ShowId>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum Health {
-    Ok,
-    Damaged,
-    Unsupported,
+    pub show: anyhow::Result<ReadShow>,
+    pub pinned: bool,
+    pub id: Option<ShowId>,
 }
 
 impl Entry {
-    pub(crate) fn health(&self) -> Health {
-        match &self.show {
-            Ok(show) if show.problems.is_empty() => Health::Ok,
-            Err(ReadError::Manifest(Unreadable::Unsupported(_))) => Health::Unsupported,
-            _ => Health::Damaged,
-        }
-    }
-
-    pub(crate) const fn pinned(&self) -> Option<bool> {
-        self.pinned
-    }
-
-    pub(crate) const fn id(&self) -> Option<&ShowId> {
-        self.id.as_ref()
-    }
-
     pub(crate) fn open(directory: &Path, managed: Option<&Path>) -> io::Result<Self> {
         let directory = std::path::absolute(directory)?;
-        let files = open_directory(&directory)?;
-        Ok(Self::read_from(directory, &files, managed))
-    }
-
-    pub(in crate::show) const fn unopened(directory: PathBuf) -> Self {
-        Self {
-            directory,
-            show: Err(ReadError::Folder),
-            pinned: None,
-            id: None,
+        if !fs::metadata(&directory)?.is_dir() {
+            return Err(io::ErrorKind::NotADirectory.into());
         }
-    }
-
-    pub(in crate::show) fn read_from(
-        directory: PathBuf,
-        files: &ReadDirectory,
-        managed: Option<&Path>,
-    ) -> Self {
-        let pinned = files.contains(OsStr::new(PIN));
-        let show = read(files, pinned.as_ref().copied());
-        let id = managed.and_then(|parent| managed_id(parent, &directory, files));
-        Self {
+        Ok(Self {
+            show: read(&directory),
+            pinned: super::pinned(&directory).unwrap_or(false),
+            id: managed.and_then(|parent| address::managed_id(parent, &directory)),
             directory,
-            show,
-            pinned: pinned.ok(),
-            id,
-        }
+        })
     }
 
     pub(crate) fn file(&self, name: &str) -> PathBuf {
@@ -122,28 +49,25 @@ impl Entry {
     }
 }
 
+fn read(directory: &Path) -> anyhow::Result<ReadShow> {
+    let bytes = fs::read(directory.join(Manifest::FILE))
+        .with_context(|| format!("Cannot read {}", Manifest::FILE))?;
+    let manifest = Manifest::parse(&bytes)?;
+    let movie = movie::saved(directory, manifest.recording().duration)
+        .with_context(|| format!("Cannot read {}", movie::FILE))?;
+    Ok(ReadShow { manifest, movie })
+}
+
 pub(crate) fn list(parent: &Path) -> io::Result<impl Iterator<Item = io::Result<Entry>>> {
-    let paths = directories(parent)?;
-    Ok(paths.into_iter().filter_map(|path| {
-        let opened = Entry::open(&path, Some(parent)).and_then(|entry| {
-            fs::metadata(&entry.directory)?;
-            Ok(entry)
-        });
-        match found(opened) {
-            Ok(entry) => entry.map(Ok),
-            Err(_private) => found(fs::symlink_metadata(&path))
-                .map(|listed| listed.map(|_| Entry::unopened(path)))
-                .transpose(),
-        }
-    }))
+    Ok(directories(parent)?
+        .into_iter()
+        .map(move |directory| Entry::open(&directory, Some(parent))))
 }
 
 pub(crate) fn directories(parent: &Path) -> io::Result<Vec<PathBuf>> {
     let Some(entries) = found(fs::read_dir(parent))? else {
         return Ok(Vec::new());
     };
-    #[cfg(unix)]
-    let _searchable = found(fs::symlink_metadata(parent.join(".")))?;
     let mut shows = Vec::new();
     for entry in entries {
         let entry = entry?;
@@ -154,7 +78,7 @@ pub(crate) fn directories(parent: &Path) -> io::Result<Vec<PathBuf>> {
         else {
             continue;
         };
-        if !found(entry.file_type())?.is_some_and(|kind| kind.is_dir()) {
+        if !entry.file_type()?.is_dir() {
             continue;
         }
         let suffix = name
@@ -166,101 +90,32 @@ pub(crate) fn directories(parent: &Path) -> io::Result<Vec<PathBuf>> {
     Ok(shows.into_iter().map(|(_, _, entry)| entry).collect())
 }
 
-fn read(
-    directory: &ReadDirectory,
-    pinned: Result<bool, &io::Error>,
-) -> Result<ReadShow, ReadError> {
-    let file_error = |name: &str, error: &io::Error| {
-        ReadError::File(FileProblem {
-            name: name.to_owned(),
-            reason: error.to_string(),
-        })
-    };
-    let bytes = read_from(directory, Manifest::FILE, MANIFEST_LIMIT)
-        .map_err(|error| file_error(Manifest::FILE, &error))?;
-    let manifest = Manifest::parse(&bytes).map_err(ReadError::Manifest)?;
-    let pinned = pinned.map_err(|error| file_error(PIN, error))?;
-    let mut problems: Vec<_> = manifest
-        .files()
-        .filter_map(|name| {
-            let limit = if name == Bundle::SUMMARY {
-                SUMMARY_LIMIT
-            } else {
-                u64::MAX
-            };
-            open_file(directory, &name, limit)
-                .err()
-                .map(|error| FileProblem {
-                    name,
-                    reason: error.to_string(),
-                })
-        })
-        .collect();
-    let movie = match super::movie::saved(directory, manifest.recording().duration) {
-        Ok(movie) => movie,
-        Err(error) => {
-            problems.push(FileProblem {
-                name: super::movie::FILE.to_owned(),
-                reason: error.to_string(),
-            });
-            None
-        },
-    };
-    Ok(ReadShow {
-        manifest,
-        pinned,
-        problems,
-        movie,
-    })
-}
-
-fn managed_id(parent: &Path, directory: &Path, files: &ReadDirectory) -> Option<ShowId> {
-    let id = super::address::managed_id(parent, directory).ok()??;
-    files.is_at(&parent.join(id.as_str())).ok()?.then_some(id)
+pub(crate) fn summary(directory: &Path) -> io::Result<String> {
+    fs::read_to_string(directory.join(Bundle::SUMMARY))
 }
 
 pub(in crate::show::store) fn open_directory(directory: &Path) -> io::Result<ReadDirectory> {
-    ReadDirectory::open(&directory.canonicalize()?)
-}
-
-pub(super) fn regular_file(directory: &Path, name: &str, limit: u64) -> io::Result<()> {
-    open_file(&open_directory(directory)?, name, limit).map(drop)
+    ReadDirectory::open(directory)
 }
 
 pub(super) fn open_file(directory: &ReadDirectory, name: &str, limit: u64) -> io::Result<File> {
     let (file, metadata) = directory.file(Path::new(name))?;
     if metadata.len() > limit {
-        return Err(too_large());
+        return Err(io::Error::new(
+            io::ErrorKind::FileTooLarge,
+            "file is too large",
+        ));
     }
-    if metadata.len() == 0 && name != Bundle::SUMMARY {
+    if metadata.len() == 0 {
         return Err(io::Error::other(Empty));
     }
     Ok(file)
 }
 
-pub(crate) fn read_file(directory: &Path, name: &str, limit: u64) -> io::Result<Vec<u8>> {
-    read_from(&open_directory(directory)?, name, limit)
-}
-
-pub(in crate::show) fn read_from(
-    directory: &ReadDirectory,
-    name: &str,
-    limit: u64,
-) -> io::Result<Vec<u8>> {
-    read_bounded(open_file(directory, name, limit)?, limit)
-}
-
-pub(super) fn read_bounded(file: File, limit: u64) -> io::Result<Vec<u8>> {
+pub(super) fn read_file(directory: &Path, name: &str, limit: u64) -> io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
-    file.take(limit.saturating_add(1)).read_to_end(&mut bytes)?;
-    if !u64::try_from(bytes.len()).is_ok_and(|length| length <= limit) {
-        return Err(too_large());
-    }
+    open_file(&open_directory(directory)?, name, limit)?.read_to_end(&mut bytes)?;
     Ok(bytes)
-}
-
-fn too_large() -> io::Error {
-    io::Error::new(io::ErrorKind::FileTooLarge, "file is too large")
 }
 
 pub(in crate::show::store) fn empty(error: &io::Error) -> bool {
@@ -278,40 +133,20 @@ impl fmt::Display for Empty {
 
 impl std::error::Error for Empty {}
 
-pub(crate) fn summary(directory: &Path) -> io::Result<String> {
-    summary_from(&open_directory(directory)?)
-}
-
-pub(in crate::show) fn summary_from(directory: &ReadDirectory) -> io::Result<String> {
-    let bytes = read_from(directory, Bundle::SUMMARY, SUMMARY_LIMIT)?;
-    String::from_utf8(bytes)
-        .map_err(|_private_error| io::Error::other("summary.md is not valid UTF-8 text"))
-}
-
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
 impl SavedShow {
     pub(crate) fn folder(&self) -> anyhow::Result<Option<&Path>> {
-        let metadata = found(fs::metadata(&self.0)).map_err(cannot_read(&self.0))?;
+        let metadata = found(fs::metadata(&self.0))
+            .with_context(|| format!("Cannot read {}", self.0.display()))?;
         Ok(metadata
             .is_some_and(|metadata| metadata.is_dir())
             .then_some(self.directory()))
     }
 
     pub(crate) fn summary(&self) -> anyhow::Result<Option<String>> {
-        let path = self.0.join(Bundle::SUMMARY);
-        match found(summary(&self.0)) {
-            Err(error) if error.kind() == io::ErrorKind::FileTooLarge => Err(anyhow::anyhow!(
-                "{} is too large to copy; a Show's summary is a few kilobytes.",
-                path.display()
-            )),
-            read => read.map_err(cannot_read(&path)),
-        }
+        found(summary(&self.0))
+            .with_context(|| format!("Cannot read {}", self.0.join(Bundle::SUMMARY).display()))
     }
-}
-
-#[cfg(any(target_os = "windows", target_os = "macos", test))]
-fn cannot_read(path: &Path) -> impl FnOnce(io::Error) -> anyhow::Error {
-    move |error| anyhow::anyhow!("Cannot read {}: {error}.", path.display())
 }
 
 #[cfg(test)]

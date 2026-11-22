@@ -6,10 +6,7 @@ use std::{
 };
 
 use anyhow::Context as _;
-use speakeasy_platform::ReadDirectory;
 use speakeasy_show::{Journal, Moment, Source, SourceFrame};
-
-use super::{found, recall};
 
 pub(crate) const FILE: &str = "source.frames";
 
@@ -29,32 +26,24 @@ pub(crate) fn longest_gap(source: &Source) -> u64 {
 }
 
 pub(crate) fn present(directory: &Path) -> io::Result<bool> {
-    Ok(found(recall::regular_file(directory, FILE, Source::FILE_LIMIT))?.is_some())
+    fs::exists(directory.join(FILE))
 }
 
 pub(crate) fn inspect(directory: &Path) -> anyhow::Result<Source> {
-    Reader::open(&recall::open_directory(directory)?)?.inspect()
+    Reader::open(directory)?.inspect()
 }
 
 pub(crate) fn frame(directory: &Path, source: &Source, at: Moment) -> anyhow::Result<SourceFrame> {
-    Reader::open(&recall::open_directory(directory)?)?.frame(source, at)
+    Reader::open(directory)?.frame(source, at)
 }
 
 pub(in crate::show) struct Reader(File);
 
 impl Reader {
-    pub(in crate::show) fn open(directory: &ReadDirectory) -> anyhow::Result<Self> {
-        recall::open_file(directory, FILE, Source::FILE_LIMIT)
+    pub(in crate::show) fn open(directory: &Path) -> anyhow::Result<Self> {
+        File::open(directory.join(FILE))
             .map(Self)
             .context("Source frames are unavailable for this Show")
-    }
-
-    pub(super) fn optional(directory: &ReadDirectory) -> io::Result<Option<Self>> {
-        Ok(found(recall::open_file(directory, FILE, Source::FILE_LIMIT))?.map(Self))
-    }
-
-    pub(super) fn into_file(self) -> File {
-        self.0
     }
 
     pub(in crate::show) fn inspect(&mut self) -> anyhow::Result<Source> {
@@ -69,10 +58,6 @@ impl Reader {
         source: &Source,
         at: Moment,
     ) -> anyhow::Result<SourceFrame> {
-        anyhow::ensure!(
-            self.0.metadata()?.len() == source.bytes(),
-            "Source frames changed. Refresh the Show before reading them."
-        );
         source
             .frame(at, |range| read_range(&mut self.0, range))
             .context("Cannot read the recorded source frame")
@@ -97,42 +82,16 @@ pub(super) fn write(directory: &Path, journal: &Journal, duration: Moment) -> an
     journal.write_source(duration, |bytes| {
         output.write_all(bytes).map_err(anyhow::Error::from)
     })?;
-    output
-        .into_inner()
-        .map_err(io::IntoInnerError::into_error)?
-        .sync_all()?;
+    output.flush()?;
+    drop(output);
     staging
         .persist_noclobber(directory.join(FILE))
         .map_err(|error| error.error)?;
-    #[expect(
-        clippy::let_underscore_must_use,
-        reason = "The complete sidecar is already visible; a directory sync failure must not report it as lost"
-    )]
-    let _ = super::sync_directory(directory);
     Ok(())
 }
 
 pub(crate) fn export(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        options.mode(0o600);
-    }
-    let mut file = options.open(path)?;
-    let written = file.write_all(bytes).and_then(|()| file.sync_all());
-    drop(file);
-    if let Err(error) = written {
-        return match fs::remove_file(path) {
-            Ok(()) => Err(error),
-            Err(cleanup) => Err(io::Error::other(format!(
-                "The export could not be written ({error}) or removed ({cleanup}); remove {}",
-                path.display()
-            ))),
-        };
-    }
-    Ok(())
+    File::create_new(path)?.write_all(bytes)
 }
 
 #[cfg(test)]

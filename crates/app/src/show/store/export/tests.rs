@@ -1,13 +1,14 @@
 use std::{
     collections::BTreeSet,
     fs::{self, File},
+    io::Read as _,
 };
 
 use serde_json::json;
-use speakeasy_show::{Image, Journal, Moment};
+use speakeasy_show::{Bundle, Image, Journal, Moment};
 use zip::ZipArchive;
 
-use super::*;
+use super::{super::recall, *};
 
 fn fixture(parent: &Path) -> anyhow::Result<PathBuf> {
     let directory = parent.join("original");
@@ -46,7 +47,6 @@ fn archive_moves_with_edited_summary_images_and_retained_samples_but_no_extra_fi
     for name in [
         "audio.wav",
         "voice.log",
-        "voice.expires",
         ".pinned",
         ".checkpoint",
         "unrelated.txt",
@@ -90,10 +90,7 @@ fn archive_moves_with_edited_summary_images_and_retained_samples_but_no_extra_fi
         }
     }
     fs::remove_dir_all(&directory)?;
-    assert_eq!(
-        recall::Entry::open(&extracted, None)?.health(),
-        recall::Health::Ok
-    );
+    assert!(recall::Entry::open(&extracted, None)?.show.is_ok());
     let retained = source::inspect(&extracted)?;
     assert_eq!(
         source::frame(&extracted, &retained, Moment::from_millis(500))?
@@ -107,101 +104,6 @@ fn archive_moves_with_edited_summary_images_and_retained_samples_but_no_extra_fi
     assert!(
         !guide.contains("PRIVATE_") && !guide.contains(&directory.to_string_lossy().to_string())
     );
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        assert_eq!(
-            fs::metadata(destination)?.permissions().mode() & 0o777,
-            0o600
-        );
-    }
-    Ok(())
-}
-
-struct Replacing<'a> {
-    archive: io::Cursor<Vec<u8>>,
-    after: &'a [u8],
-    replace: Option<Box<dyn FnOnce() -> anyhow::Result<()> + 'a>>,
-}
-
-fn replacing<'a>(
-    after: &'a str,
-    replace: impl FnOnce() -> anyhow::Result<()> + 'a,
-) -> Replacing<'a> {
-    Replacing {
-        archive: io::Cursor::new(Vec::new()),
-        after: after.as_bytes(),
-        replace: Some(Box::new(replace)),
-    }
-}
-
-impl io::Write for Replacing<'_> {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        let written = self.archive.write(bytes)?;
-        if self
-            .archive
-            .get_ref()
-            .windows(self.after.len())
-            .any(|window| window == self.after)
-            && let Some(replace) = self.replace.take()
-        {
-            replace().map_err(io::Error::other)?;
-        }
-        Ok(written)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.archive.flush()
-    }
-}
-
-impl Seek for Replacing<'_> {
-    fn seek(&mut self, position: io::SeekFrom) -> io::Result<u64> {
-        self.archive.seek(position)
-    }
-}
-
-#[test]
-fn archive_members_come_from_the_show_it_opened_after_its_path_is_replaced() -> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let directory = fixture(root.path())?;
-    let opened = ReadDirectory::open(&directory.canonicalize()?)?;
-    let moved = root.path().join("moved");
-    let mut zip = replacing(Bundle::SUMMARY, || {
-        fs::rename(&directory, &moved)?;
-        fixture(root.path())?;
-        fs::write(directory.join(Bundle::SUMMARY), "REPLACEMENT_SUMMARY")?;
-        Ok(())
-    });
-    archive(&opened, &mut zip)?;
-    assert!(zip.replace.is_none());
-    let mut exported = ZipArchive::new(zip.archive)?;
-    for name in [Bundle::SUMMARY, source::FILE] {
-        let mut bytes = Vec::new();
-        exported.by_name(name)?.read_to_end(&mut bytes)?;
-        assert_eq!(bytes, fs::read(moved.join(name))?, "{name}");
-    }
-    Ok(())
-}
-
-#[test]
-fn retained_frames_that_grow_after_inspection_are_not_exported() -> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let directory = fixture(root.path())?;
-    let opened = ReadDirectory::open(&directory.canonicalize()?)?;
-    let mut zip = replacing(source::FILE, || {
-        fs::OpenOptions::new()
-            .append(true)
-            .open(directory.join(source::FILE))?
-            .write_all(b"appended")?;
-        Ok(())
-    });
-    let message = archive(&opened, &mut zip)
-        .err()
-        .context("Grown retained frames were exported")?
-        .to_string();
-    assert!(zip.replace.is_none());
-    assert!(message.contains("changed during export"), "{message}");
     Ok(())
 }
 
@@ -263,55 +165,5 @@ fn failed_or_repeated_exports_leave_destinations_and_originals_unchanged() -> an
         "Cannot open the export folder; choose an existing folder"
     );
     assert!(!root.path().join("missing").exists());
-    Ok(())
-}
-
-#[test]
-fn source_damage_and_oversized_images_fail_without_publishing_partial_archives()
--> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let directory = fixture(root.path())?;
-    let destination = root.path().join("export.zip");
-    fs::write(directory.join(source::FILE), b"damaged retained frames")?;
-    assert!(write(&directory, &destination).is_err());
-    assert!(!destination.exists());
-    fs::remove_file(directory.join(source::FILE))?;
-    let mut other = Journal::default();
-    other.admit().unwrap().record(
-        Moment::from_millis(200),
-        Image::from_bgra(2, 2, vec![20; 16])?,
-    );
-    source::write(&directory, &other, Moment::from_millis(1500))?;
-    assert!(
-        write(&directory, &destination).is_err(),
-        "Export accepted retained frames whose duration disagrees with the Show"
-    );
-    assert!(!destination.exists());
-    fs::remove_file(directory.join(source::FILE))?;
-    File::options()
-        .write(true)
-        .open(directory.join("contact-sheet.png"))?
-        .set_len(recall::IMAGE_LIMIT + 1)?;
-    assert!(write(&directory, &destination).is_err());
-    assert_eq!(fs::read_dir(root.path())?.count(), 1);
-    Ok(())
-}
-
-#[cfg(unix)]
-#[test]
-fn linked_inventory_and_destinations_are_refused_even_when_targets_exist() -> anyhow::Result<()> {
-    use std::os::unix::fs::symlink;
-    let root = tempfile::tempdir()?;
-    let directory = fixture(root.path())?;
-    let outside = root.path().join("private.txt");
-    fs::write(&outside, b"PRIVATE_OUTSIDE_SHOW")?;
-    fs::remove_file(directory.join("frames/frame-01.png"))?;
-    symlink(&outside, directory.join("frames/frame-01.png"))?;
-    let destination = root.path().join("export.zip");
-    assert!(write(&directory, &destination).is_err());
-    assert!(!destination.exists());
-    symlink(&outside, &destination)?;
-    assert!(write(&directory, &destination).is_err());
-    assert_eq!(fs::read(outside)?, b"PRIVATE_OUTSIDE_SHOW");
     Ok(())
 }
