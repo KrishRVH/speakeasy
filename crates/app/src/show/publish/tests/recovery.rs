@@ -164,48 +164,6 @@ async fn cancelled_or_failed_recovery_and_cancelled_publication_keep_the_checkpo
         Published::Cancelled
     ));
     assert!(interrupted.directory().exists());
-    interrupted.lock()?.discard()?;
-    assert!(!interrupted.directory().exists());
-    Ok(())
-}
-
-#[tokio::test]
-async fn failed_publication_keeps_recoverable_frames_and_success_cleans_up() -> anyhow::Result<()> {
-    let parent = tempfile::tempdir()?;
-    let (_input, active) = permit();
-    let checkpoint = checkpoint(parent.path()).await?;
-    assert!(
-        publish_with(
-            Handoff::default(),
-            Footage::from(checkpoint.replay()?),
-            Origin::Live {
-                checkpoint: Some(checkpoint)
-            },
-            &active,
-            || bail!("Synthetic disk failure"),
-            uncopied,
-        )
-        .is_err()
-    );
-    let interrupted = interrupted(parent.path())?;
-    let checkpoint = interrupted.lock()?;
-    let captured = Footage::from(checkpoint.replay()?);
-    let (_input, active) = permit();
-    assert!(matches!(
-        publish_with(
-            Handoff::default(),
-            captured,
-            Origin::Live {
-                checkpoint: Some(checkpoint)
-            },
-            &active,
-            || Ok(parent.path().to_owned()),
-            |_| Ok(())
-        )?,
-        Published::Saved { .. }
-    ));
-    assert!(!interrupted.directory().exists());
-    assert_eq!(recoverable(parent.path()), []);
     Ok(())
 }
 

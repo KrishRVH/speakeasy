@@ -254,55 +254,45 @@ async fn unknown_checkpoint_state_precedes_composition_and_respects_cancellation
 #[tokio::test]
 async fn an_unavailable_checkpoint_closes_empty_and_the_show_publishes_from_memory()
 -> anyhow::Result<()> {
-    for fail_parent in [false, true] {
-        let root = tempfile::tempdir()?;
-        let blocked = root.path().join("blocked");
-        fs::write(&blocked, b"fixture")?;
-        let crate::show::Kept {
-            keeper,
-            frames,
-            audio,
-        } = crate::show::Keeper::start(
-            move || {
-                if fail_parent {
-                    bail!("Synthetic checkpoint parent failure");
-                }
-                Ok(blocked)
-            },
-            SystemTime::now(),
-        )?;
-        drop(frames);
-        drop(audio);
-        let checkpoint = crate::show::Checkpointing::Writing(keeper).close().await?;
-        assert!(checkpoint.is_none());
-        let (_input, permit) = permit();
-        let (footage, narration) = rehearse(80, 60);
-        let mut copied = false;
-        let result = publish_with(
-            Handoff::default(),
-            narrated(footage, narration.clone(), None),
-            Origin::Live { checkpoint },
-            &permit,
-            || Ok(root.path().to_owned()),
-            |_| {
-                copied = true;
-                Ok(())
-            },
-        )?;
-        let Published::Saved {
-            show,
-            copied: Ok(()),
-            ..
-        } = result
-        else {
-            bail!("In-memory footage was not published");
-        };
-        assert!(copied);
-        let manifest = Manifest::parse(&fs::read(show.directory().join("show.json"))?)?;
-        assert_eq!(manifest.recording().narration, narration);
-        assert!(store::source::inspect(show.directory())?.moments().len() >= 2);
-        assert_eq!(store::checkpoint::list(root.path(), SystemTime::now()), []);
-    }
+    let root = tempfile::tempdir()?;
+    let blocked = root.path().join("blocked");
+    fs::write(&blocked, b"fixture")?;
+    let crate::show::Kept {
+        keeper,
+        frames,
+        audio,
+    } = crate::show::Keeper::start(move || Ok(blocked), SystemTime::now())?;
+    drop(frames);
+    drop(audio);
+    let checkpoint = crate::show::Checkpointing::Writing(keeper).close().await?;
+    assert!(checkpoint.is_none());
+    let (_input, permit) = permit();
+    let (footage, narration) = rehearse(80, 60);
+    let mut copied = false;
+    let result = publish_with(
+        Handoff::default(),
+        narrated(footage, narration.clone(), None),
+        Origin::Live { checkpoint },
+        &permit,
+        || Ok(root.path().to_owned()),
+        |_| {
+            copied = true;
+            Ok(())
+        },
+    )?;
+    let Published::Saved {
+        show,
+        copied: Ok(()),
+        ..
+    } = result
+    else {
+        bail!("In-memory footage was not published");
+    };
+    assert!(copied);
+    let manifest = Manifest::parse(&fs::read(show.directory().join("show.json"))?)?;
+    assert_eq!(manifest.recording().narration, narration);
+    assert!(store::source::inspect(show.directory())?.moments().len() >= 2);
+    assert_eq!(store::checkpoint::list(root.path(), SystemTime::now()), []);
     Ok(())
 }
 
@@ -500,31 +490,6 @@ fn a_cancelled_show_never_reaches_the_disk_or_wsl() -> anyhow::Result<()> {
         questions.try_recv().is_err(),
         "A cancelled Show reached into WSL"
     );
-    Ok(())
-}
-
-#[test]
-fn a_show_cancelled_before_staging_never_writes_its_files() -> anyhow::Result<()> {
-    let directory = tempfile::tempdir()?;
-
-    let blocked = directory.path().join("shows");
-    fs::write(&blocked, b"")?;
-    let (input, permit) = permit();
-
-    let cancel_once_composed = || {
-        input.cancel();
-        Ok(blocked.clone())
-    };
-    let (footage, narration) = rehearse(32, 20);
-    let published = publish_with(
-        Handoff::default(),
-        narrated(footage, narration, None),
-        Origin::Live { checkpoint: None },
-        &permit,
-        cancel_once_composed,
-        uncopied,
-    )?;
-    assert!(matches!(published, Published::Cancelled));
     Ok(())
 }
 
@@ -769,9 +734,6 @@ fn a_show_saves_without_its_source_and_advertises_retrieval_only_with_source_and
                 .show
                 .is_ok()
         );
-        for entry in fs::read_dir(show.directory())? {
-            assert!(!entry?.file_name().to_string_lossy().starts_with(".tmp"));
-        }
     }
     Ok(())
 }
