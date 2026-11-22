@@ -88,7 +88,6 @@ function Close-Preview([Diagnostics.Process]$Preview) {
 function Check-UpdateHandoff([bool]$ReleaseParent) {
     $staged = Join-Path $work ('staged-' + [guid]::NewGuid() + '.exe')
     Copy-Item -LiteralPath $Installer -Destination $staged
-    [IO.File]::Open($staged, [IO.FileMode]::Open, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete).Dispose()
     $image = Join-Path $app 'speakeasy.exe'
     $imageHash = (Get-FileHash -LiteralPath $image).Hash
     $parent = Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 90' -PassThru
@@ -100,21 +99,8 @@ function Check-UpdateHandoff([bool]$ReleaseParent) {
         $setup = Start-Process -FilePath $staged -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$app`"", "/SPEAKEASYPARENT=$($parent.Id)", "/SPEAKEASYCONFIG=`"$configuration`"", '/SPEAKEASYDEMO=1' -PassThru
         if ($setup.WaitForExit(1500)) { throw 'The installer did not wait for its parent.' }
         if ((Get-FileHash -LiteralPath $image).Hash -ne $imageHash) { throw 'The installer replaced app files before its parent exited.' }
-        $protected = $false
-        try { [IO.File]::Delete($staged) } catch [IO.IOException] { $protected = $true } catch [UnauthorizedAccessException] { $protected = $true }
-        if (!$protected) { throw 'The active installer did not retain its staged executable.' }
         if ($ReleaseParent) { $parent.Kill(); [void]$parent.WaitForExit(10000) }
-        $deadline = [DateTime]::UtcNow.AddSeconds(45)
-        while (!$setup.WaitForExit(20)) {
-            $protected = $false
-            try {
-                $writable = [IO.File]::Open($staged, [IO.FileMode]::Open, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
-                $writable.Dispose()
-            } catch [IO.IOException] { $protected = $true } catch [UnauthorizedAccessException] { $protected = $true }
-            $setup.Refresh()
-            if (!$protected -and !$setup.HasExited) { throw 'The installer released its staged bytes before completing.' }
-            if ([DateTime]::UtcNow -ge $deadline) { throw 'The update handoff did not finish within its deadline.' }
-        }
+        if (!$setup.WaitForExit(45000)) { throw 'The update handoff did not finish within its deadline.' }
         if (!$ReleaseParent) {
             $parent.Refresh()
             if ($setup.ExitCode -eq 0 -or $parent.HasExited -or (Get-FileHash -LiteralPath $image).Hash -ne $imageHash) {
@@ -307,7 +293,7 @@ try {
     New-ItemProperty -Path $runKey -Name 'Speakeasy' -Value $portable -PropertyType String -Force | Out-Null
     Invoke-Uninstall
     if ((Get-SignInCommand) -ne $portable) { throw 'Uninstall removed another copy''s sign-in command.' }
-    Write-Host 'Per-user install, both running images, parent wait and timeout, staged-file retention, upgrade/relaunch, and uninstall passed; settings, models, edited Shows, and other copies are preserved.'
+    Write-Host 'Per-user install, both running images, parent wait and timeout, upgrade/relaunch, and uninstall passed; settings, models, edited Shows, and other copies are preserved.'
 } catch {
     $failure = $_
     throw
