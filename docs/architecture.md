@@ -297,10 +297,9 @@ module unless a test file is named.
   reset and drops it for the others. Only the bare primary modifier edits, so Windows AltGr stays
   available for character input. The pure edit state tests Unicode boundaries, and
   [native_tests.rs](../crates/app/src/shell/settings/native_tests.rs) checks owned-window
-  composition and save draining. The
-  [native interaction test](../crates/app/src/shell/settings/native_interaction.rs) checks dropdown
-  keyboard navigation, focus restoration, Parakeet's English cleanup switch, presets, and private
-  practice cleanup through the borrowed-window close callback.
+  composition. The [native interaction test](../crates/app/src/shell/settings/native_interaction.rs)
+  checks dropdown keyboard navigation, focus restoration, Parakeet's English cleanup switch,
+  presets, and private practice cleanup through the borrowed-window close callback.
   [config/tests.rs](../crates/app/src/config/tests.rs) pins the file contract.
 - **Accessibility**: Settings owns accessible names, roles, switch/page state, and bounded field
   edits; GPUI builds the AccessKit tree and routes native actions to element handlers. The
@@ -394,12 +393,12 @@ module unless a test file is named.
   since no save follows either. A nonblank private result unlocks completion; leaving practice
   clears its receipt and text. The guide never asks for Show permissions or claims to verify
   external text delivery. Skip and Finish write an empty marker, the selected settings file's name
-  plus `.onboarded`, beside it on an owned worker, without saving or replacing settings. Failed
-  writes remain visible and retryable; shutdown drains an accepted write. Startup opens an
-  unfinished guide even after automatic model setup saved a valid configuration. Replay preserves
-  settings. Demo replay uses synthetic text without microphone access or a completion write. State
-  and file tests cover blocked transitions and marker failures; the Settings native interaction test
-  walks the simulated guide and checks text cleanup and preservation of edits.
+  plus `.onboarded`, beside it, without saving or replacing settings. Failed writes remain visible
+  and retryable. Startup opens an unfinished guide even after automatic model setup saved a valid
+  configuration. Replay preserves settings. Demo replay uses synthetic text without microphone
+  access or a completion write. State and file tests cover blocked transitions and marker failures;
+  the Settings native interaction test walks the simulated guide and checks text cleanup and
+  preservation of edits.
 - **Setup**: [setup.rs](../crates/app/src/setup.rs) and [setup/](../crates/app/src/setup) choose,
   download, verify, and unpack engines and report which managed models are already downloaded. A
   download resumes after a pause and is checked against its pinned SHA-256 before it takes its final
@@ -407,15 +406,14 @@ module unless a test file is named.
   update preparation report each step through [progress.rs](../crates/app/src/progress.rs), with a
   byte count only when the step's total is known.
 - **Reset**: [reset.rs](../crates/app/src/reset.rs) deletes the engines, models, downloads, and
-  updates folders, then the settings file, following a settings symlink to its target. Shows and the
-  finished-guide marker stay, and a repeated purge succeeds. Services pauses dictation, retires the
-  runtime, and purges on an owned thread that Quit drains; nothing resumes until it exits, and a
-  failed purge restores the previous settings. Settings refuses reset during setup, saves, or a held
-  Windows update and refuses setup while settings are unreadable or a reset runs. On success it
-  adopts default settings as its saved baseline and starts automatic setup; as on a new install, the
-  first complete save enables dictation, even if it was paused.
-  [reset/tests.rs](../crates/app/src/reset/tests.rs) covers what stays and that a failed purge keeps
-  the settings.
+  updates folders, then the settings file. Shows and the finished-guide marker stay, and a repeated
+  purge succeeds. Services pauses dictation, retires the runtime, and purges on an owned thread that
+  Quit drains; nothing resumes until it exits, and a failed purge restores the previous settings.
+  Settings refuses reset during setup, saves, or a held Windows update and refuses setup while
+  settings are unreadable or a reset runs. On success it adopts default settings as its saved
+  baseline and starts automatic setup; as on a new install, the first complete save enables
+  dictation, even if it was paused. [reset/tests.rs](../crates/app/src/reset/tests.rs) covers what
+  stays and that a failed purge keeps the settings.
 - **Tray and status**: [tray.rs](../crates/app/src/tray.rs), [tray/](../crates/app/src/tray),
   [status.rs](../crates/app/src/status.rs),
   [platform/src/linux/tray.rs](../crates/platform/src/linux/tray.rs), and

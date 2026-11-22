@@ -2,7 +2,7 @@ pub(crate) mod presets;
 
 use std::{
     fs,
-    io::{self, ErrorKind, Write as _},
+    io::{self, ErrorKind},
     ops::Deref,
     path::{Path, PathBuf},
 };
@@ -10,7 +10,6 @@ use std::{
 use anyhow::{Context as _, anyhow, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use serde_path_to_error::Segment;
 use speakeasy_platform::{
     Delivery, DesktopOptions, LinuxPaste, MacShortcut, Shortcut, WindowsShortcut,
 };
@@ -25,8 +24,6 @@ use crate::{
         vocabulary::{self, Correction},
     },
 };
-
-const LINK_DEPTH: usize = 40;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -235,7 +232,7 @@ impl Config {
     }
 
     pub(crate) fn discard(path: &Path) -> io::Result<()> {
-        match fs::remove_file(link_target(path)?) {
+        match fs::remove_file(path) {
             Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
             removed => removed,
         }
@@ -365,18 +362,6 @@ impl Config {
                 file.display()
             );
         }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            let engine = &config.engine_executable;
-            let metadata = engine
-                .metadata()
-                .map_err(|error| cannot_open(engine, &error))?;
-            ensure!(
-                metadata.permissions().mode() & 0o111 != 0,
-                "Speech executable is not executable. Choose an installed engine or enable its executable permission."
-            );
-        }
         Ok(ValidConfig(config))
     }
 
@@ -415,8 +400,7 @@ impl Config {
                 crate::paths::remedy(&error)
             )
         };
-        let target = link_target(path).map_err(cannot_save)?;
-        let contents = match fs::read(&target) {
+        let contents = match fs::read(path) {
             Ok(contents) => {
                 let (_, mut file) = parse(&contents, path)?;
                 patch(&mut file, held, draft, validated)
@@ -428,7 +412,7 @@ impl Config {
             },
             Err(error) => return Err(cannot_save(error)),
         };
-        replace(&target, &contents).map_err(cannot_save)
+        replace(path, &contents).map_err(cannot_save)
     }
 }
 
@@ -471,64 +455,14 @@ impl Deref for ValidConfig {
 
 fn parse(contents: &[u8], path: &Path) -> anyhow::Result<(Config, Map<String, Value>)> {
     let invalid = || format!("Invalid settings in {}", path.display());
-    let config: Config = from_json(contents).with_context(invalid)?;
+    let config: Config = serde_json::from_slice(contents).with_context(invalid)?;
     presets::validate(&config.presets).with_context(invalid)?;
-    let file: Map<String, Value> = from_json(contents).with_context(invalid)?;
-    if file.get("linux").is_some_and(|linux| !linux.is_object()) {
-        return Err(anyhow!("The linux settings must be an object").context(invalid()));
-    }
+    let file: Map<String, Value> = serde_json::from_slice(contents).with_context(invalid)?;
     Ok((config, file))
-}
-
-fn from_json<'de, T: Deserialize<'de>>(contents: &'de [u8]) -> anyhow::Result<T> {
-    let mut json = serde_json::Deserializer::from_slice(contents);
-    let value = serde_path_to_error::deserialize(&mut json).map_err(|error| {
-        if let Some(Segment::Map { key }) = error.path().iter().next()
-            && matches!(key.as_str(), "vocabulary" | "recognition_terms" | "presets")
-        {
-            return anyhow!(
-                "{key}: invalid private setting at line {} column {}",
-                error.inner().line(),
-                error.inner().column()
-            );
-        }
-        let key = error
-            .path()
-            .iter()
-            .map_while(|segment| match segment {
-                Segment::Map { key: name } => Some(name.as_str()),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .join(".");
-        let account = anyhow::Error::new(error.into_inner());
-        if key.is_empty() {
-            account
-        } else {
-            account.context(key)
-        }
-    })?;
-    json.end()?;
-    Ok(value)
 }
 
 fn managed_model(engine: Engine, model: &Path, marker: Option<Model>) -> Option<Model> {
     marker.filter(|&choice| engine == Engine::Nemo && Model::at(model) == Some(choice))
-}
-
-fn link_target(path: &Path) -> io::Result<PathBuf> {
-    let mut target = path.to_owned();
-    for _ in 0..LINK_DEPTH {
-        if !target.is_symlink() {
-            return Ok(target);
-        }
-        let link = fs::read_link(&target)?;
-        target = match target.parent() {
-            Some(folder) => folder.join(link),
-            None => link,
-        };
-    }
-    Err(io::Error::other("Too many levels of symbolic links"))
 }
 
 fn cannot_open(file: &Path, error: &io::Error) -> anyhow::Error {
@@ -565,7 +499,7 @@ fn patch(
         file.entry("linux")
             .or_insert_with(|| Value::Object(Map::new()))
             .as_object_mut()
-            .context("parse admits only a linux object")?
+            .context("The linux settings must be an object")?
             .extend(linux);
     }
     Ok(())
@@ -598,11 +532,7 @@ fn replace(target: &Path, contents: &[u8]) -> io::Result<()> {
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(directory)?;
-    let mut file = tempfile::NamedTempFile::new_in(directory)?;
-    file.write_all(contents)?;
-    file.as_file().sync_all()?;
-    file.persist(target)?;
-    Ok(())
+    fs::write(target, contents)
 }
 
 #[cfg(test)]

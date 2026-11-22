@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fmt, path::PathBuf};
+use std::{collections::HashSet, path::PathBuf};
 
 use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
@@ -13,7 +13,7 @@ use crate::{
 pub(crate) const LIMIT: usize = 16;
 const NAME_LIMIT: usize = 48;
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Preset {
     name: String,
@@ -27,12 +27,6 @@ pub(crate) struct Preset {
     vocabulary: Vec<Correction>,
     threads: u16,
     use_gpu: bool,
-}
-
-impl fmt::Debug for Preset {
-    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
-        out.debug_struct("Preset").finish_non_exhaustive()
-    }
 }
 
 impl Preset {

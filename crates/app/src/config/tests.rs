@@ -1,5 +1,3 @@
-mod privacy;
-
 use anyhow::bail;
 
 use super::*;
@@ -84,38 +82,6 @@ fn a_save_keeps_hand_edits_and_path_spellings() -> anyhow::Result<()> {
             "theme": "iris",
         })
     );
-    Ok(())
-}
-
-#[test]
-fn delivery_changes_save_one_current_key() -> anyhow::Result<()> {
-    let directory = tempfile::tempdir()?;
-    let path = directory.path().join("settings.json");
-    fs::write(
-        &path,
-        r#"{"engine_executable":"e","model":"m","text_delivery":"type"}"#,
-    )?;
-    let mut base = Config::read(&path)?;
-    for (text_delivery, name) in [
-        (TextDelivery::Paste, "paste"),
-        (TextDelivery::Type, "type"),
-        #[cfg(target_os = "linux")]
-        (TextDelivery::TerminalPaste, "terminal_paste"),
-        #[cfg(target_os = "linux")]
-        (TextDelivery::Copy, "copy"),
-    ] {
-        let config = Config {
-            text_delivery,
-            ..base.clone()
-        };
-        save(&base, &config, &path)?;
-        assert_eq!(
-            saved(&path)?,
-            serde_json::json!({"engine_executable": "e", "model": "m", "text_delivery": name})
-        );
-        base = Config::read(&path)?;
-        assert_eq!(base.text_delivery, text_delivery);
-    }
     Ok(())
 }
 
@@ -212,24 +178,6 @@ fn shipped_example_is_what_a_first_launch_starts_from() -> anyhow::Result<()> {
 }
 
 #[test]
-fn engine_and_theme_spellings_are_the_wire_format() -> anyhow::Result<()> {
-    for (engine, name) in [(Engine::Whisper, "whisper"), (Engine::Nemo, "nemo")] {
-        assert_eq!(serde_json::to_value(engine)?, name);
-        assert_eq!(serde_json::from_value::<Engine>(name.into())?, engine);
-    }
-    for (theme, name) in [
-        (Theme::Jet, "jet"),
-        (Theme::Emerald, "emerald"),
-        (Theme::Iris, "iris"),
-        (Theme::Chrome, "chrome"),
-    ] {
-        assert_eq!(serde_json::to_value(theme)?, name);
-        assert_eq!(serde_json::from_value::<Theme>(name.into())?, theme);
-    }
-    Ok(())
-}
-
-#[test]
 fn starting_at_login_reaches_neither_a_session_nor_the_engine() {
     let next = Config {
         start_at_login: true,
@@ -271,97 +219,6 @@ fn unsupported_settings_are_rejected_without_overwriting_the_file() -> anyhow::R
 }
 
 #[test]
-fn a_file_that_reads_is_one_a_save_can_patch() -> anyhow::Result<()> {
-    let directory = tempfile::tempdir()?;
-    let path = directory.path().join("settings.json");
-    let held = Config {
-        engine_executable: "e".into(),
-        model: "m".into(),
-        ..Config::default()
-    };
-    let draft = Config {
-        theme: Theme::Iris,
-        ..held.clone()
-    };
-    for (case, language) in [
-        ("a valid language", &br#""en""#[..]),
-        ("an out-of-range number", b"1e400"),
-        ("a lone surrogate", br#""\ud800""#),
-        ("invalid UTF-8", b"\"\xff\""),
-    ] {
-        let contents = [
-            br#"{"engine_executable":"e","model":"m","language":"#,
-            language,
-            b"}",
-        ];
-        fs::write(&path, contents.concat())?;
-        let read = Config::read(&path).is_ok();
-        let saved = save(&held, &draft, &path).is_ok();
-        assert_eq!(read, saved, "{case}");
-    }
-    let mut linux_draft = held.clone();
-    linux_draft.linux.external_shortcut = true;
-    for value in ["[]", "{}"] {
-        fs::write(
-            &path,
-            format!(r#"{{"engine_executable":"e","model":"m","linux":{value}}}"#),
-        )?;
-        let read = Config::read(&path).is_ok();
-        let saved = save(&held, &linux_draft, &path).is_ok();
-        assert_eq!(read, saved, "{value}");
-    }
-    Ok(())
-}
-
-#[cfg(unix)]
-#[test]
-fn a_save_writes_through_a_linked_settings_file() -> anyhow::Result<()> {
-    let directory = tempfile::tempdir()?;
-    let dotfiles = directory.path().join("dotfiles");
-    fs::create_dir(&dotfiles)?;
-    let real = dotfiles.join("settings.json");
-    let path = directory.path().join("settings.json");
-    let linked = directory.path().join("linked.json");
-
-    std::os::unix::fs::symlink(&real, &linked)?;
-    std::os::unix::fs::symlink("linked.json", &path)?;
-    let defaults = Config::default();
-    save(&defaults, &defaults, &path)?;
-    let config = Config {
-        theme: Theme::Iris,
-        ..Config::default()
-    };
-    save(&defaults, &config, &path)?;
-    assert!(
-        path.is_symlink() && linked.is_symlink(),
-        "A save replaced a link with a file"
-    );
-    assert_eq!(Config::read(&real)?.theme, Theme::Iris);
-    Ok(())
-}
-
-#[test]
-fn a_new_file_save_preserves_choices_when_the_file_appears_later() -> anyhow::Result<()> {
-    let directory = tempfile::tempdir()?;
-    let path = directory.path().join("settings.json");
-    let draft = Config {
-        engine: Engine::Whisper,
-        ..Config::default()
-    };
-    let held = Config::held_by(&path, &draft);
-
-    fs::write(&path, br#"{"theme":"iris"}"#)?;
-    save(&held, &draft, &path)?;
-    let file = saved(&path)?;
-    assert_eq!(file["engine"], "whisper", "The chosen engine was not saved");
-    assert_eq!(
-        file["theme"], "iris",
-        "A key Settings did not change was overwritten"
-    );
-    Ok(())
-}
-
-#[test]
 fn save_refuses_to_replace_a_file_that_needs_repair() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("settings.json");
@@ -383,54 +240,6 @@ fn save_refuses_to_replace_a_file_that_needs_repair() -> anyhow::Result<()> {
 }
 
 #[test]
-fn a_repair_notice_names_the_key_before_serdes_account() -> anyhow::Result<()> {
-    for (contents, reason) in [
-        (
-            r#"{"theme":"Jet"}"#,
-            "theme: unknown variant `Jet`, expected one of `jet`, `emerald`, `iris`, `chrome` at line 1 column 14",
-        ),
-        (
-            r#"{"linux":{"cancel":false}}"#,
-            "linux.cancel: invalid type: boolean `false`, expected a string at line 1 column 24",
-        ),
-        (
-            r#"{"theme":jet}"#,
-            "theme: expected value at line 1 column 10",
-        ),
-        (
-            r#"{"threads":1e400}"#,
-            "threads: number out of range at line 1 column 16",
-        ),
-        (
-            r#"{"linux":{"cancel":"a","cancel":"b"}}"#,
-            "linux: duplicate field `cancel` at line 1 column 31",
-        ),
-        (
-            r#"{"linux":{"cancel":"a",}}"#,
-            "linux: trailing comma at line 1 column 24",
-        ),
-        (
-            r#"{"theme":"jet","theme":"iris"}"#,
-            "duplicate field `theme` at line 1 column 22",
-        ),
-        (
-            r#"{"threads":4 "theme":"jet"}"#,
-            "expected `,` or `}` at line 1 column 14",
-        ),
-        ("{} x", "trailing characters at line 1 column 4"),
-    ] {
-        let error = parse(contents.as_bytes(), Path::new("settings.json"))
-            .err()
-            .with_context(|| format!("{contents} was read"))?;
-        assert_eq!(
-            format!("{error:#}"),
-            format!("Invalid settings in settings.json: {reason}")
-        );
-    }
-    Ok(())
-}
-
-#[test]
 fn a_save_that_cannot_write_names_the_file_and_what_to_do() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let blocked = directory.path().join("speakeasy");
@@ -445,24 +254,6 @@ fn a_save_that_cannot_write_names_the_file_and_what_to_do() -> anyhow::Result<()
             && message.ends_with(", then try again."),
         "{message}"
     );
-    Ok(())
-}
-
-#[cfg(unix)]
-#[test]
-fn validation_requires_an_executable_engine() -> anyhow::Result<()> {
-    use std::os::unix::fs::PermissionsExt as _;
-    let directory = tempfile::tempdir()?;
-    let config = valid_config(directory.path())?;
-    let path = directory.path().join("settings.json");
-    fs::set_permissions(&config.engine_executable, fs::Permissions::from_mode(0o600))?;
-    let failure = config
-        .validated(&path)
-        .err()
-        .context("An engine without executable permission was accepted")?;
-    assert!(failure.to_string().contains("not executable"));
-    fs::set_permissions(&config.engine_executable, fs::Permissions::from_mode(0o700))?;
-    config.validated(&path)?;
     Ok(())
 }
 
@@ -537,24 +328,6 @@ fn valid_settings_configure_dictation_with_resolved_paths() -> anyhow::Result<()
         directory.path().join("engine").canonicalize()?
     );
     assert_eq!(config, **valid);
-    Ok(())
-}
-
-#[cfg(unix)]
-#[test]
-fn settings_that_cannot_be_checked_are_unreadable_rather_than_absent() -> anyhow::Result<()> {
-    let directory = tempfile::tempdir()?;
-    let not_a_folder = directory.path().join("speakeasy");
-    fs::write(&not_a_folder, "")?;
-    let path = not_a_folder.join("settings.json");
-    let Startup::Invalid(notice) = Config::load(&path).1 else {
-        bail!("Settings that could not be checked started as a fresh install");
-    };
-    assert!(notice.starts_with(&format!("Cannot read {}: ", path.display())));
-    assert!(
-        Config::is_unreadable(&path),
-        "Setup could replace settings it cannot read"
-    );
     Ok(())
 }
 

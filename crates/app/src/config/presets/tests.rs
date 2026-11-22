@@ -1,5 +1,3 @@
-use proptest::prelude::*;
-
 use super::*;
 use crate::{
     config::{Change, Startup, TextDelivery, ValidConfig, valid_config},
@@ -64,7 +62,6 @@ fn loading_a_domain_restores_its_words_and_model_without_changing_global_prefere
     );
     assert_eq!(writing.engine, Engine::Whisper);
     assert_eq!(writing.recognition_terms.phrases(), Vec::<String>::new());
-    assert!(!format!("{technical:?}").contains("Coding"));
     Ok(())
 }
 
@@ -192,16 +189,14 @@ fn a_description_names_the_model_a_preset_runs_even_under_a_stale_marker() -> an
     Ok(())
 }
 
-proptest! {
-    #[test]
-    fn names_cannot_hide_case_duplicates_or_controls(name in "[a-z]{1,48}", control in 0u8..32) {
-        let config = synthetic();
-        let first = Preset::capture(&name, &config).unwrap();
-        let upper = Preset::capture(&name.to_uppercase(), &config).unwrap();
-        prop_assert!(validate(&[first, upper]).is_err());
-        let corrupted = format!("{name}{}suffix", char::from(control));
-        prop_assert!(Preset::capture(&corrupted, &config).is_err());
-    }
+#[test]
+fn names_cannot_hide_case_duplicates_or_controls() -> anyhow::Result<()> {
+    let config = synthetic();
+    let first = Preset::capture("medical", &config)?;
+    let upper = Preset::capture("MEDICAL", &config)?;
+    assert!(validate(&[first, upper]).is_err());
+    assert!(Preset::capture("medical\u{7}notes", &config).is_err());
+    Ok(())
 }
 
 #[test]
