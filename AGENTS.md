@@ -99,8 +99,9 @@ upload, or silent provider switching. A Show is the one record Speakeasy keeps: 
 captured only after the user asks, frames leave out Speakeasy's windows, and a Show, its audio
 included, expires seven days after recording unless kept. A Show interrupted by a crash recovers as
 a new bundle. Ordinary dictation stays in memory. Preserve user settings and edits. Keep signing
-keys and other secrets in ignored local `.env` files. Models and generated artifacts stay out of
-Git.
+keys and other secrets in ignored local `.env` files, and never print keys or credentials, in code,
+scripts, or CI logs; the repository and its CI logs are public. Models and generated artifacts stay
+out of Git.
 
 ## Tests and review
 
