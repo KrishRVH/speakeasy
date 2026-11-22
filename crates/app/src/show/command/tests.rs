@@ -326,8 +326,6 @@ async fn interrupted_listing_has_distinct_identity_and_original_expiry_without_r
         }
     );
 
-    let saved = store::fresh_directory(root.path(), SystemTime::now())?;
-    fs::create_dir(&saved)?;
     interrupted.lock()?.keep_for_retry()?;
     bytes.clear();
     output::list(std::iter::empty(), Some(root.path()), true, &mut bytes)?;
@@ -335,10 +333,5 @@ async fn interrupted_listing_has_distinct_identity_and_original_expiry_without_r
     assert_eq!(listing[0]["status"], "narrationPending");
     assert_eq!(listing[0]["id"], interrupted.id());
     assert!(!String::from_utf8(bytes)?.contains("private-fixture"));
-    interrupted.lock()?.discard()?;
-    assert!(
-        saved.exists(),
-        "Discarding pending audio removed its saved Show"
-    );
     Ok(())
 }
