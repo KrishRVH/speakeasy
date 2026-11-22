@@ -296,13 +296,13 @@ agent.
 
 **More actions → Copy image + summary + narration** on Windows/Mac copies the displayed image with
 its actual timestamp, retrieval context, edited summary, and recorded words. Summary edits and
-original narration remain separate sections. Untimed, missing, incomplete, and truncated narration
-are labeled; `show.json` retains all recorded words. If the combined text would exceed the clipboard
-limit, the summary becomes a labeled excerpt; the complete edit remains in `summary.md`. **Copy
-summary** on Windows/Mac copies only the current `summary.md`, including your edits. Copying
-preserves the bundle and is available between recordings. Windows offers PNG and a native bitmap;
-Mac offers PNG. The receiving app chooses which formats it accepts, so some apps paste only the
-image or only the text. Receiving both still depends on that app.
+original narration remain separate sections. Untimed, missing, and incomplete narration are labeled.
+If the combined text would exceed the clipboard limit, the summary becomes a labeled excerpt; the
+complete edit remains in `summary.md`. **Copy summary** on Windows/Mac copies only the current
+`summary.md`, including your edits. Copying preserves the bundle and is available between
+recordings. Windows offers PNG and a native bitmap; Mac offers PNG. The receiving app chooses which
+formats it accepts, so some apps paste only the image or only the text. Receiving both still depends
+on that app.
 
 Copies carry the same clipboard-history and device-sync privacy markers as dictation. A new
 recording, closing the requesting window, or a settings/lifecycle change cancels a copy that has not
