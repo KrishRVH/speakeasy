@@ -119,7 +119,7 @@ impl Export {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Confirm {
     Discard,
-    Delete(library::Offered),
+    Delete(usize),
 }
 
 impl Confirm {
@@ -130,7 +130,7 @@ impl Confirm {
         }
     }
 
-    const fn delete_offer(self) -> Option<library::Offered> {
+    const fn delete_offer(self) -> Option<usize> {
         match self {
             Self::Delete(offer) => Some(offer),
             Self::Discard => None,
@@ -857,7 +857,7 @@ impl Review {
                 }
             },
             Action::Show(offer) => {
-                if let Some(row) = self.library.offered(offer)
+                if let Some(row) = self.library.rows.get(offer)
                     && !self.library.is_selected(&row.directory)
                 {
                     self.mode = Mode::Keyframes;
@@ -992,14 +992,14 @@ enum Action {
     Discard,
     ConfirmDiscard,
     CancelDiscard,
-    Delete(library::Offered),
-    ConfirmDelete(library::Offered),
+    Delete(usize),
+    ConfirmDelete(usize),
     CancelDelete,
     Jump(Direction),
     Step(Direction),
     Mode(Mode),
     Refresh,
-    Show(library::Offered),
+    Show(usize),
     Frame(usize),
     Copy(CopyKind),
     Export(ExportKind),

@@ -375,7 +375,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     })?;
     window.update(cx, |view, _, cx| {
         view.act(Action::Keep, cx);
-        view.act(Action::Show(view.library.offer(1)), cx);
+        view.act(Action::Show(1), cx);
     })?;
     wait_for(
         window,
@@ -399,7 +399,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     })?;
     assert!(!first.join(".pinned").exists());
     window.update(cx, |view, _, cx| {
-        view.act(Action::Show(view.library.offer(0)), cx);
+        view.act(Action::Show(0), cx);
     })?;
     wait_for(
         window,
@@ -421,7 +421,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     )
     .await?;
     window.update(cx, |view, _, cx| {
-        view.act(Action::Show(view.library.offer(2)), cx);
+        view.act(Action::Show(2), cx);
     })?;
     wait_for(
         window,
@@ -443,16 +443,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         .context("The missing frame must remain selected")?;
     ensure!(selected.frame == 2, "A missing frame selected a substitute");
     let directory = selected.directory;
-    window.update(cx, |view, _, cx| {
-        view.check_selected(cx);
-        view.act(Action::Keep, cx);
-        view.act(Action::Refresh, cx);
-        view.check_selected(cx);
-        assert!(
-            view.checking.is_none() && view.listing.is_none(),
-            "A read can overwrite an in-flight retention change"
-        );
-    })?;
+    window.update(cx, |view, _, cx| view.act(Action::Keep, cx))?;
     wait_for(window, |view| view.write.is_none(), cx).await?;
     window.read_with(cx, |view, _| {
         assert_eq!(
@@ -462,7 +453,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
                 .find(|row| row.directory == directory)
                 .and_then(|row| row.pinned),
             Some(true),
-            "An older read overwrote the retention result"
+            "Keep did not mark the selected Show kept"
         );
     })?;
     ensure!(
@@ -502,7 +493,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         assert!(view.detail.is_none() && matches!(view.image, ImageState::Empty));
     })?;
     window.update(cx, |view, _, cx| {
-        view.act(Action::Show(view.library.offer(0)), cx);
+        view.act(Action::Show(0), cx);
     })?;
     wait_for(
         window,
@@ -529,7 +520,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         );
     })?;
     window.update(cx, |view, _, cx| {
-        view.act(Action::Show(view.library.offer(0)), cx);
+        view.act(Action::Show(0), cx);
     })?;
     wait_for(
         window,
@@ -556,7 +547,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     window.update(cx, |view, _, cx| view.refresh(cx))?;
     wait_for(window, |view| view.listing.is_none(), cx).await?;
     window.update(cx, |view, _, cx| {
-        view.act(Action::Show(view.library.offer(0)), cx);
+        view.act(Action::Show(0), cx);
     })?;
     window.read_with(cx, |view, _| {
         assert!(view.interrupted().is_some());
@@ -571,7 +562,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
             .iter()
             .position(|row| matches!(row.kind, Kind::Saved))
             .context("A saved Show is listed beside the interrupted one")?;
-        view.act(Action::Show(view.library.offer(saved)), cx);
+        view.act(Action::Show(saved), cx);
         ensure!(
             !view.can_keep(),
             "Keep was offered while a recovery held the library"
@@ -598,7 +589,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     );
     window.update(cx, |view, window, cx| {
         ensure!(view.can_keep(), "Keep stayed unavailable after recovery");
-        view.act(Action::Show(view.library.offer(0)), cx);
+        view.act(Action::Show(0), cx);
         ensure!(
             view.interrupted().is_some(),
             "The interrupted Show is first"
@@ -648,9 +639,8 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         !interrupted.directory().exists(),
         "Confirmed discard left its checkpoint"
     );
-    retired_recovery(window, &root, &recovering, cx).await?;
     window.update(cx, |view, _, cx| {
-        view.act(Action::Show(view.library.offer(0)), cx);
+        view.act(Action::Show(0), cx);
     })?;
     wait_for(
         window,
@@ -698,72 +688,6 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         "Closing review also closed another app window"
     );
     Ok(())
-}
-
-#[expect(
-    clippy::future_not_send,
-    reason = "Native review acceptance uses GPUI's UI-thread context"
-)]
-async fn retired_recovery(
-    window: WindowHandle<Review>,
-    root: &std::path::Path,
-    recovering: &std::sync::mpsc::Receiver<oneshot::Sender<Result<SavedShow, String>>>,
-    cx: &mut AsyncApp,
-) -> anyhow::Result<()> {
-    const RETIRED: &str = "Synthetic retry heard no speech; its checkpoint was removed.";
-    let (checkpoint, writer) = crate::show::Keeper::fixture(
-        root,
-        SystemTime::now(),
-        1_000,
-        speakeasy_show::Size {
-            width: 80.0,
-            height: 60.0,
-        },
-        speakeasy_show::Framing::Automatic,
-    )?;
-    drop(writer);
-    let interrupted = checkpoint
-        .close()
-        .await?
-        .context("Fixture checkpoint is missing")?
-        .interrupted();
-    window.update(cx, |view, _, cx| view.refresh(cx))?;
-    wait_for(window, |view| view.listing.is_none(), cx).await?;
-    window.update(cx, |view, _, cx| {
-        view.act(Action::Show(view.library.offer(0)), cx);
-        view.act(Action::Recover, cx);
-    })?;
-    let recovery = recovering
-        .try_recv()
-        .context("Recover did not request a recovery")?;
-    fs::remove_dir_all(interrupted.directory())?;
-    ensure!(
-        recovery.send(Err(RETIRED.into())).is_ok(),
-        "The review stopped waiting for its recovery"
-    );
-    wait_for(
-        window,
-        |view| view.write.is_none() && view.listing.is_none(),
-        cx,
-    )
-    .await?;
-    window.read_with(cx, |view, _| {
-        ensure!(
-            view.interrupted().is_none()
-                && view
-                    .library
-                    .rows
-                    .iter()
-                    .all(|row| matches!(row.kind, Kind::Saved)),
-            "A retired checkpoint still offered Retry"
-        );
-        ensure!(
-            view.notice.as_deref() == Some(RETIRED),
-            "The retirement lost its explanation: {:?}",
-            view.notice
-        );
-        anyhow::Ok(())
-    })?
 }
 
 fn key(
@@ -908,8 +832,7 @@ async fn selection_in_view(window: WindowHandle<Review>, cx: &mut AsyncApp) -> a
     })?;
     let first = first.context("The review selected a Show")?;
     resize(window, size(px(1_100.0), px(320.0)), cx).await?;
-    let offered = window.update(cx, |view, _, _| view.library.offer(last))?;
-    select(window, Action::Show(offered), cx).await?;
+    select(window, Action::Show(last), cx).await?;
     let (library, row, offset) = window.read_with(cx, |view, _| {
         (
             view.library_scroll.bounds(),
@@ -923,7 +846,6 @@ async fn selection_in_view(window: WindowHandle<Review>, cx: &mut AsyncApp) -> a
         "The selected Show row lies outside the visible library"
     );
     resize(window, size(px(1_100.0), px(640.0)), cx).await?;
-    let first = window.update(cx, |view, _, _| view.library.offer(first))?;
     select(window, Action::Show(first), cx).await
 }
 

@@ -120,7 +120,7 @@ impl Review {
                 enabled: idle && self.detail.is_some(),
             }),
             self.library.position().map(|index| Item {
-                action: Action::Delete(self.library.offer(index)),
+                action: Action::Delete(index),
                 label: "Delete Show…",
                 enabled: self.can_delete(),
             }),

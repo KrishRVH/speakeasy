@@ -475,15 +475,15 @@ module unless a test file is named.
 - **Agent evidence**: [show/evidence.rs](../crates/app/src/show/evidence.rs) shares inspection and
   temporal queries between CLI and [show/mcp.rs](../crates/app/src/show/mcp.rs). MCP exposes three
   read-only tools within explicit launch roots. A Show path or folder name resolves only when its
-  canonical folder lies inside a root. Summary and narration text are bounded, images are at most
-  8 MiB, and source reads report actual sample times. A Show whose manifest cannot be read is
-  listed as unreadable; a root that cannot be listed is named in `unavailableRoots` while the others
-  still list. It serves the 2026-07-28 stateless protocol and the 2025-11-25 initialized protocol
-  that external clients use. No tool exports, sends, or reads ordinary dictation.
-  Initialization instructions are the disclosure followed by the embedded skill's reading guide
-  without its front matter. Setup resolves the durable installed launcher and only prints client
-  stanzas, adding one for an agent in WSL that runs the Windows command through interop with Windows
-  roots, or a note when interop, drive mounting, or a lettered drive is missing.
+  canonical folder lies inside a root. Summary and narration text are bounded, images are at most 8
+  MiB, and source reads report actual sample times. A Show whose manifest cannot be read is listed
+  as unreadable; a root that cannot be listed is named in `unavailableRoots` while the others still
+  list. It serves the 2026-07-28 stateless protocol and the 2025-11-25 initialized protocol that
+  external clients use. No tool exports, sends, or reads ordinary dictation. Initialization
+  instructions are the disclosure followed by the embedded skill's reading guide without its front
+  matter. Setup resolves the durable installed launcher and only prints client stanzas, adding one
+  for an agent in WSL that runs the Windows command through interop with Windows roots, or a note
+  when interop, drive mounting, or a lettered drive is missing.
 - **Show recording and publication**: [show.rs](../crates/app/src/show.rs),
   [show/recorder.rs](../crates/app/src/show/recorder.rs),
   [show/publish.rs](../crates/app/src/show/publish.rs), and the session owner.
@@ -497,28 +497,25 @@ module unless a test file is named.
 - **Show review**: [show/review.rs](../crates/app/src/show/review.rs) owns the native library view,
   selection, cancellable read receipts, and one decoded frame. Its
   [library.rs](../crates/app/src/show/review/library.rs) projects content-free rows through the
-  shared store reader, without CLI output types; only the selected summary and bounded recorded
-  clauses remain in memory. [narration.rs](../crates/app/src/show/review/narration.rs) distinguishes
-  timed, untimed, silent, lost, and unavailable narration. The Summary/Narration switch preserves
-  summary edits. Explicit clause and mark requests keep their timestamp across frame modes and clear
-  on manual navigation, refresh, or another Show.
+  shared store reader, without CLI output types; only the selected summary and recorded clauses
+  remain in memory. [narration.rs](../crates/app/src/show/review/narration.rs) distinguishes timed,
+  untimed, silent, lost, and unavailable narration. The Summary/Narration switch preserves summary
+  edits. Explicit clause and mark requests keep their timestamp across frame modes and clear on
+  manual navigation, refresh, or another Show.
   [navigation.rs](../crates/app/src/show/review/navigation.rs) describes earlier/later samples
   honestly and formats the retrieval pointer without transcript text.
   [handoff.rs](../crates/app/src/show/review/handoff.rs) combines that pointer, the displayed
   summary, and bounded original narration for an explicit evidence copy, keeping their meanings
   separate. A labeled summary excerpt keeps the combined text inside the clipboard byte limit
-  without dropping narration or changing the bundle. Selection revisions reject stale Show and frame
-  results. A separate listing revision rejects row actions offered before a refresh or deletion;
-  selecting a frame or changing retention does not invalidate those actions. The
-  [preview owner](../crates/app/src/show/preview.rs) retains one blocking reader through native
-  cleanup; a replacement waits for that acknowledgement, and the view keeps only its latest pending
-  seek. Closing cancels its receipt; Quit cancels and drains the owner.
-  [preview/frame.rs](../crates/app/src/show/preview/frame.rs) caps PNG dimensions at 4096 pixels per
-  side. It decodes off the UI thread, leaves private pixels out of GPUI's asset cache, and passes
-  source and video BGRA directly to the renderer. `Image` owns premultiplied RGBA; `into_bgra`
-  consumes it into straight-alpha BGRA, reusing opaque pixel storage. GPUI's `RenderImage` expects
-  BGRA bytes inside `image::Frame` despite the buffer's RGBA type. Decoder errors never include
-  content. Services owns accepted Keep/Discard/Delete writes through
+  without dropping narration or changing the bundle. A new selection drops the reads pending for the
+  old one. The [preview owner](../crates/app/src/show/preview.rs) retains one blocking reader
+  through native cleanup; a replacement waits for that acknowledgement, and the view keeps only its
+  latest pending seek. Closing cancels its receipt; Quit cancels and drains the owner.
+  [preview/frame.rs](../crates/app/src/show/preview/frame.rs) decodes off the UI thread, keeps
+  frames out of GPUI's asset cache, and passes source and video BGRA directly to the renderer.
+  `Image` owns premultiplied RGBA; `into_bgra` consumes it into straight-alpha BGRA, reusing opaque
+  pixel storage. GPUI's `RenderImage` expects BGRA bytes inside `image::Frame` despite the buffer's
+  RGBA type. Services owns accepted Keep/Discard/Delete writes through
   [edits.rs](../crates/app/src/show/edits.rs); Quit awaits them, and an immutable fixture lease
   keeps preview storage alive until completion. The view runs one library write (Keep, Recover,
   Discard, or Delete) at a time, and each write's control is enabled by the same check its action
@@ -531,29 +528,30 @@ module unless a test file is named.
   Windows and nanoseconds on macOS; Evidence copying emits a retrieval query only when a whole
   millisecond lies inside the displayed sample. During seeking, the previous video image stays
   visible and copying is disabled. [review/tests.rs](../crates/app/src/show/review/tests.rs) checks
-  navigation, damage, and private text boundaries. Opt-in
+  navigation, damage, and narration states. Opt-in
   [native_tests.rs](../crates/app/src/show/review/native_tests.rs) exercises the real view with
-  synthetic files, including rendering on a private Linux display, retention actions, stale
-  completion notices, and cleanup on close. Retention writes run off the UI thread and stay bound to
-  their original Show; activation rereads the summary and pin.
+  synthetic files, including rendering on a private Linux display, retention actions, completion
+  notices bound to their Show, and cleanup on close. Retention writes run off the UI thread and stay
+  bound to their original Show; activation rereads the summary and pin.
   [deletion.rs](../crates/app/src/show/review/deletion.rs) binds saved-Show confirmation to the
-  offered row, invalidates it on selection or refresh, and waits for preview completion before
-  accepting deletion. It clears the removed Show's pixels without selecting a substitute or changing
-  another Show's notice. The shell supplies copy availability and routes accepted writes and
-  recovery while the view owns result receipts. [copy.rs](../crates/app/src/show/copy.rs) owns
-  explicit review/tray copies through native cleanup, including the Send to agent prompt, which
-  names the Show ID, the folder and its WSL path when mapped, each manifest contact sheet in order,
-  and `summary.md` but carries no Show text. It retains the displayed image snapshot, reads or
-  encodes off the UI thread, and rejects dropped receipts, lifecycle cancellation, and any newer
-  input generation before native replacement. Copies made while paused are cancelled before an owner
-  starts. Quit drains the worker, and a replacement waits for its predecessor to finish.
-  [copy/tests.rs](../crates/app/src/show/copy/tests.rs) checks those races with fake native access;
-  the owned-window review test checks the actual visual request through an injected copy action
-  without touching the clipboard, and keyboard routing in the More actions menu, where Escape closes
-  the menu rather than the window. That menu relies on GPUI's dispatch order: the root's
-  capture-phase mouse-down runs before the popover's mouse-down-out, so pressing the trigger of an
-  open menu closes it, and a capture-phase key-up activates the highlighted action and stops
-  propagation before the focused trigger's keyboard click.
+  selected row, clears it on selection or refresh, and waits for preview completion before accepting
+  deletion. It clears the removed Show's pixels without selecting a substitute or changing another
+  Show's notice. The shell supplies copy availability and routes accepted writes and recovery while
+  the view owns result receipts. [copy.rs](../crates/app/src/show/copy.rs) owns explicit review/tray
+  copies through native cleanup, including the Send to agent prompt, which names the Show ID, the
+  folder and its WSL path when mapped, each manifest contact sheet in order, and `summary.md` but
+  carries no Show text. It retains the displayed image snapshot, reads or encodes off the UI thread,
+  and rejects dropped receipts, lifecycle cancellation, and any newer input generation before native
+  replacement. Copies made while paused are cancelled before an owner starts. Quit drains the
+  worker, and a replacement waits for its predecessor to finish.
+  [copy/tests.rs](../crates/app/src/show/copy/tests.rs) checks revocation by newer dictation, a
+  missing Show, and a failed copy with fake native access; the owned-window review test checks the
+  actual visual request through an injected copy action without touching the clipboard, and keyboard
+  routing in the More actions menu, where Escape closes the menu rather than the window. That menu
+  relies on GPUI's dispatch order: the root's capture-phase mouse-down runs before the popover's
+  mouse-down-out, so pressing the trigger of an open menu closes it, and a capture-phase key-up
+  activates the highlighted action and stops propagation before the focused trigger's keyboard
+  click.
 - **Show composition**: [crates/show/src](../crates/show/src), notably
   [locate.rs](../crates/show/src/locate.rs) resolves phrases and marks to exact recorded spans;
   [locate/evidence.rs](../crates/show/src/locate/evidence.rs) renders bounded source sheets and mark

@@ -26,15 +26,16 @@ const RETRY_NARRATION: &str = "Transcribe the kept audio with your configured lo
     original language. This saves a narrated copy; your existing Show and edits stay unchanged.";
 const RECOVER_SHOW: &str = "Recover the frames, ink, marks, and audio that reached the checkpoint. \
     Narration uses your configured local engine and the original language.";
-const RECOVERY_AUDIO: &str = "Recovery leaves your clipboard alone. Recovered voice stays private \
-    for video export and expires seven days after the original recording, \
-    even if you keep the Show.";
+const RECOVERY_AUDIO: &str = "Recovery leaves your clipboard alone. Recovered voice stays with the \
+    Show for video export and expires with it.";
 const RECOVERY_PREFIX: &str = "A crash or a slow or full disk can leave a shorter recording. \
     Recovery preserves the original expiry date.";
 const DELETE_SHOW: &str = "This removes its images, video, summary, narration, and voice, even if \
     kept. Exported copies and pending recovery audio stay.";
 const RECORD_HINT: &str =
     "Hold your shortcut and press S, W, or A to record your screen, a window, or an area.";
+
+const SUMMARY_TEXT: usize = 64 << 10;
 
 pub(super) const NEARBY_FRAMES: usize = 10;
 const SHOWN_FRAMES: usize = 2 * NEARBY_FRAMES + 1;
@@ -211,7 +212,7 @@ impl Review {
         pressable(
             kit,
             palette,
-            Action::Show(self.library.offer(index)),
+            Action::Show(index),
             label.into(),
             gpui::Role::ListBoxOption,
             true,
@@ -733,7 +734,7 @@ impl Review {
         const REST: &str = "The rest is in summary.md. Copy summary includes the whole file.";
         let text = match self.detail.as_ref().map(|detail| &detail.summary) {
             Some(Ok(summary)) => {
-                let shown = narration::excerpt(summary, narration::MOST_TEXT);
+                let shown = narration::excerpt(summary, SUMMARY_TEXT);
                 div()
                     .child(shown.to_owned())
                     .when(shown.len() < summary.len(), |text| {
@@ -755,7 +756,6 @@ impl Review {
     fn narration(&self, kit: Kit<'_>, palette: &Palette, cx: &Context<'_, Self>) -> Stateful<Div> {
         let narration = self.detail.as_ref().map(|detail| &detail.narration);
         let incomplete = narration.is_some_and(Narration::incomplete);
-        let truncated = narration.is_some_and(Narration::truncated);
         let text = match narration {
             Some(Narration::Timed { clauses, .. }) => {
                 div().flex().flex_col().gap(px(2.0)).children(
@@ -813,14 +813,6 @@ impl Review {
                 )
             })
             .child(text)
-            .when(truncated, |body| {
-                body.child(
-                    div()
-                        .mt(px(8.0))
-                        .text_color(rgb(palette.warn))
-                        .child("The rest of the recorded words are in show.json."),
-                )
-            })
     }
 
     fn clause(
@@ -1190,7 +1182,7 @@ pub(super) fn id(action: Action) -> ElementId {
         Action::Export(ExportKind::Archive) => "shows-export".into(),
         Action::Export(ExportKind::Video) => "shows-export-video".into(),
         Action::CancelExport => "shows-cancel-export".into(),
-        Action::Show(offer) => ("show", offer.index).into(),
+        Action::Show(index) => ("show", index).into(),
         Action::Frame(index) => ("frame", index).into(),
     }
 }
@@ -1282,13 +1274,8 @@ impl Review {
                 cx.stop_propagation();
                 return;
             },
-            "up" => Some(Action::Show(
-                self.library.offer(row.unwrap_or(0).saturating_sub(1)),
-            )),
-            "down" => Some(Action::Show(
-                self.library
-                    .offer(row.map_or(0, |row| row.saturating_add(1))),
-            )),
+            "up" => Some(Action::Show(row.unwrap_or(0).saturating_sub(1))),
+            "down" => Some(Action::Show(row.map_or(0, |row| row.saturating_add(1)))),
             "left" => Some(Action::Step(Direction::Back)),
             "right" => Some(Action::Step(Direction::Forward)),
             "pageup" => Some(Action::Jump(Direction::Back)),

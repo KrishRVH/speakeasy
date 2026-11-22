@@ -3,7 +3,7 @@ use speakeasy_show::{Moment, Narration as Recorded, NarrationLoss, Recording, Sp
 use super::super::narration::Narration;
 
 #[test]
-fn narration_distinguishes_silence_missing_words_and_untimed_text_and_bounds_the_preview() {
+fn narration_distinguishes_silence_missing_words_and_untimed_text() {
     let mut recording = Recording::default();
     assert!(matches!(
         Narration::from_recording(&recording),
@@ -19,45 +19,19 @@ fn narration_distinguishes_silence_missing_words_and_untimed_text_and_bounds_the
             matches!(Narration::from_recording(&recording), Narration::Lost(found) if found == loss)
         );
     }
-    recording.narration = Recorded::Text("é".repeat(40_000));
-    let Narration::Untimed {
-        text,
-        incomplete,
-        truncated,
-    } = Narration::from_recording(&recording)
-    else {
-        panic!("Expected untimed words");
-    };
-    assert_eq!(text.len(), 64 << 10);
-    assert!(incomplete && truncated);
-    recording.narration = Recorded::Words(
-        (0_u64..600)
-            .map(|n| Word {
-                span: Span::at(Moment::from_millis(n.saturating_mul(2_000))),
-                text: "word.".into(),
-            })
-            .collect(),
-    );
-    let Narration::Timed {
-        clauses,
-        incomplete,
-        truncated,
-    } = Narration::from_recording(&recording)
-    else {
-        panic!("Expected timed words");
-    };
-    assert_eq!(clauses.len(), 512);
-    assert!(incomplete && truncated);
+    recording.narration = Recorded::Text("Untimed words.".into());
+    assert!(matches!(
+        Narration::from_recording(&recording),
+        Narration::Untimed {
+            incomplete: true,
+            ..
+        }
+    ));
     recording.narration = Recorded::Words(vec![Word {
         span: Span::at(Moment::START),
-        text: "é".repeat(40_000),
+        text: "Timed words.".into(),
     }]);
-    let Narration::Timed {
-        clauses, truncated, ..
-    } = Narration::from_recording(&recording)
-    else {
-        panic!("Expected timed words");
-    };
-    assert_eq!(clauses[0].text.len(), 64 << 10);
-    assert!(truncated);
+    let narration = Narration::from_recording(&recording);
+    assert!(narration.incomplete());
+    assert_eq!(narration.clauses()[0].text, "Timed words.");
 }

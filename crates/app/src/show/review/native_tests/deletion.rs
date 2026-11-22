@@ -32,11 +32,10 @@ pub(super) async fn exercise(
     .await?;
     select(window, first, cx).await?;
     let offered = window.update(cx, |view, _, cx| {
-        let offer = view.library.offer(
-            view.library
-                .position()
-                .context("The fixture Show is selected")?,
-        );
+        let offer = view
+            .library
+            .position()
+            .context("The fixture Show is selected")?;
         view.act(Action::ConfirmDelete(offer), cx);
         assert!(view.write.is_none());
         view.menu = menu::Menu::Open(None);
@@ -68,46 +67,16 @@ pub(super) async fn exercise(
         view.export = None;
     })?;
 
-    window.update(cx, |view, _, cx| view.act(Action::Delete(offered), cx))?;
-    select(window, second, cx).await?;
-    let newer = window.update(cx, |view, _, cx| {
-        let newer = view.library.offer(
-            view.library
-                .position()
-                .context("The fixture Show is selected")?,
-        );
-        view.act(Action::Delete(newer), cx);
-        view.act(Action::ConfirmDelete(offered), cx);
-        assert!(view.confirm == Some(Confirm::Delete(newer)) && view.write.is_none());
-        view.act(Action::Refresh, cx);
-        assert!(view.confirm.is_none());
-        view.act(Action::ConfirmDelete(newer), cx);
-        assert!(view.write.is_none());
-        anyhow::Ok(newer)
-    })??;
-    assert!(first.is_dir() && second.is_dir());
-    wait_for(
-        window,
-        |view| view.listing.is_none() && view.can_delete(),
-        cx,
-    )
-    .await?;
-    window.update(cx, |view, _, cx| {
-        view.act(Action::Delete(newer), cx);
-        assert!(view.confirm.is_none());
-    })?;
-
     select(window, first, cx).await?;
     window.update(cx, |view, _, cx| {
         let collection = view.collection;
         let can_copy = view.actions.can_copy;
         view.collection = Collection::Saved;
         view.actions.can_copy = |_| true;
-        let offer = view.library.offer(
-            view.library
-                .position()
-                .context("The fixture Show is selected")?,
-        );
+        let offer = view
+            .library
+            .position()
+            .context("The fixture Show is selected")?;
         view.act(Action::Delete(offer), cx);
         view.act(Action::ConfirmDelete(offer), cx);
         assert!(matches!(view.write, Some(Write::Deleting { .. })));
@@ -123,7 +92,7 @@ pub(super) async fn exercise(
             .iter()
             .position(|row| row.directory == *second)
             .context("The second fixture is listed")?;
-        view.act(Action::Show(view.library.offer(next)), cx);
+        view.act(Action::Show(next), cx);
         assert!(view.can_copy(cx));
         view.collection = collection;
         view.actions.can_copy = can_copy;
@@ -141,11 +110,10 @@ pub(super) async fn exercise(
         assert!(!view.library.rows.iter().any(|row| row.directory == *first));
     })?;
     window.update(cx, |view, _, cx| {
-        let offer = view.library.offer(
-            view.library
-                .position()
-                .context("The fixture Show is selected")?,
-        );
+        let offer = view
+            .library
+            .position()
+            .context("The fixture Show is selected")?;
         view.act(Action::Delete(offer), cx);
         view.act(Action::ConfirmDelete(offer), cx);
         anyhow::Ok(())
@@ -177,7 +145,7 @@ async fn select(
             .iter()
             .position(|row| row.directory == path)
             .context("The fixture is listed")?;
-        view.act(Action::Show(view.library.offer(index)), cx);
+        view.act(Action::Show(index), cx);
         anyhow::Ok(())
     })??;
     wait_for(window, Review::can_delete, cx).await

@@ -43,14 +43,9 @@ pub(super) fn text(
     } else {
         ""
     };
-    let truncated = if narration.truncated() {
-        "\nThis excerpt is truncated. The remaining recorded words are in show.json."
-    } else {
-        ""
-    };
     let mut text = context;
     text.push_str("\n## Edited summary\n\n");
-    let suffix = format!("\n\n## Recorded narration\n\n{recorded}{incomplete}{truncated}\n");
+    let suffix = format!("\n\n## Recorded narration\n\n{recorded}{incomplete}\n");
     let available = ClipboardContent::MAX_TEXT_BYTES
         .checked_sub(text.len())
         .and_then(|bytes| bytes.checked_sub(suffix.len()))

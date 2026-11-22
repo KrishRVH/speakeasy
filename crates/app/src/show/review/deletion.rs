@@ -2,11 +2,7 @@ use std::path::Path;
 
 use gpui::Context;
 
-use super::{
-    Confirm, Edit, Kind, Review, Write,
-    library::{Offered, Row},
-    retention,
-};
+use super::{Confirm, Edit, Kind, Review, Write, library::Row, retention};
 use crate::gpui_ext::EntityUpdate as _;
 
 impl Review {
@@ -20,21 +16,21 @@ impl Review {
             && self.copying.is_none()
     }
 
-    fn deletable(&self, offer: Offered) -> Option<&Row> {
-        self.library.offered(offer).filter(|row| {
+    fn deletable(&self, offer: usize) -> Option<&Row> {
+        self.library.rows.get(offer).filter(|row| {
             self.can_delete()
                 && matches!(row.kind, Kind::Saved)
                 && self.library.is_selected(&row.directory)
         })
     }
 
-    pub(super) fn ask_delete(&mut self, offer: Offered) {
+    pub(super) fn ask_delete(&mut self, offer: usize) {
         if self.deletable(offer).is_some() {
             self.confirm = Some(Confirm::Delete(offer));
         }
     }
 
-    pub(super) fn delete(&mut self, offer: Offered, cx: &mut Context<'_, Self>) {
+    pub(super) fn delete(&mut self, offer: usize, cx: &mut Context<'_, Self>) {
         if self.confirm != Some(Confirm::Delete(offer)) {
             return;
         }

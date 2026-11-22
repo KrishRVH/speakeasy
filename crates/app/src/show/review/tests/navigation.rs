@@ -9,8 +9,7 @@ use super::super::{
 };
 
 #[test]
-fn navigation_reports_exact_earlier_and_first_later_samples_and_never_infers_text()
--> anyhow::Result<()> {
+fn navigation_reports_exact_earlier_and_first_later_samples() -> anyhow::Result<()> {
     let directory = Path::new("synthetic");
     let mut detail = detail(
         [100, 700, 1_500, 30_000]
@@ -57,8 +56,7 @@ fn navigation_reports_exact_earlier_and_first_later_samples_and_never_infers_tex
             )
             .contains("first available")
         );
-        let mut third = frame(3, 1_500, third);
-        third.marker = "PRIVATE_CUE".into();
+        let third = frame(3, 1_500, third);
         let text = pointer(
             directory,
             &third,
@@ -66,7 +64,6 @@ fn navigation_reports_exact_earlier_and_first_later_samples_and_never_infers_tex
             third.presentation,
             movie::AnnotationState::Off,
         );
-        assert!(!text.contains("PRIVATE"));
         assert!(text.contains("0:20.000") && text.contains("0:01.500"));
         assert!(text.contains("18500 ms earlier"));
         if matches!(third.content, preview::Content::Source { .. }) {

@@ -185,7 +185,6 @@ impl Detail {
         let mut narration = Narration::Unavailable;
         let mut inspected = None;
         let mut scene = None;
-        let mut duration = None;
         match entry.show {
             Err(error) => warnings.push(format!(
                 "Cannot read this Show: {error:#}. Its summary may still be readable."
@@ -194,7 +193,6 @@ impl Detail {
                 inspected = show.movie;
                 let manifest = show.manifest;
                 let recording = manifest.recording();
-                duration = Some(recording.duration);
                 if mode == Mode::Video {
                     match Annotations::new(recording, manifest.marks()) {
                         Ok(annotations) => scene = Some(Arc::new(annotations)),
@@ -232,8 +230,6 @@ impl Detail {
             Err(error) => warnings.push(format!("Source frames are unavailable: {error}")),
             Ok(true) => match source::inspect(directory) {
                 Err(error) => warnings.push(format!("Source frames are unavailable: {error:#}")),
-                Ok(source) if Some(source.duration()) != duration => warnings
-                    .push("Source frames do not match this Show's recording timeline.".into()),
                 Ok(source) => {
                     source_available = true;
                     coverage = format!(
@@ -381,15 +377,8 @@ fn sampled(
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Key {
-    revision: u64,
     pub directory: PathBuf,
     pub frame: usize,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) struct Offered {
-    revision: u64,
-    pub index: usize,
 }
 
 #[derive(Default)]
@@ -404,8 +393,6 @@ enum Selection {
 pub(super) struct Library {
     pub rows: Vec<Row>,
     selection: Selection,
-    revision: u64,
-    listing_revision: u64,
 }
 
 impl Library {
@@ -416,7 +403,6 @@ impl Library {
     }
 
     pub(super) fn replace(&mut self, rows: Vec<Row>) -> Option<Key> {
-        self.listing_revision = self.listing_revision.wrapping_add(1);
         self.rows = rows;
         let (directory, frame) = match &self.selection {
             Selection::Selected(key)
@@ -434,26 +420,8 @@ impl Library {
         Some(self.select(directory, frame))
     }
 
-    pub(super) const fn offer(&self, index: usize) -> Offered {
-        Offered {
-            revision: self.listing_revision,
-            index,
-        }
-    }
-
-    pub(super) fn offered(&self, offer: Offered) -> Option<&Row> {
-        self.rows
-            .get(offer.index)
-            .filter(|_| offer.revision == self.listing_revision)
-    }
-
     pub(super) fn select(&mut self, directory: PathBuf, frame: usize) -> Key {
-        self.revision = self.revision.wrapping_add(1);
-        let key = Key {
-            revision: self.revision,
-            directory,
-            frame,
-        };
+        let key = Key { directory, frame };
         self.selection = Selection::Selected(key.clone());
         key
     }
@@ -496,7 +464,6 @@ impl Library {
     }
 
     pub(super) fn remove(&mut self, directory: &Path) -> bool {
-        self.listing_revision = self.listing_revision.wrapping_add(1);
         self.rows.retain(|row| row.directory != directory);
         let selected = self.is_selected(directory);
         if selected {

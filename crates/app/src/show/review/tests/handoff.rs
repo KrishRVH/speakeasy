@@ -9,7 +9,6 @@ fn a_maximum_saved_summary_still_allows_an_image_with_labeled_context() {
     let narration = Narration::Untimed {
         text: "Recorded phrase.".repeat(4_000),
         incomplete: false,
-        truncated: false,
     };
     let text = handoff::text("Displayed sample.\n".into(), Some(&summary), &narration).unwrap();
     assert!(
@@ -34,7 +33,6 @@ fn evidence_keeps_edited_summary_and_timed_recording_as_distinct_context() {
             },
         ],
         incomplete: true,
-        truncated: true,
     };
     let text = handoff::text(
         "Displayed sample at 0:02.000.\n".into(),
@@ -48,7 +46,6 @@ fn evidence_keeps_edited_summary_and_timed_recording_as_distinct_context() {
     );
     assert!(text.contains("## Recorded narration\n\n[0:01.500] First original phrase.\n[0:04.000] Second original phrase."));
     assert!(text.contains("Narration is incomplete."));
-    assert!(text.contains("excerpt is truncated"));
 }
 
 #[test]
@@ -72,7 +69,6 @@ fn evidence_reports_missing_and_untimed_narration_without_inventing_words() {
             Narration::Untimed {
                 text: "Exact untimed wording.".into(),
                 incomplete: false,
-                truncated: false,
             },
             "No word timestamps are available.\nExact untimed wording.",
         ),

@@ -115,7 +115,6 @@ async fn exercise_video(cx: &mut AsyncApp) -> anyhow::Result<()> {
         ))
     })??;
     assert!(reference.contains("--video --at 0:00.284"));
-    assert!(!reference.contains("PRIVATE"));
     let path = directory.clone();
     let served = cx
         .background_executor()
