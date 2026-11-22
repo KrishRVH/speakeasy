@@ -15,7 +15,7 @@ pub(super) fn json(value: &impl Serialize, out: &mut impl io::Write) -> io::Resu
 
 pub(super) fn list(
     entries: impl Iterator<Item = io::Result<Entry>>,
-    parent: Option<&Path>,
+    parent: &Path,
     as_json: bool,
     out: &mut impl io::Write,
 ) -> io::Result<()> {

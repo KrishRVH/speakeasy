@@ -267,12 +267,19 @@ fn the_embedded_skill_is_emitted_verbatim_and_its_commands_are_accepted() -> any
 }
 
 #[test]
-fn closing_the_output_pipe_preserves_the_io_error_kind() {
+fn closing_the_output_pipe_preserves_the_io_error_kind() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
     for json in [false, true] {
-        let error =
-            output::list(std::iter::empty(), None, json, &mut crate::testing::Closed).unwrap_err();
+        let error = output::list(
+            std::iter::empty(),
+            root.path(),
+            json,
+            &mut crate::testing::Closed,
+        )
+        .unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
     }
+    Ok(())
 }
 
 #[tokio::test]
@@ -281,7 +288,7 @@ async fn interrupted_listing_has_distinct_identity_and_original_expiry() -> anyh
     let interrupted = interrupted(root.path()).await?;
 
     let mut bytes = Vec::new();
-    output::list(std::iter::empty(), Some(root.path()), true, &mut bytes)?;
+    output::list(std::iter::empty(), root.path(), true, &mut bytes)?;
     let listing: Value = serde_json::from_slice(&bytes)?;
     assert_eq!(listing[0]["status"], "interrupted");
     assert_eq!(listing[0]["id"], interrupted.id());
@@ -298,7 +305,7 @@ async fn interrupted_listing_has_distinct_identity_and_original_expiry() -> anyh
 
     interrupted.lock()?.keep_for_retry()?;
     bytes.clear();
-    output::list(std::iter::empty(), Some(root.path()), true, &mut bytes)?;
+    output::list(std::iter::empty(), root.path(), true, &mut bytes)?;
     let listing: Value = serde_json::from_slice(&bytes)?;
     assert_eq!(listing[0]["status"], "narrationPending");
     assert_eq!(listing[0]["id"], interrupted.id());

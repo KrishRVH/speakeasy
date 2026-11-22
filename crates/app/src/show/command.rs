@@ -257,7 +257,7 @@ impl Command {
                 let directory = store::directory()?;
                 let entries = recall::list(&directory)
                     .with_context(|| format!("Cannot list Shows in {}", directory.display()))?;
-                output::list(entries, Some(&directory), json, out)?;
+                output::list(entries, &directory, json, out)?;
             },
             Self::Inspect { directory, json } => {
                 let directory = locate(&directory)?;

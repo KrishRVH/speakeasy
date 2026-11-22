@@ -208,13 +208,10 @@ impl Inspection {
 
 pub(super) fn list(
     entries: impl Iterator<Item = io::Result<Entry>>,
-    parent: Option<&Path>,
+    parent: &Path,
 ) -> io::Result<Vec<Overview>> {
     let saved = entries.map(|entry| entry.map(|entry| Overview::of(&entry)));
-    let Some(shows) = parent else {
-        return saved.collect();
-    };
-    let interrupted = checkpoint::list(shows, SystemTime::now())
+    let interrupted = checkpoint::list(parent, SystemTime::now())
         .into_iter()
         .map(|show| Overview {
             id: Some(show.id()),
