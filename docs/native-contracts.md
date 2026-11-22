@@ -57,10 +57,9 @@ produced; the insertion thread answers the request before it waits 500 ms and pu
 back. The restore reopens the clipboard and writes only while that number is unchanged, so a newer
 copy, by the user or another app, stays. Cancellation before submission restores the snapshot at
 once under the same check, or clears the dictated copy when there was nothing to save. These
-restores are best effort, so the dictation still reports its cancellation or the original error. A
-failed write restores nothing. The thread serves the next request only after the restore, which
-therefore snapshots the restored copy. The snapshot lives only on the insertion thread and is
-dropped after the restore.
+restores are best effort, so the dictation still reports its cancellation. A failed write restores
+nothing. The thread serves the next request only after the restore, which therefore snapshots the
+restored copy. The snapshot lives only on the insertion thread and is dropped after the restore.
 
 `MonitorControl` serializes publishing a live run-loop handle, readiness and stop. Stop-before-start
 remains effective; retirement removes the handle before a later stop can wake it. This lock cannot

@@ -761,25 +761,25 @@ module unless a test file is named.
   [Mac codec](../crates/platform/src/macos/movie/encode.rs). Its non-cloneable
   [lease](../crates/platform/src/movie.rs) waits for an origin acknowledgment before opening the
   file and closes only after native file handles release. It bounds its canvas to 2560 pixels per
-  edge, its reported native input queue to 64 MiB, and actual file writes to 384 MiB. Those bounds
-  do not cover memory allocated internally by the system codec. Resized windows fit inside a cleared
-  fixed canvas. Display size, position, or scale changes end capture, since the pointer coordinate
-  grid is no longer valid. An explicit 30 Hz clock submits the latest eligible capture and holds it
-  through quiet periods; contiguous input prevents the native converter from filling a gap with a
-  future image. Captures sharing an unsubmitted tick coalesce. Before presenting a changed content
-  or source rectangle, the encoder waits for its checksummed geometry receipt. The first receipt
-  starts at sample zero; coalesced inputs never create unpresented layouts. Cancellation after
-  acceptance still prevents submission; failed persistence reports a video failure. Every read image
-  reaches the movie before quiet advancement, including images read for the still lane. Cancellation
-  is checked between submissions, and a catch-up burst stops after 60 samples instead of
-  monopolizing the capture thread. A failure retains the committed output count and presentation
-  horizon separately from the last capture time. Finalization adds no samples. The original session
-  deadline bounds capture and held output. Windows Shows and Mac screen and area Shows save video
-  beside their sampled lossless frames; Mac window Shows retain sampled frames only. The
-  [Mac stream](../crates/platform/src/macos/screen/stream.rs) keeps an immutable display crop,
-  excludes Speakeasy's application, and copies complete BGRA frames into a two-slot lane. It maps
-  native display timestamps onto the host clock and rechecks display geometry before each batch of
-  queued frames. Native screen output has no audio or cursor. A separate terminal lane reports
+  edge, the Windows codec's reported input queue to 64 MiB, and actual file writes to 384 MiB. Those
+  bounds do not cover memory allocated internally by the system codec. Resized windows fit inside a
+  cleared fixed canvas. Display size, position, or scale changes end capture, since the pointer
+  coordinate grid is no longer valid. An explicit 30 Hz clock submits the latest eligible capture
+  and holds it through quiet periods; contiguous input prevents the native converter from filling a
+  gap with a future image. Captures sharing an unsubmitted tick coalesce. Before presenting a
+  changed content or source rectangle, the encoder waits for its checksummed geometry receipt. The
+  first receipt starts at sample zero; coalesced inputs never create unpresented layouts.
+  Cancellation after acceptance still prevents submission; failed persistence reports a video
+  failure. Every read image reaches the movie before quiet advancement, including images read for
+  the still lane. Cancellation is checked between submissions, and a catch-up burst stops after 60
+  samples instead of monopolizing the capture thread. A failure retains the committed output count
+  and presentation horizon separately from the last capture time. Finalization adds no samples. The
+  original session deadline bounds capture and held output. Windows Shows and Mac screen and area
+  Shows save video beside their sampled lossless frames; Mac window Shows retain sampled frames
+  only. The [Mac stream](../crates/platform/src/macos/screen/stream.rs) keeps an immutable display
+  crop, excludes Speakeasy's application, and copies complete BGRA frames into a two-slot lane. It
+  maps native display timestamps onto the host clock and rechecks display geometry before each batch
+  of queued frames. Native screen output has no audio or cursor. A separate terminal lane reports
   failure before cleanup waits; successful stop, an already-stopped native error, or the native
   stopped notification must acknowledge termination before output removal and callback-queue
   drainage. After an acknowledged stop, the movie lease stays owned through that cleanup and codec

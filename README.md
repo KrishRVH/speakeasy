@@ -842,9 +842,9 @@ shortcut and the model until you resume.
 
 By default the text is pasted through the clipboard. On Windows and Mac, Speakeasy then puts back
 what the clipboard held half a second after the paste, unless something else changed the clipboard
-in the meantime. On Windows it leaves the dictated text there instead when the earlier copy was held
-in a format it cannot copy, such as a metafile. **Paste last dictation** pastes the text again
-either way. **Type instead of paste** types the text as direct input, which never touches the
+in the meantime. It leaves the dictated text there instead when the clipboard was empty or held
+something it cannot copy back, such as a Windows metafile. **Paste last dictation** pastes the text
+again either way. **Type instead of paste** types the text as direct input, which never touches the
 clipboard but some editors reject. On Linux the pasted text stays on the clipboard; **Insert text
 by**, described above, chooses the method. Protected fields and elevated Windows apps may refuse
 either method, and no OS submission can confirm that an editor accepted the text.
@@ -1006,14 +1006,13 @@ every ordering of events against both within the bounds
   Replay, and recognition before completion. Each check runs in its own process, which owns one GPUI
   application.
 - On macOS with FFmpeg installed, `bash scripts/check-movie-macos.sh` generates synthetic silent
-  movies and checks native frame timestamps, pixels, cancellation, and a seek near the five-minute
-  limit. It accesses no microphone, screen, input, or clipboard. The Check workflow's optional
-  `movie` input also encodes a synthetic color-and-motion clip on Windows with
-  `mise run windows:movie:colors`, normalizes its fragment headers into the published format, and
-  checks the retained prefix through the Mac reader with `mise run macos:movie:from-windows`,
-  including HD neutral midtones, without accessing live devices. With `movie`, `movie_fixture_run`
-  reuses the synthetic Windows artifact from a specified run for a focused Mac check; it skips the
-  normal native matrix.
+  movies and checks exact-frame pixels, cancellation, and a seek near the five-minute limit. It
+  accesses no microphone, screen, input, or clipboard. The Check workflow's optional `movie` input
+  also encodes a synthetic color-and-motion clip on Windows with `mise run windows:movie:colors`,
+  normalizes its fragment headers into the published format, and checks the retained prefix through
+  the Mac reader with `mise run macos:movie:from-windows`, including HD neutral midtones, without
+  accessing live devices. With `movie`, `movie_fixture_run` reuses the synthetic Windows artifact
+  from a specified run for a focused Mac check; it skips the normal native matrix.
 - On macOS, set `SPEAKEASY_MAC_MOVIE_DIRECTORY` to a new artifact directory and run
   `mise run macos:movie:encode`. It checks native H.264 fragments, held and irregular timing,
   resized content, colors, bounded output, cancellation, and file closure using generated pixels.
