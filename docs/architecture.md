@@ -475,7 +475,8 @@ module unless a test file is named.
 - **Agent evidence**: [show/evidence.rs](../crates/app/src/show/evidence.rs) shares inspection and
   temporal queries between CLI and [show/mcp.rs](../crates/app/src/show/mcp.rs). MCP exposes three
   read-only tools within explicit launch roots. A Show path or folder name resolves only when its
-  canonical folder lies inside a root. Summary and narration text are bounded, images are at most 8
+  canonical folder lies inside a root. Listing skips dot-named folders, where publication stages a
+  Show before renaming it into place. Summary and narration text are bounded, images are at most 8
   MiB, and source reads report actual sample times. A Show whose manifest cannot be read is listed
   as unreadable; a root that cannot be listed is named in `unavailableRoots` while the others still
   list. It serves the 2026-07-28 stateless protocol and the 2025-11-25 initialized protocol that
@@ -505,12 +506,12 @@ module unless a test file is named.
   [navigation.rs](../crates/app/src/show/review/navigation.rs) describes earlier/later samples
   honestly and formats the retrieval pointer without transcript text.
   [handoff.rs](../crates/app/src/show/review/handoff.rs) combines that pointer, the displayed
-  summary, and bounded original narration for an explicit evidence copy, keeping their meanings
-  separate. A labeled summary excerpt keeps the combined text inside the clipboard byte limit
-  without dropping narration or changing the bundle. A new selection drops the reads pending for the
-  old one. The [preview owner](../crates/app/src/show/preview.rs) retains one blocking reader
-  through native cleanup; a replacement waits for that acknowledgement, and the view keeps only its
-  latest pending seek. Closing cancels its receipt; Quit cancels and drains the owner.
+  summary, and original narration for an explicit evidence copy, keeping their meanings separate. A
+  labeled summary excerpt keeps the combined text inside the clipboard byte limit without dropping
+  narration or changing the bundle. A new selection drops the reads pending for the old one. The
+  [preview owner](../crates/app/src/show/preview.rs) retains one blocking reader through native
+  cleanup; a replacement waits for that acknowledgement, and the view keeps only its latest pending
+  seek. Closing cancels its receipt; Quit cancels and drains the owner.
   [preview/frame.rs](../crates/app/src/show/preview/frame.rs) decodes off the UI thread, keeps
   frames out of GPUI's asset cache, and passes source and video BGRA directly to the renderer.
   `Image` owns premultiplied RGBA; `into_bgra` consumes it into straight-alpha BGRA, reusing opaque

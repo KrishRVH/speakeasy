@@ -106,7 +106,10 @@ fn gather(root: &Path, rows: &mut Vec<PathBuf>, after: Option<&Path>) -> io::Res
     for entry in fs::read_dir(root)? {
         let name = entry?.file_name();
         let path = root.join(&name);
-        if path.is_dir() && (name.to_str().and_then(ShowId::parse).is_some() || holds_show(&path)) {
+        if !name.as_encoded_bytes().starts_with(b".")
+            && path.is_dir()
+            && (name.to_str().and_then(ShowId::parse).is_some() || holds_show(&path))
+        {
             retain(rows, path, after);
         }
     }

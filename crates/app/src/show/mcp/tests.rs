@@ -152,6 +152,22 @@ fn listing_is_bounded_and_a_cursor_does_not_skip_the_next_show() -> anyhow::Resu
 }
 
 #[test]
+fn a_show_still_being_published_is_not_listed() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let saved = fixture(temp.path(), "saved")?.canonicalize()?;
+    fixture(temp.path(), ".tmpStaged")?;
+    let roots = Roots::open(&[temp.path().to_owned()], None).map_err(anyhow::Error::msg)?;
+    let listed: Vec<_> = roots
+        .list(None)
+        .shows
+        .into_iter()
+        .map(|row| row.directory)
+        .collect();
+    assert_eq!(listed, [saved]);
+    Ok(())
+}
+
+#[test]
 fn a_show_whose_manifest_cannot_be_read_is_listed_with_that_problem() -> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;
     let single = fixture(temp.path(), "single")?.canonicalize()?;
