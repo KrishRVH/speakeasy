@@ -131,7 +131,7 @@ impl HookState {
         let physical = keyboard::Physical::read(self.shortcut, is_key_down);
         let decision = self.policy.observe(key, down, physical, Instant::now());
         decision.deliver(&self.input);
-        if decision.starts() && self.shortcut.masks_start() {
+        if decision.starts() && self.shortcut == crate::WindowsShortcut::ControlWindows {
             unsafe {
                 PostThreadMessageW(GetCurrentThreadId(), MASK_START, 0, 0);
             }

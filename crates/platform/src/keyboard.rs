@@ -369,11 +369,6 @@ impl crate::WindowsShortcut {
             Self::F13 => f13,
         }
     }
-
-    #[cfg(target_os = "windows")]
-    pub(super) const fn masks_start(self) -> bool {
-        matches!(self, Self::ControlWindows)
-    }
 }
 
 #[cfg(any(target_os = "windows", test))]
