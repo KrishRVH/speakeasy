@@ -556,8 +556,8 @@ module unless a test file is named.
 - **Show composition**: [crates/show/src](../crates/show/src), notably
   [locate.rs](../crates/show/src/locate.rs) resolves phrases and marks to exact recorded spans;
   [locate/evidence.rs](../crates/show/src/locate/evidence.rs) renders bounded source sheets and mark
-  crops with actual sample times. The source CLI and native mark navigation share this lookup. Query
-  properties, sampling gaps, private output, crops, and export ownership are checked in
+  crops with actual sample times. The source CLI and native mark navigation share this lookup.
+  Phrase matching, sampling gaps, crops, and export ownership are checked in
   [locate/tests.rs](../crates/show/src/locate/tests.rs) and
   [command/source/tests.rs](../crates/app/src/show/command/source/tests.rs). Composition also
   includes [select.rs](../crates/show/src/select.rs) and [select/](../crates/show/src/select),
@@ -638,9 +638,9 @@ module unless a test file is named.
   on Linux, or a durable app executable; temporary mounts and unavailable commands are omitted.
   Existing summaries are never regenerated. [bundle/read.rs](../crates/show/src/bundle/read.rs)
   validates format versions and references without I/O, accepts only the current format, exposes
-  sheet membership, and strips private decoder messages from failures. A keyframe `crop` must be a
-  proper part of the unit square. Its [tests](../crates/show/src/bundle/read/tests.rs) reject broken
-  references and exercise generated manifest mutations and sheet sizes.
+  sheet membership, and reports why a manifest could not be decoded. A keyframe `crop` must be a
+  proper part of the unit square. Its [tests](../crates/show/src/bundle/read/tests.rs) check the
+  format error and allow marks without saved keyframes.
 - **Show store**: [show/store.rs](../crates/app/src/show/store.rs) names, writes, and expires
   bundles, and [store/recall.rs](../crates/app/src/show/store/recall.rs) reads a saved one back; it
   also discovers and inspects saved Shows by path without changing them. A Show whose manifest or
@@ -717,24 +717,22 @@ module unless a test file is named.
   ownership, torn logs, expiry, and interrupted IDs.
   [journal/log.rs](../crates/show/src/journal/log.rs) shares live/replay admission, thinning, and
   pointer folding; its header records the budget, surface, and framing, so recovery crops as the
-  live Show would; checksums and bounded records stop replay at its first damaged event. Property
-  tests compare replayed frames, timing, and annotations with live state. The journal stores
-  lossless changed tiles and thins samples and tiles together, retaining the first and last held
-  frames. Each thinning doubles admission stride; skipped arrivals need no pixel preparation. Its
-  compressed budget is a target with a two-frame exception, not a strict resident-memory cap.
-  Sealing drops only the comparison image. A lookup returns the latest retained sample at or before
-  the query, or the first sample for an earlier query. Callers report its actual timestamp; retained
-  samples do not establish what appeared in the gaps.
-  [journal/source.rs](../crates/show/src/journal/source.rs) streams optional retained frames into
-  `source.frames` (512 MiB maximum), with checksummed tiles and an index capped at 64 MiB/4096
-  frames. [store/source.rs](../crates/app/src/show/store/source.rs) performs bounded range reads;
-  the viewer and CLI decode only the requested frame. Retained source frames require a readable Show
-  manifest with the same recording duration; a mismatch leaves keyframes and edits readable. Source
-  exports require an explicit focus and new output path and never overwrite. Source writes use a
-  temporary file; failure saves selected keyframes with a nonfatal notice.
-  [publish/tests.rs](../crates/app/src/show/publish/tests.rs) covers this fallback, and
-  [publish/tests/recovery.rs](../crates/app/src/show/publish/tests/recovery.rs) covers publication
-  failure, revocation, original expiry, and duplicate recovery prevention.
+  live Show would; checksums and bounded records stop replay at its first damaged event. Tests
+  compare replayed frames, timing, and annotations with live state. The journal stores lossless
+  changed tiles and thins samples and tiles together, retaining the first and last held frames. Each
+  thinning doubles admission stride; skipped arrivals need no pixel preparation. Its compressed
+  budget is a target with a two-frame exception, not a strict resident-memory cap. Sealing drops
+  only the comparison image. A lookup returns the latest retained sample at or before the query, or
+  the first sample for an earlier query. Callers report its actual timestamp; retained samples do
+  not establish what appeared in the gaps. [journal/source.rs](../crates/show/src/journal/source.rs)
+  streams optional retained frames into `source.frames` (512 MiB maximum), with checksummed tiles
+  and an index capped at 64 MiB/4096 frames.
+  [store/source.rs](../crates/app/src/show/store/source.rs) performs bounded range reads; the viewer
+  and CLI decode only the requested frame. Source exports require an explicit focus and new output
+  path and never overwrite. Source writes use a temporary file; failure saves selected keyframes
+  with a nonfatal notice. [publish/tests.rs](../crates/app/src/show/publish/tests.rs) covers this
+  fallback, and [publish/tests/recovery.rs](../crates/app/src/show/publish/tests/recovery.rs) covers
+  publication failure, revocation, original expiry, and duplicate recovery prevention.
 - **Screen capture and overlay**: [platform/src/screen.rs](../crates/platform/src/screen.rs),
   [screen/geometry.rs](../crates/platform/src/screen/geometry.rs),
   [windows/screen.rs](../crates/platform/src/windows/screen.rs) with
@@ -941,9 +939,6 @@ No single module owns these rules; a change to any party keeps them.
   that an editor accepted the text, and Escape cannot retract input already submitted. Explicit
   Paste last is a new user request with a new permit; it reuses exact final text without recognizing
   or styling it again.
-- **Private content stays out of diagnostics.** No module logs or reports what
-  [AGENTS.md](../AGENTS.md#app-contracts) keeps private; join failures and panics report fixed
-  messages.
 
 ### Session ownership
 
