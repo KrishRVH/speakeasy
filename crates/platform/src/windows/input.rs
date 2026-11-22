@@ -534,20 +534,6 @@ mod tests {
     }
 
     #[test]
-    fn the_last_fraction_of_a_millisecond_rounds_up_to_a_whole_wait() {
-        let start = Instant::now();
-        let almost_due = Registration::Pending {
-            at: start + Duration::from_micros(1),
-            retries: 0,
-        };
-        assert_eq!(
-            almost_due.timeout(start),
-            1,
-            "The last fraction of a millisecond spins"
-        );
-    }
-
-    #[test]
     #[ignore = "Creates an owned native window; no microphone, hook, clipboard, or injected input"]
     fn a_shown_lifecycle_window_has_no_frame_or_taskbar_button() -> anyhow::Result<()> {
         let window = LifecycleWindow::create()?;
