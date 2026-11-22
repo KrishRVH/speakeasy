@@ -92,7 +92,6 @@ enum Stroke {
 }
 
 impl Stroke {
-    #[cfg(any(target_os = "windows", target_os = "macos", test))]
     const fn new(down: bool, repeat: bool) -> Self {
         match (down, repeat) {
             (false, _) => Self::Release,

@@ -102,7 +102,7 @@ pub(crate) fn settle<N: NativeInsert + 'static>(
     }
 }
 
-pub(crate) struct Saved<N: NativeInsert> {
+struct Saved<N: NativeInsert> {
     contents: N::Contents,
     mark: N::Mark,
 }
@@ -185,7 +185,7 @@ pub(crate) trait NativeInsert {
     fn send(&mut self, keys: Self::Keys) -> anyhow::Result<Inserted>;
 }
 
-pub(crate) type Written<N> = (
+type Written<N> = (
     <N as NativeInsert>::Mark,
     Option<<N as NativeInsert>::Contents>,
 );
