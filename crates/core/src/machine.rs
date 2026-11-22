@@ -161,7 +161,7 @@ pub trait Env<P: Payload> {
 
     fn retire_delivery(&mut self, session: SessionId);
 
-    fn release(&mut self, session: SessionId, checkpoint: P::Checkpoint, release: Release<P>);
+    fn release(&mut self, session: SessionId, checkpoint: P::Checkpoint, release: Release);
 
     fn remember(&mut self, shown: P::Shown);
 

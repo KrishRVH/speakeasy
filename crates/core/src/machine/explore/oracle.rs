@@ -110,7 +110,7 @@ pub(super) enum Effect {
     RetireDelivery(#[expect(dead_code, reason = "A failure trace prints it")] SessionId),
     Release(
         #[expect(dead_code, reason = "A failure trace prints it")] SessionId,
-        #[expect(dead_code, reason = "A failure trace prints it")] Release<Abstract>,
+        #[expect(dead_code, reason = "A failure trace prints it")] Release,
     ),
     Remember,
     Announce,
@@ -315,7 +315,7 @@ impl Env<Abstract> for Oracle {
         self.effects.push(Effect::RetireDelivery(session));
     }
 
-    fn release(&mut self, session: SessionId, (): (), release: Release<Abstract>) {
+    fn release(&mut self, session: SessionId, (): (), release: Release) {
         self.effects.push(Effect::Release(session, release));
     }
 

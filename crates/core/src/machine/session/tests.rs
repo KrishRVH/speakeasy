@@ -135,26 +135,17 @@ fn a_show_goes_on_without_narration_only_from_the_stages_its_loss_can_reach() {
 }
 
 #[test]
-fn a_finished_show_keeps_its_checkpoint_with_only_the_losses_recovery_can_honor() {
-    for (silent, kept) in [(true, Some(NarrationLoss::AudioSilent)), (false, None)] {
-        let mut log = Log::default();
-        let mut show = opened(&mut log, true);
-        show.keep(Kept {
-            checkpoint: "checkpoint",
-            audio: log.producer(),
-            frames: log.producer(),
-        });
-        show.audio_ready(State::Held, Duration::ZERO);
-        show.finish();
-        assert!(show.go_on_without_audio(silent));
-        assert!(show.into_cleanup(&mut log));
-        let Some(Release::Keep(narration)) = log.released.take() else {
-            panic!("A finished Show discarded its checkpoint");
-        };
-        assert_eq!(
-            narration.map(|(_, loss)| loss),
-            kept.map(Some),
-            "Silent audio {silent} kept the wrong narration loss"
-        );
-    }
+fn a_finished_show_keeps_its_checkpoint() {
+    let mut log = Log::default();
+    let mut show = opened(&mut log, true);
+    show.keep(Kept {
+        checkpoint: "checkpoint",
+        audio: log.producer(),
+        frames: log.producer(),
+    });
+    show.audio_ready(State::Held, Duration::ZERO);
+    show.finish();
+    assert!(show.go_on_without_audio(true));
+    assert!(show.into_cleanup(&mut log));
+    assert_eq!(log.released, Some(Release::Keep));
 }

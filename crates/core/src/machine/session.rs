@@ -102,9 +102,9 @@ pub struct Publication<P: Payload> {
     pub origin: Origin<P>,
 }
 
-#[cfg_attr(test, derive(Clone, Debug))]
-pub enum Release<P: Payload> {
-    Keep(Option<(P::Narration, Option<NarrationLoss>)>),
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Release {
+    Keep,
     Discard,
 }
 
@@ -728,14 +728,7 @@ impl<P: Payload> Session<P> {
             return false;
         };
         let release = match show.disposition {
-            Disposition::Finished => Release::Keep(match self.stage {
-                Stage::AwaitingFootage {
-                    narration,
-                    loss:
-                        loss @ (None | Some(NarrationLoss::Incomplete | NarrationLoss::AudioSilent)),
-                } => Some((narration, loss)),
-                _ => None,
-            }),
+            Disposition::Finished => Release::Keep,
             Disposition::Unfinished | Disposition::Forfeited => Release::Discard,
         };
         show.close_producers();
@@ -755,8 +748,7 @@ redacted!(
     Reopened,
     Recognized,
     Origin,
-    Publication,
-    Release
+    Publication
 );
 
 #[cfg(test)]
