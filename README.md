@@ -1000,11 +1000,10 @@ every ordering of events against both within the bounds
   summaries, expiry, ZIP export, visual-copy requests through a fake, and image cleanup on close.
   Linux also checks the owned window's rendered frame pixels. It uses no microphone, global input,
   screen capture, or clipboard.
-- `mise run native:settings`, on Windows or Linux, checks Settings IME composition and save
-  draining, then language and page navigation, focus restoration, permission refresh using fake
-  observations, private practice cleanup, and the simulated onboarding journey, including Skip,
-  Replay, and recognition before completion. Each check runs in its own process, which owns one GPUI
-  application.
+- `mise run native:settings`, on Windows or Linux, checks Settings IME composition, then language
+  and page navigation, focus restoration, permission refresh using fake observations, private
+  practice cleanup, and the simulated onboarding journey, including Skip, Replay, and recognition
+  before completion. Each check runs in its own process, which owns one GPUI application.
 - On macOS with FFmpeg installed, `bash scripts/check-movie-macos.sh` generates synthetic silent
   movies and checks exact-frame pixels, cancellation, and a seek near the five-minute limit. It
   accesses no microphone, screen, input, or clipboard. The Check workflow's optional `movie` input

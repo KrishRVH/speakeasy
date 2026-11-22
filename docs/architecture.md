@@ -47,11 +47,10 @@ module unless a test file is named.
   `Payload` names what the machine carries without reading it: the app's audio, text, and permits,
   or nothing in the explorer. [session/tests.rs](../crates/core/src/machine/session/tests.rs) and
   [recognition/tests.rs](../crates/core/src/machine/recognition/tests.rs) check a session's stages
-  and early recognition, and [machine/tests.rs](../crates/core/src/machine/tests.rs) checks which
-  saved Show is remembered, the shield before an explicit Show's microphone, preset acceptance,
-  script-capture promotion, and a Show's microphone-loss notice across a worker reload;
-  [explore.rs](../crates/core/src/machine/explore.rs) tries every ordering of events and answers
-  within the bounds [exhaustive exploration](#exhaustive-exploration) lists, checking
+  and early recognition, and [machine/tests.rs](../crates/core/src/machine/tests.rs) checks preset
+  acceptance and script-capture promotion; [explore.rs](../crates/core/src/machine/explore.rs) tries
+  every ordering of events and answers within the bounds
+  [exhaustive exploration](#exhaustive-exploration) lists, checking
   [invariants.rs](../crates/core/src/machine/explore/invariants.rs) at each state and transition.
 - **Session owner**: [runtime.rs](../crates/app/src/runtime.rs) and
   [runtime/owner.rs](../crates/app/src/runtime/owner.rs) interpret the machine: the owner answers
@@ -59,19 +58,16 @@ module unless a test file is named.
   seam, and [native.rs](../crates/app/src/runtime/native.rs) supplies the app's payload.
   [device.rs](../crates/app/src/runtime/device.rs) and
   [worker.rs](../crates/app/src/runtime/worker.rs) hold a session's devices and worker.
-  [runtime/tests.rs](../crates/app/src/runtime/tests.rs) hosts the owner on fakes;
-  [tests/model.rs](../crates/app/src/runtime/tests/model.rs) checks device and worker release, and
-  that text reaches only the session that spoke it, over generated input, settings changes and
-  engine faults included. [tests/recognition.rs](../crates/app/src/runtime/tests/recognition.rs)
-  checks early recognition, stale piece results, Show promotion, and cleanup across boundaries.
-  [tests/streaming.rs](../crates/app/src/runtime/tests/streaming.rs) covers continuous cancellation,
-  worker reuse, promotion, and private delivery;
-  [tests/practice.rs](../crates/app/src/runtime/tests/practice.rs) checks practice destination and
-  lifetime. [tests/replay.rs](../crates/app/src/runtime/tests/replay.rs) defends the single
-  memory-only last-result slot: completed ordinary insertion attempts promote their exact final
-  text, cancelled or stale work cannot replace it, and each explicit replay obtains a new permit.
-  Pause, runtime restart, and Quit erase it; in-place settings changes preserve the exact result for
-  recovery. Style is frozen at session admission;
+  [runtime/tests.rs](../crates/app/src/runtime/tests.rs) hosts the owner on fakes.
+  [tests/recognition.rs](../crates/app/src/runtime/tests/recognition.rs) checks which sessions
+  recognize early, cleanup across the final boundary, and the lone-credit filter.
+  [tests/streaming.rs](../crates/app/src/runtime/tests/streaming.rs) covers continuous cancellation
+  and worker reuse; [tests/practice.rs](../crates/app/src/runtime/tests/practice.rs) checks practice
+  destination and lifetime. [tests/replay.rs](../crates/app/src/runtime/tests/replay.rs) defends the
+  single memory-only last-result slot: completed ordinary insertion attempts promote their exact
+  final text, cancelled or stale work cannot replace it, and each explicit replay obtains a new
+  permit. Pause, runtime restart, and Quit erase it; in-place settings changes preserve the exact
+  result for recovery. Style is frozen at session admission;
   [transcript/style.rs](../crates/app/src/transcript/style.rs) applies deterministic local casing
   after corrections, while Verbatim bypasses filler removal. Show narration keeps its own policy.
   [shell/choices.rs](../crates/app/src/shell/choices.rs) routes control commands and owns
@@ -81,46 +77,31 @@ module unless a test file is named.
   restart. The owner reads that lane before input, so a press sent after a save records with the
   saved settings. The [runtime](../crates/app/src/runtime.rs) handle keeps the baseline those
   requests leave in effect, apart from a transient preset, including after Resume, and compares each
-  save with it, never with an older file. Settings lands queued saves in order: a write that
-  finishes while a newer draft waits lands then, and the newest lands last. Only the newest save,
-  when it changes what a session reads, revokes input and ends the session at once; any other leaves
-  recordings and Shows running. A rollback or an older queued save waits until no session or
-  practice runs and then applies the newest baseline without replacing the result of the session
-  that just ended, so a save accepted meanwhile replaces it. A save restarts the owner at once only
-  when its desktop settings differ both from those the owner launched with and from its baseline.
-  When the owner's desktop settings otherwise differ from Services', as after a rollback, an older
-  queued save, or a later save over either, Services asks the owner to stop once no session or
-  practice runs and then restarts it, which replaces that session's result as Pause does; a newer
-  save or rollback withdraws that request. Each tray or command preset and each Use is numbered when
-  chosen, and Services sends one only while it is the newest choice. Each request sent to the owner
-  also carries its lane position: Services honors an accepted answer only when no newer request was
-  accepted and no session-changing save, rollback, Reset, Use while paused, or owner restart
-  followed it, counts requests settled only once the owner answered every one, and tells a
-  superseded tray or command caller it was refused, so a caller told it succeeded finds its preset
-  after Pause and Resume. Pause lets a validating choice finish and answer: a tray or command preset
-  that a newer choice or Pause overtakes is refused, and a Use that Pause interrupts completes as a
-  Use while paused. Tray and command presets validate off the UI thread, leave saved settings
-  unchanged, and the owner confirms one only while idle, when no session has started and no
-  session-changing save has landed since it was chosen. Text-only choices reuse the worker; engine
-  changes reload it. Use in Settings validates its candidate off the UI thread; a running owner
-  adopts one that changes what a session reads only while idle, Services makes it the configuration
-  Resume starts on, and only then does Settings save it. A session that starts while that save is
-  written therefore survives its completion, and a refused or unavailable preset changes neither
-  dictation nor the settings file. A change to any setting a session reads, made while the candidate
-  validates, outlasts it: the owner never sees the candidate, and Settings drops the Use with a
-  notice. If a change to a setting the preset keeps comes after the owner adopted it, if the save
-  fails, or if Settings closes before it loads the owner's answer, Services rolls back. Settings
-  disables Use during a session. Without a live owner, including one that stopped on its own, a
-  valid candidate clears the transient selection. One that changes the session becomes the
-  configuration Resume starts on, following each newer draft Settings writes, until the newest of
-  those saves lands or a failed one rolls it back. A Resume check that finishes on anything but the
-  current candidate checks again, so Resume launches only the newest saved or accepted
-  configuration. Older saves landing meanwhile leave the owner alone, so the newest save keeps a
-  session or Show started after Resume, even one using a shortcut changed in that draft. A transient
-  selection takes precedence in the Settings indicator, which follows Services as well as snapshots,
-  while its row still holds the definition that was chosen. Capturing a preset requires both speech
-  paths; a stored preset missing one still loads with its settings, and Use on it asks for an engine
-  and model without changing dictation.
+  save with it, never with an older file. Settings keeps one write in flight and at most one queued
+  draft; a newer edit replaces the queued draft, and only the newest save lands. A save that changes
+  what a session reads revokes input and ends the session at once; any other leaves recordings and
+  Shows running. A rollback waits until no session or practice runs and then applies the newest
+  baseline without replacing the result of the session that just ended. A save restarts the owner at
+  once only when its desktop settings differ both from those the owner launched with and from its
+  baseline. When the owner's desktop settings otherwise differ from Services', as after a rollback,
+  Services asks the owner to stop once no session or practice runs and then restarts it, which
+  replaces that session's result as Pause does; a newer save or rollback withdraws that request.
+  Tray and command presets validate off the UI thread, leave saved settings unchanged, and the owner
+  confirms one only while idle; Quit cancels choices still validating. Text-only choices reuse the
+  worker; engine changes reload it. Use in Settings validates its candidate off the UI thread; a
+  running owner adopts one that changes what a session reads only while idle, Services makes it the
+  configuration Resume starts on, and only then does Settings save it. A session that starts while
+  that save is written therefore survives its completion, and a refused or unavailable preset
+  changes neither dictation nor the settings file. If a change to a setting the preset keeps comes
+  after the owner adopted it, if the save fails, or if Settings closes before it loads the owner's
+  answer, Services rolls back. Settings disables Use during a session. Without a live owner,
+  including one that stopped on its own, a valid candidate clears the transient selection. One that
+  changes the session becomes the configuration Resume starts on, following each newer draft
+  Settings writes, until the newest save lands or a failed one rolls it back. A transient selection
+  takes precedence in the Settings indicator, which follows Services as well as snapshots, while its
+  row still holds the definition that was chosen. Capturing a preset requires both speech paths; a
+  stored preset missing one still loads with its settings, and Use on it asks for an engine and
+  model without changing dictation.
 - **Audio capture**: [audio.rs](../crates/app/src/audio.rs) with
   [control.rs](../crates/app/src/audio/control.rs), [stream.rs](../crates/app/src/audio/stream.rs),
   [pcm.rs](../crates/app/src/audio/pcm.rs), [speech.rs](../crates/app/src/audio/speech.rs),
@@ -372,11 +353,9 @@ module unless a test file is named.
   [Mac acceptance](../crates/app/src/shell/shutdown/mac_acceptance.rs) holds an accepted Show write
   across external, nested, repeated, and app-owned quit, checking foreground frames and instance
   release without devices or input. [save/tests.rs](../crates/app/src/shell/save/tests.rs) checks
-  that queued writes land in order and edits made during one;
+  that repeated saves land only the newest draft and keep edits made during one;
   [lifecycle/tests.rs](../crates/core/src/lifecycle/tests.rs) checks terminal Quit and Pause or a
-  resume check around Save, and [lifecycle/explore.rs](../crates/core/src/lifecycle/explore.rs)
-  tries every ordering of lifecycle operations, as [exhaustive exploration](#exhaustive-exploration)
-  describes.
+  resume check around Save.
 - **Start at login**: [windows/login.rs](../crates/platform/src/windows/login.rs) writes or deletes
   the Windows Run value and reads Windows' Startup apps approval of it;
   [main.rs](../crates/app/src/main.rs) decides which launches touch it, and
@@ -446,8 +425,8 @@ module unless a test file is named.
   text in place of insertion or refuses it when the session ends without text, so one session
   answers one print at most. Show promotion leaves these private dictations in their original
   session. [tests/printing.rs](../crates/app/src/runtime/tests/printing.rs) covers that handoff.
-  [tests/control.rs](../crates/app/src/runtime/tests/control.rs) covers stale authority, busy
-  admission, per-session style, and preset adoption.
+  [tests/control.rs](../crates/app/src/runtime/tests/control.rs) covers session-bound authority,
+  busy admission, per-session style, and preset adoption.
 - **Command line**: [main.rs](../crates/app/src/main.rs) parses options and routes what they ask
   for, and [show/command.rs](../crates/app/src/show/command.rs) parses `show` commands. Its
   [output.rs](../crates/app/src/show/command/output.rs) projects metadata without private text,
@@ -882,11 +861,7 @@ No single module owns these rules; a change to any party keeps them.
   then, and abandoning a session never waits for it.
 - **Snapshots only present.** The owner decides from owned state and presents coalesced snapshots;
   views never read PCM, and their timers cannot present session state. Meter levels travel on their
-  own lane, applied only to the matching epoch and recording.
-- **The snapshot epoch fences presenters.** Each status the shell announces advances it. An owner
-  takes the current epoch before its thread starts and presents only while that epoch is current, so
-  a retiring owner cannot replace a newer pause or quit notice; it can only add the last Show,
-  below.
+  own lane and apply only while recording.
 - **Quit drains without a timeout.** Every application-owned Quit route awaits audio teardown, a
   microphone scan, process reaping, insertion, setup, recovery, checkpoint cleanup, and accepted
   Settings/Show edits while rendering continues. The instance lock is released after the last
@@ -904,18 +879,13 @@ No single module owns these rules; a change to any party keeps them.
 - **Finished Shows remain recoverable.** Quit, Pause, and reconfiguration revoke unfinished
   publication without deleting its checkpoint. The same holds while finished footage awaits
   transcription. A Show finishes when the user finishes it or its capture ends, including where its
-  audio stopped. While a session is active, Quit first applies the shortcut gestures already queued
-  (press, release, lock, submit, toggle, Escape, Cancel, interrupt) in arrival order, then capture
-  events already queued; it applies no other queued input and none once no session remains. A
-  cancellation the user already sent still discards the unfinished Show, an Escape is passive or
-  held as the queued shortcut presses and releases left it, a queued press starts nothing new, and a
-  capture ending that raced Quit still finishes the Show. The session decides checkpoint
-  disposition; stale reports hold only in-memory footage. Cancelling unfinished capture, choosing no
-  target, or a screen failure before the first frame discards its checkpoint. A recorder unwind
-  preserves a finished session's checkpoint because it may contain surviving frames. Recovery waits
-  for an idle session, reopens files off the owner thread, and uses the existing local worker with
-  the original language and current text corrections. It opens no capture devices and has no
-  clipboard action. Quit or reconfiguration retains a recovery checkpoint.
+  audio stopped. The session decides checkpoint disposition; stale reports hold only in-memory
+  footage. Cancelling unfinished capture, choosing no target, or a screen failure before the first
+  frame discards its checkpoint. A recorder unwind preserves a finished session's checkpoint because
+  it may contain surviving frames. Recovery waits for an idle session, reopens files off the owner
+  thread, and uses the existing local worker with the original language and current text
+  corrections. It opens no capture devices and has no clipboard action. Quit or reconfiguration
+  retains a recovery checkpoint.
   [runtime/tests/recovery.rs](../crates/app/src/runtime/tests/recovery.rs) tests ownership and
   revocation; [recorder/tests/checkpoint.rs](../crates/app/src/show/recorder/tests/checkpoint.rs)
   tests frame handoff, independent storage failure, and a failed writer's single notice.
@@ -1038,8 +1008,8 @@ adaptation and hint snapshots.
 
 ## Exhaustive exploration
 
-The session machine and the service lifecycle are pure, so test-only explorers try every ordering of
-events against them and check each state and transition.
+The session machine is pure, so a test-only explorer tries every ordering of events against it and
+checks each state and transition.
 
 [machine/explore.rs](../crates/core/src/machine/explore.rs) offers, in each state, every event the
 owner can deliver there: input, timers, control commands, presets, settings, practice, recovery,
@@ -1059,7 +1029,7 @@ and marks a ticket for an ended session stale. At every state and transition,
 - an earlier Show never replaces a later remembered one.
 
 A failure prints the path of events that reached it. `mise run rust:test` explores five events deep,
-and `mise run rust:explore` explores to a fixed point: about 1.6 million states and 150 million
+and `mise run rust:explore` explores to a fixed point: about 1.3 million states and 91 million
 transitions in under a minute on 32 threads, with about 1 GB of memory at its peak.
 
 The explored space has bounds. Timing scales to a one-tick tap, two-tick double tap, and three-tick
@@ -1072,15 +1042,7 @@ and reports a retired session's result as `abandoned`, so each `delivered` resul
 session awaiting it. The worker picks the transcript's kind from the request, so a Show never
 receives dictation text.
 
-[lifecycle/explore.rs](../crates/core/src/lifecycle/explore.rs) tries every lifecycle operation from
-every state with every answer to its queries. It erases owner and restart tokens and compares epochs
-only by equality, as the lifecycle does, so its 13 states cover every ordering without bounds, short
-of 2^64 settings changes wrapping an epoch back to a stale check's. Every operation except
-retirement keeps the owners the lifecycle holds and never starts owners over others. Quitting is
-final, retirement applies the restart queued last, and right after a pause no save enables
-dictation.
-
-GPUI views, the ports, and native adapters stay outside the explorers; the owner's tests cover them.
+GPUI views, the ports, and native adapters stay outside the explorer; the owner's tests cover them.
 
 ## Verification
 
