@@ -318,7 +318,7 @@ if (-not $test) { throw 'Cargo reported no app test executable.' }
 [tasks."windows:clipboard"]
 description = "Check paste on a private window station, whose clipboard is never the desktop's"
 shell = "pwsh -NoProfile -Command"
-run = "cargo nextest run --workspace --lib --bins --tests --all-features --locked --run-ignored only -E 'package(speakeasy-platform) & test(copied_text_stays_private)'"
+run = "cargo nextest run -p speakeasy-platform --lib --all-features --locked --run-ignored only -E 'test(copies_stay_out_of_history_and_a_restore_keeps_a_newer_copy)'"
 
 [tasks."windows:geometry"]
 description = "Move and hide an owned window and check its tracked bounds without sampling input"
