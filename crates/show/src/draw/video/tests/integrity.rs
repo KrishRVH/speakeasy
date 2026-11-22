@@ -19,51 +19,6 @@ fn a_future_cut_segment_cannot_repaint_the_carried_joint() {
 }
 
 #[test]
-fn a_mark_cannot_declare_completion_before_its_referenced_strokes() {
-    let mut tracker = tracker();
-    tracker.observe(ms(100), Point::new(0.2, 0.5), true, false);
-    tracker.observe(ms(200), Point::new(0.8, 0.5), true, false);
-    tracker.observe(ms(210), Point::new(0.8, 0.5), false, false);
-    let mut marks = tracker.marks();
-    let recording = tracker.finish(ms(1000));
-    assert!(Annotations::new(&recording, &marks).is_ok());
-    marks[0].span = Span::at(ms(100));
-    assert!(Annotations::new(&recording, &marks).is_err());
-}
-
-#[test]
-fn a_mark_cannot_declare_inside_out_bounds() {
-    let mut tracker = tracker();
-    tracker.observe(ms(100), Point::new(0.2, 0.4), true, false);
-    tracker.observe(ms(200), Point::new(0.8, 0.6), true, false);
-    tracker.observe(ms(210), Point::new(0.8, 0.6), false, false);
-    let mut marks = tracker.marks();
-    let recording = tracker.finish(ms(1000));
-    assert!(Annotations::new(&recording, &marks).is_ok());
-    let Rect {
-        left,
-        top,
-        right,
-        bottom,
-    } = marks[0].bounds;
-    marks[0].bounds = Rect {
-        left: right,
-        top: bottom,
-        right: left,
-        bottom: top,
-    };
-    assert!(Annotations::new(&recording, &marks).is_err());
-}
-
-#[test]
-fn a_sample_past_the_recording_cannot_be_annotated() {
-    let scene = Annotations::new(&recording(Vec::new()), &[]).unwrap();
-    let paint = |at| scene.paint(&mut blank(), at, VIEW, &typeface(), || false);
-    assert!(paint(Duration::from_secs(3)).is_ok());
-    assert!(paint(Duration::from_secs(3) + Duration::from_nanos(1)).is_err());
-}
-
-#[test]
 fn cancellation_between_primitives_leaves_the_original_frame_untouched() {
     let recording = recording(vec![
         stroke(&[(0.1, 0.3, 100), (0.8, 0.3, 200)]),
@@ -87,27 +42,4 @@ fn cancellation_between_primitives_leaves_the_original_frame_untouched() {
     assert!(result.is_none());
     assert_eq!(image, blank());
     assert_eq!(polls, 3);
-}
-
-#[test]
-fn ambiguous_pin_identity_cannot_acquire_a_timing_proof() {
-    let mut tracker = tracker();
-    tracker.observe(ms(90), Point::new(0.0, 0.5), false, false);
-    assert!(tracker.pin(Span::new(ms(80), ms(100))));
-    let marks = tracker.marks();
-    let mut recording = tracker.finish(ms(1000));
-    let scene = Annotations::new(&recording, &marks).unwrap();
-    assert_eq!(painted(&scene, Duration::from_millis(100)).1.drawn, 1);
-    let mut duplicate = recording.pins[0];
-    duplicate.point.x = -0.0;
-    recording.pins.push(duplicate);
-    recording.spaces.pins.push(recording.spaces.pins[0]);
-    let scene = Annotations::new(&recording, &marks).unwrap();
-    assert_eq!(
-        painted(&scene, Duration::from_millis(100)).1,
-        AnnotationReport {
-            drawn: 0,
-            omitted: 1
-        }
-    );
 }

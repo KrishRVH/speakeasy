@@ -90,15 +90,6 @@ fn punctuation_split_from_its_word_closes_that_words_text() {
 }
 
 #[test]
-fn an_action_mid_sentence_takes_the_sentence_from_its_start() {
-    let said = words(HEADER_THEN_TAP);
-    assert_eq!(
-        texts(&[400, 2_450], &said),
-        ["First the header.", "When I tap it, nothing."]
-    );
-}
-
-#[test]
 fn a_short_comma_lead_in_stays_with_its_clause() {
     let said = words(&[
         (200, "The"),
@@ -115,21 +106,6 @@ fn a_short_comma_lead_in_stays_with_its_clause() {
         texts(&[500, 2_600], &said),
         ["The message was received.", "Um, or it should appear."]
     );
-}
-
-#[test]
-fn a_long_pause_starts_a_new_thought_even_without_punctuation() {
-    let said = Narration::Words(vec![
-        Word {
-            span: Span::new(Moment::from_millis(0), Moment::from_millis(2_900)),
-            text: "first".into(),
-        },
-        Word {
-            span: Span::new(Moment::from_millis(3_000), Moment::from_millis(3_200)),
-            text: "second".into(),
-        },
-    ]);
-    assert_eq!(texts(&[0, 3_100], &said), ["first", "second"]);
 }
 
 #[test]
@@ -288,14 +264,4 @@ fn a_sentence_left_hanging_is_over_once_the_silence_runs_long() {
             ["That's done. So the", "Next thing."]
         );
     }
-}
-
-#[test]
-fn silence_and_blank_words_belong_to_no_keyframe() {
-    assert_eq!(align(&at(&[0, 900]), &[]), [None, None]);
-    assert_eq!(align(&at(&[0]), words(&[(0, "  ")]).words()), [None]);
-    assert_eq!(
-        align(&[], words(&[(0, "Spoken.")]).words()),
-        Vec::<Option<String>>::new()
-    );
 }

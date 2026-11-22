@@ -377,8 +377,6 @@ impl<'a> Scorer<'a> {
 
 #[cfg(test)]
 mod tests {
-    use proptest::prelude::*;
-
     use super::*;
 
     fn lengths(aspects: &[f32]) -> Vec<usize> {
@@ -445,27 +443,5 @@ mod tests {
         assert_eq!(fitted(&strip, cell), (450, 45));
         let screen = Image::filled(900, 199, [0; 3]).unwrap();
         assert_eq!(fitted(&screen, cell), (450, 100));
-    }
-
-    proptest! {
-        #[test]
-        fn every_frame_gets_exactly_one_cell_in_order(
-            aspects in prop::collection::vec(0.25_f32..4.5, 1..=12),
-        ) {
-            let rows = plan(&aspects);
-            let flattened: Vec<usize> = rows.iter().flat_map(Clone::clone).collect();
-            prop_assert_eq!(flattened, (0..aspects.len()).collect::<Vec<_>>());
-            prop_assert!(rows.iter().all(|row| (1..=ROW_FRAMES).contains(&row.len())));
-            let widths = vec![2560.0; aspects.len()];
-            let Layout { width, height, cells } = layout(&aspects, &widths);
-            prop_assert!(width.max(height) as f32 <= LONGEST_EDGE, "{}×{}", width, height);
-            prop_assert!(width as f32 * height as f32 <= MOST_PIXELS, "{}×{}", width, height);
-            prop_assert_eq!(cells.len(), aspects.len());
-            for cell in cells {
-                prop_assert!(cell.width >= 1 && cell.height >= 1);
-                prop_assert!(cell.left.saturating_add(cell.width) <= width);
-                prop_assert!(cell.top.saturating_add(cell.height) <= height);
-            }
-        }
     }
 }

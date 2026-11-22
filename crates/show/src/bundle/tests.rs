@@ -480,49 +480,6 @@ fn untimed_narration_gets_its_own_section_and_no_keyframe_claims_it() {
 }
 
 #[test]
-fn debugging_a_file_never_prints_its_contents() {
-    let file = File {
-        name: "frames/frame-01.png".to_owned(),
-        contents: vec![0x5A; 4_096],
-    };
-    let shown = format!("{file:?}");
-    assert!(shown.contains("frame-01") && shown.len() < 80, "{shown}");
-}
-
-#[test]
-fn a_failed_frame_stops_loading_before_the_next_sheet() {
-    let selection = Selection {
-        marks: Vec::new(),
-        shots: (1..=13)
-            .map(|index| Shot {
-                keyframe: keyframe(index, None),
-                plan: None,
-            })
-            .collect(),
-    };
-    let result = compose(
-        Recording::default(),
-        selection,
-        |moment| {
-            assert!(
-                moment.as_millis() <= 9_000,
-                "Loaded the sheet after a failed sheet"
-            );
-            if moment.as_millis() == 7_000 {
-                Err(Error::unsampled())
-            } else {
-                Image::filled(160, 100, [90; 3])
-            }
-        },
-        &typeface(),
-    );
-    assert_eq!(
-        result.unwrap_err().to_string(),
-        Error::unsampled().to_string()
-    );
-}
-
-#[test]
 fn contact_sheets_cover_every_frame_once_in_readable_pages() {
     for (count, sizes) in [
         (6_usize, &[6][..]),

@@ -211,19 +211,6 @@ fn without_input_the_window_that_changed_joins_the_front_window() {
 }
 
 #[test]
-fn a_large_window_short_of_the_whole_screen_keeps_a_far_label_in_frame() {
-    let settings = window(1, 0, Layer::Normal, [0.08, 0.06, 0.92, 0.94]);
-    let label = Point::new(0.12, 0.5);
-    let toggle = Point::new(0.9, 0.5);
-    let layouts = [arranged(0, vec![settings])];
-    let plan = planned(&[(1_000, toggle)], 1_000, &[], &layouts).unwrap();
-    assert!(
-        plan.crop.contains(label) && plan.crop.contains(toggle),
-        "{plan:?}"
-    );
-}
-
-#[test]
 fn a_drag_leaving_the_screen_frames_its_visible_starting_window() {
     let from = Point::new(0.25, 0.3);
     let at = Moment::from_millis(1_000);

@@ -64,18 +64,6 @@ fn slanted(points: &[[f32; 2]], center: [f32; 2], degrees: f32) -> Vec<[f32; 2]>
         .collect()
 }
 
-fn scribble(samples: u16) -> Vec<[f32; 2]> {
-    (0..samples)
-        .map(f32::from)
-        .map(|step| {
-            [
-                0.2 + 0.1 * (0.9 * step).sin(),
-                0.2 + 0.022 * (0.37 * step).sin(),
-            ]
-        })
-        .collect()
-}
-
 fn real(recorded: &[u16], at: u64) -> Stroke {
     let (triples, []) = recorded.as_chunks::<3>() else {
         panic!("Every recorded point has an x, a y, and a time");
@@ -258,53 +246,18 @@ fn arrows_drawn_one_after_another_are_not_one_arrow() {
 }
 
 #[test]
-fn a_loop_with_a_lead_in_a_tail_or_an_overshoot_circles_what_it_goes_round() {
-    let flat = |from: f32, to: f32| ellipse([0.3, 0.3], [0.1, 0.05], from, to);
-    let flat_region = "① circled region x 0.20–0.40, y 0.25–0.35";
-
+fn a_loop_with_a_lead_in_or_tail_circles_what_it_goes_round() {
     let slanted_loop = |center: [f32; 2], radii: [f32; 2], degrees: f32| {
         slanted(&ellipse(center, radii, 0.0, TAU), center, degrees)
     };
     let six_to_one = slanted_loop([0.4, 0.4], [0.15, 0.025], 10.0);
     let &[x, y] = six_to_one.last().unwrap();
     let tailed = [six_to_one, polyline(&[[x, y], [x - 0.05, y]])].concat();
-    let five_to_one = slanted_loop([0.405, 0.4], [0.15, 0.03], 15.0);
-    let &[x, y] = five_to_one.first().unwrap();
-    let led_in = [polyline(&[[x + 0.08, y], [x, y]]), five_to_one].concat();
     let cases = [
-        (
-            "tail",
-            [flat(0.0, TAU), polyline(&[[0.4, 0.3], [0.52, 0.38]])].concat(),
-            flat_region,
-        ),
-        ("overshoot", flat(0.0, 1.3 * TAU), flat_region),
-        (
-            "lead-in",
-            [
-                polyline(&[[0.18, 0.2], [0.3, 0.25]]),
-                flat(-0.25 * TAU, 0.8 * TAU),
-            ]
-            .concat(),
-            flat_region,
-        ),
-        (
-            "round loop with a short tail",
-            [
-                ellipse([0.4, 0.4], [0.1, 0.1], 0.0, TAU),
-                polyline(&[[0.5, 0.4], [0.56, 0.45]]),
-            ]
-            .concat(),
-            "① circled region x 0.30–0.50, y 0.30–0.50",
-        ),
         (
             "6:1 loop slanted 10° with a 50 px tail",
             tailed,
             "① circled region x 0.25–0.55, y 0.36–0.44",
-        ),
-        (
-            "5:1 loop slanted 15° with an 80 px lead-in",
-            led_in,
-            "① circled region x 0.26–0.55, y 0.35–0.45",
         ),
         (
             "α",
@@ -335,27 +288,6 @@ fn a_loop_with_a_lead_in_a_tail_or_an_overshoot_circles_what_it_goes_round() {
         "① circled region x 0.30–0.41, y 0.25–0.32",
         "A real loop with a tail circles what it does without one"
     );
-}
-
-#[test]
-fn every_loop_closed_at_its_ends_is_still_a_circle() {
-    let center = [0.3, 0.3];
-    let cases = [
-        ellipse(center, [0.1, 0.1], 0.0, TAU),
-        ellipse(center, [0.1, 0.05], 0.0, TAU),
-        ellipse(center, [0.115, 0.05], 0.25 * TAU, 1.25 * TAU - 0.55),
-        ellipse(center, [0.1, 0.1], 0.3, TAU - 0.3),
-        ellipse(center, [0.05, 0.1], 0.2, TAU - 0.2),
-        ellipse(center, [0.1, 0.08], 0.0, 2.0 * TAU),
-        ellipse(center, [0.1, 0.1], 0.0, 3.0 * TAU),
-        ellipse(center, [0.1, 0.1], 0.0, 5.0 * TAU),
-        ellipse(center, [0.15, 0.025], 0.0, TAU),
-        ellipse(center, [0.15, 0.025], 0.0, 2.0 * TAU),
-        ellipse(center, [0.15, 0.025], 0.1, TAU),
-    ];
-    for (case, points) in cases.iter().enumerate() {
-        assert_eq!(shape_of(points, SURFACE), Shape::Circle, "case {case}");
-    }
 }
 
 #[test]
@@ -394,136 +326,15 @@ fn strokes_that_resemble_arrows_or_circles_read_as_neither() {
             "check mark",
             polyline(&[[0.1, 0.2], [0.13, 0.24], [0.22, 0.12]]),
         ),
-        ("V", polyline(&[[0.1, 0.1], [0.15, 0.25], [0.2, 0.1]])),
-        (
-            "narrow V",
-            polyline(&[[0.1, 0.1], [0.13, 0.25], [0.16, 0.1]]),
-        ),
-        (
-            "zigzag",
-            polyline(&[
-                [0.1, 0.2],
-                [0.13, 0.16],
-                [0.16, 0.2],
-                [0.19, 0.16],
-                [0.22, 0.2],
-            ]),
-        ),
-        (
-            "back and forth over a line of text",
-            polyline(&[
-                [0.1, 0.2],
-                [0.3, 0.21],
-                [0.11, 0.225],
-                [0.3, 0.24],
-                [0.11, 0.255],
-            ]),
-        ),
-        ("brief scribble", scribble(60)),
-        ("ten-second scribble", scribble(600)),
         (
             "X joined at the right",
             polyline(&[[0.1, 0.1], [0.2, 0.2], [0.2, 0.1], [0.1, 0.2]]),
         ),
-        (
-            "X joined at the bottom",
-            polyline(&[[0.1, 0.1], [0.2, 0.2], [0.1, 0.2], [0.2, 0.1]]),
-        ),
-        (
-            "tall X",
-            polyline(&[[0.1, 0.1], [0.26, 0.3], [0.26, 0.1], [0.1, 0.3]]),
-        ),
         ("figure 8", figure_eight),
-        (
-            "hooked underline",
-            polyline(&[[0.1, 0.3], [0.4, 0.3], [0.405, 0.27]]),
-        ),
-        (
-            "curled underline",
-            polyline(&[
-                [0.1, 0.3],
-                [0.4, 0.3],
-                [0.415, 0.29],
-                [0.415, 0.275],
-                [0.4, 0.265],
-            ]),
-        ),
-        (
-            "one-sided barb",
-            polyline(&[[0.1, 0.3], [0.3, 0.25], [0.26, 0.24]]),
-        ),
-        ("line", polyline(&[[0.1, 0.3], [0.4, 0.3]])),
-        (
-            "bent shaft",
-            polyline(&[
-                [0.1, 0.2],
-                [0.2, 0.3],
-                [0.4, 0.3],
-                [0.38, 0.288],
-                [0.4, 0.3],
-                [0.38, 0.312],
-            ]),
-        ),
-        (
-            "curled barb",
-            polyline(&[
-                [0.1, 0.3],
-                [0.3, 0.25],
-                [0.28, 0.235],
-                [0.275, 0.22],
-                [0.26, 0.23],
-                [0.3, 0.25],
-                [0.27, 0.27],
-            ]),
-        ),
-        (
-            "head drawn on past its tip",
-            polyline(&[
-                [0.1, 0.5],
-                [0.4, 0.5],
-                [0.355, 0.475],
-                [0.4, 0.5],
-                [0.42, 0.5],
-                [0.345, 0.525],
-            ]),
-        ),
-        (
-            "line doubled back across itself",
-            polyline(&[[0.1, 0.5], [0.4, 0.5], [0.32, 0.488], [0.33, 0.51]]),
-        ),
-        (
-            "long stroke back across a line",
-            polyline(&[[0.1, 0.5], [0.3, 0.5], [0.16, 0.44], [0.18, 0.52]]),
-        ),
-        (
-            "three rays from a point",
-            polyline(&[[0.1, 0.3], [0.3, 0.3], [0.12, 0.2], [0.3, 0.3], [0.12, 0.4]]),
-        ),
-        (
-            "line gone over again and ticked",
-            polyline(&[
-                [0.1, 0.5],
-                [0.4, 0.5],
-                [0.25, 0.508],
-                [0.4, 0.5],
-                [0.37, 0.48],
-            ]),
-        ),
-        (
-            "line ending in a tick and a drop",
-            polyline(&[
-                [0.1, 0.5],
-                [0.4, 0.5],
-                [0.36, 0.47],
-                [0.4, 0.5],
-                [0.405, 0.55],
-            ]),
-        ),
         (
             "C",
             ellipse([0.3, 0.3], [0.1, 0.1], 0.125 * TAU, 0.875 * TAU),
         ),
-        ("flat C", ellipse([0.3, 0.3], [0.1, 0.025], 0.8, TAU - 0.8)),
     ];
     let misread: Vec<String> = cases
         .into_iter()

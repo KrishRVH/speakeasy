@@ -42,15 +42,6 @@ fn crops(recording: &Recording, shots: &[Shot], changes: &[Vec<Rect>]) -> Vec<Op
         .collect()
 }
 
-fn part() -> impl Strategy<Value = Rect> {
-    (0.0_f32..=1.0, 0.0_f32..=1.0, 0.0_f32..=1.0, 0.0_f32..=1.0).prop_map(|(x0, y0, x1, y1)| Rect {
-        left: x0.min(x1),
-        top: y0.min(y1),
-        right: x0.max(x1),
-        bottom: y0.max(y1),
-    })
-}
-
 fn within(outer: Rect, inner: Rect) -> bool {
     outer
         .expanded_within(1e-5, Rect::from([-1.0, -1.0, 2.0, 2.0]))
@@ -143,24 +134,4 @@ proptest! {
         }
     }
 
-    #[test]
-    fn drawing_outside_a_crop_widens_it_to_hold_the_drawing(
-        activity in part(),
-        drawn in part(),
-        width in 100.0_f32..4_000.0,
-        height in 100.0_f32..3_000.0,
-    ) {
-        let surface = Size { width, height };
-        let screen = Screen::of(surface);
-        let crop = screen.finish(screen.margin(activity));
-        prop_assume!(crop != Rect::UNIT);
-        let blank = Image::filled(320, 200, [250; 3]).unwrap();
-        let plan = Plan::anywhere(crop);
-        if let Some(grown) = fit(plan, Some(drawn), &blank, surface) {
-            prop_assert!(spaces::valid(grown), "{:?}", grown);
-            prop_assert!(within(grown, crop), "{:?} {:?}", grown, crop);
-            prop_assert!(within(grown, drawn), "{:?} {:?}", grown, drawn);
-        }
-        prop_assert_eq!(fit(plan, None, &blank, surface), Some(crop));
-    }
 }

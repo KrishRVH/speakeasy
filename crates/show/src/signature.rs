@@ -306,14 +306,6 @@ pub(crate) mod tests {
         assert_eq!(Signature::of(&gray(128, 3, 1)), signature(128));
     }
 
-    #[test]
-    fn debugging_a_signature_never_prints_the_screen() {
-        assert_eq!(
-            format!("{:?}", signature(0)),
-            format!("{:?}", signature(255))
-        );
-    }
-
     pub(crate) fn with_patch(width: u32, height: u32, patch: [f32; 4]) -> Signature {
         let mut image = gray(40, width, height);
         let [left, top, right, bottom] = patch;

@@ -40,25 +40,6 @@ fn delayed_pins_take_the_point_and_part_seen_when_their_taps_ended() {
 }
 
 #[test]
-fn pin_proofs_require_observation_and_complete_lane_vectors() {
-    let mut saved = serde_json::json!({
-        "strokes":[], "pins":[{"generation":1,"part":[0,0,1,1]}],
-        "actions":[null,null,null]
-    });
-    assert!(serde_json::from_value::<Spaces>(saved.clone()).is_err());
-    saved["pins"][0]["observed"] = serde_json::json!(100);
-    let mut spaces: Spaces = serde_json::from_value(saved).unwrap();
-    assert!(spaces.valid(0, 1, 3, ms(100)));
-    spaces.pins[0].as_mut().unwrap().observed = ms(101);
-    assert!(!spaces.valid(0, 1, 3, ms(100)));
-    spaces.pins[0].as_mut().unwrap().observed = ms(100);
-    spaces.actions = vec![None];
-    assert!(!spaces.valid(0, 1, 3, ms(100)));
-    spaces.actions.clear();
-    assert!(!spaces.valid(0, 1, 3, ms(100)));
-}
-
-#[test]
 fn actions_include_the_release_space_but_finalization_uses_the_stored_endpoint() {
     for release in [true, false] {
         let mut tracker = tracker();

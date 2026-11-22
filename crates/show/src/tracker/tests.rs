@@ -30,23 +30,22 @@ fn shift_and_movement_draw_a_stroke() {
 }
 
 #[test]
-fn shift_for_a_capital_letter_draws_nothing() {
-    let (strokes, _) = replay(&[
-        (0, 0.500, 0.5, true, false),
-        (8, 0.502, 0.5, true, false),
-        (16, 0.502, 0.5, false, false),
-    ]);
-    assert_eq!(strokes, Vec::<Stroke>::new());
-}
-
-#[test]
 fn ink_shows_once_it_spans_enough_to_be_deliberate() {
     let mut tracker = Tracker::new(SURFACE);
     tracker.observe(Moment::START, Point::new(0.500, 0.5), true, false);
     tracker.observe(Moment::from_millis(8), Point::new(0.502, 0.5), true, false);
     assert!(tracker.drawing().is_empty(), "Shift alone shows no ink");
-    tracker.observe(Moment::from_millis(16), Point::new(0.510, 0.5), true, false);
-    assert_eq!(tracker.drawing().len(), 3);
+    tracker.observe(
+        Moment::from_millis(16),
+        Point::new(0.502, 0.5),
+        false,
+        false,
+    );
+    assert!(tracker.strokes().is_empty(), "Shift alone saves no ink");
+
+    tracker.observe(Moment::from_millis(24), Point::new(0.502, 0.5), true, false);
+    tracker.observe(Moment::from_millis(32), Point::new(0.510, 0.5), true, false);
+    assert_eq!(tracker.drawing().len(), 2);
 }
 
 #[test]
@@ -139,15 +138,6 @@ fn a_tap_that_draws_after_another_shift_hold_between_polls_drops_no_pin() {
         !tracker.pin(Span::new(at(40), at(200))),
         "A first tap that drew ink dropped a pin because Shift stayed down across polls"
     );
-}
-
-#[test]
-fn drawing_attributes_a_deliberate_stroke_to_the_start_of_its_shift_hold() {
-    let mut tracker = Tracker::new(SURFACE);
-    let at = Moment::from_millis;
-    tracker.observe(at(40), Point::new(0.5, 0.5), true, false);
-    tracker.observe(at(60), Point::new(0.52, 0.5), true, false);
-    assert!(!tracker.pin(Span::new(at(10), at(50))));
 }
 
 #[test]

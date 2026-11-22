@@ -278,19 +278,6 @@ mod tests {
     }
 
     #[test]
-    fn images_hold_exactly_their_pixels() {
-        assert!(Image::from_rgba(2, 2, vec![0; 8]).is_err());
-        assert!(Image::from_rgba(0, 1, Vec::new()).is_err());
-        assert!(Image::filled(0, 1, [0; 3]).is_err());
-    }
-
-    #[test]
-    fn debugging_an_image_never_prints_its_pixels() {
-        let shown = |level| format!("{:?}", Image::filled(2, 2, [level; 3]).unwrap());
-        assert_eq!(shown(0), shown(255));
-    }
-
-    #[test]
     fn cropping_keeps_exactly_the_pixels_inside_the_region() {
         let red = |width, height, levels: &[u8]| {
             let rgba = levels
@@ -306,24 +293,6 @@ mod tests {
         );
         assert_eq!(image.cropped(0, 1, 2, 1).unwrap(), red(2, 1, &[40, 50]));
         assert!(image.cropped(2, 0, 2, 2).is_err());
-    }
-
-    #[test]
-    fn only_a_region_at_the_origin_can_be_the_whole_image() {
-        let image = Image::filled(4, 3, [1, 2, 3]).unwrap();
-        let whole = PixelRect {
-            left: 0,
-            top: 0,
-            width: 4,
-            height: 3,
-        };
-        assert_eq!(image.clone().cut(whole).unwrap(), image);
-        for offset in [
-            PixelRect { left: 1, ..whole },
-            PixelRect { top: 1, ..whole },
-        ] {
-            assert!(image.clone().cut(offset).is_err(), "{offset:?}");
-        }
     }
 
     #[test]

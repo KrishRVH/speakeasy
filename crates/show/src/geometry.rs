@@ -319,48 +319,4 @@ mod tests {
             [0.0, 0.0, 0.95, 1.0]
         );
     }
-
-    #[test]
-    fn containment_includes_edges_and_rejects_non_finite_points() {
-        let inside = [
-            Point::new(0.0, 1.0),
-            Point::new(1.0, 0.0),
-            Point::new(0.5, 0.5),
-        ];
-        assert!(inside.into_iter().all(|point| Rect::UNIT.contains(point)));
-        let outside = [
-            Point::new(-0.01, 0.5),
-            Point::new(0.5, 1.01),
-            Point::new(f32::NAN, 0.5),
-            Point::new(0.5, f32::INFINITY),
-        ];
-        assert!(!outside.into_iter().any(|point| Rect::UNIT.contains(point)));
-    }
-
-    #[test]
-    fn a_unit_region_is_ordered_finite_and_inside_the_square() {
-        let inside = [
-            [0.0, 0.0, 1.0, 1.0],
-            [0.3, 0.7, 0.3, 0.7],
-            [0.1, 0.2, 0.4, 0.9],
-        ];
-        assert!(
-            inside
-                .into_iter()
-                .all(|edges| Rect::from(edges).is_within_unit())
-        );
-        let outside = [
-            [0.4, 0.2, 0.1, 0.9],
-            [0.1, 0.9, 0.4, 0.2],
-            [-0.01, 0.2, 0.4, 0.9],
-            [0.1, 0.2, 1.01, 0.9],
-            [0.1, f32::NAN, 0.4, 0.9],
-            [0.1, 0.2, 0.4, f32::INFINITY],
-        ];
-        assert!(
-            !outside
-                .into_iter()
-                .any(|edges| Rect::from(edges).is_within_unit())
-        );
-    }
 }

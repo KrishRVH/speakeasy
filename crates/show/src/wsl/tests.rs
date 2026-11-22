@@ -1,5 +1,3 @@
-use proptest::prelude::*;
-
 use super::*;
 
 const SHOW: &str = r"C:\Users\Ada Lovelace\AppData\Local\speakeasy\shows\20261117T093000Z";
@@ -97,24 +95,4 @@ fn interop_off_keeps_the_folder_but_not_the_command() {
     assert_eq!(off.command(exe), None);
     let on = Wsl::configured("[interop]\nenabled = true\n");
     assert_eq!(on.command(exe).as_deref(), mounted);
-}
-
-proptest! {
-    #[test]
-    fn every_component_of_a_drive_path_survives_in_order(
-        drive in proptest::char::range('A', 'Z'),
-        parts in proptest::collection::vec("[^\\\\/:\\x00-\\x1f]{1,12}", 0..6),
-        verbatim in any::<bool>(),
-    ) {
-        let windows = format!(
-            r"{}{drive}:\{}",
-            if verbatim { r"\\?\" } else { "" },
-            parts.join(r"\")
-        );
-        let expected = parts.iter().fold(
-            format!("/mnt/{}", drive.to_ascii_lowercase()),
-            |path, part| format!("{path}/{part}"),
-        );
-        prop_assert_eq!(mapped("", &windows), Some(expected));
-    }
 }

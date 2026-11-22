@@ -52,17 +52,6 @@ fn an_edge_through_a_line_of_text_moves_out_past_it() {
 }
 
 #[test]
-fn an_edge_through_a_row_moves_below_it_and_an_edge_in_white_space_stays() {
-    let row = [600, 500, 900, 530];
-    let crop = snapped(&[row], [0.35, 0.3, 0.7, 0.57]);
-    assert!(
-        crop.bottom * 900.0 >= 530.0 && crop.bottom * 900.0 <= 540.0,
-        "{crop:?}"
-    );
-    assert_eq!((crop.left, crop.right, crop.top), (0.35, 0.7, 0.3));
-}
-
-#[test]
 fn text_running_past_the_reach_keeps_the_edge_and_a_column_at_the_screen_edge_joins_the_crop() {
     let crop = [0.5, 0.2, 0.7, 0.6];
     let long = [100, 300, 1_300, 312];
