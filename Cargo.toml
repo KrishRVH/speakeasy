@@ -32,9 +32,9 @@ publish = false
 # compiles once; move them with GPUI.
 anyhow = "1.0.104"
 # arboard claims the X11 clipboard through x11rb's pure-Rust resolver, which Speakeasy's own
-# connections avoid (`XCBConnection::connect` in linux/x11.rs and linux/x11/clipboard.rs). x11rb
-# 0.13 tries the abstract socket WSLg serves; 0.14 drops it and falls back to TCP, which hangs
-# there. Check an arboard bump that moves to x11rb 0.14 under WSLg.
+# connections avoid (`XCBConnection::connect` in linux/x11.rs). x11rb 0.13 tries the abstract
+# socket WSLg serves; 0.14 drops it and falls back to TCP, which hangs there. Check an arboard
+# bump that moves to x11rb 0.14 under WSLg.
 arboard = { version = "3.7.0", default-features = false }
 async-channel = "2.5.0"
 base64 = "0.23.1"

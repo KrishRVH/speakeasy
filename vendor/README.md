@@ -62,8 +62,7 @@ app liveness for `AsyncApp`, and `App::shutdown` ordering.
   YES. A request arriving inside a main-queue task or an application borrow is canceled, because
   AppKit's nested run loop could not drain the queue the app's shutdown needs; the drain still
   runs and quits afterward. `terminate:` is ignored while a request is pending. Contract:
-  [architecture](../docs/architecture.md#change-and-test-map), "Pause, reconfigure, quit, and
-  saves".
+  [native contracts](../docs/native-contracts.md#gpui-and-vendored-adapters).
 
 ## gpui-pre-linux
 
