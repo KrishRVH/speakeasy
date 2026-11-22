@@ -289,16 +289,11 @@ its attempt stopped waiting still confirms the next attempt. Each stop waits at 
 for its completion or the did-stop signal, whichever comes first. An unconfirmed stop is reported,
 and dropping the stream requests stop once more. If that does not confirm either, the stream, output
 and queue stay retained for the life of the process, since releasing them could leave capture
-calling freed objects; the closed frame lane makes the output discard every sample. Retaining them
-latches a process-wide flag before the capture thread exits, whether the recorder awaited the stop
-or dropped the capture after a failed start. From then on `ScreenCapture::available` returns
-`Unstopped` and `ScreenCapture::start` refuses, and every session owner, including one created by
-Pause and Resume or a shortcut change, reads the flag when it presents status: it adds the quit
-warning to every status message and refuses a Show before opening the picker until Speakeasy
-restarts. Failure notification precedes potentially blocking cleanup. Callback samples are borrowed
-only during the call; copied bounded BGRA leaves the callback. Native image buffers stay locked
-through reads. The stream anchors native display timestamps to the host clock once and checks
-display geometry between frame batches.
+calling freed objects; the closed frame lane makes the output discard every sample. Failure
+notification precedes potentially blocking cleanup. Callback samples are borrowed only during the
+call; copied bounded BGRA leaves the callback. Native image buffers stay locked through reads. The
+stream anchors native display timestamps to the host clock once and checks display geometry between
+frame batches.
 
 A screen Show's window watch lists windows on its own stoppable thread every frame interval and
 sends only changed layouts over a bounded lane, dropping a change the lane cannot take until the
