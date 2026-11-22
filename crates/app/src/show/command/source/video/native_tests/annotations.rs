@@ -28,7 +28,6 @@ fn native_annotated_video_exports_match_full_canvas_crops_and_refuse_uncovered_s
         .chain(options.iter().map(OsString::from));
         let mut report = Vec::new();
         parse(Verb::Frame, args)?.write(&mut report)?;
-        assert!(!String::from_utf8_lossy(&report).contains("PRIVATE"));
         Ok(serde_json::from_slice(&report)?)
     };
     let full = run("full.png", &["--mark", "1"])?;

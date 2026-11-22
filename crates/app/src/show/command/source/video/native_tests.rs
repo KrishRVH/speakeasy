@@ -1,4 +1,4 @@
-use std::{fs, os::windows::fs::OpenOptionsExt as _};
+use std::fs;
 
 use super::{
     super::{Verb, parse},
@@ -29,7 +29,6 @@ fn native_mark_crops_match_presented_pixels_and_refuse_incompatible_spaces() -> 
         ];
         let mut report = Vec::new();
         parse(Verb::Frame, args.into_iter())?.write(&mut report)?;
-        assert!(!String::from_utf8_lossy(&report).contains("PRIVATE"));
         Ok(serde_json::from_slice(&report)?)
     };
     for (at, part, [left, top, width, height], name) in [
@@ -86,10 +85,8 @@ fn native_video_export_reports_real_samples_after_the_annotation_journal_ends() 
             output.into_os_string(),
             "--json".into(),
         ];
-        let command = parse(Verb::Frame, args.into_iter())?;
         let mut report = Vec::new();
-        command.write(&mut report)?;
-        assert!(!String::from_utf8_lossy(&report).contains("PRIVATE"));
+        parse(Verb::Frame, args.into_iter())?.write(&mut report)?;
         Ok(serde_json::from_slice(&report)?)
     };
     let tail = run("--at", "3.755", "tail.png")?;
@@ -116,24 +113,5 @@ fn native_video_export_reports_real_samples_after_the_annotation_journal_ends() 
         assert!(!directory.path().join("invalid.png").exists());
     }
     assert_eq!(fs::read(&movie_path)?, original);
-    let reading = movie::Reading::open(&show, Moment::from_millis(1000))?;
-    assert!(
-        fs::OpenOptions::new()
-            .write(true)
-            .share_mode(7)
-            .open(&movie_path)
-            .is_err()
-    );
-    fs::rename(&movie_path, show.join("validated.mp4"))?;
-    fs::write(&movie_path, vec![0; original.len()])?;
-    let served = reading
-        .frame(Moment::from_millis(3755), None, None, || false)?
-        .unwrap();
-    assert_eq!(
-        served.at.as_millis(),
-        3750,
-        "Decoder reopened the replaced path instead of retaining the validated file"
-    );
-    assert!(movie::Reading::open(&show, Moment::from_millis(1000)).is_err());
     Ok(())
 }

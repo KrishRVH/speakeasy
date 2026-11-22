@@ -6,7 +6,7 @@ use speakeasy_show::{Manifest, Span};
 use super::{AROUND, output};
 use crate::show::{evidence::query::Query, store::video};
 
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Request {
     directory: PathBuf,
     destination: PathBuf,
@@ -14,12 +14,6 @@ pub(crate) struct Request {
     around: Duration,
     captions: bool,
     json: bool,
-}
-
-impl std::fmt::Debug for Request {
-    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        out.debug_struct("VideoRequest").finish_non_exhaustive()
-    }
 }
 
 pub(super) fn parse(mut args: impl Iterator<Item = OsString>) -> anyhow::Result<super::Command> {

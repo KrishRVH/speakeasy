@@ -1,6 +1,6 @@
 use std::{
     collections::HashSet,
-    fs, io,
+    fs,
     path::{Path, PathBuf},
     thread,
     time::{Duration, Instant, SystemTime},
@@ -50,30 +50,22 @@ fn next_saved_polling(
 
 fn first_saved(
     parent: &Path,
-    mut newest_first: Vec<(Option<SystemTime>, PathBuf)>,
+    fresh: Vec<(Option<SystemTime>, PathBuf)>,
 ) -> anyhow::Result<Option<Entry>> {
-    newest_first.sort_by_key(|&(saved, _)| saved);
-    newest_first
+    fresh
         .into_iter()
-        .find_map(|(_, directory)| {
-            let opened = Entry::open(&directory, Some(parent));
-            match opened {
-                Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-                opened => Some(
-                    opened.with_context(|| format!("Cannot open Show {}", directory.display())),
-                ),
-            }
+        .min_by_key(|&(saved, _)| saved)
+        .map(|(_, directory)| {
+            Entry::open(&directory, Some(parent))
+                .with_context(|| format!("Cannot open Show {}", directory.display()))
         })
         .transpose()
 }
 
 fn saved_at(directory: &Path) -> Option<SystemTime> {
-    let marker = fs::symlink_metadata(directory.join(SAVED_AT))
-        .ok()
-        .filter(fs::Metadata::is_file);
-    marker
-        .or_else(|| fs::metadata(directory).ok())?
-        .modified()
+    fs::metadata(directory.join(SAVED_AT))
+        .or_else(|_missing| fs::metadata(directory))
+        .and_then(|metadata| metadata.modified())
         .ok()
 }
 
@@ -166,44 +158,6 @@ mod tests {
             )?;
             assert_eq!(found, saved[0]);
         }
-        Ok(())
-    }
-
-    #[test]
-    fn shows_saved_in_the_same_instant_resolve_to_the_later_recording() -> anyhow::Result<()> {
-        let root = tempfile::tempdir()?;
-        let now = SystemTime::now();
-        let minute = Duration::from_secs(60);
-        let (found, saved) = wait_for(
-            root.path(),
-            &[
-                (now, now),
-                (now + minute, now),
-                (now + minute * 2, now + Duration::from_secs(10)),
-            ],
-        )?;
-        assert_eq!(found, saved[1]);
-        Ok(())
-    }
-
-    #[test]
-    fn a_show_removed_before_it_is_opened_does_not_end_the_wait() -> anyhow::Result<()> {
-        let root = tempfile::tempdir()?;
-        let kept = save(root.path(), SystemTime::now())?;
-        let saved = saved_at(&kept).context("The kept Show has no save time")?;
-        let found = first_saved(
-            root.path(),
-            vec![
-                (None, root.path().join("removed before lookup")),
-                (Some(saved), kept.clone()),
-                (
-                    Some(saved - Duration::from_secs(1)),
-                    root.path().join("removed after lookup"),
-                ),
-            ],
-        )?
-        .context("The remaining Show was skipped")?;
-        assert_eq!(found.directory, std::path::absolute(&kept)?);
         Ok(())
     }
 

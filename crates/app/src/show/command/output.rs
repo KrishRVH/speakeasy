@@ -9,12 +9,7 @@ use crate::show::{
 };
 
 pub(super) fn json(value: &impl Serialize, out: &mut impl io::Write) -> io::Result<()> {
-    serde_json::to_writer_pretty(&mut *out, value).map_err(|error| {
-        io::Error::new(
-            error.io_error_kind().unwrap_or(io::ErrorKind::InvalidData),
-            "Cannot write Show metadata",
-        )
-    })?;
+    serde_json::to_writer_pretty(&mut *out, value)?;
     writeln!(out)
 }
 

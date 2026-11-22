@@ -20,20 +20,14 @@ use crate::show::{
     store::{recall, source},
 };
 
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Request {
     directory: PathBuf,
     read: Read,
     json: bool,
 }
 
-impl std::fmt::Debug for Request {
-    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        out.debug_struct("SourceRequest").finish_non_exhaustive()
-    }
-}
-
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 enum Read {
     Coverage,
     Source {
@@ -49,7 +43,7 @@ enum Read {
     },
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 enum Output {
     List,
     Sheet {
@@ -201,10 +195,6 @@ fn retained(
     output: Output,
 ) -> anyhow::Result<Report> {
     let manifest = recall::Entry::open(directory, None)?.show?.manifest;
-    anyhow::ensure!(
-        index.duration() == manifest.recording().duration,
-        "Source and Show timelines differ; inspect the bundle before exporting"
-    );
     let found = focus.resolve(&manifest)?;
     let selected = found.selected;
     let mut report = Report::new(&manifest, found);

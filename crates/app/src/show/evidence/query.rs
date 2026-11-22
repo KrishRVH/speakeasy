@@ -2,7 +2,7 @@ use anyhow::Context as _;
 use serde::Serialize;
 use speakeasy_show::{Manifest, Moment, Narration, Span, locate::Focus};
 
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(in crate::show) enum Query {
     At(Moment),
     Mark(usize),

@@ -393,12 +393,9 @@ fn install_skill(directory: &Path) -> anyhow::Result<PathBuf> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => {},
         Err(error) => return Err(error).context("Cannot read the existing Show skill"),
     }
-    let mut file = tempfile::NamedTempFile::new_in(&directory)?;
-    file.write_all(SKILL.as_bytes())?;
-    file.as_file().sync_all()?;
-    file.persist_noclobber(&path)
-        .map_err(|error| error.error)
-        .context("Cannot install the Show skill without replacing an existing file")?;
+    std::fs::File::create_new(&path)
+        .context("Cannot install the Show skill without replacing an existing file")?
+        .write_all(SKILL.as_bytes())?;
     Ok(path)
 }
 

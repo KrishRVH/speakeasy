@@ -462,10 +462,8 @@ module unless a test file is named.
   including exact managed IDs and expiry dates. `show keep` changes retention for one explicit
   managed Show and `show discard` permanently removes one interrupted checkpoint; inspection stays
   read-only. `show wait` polls the Shows folder and inspects the first folder that appears after it
-  starts. It orders Shows observed in the same poll by the modification time of the publication
-  marker written just before rename; equal times go to the later recording, a wall-clock step
-  backward between two such publications can reorder them, and a Show removed before it opens is
-  skipped. Atomic publication hides partial Shows.
+  starts; of several seen in one poll, it takes the one whose publication marker is oldest.
+  Publication renames a finished folder into place, so a partial Show never appears.
   [command/tests.rs](../crates/app/src/show/command/tests.rs) inspects simulated Shows, checks
   failure output, and exercises the embedded [agent skill](../skills/speakeasy-show/SKILL.md). The
   Windows package's [console entry](../crates/app/src/bin/speakeasy-cli.rs) relays Show and control

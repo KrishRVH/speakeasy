@@ -46,8 +46,7 @@ fn read(args: &[&str]) -> anyhow::Result<Command> {
 }
 
 #[test]
-fn video_requires_explicit_output_and_unambiguous_focus_without_printing_the_query()
--> anyhow::Result<()> {
+fn video_requires_explicit_output_and_unambiguous_focus() -> anyhow::Result<()> {
     for args in [
         vec![],
         vec!["show"],
@@ -60,7 +59,7 @@ fn video_requires_explicit_output_and_unambiguous_focus_without_printing_the_que
     ] {
         assert!(read(&args).is_err());
     }
-    let command = read(&[
+    let Command::Video(request) = read(&[
         "show",
         "--out",
         "clip.mp4",
@@ -72,9 +71,8 @@ fn video_requires_explicit_output_and_unambiguous_focus_without_printing_the_que
         "0",
         "--captions",
         "--json",
-    ])?;
-    assert!(!format!("{command:?}").contains("private phrase"));
-    let Command::Video(request) = command else {
+    ])?
+    else {
         anyhow::bail!("Expected export");
     };
     assert!(matches!(

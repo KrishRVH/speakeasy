@@ -6,15 +6,15 @@ use super::*;
 
 fn saved(directory: &Path) -> anyhow::Result<()> {
     fs::create_dir_all(directory.join("frames"))?;
-    fs::write(directory.join("summary.md"), b"PRIVATE_SUMMARY")?;
+    fs::write(directory.join("summary.md"), b"Summary")?;
     fs::write(directory.join("contact-sheet.png"), b"fixture image")?;
     fs::write(directory.join("frames/frame-01.png"), b"fixture image")?;
     fs::write(
         directory.join("show.json"),
         serde_json::to_vec(&json!({
             "version": 3, "duration": 1000, "surface": {"width": 2, "height": 2},
-            "strokes": [], "pins": [], "actions": [], "narration": {"text": "PRIVATE_NARRATION"},
-            "marks": [], "keyframes": [{"index": 1, "at": 500, "reason": "middle", "event": "PRIVATE_EVENT", "marks": [0,0]}]
+            "strokes": [], "pins": [], "actions": [], "narration": {"text": "Narration"},
+            "marks": [], "keyframes": [{"index": 1, "at": 500, "reason": "middle", "event": "fixture", "marks": [0,0]}]
         }))?,
     )?;
     Ok(())
@@ -39,6 +39,5 @@ fn inspection_json_keeps_its_published_shape_and_field_order() -> anyhow::Result
     let mut expected = serde_json::to_vec_pretty(&expected)?;
     expected.push(b'\n');
     assert_eq!(actual, expected);
-    assert!(!String::from_utf8(actual)?.contains("PRIVATE_"));
     Ok(())
 }

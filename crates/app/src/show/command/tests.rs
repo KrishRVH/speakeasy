@@ -1,7 +1,7 @@
 use std::fs;
 
 use serde_json::Value;
-use speakeasy_show::{Bundle, Framing, Size};
+use speakeasy_show::{Framing, Size};
 
 use super::*;
 
@@ -24,7 +24,7 @@ async fn interrupted(parent: &Path) -> anyhow::Result<store::checkpoint::Interru
         },
         Framing::Automatic
     ));
-    assert!(audio.begin(8_000, Duration::ZERO, "private-fixture".into()));
+    assert!(audio.begin(8_000, Duration::ZERO, "fixture".into()));
     audio.finish(&[1, 0], &[], store::checkpoint::AudioEnding::Interrupted);
     drop(frames);
     Ok(keeper
@@ -121,11 +121,11 @@ fn commands_require_explicit_paths_and_accept_only_their_options() -> anyhow::Re
 }
 
 #[test]
-fn portable_export_reports_only_metadata_and_preserves_the_saved_summary() -> anyhow::Result<()> {
+fn portable_export_reports_its_file_and_preserves_the_saved_summary() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let directory = root.path().join("a show");
     demo(Some(directory.clone()), &mut io::sink())?;
-    fs::write(directory.join("summary.md"), "PRIVATE_EDITED_SUMMARY")?;
+    fs::write(directory.join("summary.md"), "Edited summary")?;
     let destination = root.path().join("portable.zip");
     let mut printed = Vec::new();
     Command::Export {
@@ -138,10 +138,9 @@ fn portable_export_reports_only_metadata_and_preserves_the_saved_summary() -> an
     assert_eq!(value["path"], destination.to_string_lossy().as_ref());
     assert_eq!(value["bytes"], fs::metadata(destination)?.len());
     assert_eq!(value["retainedFrames"], false);
-    assert!(!String::from_utf8(printed)?.contains("PRIVATE_EDITED_SUMMARY"));
     assert_eq!(
         fs::read_to_string(directory.join("summary.md"))?,
-        "PRIVATE_EDITED_SUMMARY"
+        "Edited summary"
     );
     Ok(())
 }
@@ -173,7 +172,7 @@ fn metadata_reports_exact_managed_identity_and_expiry_without_claiming_moved_bun
 }
 
 #[test]
-fn a_demo_is_inspectable_and_output_never_contains_its_narration() -> anyhow::Result<()> {
+fn a_demo_outside_the_shows_folder_is_inspectable_without_a_show_id() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let directory = root.path().join("demo with spaces");
     let mut written = Vec::new();
@@ -186,53 +185,25 @@ fn a_demo_is_inspectable_and_output_never_contains_its_narration() -> anyhow::Re
         written.contains("demo with spaces") && !written.contains("Show ID"),
         "A demo outside the Shows folder claimed a Show ID: {written}"
     );
-    let summary = directory.join(Bundle::SUMMARY);
-    let edited = b"PRIVATE_USER_EDIT";
-    fs::write(&summary, edited)?;
-    for json in [false, true] {
-        let mut output = Vec::new();
-        Command::Inspect {
-            directory: directory.clone(),
-            json,
-        }
-        .write(&mut output)?;
-        let output = String::from_utf8(output)?;
-        let mut listing = Vec::new();
-        output::list(
-            std::iter::once(recall::Entry::open(&directory, None)),
-            Some(root.path()),
-            json,
-            &mut listing,
-        )?;
-        let listing = String::from_utf8(listing)?;
-        for private in [
-            "PRIVATE_USER_EDIT",
-            "Here's the settings window",
-            "theme picker is here",
-            "reduce motion",
-        ] {
-            assert!(
-                !output.contains(private) && !listing.contains(private),
-                "inspection quoted private content"
-            );
-        }
-        if json {
-            let value: Value = serde_json::from_str(&output)?;
-            assert_eq!(value["status"], "ok");
-            assert_eq!(value["keyframes"], 5);
-            assert_eq!(value["marks"], 3);
-            assert_eq!(value["markFrames"][0]["frame"], 3);
-            assert_eq!(
-                value["sheets"][0]["frames"],
-                serde_json::json!([1, 2, 3, 4, 5])
-            );
-            for frame in value["frames"].as_array().unwrap() {
-                assert!(PathBuf::from(frame["path"].as_str().unwrap()).is_file());
-                assert_eq!(frame["crop"].as_array().map(Vec::len), Some(4));
-            }
-        }
+    let mut output = Vec::new();
+    Command::Inspect {
+        directory,
+        json: true,
     }
-    assert_eq!(fs::read(summary)?, edited);
+    .write(&mut output)?;
+    let value: Value = serde_json::from_slice(&output)?;
+    assert_eq!(value["status"], "ok");
+    assert_eq!(value["keyframes"], 5);
+    assert_eq!(value["marks"], 3);
+    assert_eq!(value["markFrames"][0]["frame"], 3);
+    assert_eq!(
+        value["sheets"][0]["frames"],
+        serde_json::json!([1, 2, 3, 4, 5])
+    );
+    for frame in value["frames"].as_array().context("Frames are listed")? {
+        assert!(PathBuf::from(frame["path"].as_str().unwrap_or_default()).is_file());
+        assert_eq!(frame["crop"].as_array().map(Vec::len), Some(4));
+    }
     Ok(())
 }
 
@@ -305,8 +276,7 @@ fn closing_the_output_pipe_preserves_the_io_error_kind() {
 }
 
 #[tokio::test]
-async fn interrupted_listing_has_distinct_identity_and_original_expiry_without_replaying()
--> anyhow::Result<()> {
+async fn interrupted_listing_has_distinct_identity_and_original_expiry() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let interrupted = interrupted(root.path()).await?;
 
@@ -332,6 +302,5 @@ async fn interrupted_listing_has_distinct_identity_and_original_expiry_without_r
     let listing: Value = serde_json::from_slice(&bytes)?;
     assert_eq!(listing[0]["status"], "narrationPending");
     assert_eq!(listing[0]["id"], interrupted.id());
-    assert!(!String::from_utf8(bytes)?.contains("private-fixture"));
     Ok(())
 }

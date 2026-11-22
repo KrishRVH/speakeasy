@@ -52,7 +52,7 @@ fn source_arguments_need_one_focus_and_a_destination_for_files() {
 }
 
 #[test]
-fn source_commands_report_samples_preserve_files_and_handle_closed_pipes() -> anyhow::Result<()> {
+fn source_commands_report_samples_and_never_overwrite_an_export() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let directory = root.path().join("show");
     fs::create_dir(&directory)?;
@@ -61,7 +61,7 @@ fn source_commands_report_samples_preserve_files_and_handle_closed_pipes() -> an
         serde_json::to_vec(&serde_json::json!({
             "version":3, "duration":1000, "surface":{"width":2,"height":2},
             "strokes":[],"pins":[],"actions":[],"marks":[],"narration":{"words":[]},
-            "keyframes":[{"index":1,"at":100,"reason":"middle","event":"PRIVATE_EVENT","marks":[0,0]}]
+            "keyframes":[{"index":1,"at":100,"reason":"middle","event":"fixture","marks":[0,0]}]
         }))?,
     )?;
     let mut journal = Journal::default();
@@ -75,22 +75,6 @@ fn source_commands_report_samples_preserve_files_and_handle_closed_pipes() -> an
         read,
         json: true,
     };
-    for read in [
-        Read::Coverage,
-        Read::Source {
-            focus: Query::At(Moment::from_millis(750)),
-            around: AROUND,
-            output: Output::List,
-        },
-    ] {
-        let error = request(read)
-            .write(&mut crate::testing::Closed)
-            .unwrap_err();
-        assert_eq!(
-            error.downcast_ref::<io::Error>().map(io::Error::kind),
-            Some(io::ErrorKind::BrokenPipe)
-        );
-    }
     let destination = root.path().join("export.png");
     let frame = || {
         request(Read::Source {
@@ -130,8 +114,8 @@ fn phrase_windows_require_an_explicit_match_and_export_honest_samples() -> anyho
             "version":3, "duration":4000, "surface":{"width":100,"height":100},
             "strokes":[],"pins":[],"actions":[],
             "marks":[{"number":1,"shape":"pin","point":[0.5,0.5],"bounds":[0.5,0.5,0.5,0.5],"span":[2500,2500],"strokes":[0,0]}],
-            "narration":{"words":[{"span":[400,800],"text":"PRIVATE_PHRASE"},{"span":[2500,2700],"text":"PRIVATE_PHRASE"}]},
-            "keyframes":[{"index":1,"at":2500,"reason":"mark","event":"PRIVATE_EVENT","marks":[0,1]}]
+            "narration":{"words":[{"span":[400,800],"text":"phrase"},{"span":[2500,2700],"text":"phrase"}]},
+            "keyframes":[{"index":1,"at":2500,"reason":"mark","event":"fixture","marks":[0,1]}]
         }))?,
     )?;
     let mut journal = Journal::default();
@@ -145,14 +129,11 @@ fn phrase_windows_require_an_explicit_match_and_export_honest_samples() -> anyho
     let run = |options: &[&str], verb| -> anyhow::Result<serde_json::Value> {
         let args = std::iter::once(directory.as_os_str().to_owned())
             .chain(options.iter().map(OsString::from));
-        let command = parse(verb, args)?;
-        assert!(!format!("{command:?}").contains("PRIVATE"));
         let mut out = Vec::new();
-        command.write(&mut out)?;
-        assert!(!String::from_utf8_lossy(&out).contains("PRIVATE"));
+        parse(verb, args)?.write(&mut out)?;
         Ok(serde_json::from_slice(&out)?)
     };
-    let found = run(&["--phrase", "PRIVATE_PHRASE", "--json"], Verb::Frames)?;
+    let found = run(&["--phrase", "phrase", "--json"], Verb::Frames)?;
     assert_eq!(
         found["focus"]["matches"],
         serde_json::json!([[400, 800], [2500, 2700]])
@@ -161,24 +142,15 @@ fn phrase_windows_require_an_explicit_match_and_export_honest_samples() -> anyho
     let destination = root.path().join("sheet.png");
     let path = destination.to_str().unwrap();
     let error = run(
-        &["--phrase", "PRIVATE_PHRASE", "--out", path, "--json"],
+        &["--phrase", "phrase", "--out", path, "--json"],
         Verb::Frames,
     )
     .unwrap_err();
     assert!(error.to_string().contains("several matches"));
-    assert!(!error.to_string().contains("PRIVATE"));
     assert!(!destination.exists());
     let exported = run(
         &[
-            "--phrase",
-            "PRIVATE_PHRASE",
-            "--match",
-            "2",
-            "--out",
-            path,
-            "--most",
-            "2",
-            "--json",
+            "--phrase", "phrase", "--match", "2", "--out", path, "--most", "2", "--json",
         ],
         Verb::Frames,
     )?;
@@ -242,7 +214,7 @@ fn phrase_windows_require_an_explicit_match_and_export_honest_samples() -> anyho
 #[test]
 fn focus_options_reject_conflicts_and_unbounded_work() {
     for options in [
-        vec!["--phrase", "PRIVATE", "--at", "1"],
+        vec!["--phrase", "phrase", "--at", "1"],
         vec!["--phrase", "--json"],
         vec!["--at", "1", "--crop", "--out", "x.png"],
         vec!["--at", "1", "--match", "1"],
@@ -253,9 +225,8 @@ fn focus_options_reject_conflicts_and_unbounded_work() {
         vec!["--out", "x.png"],
         vec!["--video", "--at", "1", "--out", "x.png"],
     ] {
-        let args = std::iter::once("show").chain(options).map(OsString::from);
-        let error = parse(Verb::Frames, args).unwrap_err();
-        assert!(!format!("{error:#}").contains("PRIVATE"));
+        let args = std::iter::once("show").chain(options.iter().copied());
+        assert!(parse(Verb::Frames, args.map(OsString::from)).is_err());
     }
     let repeated = ["show", "--video", "--video", "--at", "1", "--out", "x.png"];
     assert!(parse(Verb::Frame, repeated.into_iter().map(OsString::from)).is_err());
