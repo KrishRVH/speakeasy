@@ -6,7 +6,6 @@ use super::{
     library::{Row, list},
     *,
 };
-use crate::show::store::recall;
 
 mod handoff;
 mod narration;

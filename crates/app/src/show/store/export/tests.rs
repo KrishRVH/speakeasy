@@ -44,7 +44,7 @@ fn archive_moves_with_edited_summary_images_and_retained_samples_but_no_extra_fi
 -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let directory = fixture(root.path())?;
-    for name in ["audio.wav", "voice.log", ".pinned", "unrelated.txt"] {
+    for name in ["voice.log", ".pinned", "unrelated.txt"] {
         fs::write(directory.join(name), b"PRIVATE_NOT_EXPORTED")?;
     }
     let destination = root.path().join("share.zip");

@@ -75,7 +75,7 @@ async fn a_failed_writer_warns_once_and_keeps_recording_in_memory() -> anyhow::R
         keeper,
         frames: writer,
         audio,
-    } = crate::show::Keeper::start(
+    } = Keeper::start(
         || anyhow::bail!("Synthetic checkpoint failure"),
         SystemTime::now(),
     )?;
