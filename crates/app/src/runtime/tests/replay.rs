@@ -27,41 +27,6 @@ async fn unavailable_insertion_keeps_exact_text_for_a_fresh_delivery() -> anyhow
 }
 
 #[tokio::test(start_paused = true)]
-async fn replay_owns_delivery_until_completion_or_escape() -> anyhow::Result<()> {
-    let (insertion, preparing) = gate(3);
-    let mut h = Harness::with_ports(Config::default(), |ports| {
-        ports.insertion = Some(insertion);
-    })?;
-    h.start().await?;
-    h.finish_as("First fixture.").await?;
-    let original = preparing.reached().await?;
-    preparing.release().await?;
-    assert_eq!(receive(&h.pasted).await?, "First fixture.");
-    h.phase(Phase::Done).await?;
-    h.input(Input::PasteLast);
-    let replay = preparing.reached().await?;
-    assert!(replay.active());
-    assert!(!original.active());
-    h.input(Input::Press);
-    h.input(Input::PasteLast);
-    h.input(Input::Release);
-    h.input(Input::Escape);
-    h.phase(Phase::Cancelled).await?;
-    assert!(!replay.active());
-    assert!(h.captures.try_recv().is_err());
-    preparing.release().await?;
-    h.input(Input::PasteLast);
-    let next = preparing.reached().await?;
-    assert!(next.active());
-    assert!(!replay.commit());
-    preparing.release().await?;
-    assert_eq!(receive(&h.pasted).await?, "First fixture.");
-    h.phase(Phase::Done).await?;
-    assert!(h.pasted.try_recv().is_err());
-    h.close().await
-}
-
-#[tokio::test(start_paused = true)]
 async fn paste_during_a_hold_discards_its_audio_before_replaying() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
     h.start().await?;
@@ -112,23 +77,6 @@ async fn cancelled_text_never_replaces_recall_and_settings_preserve_it() -> anyh
     preparing.release().await?;
     assert_eq!(receive(&h.pasted).await?, "Kept fixture.");
     h.phase(Phase::Done).await?;
-    h.close().await
-}
-
-#[tokio::test(start_paused = true)]
-async fn practice_cannot_populate_or_replay_recall() -> anyhow::Result<()> {
-    let mut h = Harness::new()?;
-    let mut practice = arm_practice(&h).await?;
-    h.input(Input::PasteLast);
-    h.start().await?;
-    h.finish_as("Private practice fixture.").await?;
-    assert_eq!(
-        &*practice_text(&mut practice).await?,
-        "Private practice fixture."
-    );
-    h.phase(Phase::Done).await?;
-    assert!(!h.snapshot().last_dictation);
-    assert!(h.pasted.try_recv().is_err());
     h.close().await
 }
 

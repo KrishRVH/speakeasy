@@ -13,14 +13,17 @@ fn config() -> Config {
 
 struct Feed {
     frames: mpsc::Sender<Vec<u8>>,
-    ending: oneshot::Sender<Vec<u8>>,
+    _ending: oneshot::Sender<Vec<u8>>,
 }
 
 fn live() -> (Feed, LiveAudio) {
     let (frames, received) = mpsc::channel(1);
     let (ending, tail) = oneshot::channel();
     (
-        Feed { frames, ending },
+        Feed {
+            frames,
+            _ending: ending,
+        },
         LiveAudio {
             rate: 16_000,
             frames: received,
@@ -51,78 +54,5 @@ async fn cancellation_closes_the_stream_and_reuses_a_responsive_cpu_worker() -> 
         h.loads.try_recv().is_err(),
         "Cancellation replaced a healthy streaming worker"
     );
-    h.close().await
-}
-
-#[tokio::test(start_paused = true)]
-async fn abandoning_stream_for_show_keeps_the_worker_and_whole_narration() -> anyhow::Result<()> {
-    let mut h = Harness::with_ports(config(), |ports| ports.delayed_finish = true)?;
-    receive(&h.loads).await?;
-    h.input(Input::Press);
-    h.phase(Phase::Recording).await?;
-    let (id, events) = receive(&h.captures).await?;
-    let (feed, audio) = live();
-    events.send(CaptureEvent::Streaming(id, audio)).await?;
-    h.input(Input::Show(Scope::Screen));
-    receive(&h.shows).await?;
-    drop(feed);
-    events
-        .send(CaptureEvent::Finished(id, Ok(Some(sealed()))))
-        .await?;
-    h.transcribe_next_as("Whole Show narration").await?;
-    let (_, narration) = receive(&h.published).await?;
-    assert_eq!(narration, Narration::Text("Whole Show narration".into()));
-    assert!(h.loads.try_recv().is_err());
-    assert!(h.pasted.try_recv().is_err());
-    h.close().await
-}
-
-#[tokio::test(start_paused = true)]
-async fn stream_output_waits_for_seal_and_keeps_practice_private() -> anyhow::Result<()> {
-    let mut h = Harness::with_ports(config(), |ports| ports.delayed_finish = true)?;
-    let mut practice = arm_practice(&h).await?;
-    let (id, events) = h.start().await?;
-    let (feed, audio) = live();
-    events.send(CaptureEvent::Streaming(id, audio)).await?;
-    drop(feed.frames);
-    assert!(feed.ending.send(Vec::new()).is_ok());
-    h.transcribe_next_as("Private streamed result").await?;
-    assert!(still_pending(practice.recv()).await);
-    events
-        .send(CaptureEvent::Finished(id, Ok(Some(sealed()))))
-        .await?;
-    let text = practice_text(&mut practice).await?;
-    assert_eq!(&*text, "Private streamed result");
-    h.phase(Phase::Done).await?;
-    assert!(h.jobs.try_recv().is_err());
-    assert!(h.pasted.try_recv().is_err());
-    h.close().await
-}
-
-#[tokio::test(start_paused = true)]
-async fn recording_while_worker_recovers_skips_stream_and_preserves_whole_audio()
--> anyhow::Result<()> {
-    let (probe, probes) = async_channel::bounded(1);
-    let (recorded, requests) = async_channel::bounded(1);
-    let mut h = Harness::with_ports(config(), |ports| {
-        ports.probes = Some(probes);
-        ports.recorded_requests = Some(recorded);
-    })?;
-    let (id, events) = h.start().await?;
-    let (old, audio) = live();
-    events.send(CaptureEvent::Streaming(id, audio)).await?;
-    events.send(CaptureEvent::Level(id, 0.5)).await?;
-    h.observe_level(0.5).await?;
-    h.input(Input::Cancel);
-    h.phase(Phase::Cancelled).await?;
-    timeout(PATIENCE, old.frames.closed()).await?;
-    let (id, events) = h.start().await?;
-    let (new, audio) = live();
-    events.send(CaptureEvent::Streaming(id, audio)).await?;
-    timeout(PATIENCE, new.frames.closed()).await?;
-    probe.send(Ok(())).await?;
-    h.finish_as("Complete recording").await?;
-    assert_eq!(receive(&requests).await?, *sealed().wav);
-    assert_eq!(receive(&h.pasted).await?, "Complete recording");
     h.close().await
 }

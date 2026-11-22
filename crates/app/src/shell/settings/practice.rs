@@ -68,7 +68,7 @@ impl Settings {
         let levels = follow(
             cx.global::<Services>().meter.subscribe(),
             cx,
-            |meter| meter.level.clamp(0.0, 1.0),
+            |level| level.clamp(0.0, 1.0),
             |view, level, cx| {
                 if let Some(live) = &mut view.practice.live {
                     live.level = level;

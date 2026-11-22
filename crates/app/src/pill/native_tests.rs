@@ -62,7 +62,7 @@ fn run_native(
 
 fn check_idle_pill(cx: &mut App) -> anyhow::Result<()> {
     let (_publisher, updates) = watch::channel(Snapshot::default());
-    let (_meter, levels) = watch::channel(Meter::default());
+    let (_meter, levels) = watch::channel(0.0_f32);
     let pill = open(
         updates,
         levels,
@@ -199,7 +199,7 @@ async fn check_reopened_pill(cx: &AsyncApp) -> anyhow::Result<()> {
     ] {
         let phase = snapshot.phase;
         let (_publisher, updates) = watch::channel(snapshot);
-        let (_meter, levels) = watch::channel(Meter::default());
+        let (_meter, levels) = watch::channel(0.0_f32);
         let id = cx.update(|cx| {
             let pill = open(
                 updates,
@@ -275,7 +275,7 @@ async fn check_late_window(cx: &AsyncApp) -> anyhow::Result<()> {
         .await;
     let id = cx.update(|cx| {
         let (_publisher, updates) = watch::channel(Snapshot::default());
-        let (_meter, levels) = watch::channel(Meter::default());
+        let (_meter, levels) = watch::channel(0.0_f32);
         let _pill = open(
             updates,
             levels,

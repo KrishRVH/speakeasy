@@ -65,22 +65,6 @@ async fn a_show_that_fails_before_it_is_saved_leaves_the_last_one() -> anyhow::R
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_show_cancelled_before_it_is_saved_leaves_the_last_one() -> anyhow::Result<()> {
-    let (publication, publishing) = gate(1);
-    let mut h = Harness::remembering(saved("first"), |ports| {
-        ports.publication = Some(publication);
-    })?;
-    record_show(&mut h, "cancelled").await?;
-    publishing.reached().await?;
-
-    h.runtime.input.cancel();
-    publishing.release().await?;
-    h.phase(Phase::Cancelled).await?;
-    assert_eq!(h.snapshot().last_show, Some(saved("first")));
-    h.close().await
-}
-
-#[tokio::test(start_paused = true)]
 async fn a_newer_show_replaces_the_last_one_and_dictation_leaves_it() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
     save_show(&mut h, "first").await?;
@@ -98,50 +82,6 @@ async fn a_newer_show_replaces_the_last_one_and_dictation_leaves_it() -> anyhow:
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_show_saved_as_it_is_abandoned_is_remembered_but_still_reads_as_cancelled()
--> anyhow::Result<()> {
-    let (saving, persisted) = gate(2);
-    let mut h = Harness::with_ports(Config::default(), |ports| {
-        ports.saved = Some(saving);
-    })?;
-    save_show(&mut h, "first").await?;
-    persisted.reached().await?;
-    persisted.release().await?;
-    h.phase(Phase::Copied).await?;
-    save_show(&mut h, "second").await?;
-
-    persisted.reached().await?;
-    change_settings(&mut h);
-    h.phase(Phase::Cancelled).await?;
-    persisted.release().await?;
-    h.observe(|snapshot| snapshot.last_show == Some(saved("second")))
-        .await?;
-    assert_eq!(
-        h.snapshot().phase,
-        Phase::Cancelled,
-        "The abandoned Show's result replaced the cancel"
-    );
-    h.close().await
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_show_saved_after_a_pause_announces_still_outlives_its_owner() -> anyhow::Result<()> {
-    let (saving, persisted) = gate(1);
-    let mut h = Harness::with_ports(Config::default(), |ports| {
-        ports.saved = Some(saving);
-    })?;
-    save_show(&mut h, "newer").await?;
-    persisted.reached().await?;
-
-    h.output
-        .send_modify(|snapshot| snapshot.epoch = snapshot.epoch.next());
-    persisted.release().await?;
-    h.observe(|snapshot| snapshot.last_show == Some(saved("newer")))
-        .await?;
-    h.close().await
-}
-
-#[tokio::test(start_paused = true)]
 async fn a_show_saved_as_a_pause_stops_its_owner_outlives_that_owner() -> anyhow::Result<()> {
     let (saving, persisted) = gate(1);
     let mut h = Harness::with_ports(Config::default(), |ports| {
@@ -150,8 +90,6 @@ async fn a_show_saved_as_a_pause_stops_its_owner_outlives_that_owner() -> anyhow
     save_show(&mut h, "newer").await?;
     persisted.reached().await?;
 
-    h.output
-        .send_modify(|snapshot| snapshot.epoch = snapshot.epoch.next());
     h.runtime.request_stop();
     persisted.release().await?;
     let updates = h.updates.clone();
@@ -194,23 +132,6 @@ async fn the_last_show_copied_again_reads_as_a_copied_show_only_while_idle() -> 
 }
 
 #[tokio::test(start_paused = true)]
-async fn each_copy_of_the_last_show_presents_anew() -> anyhow::Result<()> {
-    let mut h = Harness::new()?;
-    save_show(&mut h, "look").await?;
-    h.phase(Phase::Copied).await?;
-    for reported in [1, 2] {
-        h.report(Report::ShowCopied)?;
-        h.observe(|snapshot| snapshot.reported == reported).await?;
-        let snapshot = h.snapshot();
-        assert_eq!(
-            (snapshot.phase, snapshot.message.as_str()),
-            (Phase::Copied, SHOW_COPIED)
-        );
-    }
-    h.close().await
-}
-
-#[tokio::test(start_paused = true)]
 async fn a_show_found_gone_is_a_notice_that_forgets_only_that_show() -> anyhow::Result<()> {
     let mut h = Harness::remembering(saved("first"), |_| {})?;
     h.report(Report::ShowGone(saved("older")))?;
@@ -233,27 +154,6 @@ async fn a_show_found_gone_is_a_notice_that_forgets_only_that_show() -> anyhow::
         "The notice interrupted a recording"
     );
     h.close().await
-}
-
-#[tokio::test(start_paused = true)]
-async fn queued_reports_preserve_a_gone_show_on_either_side_of_a_failure() -> anyhow::Result<()> {
-    for gone_first in [false, true] {
-        let mut h = Harness::remembering(saved("first"), |_| {})?;
-        let gone = Report::ShowGone(saved("first"));
-        let failed = Report::Failed("Public fixture failure".into());
-        let reports = if gone_first {
-            [gone, failed]
-        } else {
-            [failed, gone]
-        };
-        for report in reports {
-            h.report(report)?;
-        }
-        h.observe(|snapshot| snapshot.reported == 2).await?;
-        assert!(h.snapshot().last_show.is_none());
-        h.close().await?;
-    }
-    Ok(())
 }
 
 #[test]

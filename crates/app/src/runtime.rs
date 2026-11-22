@@ -37,22 +37,12 @@ const SHOW_COPIED: &str = "Show copied. Paste it into your coding agent.";
 
 const SHOW_GONE: &str = "The last Show has expired or was deleted.";
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct SnapshotEpoch(u64);
-
-impl SnapshotEpoch {
-    pub(crate) const fn next(self) -> Self {
-        Self(self.0.wrapping_add(1))
-    }
-}
-
 #[derive(Clone, Debug, PartialEq)]
 #[expect(
     clippy::struct_excessive_bools,
     reason = "The immutable UI snapshot reports independent session, desktop and retained-text facts; it owns no transitions"
 )]
 pub(crate) struct Snapshot {
-    pub epoch: SnapshotEpoch,
     pub session: u64,
     pub reported: u64,
     pub phase: Phase,
@@ -77,7 +67,6 @@ pub(crate) struct Snapshot {
 impl Default for Snapshot {
     fn default() -> Self {
         Self {
-            epoch: SnapshotEpoch::default(),
             session: 0,
             reported: 0,
             phase: Phase::Idle,
@@ -163,13 +152,6 @@ impl From<&anyhow::Error> for Report {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct Meter {
-    pub epoch: SnapshotEpoch,
-    pub session: u64,
-    pub level: f32,
-}
-
 pub(crate) struct Runtime<Host = OwnedThread> {
     host: Host,
     pub input: InputSender,
@@ -197,7 +179,7 @@ impl Runtime {
         baseline: Config,
         styles: watch::Receiver<Style>,
         snapshots: watch::Sender<Snapshot>,
-        meter: watch::Sender<Meter>,
+        meter: watch::Sender<f32>,
         canvas: watch::Sender<Canvas>,
         wsl: show::wsl::Lookup,
         own_focus: OwnFocus,
@@ -233,7 +215,7 @@ impl Runtime {
         config: Config,
         styles: watch::Receiver<Style>,
         snapshots: watch::Sender<Snapshot>,
-        meter: watch::Sender<Meter>,
+        meter: watch::Sender<f32>,
         ports: P,
     ) -> anyhow::Result<Self> {
         let (input, inputs) = input_lane();
@@ -265,13 +247,12 @@ impl<Host> Runtime<Host> {
     fn host<P: Ports>(
         configuration: Configuration,
         snapshots: watch::Sender<Snapshot>,
-        meter: watch::Sender<Meter>,
+        meter: watch::Sender<f32>,
         ports: P,
         input: InputSender,
         inputs: Receiver<Input>,
         run: impl FnOnce(Wiring<P>) -> io::Result<Host>,
     ) -> anyhow::Result<Self> {
-        let epoch = snapshots.borrow().epoch;
         let Configuration {
             effective,
             saved,
@@ -298,7 +279,6 @@ impl<Host> Runtime<Host> {
             permits: input.clone(),
             stopping,
             ports,
-            epoch,
         })?;
         Ok(Self {
             host,
@@ -456,10 +436,6 @@ impl Ports for Desktop {
         true
     }
 
-    fn screen_unstopped(&self) -> bool {
-        speakeasy_platform::ScreenCapture::available().is_err()
-    }
-
     fn keep_awake(&self, keep: Keep) -> Option<Self::Awake> {
         speakeasy_platform::Awake::hold(keep)
     }
@@ -567,11 +543,10 @@ struct Wiring<P> {
     recoveries: Receiver<Recovery>,
     practices: Receiver<mpsc::Sender<PracticeEvent>>,
     snapshots: watch::Sender<Snapshot>,
-    meter: watch::Sender<Meter>,
+    meter: watch::Sender<f32>,
     permits: InputSender,
     stopping: Receiver<Infallible>,
     ports: P,
-    epoch: SnapshotEpoch,
 }
 
 pub(crate) type Adopted = Result<(), &'static str>;
@@ -634,29 +609,10 @@ impl Adopting {
 
 impl<P: Ports> Wiring<P> {
     fn run_on_own_thread(self) -> io::Result<OwnedThread> {
-        OwnedThread::spawn("dictation", move || self.run_on_current_thread())
-    }
-
-    fn run_on_current_thread(self) {
-        match tokio::runtime::Builder::new_current_thread()
+        let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
-            .build()
-        {
-            Ok(runtime) => runtime.block_on(owner::run(self)),
-            Err(error) => self.fail_startup(&error),
-        }
-    }
-
-    fn fail_startup(&self, error: &io::Error) {
-        self.snapshots.send_if_modified(|snapshot| {
-            if snapshot.epoch != self.epoch {
-                return false;
-            }
-            snapshot.phase = Phase::Error;
-            snapshot.message =
-                format!("Could not start dictation ({error}). Quit and reopen Speakeasy.");
-            true
-        });
+            .build()?;
+        OwnedThread::spawn("dictation", move || runtime.block_on(owner::run(self)))
     }
 }
 

@@ -49,7 +49,7 @@ use tokio::sync::watch;
 use crate::{
     config::{Config, Startup, ValidConfig},
     instance::{Event, Instance, Request},
-    runtime::{Meter, Report, Snapshot},
+    runtime::{Report, Snapshot},
     shell::{LaunchMode, Services},
     transcript::style::Style,
 };
@@ -187,7 +187,7 @@ fn launch(
     let configured = valid.is_some();
     let onboarding = !mode.is_demo() && shell::onboarding_pending(&path);
     let (output, updates) = watch::channel(snapshot);
-    let (meter, levels) = watch::channel(Meter::default());
+    let (meter, levels) = watch::channel(0.0_f32);
     let (application, presentation) = application::new()?;
     let application = application.with_assets(icons::Icons);
     application.on_reopen(shell::reveal);

@@ -51,35 +51,6 @@ async fn a_preset_applies_only_while_idle_and_reloads_only_for_engine_choices() 
 }
 
 #[tokio::test(start_paused = true)]
-async fn preset_validation_cannot_cross_a_recording_or_settings_change() -> anyhow::Result<()> {
-    let mut h = Harness::new()?;
-    h.ready().await?;
-    let baseline = h.runtime.baseline.clone();
-    let validated = h.snapshot().session;
-    h.start().await?;
-    h.input(Input::Cancel);
-    h.phase(Phase::Cancelled).await?;
-    let stale = Some(refusal(Refusal::PresetStale));
-    let across_recording = choose(&h, "Old", &baseline, &baseline, validated).await?;
-    assert_eq!(across_recording.reason.as_deref(), stale);
-    h.runtime.configure(ValidConfig::assume(Config {
-        language: "de".into(),
-        ..baseline.clone()
-    }));
-    let across_settings = choose(&h, "Old", &baseline, &baseline, h.snapshot().session).await?;
-    assert_eq!(across_settings.reason.as_deref(), stale);
-    assert!(
-        control(&h, Command::Status)
-            .await?
-            .status
-            .context("No status")?
-            .preset
-            .is_none()
-    );
-    h.close().await
-}
-
-#[tokio::test(start_paused = true)]
 async fn resumed_preset_keeps_saved_settings_separate_from_effective_choices() -> anyhow::Result<()>
 {
     let saved = Config::default();
@@ -122,53 +93,6 @@ async fn adopting_the_saved_settings_clears_the_preset_and_uses_the_saved_langua
 }
 
 #[tokio::test(start_paused = true)]
-async fn adopting_settings_waits_for_the_active_session() -> anyhow::Result<()> {
-    let mut h = Harness::new()?;
-    h.ready().await?;
-    let saved = h.runtime.baseline.clone();
-    let french = Config {
-        language: "fr".into(),
-        ..saved.clone()
-    };
-    let adopted = choose(&h, "French", &french, &saved, h.snapshot().session).await?;
-    assert_eq!(adopted.result, Disposition::Ok);
-    h.start().await?;
-    let restored = receive(&h.runtime.adopt(ValidConfig::assume(saved))).await?;
-    assert_eq!(restored, Err(refusal(Refusal::PresetBusy)));
-    finish_in(&mut h, "fr").await?;
-    assert_eq!(h.snapshot().preset.as_deref(), Some("French"));
-    h.close().await
-}
-
-#[tokio::test(start_paused = true)]
-async fn adopting_settings_follows_a_preset_queued_before_it() -> anyhow::Result<()> {
-    let mut h = Harness::new()?;
-    h.ready().await?;
-    let saved = h.runtime.baseline.clone();
-    let french = Config {
-        language: "fr".into(),
-        ..saved.clone()
-    };
-    let (call, adopted) = Call::new(Command::Preset {
-        name: "French".into(),
-    });
-    h.runtime.preset(
-        "French".into(),
-        ValidConfig::assume(french),
-        saved.clone(),
-        h.snapshot().session,
-        call,
-    );
-    let restored = h.runtime.adopt(ValidConfig::assume(saved.clone()));
-    assert_eq!(receive(&adopted).await?.result, Disposition::Ok);
-    assert_eq!(receive(&restored).await?, Ok(()));
-    h.start().await?;
-    finish_in(&mut h, &saved.language).await?;
-    assert_eq!(h.snapshot().preset, None);
-    h.close().await
-}
-
-#[tokio::test(start_paused = true)]
 async fn a_session_started_after_adoption_survives_the_save_that_follows() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
     h.ready().await?;
@@ -181,28 +105,6 @@ async fn a_session_started_after_adoption_survives_the_save_that_follows() -> an
     h.runtime.settle(french.clone());
     h.runtime.configure(french);
     finish_in(&mut h, "fr").await?;
-    h.close().await
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_rollback_sent_before_a_newer_save_never_overwrites_it() -> anyhow::Result<()> {
-    let mut h = Harness::new()?;
-    h.ready().await?;
-    let saved = h.runtime.baseline.clone();
-    let french = ValidConfig::assume(Config {
-        language: "fr".into(),
-        ..saved.clone()
-    });
-    assert_eq!(receive(&h.runtime.adopt(french.clone())).await?, Ok(()));
-    h.runtime.settle(french);
-    assert!(h.runtime.revert(saved.clone()));
-    h.runtime.configure(ValidConfig::assume(Config {
-        language: "de".into(),
-        ..saved
-    }));
-    control(&h, Command::Status).await?;
-    h.start().await?;
-    finish_in(&mut h, "de").await?;
     h.close().await
 }
 

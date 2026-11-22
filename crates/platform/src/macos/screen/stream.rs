@@ -25,7 +25,7 @@ use crate::{
     Frame, Part, ScreenEvent, Target,
     macos::movie::encode::Codec,
     movie::recording::{INTERVAL, Movie},
-    screen::{Unstopped, geometry::Bounds},
+    screen::geometry::Bounds,
 };
 
 pub(super) fn capture(
@@ -267,7 +267,6 @@ impl Stream {
 impl Drop for Stream {
     fn drop(&mut self) {
         if self.running && self.stop().is_err() {
-            Unstopped::remember();
             #[expect(
                 clippy::mem_forget,
                 reason = "ScreenCaptureKit never confirmed that this stream stopped; releasing its stream, output or queue could leave capture calling freed objects, so they stay retained for the process's life while the closed frame lane makes the output discard every sample"

@@ -15,7 +15,7 @@ use crate::{
     config::Config,
     instance::Instance,
     pill::Pill,
-    runtime::{Meter, Snapshot},
+    runtime::Snapshot,
     shell::{LaunchMode, Services},
 };
 
@@ -93,7 +93,7 @@ fn start(mode: Mode, main: MainThreadMarker, cx: &mut App) -> anyhow::Result<()>
     crate::load_brand_font(cx);
     let config = Config::default();
     let (output, snapshots) = watch::channel(Snapshot::default());
-    let (meter, levels) = watch::channel(Meter::default());
+    let (meter, levels) = watch::channel(0.0_f32);
     let (canvas, _ink) = watch::channel(crate::show::Canvas::default());
     let pill = crate::pill::open(
         snapshots,

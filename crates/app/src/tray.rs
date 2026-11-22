@@ -272,7 +272,7 @@ mod tests {
     fn a_services_change_reaches_the_tray_without_a_snapshot_change() -> anyhow::Result<()> {
         use gpui::{Application, WindowHandle, WindowId, WindowingModes};
 
-        use crate::{config::Config, runtime::Meter, show::Canvas, testing::PATIENCE};
+        use crate::{config::Config, show::Canvas, testing::PATIENCE};
 
         let (completed, outcome) = std::sync::mpsc::channel();
         Application::with_platform(gpui_linux::linux_platform(WindowingModes::HEADLESS)).run(
@@ -282,7 +282,7 @@ mod tests {
                     false,
                     Config::default(),
                     watch::channel(Snapshot::default()).0,
-                    watch::channel(Meter::default()).0,
+                    watch::channel(0.0_f32).0,
                     watch::channel(Canvas::default()).0,
                     WindowHandle::new(WindowId::from(0)),
                     None,

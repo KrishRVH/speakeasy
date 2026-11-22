@@ -12,11 +12,7 @@ use speakeasy_platform::{Display, Part};
 use speakeasy_show::{Mark, Moment, Point, Rect, Shape, Span};
 use tokio::sync::watch;
 
-use crate::{
-    pill::COUNTDOWN,
-    runtime::{Meter, Snapshot},
-    show::Canvas,
-};
+use crate::{pill::COUNTDOWN, runtime::Snapshot, show::Canvas};
 
 const NEAR_RECORDING_LIMIT: Duration = RECORDING_LIMIT
     .saturating_sub(COUNTDOWN)
@@ -25,7 +21,7 @@ const NEAR_RECORDING_LIMIT: Duration = RECORDING_LIMIT
 pub(super) struct Script {
     clock: BackgroundExecutor,
     output: watch::Sender<Snapshot>,
-    meter: watch::Sender<Meter>,
+    meter: watch::Sender<f32>,
     canvas: watch::Sender<Canvas>,
 }
 
@@ -33,7 +29,7 @@ impl Script {
     pub(super) fn new(
         clock: BackgroundExecutor,
         output: watch::Sender<Snapshot>,
-        meter: watch::Sender<Meter>,
+        meter: watch::Sender<f32>,
         canvas: watch::Sender<Canvas>,
     ) -> Self {
         Self {
@@ -54,13 +50,13 @@ impl Script {
             snapshot.hands_free = seconds > 2.0;
             let level =
                 (0.35 + 0.45 * (seconds * 7.0).sin()).max(0.0) * (seconds * 2.1).sin().abs();
-            self.measure(&snapshot, level);
+            self.measure(level);
             self.present(&snapshot, Duration::from_millis(32)).await;
         }
         snapshot.started = Instant::now()
             .checked_sub(NEAR_RECORDING_LIMIT)
             .unwrap_or_else(Instant::now);
-        self.measure(&snapshot, 0.0);
+        self.measure(0.0);
         self.present(&snapshot, Duration::from_secs(2)).await;
         for (phase, duration) in [
             (Phase::Stopping, Duration::from_millis(150)),
@@ -99,7 +95,7 @@ impl Script {
             snapshot.show = show;
             snapshot.hands_free = show;
             let level = (0.3 + 0.3 * (seconds * 5.0).sin()).max(0.0);
-            self.measure(&snapshot, level);
+            self.measure(level);
             self.present(&snapshot, Duration::from_millis(32)).await;
         }
         drop(clear);
@@ -151,12 +147,8 @@ impl Script {
         self.clock.timer(duration).await;
     }
 
-    fn measure(&self, snapshot: &Snapshot, level: f32) {
-        self.meter.send_replace(Meter {
-            epoch: snapshot.epoch,
-            session: snapshot.session,
-            level,
-        });
+    fn measure(&self, level: f32) {
+        self.meter.send_replace(level);
     }
 }
 

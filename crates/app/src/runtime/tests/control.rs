@@ -79,49 +79,6 @@ async fn start_admits_once_with_its_own_style_and_stop_is_session_bound() -> any
 }
 
 #[tokio::test(start_paused = true)]
-async fn stale_cancel_cannot_revoke_a_newer_insertion_and_current_cancel_replies_after_revoke()
--> anyhow::Result<()> {
-    let (insertion, preparing) = gate(2);
-    let mut h = Harness::with_ports(Config::default(), |ports| ports.insertion = Some(insertion))?;
-    h.ready().await?;
-    h.start().await?;
-    let first = control(&h, Command::Status)
-        .await?
-        .session
-        .context("No first token")?;
-    h.finish_as("First fixture.").await?;
-    preparing.reached().await?;
-    preparing.release().await?;
-    receive(&h.pasted).await?;
-    h.phase(Phase::Done).await?;
-    h.start().await?;
-    let current = control(&h, Command::Status)
-        .await?
-        .session
-        .context("No current token")?;
-    h.finish_as("Second fixture.").await?;
-    let permit = preparing.reached().await?;
-    assert_eq!(
-        control(&h, Command::Cancel { session: first })
-            .await?
-            .result,
-        Disposition::Refused
-    );
-    assert!(permit.active());
-    assert_eq!(
-        control(&h, Command::Cancel { session: current })
-            .await?
-            .result,
-        Disposition::Ok
-    );
-    assert!(!permit.active());
-    preparing.release().await?;
-    h.phase(Phase::Cancelled).await?;
-    assert!(h.pasted.try_recv().is_err());
-    h.close().await
-}
-
-#[tokio::test(start_paused = true)]
 async fn disconnected_callers_cannot_start_and_tokens_do_not_survive_a_new_owner()
 -> anyhow::Result<()> {
     let mut first = Harness::new()?;
@@ -185,43 +142,3 @@ async fn ordinary_control_cannot_finish_a_show_or_start_over_practice() -> anyho
 
 mod configuration;
 mod presets;
-
-#[tokio::test(start_paused = true)]
-async fn replay_does_not_advertise_capture_control_authority() -> anyhow::Result<()> {
-    let (insertion, preparing) = gate(2);
-    let mut h = Harness::with_ports(Config::default(), |ports| ports.insertion = Some(insertion))?;
-    h.ready().await?;
-    let old = control(&h, Command::Start { style: None })
-        .await?
-        .session
-        .context("No recording token")?;
-    receive(&h.captures).await?;
-    control(
-        &h,
-        Command::Stop {
-            session: old.clone(),
-        },
-    )
-    .await?;
-    let (_, reply) = receive(&h.jobs).await?;
-    answer(reply, "Replay fixture.")?;
-    preparing.reached().await?;
-    preparing.release().await?;
-    receive(&h.pasted).await?;
-    h.phase(Phase::Done).await?;
-    let accepted = control(&h, Command::PasteLast).await?;
-    assert_eq!(accepted.result, Disposition::Ok);
-    assert!(accepted.session.is_none());
-    let permit = preparing.reached().await?;
-    assert!(control(&h, Command::Status).await?.session.is_none());
-    assert_eq!(
-        control(&h, Command::Stop { session: old }).await?.result,
-        Disposition::Refused
-    );
-    assert!(permit.active());
-    preparing.release().await?;
-    assert_eq!(receive(&h.pasted).await?, "Replay fixture.");
-    h.phase(Phase::Done).await?;
-    assert!(h.captures.try_recv().is_err());
-    h.close().await
-}

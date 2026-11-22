@@ -7,7 +7,7 @@ use gpui::{
 };
 
 use super::{menu::Menu, *};
-use crate::{runtime::Meter, shell::LaunchMode, show::Canvas};
+use crate::{shell::LaunchMode, show::Canvas};
 
 const ACTIVATION: Duration = Duration::from_secs(5);
 
@@ -30,7 +30,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     ..Config::default()
                 };
                 let (output, updates) = watch::channel(Snapshot::default());
-                let (meter, levels) = watch::channel(Meter::default());
+                let (meter, levels) = watch::channel(0.0_f32);
                 let (canvas, _) = watch::channel(Canvas::default());
                 let pill = cx.update(|cx| {
                     crate::pill::open(

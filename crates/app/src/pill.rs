@@ -23,7 +23,7 @@ use tokio::sync::watch;
 
 use crate::{
     gpui_ext::{EntityUpdate, Presence, WindowUpdate, defer_presence, follow},
-    runtime::{Meter, Snapshot},
+    runtime::Snapshot,
     theme::Theme,
     transcript::style::Style,
 };
@@ -112,7 +112,7 @@ impl Pill {
     )]
     fn new(
         updates: watch::Receiver<Snapshot>,
-        levels: watch::Receiver<Meter>,
+        levels: watch::Receiver<f32>,
         secure_input: fn() -> bool,
         reduced_motion: bool,
         theme: Theme,
@@ -223,18 +223,14 @@ impl Pill {
         }
     }
 
-    fn apply_meter(&mut self, meter: Meter, cx: &mut Context<'_, Self>) {
-        let snapshot = &self.snapshot;
-        if snapshot.phase != Phase::Recording
-            || meter.epoch != snapshot.epoch
-            || meter.session != snapshot.session
-        {
+    fn apply_meter(&mut self, level: f32, cx: &mut Context<'_, Self>) {
+        if self.snapshot.phase != Phase::Recording {
             return;
         }
         let previous = self.history;
         self.history.rotate_left(1);
         let [.., newest] = &mut self.history;
-        *newest = meter.level;
+        *newest = level;
 
         if previous.map(f32::to_bits) != self.history.map(f32::to_bits) && !self.animating {
             cx.notify();
@@ -622,7 +618,7 @@ impl fmt::Display for Clock {
 
 pub(crate) fn open(
     updates: watch::Receiver<Snapshot>,
-    levels: watch::Receiver<Meter>,
+    levels: watch::Receiver<f32>,
     secure_input: fn() -> bool,
     reduced_motion: bool,
     theme: Theme,

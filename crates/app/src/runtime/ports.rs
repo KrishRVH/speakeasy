@@ -172,8 +172,6 @@ pub(crate) trait Ports: Send + 'static {
 
     fn prepares_desktop(&self) -> bool;
 
-    fn screen_unstopped(&self) -> bool;
-
     fn keep_awake(&self, keep: Keep) -> Option<Self::Awake>;
 
     fn record_microphone(

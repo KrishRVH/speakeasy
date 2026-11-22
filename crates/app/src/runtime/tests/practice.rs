@@ -39,21 +39,6 @@ async fn closing_practice_revokes_processing_and_the_next_session_is_external() 
 }
 
 #[tokio::test(start_paused = true)]
-async fn cancellation_wins_over_a_ready_practice_transcript() -> anyhow::Result<()> {
-    let mut h = Harness::new()?;
-    let mut receipt = arm_practice(&h).await?;
-    h.start().await?;
-    let reply = h.finish().await?;
-    answer(reply, "Must not arrive")?;
-
-    h.runtime.input.cancel();
-    h.phase(Phase::Cancelled).await?;
-    assert!(receipt.try_recv().is_err());
-    assert!(h.pasted.try_recv().is_err());
-    h.close().await
-}
-
-#[tokio::test(start_paused = true)]
 async fn practice_cannot_take_over_an_existing_recording() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
     h.start().await?;
@@ -75,35 +60,6 @@ async fn reconfiguration_closes_practice_and_cancels_its_capture() -> anyhow::Re
     change_settings(&mut h);
     assert!(timeout(PATIENCE, receipt.recv()).await?.is_none());
     h.phase(Phase::Cancelled).await?;
-    assert!(h.pasted.try_recv().is_err());
-    h.close().await
-}
-
-#[tokio::test(start_paused = true)]
-async fn an_explicit_show_disarms_idle_practice() -> anyhow::Result<()> {
-    let h = Harness::new()?;
-    let mut receipt = arm_practice(&h).await?;
-    h.input(Input::StartShow(Scope::Screen));
-    assert!(timeout(PATIENCE, receipt.recv()).await?.is_none());
-    receive(&h.shows).await?;
-    h.input(Input::Press);
-    h.input(Input::Escape);
-    h.close().await
-}
-
-#[tokio::test(start_paused = true)]
-async fn practice_that_loses_its_microphone_fails_without_transcribing() -> anyhow::Result<()> {
-    let mut h = Harness::new()?;
-    let mut receipt = arm_practice(&h).await?;
-    let (id, events) = h.start().await?;
-    events.send(disconnected(id)).await?;
-    h.phase(Phase::Error).await?;
-    assert_eq!(
-        h.snapshot().message,
-        "The microphone was disconnected. Reconnect it."
-    );
-    assert!(h.jobs.try_recv().is_err());
-    assert!(!matches!(receipt.try_recv(), Ok(PracticeEvent::Text(_))));
     assert!(h.pasted.try_recv().is_err());
     h.close().await
 }

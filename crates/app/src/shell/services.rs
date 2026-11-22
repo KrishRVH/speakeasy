@@ -20,7 +20,7 @@ use crate::{
     config::{Change, Config, ValidConfig},
     instance::{Event, Instance, Request},
     pill::Pill,
-    runtime::{self, Meter, Report, Runtime, Snapshot},
+    runtime::{self, Report, Runtime, Snapshot},
     show::{Canvas, review::Review},
     status::{PAUSED, PAUSING, QUITTING, RESETTING, ServiceState, Status, UNCONFIGURED},
     transcript::style::Style,
@@ -125,7 +125,7 @@ pub(crate) struct Services {
     styles: watch::Sender<Style>,
     pub(super) choices: super::choices::Choices,
     pub output: watch::Sender<Snapshot>,
-    pub(super) meter: watch::Sender<Meter>,
+    pub(super) meter: watch::Sender<f32>,
     pub(super) canvas: watch::Sender<Canvas>,
     pub(super) focus: FocusReport,
     pub(super) pill: WindowHandle<Pill>,
@@ -158,7 +158,7 @@ impl Services {
         default_settings: bool,
         config: Config,
         output: watch::Sender<Snapshot>,
-        meter: watch::Sender<Meter>,
+        meter: watch::Sender<f32>,
         canvas: watch::Sender<Canvas>,
         pill: WindowHandle<Pill>,
         instance: Option<Instance>,
@@ -688,7 +688,6 @@ impl Services {
                 Err(_) if self.config.needs_engine() => {
                     self.output.send_modify(|snapshot| {
                         *snapshot = Snapshot {
-                            epoch: snapshot.epoch.next(),
                             last_show: snapshot.last_show.clone(),
                             ..before.status
                         };
@@ -785,7 +784,6 @@ fn announce(output: &watch::Sender<Snapshot>, message: &str) {
 
 fn announcement(previous: &Snapshot, message: &str) -> Snapshot {
     Snapshot {
-        epoch: previous.epoch.next(),
         last_show: previous.last_show.clone(),
         message: message.into(),
         model: ModelState::Loading,
@@ -847,7 +845,6 @@ mod tests {
             ..Snapshot::default()
         };
         let paused = announcement(&previous, PAUSED);
-        assert_eq!(paused.epoch, previous.epoch.next());
         assert_eq!(
             (paused.phase, paused.message.as_str()),
             (Phase::Idle, PAUSED)

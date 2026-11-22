@@ -7,7 +7,7 @@ use super::*;
 use crate::{
     config::Config,
     instance::Instance,
-    runtime::{Meter, Snapshot},
+    runtime::Snapshot,
     shell::{LaunchMode, services::Installation},
     updates::Installer,
 };
@@ -32,7 +32,7 @@ fn handoff(quit: Quit) -> anyhow::Result<()> {
         crate::load_brand_font(cx);
         let config = Config::default();
         let (output, snapshots) = watch::channel(Snapshot::default());
-        let (meter, levels) = watch::channel(Meter::default());
+        let (meter, levels) = watch::channel(0.0_f32);
         let (canvas, _ink) = watch::channel(crate::show::Canvas::default());
         let pill = crate::pill::open(
             snapshots,

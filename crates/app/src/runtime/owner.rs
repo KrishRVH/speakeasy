@@ -29,8 +29,7 @@ use tokio::{
 };
 
 use super::{
-    Directive, Meter, PracticeEvent, Recovery, RecoveryResult, Report, Restarting, Snapshot,
-    SnapshotEpoch, Wiring,
+    Directive, PracticeEvent, Recovery, RecoveryResult, Report, Restarting, Snapshot, Wiring,
     device::Device,
     native::{self, Clip, Delivered, Native},
     now,
@@ -47,7 +46,6 @@ use crate::{
 
 const ORPHANED: &str =
     "The script that asked for this dictation stopped waiting, so nothing was pasted.";
-const SCREEN_UNSTOPPED: &str = "Cannot record the screen until Speakeasy restarts.";
 const UNCLAIMED: &str =
     "A script started this dictation to read it but stopped without asking, so nothing was pasted.";
 
@@ -100,8 +98,7 @@ struct World<P: Ports> {
     delivery: Option<JoinHandle<Delivered>>,
     retiring: Vec<(SessionId, JoinHandle<Delivered>)>,
     snapshots: watch::Sender<Snapshot>,
-    meter: watch::Sender<Meter>,
-    epoch: SnapshotEpoch,
+    meter: watch::Sender<f32>,
     shortcut: Arc<str>,
     cancel_shortcut: Arc<str>,
     default_microphone: Option<SessionId>,
@@ -127,7 +124,6 @@ impl<P: Ports> Owner<P> {
             permits,
             stopping,
             ports,
-            epoch,
         } = wiring;
         let (capture_events, captures) = async_channel::bounded(64);
         let (show_events, shows) = async_channel::bounded(4);
@@ -163,7 +159,6 @@ impl<P: Ports> Owner<P> {
             retiring: Vec::new(),
             snapshots,
             meter,
-            epoch,
             shortcut: speakeasy_platform::SHORTCUT.into(),
             cancel_shortcut: speakeasy_platform::CANCEL_SHORTCUT.into(),
             default_microphone: None,
@@ -298,37 +293,6 @@ impl<P: Ports> Owner<P> {
         }
     }
 
-    fn settle(&mut self) -> ControlFlow<()> {
-        for _ in 0..self.world.inputs.len() {
-            if self.machine.is_idle() {
-                break;
-            }
-            let Ok(input) = self.world.inputs.try_recv() else {
-                break;
-            };
-            if matches!(
-                input,
-                Input::Press
-                    | Input::Release
-                    | Input::Lock
-                    | Input::Submit
-                    | Input::Toggle
-                    | Input::Escape
-                    | Input::Cancel
-                    | Input::Interrupt
-            ) {
-                self.apply(Wake::Input(Ok(input)))?;
-            }
-        }
-        for _ in 0..self.world.captures.len() {
-            let Ok(event) = self.world.captures.try_recv() else {
-                break;
-            };
-            self.apply(Wake::Capture(event))?;
-        }
-        ControlFlow::Continue(())
-    }
-
     fn now(&self) -> Now<Native> {
         let instant = now();
         Now {
@@ -353,16 +317,12 @@ impl<P: Ports> Owner<P> {
         }
         let machine = &self.machine;
         let world = &self.world;
-        let mut message = outcome::message(machine.outcome(), machine.notice());
-        if world.ports.screen_unstopped() {
-            outcome::warn_unstopped(&mut message);
-        }
+        let message = outcome::message(machine.outcome(), machine.notice());
         let (ending, narration_lost) = match machine.outcome() {
             Outcome::ShowCopied(copied) => (copied.ending, copied.preservation.narration_lost),
             _ => (Ending::Finished, None),
         };
         let snapshot = Snapshot {
-            epoch: world.epoch,
             session: machine.latest_session().into(),
             reported: world.reported,
             phase: machine.phase(),
@@ -384,7 +344,7 @@ impl<P: Ports> Owner<P> {
             cancel_shortcut: Arc::clone(&world.cancel_shortcut),
         };
         world.snapshots.send_if_modified(|presented| {
-            if presented.epoch != world.epoch || *presented == snapshot {
+            if *presented == snapshot {
                 return false;
             }
             *presented = snapshot;
@@ -506,9 +466,6 @@ impl<P: Ports> Env<Native> for World<P> {
         scope: Scope,
         frames: Option<show::FrameLog>,
     ) -> Result<(), String> {
-        if self.ports.screen_unstopped() {
-            return Err(SCREEN_UNSTOPPED.into());
-        }
         let recorder = self
             .ports
             .record_screen(session, started, scope, frames, self.show_events.clone())
@@ -547,12 +504,8 @@ impl<P: Ports> Env<Native> for World<P> {
         self.screen.pin(taps);
     }
 
-    fn meter(&mut self, session: SessionId, level: f32) {
-        self.meter.send_replace(Meter {
-            epoch: self.epoch,
-            session: session.into(),
-            level,
-        });
+    fn meter(&mut self, _: SessionId, level: f32) {
+        self.meter.send_replace(level);
     }
 
     fn load(&mut self, config: &Config) {
@@ -773,9 +726,6 @@ pub(super) async fn run<P: Ports>(wiring: Wiring<P>) {
     owner.present();
     loop {
         let wake = owner.wait().await;
-        if matches!(wake, Wake::Stop) && owner.settle().is_break() {
-            break;
-        }
         if owner.apply(wake).is_break() {
             break;
         }

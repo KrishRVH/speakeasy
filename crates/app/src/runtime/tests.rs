@@ -5,9 +5,7 @@ use std::{
 
 use anyhow::{anyhow, bail, ensure};
 use speakeasy_platform::{Delivery, Enter, InsertPermit, Inserted, Scope, Taps};
-use speakeasy_show::{
-    Image, Journal, Moment, Narration, NarrationLoss, Recording, Size, Span, Word,
-};
+use speakeasy_show::{Image, Journal, Moment, Narration, NarrationLoss, Recording, Size};
 use tokio::{sync::oneshot, task::JoinHandle, time::timeout};
 
 use super::{
@@ -77,19 +75,14 @@ struct FakePorts {
     microphone_error: Option<&'static str>,
     delayed_finish: bool,
     load_results: Option<Receiver<anyhow::Result<()>>>,
-    probes: Option<Receiver<anyhow::Result<()>>>,
     recorded_requests: Option<Sender<Vec<u8>>>,
-    word_timing: Timing,
     segmentation: Option<Sender<bool>>,
     retirement: Option<Gate<()>>,
     stop: Option<Gate<()>>,
     insertion: Option<Gate<InsertPermit>>,
     insert_results: Option<Receiver<Inserted>>,
     screen_error: Option<&'static str>,
-    screen_unstopped: watch::Receiver<bool>,
     screen_report: ScreenReport,
-    screen_retirement: Option<Gate<()>>,
-    publication: Option<Gate<()>>,
     show_recovery: Option<Gate<InsertPermit>>,
     checkpoint_root: Option<PathBuf>,
     publish_outcome: PublishOutcome,
@@ -149,19 +142,14 @@ impl FakePorts {
             microphone_error: None,
             delayed_finish: false,
             load_results: None,
-            probes: None,
             recorded_requests: None,
-            word_timing: Timing::Untimed,
             segmentation: None,
             retirement: None,
             stop: None,
             insertion: None,
             insert_results: None,
             screen_error: None,
-            screen_unstopped: watch::channel(false).1,
             screen_report: ScreenReport::Footage,
-            screen_retirement: None,
-            publication: None,
             show_recovery: None,
             checkpoint_root: None,
             publish_outcome: PublishOutcome::Saves,
@@ -194,16 +182,10 @@ impl FakePorts {
     }
 
     fn cleanup_gates(&self) -> CleanupGates {
-        let releases = [
-            &self.retirement,
-            &self.screen_retirement,
-            &self.stop,
-            &self.publication,
-            &self.saved,
-        ]
-        .into_iter()
-        .flatten()
-        .map(|gate| gate.release.clone());
+        let releases = [&self.retirement, &self.stop, &self.saved]
+            .into_iter()
+            .flatten()
+            .map(|gate| gate.release.clone());
         let permits = [&self.insertion, &self.show_recovery]
             .into_iter()
             .flatten()
@@ -220,10 +202,6 @@ impl Ports for FakePorts {
 
     fn prepares_desktop(&self) -> bool {
         self.desktop_pending
-    }
-
-    fn screen_unstopped(&self) -> bool {
-        *self.screen_unstopped.borrow()
     }
 
     fn keep_awake(&self, keep: Keep) -> Option<Self::Awake> {
@@ -281,7 +259,6 @@ impl Ports for FakePorts {
             events,
             report: self.screen_report,
             pins: self.pins.clone(),
-            retirement: self.screen_retirement.clone(),
         })
     }
 
@@ -306,7 +283,6 @@ impl Ports for FakePorts {
         let lost = footage.recording.narration_lost;
         let recovery = self.show_recovery.clone();
         let published = self.published.clone();
-        let publication = self.publication.clone();
         let outcome = self.publish_outcome;
         let saved = self.saved.clone();
         let copy_error = self.copy_error;
@@ -333,13 +309,9 @@ impl Ports for FakePorts {
                     Published::Cancelled
                 });
             }
-            if let Some(gate) = publication {
-                gate.pass(()).await?;
-            }
             match outcome {
                 PublishOutcome::Saves => {},
                 PublishOutcome::Fails(error) => bail!(error),
-                PublishOutcome::Panics => panic!("The fake publication panicked"),
             }
             if !permit.commit() {
                 return Ok(Published::Cancelled);
@@ -371,9 +343,7 @@ impl Ports for FakePorts {
         let speech = FakeSpeech {
             jobs: self.jobs.clone(),
             stop: self.stop.clone(),
-            probes: self.probes.clone(),
             recorded_requests: self.recorded_requests.clone(),
-            word_timing: self.word_timing,
         };
         let loads = self.loads.clone();
         async move {
@@ -475,7 +445,6 @@ impl Listening for FakeMicrophone {
 enum PublishOutcome {
     Saves,
     Fails(&'static str),
-    Panics,
 }
 
 #[derive(Clone, Copy)]
@@ -490,7 +459,6 @@ struct FakeScreen {
     events: Sender<ShowEvent>,
     report: ScreenReport,
     pins: Sender<(SessionId, Taps)>,
-    retirement: Option<Gate<()>>,
 }
 
 impl Capturing for FakeScreen {
@@ -505,10 +473,8 @@ impl Capturing for FakeScreen {
             .expect("Show lane has room for the fake's report");
     }
 
-    async fn retire(self) {
-        if let Some(gate) = self.retirement {
-            gate.pass_during_cleanup(()).await;
-        }
+    fn retire(self) -> impl Future<Output = ()> + Send + 'static {
+        std::future::ready(())
     }
 }
 
@@ -575,18 +541,10 @@ fn saved_show(narration: &Narration) -> SavedShow {
     })
 }
 
-#[derive(Clone, Copy)]
-enum Timing {
-    Untimed,
-    Timed,
-}
-
 struct FakeSpeech {
     jobs: Sender<TranscriptionJob>,
     stop: Option<Gate<()>>,
-    probes: Option<Receiver<anyhow::Result<()>>>,
     recorded_requests: Option<Sender<Vec<u8>>>,
-    word_timing: Timing,
 }
 
 impl Speech for FakeSpeech {
@@ -623,25 +581,13 @@ impl Speech for FakeSpeech {
         language: &str,
         terms: &Terms,
     ) -> anyhow::Result<Narration> {
-        let text = self.transcribe(wav, language, terms).await?;
-        Ok(match self.word_timing {
-            Timing::Untimed => Narration::Text(text),
-            Timing::Timed => Narration::Words(
-                text.split_whitespace()
-                    .map(|word| Word {
-                        span: Span::default(),
-                        text: word.to_owned(),
-                    })
-                    .collect(),
-            ),
-        })
+        self.transcribe(wav, language, terms)
+            .await
+            .map(Narration::Text)
     }
 
-    async fn probe_with_silence(&mut self) -> anyhow::Result<()> {
-        match &self.probes {
-            Some(result) => result.recv().await?,
-            None => Ok(()),
-        }
+    fn probe_with_silence(&mut self) -> impl Future<Output = anyhow::Result<()>> + Send {
+        std::future::ready(Ok(()))
     }
 
     async fn stop(&mut self) {
@@ -682,7 +628,7 @@ impl Runtime<OwnedTask> {
         config: Config,
         styles: watch::Receiver<Style>,
         snapshots: watch::Sender<Snapshot>,
-        meter: watch::Sender<Meter>,
+        meter: watch::Sender<f32>,
         ports: P,
     ) -> anyhow::Result<Self> {
         let configuration = Configuration {
@@ -696,7 +642,7 @@ impl Runtime<OwnedTask> {
     fn on_task_with<P: Ports>(
         configuration: Configuration,
         snapshots: watch::Sender<Snapshot>,
-        meter: watch::Sender<Meter>,
+        meter: watch::Sender<f32>,
         ports: P,
     ) -> anyhow::Result<Self> {
         let (input, inputs) = input_lane();
@@ -722,9 +668,8 @@ struct Harness<Host = OwnedTask> {
     _cleanup: CleanupGates,
     runtime: Runtime<Host>,
     styles: watch::Sender<Style>,
-    output: watch::Sender<Snapshot>,
     updates: watch::Receiver<Snapshot>,
-    levels: watch::Receiver<Meter>,
+    levels: watch::Receiver<f32>,
     captures: Receiver<OpenedCapture>,
     shows: Receiver<OpenedShow>,
     pins: Receiver<(SessionId, Taps)>,
@@ -797,7 +742,7 @@ impl<Host: Sync> Harness<Host> {
             Config,
             watch::Receiver<Style>,
             watch::Sender<Snapshot>,
-            watch::Sender<Meter>,
+            watch::Sender<f32>,
             FakePorts,
         ) -> anyhow::Result<Runtime<Host>>,
     ) -> anyhow::Result<Self> {
@@ -806,18 +751,16 @@ impl<Host: Sync> Harness<Host> {
         let cleanup = ports.cleanup_gates();
 
         let (output, updates) = watch::channel(Snapshot {
-            epoch: SnapshotEpoch::default().next(),
             last_show,
             ..Snapshot::default()
         });
-        let (meter, levels) = watch::channel(Meter::default());
+        let (meter, levels) = watch::channel(0.0_f32);
         let (styles, choices) = watch::channel(Style::default());
-        let runtime = start(config, choices, output.clone(), meter, ports)?;
+        let runtime = start(config, choices, output, meter, ports)?;
         Ok(Self {
             _cleanup: cleanup,
             runtime,
             styles,
-            output,
             updates,
             levels,
             captures: reports.captures,
@@ -851,18 +794,12 @@ impl<Host: Sync> Harness<Host> {
     }
 
     async fn observe_level(&mut self, level: f32) -> anyhow::Result<()> {
-        let meter = *timeout(
+        timeout(
             PATIENCE,
             self.levels
-                .wait_for(|meter| meter.level.to_bits() == level.to_bits()),
+                .wait_for(|measured| measured.to_bits() == level.to_bits()),
         )
         .await??;
-        let snapshot = self.snapshot();
-        assert_eq!(
-            (meter.epoch, meter.session),
-            (snapshot.epoch, snapshot.session),
-            "The level is not tagged with the recording it measured"
-        );
         Ok(())
     }
 
@@ -996,7 +933,6 @@ mod control;
 mod cues;
 mod dictation;
 mod last_show;
-mod model;
 mod practice;
 mod printing;
 mod recognition;

@@ -3,9 +3,7 @@ pub(crate) mod geometry;
 
 use std::{
     collections::HashMap,
-    fmt,
-    sync::atomic::{AtomicBool, Ordering},
-    thread,
+    fmt, thread,
     time::{Duration, Instant},
 };
 
@@ -218,41 +216,7 @@ pub struct ScreenCapture {
     thread: StoppableThread,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Unstopped;
-
-impl fmt::Display for Unstopped {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(
-            "Screen capture did not confirm that it stopped. Quit Speakeasy to make sure it ends.",
-        )
-    }
-}
-
-impl std::error::Error for Unstopped {}
-
-#[expect(
-    clippy::disallowed_types,
-    reason = "A capture that never confirmed stopping keeps its native stream for the life of the process, beyond the session owner that started it and any owner that replaces it, so the refusal to start another capture belongs to the process"
-)]
-static UNSTOPPED: AtomicBool = AtomicBool::new(false);
-
-impl Unstopped {
-    #[cfg(target_os = "macos")]
-    pub(crate) fn remember() {
-        UNSTOPPED.store(true, Ordering::Relaxed);
-    }
-}
-
 impl ScreenCapture {
-    pub fn available() -> Result<(), Unstopped> {
-        if UNSTOPPED.load(Ordering::Relaxed) {
-            Err(Unstopped)
-        } else {
-            Ok(())
-        }
-    }
-
     pub fn start(
         target: Target,
         interval: Duration,
@@ -260,7 +224,6 @@ impl ScreenCapture {
         events: Sender<ScreenEvent>,
         movie: Option<crate::MovieTarget>,
     ) -> anyhow::Result<Self> {
-        Self::available()?;
         let thread = StoppableThread::spawn("screen-capture", move |stopping| {
             native::capture(target, interval, longest_edge, &events, &stopping, movie);
         })?;

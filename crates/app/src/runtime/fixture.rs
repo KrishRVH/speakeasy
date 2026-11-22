@@ -45,10 +45,6 @@ impl Ports for Fixture {
         false
     }
 
-    fn screen_unstopped(&self) -> bool {
-        false
-    }
-
     fn keep_awake(&self, _: Keep) -> Option<Self::Awake> {
         None
     }
@@ -254,7 +250,7 @@ async fn profile_fixture_dictation() -> anyhow::Result<()> {
     let (loaded, ready) = async_channel::bounded(1);
     let (inserted, submitted) = async_channel::bounded(1);
     let (output, mut updates) = watch::channel(Snapshot::default());
-    let (meter, _) = watch::channel(Meter::default());
+    let (meter, _) = watch::channel(0.0_f32);
     let started = Instant::now();
     let fixture = Fixture {
         wav,
@@ -471,7 +467,7 @@ async fn recording(
     let (statistics, drained) = async_channel::bounded(1);
     let (inferences, measured) = async_channel::unbounded();
     let (output, mut updates) = watch::channel(Snapshot::default());
-    let (meter, _) = watch::channel(Meter::default());
+    let (meter, _) = watch::channel(0.0_f32);
     let fixture = Fixture {
         wav: clip.wav,
         loaded,
