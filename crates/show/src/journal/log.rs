@@ -14,7 +14,6 @@ pub const MAX_BUDGET: usize = 384 << 20;
 
 const MAGIC: &[u8; 8] = b"SPKLOG03";
 const RECORD_LIMIT: usize = 40 << 20;
-const EVENT_OVERHEAD: usize = 64;
 
 const HEADER: u8 = 0;
 const SURFACE: u8 = 1;
@@ -51,23 +50,6 @@ pub enum TakeEvent {
         at: Moment,
         ending: Ending,
     },
-}
-
-impl TakeEvent {
-    #[must_use]
-    pub fn bytes(&self) -> usize {
-        match self {
-            Self::Arrival {
-                entry: Some(entry), ..
-            } => entry.bytes().saturating_add(EVENT_OVERHEAD),
-            Self::Windows(layout) => layout
-                .windows
-                .len()
-                .saturating_mul(WINDOW_BYTES)
-                .saturating_add(EVENT_OVERHEAD),
-            _ => EVENT_OVERHEAD,
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -411,15 +393,7 @@ impl Entry {
             put(data, value)?;
         }
         data.extend_from_slice(self.signature.as_bytes());
-        let geometry: Vec<_> = tiles(self.width, self.height).collect();
         for (index, bytes) in &self.tiles {
-            let tile = geometry
-                .get(*index)
-                .ok_or(SourceError("checkpoint tile is outside the image"))?;
-            require(
-                bytes.len() <= tile.encoded_limit(),
-                "checkpoint tile is too large",
-            )?;
             put(data, *index)?;
             put(data, bytes.len())?;
             data.extend_from_slice(bytes);

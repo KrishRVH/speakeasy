@@ -18,8 +18,6 @@ pub const MAX_FRAME_EDGE: u32 = 2_560;
 const EDGE: usize = MAX_FRAME_EDGE as usize;
 const PIXEL: usize = 4;
 pub const DURATION_LIMIT: Moment = Moment::from_millis(360_000);
-const ENTRY_OVERHEAD: usize = Signature::BYTES + 64;
-const TILE_OVERHEAD: usize = 32;
 
 pub struct Journal {
     samples: Vec<Sample>,
@@ -225,16 +223,6 @@ impl fmt::Debug for Entry {
             .field("size", &(self.width, self.height))
             .field("changed_tiles", &self.tiles.len())
             .finish_non_exhaustive()
-    }
-}
-
-impl Entry {
-    #[must_use]
-    pub(crate) fn bytes(&self) -> usize {
-        self.tiles.iter().fold(
-            ENTRY_OVERHEAD.saturating_add(self.tiles.len().saturating_mul(TILE_OVERHEAD)),
-            |bytes, (_, tile)| bytes.saturating_add(tile.len()),
-        )
     }
 }
 

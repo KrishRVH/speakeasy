@@ -34,7 +34,6 @@ pub struct Source {
     arrivals: u64,
     stride: u64,
     bytes: u64,
-    index_checksum: [u8; 4],
     segments: Vec<Segment>,
 }
 
@@ -89,9 +88,6 @@ impl Source {
         let encoded = read(start..end)?;
         require(encoded.len() as u64 == size, "source index is truncated")?;
         let mut index = Cursor(payload(&encoded, INDEX_RECORD)?);
-        let index_checksum = *encoded
-            .last_chunk()
-            .ok_or(SourceError("source checksum is missing"))?;
         let duration = Moment::from_millis(index.wide()?);
         require(
             duration <= DURATION_LIMIT,
@@ -172,7 +168,6 @@ impl Source {
             arrivals,
             stride,
             bytes: length,
-            index_checksum,
             segments,
         })
     }
@@ -232,11 +227,6 @@ impl Source {
         mut read: impl FnMut(Range<u64>) -> Result<Vec<u8>, E>,
     ) -> Result<SourceFrame, E> {
         require(at <= self.duration, "requested time is beyond the Show")?;
-        let end = self.bytes.saturating_sub(FOOTER_BYTES);
-        require(
-            read(end.saturating_sub(4)..end)?.as_slice() == self.index_checksum,
-            "source index changed; inspect the Show again",
-        )?;
         let frame = self
             .moments
             .partition_point(|moment| *moment <= at)
@@ -309,11 +299,10 @@ impl Journal {
             ] {
                 word(&mut index, value)?;
             }
-            for (tile, versions) in tiles(segment.width, segment.height).zip(&segment.tiles) {
+            for versions in &segment.tiles {
                 word(&mut index, versions.len())?;
                 for version in versions {
                     let length = version.data.len().saturating_add(RECORD_OVERHEAD);
-                    require(length <= tile.encoded_limit(), "source tile is too large")?;
                     word(&mut index, version.first)?;
                     word(&mut index, offset)?;
                     word(&mut index, length)?;

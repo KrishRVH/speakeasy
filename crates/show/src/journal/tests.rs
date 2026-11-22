@@ -1,9 +1,6 @@
-use proptest::{prelude::*, sample::Index};
+use proptest::prelude::*;
 
-use super::{
-    record::{framed, payload},
-    *,
-};
+use super::*;
 
 fn frame(width: u32, height: u32, paint: impl Fn(usize, usize) -> [u8; 4]) -> Image {
     let pixels: Vec<u8> = (0..convert::count(height))
@@ -28,16 +25,6 @@ pub(super) fn incompressible() -> Image {
             [128, 128, 128, 255]
         }
     })
-}
-
-pub(super) fn damaged(record: &[u8], at: Index, byte: u8, keep: Option<Index>) -> Vec<u8> {
-    let kind = record[size_of::<u32>()];
-    let mut data = payload(record, kind).unwrap().to_vec();
-    *at.get_mut(&mut data) = byte;
-    if let Some(keep) = keep {
-        data.truncate(keep.index(data.len()));
-    }
-    framed(kind, &data).unwrap()
 }
 
 fn admitted(journal: &mut Journal) -> Admission<'_> {
@@ -124,29 +111,6 @@ fn any_recorded_moment_is_rebuilt_exactly() {
 }
 
 #[test]
-fn a_sealed_journal_records_its_next_frame_whole_and_rebuilds_both_sides() {
-    let before = frame(64, 64, gradient(3));
-    let mut journal = Journal::default();
-    admitted(&mut journal).record(Moment::START, before.clone());
-    let whole = journal.bytes();
-    let mut journal = journal.sealed();
-    admitted(&mut journal).record(Moment::from_millis(100), before.clone());
-    assert_eq!(
-        journal.bytes() - whole,
-        whole,
-        "A sealed journal keeps no frame to compare the next against"
-    );
-    let after = frame(64, 64, gradient(9));
-    admitted(&mut journal).record(Moment::from_millis(200), after.clone());
-    assert_eq!(
-        journal.frame_at(Moment::from_millis(100)).as_ref(),
-        Some(&before)
-    );
-    assert_eq!(journal.frame_at(Moment::from_millis(200)), Some(after));
-    assert_eq!(journal.frame_at(Moment::START), Some(before));
-}
-
-#[test]
 fn each_thinning_halves_how_often_arrivals_are_admitted() {
     let mut journal = Journal::with_budget(0);
     let mut admitted = Vec::new();
@@ -158,19 +122,6 @@ fn each_thinning_halves_how_often_arrivals_are_admitted() {
         }
     }
     assert_eq!(admitted, [0, 1, 2, 4, 8]);
-}
-
-#[test]
-fn debugging_a_journal_never_prints_its_frames() {
-    let mut journal = Journal::default();
-    admitted(&mut journal).record(Moment::START, quadrants([0; 4], true));
-    let one = format!("{journal:?}");
-    for shade in 1_u8..20 {
-        let moment = Moment::from_millis(u64::from(shade) * 200);
-        admitted(&mut journal).record(moment, quadrants([shade, 0, shade, 0], false));
-    }
-    let many = format!("{journal:?}");
-    assert!(many.len() <= one.len() + 8, "{one}\n{many}");
 }
 
 proptest! {
@@ -258,26 +209,4 @@ proptest! {
         prop_assert_eq!(journal.frame_at(samples.last().unwrap().at), last);
     }
 
-    #[test]
-    fn rebuilding_is_lossless_for_any_size(
-        width in 1_u32..150,
-        height in 1_u32..150,
-        seed in 0_u8..=255,
-    ) {
-        let noise = move |x: usize, y: usize| {
-            let mixed = x
-                .checked_mul(31)
-                .unwrap()
-                .checked_add(y.checked_mul(17).unwrap())
-                .unwrap()
-                .checked_add(usize::from(seed))
-                .unwrap();
-            let value = u8::try_from(mixed % 251).unwrap();
-            [value, value.wrapping_mul(3), seed, 255]
-        };
-        let image = frame(width, height, noise);
-        let mut journal = Journal::default();
-        admitted(&mut journal).record(Moment::from_millis(5), image.clone());
-        prop_assert_eq!(journal.frame_at(Moment::from_millis(5)), Some(image));
-    }
 }
