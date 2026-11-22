@@ -17,6 +17,7 @@ use crate::macos::screen as native;
 use crate::windows::screen as native;
 use crate::{BgraImage, NativeWindow, StoppableThread};
 
+/// Polls often enough to catch a deliberate click; polling needs no input hook.
 const POINTER_INTERVAL: Duration = Duration::from_millis(8);
 
 const WINDOW_STEP: Duration = Duration::from_millis(10);
@@ -125,6 +126,7 @@ impl Target {
         self.display
     }
 
+    /// The part chosen at the start; a window's part moves with it, so read `Frame::part`.
     #[must_use]
     pub const fn part(&self) -> Part {
         match self.region {
@@ -146,6 +148,9 @@ pub enum ScreenEvent {
     Frame(Frame),
     WindowGone(WindowGone),
     Failed(String),
+    /// Movie recording stopped; still frames continue.
+    ///
+    /// Carries no message because codec errors can hold private paths or image metadata.
     MovieStopped,
 }
 
@@ -185,6 +190,9 @@ pub enum PointerSample {
         drawing: bool,
         pressed: bool,
     },
+    /// Pointer or target geometry became unavailable.
+    ///
+    /// End gestures here without inventing a button release or joining ink across the gap.
     Gap(Instant),
 }
 
@@ -217,6 +225,9 @@ pub struct ScreenCapture {
 }
 
 impl ScreenCapture {
+    /// Records `movie` only on Windows and fixed Mac regions.
+    ///
+    /// Mac window capture and Linux drop it unused, closing its lease without creating a file.
     pub fn start(
         target: Target,
         interval: Duration,
@@ -245,6 +256,7 @@ pub struct PointerMonitor {
 }
 
 impl PointerMonitor {
+    /// `samples` must have no other producer: `Samples::send` keeps its last slot for a gap.
     pub fn start(
         target: Target,
         samples: Sender<PointerSample>,
@@ -288,6 +300,8 @@ impl Samples {
             return;
         }
 
+        // Sole producer: the consumer can only free slots meanwhile, so the reserved slot still
+        // takes a gap without waiting, and a gap queued at shutdown survives.
         if matches!(sample, PointerSample::Observed { .. })
             && self
                 .outgoing

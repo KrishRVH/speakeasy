@@ -1,3 +1,8 @@
+//! A take's event fold and its checkpoint records.
+//!
+//! Live capture and checkpoint replay go through the same `Take`, so replay rebuilds the same
+//! journal admissions, tiles, and thinning.
+
 use super::{
     DURATION_LIMIT, EDGE, Entry, Journal, SourceError,
     record::{Cursor, RECORD_OVERHEAD, framed, payload, require},
@@ -13,6 +18,7 @@ pub const HEADER_BYTES: usize =
 pub const MAX_BUDGET: usize = 384 << 20;
 
 const MAGIC: &[u8; 8] = b"SPKLOG03";
+/// Fits one full reset entry at `MAX_FRAME_EDGE` with every tile at its encoded limit.
 const RECORD_LIMIT: usize = 40 << 20;
 
 const HEADER: u8 = 0;
@@ -42,6 +48,7 @@ pub enum TakeEvent {
     PointerGap(Moment),
     Windows(Layout),
     Pin(Span),
+    /// Logged for every capture arrival, even one sampling skipped, so replay keeps the stride.
     Arrival {
         at: Moment,
         entry: Option<Entry>,
@@ -108,6 +115,9 @@ impl Take {
         Ok(TakeEvent::Arrival { at, entry })
     }
 
+    /// Ends at `at` or the last consumed event, whichever is later, within `DURATION_LIMIT`.
+    ///
+    /// A late native callback or a suspend therefore cannot cut off frames already captured.
     pub fn end(&mut self, at: Moment, ending: Ending) -> TakeEvent {
         self.latest = self.through().max(at.min(DURATION_LIMIT));
         self.ending = Some(ending);
@@ -173,6 +183,7 @@ impl Take {
         Ok(())
     }
 
+    /// A take without an `End` record, such as an interrupted checkpoint, ends `ScreenStopped`.
     #[must_use]
     pub fn finish(self) -> (Recording, Journal) {
         let at = self.through();

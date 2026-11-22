@@ -22,9 +22,9 @@ desktop returns a replacement. Pause must retire native requests and sessions be
 Both input paths check GPUI's own-window activation alongside X11/Xwayland focus. On layer shell the
 GPUI report is necessary to identify Speakeasy's own windows. Wayland modifier readiness comes from
 EI. X11 reads the X server's key state. Shortcut deactivation alone cannot stand in for modifier
-release. Direct typing requires an EI text device. See
-[native contracts](native-contracts.md#linux-desktop-and-transfer-ownership) for ordering and
-transfer lifetime.
+release. Direct typing requires an EI text device. The
+[portal](../crates/platform/src/linux/portal.rs) and [libei](../crates/platform/src/linux/ei.rs)
+adapters state their ordering and transfer lifetimes beside the code.
 
 The tray uses StatusNotifier and DBusMenu. Without a host, closing Settings quits. With one, closing
 Settings hides the view without ending a setup or save.
@@ -59,4 +59,4 @@ builder driver lacks.
 Default portal transfer tests use a private `dbus-daemon`. The private-Xvfb checks exercise owned
 window rendering and X11 paths. Real desktops are needed for compositor and editor acceptance.
 Confirm capture with PipeWire's ALSA plugin where the Realtime portal offers no budget. See
-[the realtime opt-out](native-contracts.md#linux-realtime-opt-out).
+[the realtime opt-out](../crates/platform/src/linux/realtime.rs).

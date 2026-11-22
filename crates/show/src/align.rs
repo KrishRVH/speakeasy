@@ -5,16 +5,30 @@ use crate::{
     recording::{Narration, Word},
 };
 
+/// Silence that starts a new clause, measured from one word's start to the next.
+///
+/// The recognizer stretches a word's end across the pause after it.
 const PAUSE: Duration = Duration::from_secs(2);
 
+/// A finished clause lasts at most this long past its last word's start.
+///
+/// The recognizer's reported end can run through the silence that follows.
 const WORD_REACH: Duration = Duration::from_millis(700);
 
+/// How long an unfinished clause stays open for a clause that resumes it.
+///
+/// People stop mid-sentence to draw what they mean, then go on.
 const HESITATION: Duration = Duration::from_secs(4);
 
+/// An anchor in silence may take a clause beginning up to this long after it.
+///
+/// People mark or click just before saying what it is, and removing a filler such as "um" leaves
+/// silence where the clause began.
 const SPEECH_LAG: Duration = Duration::from_secs(1);
 
 const ONSET_TOLERANCE: Duration = Duration::from_millis(50);
 
+/// A comma ends a clause only after this many words, so a lead-in like "Um," stays with it.
 const COMMA_CLAUSE_WORDS: usize = 3;
 
 const LONGEST_ROW: Duration = Duration::from_secs(10);
@@ -61,6 +75,10 @@ fn ordered(words: &[Word]) -> Vec<&Word> {
     words
 }
 
+/// Partitions the words among keyframes in order, with nothing repeated or dropped.
+///
+/// Each keyframe's text runs until the next one's starts; words before the first keyframe
+/// belong to it, and split-off punctuation stays with its word.
 pub(crate) fn align(anchors: &[Moment], words: &[Word]) -> Vec<Option<String>> {
     let mut said = vec![String::new(); anchors.len()];
     let words = ordered(words);
@@ -197,6 +215,9 @@ fn ends_clause(text: &str, clause_words: usize) -> bool {
         || (clause_words >= COMMA_CLAUSE_WORDS && text.ends_with(','))
 }
 
+/// Punctuation and closing marks join the word before.
+///
+/// A spoken word never does, even one opening with an apostrophe, such as "'cause".
 fn attaches(word: &str) -> bool {
     word.starts_with([
         ',', '.', '!', '?', ';', ':', '’', '\'', '"', ')', ']', '”', '。', '！', '？', '；', '：',

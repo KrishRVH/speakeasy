@@ -76,7 +76,8 @@ dependency licenses are checked only where packaging must cite them.
   duplication or a useful side-effect seam; remove forwarding wrappers and obsolete re-exports.
 - Carry invariants in types, use enums for meaningful alternatives, and make always-present values
   non-optional. Keep internals private; record cross-module contracts and failure modes in the
-  architecture map and native-thread ownership in [native contracts](docs/native-contracts.md).
+  architecture map and native ownership that spans files in
+  [native contracts](docs/native-contracts.md).
 - Handle external failures with explicit errors or events. Use iterators or checked access and
   choose checked, saturating, or wrapping arithmetic according to the domain. Never let a panic
   cross FFI.

@@ -3,6 +3,9 @@ use std::mem;
 #[derive(Debug)]
 pub struct Lifecycle<Owners, Restart> {
     state: State<Owners, Restart>,
+    /// Set by a pause, so a later save keeps dictation off.
+    ///
+    /// A resume, a queued restart, or `forget_pause` clears it.
     held: bool,
 }
 
@@ -16,6 +19,7 @@ enum State<Owners, Restart> {
         owners: Owners,
         pending: Option<Restart>,
     },
+    /// Terminal: holds the owners until they retire, then `None`.
     Quitting(Option<Owners>),
 }
 
@@ -62,6 +66,7 @@ impl<Owners, Restart> Lifecycle<Owners, Restart> {
         if !self.may_start() {
             return Ok(false);
         }
+        // Ends any check in progress even if `launch` fails; its settings supersede the check's.
         self.state = State::Disabled;
         let owners = launch()?;
         self.state = State::Running(owners);

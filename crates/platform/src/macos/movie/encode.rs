@@ -26,6 +26,9 @@ use crate::movie::encode;
 pub(crate) struct Codec {
     native: Retained<AVAssetWriter>,
     input: Retained<AVAssetWriterInput>,
+    /// The writer's delegate and owner of the output file; the writer holds it weakly.
+    ///
+    /// Kept until finalization completes, since segments arrive through it until then.
     output: Retained<output::Output>,
     buffers: buffers::Buffers,
     frames: u32,
@@ -43,6 +46,7 @@ impl encode::Codec for Codec {
         let (native, input) = unsafe {
             let kind = UTType::typeWithIdentifier(AVFileTypeMPEG4.context("MP4 is unavailable")?)
                 .context("MP4 type is unavailable")?;
+            // With a content type and no URL, the writer hands every fragment to the delegate.
             let native = AVAssetWriter::initWithContentType(AVAssetWriter::alloc(), &kind);
             native.setDelegate(Some(ProtocolObject::from_ref(&*output)));
             native.setOutputFileTypeProfile(AVFileTypeProfileMPEG4AppleHLS);
@@ -130,6 +134,9 @@ impl encode::Codec for Codec {
             let _ = completed.send(());
         });
 
+        // The writer can leave Writing asynchronously, and finishing it then raises an
+        // Objective-C exception that aborts the process. This check narrows the race; closing
+        // it would need exception catching, which the build omits.
         unsafe {
             ensure!(
                 self.native.status() == AVAssetWriterStatus::Writing,

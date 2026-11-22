@@ -16,13 +16,16 @@ use crate::{
     insertion::{self, NativeInsert, Typed},
 };
 
+/// Formats whose zero DWORD keeps a copy out of clipboard history and cloud sync.
 const PRIVATE_FORMATS: [&str; 2] = ["CanIncludeInClipboardHistory", "CanUploadToCloudClipboard"];
 
+/// Formats Windows synthesizes from a DIB, so restoring the DIB brings them back.
 const SYNTHESIZED: [u32; 2] = [
     clipboard_win::formats::CF_BITMAP,
     clipboard_win::formats::CF_PALETTE,
 ];
 
+/// Formats whose data are handles, not global-memory bytes a snapshot can copy.
 const HANDLES: [u32; 6] = [
     clipboard_win::formats::CF_METAFILEPICT,
     clipboard_win::formats::CF_ENHMETAFILE,
@@ -32,6 +35,7 @@ const HANDLES: [u32; 6] = [
     clipboard_win::formats::CF_DSPENHMETAFILE,
 ];
 
+/// `CF_PRIVATEFIRST` through `CF_GDIOBJLAST`, whose data are handles too.
 const PRIVATE_AND_GDI: std::ops::RangeInclusive<u32> = 0x0200..=0x03FF;
 
 type SavedFormat = (u32, Vec<u8>);
@@ -62,6 +66,7 @@ fn saved_formats() -> Option<Vec<SavedFormat>> {
     let private = private_formats();
     let mut kept = Vec::new();
     for format in clipboard_win::raw::EnumFormats::new() {
+        // One uncopyable format makes a faithful restore impossible, so keep no snapshot.
         if HANDLES.contains(&format) || PRIVATE_AND_GDI.contains(&format) {
             return None;
         }
@@ -118,6 +123,7 @@ fn write_clipboard(
 }
 
 fn fill(text: &str, image: Option<(&clipboard::Image, NonZeroU32)>) -> anyhow::Result<()> {
+    // Mark first so no failure leaves the copied text unmarked.
     mark_private()?;
     if let Some((image, png)) = image {
         clipboard_win::raw::set_without_clear(png.get(), &image.png)?;
@@ -239,6 +245,9 @@ fn windows_line_endings(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\n', "\r\n")
 }
 
+/// Opens the clipboard, retrying briefly since listeners can hold it right after a change.
+///
+/// The retries block, so callers stay off the UI thread.
 fn open_clipboard() -> anyhow::Result<clipboard_win::Clipboard> {
     let started = Instant::now();
     let until = started

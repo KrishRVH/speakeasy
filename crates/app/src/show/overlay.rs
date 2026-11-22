@@ -22,6 +22,9 @@ use crate::{
     runtime::Snapshot,
 };
 
+/// Ink holds this long after the pen lifts, then fades over `FADE`.
+///
+/// A circle and the arrow drawn right after it then stay and leave together.
 const HOLD: Duration = Duration::from_millis(650);
 const FADE: Duration = Duration::from_millis(650);
 const INK: Rgba = {
@@ -34,8 +37,10 @@ const INK: Rgba = {
     }
 };
 
+/// About how wide a brand-face digit runs, in ems, so labels fit discs as the bundle's do.
 const DIGIT_EM: f32 = 0.6;
 
+/// The width `border_2` draws, so the frame sits just outside the recorded area.
 const FRAME: Pixels = px(2.0);
 
 const SHADE: Rgba = Rgba {
@@ -45,6 +50,7 @@ const SHADE: Rgba = Rgba {
     a: 0.4,
 };
 
+/// Logical pixels each way; a shorter drag is a click, which cancels the Show.
 const SMALLEST_AREA: f32 = 24.0;
 
 #[derive(Clone, Debug, Default)]
@@ -107,7 +113,9 @@ struct Cover {
 #[derive(Clone, Debug)]
 pub(crate) struct Sheet {
     part: Part,
+    /// Immutable snapshots, so a render's copy of the sheet copies only the stroke being drawn.
     strokes: Vec<Arc<[Point]>>,
+    /// Finished strokes cleared so far, so the first of `strokes` has recording index `cleared`.
     cleared: usize,
     drawing: Vec<Point>,
     marks: Arc<[Mark]>,
@@ -145,6 +153,7 @@ impl Sheet {
         let drawing: Vec<Point> = drawing.into_iter().collect();
         let was_drawing = !self.drawing.is_empty();
 
+        // A pin adds a mark but no stroke, so a new mark counts as ink here.
         let marked = marks
             .as_ref()
             .is_some_and(|marks| marks.len() > self.marks.len());
@@ -161,6 +170,8 @@ impl Sheet {
         self.strokes.extend(finished);
         self.drawing = drawing;
         if let Some(marks) = marks {
+            // A mark groups strokes by pen-down time, so the first stroke after a fade can join a
+            // mark whose earlier strokes faded; that mark's number stays shown.
             if let Some(joined) = marks
                 .iter()
                 .find(|mark| mark.strokes.contains(&self.cleared))
@@ -553,6 +564,7 @@ fn paint(sheet: &Sheet, bounds: Bounds<Pixels>, opacity: f32, window: &mut Windo
             .collect();
         let outline = ink::outline(&pixels, pen);
 
+        // Nonzero winding, as the bundle fills it, keeps ink solid where a stroke crosses itself.
         let mut path = PathBuilder::fill().with_style(PathStyle::Fill(FillOptions {
             fill_rule: FillRule::NonZero,
         }));
@@ -573,6 +585,9 @@ fn paint(sheet: &Sheet, bounds: Bounds<Pixels>, opacity: f32, window: &mut Windo
     }
 }
 
+/// Opens the overlay while a Show needs it and closes it once the Show ends.
+///
+/// A full-screen window holds GPU memory the size of its display, which an idle app does not need.
 pub(crate) fn attend(
     mut canvas: watch::Receiver<Canvas>,
     mut snapshots: watch::Receiver<Snapshot>,
@@ -618,6 +633,8 @@ pub(crate) fn attend(
                 continue;
             };
 
+            // The next session cannot start until this one leaves the active phases, so this
+            // wait never delays the next Show's overlay.
             let Ok(failure) = snapshots
                 .wait_for(|snapshot| snapshot.session != show || !snapshot.phase.is_active())
                 .await

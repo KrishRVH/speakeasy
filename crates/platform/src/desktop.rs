@@ -4,9 +4,15 @@ use raw_window_handle::WindowHandle;
 
 use crate::{InputSender, Inserter, OwnFocus, OwnedThread, native};
 
+/// Owns desktop observation and, on Windows and macOS, the insertion thread.
+///
+/// Create, stop, and drop it on the UI thread. Drop joins its threads; await `stopped` first so
+/// the join does not block.
 pub struct InputMonitor {
+    /// Declared first: drop joins it before `native` removes the macOS lifecycle observers.
     thread: OwnedThread,
     native: native::Monitor,
+    /// Keeps the monitor `!Send` on every host, as the macOS lifecycle observers require.
     _ui_thread: PhantomData<*const ()>,
 }
 
@@ -130,6 +136,7 @@ impl Default for DesktopOptions {
 pub struct NativeWindow {
     #[cfg(not(target_os = "linux"))]
     pub(crate) native: native::Window,
+    /// Keeps the handle `!Send` everywhere, so presentation stays on the window's thread.
     _ui_thread: PhantomData<*const ()>,
 }
 
@@ -162,15 +169,23 @@ pub fn reduced_motion() -> bool {
     native::reduced_motion()
 }
 
+/// Whether secure keyboard entry is on; call on the main thread, where macOS can answer.
+///
+/// Elsewhere macOS answers `false`, and Windows and Linux always do.
 #[must_use]
 pub fn secure_input() -> bool {
     native::secure_input()
 }
 
+/// Call off the UI thread; Windows retries for up to 50 ms while the clipboard is busy.
 pub fn copy_text(text: &str) -> anyhow::Result<()> {
     native::copy_text(text)
 }
 
+/// Call only for a command or a run about to end.
+///
+/// Windows gives a windowed executable no console handles, so this attaches the parent's console,
+/// and that console's Ctrl+C then reaches this process too.
 #[expect(
     clippy::must_use_candidate,
     reason = "Attaching is the point; only a caller with a dialog to fall back on needs the answer"
@@ -179,6 +194,10 @@ pub fn attach_stdio() -> bool {
     native::attach_stdio()
 }
 
+/// Call on the main thread, outside any GPUI update.
+///
+/// macOS shows nothing off the main thread, and the modal loop runs queued GPUI tasks, which
+/// panic if the app is already borrowed.
 pub fn show_startup_error(message: &str) {
     native::show_startup_error(message);
 }

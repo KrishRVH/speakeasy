@@ -22,19 +22,30 @@ const CIRCLE_PIXELS: f64 = 18.0;
 
 const ROUND: f64 = 0.42;
 
+/// Flat loops count, since people circle wide controls and lines of text with them.
+///
+/// A scribble back and forth over text also closes and fills its box, so a flat loop must also
+/// close within `FLAT_LOOP_CLOSURE` of its short side and turn at most `FLAT_LOOP_TURNS` times.
 const CIRCLE_FLATNESS: f64 = 0.15;
 const FLAT_LOOP_CLOSURE: f64 = 0.6;
 
+/// Three times round, with slack for a hand's jitter.
 const FLAT_LOOP_TURNS: f64 = 3.5;
 
 const INNER_LOOP_SHARE: f64 = 0.6;
 const INNER_LOOP_CLOSURE: f64 = 0.15;
 
+/// Above any triangle's fill, since an X drawn in one go closes a triangle where it crosses.
+///
+/// No triangle fills more than half of any box round it. An ellipse no flatter than
+/// `CIRCLE_FLATNESS` fills over 0.7 of a box turned up to 3.75° from its axes.
 const INNER_LOOP_FILL: f64 = 0.6;
 const INNER_LOOP_TURNS: f64 = 1.5;
 
+/// Caps the points tried as inner-loop ends, bounding the search's quadratic cost.
 const INNER_LOOP_ENDS: usize = 512;
 
+/// Box slants spread through a right angle, so one lies within 3.75° of any loop's axes.
 const SLANTS: usize = 12;
 
 const SHAFT_SHARE: f32 = 0.5;
@@ -55,6 +66,9 @@ const BARB_SPREAD: f32 = 75.0;
 const BARBS_SPREAD: f32 = 5.0;
 const LONE_BARB_SPREAD: f32 = 15.0;
 
+/// A head reaches at least this share as far to one side of the shaft as to the other.
+///
+/// Without it, underlines whose end hooks back to one side read as one-barbed arrows.
 const HEAD_BALANCE: f32 = 0.3;
 
 pub(super) struct Ink {
@@ -105,6 +119,10 @@ pub(super) fn ink(stroke: &Stroke, surface: Size) -> Option<Ink> {
     })
 }
 
+/// A path point with its running length and twice its swept signed area.
+///
+/// Any stretch then measures in constant time. These are f64 because a stretch's measures are
+/// differences of sums that grow along the path.
 #[derive(Clone, Copy)]
 struct Traced {
     point: Point,
@@ -180,6 +198,7 @@ impl Stretch {
         self.gap / long
     }
 
+    /// Times round the ellipse filling the box, by Ramanujan's perimeter approximation.
     fn turns(&self) -> f64 {
         let (width, height) = (self.width, self.height);
         let perimeter = PI / 2.0
@@ -211,6 +230,10 @@ impl Boxes {
     }
 }
 
+/// The loop inside a stroke with a lead-in, tail, or overshoot whose ends meet closest.
+///
+/// At most `INNER_LOOP_ENDS` points are tried as ends, but length and area still count every
+/// point, so sampling smooths no zigzag away.
 fn inner_loop(path: &[Traced]) -> Option<RangeInclusive<usize>> {
     let last = path.len().checked_sub(1)?;
     let total = path.get(last)?.length;
@@ -237,6 +260,7 @@ fn inner_loop(path: &[Traced]) -> Option<RangeInclusive<usize>> {
         .flat_map(|(tried, &(from, start, ref slanted))| {
             let mut bounds = Rect::at(start.point);
 
+            // Slanted boxes cost more to grow, so they hold points only once a stretch may loop.
             let mut boxes = Boxes::at(slanted);
             let mut unheld = ends.iter().enumerate().skip(tried).peekable();
             ends.iter()

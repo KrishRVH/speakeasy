@@ -14,6 +14,8 @@ const WHITE: [u8; 4] = [255, 255, 255, 255];
 
 const RECENT_INK: Duration = Duration::from_millis(1_200);
 
+// While recent ink spans the pause that joins strokes, a mark is recent exactly when one of its
+// strokes is, as `Shown::on` relies on.
 const _: () = assert!(
     RECENT_INK.as_nanos() >= MARK_GAP.as_nanos(),
     "recent ink spans at least the pause that joins strokes into one mark"
@@ -24,13 +26,18 @@ const RIPPLE_REACH: Duration = Duration::from_millis(600);
 const CLICK_RING: f32 = 10.0;
 const CLICK_LINE: f32 = 1.6;
 const CLICK_DOT: f32 = 1.6;
+/// About a pixel's diagonal, so a diagonal edge covers whole pixels under antialiasing.
 const CLICK_EDGE: f32 = 1.4;
+/// The blue shows on light screens and the white edge on accent blues and dark ones.
+///
+/// Both let about a tenth of the screen through, so what was clicked stays legible.
 const CLICK_BLUE: [u8; 4] = [0, 96, 214, 230];
 const CLICK_WHITE: [u8; 4] = [255, 255, 255, 230];
 
 const BADGE_BAND: f32 = 0.18;
 const BADGE_SIDE: f32 = 0.30;
 
+/// Cubic Bézier handle length, in radii, that traces a quarter circle.
 const QUARTER_CIRCLE_HANDLE: f32 = 0.552_284_8;
 
 #[derive(Clone, Copy)]
@@ -60,6 +67,10 @@ pub(crate) struct Shown<'a> {
 }
 
 impl<'a> Shown<'a> {
+    /// A keyframe shows its own marks whole, or else the ink and marks recent at its moment.
+    ///
+    /// Recent ink is drawn only up to the keyframe's moment. The focus is the keyframe's own
+    /// action, else the click nearest it within `RIPPLE_REACH`.
     pub(crate) fn on(keyframe: &Keyframe, recording: &Recording, marks: &'a [Mark]) -> Self {
         let own = keyframe.marks_in(marks);
         let owned = |index: usize| own.iter().any(|mark| mark.strokes.contains(&index));
@@ -457,6 +468,7 @@ pub(crate) fn rounded(rect: Rect, radius: f32) -> Option<Path> {
     builder.finish()
 }
 
+/// Curves through edge midpoints, so an outline computed as a polygon draws without facets.
 fn closed_curve(points: &[Point]) -> Option<Path> {
     let (&first, &last) = (points.first()?, points.last()?);
     let start = last.lerp(first, 0.5);

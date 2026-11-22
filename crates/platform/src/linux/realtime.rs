@@ -1,5 +1,10 @@
 use std::{env, fs};
 
+/// Opts out of `PipeWire`'s realtime module; call it before any other thread starts.
+///
+/// Loaded through ALSA without realtime privileges, the module lowers `RLIMIT_RTTIME` to the
+/// budget the desktop reports, and a zero budget gets the process killed once capture starts.
+/// Capture is buffered and needs no realtime scheduling. Child processes inherit the variable.
 pub fn disable_rtkit() {
     set_while_alone("DISABLE_RTKIT", "1");
 }
@@ -9,6 +14,8 @@ fn set_while_alone(key: &str, value: &str) {
         && matches!(tasks.next(), Some(Ok(_)))
         && tasks.next().is_none()
     {
+        // SAFETY: `/proc/self/task` lists one readable entry, this thread, so no other thread can
+        // read the environment concurrently. An unreadable entry must not count as this thread.
         unsafe { env::set_var(key, value) };
     }
 }

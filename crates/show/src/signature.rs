@@ -26,6 +26,7 @@ const SMALLEST_REGION: usize = 2;
 
 const MOST_REGIONS: usize = 8;
 
+/// Caps samples per cell so a signature's cost does not grow with resolution.
 const SAMPLES_PER_CELL_SIDE: usize = 4;
 
 #[derive(Clone, Debug)]
@@ -83,6 +84,10 @@ impl Signature {
         total / CELLS as f32
     }
 
+    /// The larger of the whole-frame change and the boosted fourth-strongest block change.
+    ///
+    /// A panel or page changing four or more blocks registers even when the rest holds still,
+    /// while a caret or clock confined to a few blocks does not.
     pub(crate) fn transition(&self, other: &Self) -> f32 {
         let differences: Vec<f32> = self.differences(other).collect();
         let mut blocks = [[0.0_f32; BLOCK_COLUMNS]; BLOCK_ROWS];
@@ -239,6 +244,7 @@ fn neighbors(cell: usize) -> impl Iterator<Item = usize> {
     })
 }
 
+/// Spans of at least one pixel, so a frame smaller than the grid repeats pixels across cells.
 pub(crate) fn spans(length: usize, parts: usize) -> impl Iterator<Item = Range<usize>> {
     let scale = length as f32 / parts as f32;
     (0..parts).map(move |part| {

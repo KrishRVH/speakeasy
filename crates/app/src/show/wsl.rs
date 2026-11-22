@@ -4,6 +4,10 @@ use speakeasy_show::Wsl;
 
 const PATIENCE: Duration = Duration::from_secs(1);
 
+/// Answers from one detached thread that detects WSL at most once.
+///
+/// Reading the WSL share can block in the redirector while WSL starts, so nothing joins the
+/// thread and each caller bounds its own wait.
 #[derive(Clone)]
 pub(crate) struct Lookup {
     asks: mpsc::Sender<Ask>,
@@ -51,6 +55,7 @@ impl Lookup {
 }
 
 fn serve(questions: mpsc::Receiver<Ask>, detect: impl FnOnce() -> Option<Wsl>) {
+    // Detect only once asked: reading the share can start WSL, which Speakeasy never does alone.
     let Ok(first) = questions.recv() else {
         return;
     };

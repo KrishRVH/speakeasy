@@ -27,6 +27,7 @@ impl Converter {
             let native: IMFTransform =
                 CoCreateInstance(&CLSID_VideoProcessorMFT, None, CLSCTX_INPROC_SERVER)?;
             let converter = Self(native);
+            // Frame-rate conversion stays off: `frame` expects exactly one output per input.
             converter
                 .0
                 .GetAttributes()?
@@ -65,6 +66,7 @@ impl Converter {
         let supplied = if info.dwFlags & native_allocation == 0 {
             unsafe {
                 let sample = MFCreateSample()?;
+                // MFCreateAlignedMemoryBuffer takes the alignment minus one.
                 sample.AddBuffer(&MFCreateAlignedMemoryBuffer(
                     info.cbSize,
                     info.cbAlignment.saturating_sub(1),
@@ -103,6 +105,8 @@ impl Converter {
 
 impl Drop for Output {
     fn drop(&mut self) {
+        // SAFETY: `Output` owns both references and drops each once; `output` takes a returned
+        // sample first, leaving `None`.
         unsafe {
             ManuallyDrop::drop(&mut self.0.pSample);
             ManuallyDrop::drop(&mut self.0.pEvents);

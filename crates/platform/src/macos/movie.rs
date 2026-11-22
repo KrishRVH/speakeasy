@@ -64,6 +64,10 @@ impl Sample {
     }
 }
 
+/// One image request, holding the file-backed asset its generator reads.
+///
+/// Cancellation and drop still wait for the single completion, so the handler and asset
+/// outlive native generation.
 struct Request {
     native: Retained<AVAssetImageGenerator>,
     reply: Receiver<anyhow::Result<MovieFrame>>,
@@ -78,6 +82,8 @@ impl Request {
         let time = unsafe { CMTime::new(ticks, timescale) };
         let (sender, reply) = mpsc::sync_channel(1);
         let handler = RcBlock::new(move |image: *mut CGImage, _: CMTime, error: *mut NSError| {
+            // SAFETY: the completion lends both objects until it returns; only copied pixels
+            // leave it.
             let (image, error) = unsafe { (image.as_ref(), error.as_ref()) };
             let result = catch_unwind(AssertUnwindSafe(|| {
                 autoreleasepool(|_| decoded(image, error, size, sample))
@@ -95,6 +101,8 @@ impl Request {
             native.setAppliesPreferredTrackTransform(false);
             native.setApertureMode(Some(AVAssetImageGeneratorApertureModeEncodedPixels));
             native.setMaximumSize(CGSize::new(f64::from(size[0]), f64::from(size[1])));
+            // Zero tolerance decodes the validated sample at its exact rational time, not a
+            // nearby frame.
             native.setRequestedTimeToleranceBefore(CMTime::new(0, 1));
             native.setRequestedTimeToleranceAfter(CMTime::new(0, 1));
             native.generateCGImageAsynchronouslyForTime_completionHandler(time, &handler);
@@ -192,6 +200,8 @@ fn pixels(image: &CGImage, size: [u32; 2]) -> anyhow::Result<BgraImage> {
         let space = CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB }))
             .context("Cannot create the video color space")?;
 
+        // SAFETY: the context draws into `pixels` and drops at the end of this block, before
+        // `pixels` moves.
         let context = unsafe {
             CGBitmapContextCreate(
                 pixels.as_mut_ptr().cast(),
@@ -205,6 +215,7 @@ fn pixels(image: &CGImage, size: [u32; 2]) -> anyhow::Result<BgraImage> {
         }
         .context("Cannot create the video pixel buffer")?;
 
+        // Bitmap drawing keeps raster row order; a view-style flip would invert the rows.
         CGContext::draw_image(
             Some(&context),
             CGRect::new(

@@ -32,6 +32,7 @@ const DICTATE_ID: &str = "dictate";
 const CANCEL_ID: &str = "cancel";
 const KEYBOARD_DEVICE: u32 = 1;
 const PERSIST_UNTIL_REVOKED: u32 = 2;
+/// The `RemoteDesktop` version that accepts `persist_mode` and restore tokens.
 const PERSISTENT_REMOTE_VERSION: u32 = 2;
 
 const CLOSE_TIMEOUT: Duration = Duration::from_millis(500);
@@ -43,7 +44,9 @@ type DesktopChanges = futures_util::stream::Select<MessageStream, MessageStream>
 struct Portal {
     connection: Connection,
     sender_segment: String,
+    /// The consent request still awaiting its answer; `close` dismisses its dialog.
     unanswered: Option<OwnedObjectPath>,
+    /// Every session requested, recorded before its request so `close` reaches a pending one.
     sessions: Vec<OwnedObjectPath>,
     sequence: u64,
 }
@@ -52,6 +55,7 @@ impl Portal {
     async fn connect() -> anyhow::Result<(Self, DesktopChanges)> {
         let connection = Connection::session().await?;
         let changes = watch_portal(&connection).await?;
+        // The host registry accepts `Register` only before any other portal call.
         let registered = connection
             .call_method(
                 Some(DESTINATION),
@@ -112,6 +116,7 @@ impl Portal {
         let path: OwnedObjectPath =
             format!("{DESKTOP}/request/{}/{token}", self.sender_segment).try_into()?;
         let request = Proxy::new(&self.connection, DESTINATION, path.clone(), REQUEST).await?;
+        // Subscribe before calling: the portal can answer before the call returns.
         let mut responses = request.receive_signal("Response").await?;
 
         self.unanswered = Some(path.clone());
@@ -151,6 +156,7 @@ impl Portal {
         Ok(predicted)
     }
 
+    /// Dismisses a pending consent dialog and closes every session when desktop access ends.
     async fn close(&self) {
         for (paths, interface) in [
             (self.unanswered.as_slice(), REQUEST),
@@ -236,6 +242,8 @@ pub(super) async fn run(
     requests: Receiver<Insertion>,
     stopping: &Receiver<Infallible>,
 ) -> anyhow::Result<()> {
+    // Desktop bindings with manual paste need neither portal shortcuts nor keyboard input;
+    // Xwayland serves the copy.
     if options.paste == LinuxPaste::Manual && options.external_shortcut {
         return x11::run(input, options, requests, stopping).await;
     }
@@ -246,6 +254,8 @@ pub(super) async fn run(
     };
 
     let session_root = portal.session_root();
+    // Binding is polled before revocation: a declined dialog answers before the portal closes
+    // its session, and that answer names the cause.
     let bound = tokio::select! {
         biased;
         () = stop_requested(stopping, input) => None,
@@ -265,6 +275,7 @@ pub(super) async fn run(
 }
 
 async fn bind(portal: &mut Portal, options: &DesktopOptions) -> anyhow::Result<Bound> {
+    // Load libei first, so a host without it fails before the user is asked for permissions.
     let automatic = match PasteKeys::of(options.paste) {
         Some(keys) => Some((ei::Api::load()?, keys)),
         None => None,
@@ -368,6 +379,7 @@ async fn start_remote_desktop(
     portal
         .request(REMOTE, "SelectDevices", handle, &(&session, devices))
         .await?;
+    // The clipboard portal accepts `RequestClipboard` only before `Start`.
     let clipboard_requested = request_clipboard(portal, &session).await?;
     let (handle, start) = portal.request_options();
     let mut result = portal
@@ -411,6 +423,7 @@ async fn start_remote_desktop(
 async fn request_clipboard(portal: &Portal, session: &OwnedObjectPath) -> anyhow::Result<bool> {
     let clipboard = portal.proxy(CLIPBOARD).await?;
 
+    // Creating a proxy does not contact the portal; reading `version` proves the interface exists.
     if clipboard.get_property::<u32>("version").await.is_err() {
         return Ok(false);
     }
@@ -468,6 +481,7 @@ async fn serve(
         .await
 }
 
+/// Older portals lack the host registry and identify the app from its launcher instead.
 fn lacks_registry(error: &zbus::Error) -> bool {
     matches!(
         error,
@@ -480,6 +494,10 @@ fn lacks_registry(error: &zbus::Error) -> bool {
     )
 }
 
+/// One stream per interface keeps its signals in bus order.
+///
+/// Separate queues could reorder a double tap's activations and releases, or clipboard ownership
+/// against transfers.
 async fn session_signals(
     connection: &Connection,
     interface: &str,

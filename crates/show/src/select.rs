@@ -21,13 +21,19 @@ use crate::{
     signature::Sample,
 };
 
+/// Still-frame sampling period; selection's `SETTLE` and `FRAME_GAP` are tuned against it.
 pub const SAMPLE_INTERVAL: Duration = Duration::from_millis(200);
 
+/// Non-mark keyframes keep at least this far apart, measured between their frames.
+///
+/// Two clicks' keyframes need only different frames, or different screens when the clicks were
+/// released this close.
 const FRAME_GAP: Duration = Duration::from_millis(750);
 
 const DOUBLE_CLICK: Duration = Duration::from_millis(650);
 const DOUBLE_CLICK_DISTANCE: f32 = 0.03;
 
+/// Six full contact sheets of `PAGE_FRAMES` each.
 pub(crate) const MOST_KEYFRAMES: usize = 36;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,6 +112,8 @@ fn select_within(recording: &Recording, samples: &[Sample], most: usize) -> Opti
         })
         .collect();
 
+    // Actions go in before transitions: an action scores at least as high as the transition it
+    // started, and the stable sort keeps it first on a tie, so their shared frame reports it.
     candidates.extend(
         responses
             .iter()
@@ -253,6 +261,11 @@ impl Candidate {
         self.span.start().min(frames.at(self.frame))
     }
 
+    /// Whether this chosen keyframe already stands for `candidate`.
+    ///
+    /// A mark does near its ink unless the screen changed, so a click right after drawing still
+    /// gets its screen. A click covers another click only on its frame, or on the same screen when
+    /// the clicks came within `FRAME_GAP`, so waiting for one result never crowds out the next.
     fn covers(&self, frames: &Frames<'_>, candidate: &Self) -> bool {
         let same_screen = || !frames.novel(self.frame, candidate.frame);
         match (&self.basis, &candidate.basis) {
@@ -317,6 +330,10 @@ fn admits(chosen: &[Candidate], candidate: &Candidate, frames: &Frames<'_>) -> b
     }
 }
 
+/// Keeps at most `most` keyframes, spread across the recording.
+///
+/// Marks always stay, since `group_marks` already fit them within `most`. The last keyframe
+/// stays while there is room, and each other kept one splits the longest stretch without one.
 fn thin(chosen: &mut Vec<Candidate>, frames: &Frames<'_>, most: usize) {
     if chosen.len() <= most {
         return;

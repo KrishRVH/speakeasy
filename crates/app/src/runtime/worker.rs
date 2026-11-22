@@ -61,6 +61,7 @@ impl<W: Speech> Worker<W> {
         }
     }
 
+    /// Cancel-safe: the owner polls it in `select!`, and dropping it leaves the job running.
     pub(super) async fn completed(&mut self) -> Completion<Native> {
         let (state, completion) = match &mut self.state {
             State::Loading(job) => match joined((&mut job.task).await, LOAD_STOPPED) {
@@ -237,6 +238,7 @@ impl<W: Speech> Worker<W> {
 }
 
 enum Transcription {
+    /// A stream ended without final text; the worker stays for whole-recording fallback.
     Abandoned,
     Heard(Transcript<Native>),
     Cancelled,

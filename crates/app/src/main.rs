@@ -443,6 +443,8 @@ fn release_services(
     if cx.has_global::<tray::Tray>() {
         drop(cx.remove_global::<tray::Tray>());
     }
+    // GPUI calls this before disposing windows and polls the returned future after: remove
+    // Services now, but close the instance only in the future so its lock outlives disposal.
     let services = cx.remove_global::<Services>();
     #[cfg(target_os = "windows")]
     let mut services = services;

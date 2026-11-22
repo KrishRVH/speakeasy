@@ -47,6 +47,7 @@ pub struct Manifest {
 
 impl Manifest {
     pub const FILE: &str = "show.json";
+    /// Changes only when a reader must change to read the manifest.
     pub(crate) const VERSION: u32 = 3;
 }
 
@@ -114,6 +115,10 @@ impl fmt::Debug for File {
     }
 }
 
+/// Annotates, lays out, badges, and encodes the selection's keyframes, one sheet at a time.
+///
+/// `frame` may run on several threads at once. Loading per sheet keeps only one sheet's frames
+/// decoded together.
 pub fn compose<E: From<Error> + Send>(
     recording: Recording,
     selection: Selection,
@@ -217,6 +222,7 @@ impl fmt::Display for Summary<'_> {
             ..
         } = manifest;
 
+        // Joined part by part, a bundle file's `/`-separated name takes the platform separator.
         let file = |name: &str| {
             let within: PathBuf = name.split('/').collect();
             Code(directory.join(within).display().to_string())
@@ -417,6 +423,10 @@ impl fmt::Display for Frames<'_> {
     }
 }
 
+/// Text as a Markdown code span, so a reader can tell where a path with spaces ends.
+///
+/// Markdown's rule: the fence is one backtick longer than any run inside, and text starting or
+/// ending with a backtick or space is padded with a space that reading strips.
 struct Code<T>(T);
 
 impl<T: fmt::Display> fmt::Display for Code<T> {

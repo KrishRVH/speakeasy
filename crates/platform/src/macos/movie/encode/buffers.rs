@@ -32,6 +32,7 @@ impl Buffers {
         let format = CFNumber::new_i64(i64::from(kCVPixelFormatType_32BGRA));
         let mut pool = ptr::null_mut();
 
+        // SAFETY: each key takes a `CFNumber`, and `from_raw` adopts the Create-rule pool once.
         let pool = unsafe {
             let attributes = CFDictionary::from_slices(
                 &[
@@ -55,6 +56,10 @@ impl Buffers {
         Ok(Self { pool, size })
     }
 
+    /// Wraps a copy of `bgra` in a fresh pool buffer as the sample for frame `index`.
+    ///
+    /// Never reuse a buffer: the writer reads appended samples later, and the pool recycles one
+    /// only after the writer releases it.
     pub(super) fn sample(
         &self,
         bgra: &[u8],
@@ -87,6 +92,7 @@ impl Buffers {
             .checked_mul(height)
             .context("Native video rows exceed their buffer")?;
         {
+            // SAFETY: `buffer` is fresh from the pool and not yet shared with the writer.
             let mut locked = unsafe { Locked::new(&buffer) }?;
             let pixels = locked.bytes(length)?;
             pixels.fill(0);
@@ -152,6 +158,10 @@ impl Buffers {
 struct Locked<'a>(&'a CVPixelBuffer);
 
 impl<'a> Locked<'a> {
+    /// Write-locks `buffer`'s pixels until drop.
+    ///
+    /// # Safety
+    /// Nothing else may touch `buffer`'s pixels while the lock lives.
     unsafe fn new(buffer: &'a CVPixelBuffer) -> anyhow::Result<Self> {
         let status = unsafe { CVPixelBufferLockBaseAddress(buffer, CVPixelBufferLockFlags(0)) };
         ensure!(
@@ -173,6 +183,8 @@ impl<'a> Locked<'a> {
         let base = NonNull::new(CVPixelBufferGetBaseAddress(self.0).cast::<u8>())
             .context("Native video pixels are missing")?;
 
+        // SAFETY: `length` fits the allocation (checked above), and `&mut self` allows one slice
+        // at a time, which cannot outlive the lock.
         Ok(unsafe { slice::from_raw_parts_mut(base.as_ptr(), length) })
     }
 }

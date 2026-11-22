@@ -46,6 +46,7 @@ pub(crate) use self::{
     insertion::{copy_content, copy_text},
 };
 
+/// Tags input Speakeasy synthesizes so its own keyboard hook ignores it.
 const OWN_INPUT: usize = 0x5350_4541;
 
 const BASE_DPI: u32 = 96;
@@ -73,6 +74,7 @@ pub(crate) fn attach_stdio() -> bool {
         handle.is_null() || handle == INVALID_HANDLE_VALUE
     };
     if missing(STD_OUTPUT_HANDLE) || missing(STD_ERROR_HANDLE) {
+        // Attaching fills only the missing handles, so a redirected stream keeps its target.
         unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
     }
     !missing(STD_ERROR_HANDLE)
@@ -129,6 +131,11 @@ fn send_input(input: &[INPUT]) -> anyhow::Result<usize> {
     Ok(usize::try_from(sent)?)
 }
 
+/// Adopts a fresh kernel handle, or reports the last error for a null one.
+///
+/// # Safety
+/// `raw` comes straight from a Win32 call that fails with null, not `INVALID_HANDLE_VALUE`,
+/// and otherwise returns a handle closed by `CloseHandle` that nothing else owns.
 pub(crate) unsafe fn take_handle(raw: HANDLE) -> io::Result<OwnedHandle> {
     if raw.is_null() {
         return Err(io::Error::last_os_error());
@@ -144,6 +151,10 @@ pub(crate) fn ok_or_last_error(result: BOOL) -> io::Result<()> {
     Ok(())
 }
 
+/// A borrowed HWND, used only on the thread that owns it.
+///
+/// Subclass and presentation calls need the owning thread, and `new` does not check it:
+/// `NativeWindow` is built on GPUI's UI thread and is `!Send`.
 pub(crate) struct Window {
     hwnd: HWND,
 }

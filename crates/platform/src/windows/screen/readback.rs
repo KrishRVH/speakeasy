@@ -26,6 +26,9 @@ use crate::{
 
 pub(super) const BYTES_PER_PIXEL: usize = 4;
 
+/// A device on the adapter that drives `monitor`, so frames need no cross-adapter copy.
+///
+/// A display no adapter reports falls back to the default hardware adapter.
 pub(super) fn device_for(
     monitor: HMONITOR,
 ) -> windows::core::Result<(ID3D11Device, ID3D11DeviceContext)> {
@@ -43,6 +46,7 @@ pub(super) fn device_for(
                     })
             })
     };
+    // D3D11CreateDevice requires D3D_DRIVER_TYPE_UNKNOWN with an explicit adapter.
     let driver = if adapter.is_some() {
         D3D_DRIVER_TYPE_UNKNOWN
     } else {
@@ -134,6 +138,8 @@ impl Readback {
             .as_ref()
             .map_or(&self.staging, |mips| &mips.texture);
 
+        // SAFETY: `frame`, the mips, and staging share this context's device and BGRA format, and
+        // the caller keeps the box inside the frame.
         unsafe {
             context.CopySubresourceRegion(first, 0, 0, 0, 0, frame, 0, Some(&raw const region));
             if let Some(mips) = &self.mips {
@@ -195,6 +201,7 @@ impl<'a> Mapping<'a> {
     ) -> windows::core::Result<Self> {
         let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
 
+        // Without D3D11_MAP_FLAG_DO_NOT_WAIT, mapping waits for the copies into `texture`.
         unsafe { context.Map(texture, 0, D3D11_MAP_READ, 0, Some(&raw mut mapped))? };
         Ok(Self {
             context,
@@ -212,6 +219,8 @@ impl<'a> Mapping<'a> {
         }
         let length = mapped_len(pitch, row, height).ok_or(E_UNEXPECTED)?;
 
+        // SAFETY: the map holds `height` rows `pitch` bytes apart until `drop` unmaps it; the
+        // checks above end `length` at the last row's pixels, and `bytes` stays inside `pack`.
         let bytes = unsafe { slice::from_raw_parts(self.mapped.pData.cast::<u8>(), length) };
         pack_rows(bytes, pitch, width, height)
             .and_then(|pixels| BgraImage::new(size, pixels))
@@ -261,6 +270,7 @@ fn halvings([width, _]: [u32; 2], [fitted, _]: [u32; 2]) -> u32 {
         .unwrap_or(0)
 }
 
+/// The last row may end without padding, so only earlier rows span the full pitch.
 fn mapped_len(pitch: usize, row: usize, rows: usize) -> Option<usize> {
     pitch.checked_mul(rows.checked_sub(1)?)?.checked_add(row)
 }

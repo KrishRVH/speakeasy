@@ -12,18 +12,24 @@ const PADDING: u32 = 6;
 const GUTTER: u32 = 6;
 const BACKGROUND: [u8; 3] = [28, 29, 34];
 
+/// Vision models downscale past about this long edge, and past `MOST_PIXELS` in all.
 const LONGEST_EDGE: f32 = 1_600.0;
 const MOST_PIXELS: f32 = 1_560_000.0;
 
 const ROW_FRAMES: usize = 6;
 
+/// More frames start another sheet rather than shrinking every thumbnail.
 const PAGE_FRAMES: usize = 6;
 
+/// Layout clamps aspects to `NARROWEST..=WIDEST` so an extreme crop gets a usable cell.
+///
+/// The frame keeps its own proportions inside that cell.
 const NARROWEST: f32 = 0.25;
 const WIDEST: f32 = 4.5;
 
 const SMALLEST_INNER: u32 = 64;
 
+/// Fitting can take several passes because fixed padding and gutters do not shrink.
 const FIT_PASSES: usize = 16;
 
 const PAIR_SPLIT: f32 = 3.6;
@@ -82,6 +88,7 @@ impl Layout {
     }
 }
 
+/// The fewest sheets of at most `PAGE_FRAMES`, shared evenly so none is left with one or two.
 pub(crate) fn pages<T>(keyframes: &[T]) -> impl Iterator<Item = &[T]> {
     let sheets = keyframes.len().div_ceil(PAGE_FRAMES);
     let edge = move |page: usize| page.saturating_mul(keyframes.len()).div_ceil(sheets);
@@ -182,6 +189,9 @@ fn gaps(row: &Range<usize>) -> u32 {
     GUTTER.saturating_mul(u32::try_from(row.len().saturating_sub(1)).unwrap_or(u32::MAX))
 }
 
+/// Cells for justified rows `inner` pixels wide.
+///
+/// Heights round down, so a row's frames at its height never overflow its width.
 fn place(aspects: &[f32], rows: &[Range<usize>], row_aspects: &[f32], inner: u32) -> Layout {
     let mut cells = Vec::with_capacity(aspects.len());
     let mut top = PADDING;
@@ -221,6 +231,7 @@ fn sum(values: &[f32], range: &Range<usize>) -> f32 {
     values.get(range.clone()).unwrap_or_default().iter().sum()
 }
 
+/// At a shared width, stacked rows' heights add, so the reciprocals of their aspects do.
 fn stacked_aspect(row_aspects: &[f32]) -> f32 {
     row_aspects
         .iter()
@@ -267,6 +278,7 @@ impl<'a> Scorer<'a> {
         let total: f32 = aspects.iter().sum();
         let mean_aspect = total / aspects.len() as f32;
 
+        // Portrait frames, such as phones, read best on a squarer sheet.
         let target_sheet = if mean_aspect < 0.7 { 1.05 } else { 1.25 };
         Self {
             aspects,
@@ -311,6 +323,7 @@ impl<'a> Scorer<'a> {
         let sheet_aspect = stacked_aspect(&row_aspects);
         let sheet_penalty = (sheet_aspect / self.target_sheet).ln().powi(2) * 1.8;
 
+        // A frame's displayed area is proportional to its aspect over its row's aspect squared.
         let areas: Vec<f32> = rows
             .iter()
             .zip(&row_aspects)

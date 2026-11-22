@@ -15,12 +15,15 @@ const MENU_BAR_POINTS: f64 = 22.0;
 pub struct StatusItem {
     item: Retained<NSStatusItem>,
     button: Retained<NSStatusBarButton>,
+    /// Dropping the muda menu cancels `AppKit`'s tracking of it, so it lives as long as the item.
     _menu: muda::Menu,
 }
 
 impl StatusItem {
     pub fn new(menu: muda::Menu) -> anyhow::Result<Self> {
         let main = MainThreadMarker::new().context("The menu bar item opens on the main thread")?;
+        // SAFETY: `ns_menu` points at the `NSMenu` that `menu` retains; this adds our own
+        // reference.
         let native = unsafe { Retained::retain(menu.ns_menu().cast::<NSMenu>()) }
             .context("The menu bar item's menu has no AppKit menu")?;
         let bar = NSStatusBar::systemStatusBar();

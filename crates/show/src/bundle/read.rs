@@ -30,6 +30,7 @@ impl fmt::Display for Unreadable {
 
 impl std::error::Error for Unreadable {}
 
+/// Unknown fields are ignored, so additive format changes stay readable.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Decoded {

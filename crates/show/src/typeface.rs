@@ -19,6 +19,7 @@ impl Typeface {
         size / f32::from(self.face.units_per_em())
     }
 
+    /// Glyphs with their advances, without kerning, which the short labels drawn here skip.
     fn glyphs(&self, text: &str) -> impl Iterator<Item = (GlyphId, f32)> {
         text.chars().filter_map(|character| {
             let glyph = self.face.glyph_index(character)?;

@@ -6,6 +6,7 @@ use crate::{Moment, Rect, Span, marks::Mark};
 const SAME_SCREEN: f32 = 0.05;
 const INK_CONTEXT: f32 = 0.08;
 
+/// A mark group closes past this span or `GROUP_STROKES`, keeping one frame legible.
 const GROUP_SPAN: Duration = Duration::from_secs(20);
 const GROUP_STROKES: usize = 12;
 

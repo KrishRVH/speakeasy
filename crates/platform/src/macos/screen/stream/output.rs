@@ -50,6 +50,7 @@ define_class!(
     unsafe impl SCStreamDelegate for Output {
         #[unsafe(method(stream:didStopWithError:))]
         fn stopped(&self, _: &SCStream, error: &NSError) {
+            // Closing this lane is the did-stop confirmation `Stream` waits for.
             self.ivars().stopped.close();
             let failure = panic::catch_unwind(AssertUnwindSafe(|| {
                 if refused(error) {
@@ -84,6 +85,8 @@ impl Output {
 
     fn read(&self, sample: &CMSampleBuffer, kind: SCStreamOutputType) -> Result<(), Failure> {
         let state = self.ivars();
+        // A closed frame lane means `Stream` is gone, perhaps leaving this output retained
+        // beside a stream that never confirmed stopping; discard the sample.
         if kind != SCStreamOutputType::Screen || state.frames.is_closed() {
             return Ok(());
         }
@@ -92,6 +95,8 @@ impl Output {
             return Ok(());
         }
 
+        // SAFETY: sample attachments are an array of string-keyed dictionaries, which the
+        // retained array owns while status and display time are read.
         let attachments = unsafe {
             let array = sample
                 .sample_attachments_array(false)
@@ -136,6 +141,7 @@ impl Output {
 }
 
 fn number(info: &CFDictionary<CFString, CFType>, key: &NSString) -> Option<i64> {
+    // SAFETY: `NSString` and `CFString` are toll-free bridged; the cast creates no ownership.
     let key = unsafe { &*std::ptr::from_ref(key).cast::<CFString>() };
     info.get(key)?.downcast::<CFNumber>().ok()?.as_i64()
 }
@@ -155,6 +161,7 @@ impl Clock {
     }
 
     fn at(&self, ticks: u64, now: Instant) -> Option<Instant> {
+        // Display times are mach absolute time, the host clock's system units.
         let native = unsafe { CMClock::make_host_time_from_system_units(ticks) };
         let elapsed = host_time(native)?.checked_sub(self.origin)?;
         let at = self.instant.checked_add(elapsed)?;

@@ -23,8 +23,10 @@ use super::{convert::Converter, file, foundation::Foundation};
 use crate::movie::encode::{self, Clock};
 
 const TICKS_PER_SECOND: u64 = 10_000_000;
+/// With throttling disabled the writer queues without bound, so `write` refuses past this.
 const QUEUED_BYTES: u32 = 64 << 20;
 
+/// Field order is teardown order: writer, sink shutdown, stream close, then `Foundation`.
 pub(crate) struct Codec {
     writer: IMFSinkWriter,
     converter: Converter,
@@ -72,6 +74,8 @@ impl encode::Codec for Codec {
             MFCreateAttributes(&raw mut attributes, 3)?;
             let attributes = attributes.context("Video writer attributes are unavailable")?;
 
+            // Hardware transforms stay off: their discovery delays the first frame, and a GPU
+            // encoder needs D3D surface input, not these CPU-backed NV12 frames.
             attributes.SetUINT32(&MF_LOW_LATENCY, 1)?;
             attributes.SetUINT32(&MF_READWRITE_DISABLE_CONVERTERS, 1)?;
             attributes.SetUINT32(&MF_SINK_WRITER_DISABLE_THROTTLING, 1)?;

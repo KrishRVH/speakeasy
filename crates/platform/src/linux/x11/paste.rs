@@ -29,6 +29,10 @@ const SECOND_LAYOUT: Inserted = Inserted::Copied(
     "Text copied. Automatic paste needs your first keyboard layout; paste manually with the current layout.",
 );
 
+/// Serializes X11 insertion on one connection; setup failure or a panic ends the thread.
+///
+/// Serving on would reuse a connection in an unknown state, so the thread reports why and
+/// abandons each queued request, which answers its caller.
 pub(super) struct InsertionWorker {
     _thread: OwnedThread,
     input: InputSender,
@@ -55,6 +59,8 @@ impl InsertionWorker {
         let thread = OwnedThread::spawn("x11-insertion", {
             let (input, requests) = (input.clone(), requests.clone());
             move || {
+                // `opened` drops only after a failed setup is reported, so that report precedes
+                // the generic failure `ready` returns.
                 let served = match panic::catch_unwind(AssertUnwindSafe(open)) {
                     Ok(Ok(state)) => {
                         opened.send(());
@@ -68,6 +74,7 @@ impl InsertionWorker {
                     Ok(Err(error)) => input.fail(format!(
                         "X11 input is unavailable: {error}. Check your desktop connection, then resume dictation."
                     )),
+                    // Never the panic payload, which could quote the text.
                     Err(_) => input.fail(
                         "X11 input stopped unexpectedly. Resume dictation to reconnect.".into(),
                     ),
@@ -136,6 +143,8 @@ impl Paster {
         if !request.permit.active() {
             return Ok(Inserted::Cancelled);
         }
+        // `set_text` reads back through arboard, ordering its unawaited selection claim before
+        // XTEST on `connection`. Checking the permit before `?` lets Escape outrank a failed copy.
         let copied = self.clipboard.set_text(&request.text, &request.permit);
         if !request.permit.active() || !copied? {
             return Ok(Inserted::Cancelled);
@@ -158,6 +167,7 @@ impl Paster {
         if !uses_first_layout(&self.clipboard.connection).unwrap_or(false) {
             return Ok(settle_copy(&request.permit, SECOND_LAYOUT));
         }
+        // Read after those round trips: modifiers pressed meanwhile would join the synthetic chord.
         let released = !modifiers_held(&self.clipboard, &self.keyboard)?;
         if let Some(outcome) =
             Delivery::Paste.preflight(external && !request.own_focus.held(), released)
@@ -185,6 +195,7 @@ fn settle_copy(permit: &InsertPermit, outcome: Inserted) -> Inserted {
     }
 }
 
+/// Whether the first layout group is active, the only one `unshifted_keycode` reads.
 fn uses_first_layout(connection: &XCBConnection) -> anyhow::Result<bool> {
     ensure!(
         connection.xkb_use_extension(1, 0)?.reply()?.supported,
@@ -201,6 +212,10 @@ fn modifiers_held(clipboard: &Clipboard, keyboard: &Keyboard) -> anyhow::Result<
     Ok(keyboard.held_modifiers(&keys) & !keyboard.lock_modifiers() != 0)
 }
 
+/// Queues the whole chord, releases even after a failed press, then synchronizes once.
+///
+/// A round trip per event would hold synthetic modifiers down. Once committed, the chord
+/// completes even if a cancel arrives.
 fn submit_paste(connection: &XCBConnection, chord: PasteChord<u8>) -> anyhow::Result<()> {
     let press = |kind, code| connection.xtest_fake_input(kind, code, 0, 0, 0, 0, 0);
     let mut cookies = Vec::with_capacity(6);

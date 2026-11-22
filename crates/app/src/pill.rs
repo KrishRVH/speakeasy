@@ -1,5 +1,7 @@
 mod grille;
 
+// Clippy's `allow-*-in-tests` settings recognize only a bare `cfg(test)`, so the platform gate is
+// a separate attribute.
 #[cfg(test)]
 #[cfg(target_os = "linux")]
 mod native_tests;
@@ -64,6 +66,9 @@ const _: () = assert!(
 );
 
 const WINDOW_SIZE: Size<Pixels> = size(px(PILL_WIDTH as f32), px(PILL_HEIGHT as f32));
+/// How far above the display's bottom edge Linux keeps the pill, clear of a bottom panel.
+///
+/// GPUI reports no Linux work area; Windows and macOS move the pill onto theirs on every show.
 const BOTTOM_CLEARANCE: Pixels = px(50.0);
 
 const LID_OPEN: f32 = 0.0;
@@ -216,6 +221,7 @@ impl Pill {
         }
         self.snapshot = snapshot;
         if state_changed {
+            // A hidden native window never renders, so it cannot wait for `render` to show it.
             if !self.visible && self.scene(now).is_shown() {
                 self.set_visible(true, cx);
             }
@@ -232,6 +238,8 @@ impl Pill {
         let [.., newest] = &mut self.history;
         *newest = level;
 
+        // Exact comparison: any tolerance would hide quiet speech. An animating pill paints new
+        // levels on its pending frame.
         if previous.map(f32::to_bits) != self.history.map(f32::to_bits) && !self.animating {
             cx.notify();
         }
@@ -284,6 +292,9 @@ impl Pill {
         moving
     }
 
+    /// Settles every spring now, since a hidden native window receives no frames.
+    ///
+    /// The next entrance then starts at rest, not from wherever the fade-out left it moving.
     fn rest_while_hidden(&mut self) {
         for (spring, _) in self.capsule.springs_mut() {
             spring.snap();
@@ -303,6 +314,9 @@ impl Pill {
         self.visibility = Some(defer_presence(self.window, presence, cx));
     }
 
+    /// Redraws on the first native frame at or after `frame_due`.
+    ///
+    /// This stays in display sync without a repeating timer or redraws between deadlines.
     fn request_deadline_frame(&mut self, window: &Window, cx: &Context<'_, Self>) {
         if self.frame_pending {
             return;
@@ -591,6 +605,7 @@ impl Content {
 struct Clock {
     seconds: u64,
     near_limit: bool,
+    /// Counted from the recording's start, so a late wake cannot delay or skip a second.
     next_tick: Duration,
 }
 
@@ -644,6 +659,8 @@ pub(crate) fn open(
         },
         |window, cx| {
             window.set_window_title("Speakeasy pill");
+            // The pill lives as long as the app; refuse outside close requests, such as a tool
+            // closing the process's main window.
             window.on_window_should_close(cx, |_, _| false);
             configured = configure(window);
             cx.new(|cx| {
@@ -731,6 +748,7 @@ fn feedback_remaining(phase: Phase, labeled: bool, since_phase: Duration) -> Opt
         .filter(|left| !left.is_zero())
 }
 
+/// Backdates a reopened pill's phase so feedback from before the reopen does not replay.
 fn inherited_phase_at(now: Instant) -> Instant {
     now.checked_sub(LONGEST_FEEDBACK).unwrap_or(now)
 }

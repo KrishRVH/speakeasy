@@ -97,6 +97,10 @@ impl Owners {
     }
 }
 
+/// Asks both owners to stop before their fields drop and join one at a time.
+///
+/// Each field's own `Drop` stops only itself before joining, so asking both first lets their
+/// teardowns overlap.
 impl Drop for Owners {
     fn drop(&mut self) {
         self.request_stop();
@@ -118,6 +122,9 @@ pub(crate) struct Services {
     #[cfg(target_os = "windows")]
     pub(super) installation: Option<Installation>,
     pub(super) path: PathBuf,
+    /// Whether `path` is the file a launch without `--config` opens.
+    ///
+    /// Only that file registers Start at login on Windows.
     pub(super) default_settings: bool,
     pub config: Config,
     pub(super) speech_checked: bool,
@@ -203,6 +210,7 @@ impl Services {
         }
     }
 
+    /// Drops every other service and hands back the instance lock for the caller to release last.
     pub(crate) fn into_instance(self) -> Option<Instance> {
         self.instance
     }
@@ -374,6 +382,8 @@ impl Services {
         self.show_copies.cancel();
 
         self.reset_choice_for(&config);
+        // A dead runtime or changed desktop options need fresh owners: pausing makes the queue
+        // below restart with `config` once the current owners retire.
         if self.lifecycle.active().is_some_and(|owners| {
             !owners.runtime.is_running()
                 || (owners.launched.change_to(&config) == Change::Desktop
@@ -455,6 +465,7 @@ impl Services {
             self.speech_checked = true;
             Ok(())
         };
+        // Registers on every save, not only on change, so saving again retries a refused write.
         #[cfg(target_os = "windows")]
         if self.default_settings {
             let registered = speakeasy_platform::start_at_login(start_at_login);
@@ -722,6 +733,7 @@ impl Services {
         self.requests = None;
         self.visibility = None;
 
+        // A copy or opening of the last Show still under way would report over Quitting.
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         {
             self.last_show = None;
@@ -782,6 +794,7 @@ fn announce(output: &watch::Sender<Snapshot>, message: &str) {
     output.send_modify(|snapshot| *snapshot = announcement(snapshot, message));
 }
 
+/// Replaces the status, keeping `last_show`; the model reads as loading, not unavailable.
 fn announcement(previous: &Snapshot, message: &str) -> Snapshot {
     Snapshot {
         last_show: previous.last_show.clone(),
@@ -799,6 +812,9 @@ fn recallable(snapshot: &Snapshot, service: ServiceState, mode: LaunchMode) -> O
         .filter(|_| clipboard_free(snapshot, service, mode))
 }
 
+/// Whether the last Show may be copied or opened: no active session, no Quit, and no demo.
+///
+/// A copy could race a session to the clipboard, and a session hides either action's report.
 fn clipboard_free(snapshot: &Snapshot, service: ServiceState, mode: LaunchMode) -> bool {
     !snapshot.phase.is_active() && service != ServiceState::Quitting && !mode.is_demo()
 }
@@ -813,6 +829,8 @@ fn handle_request(request: Request, cx: &mut App) {
         Request::Cancel => Input::Cancel,
     };
 
+    // Only Linux desktop bindings drive dictation through a relaunch; elsewhere the native
+    // shortcut owns the gesture.
     if cfg!(target_os = "linux") && cx.global::<Services>().config.linux.external_shortcut {
         send(input, cx);
     }

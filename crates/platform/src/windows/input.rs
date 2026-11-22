@@ -49,8 +49,10 @@ use crate::{
     insertion, keyboard,
 };
 
+/// Posted by the hook so the message loop, not the time-limited hook callback, masks Start.
 const MASK_START: u32 = WM_APP + 1;
 
+/// A virtual key Windows leaves unassigned.
 const UNASSIGNED_KEY: VIRTUAL_KEY = 0xE8;
 
 thread_local! {
@@ -62,6 +64,7 @@ thread_local! {
 }
 
 pub(crate) struct Monitor {
+    /// Shared with the hook thread, which waits on it, so the event lives until both finish.
     stop: Arc<StopEvent>,
     insertion: insertion::Worker,
 }
@@ -103,6 +106,7 @@ pub(crate) fn start(
     Ok((thread, Monitor { stop, insertion }, inserter))
 }
 
+/// A manual-reset event, so a stop set before the hook thread first waits still ends it.
 struct StopEvent(OwnedHandle);
 
 impl StopEvent {
@@ -128,6 +132,7 @@ struct HookState {
 
 impl HookState {
     fn observe(&mut self, key: u32, down: bool) -> bool {
+        // Async key state does not reflect this event until the hook returns.
         let physical = keyboard::Physical::read(self.shortcut, is_key_down);
         let decision = self.policy.observe(key, down, physical, Instant::now());
         decision.deliver(&self.input);
@@ -170,6 +175,10 @@ impl Drop for KeyboardHook {
     }
 }
 
+/// A hidden window for session, end-session, and power notifications.
+///
+/// Message-only windows miss the `WM_QUERYENDSESSION` and `WM_POWERBROADCAST` broadcasts. The
+/// shell sometimes shows hidden top-level windows, so this is a zero-size tool popup.
 struct LifecycleWindow(HWND);
 
 impl LifecycleWindow {
@@ -222,6 +231,10 @@ impl Drop for LifecycleWindow {
     }
 }
 
+/// Session-change notifications for the lifecycle window, retried while refused.
+///
+/// Registration can fail early in a session, before Terminal Services is ready, which is when a
+/// login item starts. Power and end-session messages arrive without it.
 struct SessionNotifications<'window> {
     window: &'window LifecycleWindow,
     registration: Registration,
@@ -294,6 +307,7 @@ impl Registration {
         match self {
             Self::Pending { at, .. } => {
                 let remaining = at.saturating_duration_since(now);
+                // Round up so a sub-millisecond wait cannot become a zero timeout that spins.
                 u32::try_from(remaining.as_nanos().div_ceil(1_000_000)).unwrap_or(INFINITE)
             },
             Self::Registered | Self::Abandoned => INFINITE,
@@ -323,6 +337,7 @@ fn monitor(
             "Cannot watch the dictation shortcut ({error}). Resume dictation to try again."
         )));
     }
+    // `run_event_loop` has removed the hook, notifications, and window, so no callback remains.
     HOOK.set(None);
     input.close();
 }
@@ -336,6 +351,8 @@ fn run_event_loop(
         return Ok(());
     }
 
+    // Windows silently removes a low-level hook that misses LowLevelHooksTimeout, as a starved
+    // thread can; this thread only decides key events and waits, so it may preempt other work.
     unsafe {
         SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
     }
@@ -354,6 +371,7 @@ fn run_event_loop(
     pump_messages(stop, &mut notifications)
 }
 
+/// Makes Windows create this thread's queue before the hook posts `MASK_START` to it.
 fn create_message_queue() {
     let mut message = MSG::default();
 
@@ -408,6 +426,7 @@ fn dispatch_queued_messages(stop: &StopEvent) -> ControlFlow<()> {
 unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     let swallow = code >= 0
         && panic::catch_unwind(|| {
+            // SAFETY: a nonnegative code means lparam points to a KBDLLHOOKSTRUCT for this call.
             let event = unsafe { &*(lparam as *const KBDLLHOOKSTRUCT) };
             let down = matches!(u32::try_from(wparam), Ok(WM_KEYDOWN | WM_SYSKEYDOWN));
             event.dwExtraInfo != OWN_INPUT
@@ -449,6 +468,9 @@ unsafe extern "system" fn lifecycle_window(
     unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
 }
 
+/// Handles a panic caught in a native callback, which must not unwind into Windows.
+///
+/// Closing the input makes the owner cancel rather than go on with lost key edges.
 fn close_input() {
     HOOK.with(|slot| {
         if let Ok(Some(state)) = slot.try_borrow().as_deref() {
@@ -472,6 +494,7 @@ fn interrupts_recording(message: u32, wparam: WPARAM) -> bool {
     }
 }
 
+/// Marks Win as used: Win released with no other key opens Start.
 fn mask_start_menu() {
     #[expect(
         clippy::let_underscore_must_use,

@@ -132,6 +132,7 @@ fn finished(result: anyhow::Result<SavedConfig>, earlier: Option<SavedConfig>) -
     })
 }
 
+/// Dropping it waits for the in-flight write and abandons any queued draft.
 struct Running {
     _thread: OwnedThread,
     draft: Config,

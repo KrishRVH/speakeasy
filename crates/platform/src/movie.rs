@@ -23,6 +23,10 @@ pub struct MovieFrame {
     pub image: crate::BgraImage,
 }
 
+/// Decodes the frame for `at`; `prefix` must come from reading this same open `file`.
+///
+/// Runs native decoding on the calling thread, so call it off the UI thread. `Ok(None)` means
+/// `cancelled` fired.
 pub fn read_movie_frame(
     file: File,
     prefix: &MoviePrefix,
@@ -65,11 +69,16 @@ pub(crate) fn is_canvas(size: [u32; 2]) -> bool {
 
 #[derive(Debug)]
 pub enum MovieEvent {
+    /// Sent before the movie file exists; refusing or dropping `accepted` prevents creating it.
     Started {
         at: Instant,
         size: [u32; 2],
         accepted: oneshot::Sender<bool>,
     },
+    /// Sent before the first sample that uses `content`; answer only once it is saved.
+    ///
+    /// `sample` counts output samples, including held repeats. `false` reports a storage
+    /// failure; a stop while unanswered ends the movie without one.
     Geometry {
         sample: u32,
         content: [u32; 4],
@@ -77,19 +86,31 @@ pub enum MovieEvent {
         accepted: oneshot::Sender<bool>,
     },
     Finished {
+        /// Capture time of the newest submitted image; held repeats do not advance it.
         last: Instant,
+        /// Where coverage ends, never past the deadline or the movie's limit.
+        ///
+        /// The stop time, or the last image's time without a stop, raised to the last written tick.
         through: Instant,
         frames: u32,
+        /// False after a write failure or a failed finalize; earlier fragments can still play.
         finalized: bool,
     },
 }
 
+/// The checkpoint's half of the movie lease.
+///
+/// Dropping it only requests a stop. Wait for `next` to return `None` before unlocking or
+/// deleting the checkpoint.
 #[derive(Debug)]
 pub struct MovieControl {
     cancel: Sender<Infallible>,
     events: Receiver<MovieEvent>,
 }
 
+/// The native writer's half of the movie lease; dropping it acknowledges teardown.
+///
+/// Drop it only after every native object, callback, and file handle of the movie is released.
 pub struct MovieTarget {
     path: PathBuf,
     cancelled: Receiver<Infallible>,
@@ -112,6 +133,9 @@ impl fmt::Debug for MovieTarget {
 }
 
 impl MovieControl {
+    /// `deadline` is the session's hard end even when the movie starts later.
+    ///
+    /// `limit` bounds the movie's own timeline, measured from its first frame.
     #[must_use]
     pub fn new(path: PathBuf, deadline: Instant, limit: Duration) -> (Self, MovieTarget) {
         let (cancel, cancelled) = async_channel::bounded(1);
@@ -132,10 +156,15 @@ impl MovieControl {
         self.cancel.close();
     }
 
+    /// `None` only after the native writer drops its `MovieTarget`, releasing the file.
     pub async fn next(&self) -> Option<MovieEvent> {
         self.events.recv().await.ok()
     }
 
+    /// Stops and blocks until the native writer drops its `MovieTarget`.
+    ///
+    /// Drained events drop their unanswered `accepted` senders, so a waiting writer stops
+    /// instead of hanging. Never call it on the UI thread or on the thread holding the target.
     pub fn close_blocking(&self) {
         self.request_stop();
         while self.events.recv_blocking().is_ok() {}

@@ -41,6 +41,9 @@ const COLOR_FORMAT: [(GUID, u32); 3] = [
     ),
 ];
 
+/// Decodes the frame on screen at `at` from a movie Speakeasy wrote and validated.
+///
+/// It trusts that movie's frame size and timestamps; `pixels::read` still bounds every row.
 pub(crate) fn frame(
     file: File,
     bytes: u64,
@@ -72,6 +75,7 @@ fn decode(
     }
     let ticks = i64::try_from(at.as_nanos() / 100)?;
 
+    // A null GUID means `ticks` counts 100 ns units.
     unsafe { reader.SetCurrentPosition(&GUID::zeroed(), &PROPVARIANT::from(ticks))? };
     let Some(decoded) = select(&reader, size, ticks, cancelled)? else {
         return Ok(None);
@@ -95,6 +99,7 @@ fn reader(stream: &file::Stream) -> anyhow::Result<IMFSourceReader> {
         let mut attributes = None;
         MFCreateAttributes(&raw mut attributes, 1)?;
         let attributes = attributes.context("Video reader attributes are unavailable")?;
+        // Inserts the video processor that converts to RGB32; `preserve_timestamps` adjusts it.
         attributes.SetUINT32(&MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING, 1)?;
         let reader = MFCreateSourceReaderFromByteStream(&stream.native, &attributes)?;
         reader.SetStreamSelection(MF_SOURCE_READER_ALL_STREAMS.0.cast_unsigned(), false)?;
@@ -111,6 +116,7 @@ fn reader(stream: &file::Stream) -> anyhow::Result<IMFSourceReader> {
     }
 }
 
+/// Disables the video processor's frame-rate conversion so samples keep their own times.
 fn preserve_timestamps(reader: &IMFSourceReader) -> anyhow::Result<()> {
     let extended: IMFSourceReaderEx = reader.cast()?;
     for index in 0..8 {

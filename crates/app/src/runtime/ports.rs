@@ -44,6 +44,9 @@ pub(crate) struct Lost {
 pub(crate) struct LiveAudio {
     pub rate: u32,
     pub frames: mpsc::Receiver<Vec<u8>>,
+    /// The audio after the last queued frame, sent only if capture ends with the feed intact.
+    ///
+    /// A separate lane, so a full `frames` lane cannot lose it.
     pub tail: oneshot::Receiver<Vec<u8>>,
 }
 
@@ -122,12 +125,14 @@ pub(crate) enum Published {
 pub(crate) trait Capturing: Send + 'static {
     fn finish(&self);
 
+    /// Cancels capture; resolves only once the device has been released.
     fn retire(self) -> impl Future<Output = ()> + Send + 'static;
 }
 
 pub(crate) trait Listening: Capturing {
     fn whole(&self);
 
+    /// A cue is about to sound; until it passes, only a voice beneath it counts as speech.
     fn expect_cue(&self);
 
     fn keep(&self, log: AudioLog, start: Duration, language: &str) -> bool;
@@ -138,6 +143,9 @@ pub(crate) trait Pinning: Capturing {
 }
 
 pub(crate) trait Speech: Send + 'static {
+    /// `Ok(None)` abandons the stream but keeps the worker for whole-recording recognition.
+    ///
+    /// An `Err` stops the worker.
     fn transcribe_stream(
         &mut self,
         audio: LiveAudio,
@@ -145,6 +153,7 @@ pub(crate) trait Speech: Send + 'static {
         terms: &Terms,
     ) -> impl Future<Output = anyhow::Result<Option<String>>> + Send;
 
+    /// Returns raw engine text; dictation cleanup runs later, over the whole session.
     fn transcribe(
         &mut self,
         wav: Vec<u8>,
@@ -152,6 +161,7 @@ pub(crate) trait Speech: Send + 'static {
         terms: &Terms,
     ) -> impl Future<Output = anyhow::Result<String>> + Send;
 
+    /// Returns words timed from the start of `wav`, or untimed text; times are never guessed.
     fn transcribe_words(
         &mut self,
         wav: Vec<u8>,
@@ -159,8 +169,13 @@ pub(crate) trait Speech: Send + 'static {
         terms: &Terms,
     ) -> impl Future<Output = anyhow::Result<Narration>> + Send;
 
+    /// Transcribes silence and discards the text.
+    ///
+    /// Engines serialize requests, so an answer proves an abandoned job has drained and the model
+    /// still responds, which a health check cannot.
     fn probe_with_silence(&mut self) -> impl Future<Output = anyhow::Result<()>> + Send;
 
+    /// Terminates the engine; resolves only once its process has been reaped.
     fn stop(&mut self) -> impl Future<Output = ()> + Send;
 }
 
@@ -204,6 +219,9 @@ pub(crate) trait Ports: Send + 'static {
         interrupted: Interrupted,
     ) -> impl Future<Output = anyhow::Result<Reopened>> + Send + 'static;
 
+    /// Starts a speech worker; nothing may start until the future is first polled.
+    ///
+    /// The worker builds a replacement's future before its predecessor has stopped.
     fn load(
         &self,
         config: Config,
@@ -218,7 +236,9 @@ pub(crate) trait Ports: Send + 'static {
         enter: Enter,
     ) -> impl Future<Output = anyhow::Result<Inserted>> + Send + 'static;
 
+    /// Plays `cue` soon enough to match the pill, or skips it.
     fn cue(&self, cue: Cue);
 
+    /// Keeps the cue output open while `held`, so no cue waits for a device to open.
     fn hold_cues(&self, held: bool);
 }

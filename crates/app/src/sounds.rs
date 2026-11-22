@@ -15,12 +15,21 @@ use speakeasy_platform::OwnedThread;
 
 use crate::lowpass::Lowpass;
 
+/// How long after a cue is asked for the microphone may still hear it.
+///
+/// The speech gate listens beneath each cue for this long.
 pub(crate) const HEARD_FOR: Duration = LATE.saturating_add(HEARD_CUE).saturating_add(ECHO);
+/// Skips a cue heard later than this after its ask, so every cue still matches the pill.
 const LATE: Duration = Duration::from_millis(300);
 const HEARD_CUE: Duration = Duration::from_millis(200);
+/// Room echo after a cue ends, which also covers the microphone's delivery delay.
 const ECHO: Duration = Duration::from_millis(100);
+/// How long the output stays open after the last ask once nothing holds it.
+///
+/// Closing it then leaves an idle app holding no audio stream.
 const LINGER: Duration = Duration::from_secs(10);
 const RATE: u64 = 48_000;
+/// Cues that can sound at once; another replaces the one that has played longest.
 const VOICES: usize = 4;
 
 pub(crate) fn pcm(cue: Cue) -> &'static [u8] {
@@ -64,6 +73,7 @@ const fn is_canonical(wav: &[u8]) -> bool {
     let Some((header, samples)) = wav.split_first_chunk::<WAV_HEADER>() else {
         return false;
     };
+    // A 16-byte format chunk: PCM, mono, 48,000 Hz, 96,000 bytes a second, 2-byte 16-bit frames.
     #[rustfmt::skip]
     let [
         b'R', b'I', b'F', b'F', r0, r1, r2, r3, b'W', b'A', b'V', b'E',
@@ -88,6 +98,7 @@ enum Ask {
 }
 
 pub(crate) struct Sounds {
+    /// Declared before `_player`: dropping it ends the player loop that `_player` then joins.
     asks: Sender<Ask>,
     _player: OwnedThread,
 }
@@ -167,6 +178,7 @@ fn usable<S: Sink>(sink: Option<S>, open: impl FnOnce() -> Option<S>) -> Option<
     sink.filter(|sink| !sink.is_broken()).or_else(open)
 }
 
+/// Fields drop in order, so the stream stops before its device and host.
 struct Output {
     asks: Producer<(Cue, Instant)>,
     failures: Receiver<cpal::Error>,
@@ -249,6 +261,7 @@ fn heard(now: Instant, stamp: cpal::OutputStreamTimestamp) -> Instant {
         .unwrap_or(now)
 }
 
+/// Glitches, reroutes to the new default device, and refused real-time priority keep playing.
 const fn breaks(kind: cpal::ErrorKind) -> bool {
     !matches!(
         kind,
@@ -287,6 +300,10 @@ impl Bank {
     }
 }
 
+/// Linearly interpolates the 48,000 Hz cue to `rate`.
+///
+/// Below 48,000 Hz it first applies an eighth-order lowpass at 45% of `rate`, so aliasing stays
+/// faint.
 fn resample(pcm: &[u8], rate: NonZeroU32) -> Box<[f32]> {
     let mut band = Lowpass::new(0.45 * f64::from(rate.get()), RATE as f64)
         .filter(|_| u64::from(rate.get()) < RATE);
@@ -324,6 +341,7 @@ fn resample(pcm: &[u8], rate: NonZeroU32) -> Box<[f32]> {
         .collect()
 }
 
+/// Runs inside the output callback, so `fill` must not allocate, lock, or block.
 struct Mixer {
     bank: Bank,
     channels: NonZeroUsize,

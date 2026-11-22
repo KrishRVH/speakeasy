@@ -72,10 +72,12 @@ pub(super) fn capture(
         Ok(Started::Cancelled) => Ok(()),
         Err(failure) => Err(failure),
     };
+    // Report first: `stop` and `drop` below can each block for up to `PATIENCE`.
     if let Err(failure) = outcome {
         report(events, failure);
     }
     let ended = Instant::now();
+    // `drop` retries an unconfirmed stop and can block again, so report and end the movie first.
     if let Err(failure) = stream.stop() {
         if outcome.is_ok() {
             report(events, failure);
@@ -166,12 +168,17 @@ impl Geometry {
     }
 }
 
+/// A native stream with the output and serial queue it calls into.
+///
+/// `output` and `queue` live until stop is confirmed and the queue drained; when `Drop` cannot
+/// confirm stop, all three stay retained for the life of the process.
 struct Stream {
     native: Retained<SCStream>,
     output: Retained<output::Output>,
     queue: DispatchRetained<DispatchQueue>,
     frames: Receiver<Frame>,
     failures: Receiver<Failure>,
+    /// Closes once stop is confirmed, by a successful stop completion or the did-stop delegate.
     stopped: Receiver<Infallible>,
     confirm: Sender<Infallible>,
     running: bool,
@@ -196,6 +203,7 @@ impl Stream {
         let (failures, failed) = async_channel::bounded(1);
         let (confirm, stopped) = async_channel::bounded(1);
         let output = output::Output::new(part, frames, failures, confirm.clone())?;
+        // Must stay serial: `Drop` drains it with one empty `exec_sync`.
         let queue = DispatchQueue::new("speakeasy.screen", None);
 
         let native = unsafe {
@@ -238,6 +246,8 @@ impl Stream {
         }
         drop(completion);
         let started = runtime.block_on(starting(&reply, &self.stopped, stopping));
+        // A start the owner cancelled may still be starting natively, so it counts as running
+        // and `stop` must confirm it before the output and queue go.
         self.running = started.is_ok();
         started
     }
@@ -284,6 +294,7 @@ impl Drop for Stream {
                 SCStreamOutputType::Screen,
             )
         };
+        // Wait out callbacks already queued, so none still uses `output` once it drops.
         self.queue.exec_sync(|| {});
     }
 }
@@ -340,6 +351,10 @@ async fn starting(
     }
 }
 
+/// Waits up to `patience` for confirmation that the stream stopped.
+///
+/// A successful completion, the already-stopped error, or the did-stop signal confirms it; a
+/// signal that lands as the wait times out still counts.
 async fn acknowledged(
     reply: &Receiver<Result<(), Failure>>,
     stopped: &Receiver<Infallible>,
@@ -360,6 +375,7 @@ fn completion_result(error: Option<&NSError>, operation: Operation) -> Result<()
     };
 
     let domain = unsafe { SCStreamErrorDomain };
+    // Stopping a stream that already stopped reports this error, which still confirms cessation.
     if operation == Operation::Stop
         && *error.domain() == *domain
         && error.code() == SCStreamErrorCode::AttemptToStopStreamState.0

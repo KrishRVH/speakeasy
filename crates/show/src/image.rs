@@ -32,6 +32,7 @@ impl Image {
         Self::from_premultiplied(width, height, rgba)
     }
 
+    /// Takes captured BGRA or BGRX rows; screens are opaque, so the fourth byte becomes 255.
     pub fn from_bgra(width: u32, height: u32, mut bgra: Vec<u8>) -> Result<Self, Error> {
         let (pixels, _) = bgra.as_chunks_mut::<4>();
         for [blue, _, red, alpha] in pixels {
@@ -126,6 +127,7 @@ impl Image {
         let mut encoder = png::Encoder::new(&mut png, self.width(), self.height());
         encoder.set_color(png::ColorType::Rgba);
         encoder.set_depth(png::BitDepth::Eight);
+        // Fast compression favors latency; screen content still compresses well.
         encoder.set_compression(png::Compression::Fast);
         let mut writer = encoder.write_header().map_err(Error::png)?;
         writer.write_image_data(&rgba).map_err(Error::png)?;
@@ -172,6 +174,7 @@ impl Image {
             .collect()
     }
 
+    /// Area-averaging resample, so large reductions keep text legible instead of aliasing.
     pub(crate) fn resized(&self, width: u32, height: u32) -> Result<Self, Error> {
         let (columns, rows) = (
             footprints(self.width(), width),
@@ -179,6 +182,7 @@ impl Image {
         );
         let wide = convert::count(width);
 
+        // The horizontal pass keeps f32 precision so the vertical pass rounds only once.
         let mut horizontal = Vec::with_capacity(wide.saturating_mul(convert::count(self.height())));
         for row in self.rows() {
             let pixels = row.as_chunks::<4>().0;

@@ -29,12 +29,17 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const HEALTH_TIMEOUT: Duration = Duration::from_millis(200);
 const HEALTH_POLL: Duration = Duration::from_millis(25);
 
+/// Bounds each startup stage on its own: serving, then any warmup.
 pub(crate) const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// Generous on purpose: CPU inference of a five-minute recording can take minutes.
+///
+/// Escape and bounded recovery end real waits long before this.
 const INFERENCE_TIMEOUT: Duration = Duration::from_mins(30);
 const PARAKEET_RATES: RangeInclusive<u32> = 8_000..=96_000;
 const STOPPED: &str = "Transcription stopped. Check the selected model and engine, then try again.";
 
+/// How long a killed engine's exit status may take to become reapable.
 const EXIT_GRACE: Duration = Duration::from_millis(500);
 const SIGILL: i32 = 4;
 const USAGE_ERROR: i32 = 2;
@@ -45,6 +50,7 @@ const STATUS_INVALID_IMAGE_FORMAT: u32 = 0xC000_007B;
 
 pub(crate) struct LocalSpeech {
     protocol: Protocol,
+    /// Declared before `child`, so dropping kills the group before its leader can be reaped.
     group: ProcessGroup,
     child: Child,
     port: u16,
@@ -196,6 +202,10 @@ impl LocalSpeech {
         }
     }
 
+    /// Kills the engine's group, then reads its exit status for an exact remedy.
+    ///
+    /// On Unix the group can be signaled only while its leader is unreaped, so the kill comes
+    /// first. No cause is lost: a crash fixes its exit status before its connections close.
     async fn terminate_with_cause(&mut self) -> anyhow::Error {
         self.group.terminate();
         if let Ok(Ok(status)) = timeout(EXIT_GRACE, self.child.wait()).await
@@ -214,6 +224,8 @@ impl Speech for LocalSpeech {
         language: &str,
         terms: &Terms,
     ) -> anyhow::Result<Option<String>> {
+        // Continuous recognition is optional, so a stream failure yields `None`, not an error.
+        // The probe then confirms the engine is alive and has dropped the abandoned stream job.
         let text = streaming::transcribe(self, audio, language, terms)
             .await
             .unwrap_or(None);
@@ -267,6 +279,10 @@ enum Protocol {
     Nemotron,
 }
 
+/// Configurations that must transcribe silence before reporting ready.
+///
+/// Loading weights neither initializes every GPU kernel nor proves that a Linux build can run
+/// its CPU kernels.
 struct Warmup {
     timed_out: &'static str,
     failed: &'static str,
@@ -298,6 +314,7 @@ impl Warmup {
     }
 }
 
+/// Drops serde's error: it quotes unexpected strings, which can be transcript text.
 fn reply<T: DeserializeOwned>(body: &[u8]) -> anyhow::Result<T> {
     serde_json::from_slice(body)
         .ok()
@@ -340,6 +357,9 @@ struct TimedSegment {
     words: Vec<Token>,
 }
 
+/// A word or word piece, timed in seconds from the start of the audio.
+///
+/// A time the engine could not compute is absent or `null`, as JSON writers print `NaN`.
 #[derive(Deserialize)]
 struct Token {
     word: String,
@@ -353,6 +373,9 @@ struct Heard {
 }
 
 impl Timed {
+    /// Times every word, or falls back to untimed text when any time is missing or invalid.
+    ///
+    /// A guessed time would silently misplace a word.
     fn into_narration(self) -> Narration {
         let heard: Vec<Heard> = if self.words.is_empty() {
             self.segments
@@ -402,6 +425,9 @@ impl Token {
     }
 }
 
+/// Rejoins Whisper's word-piece tokens; a token that starts with a space starts a word.
+///
+/// Its `[_`-prefixed control tokens are not speech.
 fn joined(tokens: Vec<Token>) -> Vec<Heard> {
     let mut words: Vec<Heard> = Vec::new();
     let mut boundary = true;
@@ -451,6 +477,7 @@ fn server_command(config: &Config, port: u16) -> Command {
                     "1",
                     "--asr.batching.enabled=false",
                 ])
+                // An inherited key would make every request fail with 401 after `/ready` succeeds.
                 .env_remove("NEMO_SPEECH_HTTP_API_KEY");
         },
         Engine::Whisper => {
@@ -469,6 +496,8 @@ fn server_command(config: &Config, port: u16) -> Command {
             }
         },
     }
+    // ggml turns its Metal tensor kernels on by itself for some newer GPUs, where they return no
+    // speech or garbage text.
     #[cfg(target_os = "macos")]
     command.env("GGML_METAL_TENSOR_DISABLE", "1");
     #[cfg(unix)]

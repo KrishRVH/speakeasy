@@ -3,6 +3,12 @@ use super::{MovieError, require};
 const UNDECLARED: u8 = 0x01;
 const DECLARED: u8 = 0x11;
 
+/// Offset-preserving fix for the zero word Media Foundation appends to each `tfhd`.
+///
+/// Setting the default-sample-size flag declares that word, so the Mac reader can use the saved
+/// bytes directly. Only one flag byte per fragment changes; picture bytes, sample timing, and
+/// file offsets must stay intact. `fragment` records a header only when `tfhd` has no other
+/// optional field and every `trun` carries its own sample sizes, so the declared zero is unused.
 #[derive(Clone, Debug, Default)]
 pub struct MovieNormalization {
     pub(super) headers: Vec<u64>,

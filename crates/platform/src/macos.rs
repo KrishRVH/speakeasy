@@ -1,3 +1,8 @@
+//! macOS adapter: the shortcut event tap, lifecycle interrupts, windows, and insertion.
+//!
+//! The tap, run-loop observer, and notification callbacks catch panics. A panic closes the input
+//! lane, and a closed lane stops the tap's run loop.
+
 mod clipboard;
 pub(crate) mod movie;
 pub(crate) mod screen;
@@ -54,8 +59,10 @@ use super::{
     monitor::MonitorControl,
 };
 
+/// Tags events Speakeasy posts ("SPEA" in ASCII) so its own tap passes over them.
 const OWN_INPUT: i64 = 0x5350_4541;
 
+/// UTF-16 units per text event; Core Graphics truncates longer keyboard-event strings.
 const TEXT_EVENT_UNITS: usize = 16;
 
 pub(super) struct Monitor {
@@ -148,11 +155,16 @@ struct SharedPolicy {
 }
 
 impl SharedPolicy {
+    /// Ignores poison: the panic that poisoned the lock already closed the input lane.
     fn lock(&self) -> MutexGuard<'_, keyboard::Mac> {
         self.policy.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
+/// A block observer, registered until `Drop` removes its token.
+///
+/// The center holds the token and block until removal, so dropping the token alone would leave
+/// the block running.
 struct Observer {
     center: Retained<NSNotificationCenter>,
     token: Retained<ProtocolObject<dyn NSObjectProtocol>>,
@@ -180,6 +192,8 @@ impl Observer {
             }
         });
 
+        // SAFETY: the block is sendable: it touches only the locked policy, the input lane, and
+        // the stop request, never an AppKit object. With no queue it runs on the posting thread.
         let token = unsafe {
             center.addObserverForName_object_queue_usingBlock(Some(name), None, None, &callback)
         };
@@ -209,6 +223,7 @@ fn lifecycle_observers(
         )
     };
     let distributed = NSDistributedNotificationCenter::defaultCenter().into_super();
+    // Screen lock has no public notification name; the system posts this distributed one.
     let screen_locked = ns_string!("com.apple.screenIsLocked");
     [
         Observer::interrupt_on(workspace.clone(), will_sleep, input, policy, control),
@@ -232,6 +247,10 @@ fn monitor(input: &InputSender, control: &MonitorControl<CFRunLoop>, policy: &Sh
     input.close();
 }
 
+/// Runs the shortcut tap on this thread's run loop until it stops.
+///
+/// The tap, its source, and the entry observer live in this frame through the run, and the
+/// observer is removed before the stack `ready` it borrows goes away.
 fn run_event_loop(
     input: &InputSender,
     control: &MonitorControl<CFRunLoop>,
@@ -261,6 +280,7 @@ fn run_event_loop(
         copyDescription: None,
     };
 
+    // SAFETY: `ready` outlives the run, and the observer is removed before this frame ends.
     let raw = unsafe {
         CFRunLoopObserverCreate(
             kCFAllocatorDefault,
@@ -273,6 +293,7 @@ fn run_event_loop(
     };
     ensure!(!raw.is_null(), UNWATCHED);
 
+    // SAFETY: `raw` is a non-null Create-rule observer, adopted exactly once here.
     let observer = unsafe { CFRunLoopObserver::wrap_under_create_rule(raw) };
 
     let modes = unsafe { kCFRunLoopCommonModes };
@@ -286,6 +307,10 @@ fn run_event_loop(
     Ok(())
 }
 
+/// Stops the run loop when the input lane closes.
+///
+/// `wake` takes no lock: the lane can close while the policy or `MonitorControl` lock is held.
+/// A stop before the loop enters is lost; `on_run_loop_entry` rechecks the lane on entry.
 struct StopOnClose(CFRunLoop);
 
 impl Wake for StopOnClose {
@@ -325,6 +350,8 @@ impl TapPort {
             return false;
         };
 
+        // SAFETY: both bindings name the same `CFMachPort`, which `self` keeps alive for this
+        // borrow.
         let port = unsafe {
             &*port
                 .as_concrete_TypeRef()
@@ -365,6 +392,8 @@ fn shortcut_tap<'tap>(
         CGEventType::KeyUp,
         CGEventType::FlagsChanged,
     ];
+    // SAFETY: `run_event_loop` drops the tap before the state it borrows and adds its source
+    // only to this thread's run loop, so the callback runs here while that state lives.
     unsafe {
         CGEventTap::new_unchecked(
             CGEventTapLocation::Session,
@@ -381,11 +410,16 @@ fn shortcut_tap<'tap>(
     })
 }
 
+/// Publishes the run loop to `MonitorControl` once it has entered.
+///
+/// `CFRunLoopStop` before entry does not stop a later run, so a stop requested earlier, or a
+/// lane closed earlier, ends the run from here.
 extern "C" fn on_run_loop_entry(
     _: CFRunLoopObserverRef,
     _: CFRunLoopActivity,
     context: *mut c_void,
 ) {
+    // SAFETY: `context` is `run_event_loop`'s `ready`, which outlives this observer.
     let ready = unsafe { &*context.cast::<RunLoopReady<'_>>() };
     if panic::catch_unwind(AssertUnwindSafe(|| ready.publish())).is_err() {
         ready.input.close();
@@ -421,6 +455,7 @@ fn observe(
     }
     let code = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
 
+    // Both Core Graphics bindings use the same `CGEventFlags` bits; see `modifiers_for`.
     let held = shortcut.modifiers(event.get_flags().bits());
     let key_event = match kind {
         CGEventType::KeyDown => MacEvent::Key {
@@ -459,6 +494,8 @@ impl NativeWindow {
         let window = &self.native.ns_window;
         window.setIgnoresMouseEvents(true);
 
+        // A titled panel highlights its top edge in dark mode and shadows the whole transparent
+        // window; the capsule draws its own shadow.
         window.setStyleMask(NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel);
         window.setHasShadow(false);
         window.setLevel(NSFloatingWindowLevel);
@@ -485,6 +522,7 @@ impl NativeWindow {
             if let Some(origin) = pill_origin_under_pointer(window.mtm()) {
                 window.setFrameOrigin(origin);
             }
+            // Raises the pill while Speakeasy is inactive, without changing the key window.
             window.orderFrontRegardless();
         } else {
             window.orderOut(None);
@@ -496,6 +534,8 @@ fn pill_origin_under_pointer(main: MainThreadMarker) -> Option<NSPoint> {
     let pointer = NSEvent::mouseLocation();
     let screen = NSScreen::screens(main)
         .iter()
+        // `mouseLocation` puts the top row at the frame's max y, which a half-open test misses;
+        // `NSMouseInRect` applies AppKit's edge rule.
         .find(|screen| NSMouseInRect(pointer, screen.frame(), false))?;
     let frame = screen.visibleFrame();
     Some(NSPoint::new(
@@ -504,6 +544,7 @@ fn pill_origin_under_pointer(main: MainThreadMarker) -> Option<NSPoint> {
     ))
 }
 
+/// A GPUI window's retained `NSWindow`; main-thread-only, so this is not `Send`.
 pub(super) struct Window {
     ns_window: Retained<NSWindow>,
 }
@@ -518,6 +559,7 @@ impl Window {
             bail!("Expected an AppKit window");
         };
 
+        // SAFETY: the borrowed handle keeps its `NSView` alive, and this is the main thread.
         let view = unsafe { view.ns_view.cast::<NSView>().as_ref() };
         let ns_window = view.window().context("The view has no window")?;
         Ok(Self { ns_window })
@@ -528,6 +570,7 @@ fn modifiers_for(shortcut: MacShortcut) -> Modifiers {
     let mut held = shortcut.modifiers(
         cg::CGEventSource::flags_state(cg::CGEventSourceStateID::CombinedSessionState).0,
     );
+    // F13 sets no modifier flag, so its hold comes from the HID key state.
     if shortcut == MacShortcut::F13 {
         held.talk = shortcut_key_down(shortcut);
     }
@@ -589,6 +632,7 @@ impl insertion::NativeInsert for Insert {
                         events.extend([press, release]);
                     }
                 },
+                // A line feed in a string event can act as Return and send a chat message.
                 insertion::Typed::LineBreak => {
                     for down in [true, false] {
                         let event = own_key_event(&source, KeyCode::RETURN, down)
@@ -625,6 +669,8 @@ impl insertion::NativeInsert for Insert {
     }
 
     fn activity(&mut self) -> Option<Self::Activity> {
+        // Secure input hides key presses from the tap, so the typed count cannot vouch for an
+        // untouched field; an unknown answer counts as on.
         if secure_input_from_worker() != Some(false) {
             return None;
         }
@@ -678,12 +724,15 @@ unsafe extern "C" {
     fn IsSecureEventInputEnabled() -> u8;
 }
 
+/// Whether another app holds secure input; always false off the main thread.
 pub(super) fn secure_input() -> bool {
+    // SAFETY: Carbon marks this query not thread safe; the marker proves the main thread.
     MainThreadMarker::new().is_some_and(|_| unsafe { IsSecureEventInputEnabled() } != 0)
 }
 
 const SECURE_INPUT_PATIENCE: Duration = Duration::from_millis(50);
 
+/// Asks the main queue, where the query is allowed; `None` if it does not answer in time.
 fn secure_input_from_worker() -> Option<bool> {
     let (reply, answer) = mpsc::sync_channel(1);
     DispatchQueue::main().exec_async(move || {

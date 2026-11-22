@@ -44,6 +44,9 @@ const SHOW_GONE: &str = "The last Show has expired or was deleted.";
 )]
 pub(crate) struct Snapshot {
     pub session: u64,
+    /// Counts reports shown outside a session, so a repeated report still reads as new.
+    ///
+    /// A `Recurring` report does not advance it.
     pub reported: u64,
     pub phase: Phase,
     pub hands_free: bool,
@@ -53,6 +56,7 @@ pub(crate) struct Snapshot {
     pub ending: Ending,
     pub narration_lost: Option<NarrationLoss>,
     pub started: Instant,
+    /// Outlives each owner: announcements keep it and a new owner starts from it.
     pub last_show: Option<SavedShow>,
     pub last_dictation: bool,
     pub style: Style,
@@ -133,6 +137,7 @@ impl Report {
         *snapshot != shown
     }
 
+    /// False for `Recurring`, so the hourly retention sweep cannot pop the same failure up again.
     fn presents_anew(&self) -> bool {
         !matches!(self, Self::Recurring(_))
     }
@@ -334,6 +339,7 @@ impl<Host> Runtime<Host> {
         let config = config.into_inner();
         if reads_differently(&self.baseline, &config) {
             self.baseline.clone_from(&config);
+            // Revoke now, so a preparing insertion cannot commit under the old settings.
             self.input.cancel();
             self.direct(Directive::Apply(Box::new(config)));
         } else {
@@ -387,6 +393,10 @@ impl<Host> Runtime<Host> {
         }
     }
 
+    /// Wakes the owner on its stop lane before closing input.
+    ///
+    /// The owner's biased `select!` then sees Stop first, so a normal pause never reports a
+    /// shortcut failure or drains queued presses.
     pub(crate) fn request_stop(&self) {
         self.stop.close();
         self.input.close();
@@ -512,6 +522,7 @@ pub(crate) type RecoveryReceipt = oneshot::Receiver<RecoveryResult>;
 
 type RecoveryResult = Result<SavedShow, String>;
 
+/// Deliberately has no `Debug`, so recognized practice words cannot reach a log.
 pub(crate) enum PracticeEvent {
     Ready,
     Text(String),
@@ -605,6 +616,7 @@ impl<P: Ports> Wiring<P> {
     }
 }
 
+/// Follows tokio's paused clock in tests, so deadlines and snapshots share one timeline.
 pub(crate) fn now() -> Instant {
     tokio::time::Instant::now().into_std()
 }

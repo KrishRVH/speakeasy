@@ -50,6 +50,9 @@ impl std::fmt::Display for Unwound {
 impl std::error::Error for Unwound {}
 
 pub(crate) struct ScreenRecorder {
+    /// Sending finishes the recording; closing this only sender cancels it.
+    ///
+    /// Declared before `thread`, so a recorder dropped without `retire` cancels before the join.
     finish: Sender<()>,
     pins: Sender<Taps>,
     thread: OwnedThread,
@@ -123,6 +126,11 @@ enum Ended {
     Cancelled,
 }
 
+/// Sends the terminal outcome from the recorder thread, before its exit is observable.
+///
+/// A drop while still armed, as in an unwind, sends `Unwound`: fixed text rather than a panic
+/// message that could carry private text. Sends block on the bounded lane, since a dropped final
+/// event could leave the session waiting forever.
 struct Report<'a> {
     id: SessionId,
     events: Sender<ShowEvent>,
@@ -141,6 +149,7 @@ impl<'a> Report<'a> {
     }
 
     fn deliver(mut self, outcome: anyhow::Result<Ended>) {
+        // Disarmed first, so a panic while sending never reports twice.
         self.armed = false;
         self.send(outcome);
     }
@@ -154,6 +163,8 @@ impl<'a> Report<'a> {
             Err(error) => ShowEvent::Finished(self.id, Err(error)),
         };
 
+        // A recording can end without seeing the cancel, as one looking for a window does, but the
+        // owner that cancelled it waits for no report.
         if self.lanes.finishing.is_closed() {
             return;
         }
@@ -291,8 +302,10 @@ async fn pick(choice: &Receiver<Part>, lanes: &Lanes<'_>) -> Picked {
             Ok(()) => Picked::Unchosen,
             Err(_closed) => Picked::Cancelled,
         },
+        // The overlay closes `choice` for a click or when it cannot appear.
         part = choice.recv() => part.map_or(Picked::Unchosen, Picked::Area),
     };
+    // Pins asked for while picking mark nothing.
     while lanes.pinned.try_recv().is_ok() {}
     picked
 }
@@ -309,6 +322,7 @@ struct Take<'a> {
     limit: Option<Instant>,
     canvas: &'a watch::Sender<Canvas>,
     display: [f32; 2],
+    /// The newest observed geometry; `placed_at` drops older ones arriving on another lane.
     part: Part,
     placed_at: Instant,
     state: speakeasy_show::Take,
@@ -353,6 +367,7 @@ impl<'a> Take<'a> {
         } = sources;
 
         let limit = self.limit.map(tokio::time::Instant::from_std);
+        // Set once finished: the latest moment to keep waiting for a first frame.
         let mut finished_by = None;
 
         let ended = loop {
@@ -394,12 +409,15 @@ impl<'a> Take<'a> {
                         Err(_) => (Ending::ScreenStopped, anyhow!(CAPTURE_STOPPED)),
                     };
 
+                    // Journaled frames stay sound, so a partway stop keeps them. Only the
+                    // `Ending` is saved, never native failure text.
                     break Some(if self.state.journal().is_empty() {
                         Err(failure)
                     } else {
                         Ok(ending)
                     });
                 },
+                // Samples before pins, so a pin lands where the pointer is.
                 Ok(sample) = samples.recv() => {
                     if let Err(error) = self.pointer(sample) {
                         break Some(Err(error));
@@ -413,6 +431,7 @@ impl<'a> Take<'a> {
                 Ok(layout) = layouts.recv() => self.arrange(layout),
             }
         };
+        // Read before stopping the sources, so their shutdown adds nothing to the footage.
         let at = self
             .limit
             .map_or_else(runtime::now, |limit| runtime::now().min(limit));
@@ -663,6 +682,7 @@ fn first_frame_deadline(limit: Option<tokio::time::Instant>) -> tokio::time::Ins
     limit.map_or(waited, |limit| waited.min(limit))
 }
 
+/// Releases the display and pointer before any report, so a new Show cannot overlap them.
 async fn stop(capture: &ScreenCapture, pointer: &PointerMonitor, watch: Option<&WindowWatch>) {
     capture.request_stop();
     pointer.request_stop();

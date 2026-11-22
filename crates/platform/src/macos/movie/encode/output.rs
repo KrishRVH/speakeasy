@@ -43,6 +43,8 @@ define_class!(
     unsafe impl AVAssetWriterDelegate for Output {
         #[unsafe(method(assetWriter:didOutputSegmentData:segmentType:))]
         fn segment(&self, _: &AVAssetWriter, data: &NSData, _: AVAssetSegmentType) {
+            // Hold the guard through the write so a failure is latched before `check` or
+            // `close` can take the sink.
             let mut sink = self.sink();
             if !matches!(
                 catch_unwind(AssertUnwindSafe(|| sink.write(data))),
@@ -116,6 +118,8 @@ impl Sink {
             .context("The movie reached its storage limit")?;
         let file = self.file.as_mut().context("Movie output has closed")?;
 
+        // SAFETY: the writer lends immutable `data` for this synchronous callback, and the
+        // slice does not escape.
         file.write_all(unsafe { data.as_bytes_unchecked() })?;
         self.bytes = end;
         self.progress = Progress::Initialized;

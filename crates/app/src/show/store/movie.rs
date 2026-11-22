@@ -1,3 +1,8 @@
+//! Silent movie storage beside a Show.
+//!
+//! Coverage comes from the container's surviving fragments, not from the writer's `Finished`
+//! receipt, whose `finalized` flag only marks that coverage partial.
+
 mod frame;
 pub(in crate::show::store) mod geometry;
 use std::{
@@ -27,6 +32,7 @@ pub(crate) struct Metadata {
     pub origin_ms: u64,
     pub size: [u32; 2],
     pub finished: Option<Finished>,
+    /// Set by `retain` at publication; `None` in a live or crashed checkpoint.
     pub coverage: Option<Coverage>,
     pub geometry: Option<geometry::Geometry>,
 }
@@ -185,6 +191,10 @@ impl Reading {
         Ok(Some(reading))
     }
 
+    /// Copies the validated prefix with fragment headers normalized for the Mac reader.
+    ///
+    /// Publication, ZIP export, and video export all copy through here. Bytes past the last
+    /// complete fragment, including any final index, are left out.
     pub(in crate::show::store) fn copy_to(
         &mut self,
         out: &mut impl std::io::Write,
@@ -221,6 +231,7 @@ fn read_metadata(directory: &Path) -> anyhow::Result<Metadata> {
     Ok(metadata)
 }
 
+/// No `recording.mp4` means a still-only Show; a damaged movie is an error, never absent.
 pub(super) fn open(directory: &Path) -> anyhow::Result<Option<Reading>> {
     let Some(mut file) = found(File::open(directory.join(FILE)))? else {
         anyhow::ensure!(

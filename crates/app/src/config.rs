@@ -272,6 +272,7 @@ impl Config {
     }
 
     pub(crate) fn change_to(&self, next: &Self) -> Change {
+        // Every field is named, so a new one cannot compile until it is classified below.
         let Self {
             linux,
             mac_shortcut,
@@ -315,6 +316,7 @@ impl Config {
                 Change::Engine,
             ),
             (
+                // Whisper's launch `--language` is only a default; each request names its own.
                 self.language != *language
                     || self.microphone != *microphone
                     || self.recognition_terms != *recognition_terms
@@ -387,6 +389,10 @@ impl Config {
         Ok(())
     }
 
+    /// Patches only the keys Settings changed, so hand edits made while Speakeasy runs survive.
+    ///
+    /// A key counts as unchanged when the draft matches any of `held`, each spelling the file may
+    /// hold, such as a submitted draft and the paths validation resolved from it.
     pub(crate) fn save_changes(
         held: &[&Self],
         draft: &Self,
@@ -416,12 +422,20 @@ impl Config {
     }
 }
 
+/// How far a settings change reaches, ordered by disruption.
+///
+/// Variant order is load-bearing: `change_to` takes the highest tier, and each tier's action
+/// covers the tiers below it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Change {
     Unchanged,
+    /// Read only by the shell, pill, and tray, so a session continues.
     Presentation,
+    /// Read by the owner per session or request, so a session in progress ends.
     Session,
+    /// Read when the engine process starts, so the worker reloads.
     Engine,
+    /// Desktop options bind when the owners start, so the owners restart.
     Desktop,
 }
 
@@ -479,6 +493,7 @@ fn cannot_open(file: &Path, error: &io::Error) -> anyhow::Error {
     }
 }
 
+/// Compares `linux` keys one by one: a default `linux` block is not serialized at all.
 fn patch(
     file: &mut Map<String, Value>,
     held: &[&Config],
@@ -526,6 +541,9 @@ fn changes<'a, T: Serialize + 'a>(
         .collect())
 }
 
+/// Renames a temporary file beside `target` over it, so a failure never leaves half a file.
+///
+/// The temporary file stays in the target's directory so the rename stays on one filesystem.
 fn replace(target: &Path, contents: &[u8]) -> io::Result<()> {
     let directory = target
         .parent()

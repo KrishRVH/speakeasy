@@ -15,6 +15,7 @@ use crate::{
     windows::window_process,
 };
 
+/// The system window class of popup menus.
 const MENU_CLASS: &str = "#32768";
 
 pub(crate) fn stack(display: Display) -> Option<Vec<Listed>> {

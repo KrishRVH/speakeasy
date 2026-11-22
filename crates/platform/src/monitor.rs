@@ -1,3 +1,7 @@
+//! Stop coordination for the macOS event tap's run loop.
+//!
+//! Portable so its tests run on every host; only macOS builds it outside tests.
+
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 struct MonitorState<T> {
@@ -5,6 +9,7 @@ struct MonitorState<T> {
     handle: Option<T>,
 }
 
+/// Publishes a native loop's wake handle, readiness, and stop under one lock.
 pub(crate) struct MonitorControl<T> {
     #[expect(
         clippy::disallowed_types,
@@ -26,6 +31,9 @@ impl<T> Default for MonitorControl<T> {
 }
 
 impl<T> MonitorControl<T> {
+    /// Publishes `handle` and runs `ready`, or returns `false` when a stop came first.
+    ///
+    /// A stop that lands before publication stays in effect; the caller stops its loop on `false`.
     #[expect(
         clippy::significant_drop_tightening,
         reason = "Readiness must publish under the same lock as native initialization so stop cannot interleave"
@@ -52,6 +60,7 @@ impl<T> MonitorControl<T> {
         self.state().stopping
     }
 
+    /// Drops the published handle once the loop has exited, so a later stop wakes nothing.
     pub(crate) fn retire(&self) {
         self.state().handle = None;
     }

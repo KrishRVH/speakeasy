@@ -13,6 +13,7 @@ use super::to_wide;
 
 const RUN: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 
+/// Where the Startup apps page records which `RUN` values it lets start.
 const APPROVED: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
 
 const VALUE: &str = "Speakeasy";
@@ -45,12 +46,18 @@ fn approved(key: &str) -> bool {
     approves(read(key, RRF_RT_REG_BINARY, &mut data).ok().flatten())
 }
 
+/// Whether a `StartupApproved` value lets the Run value start; no value means it does.
+///
+/// Explorer writes 12 bytes: a little-endian flags DWORD (2 or 6 while on, 3 once turned off)
+/// and the FILETIME it was turned off. Bit 0 marks off. A longer value fails `approved`'s read
+/// and counts as allowed.
 fn approves(value: Option<&[u8]>) -> bool {
     value
         .and_then(<[u8]>::first)
         .is_none_or(|flags| flags & 1 == 0)
 }
 
+/// The quoted, NUL-terminated UTF-16 path; Windows paths hold no quotes to escape.
 fn command(exe: &Path) -> Vec<u8> {
     let quote = u16::from(b'"');
     iter::once(quote)

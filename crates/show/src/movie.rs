@@ -9,6 +9,7 @@ use initialization::Track;
 pub use normalization::MovieNormalization;
 
 const HEADER_LIMIT: u64 = 1 << 20;
+/// `DURATION_LIMIT` at 30 Hz, plus one sample.
 const SAMPLE_LIMIT: usize = 10_801;
 const DURATION_LIMIT: Duration = Duration::from_secs(360);
 
@@ -114,6 +115,10 @@ impl MoviePrefix {
         self.truncated
     }
 
+    /// Validates the container and keeps only complete, contiguous fragment and data pairs.
+    ///
+    /// Timing comes from the surviving sample tables; container durations and a final `mfra`
+    /// index never establish surviving frames. AVC pictures are not decoded here.
     pub fn read<E: From<MovieError>>(
         length: u64,
         read: impl FnMut(Range<u64>) -> Result<Vec<u8>, E>,
@@ -374,6 +379,7 @@ fn fragment(
     let sample_flags = header
         .word_if(flags & tfhd::FLAGS != 0)?
         .unwrap_or(track.flags);
+    // Media Foundation appends a reserved zero word to `tfhd` even when no flag declares it.
     require(
         header.rest().iter().all(|byte| *byte == 0) && header.rest().len() <= 4,
         "Movie fragment header has trailing data",

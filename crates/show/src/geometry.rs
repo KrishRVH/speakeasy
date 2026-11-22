@@ -37,11 +37,13 @@ impl Point {
         self.x * other.x + self.y * other.y
     }
 
+    /// The vector turned a quarter counterclockwise on screen, where y grows downward.
     #[must_use]
     pub(crate) const fn perpendicular(self) -> Self {
         Self::new(self.y, -self.x)
     }
 
+    /// Turns about `center`; a positive `angle` turns clockwise on screen, where y grows down.
     #[must_use]
     pub(crate) fn rotated(self, center: Self, angle: f32) -> Self {
         let (sin, cos) = angle.sin_cos();

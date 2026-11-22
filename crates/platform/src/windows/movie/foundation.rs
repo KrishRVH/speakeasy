@@ -5,7 +5,11 @@ use windows::Win32::{
     System::Com::{COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize},
 };
 
+/// COM MTA and Media Foundation for the codec or reader thread that starts it.
+///
+/// It must drop after every Media Foundation object: hold it as the last field or first local.
 pub(super) struct Foundation {
+    /// Keeps it `!Send`: `CoUninitialize` must run on the initializing thread.
     _thread: PhantomData<*mut ()>,
 }
 

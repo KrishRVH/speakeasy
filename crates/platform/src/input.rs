@@ -56,6 +56,7 @@ impl InputSender {
         ) {
             self.gate.revoke_unshielded();
         }
+        // A full queue closes the lane rather than losing an Escape or a release.
         if self.sender.try_send(event).is_err() {
             self.close();
         }
@@ -87,6 +88,7 @@ impl InputSender {
             generation,
         };
 
+        // A close racing `advance` may have revoked the previous generation instead of this one.
         if self.is_closed() {
             permit.revoke();
             return None;
@@ -152,12 +154,20 @@ impl InsertPermit {
         self.gate.is_current(self.generation)
     }
 
+    /// Spends this recording's authority; call it immediately before the irreversible effect.
+    ///
+    /// Returns whether authority was still held. Success never licenses repeating input after an
+    /// error.
     #[must_use]
     pub fn commit(&self) -> bool {
         self.gate.revoke(self.generation)
     }
 }
 
+/// The recording generation, shared with native cancellation callbacks.
+///
+/// Generations count up above three state bits. A permit holds authority only while the gate
+/// equals its generation, shielded or not, so only one revocation or commit of it succeeds.
 #[derive(Clone, Debug)]
 #[expect(
     clippy::disallowed_types,

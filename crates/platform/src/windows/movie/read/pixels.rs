@@ -52,6 +52,7 @@ pub(super) fn read(sample: &IMFSample, stride: i32, size: [u32; 2]) -> anyhow::R
     } else {
         unsafe { buffer.Lock(&raw mut start, None, Some(&raw mut length))? };
         let lock = Lock::Flat(&buffer);
+        // A negative pitch means bottom-up rows, so the top row is last in memory.
         let offset = if pitch < 0 {
             usize::try_from(size[1].saturating_sub(1))?
                 .checked_mul(usize::try_from(pitch.unsigned_abs())?)
@@ -64,6 +65,8 @@ pub(super) fn read(sample: &IMFSample, stride: i32, size: [u32; 2]) -> anyhow::R
     ensure!(!start.is_null(), "Decoded video buffer is invalid");
     let length = usize::try_from(length)?;
 
+    // SAFETY: the lock keeps `length` bytes at `start` readable until `drop(lock)`, and `copy`
+    // checks every row against them.
     let bytes = unsafe { std::slice::from_raw_parts(start, length) };
     let pixels = copy(bytes, offset, pitch, size)?;
     drop(lock);

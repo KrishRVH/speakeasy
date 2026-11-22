@@ -183,6 +183,8 @@ impl<'a> Insertions<'a> {
             .in_flight
             .as_mut()
             .context("Missing clipboard preparation")?;
+        // Before the permit check: a replacement the portal accepted, or never answered, withdraws
+        // the old copy even when cancelled. A refusal or a skipped call keeps it served.
         if matches!(pending.phase, Phase::SettingSelection(_)) {
             match &prepared {
                 Ok(Prepared::NotCopied) => {},
@@ -264,6 +266,8 @@ impl<'a> Insertions<'a> {
             .in_flight
             .as_ref()
             .is_some_and(|pending| matches!(pending.phase, Phase::SettingSelection(_)));
+        // Cloned now, so a started transfer keeps its text. Nothing is served during
+        // `SetSelection`, since the desktop may already offer the replacement.
         let text = self
             .selection
             .clone()
@@ -279,6 +283,10 @@ fn deadline_after(wait: Duration) -> Instant {
     now.checked_add(wait).unwrap_or(now)
 }
 
+/// A replacement is owned only once an ownership change arrives after its reply.
+///
+/// The portal frontend answers `SetSelection` before its backend installs the selection, and
+/// ownership changes do not name the selection they confirm.
 fn owns_selection(owned_since: Option<Sequence>, replied: Sequence) -> bool {
     owned_since.is_some_and(|since| since > replied)
 }
@@ -360,6 +368,7 @@ async fn query_focus(
     permit: InsertPermit,
     route: Route,
 ) -> anyhow::Result<Prepared> {
+    // A failed focus query fails closed, as if Speakeasy had focus.
     let external = worker.external_target(permit).await.unwrap_or(false);
     Ok(Prepared::Target { external, route })
 }

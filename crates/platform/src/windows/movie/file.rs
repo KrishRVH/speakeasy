@@ -23,6 +23,7 @@ use windows_core::{Error, HRESULT, Ref, Result};
 
 pub(super) struct Stream {
     pub(super) native: IMFByteStream,
+    /// Dropped after `native`: an asynchronous callback may still hold the `IStream`.
     _closed: Closed,
 }
 
@@ -68,6 +69,7 @@ fn byte_stream(file: File, limit: u64) -> anyhow::Result<Stream> {
     })
 }
 
+/// Blocks on drop until the last `CappedFile` reference releases the file.
 struct Closed(async_channel::Receiver<Infallible>);
 
 impl Drop for Closed {
@@ -131,6 +133,8 @@ impl ISequentialStream_Impl for CappedFile_Impl {
             let length = usize::try_from(count)
                 .map_err(|_invalid_count| Error::from_hresult(STG_E_READFAULT))?;
 
+            // SAFETY: the caller lends `count` writable bytes for this call only; zeroing them
+            // first makes them initialized, which the caller's buffer need not be.
             let bytes = unsafe {
                 let destination = destination.cast::<u8>();
                 destination.write_bytes(0, length);
@@ -169,6 +173,7 @@ impl ISequentialStream_Impl for CappedFile_Impl {
             let length = usize::try_from(count)
                 .map_err(|_invalid_count| Error::from_hresult(STG_E_WRITEFAULT))?;
 
+            // SAFETY: the caller lends `count` readable bytes for this call; the slice stays here.
             let bytes = unsafe { std::slice::from_raw_parts(source.cast(), length) };
             file.write_all(bytes).map_err(io_error(STG_E_WRITEFAULT))?;
             drop(file);

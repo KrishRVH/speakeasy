@@ -20,6 +20,8 @@ pub(super) async fn transfer(
 ) {
     let request = (&session, serial);
     let write = clipboard.call::<_, _, zbus::zvariant::OwnedFd>("SelectionWrite", &request);
+    // With nothing to serve, still take the descriptor and close it empty: the compositor waits
+    // for it to close.
     let success = match (tokio::time::timeout(TRANSFER_TIMEOUT, write).await, text) {
         (Ok(Ok(fd)), Some(text)) => {
             matches!(
@@ -39,7 +41,9 @@ pub(super) async fn transfer(
 }
 
 async fn write_payload(fd: OwnedFd, text: &str) -> anyhow::Result<()> {
+    // Nonblocking, so a full pipe yields to the desktop thread's loop instead of stalling it.
     set_nonblocking(fd.as_fd())?;
+    // SAFETY: the `File` owns the descriptor, keeping it open and unchanged until `pipe` drops.
     let pipe = unsafe { AsyncFd::register(File::from(fd)) }?;
     let mut bytes = text.as_bytes();
     while !bytes.is_empty() {

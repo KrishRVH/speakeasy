@@ -13,6 +13,7 @@ pub struct Recording {
     pub duration: Moment,
     #[serde(default, skip_serializing_if = "Ending::is_finished")]
     pub ending: Ending,
+    /// Points are normalized to this surface; shapes and drag distances use its pixels.
     pub surface: Size,
     #[serde(default, skip_serializing_if = "Spaces::is_empty")]
     pub spaces: Spaces,
@@ -175,8 +176,16 @@ pub struct Pin {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Action {
-    Click { at: Moment, point: Point },
-    Drag { span: Span, from: Point, to: Point },
+    /// `at` is the release and `point` the press; a drag's `span` runs from press to release.
+    Click {
+        at: Moment,
+        point: Point,
+    },
+    Drag {
+        span: Span,
+        from: Point,
+        to: Point,
+    },
 }
 
 impl Action {
@@ -200,6 +209,7 @@ impl Action {
 #[serde(rename_all = "camelCase")]
 pub enum Narration {
     Words(Vec<Word>),
+    /// Untimed text from a recognizer without word times; no keyframe owns it.
     Text(String),
 }
 

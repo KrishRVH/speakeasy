@@ -8,16 +8,26 @@ use crate::{
     signature::{SCENE, Sample, Signature},
 };
 
+/// A click that started no transition shows the screen this long after release.
 const SETTLE: Duration = Duration::from_millis(250);
 
 const NOVELTY: f32 = 0.03;
 
+/// How far a transition may start before the click or cue that caused it.
+///
+/// A transition starts on the last frame captured before the screen changed.
 const LEAD: Duration = Duration::from_millis(300);
 
+/// How soon after a release a change must start to count as the click's result.
+///
+/// A later change is taken for input a Show does not record, such as a scroll or a key press.
 const CLICK_REACH: Duration = Duration::from_millis(500);
 
 const CUE_REACH: Duration = Duration::from_millis(1_200);
 
+/// After this long, a still-changing screen is playing, as a video or long scroll does.
+///
+/// Where it settles would show something later than what was pointed at.
 const SETTLE_LIMIT: Duration = Duration::from_secs(2);
 
 const CUE_LOOK: Duration = Duration::from_millis(150);
@@ -265,6 +275,9 @@ impl Transition {
     }
 }
 
+/// A word pointing at the screen; deliberate cues add more to a snapped transition's score.
+///
+/// Incidental cues ("I see why", "that's odd") are as often filler, so they mostly break ties.
 struct Cue {
     word: &'static str,
     score: f32,

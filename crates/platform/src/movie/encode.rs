@@ -5,8 +5,13 @@ use anyhow::ensure;
 use super::canvas::Canvas;
 use crate::Frame;
 
+/// Five minutes of 30 Hz samples, matching `RECORDING_LIMIT`; later ticks are not written.
 const FRAME_LIMIT: u32 = 9_000;
 
+/// The most held samples one call may submit.
+///
+/// A longer stall fails the movie rather than monopolizing the capture thread; still frames
+/// keep recording.
 const CATCH_UP_LIMIT: u32 = 60;
 
 pub(crate) trait Codec: Sized {
@@ -42,6 +47,7 @@ impl End {
 pub(crate) trait Observer {
     fn cancelled(&mut self) -> bool;
 
+    /// Persists geometry before `sample` is written: `Ok(false)` means stop, `Err` unsaved.
     fn geometry(
         &mut self,
         sample: u32,
@@ -101,6 +107,8 @@ impl<C: Codec> Encoder<C> {
             "Movie capture time is invalid"
         );
 
+        // Fill every earlier tick with pixels already painted before painting this frame: a gap
+        // lets native frame-rate conversion fill earlier ticks with this future image.
         if self.advance(End::Before(at), observer)?.is_break() || observer.cancelled() {
             return Ok(ControlFlow::Break(()));
         }
@@ -132,6 +140,7 @@ impl<C: Codec> Encoder<C> {
             );
             let content = self.canvas.content();
             let part = self.canvas.part();
+            // The checkpoint must save new geometry before the first sample that uses it.
             if self.geometry != Some((content, part)) {
                 if !observer.geometry(index, content, part)? || observer.cancelled() {
                     return Ok(ControlFlow::Break(()));
@@ -163,6 +172,9 @@ impl<C: Codec> Encoder<C> {
     }
 }
 
+/// The codec's timestamp unit; sample `index` sits at `index / 30` s, rounded down to it.
+///
+/// Media Foundation counts 100 ns ticks; other hosts, including Linux tests, use nanoseconds.
 #[derive(Clone, Copy)]
 pub(crate) enum Clock {
     #[cfg(not(target_os = "windows"))]

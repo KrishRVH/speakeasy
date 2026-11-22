@@ -5,6 +5,7 @@ pub(crate) fn map<T: Sync, R: Send>(items: &[T], work: impl Fn(&T) -> R + Sync) 
     let per_thread = items.len().div_ceil(threads).max(1);
     let run = |chunk: &[T]| chunk.iter().map(&work).collect::<Vec<R>>();
     thread::scope(|scope| {
+        // Spawn every worker before the first join; joining as they spawn would run serially.
         let workers: Vec<_> = items
             .chunks(per_thread)
             .map(|chunk| {

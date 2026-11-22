@@ -20,8 +20,14 @@ use crate::macos::movie::encode::Codec as Native;
 use crate::windows::movie::encoder::Codec as Native;
 use crate::{Frame, MovieTarget, Part};
 
+/// One 30 Hz tick rounded up, for capture pacing only.
+///
+/// Sample timestamps come from `Clock::time`, not from multiples of this value.
 pub(crate) const INTERVAL: Duration = Duration::from_nanos(33_333_334);
 
+/// Caps the native encoder's disk use, independently of the retained still frames.
+///
+/// Stays below `MoviePrefix::FILE_LIMIT`, which readers enforce.
 const FILE_LIMIT: u64 = 384 << 20;
 
 pub(crate) enum Movie<C: Codec> {
@@ -35,6 +41,7 @@ pub(crate) struct Recording<C: Codec> {
     first: Instant,
     received_at: Option<Instant>,
     ending: Ending,
+    /// Drops last: once its lane closes, the checkpoint may unlock or delete the movie file.
     target: MovieTarget,
 }
 
@@ -73,6 +80,9 @@ impl<C: Codec> Movie<C> {
         !matches!(self, Self::Stopped)
     }
 
+    /// Advances held samples and observes stop and the deadline on a quiet screen.
+    ///
+    /// Call it every capture tick. `Err` comes once; still capture continues after it.
     pub(crate) fn poll(
         &mut self,
         now: Instant,
@@ -217,6 +227,9 @@ impl<C: Codec> Recording<C> {
         encoder.advance(End::Through(through), &mut Publication { target, stopping })
     }
 
+    /// The session deadline or the first frame plus the limit, whichever comes first.
+    ///
+    /// Held samples on a quiet screen and the reported coverage both stop here.
     fn horizon(&self) -> Instant {
         let deadline = self.target.deadline();
         self.first
@@ -242,6 +255,9 @@ impl<C: Codec> Drop for Recording<C> {
             .unwrap_or(self.first)
             .max(presented)
             .min(self.horizon());
+        // A failed recording skips finalize: the macOS writer raises a fatal Objective-C
+        // exception when finishing after a failure. Coverage is reported either way, since
+        // fragments already written stay playable.
         let finalized = self.encoder.take().is_some_and(|encoder| {
             !matches!(self.ending, Ending::Failed) && encoder.finish().is_ok()
         });

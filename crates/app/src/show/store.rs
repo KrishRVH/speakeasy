@@ -14,6 +14,7 @@ const KEPT_FOR: Duration = Duration::from_hours(7 * 24);
 
 const SWEEP_EVERY: Duration = Duration::from_hours(1);
 
+/// Empty marker whose mtime records publication; `show wait` orders new Shows by it.
 pub(super) const SAVED_AT: &str = ".saved-at";
 
 const PIN: &str = ".pinned";
@@ -90,6 +91,7 @@ fn cannot_save(parent: &Path) -> impl FnOnce(io::Error) -> anyhow::Error {
     }
 }
 
+/// Stages beside the final directory so `persist` can rename the whole bundle into place.
 fn staging(parent: &Path) -> io::Result<tempfile::TempDir> {
     fs::create_dir_all(parent)?;
     tempfile::tempdir_in(parent)
@@ -204,6 +206,7 @@ fn stamp(name: &str) -> Option<&str> {
     (stamped && numbered).then_some(stamp)
 }
 
+/// `YYYYMMDDTHHMMSSZ`, which sorts in time order; `sweep` and recall compare stamps as text.
 fn utc_stamp(now: SystemTime) -> String {
     let [year, month, day, hour, minute, second] = utc_fields(now);
     format!("{year:04}{month:02}{day:02}T{hour:02}{minute:02}{second:02}Z")
@@ -219,6 +222,9 @@ fn utc_fields(at: SystemTime) -> [u64; 6] {
     [year, month, day, time / 3_600, time / 60 % 60, time % 60]
 }
 
+/// The proleptic Gregorian date `days` after 1970-01-01, by the `civil_from_days` algorithm.
+///
+/// Years count from March, so each leap day falls at the end of its year.
 fn civil_date(days: u64) -> (u64, u64, u64) {
     let shifted = days.saturating_add(719_468);
     let era = shifted / 146_097;

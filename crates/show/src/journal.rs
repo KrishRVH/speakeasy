@@ -1,3 +1,8 @@
+//! Sampled frames kept losslessly as changed tiles within a memory budget.
+//!
+//! Over budget, the journal drops every second frame together with its `Sample`, so selection
+//! only picks frames the journal can rebuild.
+
 use std::{fmt, iter, mem, ops::Range, sync::Arc, time::Duration};
 
 use crate::{
@@ -12,11 +17,14 @@ pub use log::{Take, TakeEvent};
 use record::require;
 pub use source::{Source, SourceError, SourceFrame};
 
+/// Small enough that a blinking caret stores little, large enough to keep the index small.
 const TILE: usize = 64;
 
+/// Largest frame edge the source, checkpoint, and movie formats accept; capture fits to it.
 pub const MAX_FRAME_EDGE: u32 = 2_560;
 const EDGE: usize = MAX_FRAME_EDGE as usize;
 const PIXEL: usize = 4;
+/// The formats' timeline limit, with teardown slack past the five-minute recording limit.
 pub const DURATION_LIMIT: Moment = Moment::from_millis(360_000);
 
 pub struct Journal {
@@ -51,6 +59,9 @@ struct Tile {
 }
 
 impl Tile {
+    /// Worst-case compressed size: `fdeflate` spends at most 12 bits per input byte.
+    ///
+    /// The extra 128 bytes cover its fixed headers and the record framing.
     fn encoded_limit(self) -> usize {
         self.width
             .saturating_mul(self.height)
@@ -115,6 +126,7 @@ impl Journal {
             .is_none_or(|sample| sample.at < DURATION_LIMIT)
     }
 
+    /// Drops the comparison frame; a frame recorded after this starts a new segment.
     #[must_use]
     pub(crate) fn sealed(mut self) -> Self {
         self.latest = None;
@@ -172,6 +184,7 @@ impl Journal {
     }
 }
 
+/// Proof that `Journal::admit` counted this arrival against the sampling stride.
 #[derive(Debug)]
 #[must_use = "an admitted frame is recorded only through its admission"]
 pub struct Admission<'a>(&'a mut Journal);
@@ -237,8 +250,11 @@ impl Journal {
         Ok(())
     }
 
+    /// Replays a checkpoint arrival through `admit`, so stride and thinning match the live take.
     fn restore(&mut self, at: Moment, entry: Option<&Entry>) -> Result<(), SourceError> {
         if let Some(entry) = entry {
+            // Check before `admit` advances the stride, so a rejected record leaves the replayed
+            // prefix intact.
             require(
                 self.admits() && self.has_time(),
                 "checkpoint frame disagrees with sampling",
@@ -261,6 +277,7 @@ impl Journal {
 
     fn push(&mut self, at: Moment, entry: &Entry) {
         let at = at.min(DURATION_LIMIT);
+        // Source files require strictly increasing sample times, so a tie moves 1 ms later.
         let at = self.samples.last().map_or(at, |last| {
             at.max(last.at.saturating_add(Duration::from_millis(1)))
         });
@@ -313,6 +330,9 @@ impl Segment {
             .sum()
     }
 
+    /// Renumbers kept frames; a tile version passes to the first kept frame that shows it.
+    ///
+    /// Every frame after a dropped one therefore rebuilds unchanged.
     fn thinned(self, renumbered: &[Option<usize>], end: usize) -> Option<Self> {
         let kept_from = |from: usize, until: usize| {
             renumbered

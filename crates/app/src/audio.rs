@@ -60,6 +60,10 @@ const QUIETEST_METER_CEILING_DBFS: f32 = -30.0;
 const LOUDEST_METER_CEILING_DBFS: f32 = -10.0;
 const METER_CEILING_RELEASE_DB_PER_SECOND: f32 = 6.0;
 
+/// One microphone capture on its own thread.
+///
+/// Fields drop in order, so a capture dropped without retiring cancels before its thread joins.
+/// The owner retires it instead, awaiting teardown without blocking its executor.
 pub(crate) struct Capture {
     signal: Signal,
     cues: Sender<()>,
@@ -146,6 +150,8 @@ impl Capture {
                 )]
                 let _ = events.send_blocking(outcome.report(id));
 
+                // The outcome is reported before this driver teardown, which can block; retirement
+                // waits for it.
                 drop(device);
                 if let Some(tail) = tail {
                     tail.flush();
@@ -272,6 +278,7 @@ impl Outcome {
     }
 }
 
+/// Fields drop in order, so the stream stops before its device and host.
 struct LiveStream {
     _stream: cpal::Stream,
     _device: cpal::Device,
@@ -301,6 +308,7 @@ impl Recorder {
         events: &Sender<CaptureEvent>,
         control: &Arc<Control>,
     ) -> Result<Self, Startup> {
+        // Driver calls can block; recheck between them so a cancelled startup never plays a stream.
         let proceed = || {
             if control.mode() == Mode::Recording && !events.is_closed() {
                 Ok(())
@@ -425,6 +433,7 @@ impl<D> Recorder<D> {
 
     fn stop(&self, control: &Control, lost: Option<Lost>) -> Option<Lost> {
         control.finish();
+        // Picks up a stream error reported between the last poll and `finish`.
         lost.or_else(|| self.errors.try_recv().ok().map(Lost::from))
     }
 
@@ -474,6 +483,7 @@ impl<D> Recorder<D> {
                 self.pulse.beat(Instant::now());
             }
 
+            // Checked after draining, so no audio reaches the recording without a `Ready`.
             if !ready && self.pcm.samples() > 0 {
                 ready = true;
                 events.send_blocking(CaptureEvent::Ready(id, self.source))?;
@@ -520,6 +530,8 @@ impl<D> Recorder<D> {
                 }
             }
 
+            // Finish and cancel unpark at once, and an unpark before this wait is not lost; the
+            // timeout only paces draining.
             thread::park_timeout(DRAIN_INTERVAL);
         }
     }
@@ -600,6 +612,10 @@ impl Default for SpeechScale {
 }
 
 impl SpeechScale {
+    /// Squares loudness between a fixed floor and a ceiling that jumps to each louder window.
+    ///
+    /// The ceiling then relaxes within its bounds, so pauses sink and stressed syllables fill the
+    /// bar on quiet and hot microphones alike.
     fn level(&mut self, rms: f32, elapsed: Duration) -> f32 {
         let dbfs = 20.0 * rms.max(0.000_001).log10();
         let released =

@@ -46,6 +46,8 @@ impl NativeWindow {
         let border = DWMWA_COLOR_NONE;
         let corners = DWMWCP_DONOTROUND;
 
+        // A caption style leaves a frame around the transparent pill; a plain popup has none.
+        // The DWM border and corner hints below are best effort.
         window.restyle(GWL_STYLE, |style| (style & !WS_OVERLAPPEDWINDOW) | WS_POPUP);
 
         unsafe {
@@ -67,7 +69,9 @@ impl NativeWindow {
         });
 
         unsafe {
+            // WS_EX_TRANSPARENT alone only changes paint order; layering lets clicks pass through.
             ok_or_last_error(SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA))?;
+            // Style changes take effect only once SWP_FRAMECHANGED applies them.
             ok_or_last_error(SetWindowPos(
                 hwnd,
                 null_mut(),
@@ -102,12 +106,15 @@ unsafe extern "system" fn pill_window(
     id: usize,
     _: usize,
 ) -> LRESULT {
+    // SAFETY: the subclass runs on the pill's thread and removes itself at WM_NCDESTROY;
+    // `paint` lives through its BeginPaint/EndPaint cycle.
     unsafe {
         match message {
             WM_NCDESTROY => {
                 RemoveWindowSubclass(hwnd, Some(pill_window), id);
                 DefSubclassProc(hwnd, message, wparam, lparam)
             },
+            // A hidden pill finishes its paint cycle without GPUI: no render, no pending paint.
             WM_PAINT if IsWindowVisible(hwnd) == FALSE => {
                 let mut paint = PAINTSTRUCT::default();
                 BeginPaint(hwnd, &raw mut paint);
@@ -171,6 +178,10 @@ fn place_pill(hwnd: HWND) {
     );
 }
 
+/// Places a window, then again if that moved it onto a display of another DPI.
+///
+/// Arriving at a new DPI makes GPUI resize the window synchronously to the size Windows
+/// suggests; the second placement restores the exact bounds.
 pub(super) fn place_across_dpi(
     mut dpi: impl FnMut() -> u32,
     mut place: impl FnMut() -> io::Result<()>,
@@ -192,10 +203,16 @@ fn centered_left(area: RECT, width: i32) -> i32 {
 }
 
 impl NativeWindow {
+    /// Hides the window to the tray on minimize by sending on `hide`; install once per window.
+    ///
+    /// The callback only enqueues, since it runs inside GPUI's message dispatch. A second call
+    /// replaces the `HIDE_LANE` property and leaks the first sender.
     pub fn minimize_to_tray(&self, hide: Sender<()>) -> anyhow::Result<()> {
         let hwnd = self.native.hwnd;
         let lane = Box::into_raw(Box::new(hide));
 
+        // SAFETY: on success the window owns the boxed lane until `settings_window` frees it at
+        // WM_NCDESTROY; on failure it is reclaimed here before any message can read it.
         unsafe {
             if SetPropW(hwnd, HIDE_LANE, lane.cast()) == FALSE
                 || SetWindowSubclass(hwnd, Some(settings_window), 1, 0) == FALSE
@@ -228,6 +245,8 @@ unsafe extern "system" fn settings_window(
     id: usize,
     _: usize,
 ) -> LRESULT {
+    // SAFETY: runs on the window's thread. Final destruction removes the subclass before freeing
+    // the lane, so no later message reaches a freed sender.
     unsafe {
         match message {
             WM_NCDESTROY => {
@@ -238,10 +257,13 @@ unsafe extern "system" fn settings_window(
                 }
                 DefSubclassProc(hwnd, message, wparam, lparam)
             },
+            // WM_SYSCOMMAND reserves wParam's low four bits for the system.
             WM_SYSCOMMAND if wparam & 0xFFF0 == SC_MINIMIZE as usize => {
                 request_hide(hwnd);
                 0
             },
+            // ShowWindow(SW_MINIMIZE), including GPUI's own minimize, bypasses WM_SYSCOMMAND.
+            // Still forward the size so GPUI tracks the restore.
             WM_SIZE if wparam == SIZE_MINIMIZED as usize => {
                 request_hide(hwnd);
                 DefSubclassProc(hwnd, message, wparam, lparam)
@@ -252,6 +274,7 @@ unsafe extern "system" fn settings_window(
 }
 
 unsafe fn request_hide(hwnd: HWND) {
+    // SAFETY: `HIDE_LANE` holds the live boxed sender until WM_NCDESTROY removes it.
     let Some(hide) = (unsafe { GetPropW(hwnd, HIDE_LANE).cast::<Sender<()>>().as_ref() }) else {
         return;
     };

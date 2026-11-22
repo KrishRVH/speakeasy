@@ -9,10 +9,14 @@ const DRAG_PIXELS: f32 = 12.0;
 
 const INK_SPACING_PIXELS: f32 = 1.5;
 
+/// Shorter ink is Shift held to type a capital letter, not drawing.
 const SHORTEST_STROKE_PIXELS: f32 = 6.0;
 
 const MOST_STROKE_POINTS: usize = 2_400;
 
+/// Pointer history kept so a pin lands where the pointer was when its taps ended.
+///
+/// Taps and pointer samples arrive on separate lanes, so a pin can arrive after the pointer moved.
 const PIN_LOOKBACK: Duration = Duration::from_secs(2);
 
 #[derive(Debug)]
@@ -145,6 +149,7 @@ impl Tracker {
         self.pin_after = Some(self.pin_after.unwrap_or(at).max(at));
     }
 
+    /// Takes samples in time order; `point` is normalized to the surface and may lie outside it.
     pub fn observe(&mut self, at: Moment, point: Point, drawing: bool, pressed: bool) {
         if self.seen.is_empty()
             && let Some(gap) = &mut self.pin_after
@@ -152,6 +157,8 @@ impl Tracker {
             *gap = (*gap).max(at);
         }
         self.see(InkPoint { point, at });
+        // A sample stamped at or before the last pin starts no ink, which would sort ahead of the
+        // pin and take its number.
         let inking = drawing && self.pins.last().is_none_or(|pin| at > pin.at);
         self.shift_down = inking.then(|| self.shift_down.unwrap_or(at));
         if inking && pressed {
@@ -201,6 +208,11 @@ impl Tracker {
         &self.strokes
     }
 
+    /// Drops a pin for a Shift double tap where the pointer was when `taps` ended.
+    ///
+    /// Taps that drew ink or overlapped a button press pin nothing, so two quick strokes, as in an
+    /// X, or two Shift-clicks never pin. A tap that ended a pin starts no other, so three taps pin
+    /// once. Nothing pins across a pointer gap or off the surface.
     pub(crate) fn pin(&mut self, taps: Span) -> bool {
         let used = self
             .shift_uses

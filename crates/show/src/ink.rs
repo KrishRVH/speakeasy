@@ -1,7 +1,13 @@
+//! Ink drawn alike on the overlay and in bundles.
+//!
+//! The stroke outline is adapted from perfect-freehand 1.2.2 under the MIT License; see
+//! `crates/show/NOTICE.md`.
+
 use std::f32::consts::{PI, TAU};
 
 use crate::Point;
 
+/// How much speed narrows the line: at one half, a fast stroke is about half as wide.
 const THINNING: f32 = 0.5;
 
 const SMOOTHING: f32 = 0.5;
@@ -24,11 +30,18 @@ pub const LABEL_TYPE: f32 = 1.3;
 
 pub const LABEL_DIGITS: f32 = 1.4;
 
+/// The pen width: 6 pixels on a 1080p display, alike on the overlay and in bundle frames.
+///
+/// Thin enough to leave the text a mark points at readable; a fast stroke, which narrows to half,
+/// still shows on a contact sheet that scales frames down threefold.
 #[must_use]
 pub fn pen(width: f32, height: f32) -> f32 {
     (width.min(height) * 0.0043).clamp(2.8, 4.0) * detail(width, height)
 }
 
+/// The radius of a mark's number disc: 18 pixels on a 1080p display.
+///
+/// Its digits read at a glance beside the ink without covering much of what the ink points at.
 #[must_use]
 pub fn label_radius(width: f32, height: f32) -> f32 {
     12.0 * detail(width, height)

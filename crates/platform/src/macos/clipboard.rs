@@ -8,6 +8,7 @@ use objc2_foundation::{NSArray, NSData, NSString, ns_string};
 
 use crate::clipboard;
 
+/// Asks clipboard managers not to record or show an item; the item still pastes.
 const TRANSIENT_TYPE: &str = "org.nspasteboard.TransientType";
 
 const INCOMPLETE: &str = "Cannot place the complete copy on the clipboard";
@@ -37,6 +38,7 @@ pub(super) fn snapshot() -> Option<Saved> {
 }
 
 pub(super) fn restore(saved: Option<&Saved>, mark: isize) -> anyhow::Result<()> {
+    // Build every item before the change-count check, so a copy made meanwhile is not cleared.
     let items = saved.map(items_from).transpose()?;
     let pasteboard = NSPasteboard::generalPasteboard();
     if pasteboard.changeCount() != mark {
@@ -55,6 +57,7 @@ pub(crate) fn copy_content(
 ) -> anyhow::Result<bool> {
     objc2::rc::autoreleasepool(|_| {
         let items = writers(&[item(&content.text, content.image.as_ref())?]);
+        // Authorize last, right before the clipboard changes.
         if !authorized() {
             return Ok(false);
         }
@@ -70,6 +73,7 @@ fn publish(items: &Writers) -> anyhow::Result<isize> {
     Ok(pasteboard.changeCount())
 }
 
+/// Prepares for new contents that stay on this Mac, out of Universal Clipboard.
 fn clear(pasteboard: &NSPasteboard) {
     pasteboard.prepareForNewContentsWithOptions(NSPasteboardContentsOptions::CurrentHostOnly);
 }

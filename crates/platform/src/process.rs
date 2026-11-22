@@ -25,6 +25,9 @@ pub struct ProcessGroup {
 
 #[cfg(target_os = "windows")]
 impl ProcessGroup {
+    /// Contains a freshly spawned child; attach right after spawning.
+    ///
+    /// Processes the child started before this call stay outside the job.
     pub fn attach(child: &tokio::process::Child) -> anyhow::Result<Self> {
         let process = child
             .raw_handle()
@@ -43,12 +46,14 @@ impl ProcessGroup {
             )
         })?;
 
+        // SAFETY: `child` keeps `process` open through this call.
         ok_or_last_error(unsafe { AssignProcessToJobObject(job.as_raw_handle(), process) })?;
         Ok(Self { job })
     }
 
     pub fn terminate(&mut self) {
         unsafe {
+            // A failure needs no handling: closing the job on drop still kills the group.
             TerminateJobObject(self.job.as_raw_handle(), 1);
         }
     }
@@ -62,6 +67,7 @@ pub struct ProcessGroup {
 
 #[cfg(unix)]
 impl ProcessGroup {
+    /// Leads the group of a child spawned with `process_group(0)`, whose PID names the group.
     pub fn attach(child: &tokio::process::Child) -> anyhow::Result<Self> {
         let leader = child
             .id()
@@ -76,6 +82,9 @@ impl ProcessGroup {
             return Ok(true);
         };
         loop {
+            // Zeroed, not uninit: with WNOHANG and no exited child, waitid returns 0 and may leave
+            // `info` untouched, so only a matching `si_pid` reports an exit. WNOWAIT leaves the
+            // leader for its owner to reap, so its PID stays reserved until then.
             let mut info = MaybeUninit::<libc::siginfo_t>::zeroed();
             let result = unsafe {
                 libc::waitid(
@@ -95,9 +104,14 @@ impl ProcessGroup {
         }
     }
 
+    /// Kills the group; call it before the leader is reaped.
+    ///
+    /// A reaped leader's PID can name another group. The leader is taken before signaling, so a
+    /// second call or the drop never signals a reused PID.
     pub fn terminate(&mut self) {
         if let Some(leader) = self.leader.take() {
             unsafe {
+                // A failure needs no handling: ESRCH means the group already exited.
                 libc::killpg(leader, libc::SIGKILL);
             }
         }

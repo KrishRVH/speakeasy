@@ -18,6 +18,7 @@ pub(crate) struct Awake {
     request: HANDLE,
 }
 
+// SAFETY: a power request is a kernel handle, usable and closable from any thread.
 unsafe impl Send for Awake {}
 
 impl Awake {

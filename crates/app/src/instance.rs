@@ -22,6 +22,7 @@ use crate::control::{Call, Command, Reply};
 
 const LOCK_FILE: &str = "instance.lock";
 const PORT_FILE: &str = "instance.port";
+/// Fails a stale port fast; Windows retries a refused loopback connection before failing.
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(100);
 const REVEAL_ATTEMPTS: u32 = 25;
 const REVEAL_RETRY: Duration = Duration::from_millis(20);
@@ -75,6 +76,7 @@ impl Instance {
             },
         }
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+        // `tokio::net::TcpListener::from_std` on the server thread needs a nonblocking socket.
         listener.set_nonblocking(true)?;
         let port_file = directory.join(PORT_FILE);
         fs::write(&port_file, listener.local_addr()?.port().to_string())
@@ -132,6 +134,7 @@ impl Drop for Instance {
     }
 }
 
+/// Retried briefly: the owner takes the lock before it writes the port file.
 fn reveal_running(path: &Path) -> anyhow::Result<()> {
     for _ in 0..REVEAL_ATTEMPTS {
         if Instance::send(path, Request::Reveal).is_ok() {
@@ -156,6 +159,7 @@ fn connect(path: &Path, message: &Message) -> anyhow::Result<TcpStream> {
         CONNECT_TIMEOUT,
     )?;
     stream.write_all(&serde_json::to_vec(message)?)?;
+    // Half-close: the server reads the message to EOF before it replies.
     stream.shutdown(Shutdown::Write)?;
     Ok(stream)
 }
@@ -177,6 +181,9 @@ fn serve(listener: TcpListener, requests: Sender<Event>, started: &SyncSender<io
     }
 }
 
+/// Runs on the server thread, which also drops the runtime it builds.
+///
+/// The acquiring caller may be inside an async context, where dropping a runtime panics.
 fn listen(listener: TcpListener) -> io::Result<(Runtime, tokio::net::TcpListener)> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()

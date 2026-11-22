@@ -110,6 +110,7 @@ pub(crate) fn group(strokes: &[Stroke], pins: &[Pin], surface: Size) -> Vec<Mark
     });
     let mut marks: Vec<Mark> = ink.chain(pinned).collect();
 
+    // Stable, so ink begun at a pin's moment keeps its place before the pin.
     marks.sort_by_key(|mark| mark.span.start());
     for (position, mark) in marks.iter_mut().enumerate() {
         mark.number = position.saturating_add(1);

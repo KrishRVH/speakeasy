@@ -3,6 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Counted from the press, so microphone startup is included.
 pub const RECORDING_LIMIT: Duration = Duration::from_secs(300);
 
 const TAP: Duration = Duration::from_millis(220);
@@ -82,6 +83,7 @@ pub(crate) enum Action {
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Gesture {
     phase: Phase,
+    /// Survives completion and cancellation, so autorepeat cannot start a new session early.
     down: bool,
     timing: Timing,
 }
@@ -103,6 +105,7 @@ impl Gesture {
         true
     }
 
+    /// Enters saving from idle for a Show recovery, which Escape and cancel then leave alone.
     pub(crate) fn save(&mut self) -> bool {
         if self.phase != Phase::Idle {
             return false;
@@ -185,6 +188,7 @@ impl Gesture {
         }
     }
 
+    /// A Show records hands-free, so releasing the shortcut that started it does not finish it.
     pub(crate) fn show(&mut self) {
         if let Phase::Held { started } | Phase::HandsFree { started } = self.phase {
             self.phase = Phase::Show { started };
@@ -241,6 +245,7 @@ impl Gesture {
         Some(Action::Finish)
     }
 
+    /// Escape also reaches the focused app, so it cancels a Show only while the shortcut is held.
     pub(crate) fn escape(&mut self) -> Option<Action> {
         match self.phase {
             Phase::Show { .. } | Phase::ShowArmed { .. } if !self.down => None,
@@ -248,6 +253,7 @@ impl Gesture {
         }
     }
 
+    /// An interruption the user never asked for discards dictation but finishes a recording Show.
     pub(crate) fn interrupt(&mut self) -> Option<Action> {
         match self.phase {
             Phase::Show { .. } | Phase::ShowArmed { .. } => self.finish(),
@@ -255,6 +261,7 @@ impl Gesture {
         }
     }
 
+    /// Cancels anything but a Show being saved; only `abandon` discards that.
     pub(crate) fn cancel(&mut self) -> Option<Action> {
         if self.phase == Phase::Saving {
             return None;

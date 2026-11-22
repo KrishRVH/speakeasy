@@ -18,6 +18,10 @@ pub(super) struct Exclusions {
 }
 
 impl Exclusions {
+    /// Excludes every capturable window of this process; reports whether any was new.
+    ///
+    /// Hidden windows are excluded too, so they stay out once shown. A newly excluded window, even
+    /// one hidden now, may be in frames composed since the last check.
     pub(super) fn refresh(&mut self) -> Result<bool, Failure> {
         let mut excluded_any = false;
         for window in top_level_windows()? {
@@ -57,6 +61,7 @@ impl Drop for Exclusions {
 }
 pub(super) fn top_level_windows() -> windows::core::Result<Vec<HWND>> {
     unsafe extern "system" fn collect(window: HWND, found: LPARAM) -> BOOL {
+        // SAFETY: `found` is the vector `top_level_windows` lends for the whole enumeration.
         unsafe { (*(found as *mut Vec<HWND>)).push(window) };
         TRUE
     }

@@ -7,6 +7,7 @@ use std::sync::{
 
 use super::{Inserted, commit::NativeInsert};
 
+/// Keystrokes compared between pastes; relaxed, as no other memory syncs on it.
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 #[derive(Clone, Debug, Default)]
 #[expect(
@@ -102,6 +103,9 @@ const CLOSERS: [char; 22] = [
     '\u{037E}', '،', '؛', '؟', '।',
 ];
 
+/// Thai, Lao, Myanmar, Khmer, kana, and CJK, which put no spaces between words.
+///
+/// Hangul spaces its words, so it stays out.
 const fn unspaced_script(character: char) -> bool {
     matches!(
         character,

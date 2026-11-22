@@ -1,7 +1,12 @@
 use std::{convert::Infallible, io, thread};
 
+/// An OS thread owned by one value; dropping the value joins it.
+///
+/// Drop joins synchronously, so the thread's captures are released before any field declared
+/// after it in the containing value.
 #[derive(Debug)]
 pub struct OwnedThread {
+    /// Never sends; closes when the body returns or unwinds and drops the receiver.
     exit: async_channel::Sender<Infallible>,
     thread: thread::Thread,
     handle: Option<thread::JoinHandle<()>>,
@@ -13,6 +18,7 @@ impl OwnedThread {
         let handle = thread::Builder::new()
             .name(name.to_owned())
             .spawn(move || {
+                // Moves the receiver in, so it drops only after `body` returns or unwinds.
                 let _alive = alive;
                 body();
             })?;
@@ -28,6 +34,9 @@ impl OwnedThread {
         &self.thread
     }
 
+    /// Resolves once the body returns or unwinds.
+    ///
+    /// Thread-local destructors may still be running; only `join` or drop waits for them.
     pub fn exited(&self) -> impl Future<Output = ()> + Send + use<> {
         let exit = self.exit.clone();
         async move { exit.closed().await }
@@ -38,6 +47,10 @@ impl OwnedThread {
         self.exit.is_closed()
     }
 
+    /// Waits for the body, then joins on Tokio's blocking pool.
+    ///
+    /// Thread-local destructors, such as a COM apartment's teardown, can block after the body
+    /// returns. The blocking task owns `self`, so cancelling this future never detaches the thread.
     pub async fn join(self) -> io::Result<()> {
         let runtime = tokio::runtime::Handle::try_current().map_err(|_runtime_unavailable| {
             io::Error::other("Joining a worker requires an active Tokio runtime")
@@ -71,6 +84,10 @@ impl Drop for OwnedThread {
     }
 }
 
+/// An `OwnedThread` whose body watches a stop lane that never carries a value.
+///
+/// Drop closes the lane before joining, so the body is asked to stop before the join waits,
+/// however the containing value orders its fields.
 #[derive(Debug)]
 pub struct StoppableThread {
     stop: async_channel::Sender<Infallible>,

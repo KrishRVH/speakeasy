@@ -18,6 +18,7 @@ use objc2_av_foundation::{
 use objc2_foundation::{NSData, NSError, NSObject, NSObjectProtocol, NSURL, ns_string};
 use speakeasy_show::MoviePrefix;
 
+/// A scheme `AVURLAsset` cannot load itself, so it asks the resource loader delegate.
 const RESOURCE: &str = "speakeasy-movie://local/recording.mp4";
 
 const READ_CHUNK: usize = 64 * 1024;
@@ -32,6 +33,10 @@ struct Input {
 }
 
 impl Input {
+    /// Copies bytes under the file lock.
+    ///
+    /// The lock is released before the caller responds to `AVFoundation`, so `close` never
+    /// waits on a native response.
     fn read(&self, buffer: &mut [u8], at: u64) -> anyhow::Result<()> {
         let lease = self.lease();
         let file = lease.as_ref().context("Video input has closed")?;
@@ -41,6 +46,7 @@ impl Input {
         Ok(())
     }
 
+    /// Takes the file under the read lock: an in-flight read finishes first, and later ones fail.
     fn close(&self) {
         *self.lease() = None;
     }
@@ -58,6 +64,8 @@ define_class!(
     unsafe impl NSObjectProtocol for Reader {}
 
     unsafe impl AVAssetResourceLoaderDelegate for Reader {
+        // Returning true promises to finish the request, so each failure finishes it with an
+        // error.
         #[unsafe(method(resourceLoader:shouldWaitForLoadingOfRequestedResource:))]
         fn load(&self, _: &AVAssetResourceLoader, request: &AVAssetResourceLoadingRequest) -> bool {
             if !matches!(
@@ -157,6 +165,7 @@ impl Reader {
 
 pub(super) struct Asset {
     pub(super) native: Retained<AVURLAsset>,
+    /// The resource loader holds its delegate weakly; this keeps it alive.
     reader: Retained<Reader>,
     _queue: DispatchRetained<DispatchQueue>,
 }
@@ -185,6 +194,8 @@ impl Asset {
 
 impl Drop for Asset {
     fn drop(&mut self) {
+        // Stop new loads first; `close` then waits out a read in flight, and any later read
+        // fails.
         unsafe {
             self.native.cancelLoading();
             self.native.resourceLoader().setDelegate_queue(None, None);

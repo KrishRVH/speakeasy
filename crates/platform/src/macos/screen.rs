@@ -57,6 +57,7 @@ use crate::{
 
 const NO_POINTER: &str = "Cannot find the pointer. Try again.";
 
+/// How long capture waits for a native answer, a first frame, or stop confirmation.
 const PATIENCE: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy, Debug)]
@@ -104,6 +105,7 @@ impl fmt::Display for Failure {
     }
 }
 
+/// A display; `bounds` are global points from the main display's top-left corner, y down.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Display {
     id: CGDirectDisplayID,
@@ -131,6 +133,8 @@ pub(crate) fn window_under_pointer(display: Display) -> anyhow::Result<Option<(W
                 && window.alpha > 0.0
                 && window.bounds.contains(pointer)
         })
+        // Only the frontmost window counts: over Speakeasy's own, the answer is none, not the
+        // window behind it.
         .filter(|window| !super::is_own_process(window.owner))
         .and_then(|front| {
             display
@@ -176,6 +180,7 @@ enum Place {
     Unknown,
 }
 
+/// Where `target` lies now. Minimized, hidden, and other-Space windows are off screen.
 fn place(target: Target) -> Result<Place, WindowGone> {
     let Region::Window(window, _) = target.region else {
         return Ok(Place::Covers(target.part()));
@@ -211,6 +216,7 @@ fn windows(
 ) -> Option<impl Iterator<Item = Described>> {
     let list = CGWindowListCopyWindowInfo(options, window)?;
 
+    // SAFETY: the window list is documented as an array of string-keyed dictionaries.
     let list =
         unsafe { CFRetained::cast_unchecked::<CFArray<CFDictionary<CFString, CFType>>>(list) };
     Some(list.into_iter().filter_map(|window| describe(&window)))
@@ -254,6 +260,7 @@ pub(crate) fn display_under_pointer() -> anyhow::Result<screen::Display> {
     let mut id = kCGNullDirectDisplay;
     let mut found = 0;
 
+    // SAFETY: the out-pointers are live locals, and `id` holds the one display requested.
     let status =
         unsafe { CGGetDisplaysWithPoint(CGPoint::new(x, y), 1, &raw mut id, &raw mut found) };
     if status != CGError::Success || found == 0 {
@@ -307,6 +314,7 @@ fn capture_stills_owned(
         let failed = async {
             let Err(failure) = capture_stills(target, interval, longest_edge, events).await;
 
+            // Unlike a frame, the failure waits for room: it is the capture's last word.
             events.send(failure.into()).await
         };
         tokio::select! {
@@ -330,6 +338,8 @@ async fn capture_stills(
             Place::Covers(part) => answer(source.still(part)?).await.unwrap_or(Ok(None))?,
             Place::Unknown => None,
         };
+        // Re-place the window after the request: if it moved meanwhile, the still can show what
+        // replaced it, so it is dropped. A completed request still resets the stall clock.
         if let Some(frame) = still
             && let Place::Covers(part) = place(target)?
         {
@@ -358,6 +368,7 @@ struct Source {
     longest_edge: u32,
 }
 
+// SAFETY: `Source` never changes its filter after `new`, and the filter holds no AppKit object.
 #[expect(
     clippy::non_send_fields_in_send_ty,
     reason = "ScreenCaptureKit content filters are immutable, retained, and have no thread affinity"
@@ -365,12 +376,15 @@ struct Source {
 unsafe impl Send for Source {}
 
 impl Source {
+    /// Lists shareable content, which prompts for Screen Recording the first time.
     async fn fetch(id: CGDirectDisplayID, longest_edge: u32) -> Result<Self, Failure> {
         let replies = ask(
             |handler| {
                 unsafe { SCShareableContent::getShareableContentWithCompletionHandler(handler) };
             },
             move |content: Option<&SCShareableContent>, _: Option<&NSError>| {
+                // macOS reports a missing permission inconsistently; of the reasons it lists
+                // no content, permission is the one the user can fix.
                 Self::new(content.ok_or(Failure::Permission)?, id, longest_edge)
             },
         );
@@ -396,6 +410,8 @@ impl Source {
         let display = display.ok_or(Failure::DisplayLost)?;
         let own = own.ok_or(Failure::Exposed)?;
 
+        // Excluding the application, not its windows, also leaves out windows it opens later,
+        // such as the overlay.
         let filter = unsafe {
             SCContentFilter::initWithDisplay_excludingApplications_exceptingWindows(
                 SCContentFilter::alloc(),
@@ -436,10 +452,14 @@ impl Source {
             configuration.setHeight(height as usize);
             configuration.setPixelFormat(kCVPixelFormatType_32BGRA);
 
+            // Frames carry no color profile, so convert to the sRGB that readers assume.
             configuration.setColorSpaceName(kCGColorSpaceSRGB);
 
+            // Click markers stand in for the cursor, which would only hide what it points at.
             configuration.setShowsCursor(false);
 
+            // `fit` halves both axes and can round them differently; stretching by that pixel
+            // fraction keeps frames edge to edge, where letterboxing would shift ink off its mark.
             configuration.setPreservesAspectRatio(false);
             configuration
         };
@@ -477,6 +497,8 @@ where
 {
     let (reply, replies) = async_channel::bounded(1);
     let handler = RcBlock::new(move |value: *mut T, error: *mut NSError| {
+        // SAFETY: each argument is nil or an object kept alive for this call; `read` copies out
+        // what it keeps.
         let (value, error) = unsafe { (value.as_ref(), error.as_ref()) };
 
         let outcome =
@@ -497,6 +519,7 @@ async fn answer<O>(replies: Receiver<O>) -> Option<O> {
     time::timeout(PATIENCE, replies.recv()).await.ok()?.ok()
 }
 
+/// Copies `sample`'s pixels; call only inside the native callback that lends `sample`.
 fn frame(sample: &CMSampleBuffer, part: Part, captured: Instant) -> Option<Frame> {
     let buffer = unsafe { sample.image_buffer() }?;
     if CVPixelBufferGetPixelFormatType(&buffer) != kCVPixelFormatType_32BGRA {
@@ -535,6 +558,8 @@ impl<'a> Locked<'a> {
         let length =
             CVPixelBufferGetBytesPerRow(self.0).checked_mul(CVPixelBufferGetHeight(self.0))?;
 
+        // SAFETY: while locked, the base address starts `height` rows of `bytesPerRow` bytes,
+        // and the slice borrows `self`, so it cannot outlive the lock.
         Some(unsafe { slice::from_raw_parts(base.as_ptr(), length) })
     }
 }
@@ -572,6 +597,7 @@ pub(crate) fn pointer(target: Target, shortcut: crate::Shortcut) -> Option<Point
 }
 
 pub(super) fn pointer_location() -> Option<[f64; 2]> {
+    // An event created without a source carries the pointer's current position.
     let event = CGEvent::new(None)?;
     let point = CGEvent::location(Some(&event));
     Some([point.x, point.y])
@@ -599,13 +625,17 @@ pub(crate) fn configure_overlay(window: &NativeWindow, display: Display) -> anyh
     window.setIgnoresMouseEvents(true);
     window.setStyleMask(NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel);
 
+    // Otherwise a click while the overlay takes input makes it key, taking typing from the
+    // recorded app; GPUI never needs it key.
     if let Some(panel) = window.downcast_ref::<NSPanel>() {
         panel.setBecomesKeyOnlyIfNeeded(true);
     }
     window.setHasShadow(false);
 
+    // Shows already exclude the whole app; this asks other recorders to leave out the ink too.
     window.setSharingType(NSWindowSharingType::None);
 
+    // Above the pill, menu bar, and status items; menus the user opens still cover the ink.
     window.setLevel(NSStatusWindowLevel.saturating_add(1));
     window.setCollectionBehavior(
         NSWindowCollectionBehavior::CanJoinAllSpaces
@@ -614,6 +644,7 @@ pub(crate) fn configure_overlay(window: &NativeWindow, display: Display) -> anyh
             | NSWindowCollectionBehavior::IgnoresCycle,
     );
 
+    // AppKit measures up from the main display's bottom edge, Core Graphics down from its top.
     let [_, main_height] = display_bounds(CGMainDisplayID()).size;
     let Bounds {
         origin: [x, y],

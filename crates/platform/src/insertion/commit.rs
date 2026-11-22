@@ -16,6 +16,7 @@ use crate::{InputSender, InsertPermit, OwnedThread};
 
 pub(crate) struct Worker {
     thread: OwnedThread,
+    /// Closing it ends the thread after queued requests, even while `Inserter` clones live.
     requests: Receiver<Insertion>,
     input: InputSender,
 }
@@ -71,8 +72,12 @@ impl From<anyhow::Result<Inserted>> for Settled {
 
 fn serve(requests: &Receiver<Insertion>, mut serve_one: impl FnMut(&Insertion) -> Settled) {
     while let Ok(request) = requests.recv_blocking() {
+        // A panic answers this request and the thread serves on: an ended thread would strand
+        // later requests on the lane `Worker` keeps open.
         let settled = panic::catch_unwind(AssertUnwindSafe(|| serve_one(&request)))
             .unwrap_or_else(|_| Err(anyhow!(INSERTION_STOPPED)).into());
+        // Reply before the delayed restore; the next request waits for it, so its snapshot holds
+        // the restored copy.
         request.reply.send(settled.outcome);
         if let Some(restore) = settled.restore {
             thread::sleep(RESTORE_AFTER);
@@ -121,6 +126,7 @@ fn deliver<N: NativeInsert>(
         patience,
         || Ok(!native.shortcut_released()),
     )?;
+    // Taken, so an error or a Return send leaves no trail for the next dictation.
     let previous = mem::take(continuation);
     let text = previous.lead(native, &request.text);
     let (inserted, saved) = insert(
@@ -130,6 +136,8 @@ fn deliver<N: NativeInsert>(
         request.delivery,
         &request.own_focus,
     )?;
+    // The text spent the permit, so Return relies on `submit`'s checks against the target read
+    // here. The snapshot is dropped: a slow target could paste a restored copy, then get Return.
     if request.enter == Enter::Pressed && inserted == Inserted::Sent {
         let target = native.target();
         thread::sleep(SUBMIT_SETTLE);
@@ -152,6 +160,9 @@ const RETURN_WITHHELD: Inserted = Inserted::Copied(
 pub(crate) trait NativeInsert {
     type Mark;
 
+    /// Built in full before the permit commits.
+    ///
+    /// Tagged as own input, so the Windows hook and the macOS tap ignore it.
     type Keys;
 
     type Contents;
@@ -160,8 +171,13 @@ pub(crate) trait NativeInsert {
 
     type Activity: PartialEq;
 
+    /// Writes `text` with clipboard-history or transient marks.
+    ///
+    /// Returns the mark that write produced and the prior contents, `None` when there was nothing
+    /// it could save. A failed write returns no snapshot, so nothing is restored.
     fn copy(&mut self, text: &str) -> anyhow::Result<(Self::Mark, Option<Self::Contents>)>;
 
+    /// Restores `contents`, or clears for `None`, only while the clipboard still has `mark`.
     fn restore(
         &mut self,
         contents: Option<Self::Contents>,
@@ -178,10 +194,12 @@ pub(crate) trait NativeInsert {
 
     fn target(&mut self) -> Option<Self::Target>;
 
+    /// `None` withholds continuation spacing; return it whenever activity cannot be observed.
     fn activity(&mut self) -> Option<Self::Activity>;
 
     fn shortcut_released(&mut self) -> bool;
 
+    /// Runs after the permit commits; reports a cut-short submission without retrying it.
     fn send(&mut self, keys: Self::Keys) -> anyhow::Result<Inserted>;
 }
 
@@ -208,6 +226,7 @@ fn insert<N: NativeInsert>(
     };
     let (keys, clipboard) = match staged {
         Ok(staged) => staged,
+        // A revocation that met a failing native call reports the cancellation, not the failure.
         Err(_) if !permit.active() => return Ok((Inserted::Cancelled, None)),
         Err(error) => return Err(error),
     };
@@ -215,6 +234,8 @@ fn insert<N: NativeInsert>(
         !own_focus.held() && native.external_focus(),
         native.shortcut_released(),
     );
+    // Checked after the preflight's native reads: its outcome leaves the dictation on the
+    // clipboard, which a revoked recording must not.
     if !permit.active() {
         restore_now(native, clipboard);
         return Ok((Inserted::Cancelled, None));
@@ -222,6 +243,7 @@ fn insert<N: NativeInsert>(
     if let Some(outcome) = preflight {
         return Ok((outcome, None));
     }
+    // The commit comes immediately before the irreversible send; keys and clipboard are staged.
     if !permit.commit() {
         restore_now(native, clipboard);
         return Ok((Inserted::Cancelled, None));
@@ -238,6 +260,7 @@ fn insert<N: NativeInsert>(
     Ok((inserted, saved))
 }
 
+/// Restores after an unsent paste; with no snapshot, clears the dictated copy.
 fn restore_now<N: NativeInsert>(native: &mut N, clipboard: Option<Written<N>>) {
     if let Some((mark, contents)) = clipboard {
         #[expect(
@@ -248,6 +271,9 @@ fn restore_now<N: NativeInsert>(native: &mut N, clipboard: Option<Written<N>>) {
     }
 }
 
+/// Presses Return only for the target read after the text, with the shortcut released.
+///
+/// Any failure reports `RETURN_WITHHELD`: the text already landed, so it is never a lost paste.
 fn submit<N: NativeInsert>(
     native: &mut N,
     own_focus: &OwnFocus,

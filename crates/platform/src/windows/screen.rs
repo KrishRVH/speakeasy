@@ -1,3 +1,8 @@
+//! Show capture, pointer sampling, and the Show overlay on Windows.
+//!
+//! Positions are physical pixels: the manifest declares per-monitor DPI awareness, so cursor,
+//! monitor, and window coordinates share one space.
+
 mod exclusion;
 mod layout;
 mod readback;
@@ -82,14 +87,19 @@ const NO_POINTER: &str = "Cannot find the pointer. Try again.";
 
 const POLL: Duration = Duration::from_millis(10);
 
+/// Pool buffers: one can wait as `pending` while Windows fills the other.
 const BUFFERS: i32 = 2;
 
 const ACCESS_WAIT: Duration = Duration::from_millis(250);
 
+/// Matches `readback::texture_description`; Direct3D copies only between matching formats.
 const POOL_FORMAT: DirectXPixelFormat = DirectXPixelFormat::B8G8R8A8UIntNormalized;
 
 const TICKS_PER_SECOND: i128 = 10_000_000;
 
+/// Frames stamped this soon after an exclusion may predate it.
+///
+/// A frame's stamp can mark its presentation, up to a refresh after its composition began.
 const COMPOSITION_MARGIN: Duration = Duration::from_millis(50);
 
 const DESKTOP_CLASSES: [&str; 2] = ["Progman", "WorkerW"];
@@ -98,6 +108,7 @@ const BAR_CLASSES: [&str; 2] = ["Shell_TrayWnd", "Shell_SecondaryTrayWnd"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Display {
+    /// The `HMONITOR` as an integer, since handles are not `Send`.
     monitor: isize,
     edges: [i32; 4],
 }
@@ -137,6 +148,7 @@ const fn edges(rect: RECT) -> [i32; 4] {
     [rect.left, rect.top, rect.right, rect.bottom]
 }
 
+/// A top-level HWND as an integer, since handles are not `Send`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Window(isize);
 
@@ -206,6 +218,7 @@ fn window_part(display: Display, window: Window) -> Result<Option<Part>, WindowG
         .ok_or(WindowGone::OffScreen)
 }
 
+/// Whether DWM hides a window that still counts as visible, as on another virtual desktop.
 fn is_cloaked(window: HWND) -> bool {
     let mut cloaked = 0_u32;
     let Ok(size) = u32::try_from(size_of_val(&cloaked)) else {
@@ -223,6 +236,7 @@ fn is_cloaked(window: HWND) -> bool {
     read >= 0 && cloaked != 0
 }
 
+/// The visible frame, without the invisible resize border that `GetWindowRect` includes.
 fn frame_bounds(window: HWND) -> Option<RECT> {
     let mut frame = RECT::default();
     let size = u32::try_from(size_of::<RECT>()).ok()?;
@@ -314,6 +328,7 @@ pub(super) fn pointer_location() -> Option<POINT> {
     (unsafe { GetCursorPos(&raw mut point) } != FALSE).then_some(point)
 }
 
+/// `GetAsyncKeyState` reads physical buttons, so a swapped mouse's primary is its right.
 fn primary_button_down() -> bool {
     let swapped = unsafe { GetSystemMetrics(SM_SWAPBUTTON) } != 0;
     is_key_down(if swapped { VK_RBUTTON } else { VK_LBUTTON })
@@ -348,6 +363,7 @@ fn record(
 ) -> Result<(), Failure> {
     join_lasting_apartment()?;
     let mut exclusions = Exclusions::default();
+    // Exclude own windows before `Capture::start`, whose cutoff then admits only later frames.
     exclusions.refresh()?;
     let mut movie = movie::Movie::new(movie);
     let cadence = if movie.wants_frames() {
@@ -360,12 +376,14 @@ fn record(
     let mut motion = Instant::now();
     let outcome = (|| {
         while !stopping.is_closed() && !events.is_closed() {
+            // A window excluded now may still be in frames composed before its affinity took hold.
             if capture.poll()? && exclusions.refresh()? {
                 capture.discard_until_now();
             }
             let now = Instant::now();
             let mut movie_failed = false;
 
+            // A full lane leaves the frame pending rather than read back one to drop.
             let still = pacer.due(now) && !events.is_full();
             let moving = movie.wants_frames() && now >= motion;
             if (still || moving)
@@ -434,6 +452,7 @@ impl Pacer {
     }
 }
 
+/// A capture of one display, created, polled, and dropped on the screen-capture thread.
 struct Capture {
     target: Target,
     content: [u32; 2],
@@ -453,6 +472,7 @@ struct Capture {
 struct PendingFrame {
     frame: Direct3D11CaptureFrame,
     at: Instant,
+    /// The target rectangle sampled in the poll that took this frame; readback crops to it.
     part: Part,
 }
 
@@ -463,6 +483,7 @@ impl Capture {
         longest_edge: u32,
         stopping: &Receiver<Infallible>,
     ) -> Result<Self, Failure> {
+        // Asked first so Windows answers while the device is made.
         let access =
             GraphicsCaptureAccess::RequestAccessAsync(GraphicsCaptureAccessKind::Borderless);
         let monitor = target.display.native.handle();
@@ -475,17 +496,21 @@ impl Capture {
 
         let item: GraphicsCaptureItem = unsafe { interop.CreateForMonitor(monitor)? };
         let (closed, item_closed) = async_channel::bounded::<Infallible>(1);
+        // Runs on a Windows thread, so it only closes a channel that `poll` checks.
         let closed_handler = item.Closed(&TypedEventHandler::new(move |_, _| {
             closed.close();
             Ok(())
         }))?;
         let size = item.Size()?;
+        // Free-threaded so the capture thread can poll it; `Create` needs a dispatcher queue.
         let pool =
             Direct3D11CaptureFramePool::CreateFreeThreaded(&direct3d, POOL_FORMAT, BUFFERS, size)?;
         let session = pool.CreateCaptureSession(&item)?;
 
+        // The pointer reaches a Show as samples and click marks, not as a cursor in frames.
         best_effort(session.SetIsCursorCaptureEnabled(false));
 
+        // Builds without this setting deliver every change; `record` paces frames itself.
         best_effort(session.SetMinUpdateInterval(interval.into()));
         let content_size = pixels(size);
         let part = target.part();
@@ -496,6 +521,7 @@ impl Capture {
             settle(access, stopping);
         }
 
+        // Windows refuses this before capture starts, even with borderless access granted.
         best_effort(session.SetIsBorderRequired(false));
         Ok(Self {
             target,
@@ -522,6 +548,7 @@ impl Capture {
             return Err(Failure::DisplayChanged);
         }
         let part = current_part(self.target)?;
+        // Unreadable window bounds keep the Show but drop frames until the bounds return.
         if part.is_none() {
             self.pending = None;
         }
@@ -553,6 +580,7 @@ impl Capture {
     fn next_frame(&self) -> Result<Option<Direct3D11CaptureFrame>, Failure> {
         match self.pool.TryGetNextFrame() {
             Ok(frame) => Ok(Some(frame)),
+            // An empty pool returns a null frame, which surfaces as an error without a code.
             Err(error) if error.code().is_ok() => Ok(None),
             Err(error) => Err(error.into()),
         }
@@ -588,6 +616,7 @@ impl Drop for Capture {
     fn drop(&mut self) {
         best_effort(self.item.RemoveClosed(self.closed_handler));
 
+        // Close before the fields drop so capture stops now, not at Windows' last release.
         best_effort(self.session.Close());
         best_effort(self.pool.Close());
     }
@@ -601,6 +630,10 @@ fn pixels(size: SizeInt32) -> [u32; 2] {
     [size.Width, size.Height].map(|edge| u32::try_from(edge).unwrap_or_default())
 }
 
+/// When a frame stamped `composed` on the QPC clock was on screen.
+///
+/// `Instant` reads the same clock but cannot be built from a QPC reading, so this measures the
+/// frame's age instead.
 fn composed_at(composed: TimeSpan) -> Instant {
     let now = Instant::now();
     qpc_ticks()
@@ -647,6 +680,10 @@ fn best_effort<T>(result: windows::core::Result<T>) {
     let _ = result;
 }
 
+/// Joins an MTA that lasts for the process; the cookie is never released.
+///
+/// The `windows` crate caches activation factories process-wide, and they would dangle once the
+/// last apartment closed, crashing a later capture.
 fn join_lasting_apartment() -> windows::core::Result<()> {
     let mut cookie = null_mut();
 
@@ -718,9 +755,11 @@ impl error::Error for Failure {}
 pub(crate) fn configure_overlay(window: &NativeWindow, display: Display) -> anyhow::Result<()> {
     let hwnd = window.native.hwnd;
 
+    // Exclusion must succeed before the overlay can cover the display.
     ok_or_last_error(unsafe { SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) })
         .context("Cannot keep the Show overlay out of screen capture")?;
 
+    // The overlay is the pill's click-through popup, stretched over the display.
     window.configure_pill()?;
     let [left, top, ..] = display.edges;
     let [width, height] = display.extent();
@@ -743,6 +782,8 @@ pub(crate) fn configure_overlay(window: &NativeWindow, display: Display) -> anyh
 }
 
 pub(crate) fn set_overlay_input(window: &NativeWindow, takes_input: bool) {
+    // Without WS_EX_TRANSPARENT the layered overlay takes every click over it;
+    // WS_EX_NOACTIVATE still keeps those clicks from activating it.
     window.native.restyle(GWL_EXSTYLE, |style| {
         if takes_input {
             style & !WS_EX_TRANSPARENT
@@ -758,6 +799,7 @@ pub(crate) fn set_overlay_visible(window: &NativeWindow, visible: bool) {
     unsafe {
         ShowWindow(hwnd, if visible { SW_SHOWNOACTIVATE } else { SW_HIDE });
         if visible {
+            // Topmost windows shown since stack above it; return it to the top of the band.
             SetWindowPos(
                 hwnd,
                 HWND_TOPMOST,
