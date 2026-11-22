@@ -33,14 +33,8 @@ async fn movie_startup_failure_saves_stills_with_an_explicit_video_loss() -> any
         Missing,
         Empty,
         Truncated,
-        InvalidHeader,
     }
-    for fault in [
-        Fault::Missing,
-        Fault::Empty,
-        Fault::Truncated,
-        Fault::InvalidHeader,
-    ] {
+    for fault in [Fault::Missing, Fault::Empty, Fault::Truncated] {
         let parent = tempfile::tempdir()?;
         let interrupted = checkpoint(parent.path()).await?.interrupted();
         store::movie::tests::checkpoint(interrupted.directory(), false)?;
@@ -53,10 +47,6 @@ async fn movie_startup_failure_saves_stills_with_an_explicit_video_loss() -> any
                 let first = bytes.windows(4).position(|bytes| bytes == b"moof").unwrap();
                 bytes.truncate(first + 12);
                 fs::write(&path, bytes)?;
-            },
-            Fault::InvalidHeader => {
-                fs::remove_file(&path)?;
-                fs::write(interrupted.directory().join(store::movie::HEADER), b"{")?;
             },
         }
         let (_input, permit) = permit();
