@@ -51,7 +51,7 @@ class ProcessResult(TypedDict):
 def read_process(process_id: int, proc: Path, ticks_per_second: int) -> Sample:
     """Read one numeric snapshot; missing optional memory/FD data remains unknown."""
     root = proc / str(process_id)
-    # Names may contain spaces or parentheses; never include them in output.
+    # Names may contain spaces or parentheses, so fields start after the last one.
     fields = (root / "stat").read_text().rsplit(")", 1)[-1].split()
     if len(fields) < 21:
         raise ValueError("Incomplete process metadata")

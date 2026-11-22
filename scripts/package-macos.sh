@@ -55,9 +55,8 @@ cp LICENSE "$bundle/Contents/Resources/"
 cargo about generate --locked --fail -c packaging/about.toml --target aarch64-apple-darwin -o "$bundle/Contents/Resources/THIRD-PARTY-NOTICES.txt" packaging/notices.hbs
 cp crates/app/assets/JosefinSans-OFL.txt "$bundle/Contents/Resources/"
 cp crates/show/NOTICE.md "$bundle/Contents/Resources/"
-# Ad-hoc signatures change identity with the binary and can require permission grants again.
-# A persistent signing identity and bundle identifier support permission continuity; verify
-# consent after replacement. Gatekeeper also requires notarization for distribution.
+# Ad-hoc signatures change with every build, so macOS may ask for permissions again; a persistent
+# identity keeps them. Distribution also needs notarization.
 if [[ -n "$signing_identity" ]]; then
   codesign --force --sign "$signing_identity" --options runtime --timestamp \
     --entitlements packaging/macos/Entitlements.plist "$bundle"

@@ -59,9 +59,8 @@ jobs:
         with:
           version: 2026.11.12
           install_args: rust github:EmbarkStudios/cargo-about
-      # Caches compiled registry crates only. Keying by runner image keeps cached Linux objects on
-      # the glibc 2.35 floor. Only main saves: branch dispatches restore main's cache but would
-      # otherwise spend the repository cache quota on entries that evict it.
+      # Caches registry crates, keyed by runner image to keep Linux objects on the glibc 2.35 floor.
+      # Only main saves, so branch runs cannot evict main's cache.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: ${{ matrix.os }}

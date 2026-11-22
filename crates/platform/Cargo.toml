@@ -25,8 +25,7 @@ wayland-client = { workspace = true, features = ["dlopen", "system"] }
 x11rb = { workspace = true, features = ["allow-unsafe-code", "shape", "xinput", "xkb", "xtest"] }
 xkbcommon.workspace = true
 tempfile.workspace = true
-# `net` provides `tokio::io::unix::AsyncFd`, which waits on the X11, libei, and portal transfer
-# descriptors.
+# `net` provides `AsyncFd`, which waits on the X11, libei, and portal descriptors.
 tokio = { workspace = true, features = ["net"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]

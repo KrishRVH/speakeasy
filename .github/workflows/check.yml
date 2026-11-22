@@ -35,9 +35,8 @@ concurrency:
   group: check-${{ github.ref }}-${{ inputs.installer && 'installer' || 'regular' }}
   cancel-in-progress: true
 
-# The local gate runs on Linux, where the app cannot build for macOS or for Windows' MSVC target
-# without their SDKs, so its code for those systems compiles and runs here, on the project's
-# self-hosted Windows PC and Mac mini. Their tools persist between runs, so mise skips the cache.
+# The Linux gate cannot build for macOS or Windows MSVC without their SDKs, so that code builds and
+# runs here, on the self-hosted Windows PC and Mac mini. Their tools persist, so mise skips the cache.
 jobs:
   native:
     name: native (${{ matrix.system }})

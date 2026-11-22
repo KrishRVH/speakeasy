@@ -351,7 +351,7 @@ public sealed class TextEventCounts : IDisposable {
         Wait-Width { param($current) $current -ge $width } wide
         $first.ScrollIntoView($true)
         Wait-Visible $first widened-first-position
-        # The request below names the range before the field narrows; the field reveals it in its new layout.
+        # Queue the scroll before the field narrows; the field reveals the range in its new layout.
         $resize.Invoke()
         $later.ScrollIntoView($false)
         Wait-Width { param($current) $current -lt $width } narrow-again

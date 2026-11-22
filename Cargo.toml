@@ -31,10 +31,9 @@ publish = false
 # libloading, tiny-skia, wayland-client, x11rb, and zbus match the majors GPUI brings in, so each
 # compiles once; move them with GPUI.
 anyhow = "1.0.104"
-# arboard claims the X11 clipboard through x11rb's pure-Rust resolver, which Speakeasy's own
-# connections avoid (`XCBConnection::connect` in linux/x11.rs). x11rb 0.13 tries the abstract
-# socket WSLg serves; 0.14 drops it and falls back to TCP, which hangs there. Check an arboard
-# bump that moves to x11rb 0.14 under WSLg.
+# arboard connects through x11rb's pure-Rust resolver, unlike linux/x11.rs. x11rb 0.13 finds
+# WSLg's abstract socket; 0.14 falls back to TCP, which hangs there. Test an arboard bump to
+# x11rb 0.14 under WSLg.
 arboard = { version = "3.7.0", default-features = false }
 async-channel = "2.5.0"
 base64 = "0.23.1"
@@ -103,12 +102,10 @@ zip = { version = "9.8.1", default-features = false }
 future_incompatible = { level = "deny", priority = -1 }
 # Borrows stay visible in paths (`Formatter<'_>`), and inferable outlives bounds go.
 rust_2018_idioms = { level = "deny", priority = -1 }
-# Public interfaces stay reachable and implement `Debug` without exposing private content.
 missing_debug_implementations = "deny"
 unexpected_cfgs = "deny"
 unreachable_pub = "deny"
-# Native FFI lives in platform; every other crate root forbids unsafe locally, as `mise run hygiene`
-# checks.
+# Unsafe lives only in platform; `mise run hygiene` checks that other crate roots forbid it.
 unsafe_op_in_unsafe_fn = "deny"
 unfulfilled_lint_expectations = "deny"
 
@@ -129,16 +126,13 @@ pedantic = { level = "deny", priority = -1 }
 allow_attributes = "forbid"
 allow_attributes_without_reason = "forbid"
 
-# Rust source is comment-free. Architecture and native contracts document interfaces and FFI;
-# these lints can only recognize inline documentation.
+# Rust source is comment-free; docs/ holds the contracts these lints look for inline.
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 
-# Production code handles failure explicitly. Tests may assert established
-# invariants through the clippy.toml `allow-*-in-tests` settings.
-# Arithmetic has no test setting. Where Clippy checks fixture helpers and
-# properties, use checked arithmetic; only operator tests expect the lint.
-# Wrapping and saturation remain explicit when the domain requires them.
+# Production code handles failure explicitly; tests use clippy.toml's `allow-*-in-tests`.
+# Arithmetic has no test setting: test helpers use checked arithmetic, and only operator tests
+# expect the lint.
 arithmetic_side_effects = "deny"
 dbg_macro = "deny"
 exit = "deny"
@@ -161,21 +155,16 @@ unused_result_ok = "deny"
 print_stderr = "deny"
 print_stdout = "deny"
 
-# Immutable `Arc` snapshots are the permitted sharing: `Arc::clone` keeps shared ownership visible
-# at the call site, and `Arc<str>` or `Arc<[T]>` avoids a growable buffer behind a second pointer.
+# `Arc::clone` keeps sharing visible; `Arc<str>` and `Arc<[T]>` avoid a buffer behind two pointers.
 clone_on_ref_ptr = "deny"
 rc_buffer = "deny"
 
-# Dependency hygiene.
 wildcard_dependencies = "deny"
 
-# Deep nesting is context-hostile; the threshold lives in clippy.toml.
+# Threshold in clippy.toml.
 excessive_nesting = "deny"
 
-# Lossy casts (truncation, wrap, sign loss) are denied by pedantic above:
-# conversions go through From/TryFrom or checked methods. These two remain
-# allowed: int-to-float precision loss is usually intended, and widening `as`
-# casts are harmless in systems code.
+# Pedantic denies lossy casts; widening and int-to-float casts stay allowed.
 cast_lossless = "allow"
 cast_precision_loss = "allow"
 

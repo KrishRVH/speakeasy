@@ -7,8 +7,7 @@ lockfile = true
 idiomatic_version_file_enable_tools = ["rust"]
 
 [vars]
-# Tasks that pipe this list run under bash with pipefail, which /bin/sh lacks on older dash: without
-# it a git failure hands the markdown tool an empty list, and it passes.
+# Tasks that pipe this list use bash with pipefail, so a git failure fails the task.
 md_files = '''git ls-files -z --cached --others --exclude-standard -- '*.md' ':(exclude)vendor/' '''
 # Linux owned-window checks need a private X11 display, and GPUI chooses Wayland whenever
 # WAYLAND_DISPLAY is set; Windows and macOS use the native desktop.
@@ -33,8 +32,8 @@ lychee = { version = "0.24.2", libc = "musl" }
 typos = "1.52.2"
 jactionlint = "2.6.0"
 
-# A dependency change is when a crate can bring a license packaging cannot cite, so the check runs
-# here rather than in every gate; its notices cover all three packaged targets at once.
+# The license check runs on dependency changes rather than in every gate; its notices cover all
+# three packaged targets.
 [tasks."rust:lock"]
 description = "Refresh the Cargo lockfiles after manifest changes and check packaging can cite every license"
 run = [
@@ -279,10 +278,8 @@ run = [
   "install -Dm644 packaging/linux/io.github.krvh.speakeasy.desktop \"${XDG_DATA_HOME:-$HOME/.local/share}/applications/io.github.krvh.speakeasy.desktop\"",
 ]
 
-# Opt-in native checks open owned windows, record an owned scene, or need the named system, so the
-# gate depends on none of them. The README's packaging and native checks say what each touches and
-# which variables name its fixtures. Windows tasks that quote arguments run in PowerShell, because
-# cmd.exe does not honor the quoting that Rust gives an argument.
+# Opt-in native checks stay outside the gate; README lists what each touches and its fixture
+# variables. Windows tasks that quote arguments run in PowerShell, which keeps Rust's quoting intact.
 
 [tasks."native:rendering"]
 description = "Render an owned non-activating window through SVG frames, resizes, and show/hide"

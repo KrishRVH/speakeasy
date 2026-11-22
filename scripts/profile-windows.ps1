@@ -6,9 +6,8 @@ param(
     [Parameter(Mandatory)][string]$OutputPath
 )
 $ErrorActionPreference = 'Stop'
-# GPU memory counters exist only where Windows publishes them under these names; their absence
-# leaves the metrics out rather than failing the run. Raw values read at once, where Get-Counter
-# would wait a second for each.
+# GPU memory counters exist only where Windows publishes them; missing ones leave the metrics out.
+# Raw reads avoid Get-Counter's one-second wait per counter.
 function Get-GpuMemory([int]$ProcessId) {
     $usage = @{}
     try {
@@ -25,10 +24,9 @@ function Get-GpuMemory([int]$ProcessId) {
     } catch {}
     $usage
 }
-# Raw thread counters are cumulative switch counts. One category read serves every sampled PID: it
-# maps each to its threads' counts by thread ID, or is null where the counters are missing. Rates
-# divide by the read's own QPC capture stamp, this counter type's time base; a clock read after the
-# call lags capture by tens of milliseconds that vary per read.
+# Raw thread counters hold cumulative switch counts; one read maps every sampled PID's threads by
+# ID, or is null where the counters are missing. Rates divide by the read's own QPC stamp, since a
+# later clock read lags it by a varying tens of milliseconds.
 function Get-ThreadSwitches([string[]]$ProcessIds) {
     $threads = @{}
     foreach ($processId in $ProcessIds) { $threads[$processId] = @{} }
@@ -49,9 +47,8 @@ function Get-ThreadSwitches([string[]]$ProcessIds) {
     } catch { return $null }
     @{ at = $at; threads = $threads }
 }
-# Sums growth over the threads alive at the later read. One absent from the earlier read started
-# since then, so all of its switches fall inside the interval; a thread that exits before a read
-# takes its switches since the previous read with it.
+# Sums growth over threads alive at the later read: a new thread counts all its switches, and an
+# exited one takes its last interval with it.
 function Get-SwitchDelta([hashtable]$Earlier, [hashtable]$Later) {
     $delta = [long]0
     foreach ($thread in $Later.GetEnumerator()) {
