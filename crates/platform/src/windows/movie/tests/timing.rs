@@ -1,12 +1,10 @@
 use super::*;
 
 #[test]
-#[ignore = "Opt in: native encoder/decoder with synthetic resizing frames; choose SPEAKEASY_MOVIE_PROBE_DIRECTORY"]
+#[ignore = "Opt in: native encoder/decoder with synthetic resizing frames; no capture or input"]
 fn irregular_captures_never_appear_before_their_capture_time() -> anyhow::Result<()> {
-    use std::io::Write as _;
-
-    let directory = probe_directory()?;
-    let path = directory.join("resizing.mp4");
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("resizing.mp4");
     let mut encoder = Encoder::open(&path, canvas::Canvas::new([320, 240])?, FILE_LIMIT)?;
     let captures = [
         (0_u64, 40_u8),
@@ -44,18 +42,15 @@ fn irregular_captures_never_appear_before_their_capture_time() -> anyhow::Result
     encoder.finish()?;
     let samples = sample_times(&path)?;
     assert_eq!(samples.len(), 90, "Three seconds at 30 fps");
-    let mut log = std::fs::File::create_new(directory.join("resizing.csv"))?;
-    writeln!(log, "pts100ns,duration100ns,source,sourceMs")?;
-    for (ticks, duration) in samples {
+    for (ticks, _) in samples {
         let at = Duration::from_nanos(u64::try_from(ticks)?.saturating_mul(100));
         let decoded = decode(&path, [320, 240], at)?;
         let shade = decoded.image.pixels()[(120 * 320 + 160) * 4];
-        let (source, &(captured_ms, _)) = captures
+        let (source, _) = captures
             .iter()
             .enumerate()
             .min_by_key(|(_, (_, written))| shade.abs_diff(*written))
             .unwrap();
-        writeln!(log, "{ticks},{duration},{source},{captured_ms}")?;
         let expected = captures
             .partition_point(|&(ms, _)| Duration::from_millis(ms) <= decoded.at)
             .saturating_sub(1);
