@@ -41,8 +41,6 @@ const NO_PASTE_BINDING: Inserted = Inserted::Copied(
 
 const COPIED_FOR_MANUAL_PASTE: Inserted = Inserted::Copied("Text copied. Paste into your editor.");
 
-const CLIPBOARD_CHANGED: Inserted = Inserted::Unavailable("The clipboard changed before pasting.");
-
 #[derive(Clone, Copy)]
 enum PasteKeys {
     CtrlV,

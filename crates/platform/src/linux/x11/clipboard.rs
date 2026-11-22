@@ -1,22 +1,12 @@
 use std::panic::{self, AssertUnwindSafe};
 
-use anyhow::Context as _;
+use anyhow::{Context as _, ensure};
 use async_channel::{Receiver, Sender};
-use x11rb::{
-    connection::{Connection as _, RequestConnection as _},
-    protocol::{
-        Event,
-        xfixes::{self, ConnectionExt as _, SelectionEventMask},
-        xproto::{Atom, ConnectionExt as _, Window},
-    },
-    xcb_ffi::XCBConnection,
-};
+use x11rb::xcb_ffi::XCBConnection;
 
-use super::{connect_with_root, has_external_target, intern};
+use super::{connect_with_root, has_external_target};
 use crate::{
-    InputSender, InsertPermit, OwnedThread,
-    clipboard::copy_when,
-    insertion::{Reply, holds_text},
+    InputSender, InsertPermit, OwnedThread, clipboard::copy_when, insertion::Reply,
     linux::HostSession,
 };
 
@@ -83,7 +73,7 @@ impl ClipboardWorker {
         &self,
         text: String,
         permit: InsertPermit,
-    ) -> anyhow::Result<Option<Window>> {
+    ) -> anyhow::Result<bool> {
         self.ask(
             |reply| ClipboardRequest::Set {
                 text,
@@ -91,24 +81,6 @@ impl ClipboardWorker {
                 reply,
             },
             "Clipboard preparation stopped",
-        )
-        .await
-    }
-
-    pub(in crate::linux) async fn paste_target(
-        &self,
-        owner: Window,
-        text: String,
-        permit: InsertPermit,
-    ) -> anyhow::Result<(bool, bool)> {
-        self.ask(
-            |reply| ClipboardRequest::PasteTarget {
-                owner,
-                text,
-                permit,
-                reply,
-            },
-            "Clipboard ownership monitoring stopped",
         )
         .await
     }
@@ -142,13 +114,7 @@ enum ClipboardRequest {
     Set {
         text: String,
         permit: InsertPermit,
-        reply: Reply<anyhow::Result<Option<Window>>>,
-    },
-    PasteTarget {
-        owner: Window,
-        text: String,
-        permit: InsertPermit,
-        reply: Reply<anyhow::Result<(bool, bool)>>,
+        reply: Reply<anyhow::Result<bool>>,
     },
 }
 
@@ -162,19 +128,7 @@ impl ClipboardRequest {
                 text,
                 permit,
                 reply,
-            } => answer(&permit, reply, None, || clipboard.set_text(&text, &permit)),
-            Self::PasteTarget {
-                owner,
-                text,
-                permit,
-                reply,
-            } => answer(&permit, reply, (false, false), || {
-                let external = clipboard
-                    .external_target(HostSession::Wayland)
-                    .unwrap_or(false);
-                let owned = permit.active() && clipboard.holds(owner, &text)?;
-                Ok((external, owned))
-            }),
+            } => answer(&permit, reply, false, || clipboard.set_text(&text, &permit)),
         }
     }
 }
@@ -190,104 +144,21 @@ fn answer<T>(
 
 pub(in crate::linux) trait ClipboardAccess {
     fn external_target(&self, host: HostSession) -> anyhow::Result<bool>;
-    fn write_text(&mut self, text: &str, permit: &InsertPermit) -> anyhow::Result<bool>;
-    fn owner(&self) -> anyhow::Result<Window>;
-    fn holds_text(&mut self, text: &str) -> anyhow::Result<bool>;
-
-    fn set_text(&mut self, text: &str, permit: &InsertPermit) -> anyhow::Result<Option<Window>> {
-        let mut checked = || -> anyhow::Result<Option<Window>> {
-            if !self.write_text(text, permit)? || !self.holds_text(text)? {
-                return Ok(None);
-            }
-            let owner = self.owner()?;
-            Ok(self.holds(owner, text)?.then_some(owner))
-        };
-        let checked = checked();
-        if permit.active() { checked } else { Ok(None) }
-    }
-
-    fn holds(&mut self, owner: Window, text: &str) -> anyhow::Result<bool> {
-        Ok(owner != x11rb::NONE && self.holds_text(text)? && self.owner()? == owner)
-    }
+    fn set_text(&mut self, text: &str, permit: &InsertPermit) -> anyhow::Result<bool>;
 }
 
 pub(super) struct Clipboard {
     pub(super) connection: XCBConnection,
     native: Option<arboard::Clipboard>,
-    root: Window,
-    selection: Atom,
-    owner_watch: OwnerWatch,
-}
-
-enum OwnerWatch {
-    Notifications,
-    OwnerWindow,
 }
 
 impl Clipboard {
     pub(super) fn open() -> anyhow::Result<Self> {
-        let (connection, root) = connect_with_root()?;
-        let owner_watch = if connection
-            .extension_information(xfixes::X11_EXTENSION_NAME)?
-            .is_some()
-            && connection.xfixes_query_version(5, 0)?.reply().is_ok()
-        {
-            OwnerWatch::Notifications
-        } else {
-            OwnerWatch::OwnerWindow
-        };
-        let selection = intern(&connection, b"CLIPBOARD")?;
+        let (connection, _) = connect_with_root()?;
         Ok(Self {
             connection,
             native: None,
-            root,
-            selection,
-            owner_watch,
         })
-    }
-
-    pub(super) fn watching_owner<T>(
-        &self,
-        during: impl FnOnce(&Self) -> anyhow::Result<T>,
-    ) -> anyhow::Result<(T, bool)> {
-        match self.owner_watch {
-            OwnerWatch::Notifications => {
-                self.watch_owner(
-                    SelectionEventMask::SET_SELECTION_OWNER
-                        | SelectionEventMask::SELECTION_WINDOW_DESTROY
-                        | SelectionEventMask::SELECTION_CLIENT_CLOSE,
-                )?;
-                self.owner_changed()?;
-                let during = during(self);
-                let stopped = self.watch_owner(SelectionEventMask::default());
-                let changed = self.owner_changed()?;
-                stopped?;
-                Ok((during?, changed))
-            },
-            OwnerWatch::OwnerWindow => {
-                let before = self.owner()?;
-                let during = during(self)?;
-                Ok((during, self.owner()? != before))
-            },
-        }
-    }
-
-    fn watch_owner(&self, changes: SelectionEventMask) -> anyhow::Result<()> {
-        self.connection
-            .xfixes_select_selection_input(self.root, self.selection, changes)?
-            .check()?;
-        Ok(())
-    }
-
-    fn owner_changed(&self) -> anyhow::Result<bool> {
-        let mut changed = false;
-        while let Some(event) = self.connection.poll_for_event()? {
-            changed |= matches!(
-                event,
-                Event::XfixesSelectionNotify(notify) if notify.selection == self.selection
-            );
-        }
-        Ok(changed)
     }
 
     fn native(&mut self) -> anyhow::Result<&mut arboard::Clipboard> {
@@ -303,24 +174,19 @@ impl ClipboardAccess for Clipboard {
         has_external_target(&self.connection, host)
     }
 
-    fn write_text(&mut self, text: &str, permit: &InsertPermit) -> anyhow::Result<bool> {
+    fn set_text(&mut self, text: &str, permit: &InsertPermit) -> anyhow::Result<bool> {
         copy_when(
             || permit.active(),
             || self.native(),
-            |native| Ok(native.set_text(text)?),
+            |native| {
+                native.set_text(text)?;
+                ensure!(
+                    native.get_text()? == text,
+                    "The X11 clipboard did not keep the copied text. Try Paste last dictation again."
+                );
+                Ok(())
+            },
         )
-    }
-
-    fn owner(&self) -> anyhow::Result<Window> {
-        Ok(self
-            .connection
-            .get_selection_owner(self.selection)?
-            .reply()?
-            .owner)
-    }
-
-    fn holds_text(&mut self, text: &str) -> anyhow::Result<bool> {
-        holds_text(self.native()?.get_text(), text)
     }
 }
 

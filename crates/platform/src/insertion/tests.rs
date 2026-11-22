@@ -121,22 +121,3 @@ fn each_line_break_spelling_types_as_one_line_break() {
     assert_eq!(typed("🦀\n"), ["🦀", "⏎"]);
     assert_eq!(split_line_breaks("").count(), 0);
 }
-
-#[cfg(target_os = "linux")]
-#[test]
-fn a_clipboard_that_now_holds_no_text_reads_as_changed_not_failed() -> anyhow::Result<()> {
-    assert!(super::holds_text(Ok("fixture".into()), "fixture")?);
-    assert!(!super::holds_text(Ok("other".into()), "fixture")?);
-    assert!(
-        matches!(
-            super::holds_text(Err(arboard::Error::ContentNotAvailable), "fixture"),
-            Ok(false)
-        ),
-        "An image another app copied over the text failed the insertion"
-    );
-    assert!(
-        super::holds_text(Err(arboard::Error::ClipboardOccupied), "fixture").is_err(),
-        "A clipboard fault read as an ordinary change"
-    );
-    Ok(())
-}

@@ -21,15 +21,7 @@ async fn a_blocked_focus_query_stays_off_the_caller_and_never_touches_clipboard_
             Ok(false)
         }
 
-        fn write_text(&mut self, _: &str, _: &InsertPermit) -> anyhow::Result<bool> {
-            bail!("Focus accessed clipboard contents")
-        }
-
-        fn owner(&self) -> anyhow::Result<Window> {
-            bail!("Focus accessed clipboard ownership")
-        }
-
-        fn holds_text(&mut self, _: &str) -> anyhow::Result<bool> {
+        fn set_text(&mut self, _: &str, _: &InsertPermit) -> anyhow::Result<bool> {
             bail!("Focus accessed clipboard contents")
         }
     }
@@ -68,16 +60,8 @@ async fn clipboard_setup_does_not_block_cancel_and_skips_a_stale_queued_copy() -
             Ok(false)
         }
 
-        fn write_text(&mut self, _: &str, _: &InsertPermit) -> anyhow::Result<bool> {
+        fn set_text(&mut self, _: &str, _: &InsertPermit) -> anyhow::Result<bool> {
             self.0.send(())?;
-            Ok(true)
-        }
-
-        fn owner(&self) -> anyhow::Result<Window> {
-            Ok(7)
-        }
-
-        fn holds_text(&mut self, _: &str) -> anyhow::Result<bool> {
             Ok(true)
         }
     }
@@ -102,23 +86,13 @@ async fn clipboard_setup_does_not_block_cancel_and_skips_a_stale_queued_copy() -
     let mut previous_copy = Box::pin(worker.set_text("fixture".into(), previous.clone()));
     assert!(previous_copy.as_mut().now_or_never().is_none());
     input.deliver(Input::Cancel);
-    assert!(!previous.active());
     let current = input.begin().context("Current recording")?;
     release.send(())?;
     ready.await?;
 
-    assert!(previous_copy.await?.is_none());
-    assert_eq!(
-        worker.set_text("fixture".into(), current.clone()).await?,
-        Some(7)
-    );
+    assert!(!previous_copy.await?);
+    assert!(worker.set_text("fixture".into(), current.clone()).await?);
     assert_eq!(copies.try_iter().count(), 1);
-    assert_eq!(
-        worker
-            .paste_target(7, "fixture".into(), current.clone())
-            .await?,
-        (false, true)
-    );
     drop(worker);
     assert!(
         !current.active(),
@@ -128,147 +102,5 @@ async fn clipboard_setup_does_not_block_cancel_and_skips_a_stale_queued_copy() -
         !input.is_closed(),
         "Clipboard retirement closed input before the desktop thread could report why"
     );
-    Ok(())
-}
-
-#[tokio::test]
-async fn paste_needs_its_own_text_from_the_same_owner_after_looking_up_focus() -> anyhow::Result<()>
-{
-    struct ManagedClipboard {
-        owner: Window,
-        text: &'static str,
-        calls: mpsc::Sender<&'static str>,
-    }
-
-    impl ClipboardAccess for ManagedClipboard {
-        fn external_target(&self, _: HostSession) -> anyhow::Result<bool> {
-            self.calls.send("focus")?;
-            Ok(true)
-        }
-
-        fn write_text(&mut self, _: &str, _: &InsertPermit) -> anyhow::Result<bool> {
-            bail!("The selection was already written")
-        }
-
-        fn owner(&self) -> anyhow::Result<Window> {
-            self.calls.send("owner")?;
-            Ok(self.owner)
-        }
-
-        fn holds_text(&mut self, text: &str) -> anyhow::Result<bool> {
-            self.calls.send("text")?;
-            Ok(self.text == text)
-        }
-    }
-
-    let (sender, _events) = async_channel::bounded(4);
-    let input = InputSender::new(sender);
-    for (owner, text, owned) in [
-        (7, "fixture", true),
-        (7, "other", false),
-        (8, "fixture", false),
-    ] {
-        let permit = input.begin().context("Recording")?;
-        let (calls, seen) = mpsc::channel();
-        let worker = ClipboardWorker::spawn(input.clone(), move || {
-            Ok(ManagedClipboard { owner, text, calls })
-        })?;
-        worker.ready().await?;
-        assert_eq!(
-            worker.paste_target(7, "fixture".into(), permit).await?,
-            (true, owned),
-            "A clipboard owned by {owner} holding {text:?} was judged wrongly"
-        );
-        assert_eq!(
-            seen.try_iter().next(),
-            Some("focus"),
-            "The clipboard was checked before the focus lookup"
-        );
-    }
-    Ok(())
-}
-
-#[test]
-fn escape_during_the_checks_after_a_copy_withdraws_it_even_when_a_check_fails() -> anyhow::Result<()>
-{
-    struct Escaping {
-        permit: InsertPermit,
-        fails: bool,
-    }
-
-    impl ClipboardAccess for Escaping {
-        fn external_target(&self, _: HostSession) -> anyhow::Result<bool> {
-            Ok(false)
-        }
-
-        fn write_text(&mut self, _: &str, _: &InsertPermit) -> anyhow::Result<bool> {
-            Ok(true)
-        }
-
-        fn owner(&self) -> anyhow::Result<Window> {
-            Ok(7)
-        }
-
-        fn holds_text(&mut self, _: &str) -> anyhow::Result<bool> {
-            self.permit.revoke();
-            if self.fails {
-                bail!("Synthetic owner loss");
-            }
-            Ok(true)
-        }
-    }
-
-    let (events, _received) = async_channel::bounded(1);
-    let input = InputSender::new(events);
-    for fails in [false, true] {
-        let permit = input.begin().context("Recording")?;
-        let mut clipboard = Escaping {
-            permit: permit.clone(),
-            fails,
-        };
-        let copied = clipboard.set_text("fixture", &permit);
-        assert!(
-            matches!(copied, Ok(None)),
-            "A copy cancelled while its content was checked ended {copied:?} (failing check: {fails})"
-        );
-    }
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_panicking_clipboard_thread_answers_its_request_and_reports_why() -> anyhow::Result<()> {
-    struct PanickingClipboard;
-
-    impl ClipboardAccess for PanickingClipboard {
-        fn external_target(&self, _: HostSession) -> anyhow::Result<bool> {
-            Ok(false)
-        }
-
-        fn write_text(&mut self, _: &str, _: &InsertPermit) -> anyhow::Result<bool> {
-            panic::resume_unwind(Box::new("private payload"))
-        }
-
-        fn owner(&self) -> anyhow::Result<Window> {
-            Ok(x11rb::NONE)
-        }
-
-        fn holds_text(&mut self, _: &str) -> anyhow::Result<bool> {
-            Ok(false)
-        }
-    }
-
-    let (events, received) = async_channel::bounded(4);
-    let input = InputSender::new(events);
-    let worker = ClipboardWorker::spawn(input.clone(), || Ok(PanickingClipboard))?;
-    worker.ready().await?;
-    let permit = input.begin().context("Recording")?;
-    let answer = tokio::time::timeout(PATIENCE, worker.set_text("fixture".into(), permit))
-        .await
-        .context("The clipboard request was left waiting")?;
-    assert!(answer.is_err());
-    match tokio::time::timeout(PATIENCE, received.recv()).await? {
-        Ok(Input::Unavailable(reason)) => assert!(!reason.contains("private payload")),
-        other => bail!("The stopped clipboard thread did not report why: {other:?}"),
-    }
     Ok(())
 }

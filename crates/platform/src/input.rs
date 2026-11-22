@@ -138,17 +138,8 @@ pub struct InsertPermit {
 }
 
 impl InsertPermit {
-    #[cfg(target_os = "linux")]
-    pub(crate) fn same_recording(&self, other: &Self) -> bool {
-        self.gate.is_same(&other.gate) && self.generation == other.generation
-    }
-
-    #[expect(
-        clippy::must_use_candidate,
-        reason = "Ending a recording needs no answer; only a lost clipboard selection asks whether it ended the current one"
-    )]
-    pub fn revoke(&self) -> bool {
-        self.gate.revoke(self.generation)
+    pub fn revoke(&self) {
+        self.gate.revoke(self.generation);
     }
 
     #[must_use]
@@ -248,11 +239,6 @@ impl Gate {
 
     fn is_authorized(&self) -> bool {
         self.0.load(Ordering::Acquire) & (Self::AUTHORIZED | Self::REVOKED) == Self::AUTHORIZED
-    }
-
-    #[cfg(target_os = "linux")]
-    fn is_same(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
     }
 }
 

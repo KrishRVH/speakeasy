@@ -221,15 +221,6 @@ pub(crate) fn wait_for_released_modifiers(
     }
 }
 
-#[cfg(target_os = "linux")]
-pub(crate) fn holds_text(read: Result<String, arboard::Error>, text: &str) -> anyhow::Result<bool> {
-    match read {
-        Ok(current) => Ok(current == text),
-        Err(arboard::Error::ContentNotAvailable) => Ok(false),
-        Err(error) => Err(error.into()),
-    }
-}
-
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
 pub(crate) enum Typed<'text> {
     Text(&'text str),
