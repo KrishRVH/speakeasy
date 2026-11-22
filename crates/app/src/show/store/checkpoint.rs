@@ -83,7 +83,7 @@ impl Checkpoint {
         fs::create_dir_all(&root)?;
         let directory = super::fresh_directory(&root, recorded)?;
         fs::create_dir(&directory)?;
-        lock(&directory)?.context(BUSY)
+        hold(&directory, File::create_new(directory.join(LOCK))?)?.context(BUSY)
     }
 
     pub(crate) const fn recorded(&self) -> SystemTime {
@@ -140,7 +140,7 @@ impl Checkpoint {
     }
 
     pub(in crate::show) fn has_audio(&self) -> bool {
-        self.audio().is_ok_and(|audio| audio.is_some())
+        !matches!(self.audio(), Ok(None))
     }
 
     pub(crate) fn replay(&self) -> anyhow::Result<Take> {
@@ -229,16 +229,18 @@ fn owned(parent: &Path) -> impl Iterator<Item = Checkpoint> {
 }
 
 fn lock(directory: &Path) -> io::Result<Option<Checkpoint>> {
+    hold(
+        directory,
+        OpenOptions::new().write(true).open(directory.join(LOCK))?,
+    )
+}
+
+fn hold(directory: &Path, lock: File) -> io::Result<Option<Checkpoint>> {
     let recorded = directory
         .file_name()
         .and_then(|name| name.to_str())
         .and_then(age::recorded_at)
         .ok_or_else(|| io::Error::other("Not an interrupted Show"))?;
-    let lock = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(directory.join(LOCK))?;
     match lock.try_lock() {
         Ok(()) => Ok(Some(Checkpoint {
             directory: directory.to_owned(),

@@ -708,14 +708,14 @@ module unless a test file is named.
   the bundle in a temporary folder and renames it into place. Narrated publication copies the
   checkpoint's audio into the bundle as voice, and the saved Show says when that voice lacks its end
   record. A saved Show discards its checkpoint unless its narration was lost to stopped audio or
-  failed transcription and the checkpoint holds audio; then a `pending` marker keeps the checkpoint
-  listed as Narration pending until it is discarded or expires seven days after recording, whatever
-  the saved Show's Keep marker says. Recovering a pending checkpoint transcribes its audio and saves
-  a narrated copy beside the unchanged original; a retry that hears no words saves nothing and
-  stays. If checkpoint storage never opens, in-memory footage remains publishable; a keeper that
-  never returns its checkpoint stops publication. Recovery reads audio up to its first torn or
-  failed-checksum record; audio that cannot be read leaves the recovered Show without narration.
-  Listing skips folders it cannot lock, including checkpoints another process holds.
+  failed transcription and its checkpoint audio is present or unreadable; then a `pending` marker
+  keeps the checkpoint listed as Narration pending until it is discarded or expires seven days after
+  recording, whatever the saved Show's Keep marker says. Recovering a pending checkpoint transcribes
+  its audio and saves a narrated copy beside the unchanged original; a retry that hears no words
+  saves nothing and stays. If checkpoint storage never opens, in-memory footage remains publishable;
+  a keeper that never returns its checkpoint stops publication. Recovery reads audio up to its first
+  torn or failed-checksum record; audio that cannot be read leaves the recovered Show without
+  narration. Listing skips folders it cannot lock, including checkpoints another process holds.
   [checkpoint/tests.rs](../crates/app/src/show/store/checkpoint/tests.rs) exercises listing, lock
   ownership, torn logs, expiry, and interrupted IDs.
   [journal/log.rs](../crates/show/src/journal/log.rs) shares live/replay admission, thinning, and
