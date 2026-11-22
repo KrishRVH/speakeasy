@@ -32,51 +32,33 @@ commitment is not permission to repeat input after an error. Synthetic key array
 their synchronous submission and carry the app's own-input marker so hooks ignore them. Direct text
 is split only at valid encoding boundaries. Windows and macOS type each line break, whether CRLF, CR
 or LF, as Shift+Enter, which chat and form fields take as a new line rather than a send; Linux sends
-line breaks inside EI text, and the compositor decides how to insert them. Windows input cut short
-releases every key its sent part left down, and reports the paste or Return as sent once the key
-that acts, V with Ctrl or Return, went down; typed text cut short reports itself blocked. Clipboard
-data and decoded images never enter Debug/error output.
+line breaks inside EI text, and the compositor decides how to insert them. Windows input reports
+itself sent only when every key landed; input cut short reports itself blocked. Clipboard data and
+decoded images never enter Debug/error output.
 
 `KeyCount` is a relaxed atomic counter. The Windows keyboard hook adds each key press it passes
 through that is not a modifier or lock key. The Mac event tap adds each key-down it passes through,
-since modifiers arrive as FlagsChanged, and adds one whenever the tap was disabled and may have
-missed typing. Both callbacks skip keys with the own-input marker first. The insertion worker
-compares the reading it takes after one paste with the one it takes before the next: the count and
-the pointer position, and on macOS the HID system's mouse-down counters, which Speakeasy never posts
-to. No other memory needs ordering against the count. A pointer that cannot be read means no
-reading, and no space. On macOS the worker first asks the main thread for `secure_input` through the
-main dispatch queue and waits 50 ms; secure input, or no answer, also means no reading.
+since modifiers arrive as FlagsChanged. Both callbacks skip keys with the own-input marker first.
+The insertion worker compares the reading it takes after one paste with the one it takes before the
+next: the count and the pointer position, and on macOS the HID system's mouse-down counters, which
+Speakeasy never posts to. No other memory needs ordering against the count. A pointer that cannot be
+read means no reading, and no space. On macOS the worker first asks the main thread for
+`secure_input` through the main dispatch queue and waits 50 ms; secure input, or no answer, also
+means no reading.
 
 A dictation sent with Return spends its permit on the text; the Return 100 ms later is a second send
 that requires the foreground window (macOS: the frontmost app) captured right after the text,
 Speakeasy not holding focus, and a released shortcut, so a newer press or a focus change withholds
 it. A failure after the text landed reports that Return was not pressed, never a lost paste. A sent
 dictation keeps its clipboard snapshot unused, so a slow target cannot paste the restored copy and
-then receive Return. A paste snapshots the clipboard under the same lease that writes the dictation,
-and the insertion thread answers the request before it waits 500 ms and puts the snapshot back. The
-write records the sequence number or change count once its copy is complete, on Windows after the
-clipboard closes, because closing advances the number. Another copy published in that moment would
-lend the write its number, so the paste trusts the number only once the clipboard is shown to hold
-the dictated text. The restore reopens the clipboard, prepares the whole snapshot, and only then
-checks that the number is unchanged before it writes. Cancellation before submission restores the
-same snapshot immediately or clears the dictated copy when no snapshot was available, as does a
-failure once the dictated text is confirmed; a cancellation that finds another copy, or a check that
-fails, restores nothing. These restores are best effort, so the dictation still reports its
-cancellation or the original error. A revocation that meets a failing clipboard call reports the
-cancellation, and a paste left to the user reports the text copied only while the clipboard number
-is unchanged and the permit outlived that last check; a revocation during it restores the snapshot.
-A write that fails partway puts the snapshot back, or clears its partial copy when there is none,
-before it releases its lease; macOS rebuilds the snapshot first and puts it back only while the
-change count its clearing produced still stands. One that fails before touching the clipboard leaves
-it alone. The paste restores nothing after a failed write, so it never writes under a number another
-copy may own. Windows and macOS inspect every clipboard format or item type for concealed content
-before reading any payload; Windows saves nothing when its format listing ends in an error, and
-macOS reads the items again when its change count moved while it read them, and saves nothing after
-three tries that never held still. The dictated-text check reads text only from a clipboard that
-bears no concealment mark and carries the dictation's own marks, so another app's copy of the same
-text never passes for it: macOS reads the one item whose types it has just inspected and requires
-its transient mark, and Windows requires both private marks to exclude the copy and lists no format
-beyond them and the text formats. The thread serves the next request only after the restore, which
+then receive Return. A paste snapshots the clipboard, writes the dictation with the private marks
+that keep it out of clipboard history, and records the sequence number or change count its write
+produced; the insertion thread answers the request before it waits 500 ms and puts the snapshot
+back. The restore reopens the clipboard and writes only while that number is unchanged, so a newer
+copy, by the user or another app, stays. Cancellation before submission restores the snapshot at
+once under the same check, or clears the dictated copy when there was nothing to save. These
+restores are best effort, so the dictation still reports its cancellation or the original error. A
+failed write restores nothing. The thread serves the next request only after the restore, which
 therefore snapshots the restored copy. The snapshot lives only on the insertion thread and is
 dropped after the restore.
 
@@ -105,23 +87,22 @@ Owners: `crates/platform/src/windows.rs`, `windows/input.rs`, `windows/insertion
 with null and requires `CloseHandle`; it is not an adopter for pseudo-handles, window handles, or
 APIs using `INVALID_HANDLE_VALUE`. The OwnedHandle closes it exactly once. Native byte/UTF-16
 buffers have checked ABI lengths and remain alive through the synchronous call. Registry strings are
-bounded and terminated, then validated before becoming an installation path or a WSL share name: the
-default distribution's key holds only hex digits, braces, and hyphens, and its name only letters,
-digits, `.`, `_`, and `-`. Reading `/etc/wsl.conf` through `\\wsl.localhost` or `\\wsl$` can start
-the WSL VM and block, so the app reads it only on the WSL lookup thread; the CLI reads it
-synchronously. The file is bounded to 64 KiB; an unreadable or oversized file gives no WSL path.
+read into a buffer of the longest registry value and lose their terminator. Reading `/etc/wsl.conf`
+through `\\wsl.localhost` or `\\wsl$` can start the WSL VM and block, so the app reads it only on
+the WSL lookup thread; the CLI reads it synchronously. An unreadable file gives no WSL path.
 
-Windows presentation/subclass operations run on the HWND's owning thread. `Window::new` verifies
-that ownership. The pill and overlay reapply their physical bounds after a DPI transition because
-GPUI can reposition them synchronously during the initial move. A subclass is removed during native
-destruction. Low-level hook callbacks without a context argument use thread-local state only on
-their owning hook/message-loop thread, and callback failures cannot unwind across the native ABI.
-The input owner removes hooks/window registrations before releasing their reachable state. A raw
-integer HWND transports identity, not ownership. The test-only `native_window` requires a live HWND
-that outlives its borrowed handle. `keyboard_hook` casts `lparam` only for a nonnegative hook code,
-when Windows supplies a `KBDLLHOOKSTRUCT` valid through that invocation; other codes are forwarded
-unchanged. `Monitor` shares its `StopEvent` with the native thread so owner cancellation can wake a
-blocked message wait; the final `Arc` releases the kernel event only after both users finish.
+Windows presentation/subclass operations run on the HWND's owning thread; the app creates and
+configures its windows on the GPUI thread that owns them. The pill and overlay reapply their
+physical bounds after a DPI transition because GPUI can reposition them synchronously during the
+initial move. A subclass is removed during native destruction. Low-level hook callbacks without a
+context argument use thread-local state only on their owning hook/message-loop thread, and callback
+failures cannot unwind across the native ABI. The input owner removes hooks/window registrations
+before releasing their reachable state. A raw integer HWND transports identity, not ownership. The
+test-only `native_window` requires a live HWND that outlives its borrowed handle. `keyboard_hook`
+casts `lparam` only for a nonnegative hook code, when Windows supplies a `KBDLLHOOKSTRUCT` valid
+through that invocation; other codes are forwarded unchanged. `Monitor` shares its `StopEvent` with
+the native thread so owner cancellation can wake a blocked message wait; the final `Arc` releases
+the kernel event only after both users finish.
 
 The file dialog owns a dedicated STA/message-loop thread and all title/filter/output buffers until
 `GetOpenFileNameW` returns. Successful COM initialization is balanced on that same thread. Dropping
@@ -234,7 +215,7 @@ PipeWire release needs another opt-out.
 
 Owners: `crates/platform/src/macos.rs`, `macos/clipboard.rs`, `macos/status_item.rs`, `monitor.rs`,
 `permissions.rs`; `keyboard.rs` holds the hold-key and F13 policy this tap shares with the Windows
-hook, and `keyboard/typematic.rs` reads the Windows repeat settings.
+hook.
 
 AppKit window/view operations require the main thread. The platform wrapper retains the NSWindow and
 is not Send. Core Foundation Create-rule results are adopted once; Get-rule references remain
@@ -252,13 +233,12 @@ input lane's closure, so a lane closed from any thread, including by its receive
 loop without waiting for another event. The waker only stops the loop and takes no lock, so a lane
 closed under the policy or monitor lock cannot deadlock. The event tap passes the current key
 through and disables itself when the input lane closes. Notification tokens remain retained until
-removal. A hold key acts only when pressed afresh during a hold, never on a repeat, so a key already
-down when the hold began does nothing. A swallowed hold key stays suppressed until its own release
-or a fresh press of it, which shows that the release went unseen, so a key held through a tap
-outage, lifecycle interrupt or missed chord release never repeats into the app. The Mac tap tells a
-fresh press from a repeat by the event's autorepeat field. Only a fresh press can be a quick
-application combination with a right modifier, so a swallowed key's repeat stays swallowed after
-that modifier's release.
+removal. A disabled tap is re-enabled. A hold key acts only when pressed afresh during a hold, never
+on a repeat, so a key already down when the hold began does nothing. A swallowed hold key stays
+suppressed until its own release, so a key held through the end of a hold never repeats into the
+app. The Mac tap tells a fresh press from a repeat by the event's autorepeat field. Only a fresh
+press can be a quick application combination with a right modifier, so a swallowed key's repeat
+stays swallowed after that modifier's release.
 
 Mac F13 uses key code 105 and the event's autorepeat field. Its initial press and release establish
 the pre-event hold explicitly; unrelated events reconcile against HID-system physical key state. The
@@ -269,27 +249,11 @@ wait and its final preflight. Its per-request autorelease pool encloses native d
 Windows F13 is VK 0x7C, and the hook swallows its every event. Windows updates async key state only
 after the hooks pass an event, so a swallowed F13 never reads as down, and its own events establish
 the hold. The low-level hook reports no autorepeat, so the Windows policy remembers each key whose
-press it saw, with the time of its last down, and takes another down of that key before its release
-as a repeat while it arrives within the repeat limit of the last one. Windows autorepeat repeats
-only the most recent key and does not resume an earlier one, so a down after a longer silence is a
-fresh press whose release went unseen. The limit is twice the longer of the repeat delay and
-interval, plus 250 ms. The hook reads those settings with `SystemParametersInfoW` whenever it judges
-such a silence: the keyboard delay and speed, or FilterKeys' acceptance wait plus repeat delay, and
-its repeat interval, when FilterKeys is on without BounceKeys. Without repeat every further down is
-fresh, and an unreadable FilterKeys setting counts as its 20 s maximum. The read fills caller-owned
-values and sends no messages, so it cannot re-enter the hook. The policy keeps those keys through a
-lifecycle interrupt and a missed chord release, so a swallowed key's repeats stay swallowed until
-its own release, and a press after the lock screen or a stall is fresh again; a key released unseen
-and pressed again within the limit loses that press. Nothing reports a swallowed F13's physical
-state, so an unseen F13 release keeps the hold until the next fresh F13 down, which ends the hold
-and starts another, or until the next F13 release. While F13 is the last key to go down, its repeats
-keep arriving, so a hold key pressed after a silence longer than the limit presumes the release went
-unseen: the hold ends and the key reaches the app. Any other key-down, a Show key or a Shift tap
-included, makes F13's silence expected until F13 is heard again, and so does an F13 down the hook
-reports as injected, since Windows never repeats injected input. FilterKeys without repeat never
-presumes a release. A hold key pressed within the limit after an unseen release, or after another
-key or an injected F13 went down, still acts. F13 modifies no other key, so the insertion worker's
-release wait and preflight do not wait for it.
+press it saw and takes every further down of that key before its release as a repeat. A release the
+hook never saw leaves the next press of that key read as a repeat, and an F13 hold whose release
+went unseen lasts until the next F13 release. Ctrl and Win are reconciled against physical key state
+on every event, so a Ctrl or Win release the hook never saw ends the hold at the next event. F13
+modifies no other key, so the insertion worker's release wait and preflight do not wait for it.
 
 `StatusItem` is created, updated and removed on the main thread. It takes the item's button at
 creation, removing the item again if AppKit offers none, and holds that main-thread-only button, so
@@ -307,8 +271,7 @@ reports false elsewhere. While another process holds Secure Event Input, the ses
 receives FlagsChanged but no KeyDown or KeyUp.
 
 Permission queries report consent only; they do not open a microphone, prove device readiness or
-install a hook. The Mac clipboard's private/transient marks precede user content, and change-count
-plus content checks bound clipboard replacement races.
+install a hook. The Mac clipboard's transient mark precedes user content.
 
 ## Capture buffers, geometry and privacy
 
@@ -323,20 +286,17 @@ usage reference it never releases, so the apartment lasts for the process, becau
 activation factories outlive individual captures. Session/pool closure precedes resource release,
 and the display-closed callback only closes its lane. Texture/context resources belong to the same
 D3D device; crop bounds lie inside the source; CPU mappings are read only until Unmap. Checked
-row/pitch/height calculations precede raw slices. App-owned windows, including any whose display
-affinity cannot be read, are excluded before admissible frames, and new exclusions discard pending
-images under the existing composition margin.
+row/pitch/height calculations precede raw slices. Capturable app-owned windows are excluded before
+admissible frames, and new exclusions discard pending images under the existing composition margin.
+The overlay excludes itself whenever it is placed, and a capture puts back only the windows it
+excluded.
 
-Pending Windows frames retain their observed target rectangle and are rejected when observations
-before or after GPU readback differ. While DWM cannot report the frame bounds of a window that still
-exists on screen, Windows discards its frames instead of ending the Show; when the bounds return, it
-crops only frames composed after a fresh composition margin, so a frame from the unmeasured interval
-never takes the new rectangle. A readback whose before or after observation finds the bounds
-unreadable or changed counts as the same loss, so the next measured bounds also start a fresh
-margin. Mac window stills are admitted only when the target rectangle observed after the request
-equals that attached to the image. A still rejected because the measurable target rectangle changed
-refreshes the response clock; unknown geometry does not. Neither platform's sampled observations
-establish exact composition-time window geometry or detect every move-away-and-back.
+Pending Windows frames carry the target rectangle observed when the frame arrived. While DWM cannot
+report the frame bounds of a window that still exists on screen, Windows discards its frames instead
+of ending the Show. Mac window stills are admitted only when the target rectangle observed after the
+request equals that attached to the image. A still rejected because the measurable target rectangle
+changed refreshes the response clock; unknown geometry does not. Neither platform's sampled
+observations establish exact composition-time window geometry or detect every move-away-and-back.
 
 Mac `Source` may cross threads because its retained ScreenCaptureKit filter is immutable and lacks
 thread affinity; no AppKit object is moved with it. The filter excludes the whole application,
@@ -347,20 +307,20 @@ drains the queue directly; a start interrupted by a stop request counts as runni
 confirms. For a started stream, only successful stop, the exact documented already-stopped
 domain/code, or the actual did-stop signal establishes cessation; other stop errors do not. A
 confirming stop completion closes the did-stop signal's lane, so a confirmation that arrives after
-its attempt stopped waiting still confirms every later attempt. Each stop waits at most five seconds
-for its completion or the did-stop signal, whichever comes first. An unconfirmed stop is reported
-and retried after 0.1, 0.4, 1 and 2 seconds. If none confirms, the stream, output and queue stay
-retained for the life of the process, since releasing them could leave capture calling freed
-objects; the closed frame lane makes the output discard every sample. Retaining them latches a
-process-wide flag before the capture thread exits, whether the recorder awaited the stop or dropped
-the capture after a failed start. From then on `ScreenCapture::available` returns `Unstopped` and
-`ScreenCapture::start` refuses, and every session owner, including one created by Pause and Resume
-or a shortcut change, reads the flag when it presents status: it adds the quit warning to every
-status message and refuses a Show before opening the picker until Speakeasy restarts. A stream
-dropped before confirming cessation requests stop once more first. Failure notification precedes
-potentially blocking cleanup. Callback samples are borrowed only during the call; copied bounded
-BGRA leaves the callback. Native image buffers stay locked through reads. The stream's bounded
-host-clock calibration and display-geometry checks precede frame admission.
+its attempt stopped waiting still confirms the next attempt. Each stop waits at most five seconds
+for its completion or the did-stop signal, whichever comes first. An unconfirmed stop is reported,
+and dropping the stream requests stop once more. If that does not confirm either, the stream, output
+and queue stay retained for the life of the process, since releasing them could leave capture
+calling freed objects; the closed frame lane makes the output discard every sample. Retaining them
+latches a process-wide flag before the capture thread exits, whether the recorder awaited the stop
+or dropped the capture after a failed start. From then on `ScreenCapture::available` returns
+`Unstopped` and `ScreenCapture::start` refuses, and every session owner, including one created by
+Pause and Resume or a shortcut change, reads the flag when it presents status: it adds the quit
+warning to every status message and refuses a Show before opening the picker until Speakeasy
+restarts. Failure notification precedes potentially blocking cleanup. Callback samples are borrowed
+only during the call; copied bounded BGRA leaves the callback. Native image buffers stay locked
+through reads. The stream anchors native display timestamps to the host clock once and checks
+display geometry between frame batches.
 
 A screen Show's window watch lists windows on its own stoppable thread every frame interval and
 sends only changed layouts over a bounded lane, dropping a change the lane cannot take until the
@@ -403,52 +363,49 @@ Owners: `crates/platform/src/windows/movie/foundation.rs`, `encoder.rs`, `conver
 
 The Foundation guard starts COM MTA and Media Foundation and is deliberately not Send. It outlives
 every native codec/reader object on its initiating thread, including partial-open failures. Encoding
-releases writer, sink, converter and stream before Foundation teardown. Conversion is synchronous,
-disables frame-rate conversion and requires one output with unchanged time/duration for each input.
-The generated MFT output's ManuallyDrop sample/events are owned by a guard and released exactly once
-on every result path.
+releases writer, sink, converter and stream before Foundation teardown. Conversion disables
+frame-rate conversion and takes one output for each input. The generated MFT output's ManuallyDrop
+sample/events are owned by a guard and released exactly once on every result path.
 
 The COM file adapter serializes cursor operations and caps actual writes, seeks and SetSize. Foreign
 pointers and optional result pointers obey IStream's caller-owned buffer contract. It maps failures
-to content-free HRESULTs. Reads, reported size and end-relative seeks stay within the validated
-prefix even if the underlying file grows. Explicit IMFByteStream Close cancels I/O, but the Closed
-receipt waits for the last underlying IStream/file owner. A writer's extra File handle exists only
-to sync after Finalize closes the native byte stream, and drops before that receipt.
+to content-free HRESULTs. Explicit IMFByteStream Close cancels I/O, but the Closed receipt waits for
+the last underlying IStream/file owner.
 
 Decoding uses the same validated open File, never reopens a path. Media-type-change notifications
-revalidate dimensions/color format and associate stride with the returned sample. Flat and 2D native
-locks remain owned until unlock; signed pitch, offsets and allocation bounds are checked before
-copying top-down opaque BGRA. Cancellation is observed between native calls, and native I/O is
-released before return.
+refresh the stride associated with the returned sample, and decoding ends at end of stream or a
+reader error. Flat and 2D native locks remain owned until unlock; signed pitch and offsets are
+checked before copying top-down opaque BGRA. Cancellation is observed between native calls, and
+native I/O is released before return.
 
 ## Mac codec and verified-file decoder
 
 Owners: `crates/platform/src/macos/movie.rs`, `macos/movie/file.rs`, `macos/movie/encode.rs`,
 `encode/output.rs`, `encode/buffers.rs`, `encode/settings.rs`.
 
-AVAssetImageGenerator requests one exact rational timestamp with no preferred transform or aperture
-crop. The request retains the generator and waits for the promised completion even after
-cancellation or unwind. Completion borrows native objects only during its call and copies checked
-pixels/timing into Rust-owned values. Numeric native error codes may be reported; native
-descriptions and userInfo are not exposed.
+AVAssetImageGenerator requests one exact rational timestamp with zero tolerance and no preferred
+transform or aperture crop, and the frame carries the validated sample's time. The request retains
+the generator and waits for the promised completion even after cancellation or unwind. Completion
+borrows native objects only during its call and copies pixels into Rust-owned values. Numeric native
+error codes may be reported; native descriptions and userInfo are not exposed.
 
 The asset's private resource URL resolves only to the validated file. Its strongly held delegate
-backs a weak native registration; external references are forbidden. Each bounded read holds the
-file mutex only through file access, releasing it before responding with copied NSData. Asset
-teardown detaches/cancels and takes the optional File under the same mutex, so no concurrent read
-retains the file afterward. The reader passes the published movie bytes directly to AVFoundation;
-Media Foundation fragment headers are normalized before publication.
+backs a weak native registration. Each bounded read holds the file mutex only through file access,
+releasing it before responding with copied NSData. Asset teardown detaches/cancels and takes the
+optional File under the same mutex, so no concurrent read retains the file afterward. The reader
+passes the published movie bytes directly to AVFoundation; Media Foundation fragment headers are
+normalized before publication.
 
 The AVAssetWriter has no output URL: only the strongly held segment delegate owns its create-new
-private file. Segment order, actual byte cap and sync are enforced under one lock. Failure/panic is
-latched before releasing that lock. Each appended sample owns an independent CVPixelBuffer; the pool
-allocation threshold is based on actual buffer size. Writable pixel slices are exclusive and bounded
-by the native allocation while locked. CMSampleBuffer/format results follow Create ownership and
-retain their dependencies. Finalization requires a writing writer and waits for its native
-completion. A writer that fails asynchronously between that status check and the finalization call
-still makes AVFoundation raise an Objective-C exception, which aborts the process; catching it needs
-objc2's `exception` feature, whose helper crate the build does not include. Drop cancels a writer
-still writing before closing the sink. The checkpoint lease outlives those resources.
+file. The actual byte cap is enforced under one lock, and failure/panic is latched before releasing
+that lock. Each appended sample owns an independent CVPixelBuffer from the pool. Writable pixel
+slices are exclusive and bounded by the native allocation while locked. CMSampleBuffer/format
+results follow Create ownership and retain their dependencies. Finalization requires a writing
+writer and waits for its native completion. A writer that fails asynchronously between that status
+check and the finalization call still makes AVFoundation raise an Objective-C exception, which
+aborts the process; catching it needs objc2's `exception` feature, whose helper crate the build does
+not include. Drop cancels a writer still writing before closing the sink. The checkpoint lease
+outlives those resources.
 
 ## GPUI and vendored adapters
 

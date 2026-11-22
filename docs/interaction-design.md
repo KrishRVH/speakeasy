@@ -306,13 +306,13 @@ its original seven-day schedule even when the saved bundle is kept.
 - Windows/macOS Escape continues to the focused app. It cancels dictation immediately at any stage,
   but a Show, area choice included, only while the shortcut is held: during the hold that started it
   or the press that would finish it. Otherwise a recording Show ignores Escape, and the tray's
-  Cancel Show discards it. An interruption, which is another shortcut, a session change such as
-  locking the screen, or a macOS key-tap outage, discards dictation but finishes a recording Show as
-  the shortcut would. Once a Show finishes, neither Escape, the tray, nor an interruption discards
-  it while it is saved. Pause, Quit, and a settings change can stop pending work, but preserve the
-  finished Show's checkpoint for recovery. A committed Show stays saved. Linux uses a reserved
-  Ctrl+Super+Escape chord or an explicit command binding; bare Escape is not globally captured.
-  Animation never delays cancellation or owns the microphone lifetime.
+  Cancel Show discards it. An interruption, which is another shortcut or a session change such as
+  locking the screen, discards dictation but finishes a recording Show as the shortcut would. Once a
+  Show finishes, neither Escape, the tray, nor an interruption discards it while it is saved. Pause,
+  Quit, and a settings change can stop pending work, but preserve the finished Show's checkpoint for
+  recovery. A committed Show stays saved. Linux uses a reserved Ctrl+Super+Escape chord or an
+  explicit command binding; bare Escape is not globally captured. Animation never delays
+  cancellation or owns the microphone lifetime.
 - On macOS, while another app holds secure keyboard entry, such as a focused password field or a
   terminal's Secure Keyboard Entry, the event tap sees modifier changes but no key presses. Fn,
   Right Option, and Right Command still start and finish dictation; a selected F13 does nothing, and

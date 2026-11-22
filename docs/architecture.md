@@ -220,23 +220,19 @@ module unless a test file is named.
   application's. On Windows and macOS, `copy_text` writes a Show's summary through the paste's own
   clipboard write, so both carry the same private markers.
   [clipboard.rs](../crates/platform/src/clipboard.rs) prepares bounded PNG/bitmap representations
-  from the displayed BGRA pixels, checks copy authorization after native acquisition, and keeps the
-  macOS change-count checks of a save, a failed write's rollback and a restore behind a `Pasteboard`
-  seam. [macos/clipboard.rs](../crates/platform/src/macos/clipboard.rs) serializes native writes
-  with a process-local lease because AppKit has no exclusive clipboard lease; one pasteboard item
-  carries every format. Windows holds its native lease through every format; a write that fails
-  partway puts back what a dictation replaced, or removes its partial copy, before releasing the
-  lease. [clipboard/tests.rs](../crates/platform/src/clipboard/tests.rs) checks image channels,
-  orientation, transparency, bounds, failure reporting, a newer recording during acquisition, and a
-  newer copy made while a pasteboard snapshot is read or rebuilt.
+  from the displayed BGRA pixels and checks copy authorization after native acquisition.
+  [macos/clipboard.rs](../crates/platform/src/macos/clipboard.rs) writes one pasteboard item that
+  carries every format, and Windows holds its native lease through every format.
+  [clipboard/tests.rs](../crates/platform/src/clipboard/tests.rs) checks image channels,
+  orientation, transparency, bounds, and a newer recording during acquisition.
   [insertion/tests.rs](../crates/platform/src/insertion/tests.rs),
   [insertion/commit/tests.rs](../crates/platform/src/insertion/commit/tests.rs), and the input, X11,
   portal, and EI modules test them. An opt-in test in
   [windows/insertion/tests.rs](../crates/platform/src/windows/insertion/tests.rs), which Windows CI
-  runs, checks pasted and copied text, images, failed writes, and cancellation on a hidden window
-  station's clipboard and refuses an interactive station, whose clipboard belongs to a person. A
-  standard account cannot create a named station, so the check uses its logon session's hidden
-  station, which other processes in that session may share.
+  runs, checks copied text and images, their private marks, and a restore that keeps a newer copy on
+  a hidden window station's clipboard and refuses an interactive station, whose clipboard belongs to
+  a person. A standard account cannot create a named station, so the check uses its logon session's
+  hidden station, which other processes in that session may share.
 - **Shortcuts and desktop adapters**: [keyboard.rs](../crates/platform/src/keyboard.rs),
   [desktop.rs](../crates/platform/src/desktop.rs), [monitor.rs](../crates/platform/src/monitor.rs),
   [owned_thread.rs](../crates/platform/src/owned_thread.rs),
@@ -249,12 +245,10 @@ module unless a test file is named.
   or Wayland. [keyboard/tests.rs](../crates/platform/src/keyboard/tests.rs) checks the pure key
   decisions on every host; owned-window and private-Xvfb checks are opt-in, and the hooks need
   native acceptance. Mac F13 uses key events and physical key-state reconciliation; Fn and the right
-  modifiers use modifier events. Windows F13 presumes a lost release only from silence beyond the
-  user's repeat settings, which
-  [keyboard/typematic.rs](../crates/platform/src/keyboard/typematic.rs) reads. Only right modifiers
-  defer quick application combinations. Insertion waits for the configured shortcut through the same
-  native adapter that rechecks it before delivery; selecting F13 never reserves it for another
-  shortcut setting.
+  modifiers use modifier events. Windows takes a held key's further downs as repeats until its
+  release. Only right modifiers defer quick application combinations. Insertion waits for the
+  configured shortcut through the same native adapter that rechecks it before delivery; selecting
+  F13 never reserves it for another shortcut setting.
 - **Pill and motion**: [pill.rs](../crates/app/src/pill.rs) and [pill/](../crates/app/src/pill),
   [core/src/motion.rs](../crates/core/src/motion.rs), [gpui_ext.rs](../crates/app/src/gpui_ext.rs),
   [icons.rs](../crates/app/src/icons.rs), and [theme.rs](../crates/app/src/theme.rs) animate the
@@ -741,30 +735,29 @@ module unless a test file is named.
   until it closes or goes off screen, or an area, and
   [show/overlay.rs](../crates/app/src/show/overlay.rs) shows ink, mark numbers, and the area picker.
   Mac window screenshots reject a changed rectangle after their request. Windows pending frames
-  retain the rectangle observed when polled and reject a rectangle that differs before or after GPU
-  readback. These sampled observations do not establish a window's exact rectangle at composition
-  time. Pointer samples carry their target geometry; queued stills cannot rewind the live overlay,
-  and each sample uses its own surface for annotation coordinates and gesture distances. Unavailable
-  observations and queue overflow produce explicit gaps, with one lane slot reserved for their
-  delivery. Gaps preserve known ink, discard incomplete clicks and drags, and prevent pins from
-  crossing an unobserved interval. A take finished before its first frame waits up to three seconds
-  for one, never past the session's five-minute limit. The recorder arms that limit from session
-  start, ends there even when the owner's Finish arrives late, and admits no observation stamped at
-  or after it; a capture that would start past the limit fails as recording no frames. Finishing
-  drains queued frames, observations, and pins through the chosen end after the producers stop, so a
-  first frame captured just before the limit still joins the Show, each pin after the samples up to
-  its release, as the live order would judge it; teardown adds no annotations. Checkpoint replay
-  preserves these same gaps. Pointer events also carry their source display rectangle. The tracker
-  retains one coordinate-space proof per stroke and pin: mixed strokes and groups across resizes or
-  gaps have none. A pin takes the last pointer sample at or before its second tap's release, with
-  that sample's proof, however late the taps arrive, and samples from before an accepted pin start
-  no ink. Stroke cuts preserve the carried joint’s proof. A recording without spaces, such as the
-  scripted demo, has unknown provenance. Geometry, overlay timing, and the area drag run on every
-  host; native capture is opt-in, and window lookup and the picker's clicks need native acceptance.
-  On Windows, an opt-in acceptance test stops an owned window's capture as it hides, minimizes,
-  cloaks, moves away, and closes. The [recording owner](../crates/platform/src/movie/recording.rs)
-  writes silent H.264 fragments from admitted frames through the
-  [Windows codec](../crates/platform/src/windows/movie/encoder.rs) or
+  retain the rectangle observed when polled. These sampled observations do not establish a window's
+  exact rectangle at composition time. Pointer samples carry their target geometry; queued stills
+  cannot rewind the live overlay, and each sample uses its own surface for annotation coordinates
+  and gesture distances. Unavailable observations and queue overflow produce explicit gaps, with one
+  lane slot reserved for their delivery. Gaps preserve known ink, discard incomplete clicks and
+  drags, and prevent pins from crossing an unobserved interval. A take finished before its first
+  frame waits up to three seconds for one, never past the session's five-minute limit. The recorder
+  arms that limit from session start, ends there even when the owner's Finish arrives late, and
+  admits no observation stamped at or after it; a capture that would start past the limit fails as
+  recording no frames. Finishing drains queued frames, observations, and pins through the chosen end
+  after the producers stop, so a first frame captured just before the limit still joins the Show,
+  each pin after the samples up to its release, as the live order would judge it; teardown adds no
+  annotations. Checkpoint replay preserves these same gaps. Pointer events also carry their source
+  display rectangle. The tracker retains one coordinate-space proof per stroke and pin: mixed
+  strokes and groups across resizes or gaps have none. A pin takes the last pointer sample at or
+  before its second tap's release, with that sample's proof, however late the taps arrive, and
+  samples from before an accepted pin start no ink. Stroke cuts preserve the carried joint’s proof.
+  A recording without spaces, such as the scripted demo, has unknown provenance. Geometry, overlay
+  timing, and the area drag run on every host; native capture is opt-in, and window lookup and the
+  picker's clicks need native acceptance. On Windows, an opt-in acceptance test stops an owned
+  window's capture as it hides, minimizes, cloaks, moves away, and closes. The
+  [recording owner](../crates/platform/src/movie/recording.rs) writes silent H.264 fragments from
+  admitted frames through the [Windows codec](../crates/platform/src/windows/movie/encoder.rs) or
   [Mac codec](../crates/platform/src/macos/movie/encode.rs). Its non-cloneable
   [lease](../crates/platform/src/movie.rs) waits for an origin acknowledgment before opening the
   file and closes only after native file handles release. It bounds its canvas to 2560 pixels per
@@ -785,21 +778,21 @@ module unless a test file is named.
   beside their sampled lossless frames; Mac window Shows retain sampled frames only. The
   [Mac stream](../crates/platform/src/macos/screen/stream.rs) keeps an immutable display crop,
   excludes Speakeasy's application, and copies complete BGRA frames into a two-slot lane. It maps
-  native display timestamps through a bounded host-clock calibration and rechecks display geometry
-  before admitting each queued frame. Native screen output has no audio or cursor. A separate
-  terminal lane reports failure before cleanup waits; successful stop, an already-stopped native
-  error, or the native stopped notification must acknowledge termination before output removal and
-  callback-queue drainage. After an acknowledged stop, the movie lease stays owned through that
-  cleanup and codec finalization. If stop fails, codec finalization releases the movie lease before
-  the stream retries stop and drains its callbacks. The Mac codec receives no file URL: its delegate
-  serializes complete segment writes within the file cap, syncs each segment, and latches failures
-  before releasing the output lock. [show/src/movie.rs](../crates/show/src/movie.rs) validates
-  bounded, single-track fragment metadata and returns only the complete prefix. It checks sample
-  byte ranges and timing, not compressed picture decoding. Inspection also identifies Media
-  Foundation's undeclared fragment-header padding. Publication and ZIP export declare that zero word
-  as a default size only when every affected sample has an explicit size and no later header field
-  can change meaning. This changes one flag byte per affected fragment; picture bytes, timestamps,
-  offsets, and the source file stay intact. Mac reads use the published bytes directly.
+  native display timestamps onto the host clock and rechecks display geometry before each batch of
+  queued frames. Native screen output has no audio or cursor. A separate terminal lane reports
+  failure before cleanup waits; successful stop, an already-stopped native error, or the native
+  stopped notification must acknowledge termination before output removal and callback-queue
+  drainage. After an acknowledged stop, the movie lease stays owned through that cleanup and codec
+  finalization. If stop fails, codec finalization releases the movie lease before the stream
+  requests stop once more and drains its callbacks. The Mac codec receives no file URL: its delegate
+  serializes complete segment writes within the file cap and latches failures before releasing the
+  output lock. [show/src/movie.rs](../crates/show/src/movie.rs) validates bounded, single-track
+  fragment metadata and returns only the complete prefix. It checks sample byte ranges and timing,
+  not compressed picture decoding. Inspection also identifies Media Foundation's undeclared
+  fragment-header padding. Publication and ZIP export declare that zero word as a default size only
+  when every affected sample has an explicit size and no later header field can change meaning. This
+  changes one flag byte per affected fragment; picture bytes, timestamps, offsets, and the source
+  file stay intact. Mac reads use the published bytes directly.
   [store/movie.rs](../crates/app/src/show/store/movie.rs) copies that prefix before publication
   commits and records the separate annotation horizon. A failed copy preserves the checkpoint. Video
   that cannot be read permits still-only publication with an explicit video-loss notice.
@@ -820,33 +813,33 @@ module unless a test file is named.
   Explicit `show frame --video` queries use the
   [native reader](../crates/platform/src/windows/movie/read.rs) on Windows and the
   [Mac image generator](../crates/platform/src/macos/movie.rs) on macOS. Validation and decoding
-  share one open file; Windows also denies other writers. Mac reads that handle through a private
-  resource loader, rejects external references, and closes the lease after active reads finish. The
-  validated sample table retains exact ticks alongside display timestamps; Mac requests its selected
-  predecessor without rounding and verifies the actual rational time. Encoded pixels exclude track
-  transforms and aperture cropping. Both readers release native I/O before returning; cancellation
-  is checked between native calls and Mac waits for image-generation completion after cancelling.
-  Canvas and buffer bounds are checked, and output is top-down opaque BGRA with the actual decoded
-  timestamp. The [`show frame --video` source](../crates/app/src/show/command/source/video.rs)
-  reports session-relative time and separate annotation coverage, including recovered tails.
-  `--annotated` shares the preview renderer at the exact decoded session time, reports omitted
-  primitives, and refuses samples without geometry or annotation coverage. Annotation rendering
-  precedes cropping. It refuses crops unless the actual decoded sample’s saved source rectangle
-  matches the mark’s coordinate proof. Crops expand within the fitted content, with output
-  coordinates reported in the full canvas. Missing geometry permits only unannotated, uncropped
-  video. Opt-in synthetic checks cover seek direction, orientation, cancellation, file replacement,
-  and exports beyond the annotation journal. Synthetic encoder checks decode irregular captures
-  sample by sample, reject future images, and exercise quiet fragments, same-tick coalescing,
-  cancellation, and partial progress after a stall. Captured and decoded frames carry a
+  share one open file. Mac reads that handle through a private resource loader and closes the lease
+  after active reads finish. The validated sample table retains exact ticks alongside display
+  timestamps; Mac requests its selected predecessor without rounding or tolerance. Encoded pixels
+  exclude track transforms and aperture cropping. Both readers release native I/O before returning;
+  cancellation is checked between native calls and Mac waits for image-generation completion after
+  cancelling. Output is top-down opaque BGRA with the decoded sample's timestamp. The
+  [`show frame --video` source](../crates/app/src/show/command/source/video.rs) reports
+  session-relative time and separate annotation coverage, including recovered tails. `--annotated`
+  shares the preview renderer at the exact decoded session time, reports omitted primitives, and
+  refuses samples without geometry or annotation coverage. Annotation rendering precedes cropping.
+  It refuses crops unless the actual decoded sample’s saved source rectangle matches the mark’s
+  coordinate proof. Crops expand within the fitted content, with output coordinates reported in the
+  full canvas. Missing geometry permits only unannotated, uncropped video. Opt-in synthetic checks
+  cover seek direction, orientation, cancellation, and exports beyond the annotation journal.
+  Synthetic encoder checks decode irregular captures sample by sample, reject future images, and
+  exercise quiet fragments; the fake codec in
+  [movie/encode/tests.rs](../crates/platform/src/movie/encode/tests.rs) covers same-tick coalescing,
+  cancellation, and a stall. Captured and decoded frames carry a
   [`BgraImage`](../crates/platform/src/image.rs), whose nonzero size matches its tightly packed
   bytes.
 
   Windows converts sRGB RGB32 through an explicit
   [native processor](../crates/platform/src/windows/movie/convert.rs) into limited-range BT.709
   NV12; the H.264 stream carries matching primaries, transfer, matrix, and range. Hidden sink-writer
-  converters are disabled. Progressive conversion returns one sample with unchanged timing per input
-  and no delayed output at finalization. The Windows reader requests sRGB output and disables
-  frame-rate conversion so color processing cannot synthesize timestamps.
+  converters are disabled. Progressive conversion returns one sample per input. The Windows reader
+  requests sRGB output and disables frame-rate conversion so color processing cannot synthesize
+  timestamps.
 
 - **Scripts and packaging**: [scripts/](../scripts) and [packaging/](../packaging) profile, check,
   package, and launch the app, [app/build.rs](../crates/app/build.rs) embeds the Windows resources,
