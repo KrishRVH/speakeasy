@@ -1,7 +1,6 @@
 use std::ops::{ControlFlow, Range};
 
 use gpui::{Context, Task, Window};
-use zeroize::Zeroizing;
 
 use super::{Notice, Settings, is_demo, onboarding::Step};
 use crate::{
@@ -12,7 +11,7 @@ use crate::{
 
 #[derive(Default)]
 pub(super) struct Practice {
-    pub(super) text: Zeroizing<String>,
+    pub(super) text: String,
     pub(super) live: Option<Live>,
     pub(super) picked: Option<Range<usize>>,
 }
@@ -51,7 +50,7 @@ impl Settings {
 
     pub(super) fn toggle_practice(&mut self, cx: &mut Context<'_, Self>) {
         if is_demo(cx) && self.onboarding == Some(Step::Practice) {
-            self.practice.text = Zeroizing::new("A little practice goes a long way.".into());
+            self.practice.text = "A little practice goes a long way.".into();
             return;
         }
         if self.practice.live.is_some() {

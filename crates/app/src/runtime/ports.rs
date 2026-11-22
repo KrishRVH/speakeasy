@@ -8,7 +8,6 @@ use speakeasy_core::machine::{Cue, RecognitionMode, SessionId};
 use speakeasy_platform::{Delivery, Enter, InsertPermit, Inserted, Keep, Scope, Taps};
 use speakeasy_show::{Ending, Framing, Journal, Narration, NarrationLoss, Recording, Take};
 use tokio::sync::{mpsc, oneshot, watch};
-use zeroize::Zeroizing;
 
 use crate::{
     config::Config,
@@ -44,19 +43,19 @@ pub(crate) struct Lost {
 
 pub(crate) struct LiveAudio {
     pub rate: u32,
-    pub frames: mpsc::Receiver<Zeroizing<Vec<u8>>>,
-    pub tail: oneshot::Receiver<Zeroizing<Vec<u8>>>,
+    pub frames: mpsc::Receiver<Vec<u8>>,
+    pub tail: oneshot::Receiver<Vec<u8>>,
 }
 
 pub(crate) struct Sealed {
-    pub wav: Zeroizing<Vec<u8>>,
+    pub wav: Vec<u8>,
     pub trimmed: Duration,
     pub audible: Duration,
     pub partition: Option<Partition>,
 }
 
 pub(crate) struct Piece {
-    pub wav: Zeroizing<Vec<u8>>,
+    pub wav: Vec<u8>,
     pub audible: Duration,
 }
 

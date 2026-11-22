@@ -47,7 +47,7 @@ async fn segmentation_admits_only_nemo_dictation_regardless_of_language() -> any
 
 fn partitioned(pieces: u32) -> anyhow::Result<Sealed> {
     Ok(Sealed {
-        wav: Zeroizing::new(silent_wav(16_000, Duration::from_secs(1))?),
+        wav: silent_wav(16_000, Duration::from_secs(1))?,
         trimmed: Duration::ZERO,
         audible: SPOKEN,
         partition: Some(Partition {
@@ -117,7 +117,7 @@ async fn a_nonempty_tail_keeps_every_piece_and_cleans_across_the_final_boundary(
         .send(CaptureEvent::Finished(
             id,
             Ok(Some(Sealed {
-                wav: Zeroizing::new(audio.clone()),
+                wav: audio.clone(),
                 trimmed: Duration::ZERO,
                 audible: SPOKEN,
                 partition: Some(Partition {
@@ -265,7 +265,7 @@ const BRIEF: Duration = Duration::from_millis(900);
 
 fn heard_for(audible: Duration) -> Sealed {
     Sealed {
-        wav: Zeroizing::new(vec![1, 2]),
+        wav: vec![1, 2],
         trimmed: Duration::ZERO,
         audible,
         partition: None,

@@ -3,7 +3,6 @@ use tokio::{
     sync::{mpsc, oneshot},
 };
 use tokio_tungstenite::accept_async;
-use zeroize::Zeroizing;
 
 use super::*;
 use crate::testing::PATIENCE;
@@ -29,10 +28,10 @@ async fn sockets() -> anyhow::Result<(Socket, Socket)> {
 fn ended(frames: &[&[u8]]) -> LiveAudio {
     let (sender, received) = mpsc::channel(frames.len().max(1));
     for frame in frames {
-        assert!(sender.try_send(Zeroizing::new(frame.to_vec())).is_ok());
+        assert!(sender.try_send(frame.to_vec()).is_ok());
     }
     let (ending, tail) = oneshot::channel();
-    assert!(ending.send(Zeroizing::new(Vec::new())).is_ok());
+    assert!(ending.send(Vec::new()).is_ok());
     LiveAudio {
         rate: 16_000,
         frames: received,

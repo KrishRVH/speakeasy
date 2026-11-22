@@ -2,7 +2,6 @@ use std::time::Duration;
 
 use speakeasy_core::machine::SessionId;
 use tokio::sync::{mpsc, oneshot};
-use zeroize::Zeroizing;
 
 use super::{
     pcm::{bytes_in, samples_in},
@@ -16,8 +15,8 @@ const QUEUED_FRAMES: usize = 20;
 pub(super) enum Feed {
     Waiting,
     Sending {
-        frames: mpsc::Sender<Zeroizing<Vec<u8>>>,
-        ending: oneshot::Sender<Zeroizing<Vec<u8>>>,
+        frames: mpsc::Sender<Vec<u8>>,
+        ending: oneshot::Sender<Vec<u8>>,
         cursor: usize,
     },
 }
@@ -68,7 +67,7 @@ impl Feed {
             else {
                 break;
             };
-            if frames.try_send(Zeroizing::new(part.to_vec())).is_err() {
+            if frames.try_send(part.to_vec()).is_err() {
                 return Err(Abandoned);
             }
             *cursor = cursor.saturating_add(chunk);
@@ -84,7 +83,7 @@ impl Feed {
                 clippy::let_underscore_must_use,
                 reason = "A cancelled stream no longer needs its tail; the owner still receives the full sealed recording"
             )]
-            let _ = ending.send(Zeroizing::new(tail.to_vec()));
+            let _ = ending.send(tail.to_vec());
         }
     }
 }

@@ -161,7 +161,7 @@ pub(in crate::shell::settings) fn exercise(
             view.practice.live.is_none(),
             "Demo started a real practice session"
         );
-        view.practice.text = zeroize::Zeroizing::new(" \n\t".into());
+        view.practice.text = " \n\t".into();
         view.act(SettingsAction::Onboarding(Action::Next), window, cx);
         ensure!(
             view.onboarding == Some(Step::Practice),

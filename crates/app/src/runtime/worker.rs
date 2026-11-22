@@ -8,7 +8,6 @@ use tokio::{
     task::{JoinError, JoinHandle},
     time::timeout,
 };
-use zeroize::Zeroizing;
 
 use super::{
     native::{Clip, Native},
@@ -162,7 +161,7 @@ impl<W: Speech> Worker<W> {
                         Request::Stream { audio, .. } => {
                             let text = worker.transcribe_stream(audio, &language, &terms).await?;
                             Ok(text
-                                .map(|text| Transcript::Text(Zeroizing::new(text)))
+                                .map(Transcript::Text)
                                 .map_or(Transcription::Abandoned, Transcription::Heard))
                         },
                         Request::Piece { audio: clip, .. } | Request::Final { audio: clip, .. } => {
@@ -319,13 +318,13 @@ async fn transcript_of<W: Speech>(
     wanted: Wanted,
     terms: &Terms,
 ) -> anyhow::Result<Transcript<Native>> {
-    let wav = mem::take(&mut *clip.wav);
+    let wav = mem::take(&mut clip.wav);
     Ok(match wanted {
         Wanted::Text => {
-            let text = Zeroizing::new(worker.transcribe(wav, language, terms).await?);
+            let text = worker.transcribe(wav, language, terms).await?;
             Transcript::Text(
                 if whisper_invented(engine, iter::once(text.as_str()), clip.audible, terms) {
-                    Zeroizing::default()
+                    String::new()
                 } else {
                     text
                 },

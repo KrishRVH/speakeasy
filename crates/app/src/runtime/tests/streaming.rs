@@ -1,4 +1,3 @@
-use zeroize::Zeroizing;
 
 use super::*;
 use crate::{config::Engine, models::Model, runtime::ports::LiveAudio};
@@ -14,8 +13,8 @@ fn config() -> Config {
 }
 
 struct Feed {
-    frames: mpsc::Sender<Zeroizing<Vec<u8>>>,
-    ending: oneshot::Sender<Zeroizing<Vec<u8>>>,
+    frames: mpsc::Sender<Vec<u8>>,
+    ending: oneshot::Sender<Vec<u8>>,
 }
 
 fn live() -> (Feed, LiveAudio) {
@@ -87,7 +86,7 @@ async fn stream_output_waits_for_seal_and_keeps_practice_private() -> anyhow::Re
     let (feed, audio) = live();
     events.send(CaptureEvent::Streaming(id, audio)).await?;
     drop(feed.frames);
-    assert!(feed.ending.send(Zeroizing::new(Vec::new())).is_ok());
+    assert!(feed.ending.send(Vec::new()).is_ok());
     h.transcribe_next_as("Private streamed result").await?;
     assert!(still_pending(practice.recv()).await);
     events

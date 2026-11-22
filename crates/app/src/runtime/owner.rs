@@ -4,7 +4,6 @@ mod outcome;
 use std::{
     convert::Infallible,
     future::{pending, poll_fn, ready},
-    mem,
     ops::{ControlFlow, Range},
     pin::Pin,
     sync::Arc,
@@ -28,7 +27,6 @@ use tokio::{
     task::{JoinError, JoinHandle},
     time::sleep_until,
 };
-use zeroize::Zeroizing;
 
 use super::{
     Directive, Meter, PracticeEvent, Recovery, RecoveryResult, Report, Restarting, Snapshot,
@@ -583,17 +581,17 @@ impl<P: Ports> Env<Native> for World<P> {
 
     fn compose(
         &mut self,
-        heard: Zeroizing<String>,
+        heard: String,
         style: Style,
         config: &Config,
-    ) -> Option<Zeroizing<String>> {
+    ) -> Option<String> {
         let text = transcript::for_dictation(&heard, style, config.writing(), &config.vocabulary);
-        (!text.is_empty()).then(|| Zeroizing::new(text))
+        (!text.is_empty()).then_some(text)
     }
 
     fn insert(
         &mut self,
-        mut text: Zeroizing<String>,
+        text: String,
         permit: &InsertPermit,
         config: &Config,
         handoff: machine::Handoff<Native>,
@@ -608,7 +606,7 @@ impl<P: Ports> Env<Native> for World<P> {
                 } else if !call.is_live() {
                     Inserted::Unavailable(ORPHANED)
                 } else {
-                    call.respond(Reply::printed(mem::take(&mut *text)));
+                    call.respond(Reply::printed(text));
                     Inserted::Sent
                 };
                 self.delivery = Some(tokio::spawn(
@@ -624,7 +622,7 @@ impl<P: Ports> Env<Native> for World<P> {
             },
         };
         let insertion = self.ports.insert(
-            mem::take(&mut *text),
+            text,
             permit.clone(),
             config.delivery(),
             enter,
@@ -652,7 +650,7 @@ impl<P: Ports> Env<Native> for World<P> {
         &mut self,
         practice: &mpsc::Sender<PracticeEvent>,
         permit: &InsertPermit,
-        text: Zeroizing<String>,
+        text: String,
     ) -> bool {
         !practice.is_closed()
             && permit.commit()

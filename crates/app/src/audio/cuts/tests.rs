@@ -1,5 +1,4 @@
 use proptest::prelude::*;
-use zeroize::Zeroizing;
 
 use super::*;
 use crate::audio::{
@@ -23,7 +22,7 @@ fn replay(
     chunk: usize,
     fail_every: usize,
     cue: bool,
-) -> (Zeroizing<Vec<u8>>, Vec<u8>, Option<Partition>, usize) {
+) -> (Vec<u8>, Vec<u8>, Option<Partition>, usize) {
     let mut pcm = Pcm16::with_reservation(samples.len(), samples.len());
     let mut speech = Audibility::new(1000);
     let mut cuts = Cuts::new(1000);

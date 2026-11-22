@@ -452,7 +452,7 @@ fn correct_from_practice(
 
 fn practicing() -> practice::Practice {
     practice::Practice {
-        text: zeroize::Zeroizing::new("Synthetic private practice".into()),
+        text: "Synthetic private practice".into(),
         picked: None,
         live: Some(practice::Live {
             _events: Task::ready(()),

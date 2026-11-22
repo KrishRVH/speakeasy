@@ -285,7 +285,7 @@ impl Settings {
                 .line_height(px(26.0))
                 .child(gpui::text!(
                     id = "onboarding-words",
-                    self.practice.text.to_string()
+                    self.practice.text.clone()
                 ))
         } else {
             div()

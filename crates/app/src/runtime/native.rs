@@ -11,7 +11,6 @@ use tokio::{
     sync::{mpsc, oneshot},
     task::JoinError,
 };
-use zeroize::Zeroizing;
 
 use super::{
     PracticeEvent, RecoveryResult,
@@ -34,7 +33,7 @@ impl Payload for Native {
     type Config = Config;
     type Footage = Box<Footage>;
     type FrameLog = FrameLog;
-    type Heard = Zeroizing<String>;
+    type Heard = String;
     type Instant = Instant;
     type Interrupted = Interrupted;
     type Level = f32;
@@ -85,7 +84,7 @@ impl Payload for Native {
         narration.delayed(by)
     }
 
-    fn append(text: &mut Zeroizing<String>, next: Zeroizing<String>) {
+    fn append(text: &mut String, next: String) {
         let next = next.trim();
         if !text.is_empty() && !next.is_empty() {
             text.push(' ');
@@ -96,7 +95,7 @@ impl Payload for Native {
 
 #[derive(Clone)]
 pub(super) struct Clip {
-    pub wav: Zeroizing<Vec<u8>>,
+    pub wav: Vec<u8>,
     pub language: Option<Box<str>>,
     pub audible: Duration,
 }

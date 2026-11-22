@@ -40,7 +40,6 @@ tempfile.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "process", "rt", "signal", "sync", "time"] }
 tokio-tungstenite.workspace = true
 unicode-segmentation.workspace = true
-zeroize.workspace = true
 zip.workspace = true
 
 [dev-dependencies]

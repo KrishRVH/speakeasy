@@ -1,4 +1,4 @@
-use std::{mem, time::Duration};
+use std::time::Duration;
 
 use anyhow::{Context as _, bail, ensure};
 use futures_util::{SinkExt as _, StreamExt as _};
@@ -59,8 +59,8 @@ async fn recognize(socket: &mut Socket, mut audio: LiveAudio) -> anyhow::Result<
         tokio::select! {
             () = &mut deadline, if committed => bail!(FAILED),
             frame = audio.frames.recv(), if !committed => {
-                if let Some(mut bytes) = frame {
-                    send(socket, Message::Binary(mem::take(&mut *bytes).into())).await?;
+                if let Some(bytes) = frame {
+                    send(socket, Message::Binary(bytes.into())).await?;
                 } else {
                     let Ok(tail) = (&mut audio.tail).await else {
                         return Ok(None);

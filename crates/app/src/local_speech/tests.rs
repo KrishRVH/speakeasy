@@ -488,10 +488,10 @@ async fn streaming_sends_per_request_language_and_hints() -> anyhow::Result<()> 
     let mut terms = Terms::default();
     terms.add("Example Name")?;
     let (frames, received) = tokio::sync::mpsc::channel(2);
-    frames.send(zeroize::Zeroizing::new(vec![0; 3200])).await?;
+    frames.send(vec![0; 3200]).await?;
     drop(frames);
     let (ending, tail) = tokio::sync::oneshot::channel();
-    assert!(ending.send(zeroize::Zeroizing::new(Vec::new())).is_ok());
+    assert!(ending.send(Vec::new()).is_ok());
     let server = async {
         let mut socket = accept_async(listener.accept().await?.0).await?;
         socket

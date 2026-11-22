@@ -19,7 +19,6 @@ use speakeasy_platform::{
 };
 use speakeasy_show::{Ending, NarrationLoss};
 use tokio::sync::{mpsc, oneshot, watch};
-use zeroize::Zeroizing;
 
 use self::ports::{CaptureEvent, Ports, Published, ShowEvent};
 use crate::{
@@ -567,7 +566,7 @@ type RecoveryResult = Result<SavedShow, String>;
 
 pub(crate) enum PracticeEvent {
     Ready,
-    Text(Zeroizing<String>),
+    Text(String),
     Unavailable(&'static str),
 }
 

@@ -168,7 +168,7 @@ impl Capturing for FixtureDevice {
             Self::Replaying(capture) => capture.finish(),
             Self::Whole { id, wav, events } => {
                 let sealed = Sealed {
-                    wav: Zeroizing::new(wav.clone()),
+                    wav: wav.clone(),
                     trimmed: Duration::ZERO,
                     audible: audio::wav_duration(wav).expect("Fixture audio has a WAV header"),
                     partition: None,

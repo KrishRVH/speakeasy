@@ -1,7 +1,6 @@
 use std::{ops::Range, time::Duration};
 
 use anyhow::Context as _;
-use zeroize::Zeroizing;
 
 use super::speech::Audibility;
 use crate::runtime::ports::{Piece, Sealed};
@@ -17,16 +16,16 @@ const UNSUPPORTED_FORMAT: &str =
 const MISPLACED_PIECE: &str = "Recording piece does not fit the recording. Try recording again.";
 
 pub(super) struct Pcm16 {
-    bytes: Zeroizing<Vec<u8>>,
+    bytes: Vec<u8>,
     limit: usize,
 }
 
 impl Pcm16 {
     pub(super) fn from_kept(audio: &[u8]) -> Self {
         let samples = audio.len() / SAMPLE_BYTES;
-        let mut bytes = Zeroizing::new(Vec::with_capacity(
+        let mut bytes = Vec::with_capacity(
             audio.len().saturating_add(WAV_HEADER_BYTES),
-        ));
+        );
         bytes.resize(WAV_HEADER_BYTES, 0);
         bytes.extend_from_slice(audio);
         Self {
@@ -36,9 +35,9 @@ impl Pcm16 {
     }
 
     pub(super) fn with_reservation(reserved: usize, limit: usize) -> Self {
-        let mut bytes = Zeroizing::new(Vec::with_capacity(
+        let mut bytes = Vec::with_capacity(
             WAV_HEADER_BYTES.saturating_add(bytes_in(reserved)),
-        ));
+        );
         bytes.resize(WAV_HEADER_BYTES, 0);
         Self { bytes, limit }
     }
@@ -133,12 +132,12 @@ impl Pcm16 {
     }
 
     fn reallocate(&mut self, capacity: usize) {
-        let mut replacement = Zeroizing::new(Vec::with_capacity(capacity));
+        let mut replacement = Vec::with_capacity(capacity);
         replacement.extend_from_slice(&self.bytes);
         self.bytes = replacement;
     }
 
-    fn into_wav(mut self, rate: u32) -> anyhow::Result<Zeroizing<Vec<u8>>> {
+    fn into_wav(mut self, rate: u32) -> anyhow::Result<Vec<u8>> {
         let (header, audio) = self
             .bytes
             .split_first_chunk_mut::<WAV_HEADER_BYTES>()
@@ -148,17 +147,17 @@ impl Pcm16 {
     }
 }
 
-fn encode(audio: &[u8], rate: u32) -> anyhow::Result<Zeroizing<Vec<u8>>> {
+fn encode(audio: &[u8], rate: u32) -> anyhow::Result<Vec<u8>> {
     let header = wav_header(audio.len(), rate).context(UNSUPPORTED_FORMAT)?;
-    let mut wav = Zeroizing::new(Vec::with_capacity(
+    let mut wav = Vec::with_capacity(
         WAV_HEADER_BYTES.saturating_add(audio.len()),
-    ));
+    );
     wav.extend_from_slice(&header);
     wav.extend_from_slice(audio);
     Ok(wav)
 }
 
-pub(crate) fn wav_tail(wav: &[u8], range: Range<usize>) -> anyhow::Result<Zeroizing<Vec<u8>>> {
+pub(crate) fn wav_tail(wav: &[u8], range: Range<usize>) -> anyhow::Result<Vec<u8>> {
     let rate = wav_sample_rate(wav)?;
     let audio = wav.get(WAV_HEADER_BYTES..).context(INCOMPLETE_HEADER)?;
     let tail = audio
@@ -260,7 +259,7 @@ mod tests {
     #[test]
     fn wav_encoding_rewrites_the_header_in_place_with_exact_riff_lengths() -> anyhow::Result<()> {
         let mut pcm = Pcm16 {
-            bytes: Zeroizing::new(vec![0xFF; WAV_HEADER_BYTES]),
+            bytes: vec![0xFF; WAV_HEADER_BYTES],
             limit: usize::MAX,
         };
         for sample in [i16::MIN, 0, i16::MAX] {
@@ -290,7 +289,7 @@ mod tests {
             (WAV_HEADER_BYTES + 2, u32::MAX, UNSUPPORTED_FORMAT),
         ] {
             let pcm = Pcm16 {
-                bytes: Zeroizing::new(vec![0x5A; length]),
+                bytes: vec![0x5A; length],
                 limit: usize::MAX,
             };
             let error = pcm.into_wav(rate).unwrap_err().to_string();
@@ -372,7 +371,7 @@ mod tests {
         let rate = 48_000;
         let second = samples_in(Duration::from_secs(1), rate);
         let mut pcm = Pcm16 {
-            bytes: Zeroizing::new(vec![0; WAV_HEADER_BYTES + bytes_in(300 * second)]),
+            bytes: vec![0; WAV_HEADER_BYTES + bytes_in(300 * second)],
             limit: usize::MAX,
         };
         let speech =
@@ -405,7 +404,7 @@ mod tests {
             bytes.resize(length, 0x5A);
             let allocation = bytes.as_ptr();
             let mut pcm = Pcm16 {
-                bytes: Zeroizing::new(bytes),
+                bytes,
                 limit: usize::MAX,
             };
             pcm.release_excess_capacity();
