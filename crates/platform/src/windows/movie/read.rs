@@ -90,7 +90,7 @@ fn decode(
     }))
 }
 
-fn reader(stream: &file::ReadStream) -> anyhow::Result<IMFSourceReader> {
+fn reader(stream: &file::Stream) -> anyhow::Result<IMFSourceReader> {
     unsafe {
         let mut attributes = None;
         MFCreateAttributes(&raw mut attributes, 1)?;

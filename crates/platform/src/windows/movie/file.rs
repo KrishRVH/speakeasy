@@ -30,34 +30,15 @@ impl Drop for Stream {
     fn drop(&mut self) {
         #[expect(
             clippy::let_underscore_must_use,
-            reason = "Finalize may already close the stream; failed initialization/finalization still explicitly cancels outstanding I/O before waiting for actual file closure"
+            reason = "Finalize may already close the stream; closing again cancels outstanding I/O before the drop waits for the last callback to release the file"
         )]
         let _ = unsafe { self.native.Close() };
     }
 }
 
-pub(super) struct ReadStream {
-    pub(super) native: IMFByteStream,
-    _closed: Closed,
-}
-
-impl Drop for ReadStream {
-    fn drop(&mut self) {
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "Reader teardown must cancel asynchronous I/O before waiting for the last callback to release its file"
-        )]
-        let _ = unsafe { self.native.Close() };
-    }
-}
-
-pub(super) fn read(mut file: File, limit: u64) -> anyhow::Result<ReadStream> {
+pub(super) fn read(mut file: File, limit: u64) -> anyhow::Result<Stream> {
     file.rewind()?;
-    let (native, closed) = byte_stream(file, limit)?;
-    Ok(ReadStream {
-        native,
-        _closed: closed,
-    })
+    byte_stream(file, limit)
 }
 
 pub(super) fn create(path: &Path, limit: u64) -> anyhow::Result<Stream> {
@@ -66,18 +47,14 @@ pub(super) fn create(path: &Path, limit: u64) -> anyhow::Result<Stream> {
         .read(true)
         .write(true)
         .open(path)?;
-    let (native, closed) = byte_stream(file, limit)?;
-    Ok(Stream {
-        native,
-        _closed: closed,
-    })
+    byte_stream(file, limit)
 }
 
 #[expect(
     clippy::disallowed_types,
     reason = "Media Foundation reads, seeks and writes on its own I/O threads; each callback holds the file's one cursor and cap check across its operation"
 )]
-fn byte_stream(file: File, limit: u64) -> anyhow::Result<(IMFByteStream, Closed)> {
+fn byte_stream(file: File, limit: u64) -> anyhow::Result<Stream> {
     let (released, closed) = async_channel::bounded(1);
     let stream: IStream = CappedFile {
         file: Mutex::new(file),
@@ -85,10 +62,10 @@ fn byte_stream(file: File, limit: u64) -> anyhow::Result<(IMFByteStream, Closed)
         _released: released,
     }
     .into();
-    Ok((
-        unsafe { MFCreateMFByteStreamOnStream(&stream) }?,
-        Closed(closed),
-    ))
+    Ok(Stream {
+        native: unsafe { MFCreateMFByteStreamOnStream(&stream) }?,
+        _closed: Closed(closed),
+    })
 }
 
 struct Closed(async_channel::Receiver<Infallible>);
