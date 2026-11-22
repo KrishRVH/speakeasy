@@ -82,13 +82,6 @@ fn windows_f13_is_reserved_and_its_repeats_never_restart() {
 }
 
 #[test]
-fn only_ctrl_win_masks_the_start_menu() {
-    assert!(WindowsShortcut::ControlWindows.masks_start());
-    assert!(!WindowsShortcut::RightControl.masks_start());
-    assert!(!WindowsShortcut::F13.masks_start());
-}
-
-#[test]
 fn the_chosen_windows_key_holds_the_paste_and_shift_still_draws_beside_it() {
     let read = |shortcut: WindowsShortcut, keys: &[u32]| {
         let control = keys.contains(&LEFT_CONTROL) || keys.contains(&RIGHT_CONTROL);

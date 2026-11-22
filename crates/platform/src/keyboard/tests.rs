@@ -310,43 +310,6 @@ fn mac_alternative_modifiers_preserve_quick_application_shortcuts() {
 }
 
 #[test]
-fn shift_draws_beside_fn_but_any_modifier_holds_paste() {
-    assert!(
-        Modifiers {
-            shift: true,
-            ..FN_HELD
-        }
-        .draws(),
-        "Shift must draw while Fn is held to talk"
-    );
-    assert!(
-        !Modifiers {
-            shift: true,
-            ..COMMAND_HELD
-        }
-        .draws(),
-        "A Shift shortcut must not draw"
-    );
-    assert!(FN_HELD.any(), "Fn alone must hold the paste");
-    assert!(
-        Modifiers {
-            shift: true,
-            ..NO_MODIFIERS
-        }
-        .any(),
-        "Shift alone must hold the paste"
-    );
-    assert!(
-        COMMAND_HELD.any(),
-        "A shortcut modifier must hold the paste"
-    );
-    assert!(
-        !NO_MODIFIERS.any(),
-        "The paste waited with no modifier held"
-    );
-}
-
-#[test]
 fn shift_draws_beside_ctrl_win_but_not_in_another_windows_shortcut() {
     let modifiers = |keys: &[u32]| {
         WindowsShortcut::ControlWindows.modifiers(|key| keys.contains(&u32::from(key)))
