@@ -6,7 +6,7 @@ use speakeasy_show::Narration;
 use tokio::time::timeout;
 
 use super::{
-    ports::{Capturing, Listening, LiveAudio, MicrophoneSource, Pinning, Sealed, Speech},
+    ports::{LiveAudio, Pinning, Speech},
     *,
 };
 use crate::{
@@ -25,20 +25,20 @@ const STARTUP_TIMEOUT: Duration = local_speech::STARTUP_TIMEOUT
     .saturating_add(Duration::from_secs(5));
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 const RECORDING_TIMEOUT: Duration = Duration::from_secs(310);
-const PHASE_TIMEOUT: Duration = Duration::from_secs(2);
+const DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 struct Fixture {
     wav: Vec<u8>,
     loaded: Sender<()>,
     inserted: Sender<(Instant, String)>,
-    replay: Option<Replay>,
+    replay: Replay,
 }
 
 impl Ports for Fixture {
     type Awake = ();
-    type Microphone = FixtureDevice;
-    type Screen = FixtureDevice;
+    type Microphone = Capture;
+    type Screen = Capture;
     type Speech = MeasuredSpeech;
 
     fn prepares_desktop(&self) -> bool {
@@ -55,15 +55,8 @@ impl Ports for Fixture {
         _: Option<&str>,
         recognition: RecognitionMode,
         events: Sender<CaptureEvent>,
-    ) -> anyhow::Result<FixtureDevice> {
-        let Some(replay) = &self.replay else {
-            events.try_send(CaptureEvent::Ready(id, MicrophoneSource::Chosen))?;
-            return Ok(FixtureDevice::Whole {
-                id,
-                wav: self.wav.clone(),
-                events,
-            });
-        };
+    ) -> anyhow::Result<Capture> {
+        let replay = &self.replay;
         let recognition = if replay.segmenting {
             recognition
         } else {
@@ -78,7 +71,6 @@ impl Ports for Fixture {
             replay.finished.clone(),
             replay.statistics.clone(),
         )
-        .map(FixtureDevice::Replaying)
     }
 
     fn keep(&self, _: SystemTime) -> anyhow::Result<Option<show::Kept>> {
@@ -92,7 +84,7 @@ impl Ports for Fixture {
         _: Scope,
         _: Option<show::FrameLog>,
         _: Sender<ShowEvent>,
-    ) -> anyhow::Result<FixtureDevice> {
+    ) -> anyhow::Result<Capture> {
         anyhow::bail!("The dictation fixture records no Shows")
     }
 
@@ -119,7 +111,7 @@ impl Ports for Fixture {
         cancelled: watch::Receiver<bool>,
     ) -> impl Future<Output = anyhow::Result<MeasuredSpeech>> + Send + 'static {
         let loaded = self.loaded.clone();
-        let inferences = self.replay.as_ref().map(|replay| replay.inferences.clone());
+        let inferences = self.replay.inferences.clone();
         async move {
             let worker = LocalSpeech::start(config, cancelled).await?;
             loaded.send(()).await?;
@@ -149,59 +141,7 @@ impl Ports for Fixture {
     fn hold_cues(&self, _: bool) {}
 }
 
-enum FixtureDevice {
-    Replaying(Capture),
-    Whole {
-        id: SessionId,
-        wav: Vec<u8>,
-        events: Sender<CaptureEvent>,
-    },
-}
-
-impl Capturing for FixtureDevice {
-    fn finish(&self) {
-        match self {
-            Self::Replaying(capture) => capture.finish(),
-            Self::Whole { id, wav, events } => {
-                let sealed = Sealed {
-                    wav: wav.clone(),
-                    trimmed: Duration::ZERO,
-                    audible: audio::wav_duration(wav).expect("Fixture audio has a WAV header"),
-                    partition: None,
-                };
-                events
-                    .try_send(CaptureEvent::Finished(*id, Ok(Some(sealed))))
-                    .expect("Capture lane has room for fixture audio");
-            },
-        }
-    }
-
-    async fn retire(self) {
-        if let Self::Replaying(capture) = self {
-            capture.retire().await;
-        }
-    }
-}
-
-impl Listening for FixtureDevice {
-    fn whole(&self) {
-        if let Self::Replaying(capture) = self {
-            capture.whole();
-        }
-    }
-
-    fn keep(&self, _: show::AudioLog, _: Duration, _: &str) -> bool {
-        true
-    }
-
-    fn expect_cue(&self) {
-        if let Self::Replaying(capture) = self {
-            capture.expect_cue();
-        }
-    }
-}
-
-impl Pinning for FixtureDevice {
+impl Pinning for Capture {
     fn pin(&self, _: Taps) {}
 }
 
@@ -229,68 +169,6 @@ fn interruption(snapshot: &Snapshot) -> anyhow::Error {
     }
 }
 
-async fn wait_for_phase(
-    updates: &mut watch::Receiver<Snapshot>,
-    phase: Phase,
-) -> anyhow::Result<()> {
-    timeout(
-        PHASE_TIMEOUT,
-        updates.wait_for(|snapshot| snapshot.phase == phase),
-    )
-    .await??;
-    Ok(())
-}
-
-#[tokio::test]
-#[ignore = "Profiles real local inference; requires SPEAKEASY_FIXTURE_CONFIG and SPEAKEASY_FIXTURE_WAV"]
-async fn profile_fixture_dictation() -> anyhow::Result<()> {
-    let path = PathBuf::from(std::env::var("SPEAKEASY_FIXTURE_CONFIG")?);
-    let config = Config::read(&path)?.validated(&path)?.into_inner();
-    let wav = std::fs::read(std::env::var("SPEAKEASY_FIXTURE_WAV")?)?;
-    let (loaded, ready) = async_channel::bounded(1);
-    let (inserted, submitted) = async_channel::bounded(1);
-    let (output, mut updates) = watch::channel(Snapshot::default());
-    let (meter, _) = watch::channel(0.0_f32);
-    let started = Instant::now();
-    let fixture = Fixture {
-        wav,
-        loaded,
-        inserted,
-        replay: None,
-    };
-    let runtime = Runtime::start_with(
-        config,
-        watch::channel(Style::default()).1,
-        output,
-        meter,
-        fixture,
-    )?;
-    wait_for_signal(&ready, &mut updates, STARTUP_TIMEOUT).await?;
-    let startup_ms = milliseconds(started.elapsed());
-    let mut requests_ms = Vec::new();
-    for _ in 0..5 {
-        runtime.input.deliver(Input::Toggle);
-        wait_for_phase(&mut updates, Phase::Recording).await?;
-        let requested = Instant::now();
-        runtime.input.deliver(Input::Toggle);
-        wait_for_signal(&submitted, &mut updates, REQUEST_TIMEOUT).await?;
-        requests_ms.push(milliseconds(requested.elapsed()));
-        wait_for_phase(&mut updates, Phase::Done).await?;
-    }
-    let stopped = Instant::now();
-    runtime.request_stop();
-    timeout(SHUTDOWN_TIMEOUT, runtime.stopped()).await?;
-    eprintln!(
-        "Fixture owner profile: {}",
-        serde_json::json!({
-            "startup_ms": startup_ms,
-            "stop_to_fake_insert_ms": requests_ms,
-            "shutdown_ms": milliseconds(stopped.elapsed()),
-        })
-    );
-    Ok(())
-}
-
 struct Replay {
     speed: u32,
     segmenting: bool,
@@ -308,7 +186,7 @@ struct Inference {
 
 struct MeasuredSpeech {
     worker: LocalSpeech,
-    inferences: Option<Sender<Inference>>,
+    inferences: Sender<Inference>,
 }
 
 impl Speech for MeasuredSpeech {
@@ -327,14 +205,11 @@ impl Speech for MeasuredSpeech {
         language: &str,
         terms: &Terms,
     ) -> anyhow::Result<String> {
-        let Some(inferences) = &self.inferences else {
-            return self.worker.transcribe(wav, language, terms).await;
-        };
         let audio_ms = milliseconds(audio::wav_duration(&wav)?);
         let sha256 = sha256(&wav);
         let started = Instant::now();
         let text = self.worker.transcribe(wav, language, terms).await?;
-        inferences.try_send(Inference {
+        self.inferences.try_send(Inference {
             audio_ms,
             elapsed_ms: milliseconds(started.elapsed()),
             sha256,
@@ -472,13 +347,13 @@ async fn recording(
         wav: clip.wav,
         loaded,
         inserted,
-        replay: Some(Replay {
+        replay: Replay {
             speed,
             segmenting,
             finished,
             statistics,
             inferences,
-        }),
+        },
     };
     let started = Instant::now();
     let (recognition_config, style) = cleanup.prepare(config);
@@ -515,7 +390,7 @@ async fn recording(
             let (at, text) = submitted.try_recv()?;
             (Some(at), text)
         };
-        let capture = timeout(PHASE_TIMEOUT, drained.recv()).await??;
+        let capture = timeout(DRAIN_TIMEOUT, drained.recv()).await??;
         Ok::<_, anyhow::Error>((startup_ms, stopped, inserted, text, capture))
     }
     .await;

@@ -10,7 +10,6 @@ use super::{Report, paired, sha256};
 pub(super) const WORD_SCORING: &str = "lowercase-alphanumeric-runs-v1";
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(super) struct Corpus {
     pub clips: Vec<Case>,
     #[serde(skip)]
@@ -18,14 +17,11 @@ pub(super) struct Corpus {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(super) struct Case {
     pub id: String,
     pub tags: BTreeSet<String>,
     wav: PathBuf,
     reference: PathBuf,
-    wav_sha256: String,
-    reference_sha256: String,
 }
 
 pub(super) struct Clip {
@@ -46,45 +42,14 @@ impl Corpus {
     pub(super) fn read(path: &Path) -> anyhow::Result<Self> {
         let bytes = std::fs::read(path)?;
         let mut corpus: Self = serde_json::from_slice(&bytes)?;
-        anyhow::ensure!(
-            (1..=256).contains(&corpus.clips.len()),
-            "A corpus needs 1 to 256 clips"
-        );
-        let mut ids = BTreeSet::new();
-        for case in &corpus.clips {
-            anyhow::ensure!(
-                is_label(&case.id) && case.tags.iter().all(|tag| is_label(tag)),
-                "Corpus IDs and tags need short ASCII labels"
-            );
-            anyhow::ensure!(ids.insert(&case.id), "Corpus clip IDs must be unique");
-        }
         corpus.sha256 = sha256(&bytes);
         Ok(corpus)
     }
 }
 
-fn is_label(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 80
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"-_".contains(&byte))
-}
-
 impl Case {
     pub(super) fn load(&self, root: &Path) -> anyhow::Result<Clip> {
-        let clip = Clip::read(&root.join(&self.wav), &root.join(&self.reference))?;
-        anyhow::ensure!(
-            sha256(&clip.wav) == self.wav_sha256,
-            "Corpus audio hash mismatch for {}",
-            self.id
-        );
-        anyhow::ensure!(
-            sha256(clip.reference.as_bytes()) == self.reference_sha256,
-            "Corpus reference hash mismatch for {}",
-            self.id
-        );
-        Ok(clip)
+        Clip::read(&root.join(&self.wav), &root.join(&self.reference))
     }
 }
 

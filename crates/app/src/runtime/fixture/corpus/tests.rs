@@ -56,8 +56,6 @@ fn production_summaries_count_a_report_under_every_tag_of_its_case() {
         tags: BTreeSet::from(["english".into(), "short".into()]),
         wav: PathBuf::from("clip.wav"),
         reference: PathBuf::from("reference.txt"),
-        wav_sha256: String::new(),
-        reference_sha256: String::new(),
     };
     let results = [(&case, report("public words", "public", Some(7.0), 1))];
     let Summary::Production { overall, by_tag } = Summary::new(&results) else {
@@ -66,56 +64,4 @@ fn production_summaries_count_a_report_under_every_tag_of_its_case() {
     assert_eq!(overall.quality.word_errors, 1);
     assert_eq!(by_tag["short"].quality.word_errors, 1);
     assert_eq!(by_tag["english"].quality.reference_words, 2);
-}
-
-#[test]
-fn corpus_verifies_both_files_and_rejects_duplicate_cases() -> anyhow::Result<()> {
-    let temp = tempfile::tempdir()?;
-    std::fs::write(temp.path().join("clip.wav"), b"synthetic audio")?;
-    std::fs::write(temp.path().join("reference.txt"), "public words")?;
-    let case = serde_json::json!({
-        "id": "clip", "tags": ["english", "short"],
-        "wav": "clip.wav", "reference": "reference.txt",
-        "wav_sha256": sha256(b"synthetic audio"),
-        "reference_sha256": sha256(b"public words"),
-    });
-    let path = temp.path().join("corpus.json");
-    std::fs::write(
-        &path,
-        serde_json::to_vec(&serde_json::json!({"clips": [case]}))?,
-    )?;
-    let corpus = Corpus::read(&path)?;
-    let case_read = corpus.clips.first().unwrap();
-    case_read.load(temp.path())?;
-    std::fs::write(temp.path().join("reference.txt"), "changed words")?;
-    assert!(
-        case_read
-            .load(temp.path())
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("reference hash mismatch")
-    );
-    std::fs::write(temp.path().join("reference.txt"), "public words")?;
-    std::fs::write(temp.path().join("clip.wav"), b"changed audio")?;
-    assert!(
-        case_read
-            .load(temp.path())
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("audio hash mismatch")
-    );
-    std::fs::write(
-        &path,
-        serde_json::to_vec(&serde_json::json!({"clips": [case, case]}))?,
-    )?;
-    assert!(
-        Corpus::read(&path)
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("unique")
-    );
-    Ok(())
 }

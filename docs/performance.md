@@ -53,14 +53,14 @@ a measurement speaks only for the revision it ran on.
 ## Measuring
 
 Record hardware, model and runtime, sample rate, request boundaries, warmup, and competing load.
-Compare paired runs and check word accuracy and formatting as well as latency. The opt-in tests
-`profile_fixture_dictation` and `profile_ready_text_latency` exercise the real session owner with
-public audio or fake devices. `profile_recording_dictation` replays public PCM through the actual
-callback, ring, drain, and pause cutter while the local worker recognizes it, with fake insertion.
-It reports request hashes and durations, word and formatting errors against a public reference,
-total inference work, release latency, and drain and meter cadence. Pair segmented and whole runs at
-real time for latency and capture load; accelerated playback is only a quality check. A segmented
-Nemotron run streams continuously, so it reports neither request durations nor total inference.
+Compare paired runs and check word accuracy and formatting as well as latency. The opt-in test
+`profile_ready_text_latency` exercises the real session owner with fake devices.
+`profile_recording_dictation` replays public PCM through the actual callback, ring, drain, and pause
+cutter while the local worker recognizes it, with fake insertion. It reports request hashes and
+durations, word and formatting errors against a public reference, total inference work, release
+latency, and drain and meter cadence. Pair segmented and whole runs at real time for latency and
+capture load; accelerated playback is only a quality check. A segmented Nemotron run streams
+continuously, so it reports neither request durations nor total inference.
 [Verification](architecture.md#verification) names the fixture variables. The synthetic
 `profile_audio_pipeline` probe times callback/downmix/consumer work; `profile_audio_seal` times
 sealing a five-minute recording, classified for speech while recording. Sealing includes the
@@ -77,10 +77,8 @@ profilers rather than a permanent benchmark suite.
 
 ## Public corpus replay
 
-The same `profile_recording_dictation` test accepts `SPEAKEASY_FIXTURE_CORPUS`, a local JSON file
-with 1 to 256 public clips. Paths resolve beside the manifest; each audio and reference hash must
-match before that case starts. IDs and tags use up to 80 ASCII letters, digits, underscores or
-hyphens. IDs must be unique. For example, replace the two hash placeholders with the files' SHA-256:
+The same `profile_recording_dictation` test accepts `SPEAKEASY_FIXTURE_CORPUS`, a local JSON file of
+public clips. Paths resolve beside the manifest. For example:
 
 ```json
 {
@@ -89,9 +87,7 @@ hyphens. IDs must be unique. For example, replace the two hash placeholders with
       "id": "speaker-01-short",
       "tags": ["english", "short"],
       "wav": "speaker-01.wav",
-      "reference": "speaker-01.txt",
-      "wav_sha256": "SHA256_OF_WAV_BYTES",
-      "reference_sha256": "SHA256_OF_UTF8_REFERENCE_BYTES"
+      "reference": "speaker-01.txt"
     }
   ]
 }
