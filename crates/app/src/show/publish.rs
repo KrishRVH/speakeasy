@@ -77,7 +77,7 @@ pub(crate) async fn publish(
     let Publication { footage, origin } = publication;
     let origin = match origin.close().await {
         Ok(origin) => origin,
-        Err(_cancelled) if !permit.active() => return Ok(Published::Cancelled),
+        Err(_) if !permit.active() => return Ok(Published::Cancelled),
         Err(error) => {
             return Err(error.context(
                 "The Show could not be saved because its checkpoint failed. Check Shows for recoverable footage.",
