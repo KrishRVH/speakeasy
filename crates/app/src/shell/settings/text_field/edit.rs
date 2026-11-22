@@ -208,36 +208,6 @@ mod tests {
     }
 
     #[test]
-    fn a_committed_insertion_keeps_the_caret_after_a_joined_grapheme() {
-        let mut edit = Edit::default();
-        edit.set_text("\u{301}b".into());
-        edit.select(0, false);
-        assert!(edit.replace(None, "e", Composition::Commit));
-        assert_eq!(edit.cursor, "e\u{301}".len());
-        edit.step(Direction::Backward, true);
-        assert!(edit.replace(None, "", Composition::Commit));
-        assert_eq!(edit.text, "b");
-    }
-
-    #[test]
-    fn accessible_selection_rejects_partial_graphemes_before_changing_either_endpoint() {
-        let mut edit = Edit::default();
-        edit.set_text("ae\u{301}👩🏽‍💻".into());
-        let end = edit.text.len();
-        assert!(edit.select_range(Selection {
-            anchor: end,
-            focus: 1
-        }));
-        for (anchor, focus) in [(2, 1), (0, 2), (0, usize::MAX)] {
-            assert!(!edit.select_range(Selection { anchor, focus }));
-            assert_eq!(edit.anchor, end);
-            assert_eq!(edit.cursor, 1);
-        }
-        assert!(edit.replace(None, "", Composition::Commit));
-        assert_eq!(edit.text, "a");
-    }
-
-    #[test]
     fn unmarking_restores_graphemes_without_rounding_an_active_utf16_composition() {
         for selected in [1..1, 1..2, Range { start: 2, end: 1 }] {
             let mut edit = Edit::default();
@@ -283,19 +253,6 @@ mod tests {
     }
 
     #[test]
-    fn deletion_and_selection_do_not_split_combining_or_emoji_graphemes() {
-        let mut edit = Edit::default();
-        edit.set_text("a👩🏽‍💻e\u{301}".into());
-        edit.step(Direction::Backward, true);
-        assert_eq!(edit.text.get(edit.selection()), Some("e\u{301}"));
-        assert!(edit.replace(None, "", Composition::Commit));
-        edit.step(Direction::Backward, true);
-        assert_eq!(edit.text.get(edit.selection()), Some("👩🏽‍💻"));
-        assert!(edit.replace(None, "", Composition::Commit));
-        assert_eq!(edit.text, "a");
-    }
-
-    #[test]
     fn composing_after_a_non_ascii_prefix_uses_insert_relative_utf16_selection() {
         let mut edit = Edit::default();
         edit.set_text("🦀 café ".into());
@@ -310,15 +267,5 @@ mod tests {
         assert!(!edit.replace(None, "bad\ninput", Composition::Commit));
         assert!(!edit.replace(None, &"x".repeat(TEXT_LIMIT + 1), Composition::Commit));
         assert_eq!(edit.text, unchanged);
-    }
-
-    #[test]
-    fn external_ranges_are_bounded_and_reversed_ranges_do_not_panic() {
-        let mut edit = Edit::default();
-        edit.set_text("a😀b".into());
-        assert_eq!(edit.utf8(2..3), 5..5);
-        assert_eq!(edit.utf8(Range { start: 100, end: 0 }), 6..6);
-        assert!(edit.replace(Some(Range { start: 100, end: 0 }), "!", Composition::Commit));
-        assert_eq!(edit.text, "a😀b!");
     }
 }

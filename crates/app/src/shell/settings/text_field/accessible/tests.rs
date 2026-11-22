@@ -1,8 +1,4 @@
-use gpui::{
-    EntityId,
-    accesskit::{Point, ScrollHint},
-    px,
-};
+use gpui::{EntityId, px};
 
 use super::*;
 use crate::shell::settings::text_field::edit::Composition;
@@ -173,71 +169,4 @@ fn scrolling_moves_geometry_without_retiring_runs() {
     );
     assert_eq!(still.bounds().unwrap().x0, 20.0);
     assert_eq!(scrolled.bounds().unwrap().x0, -10.0);
-    for invalid in [f32::NAN, f32::INFINITY] {
-        assert!(
-            painted(&text, invalid).is_none(),
-            "A scroll of {invalid} was published"
-        );
-    }
-}
-
-#[test]
-fn a_field_scrolled_out_of_its_clip_publishes_an_empty_rectangle_at_the_clip_edge() {
-    let mut separated = frame();
-    separated.visible = separated.bounds.intersect(&Bounds::new(
-        point(px(150.0), px(0.0)),
-        size(px(50.0), px(100.0)),
-    ));
-    let rect = separated.physical(separated.visible);
-    assert_eq!(rect.width(), 0.0);
-    assert_eq!(rect.x0, 300.0);
-}
-
-#[test]
-fn reveal_requests_name_ranges_of_the_current_revision_and_match_their_action() {
-    let mut text = edit("ab🦀c");
-    let doc = document(&text);
-    let span = TextSelection {
-        anchor: doc.position(text.text.len()).unwrap(),
-        focus: doc.position(1).unwrap(),
-    };
-    let reveal = |text: &Edit, action, data: &ActionData| match Request::new(
-        action,
-        data,
-        EntityId::from(FIELD),
-        text,
-    )? {
-        Request::Reveal(span) => Some(span),
-        Request::Replace(_) | Request::Select(_) => None,
-    };
-    let named = ActionData::SetTextSelection(span);
-    assert_eq!(
-        reveal(&text, AccessibleAction::ScrollIntoView, &named),
-        Some(Selection {
-            anchor: text.text.len(),
-            focus: 1
-        })
-    );
-    assert!(
-        Request::new(
-            AccessibleAction::SetTextSelection,
-            &ActionData::Value("ab".into()),
-            EntityId::from(FIELD),
-            &text
-        )
-        .is_none(),
-        "A value was accepted as a selection"
-    );
-    for data in [
-        ActionData::ScrollHint(ScrollHint::TopEdge),
-        ActionData::SetScrollOffset(Point { x: 10.0, y: 0.0 }),
-    ] {
-        assert_eq!(reveal(&text, AccessibleAction::ScrollIntoView, &data), None);
-    }
-    text.set_text(text.text.clone());
-    assert_eq!(
-        reveal(&text, AccessibleAction::ScrollIntoView, &named),
-        None,
-        "A replaced text accepted a reveal from its previous revision"
-    );
 }

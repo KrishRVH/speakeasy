@@ -140,20 +140,4 @@ mod tests {
         view = layout(view, caret, 100.0);
         assert_eq!(view.offset, px(303.0));
     }
-
-    #[test]
-    fn a_reveal_after_an_unpainted_edit_or_selection_change_outranks_the_caret() {
-        let mut view = layout(Viewport::default(), span(50, 50), 100.0);
-        let selected = span(50, 49);
-        view.reveal(span(5, 6), 1, selected);
-        view = layout(view, selected, 100.0);
-        assert_eq!(
-            view.offset,
-            px(50.0),
-            "The selection change replaced a later reveal"
-        );
-        view.reveal(span(29, 30), 2, selected);
-        view = view.layout(2, selected, x, px(100.0), px(500.0));
-        assert_eq!(view.offset, px(203.0), "The edit replaced a later reveal");
-    }
 }

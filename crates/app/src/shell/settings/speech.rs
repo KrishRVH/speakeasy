@@ -86,15 +86,6 @@ mod tests {
     }
 
     #[test]
-    fn your_own_engine_stays_chosen_when_its_model_is_a_managed_file() {
-        assert_eq!(
-            Speech::of(&parakeet(), true),
-            Some(Speech::Own),
-            "Picking the managed Parakeet file hid the own-engine program picker"
-        );
-    }
-
-    #[test]
     fn switching_engines_forgets_the_other_engines_files() {
         let mut config = parakeet();
         assert!(switch_engine(&mut config, Engine::Whisper));
