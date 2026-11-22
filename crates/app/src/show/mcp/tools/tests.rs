@@ -66,7 +66,11 @@ fn reads_change_no_file_and_include_narration_only_on_request() -> anyhow::Resul
     assert_eq!(read["narration"]["kind"], "timed");
     assert_eq!(read["location"]["matches"].as_array().unwrap().len(), 2);
     assert!(read["location"]["startMs"].is_null());
-    assert_eq!(read["narration"]["words"][0]["text"], "PRIVATE_NARRATION");
+    assert_eq!(read["narration"]["rows"][0]["atMs"], 200);
+    assert_eq!(
+        read["narration"]["rows"][0]["text"],
+        "PRIVATE_NARRATION PRIVATE_NARRATION"
+    );
     assert_eq!(snapshot(root.path())?, before);
     Ok(())
 }
@@ -137,14 +141,18 @@ fn image_returns_exact_saved_bytes_and_never_falls_back_from_missing_source() ->
 }
 
 #[test]
-fn truncation_is_truthful_and_untimed_or_lost_narration_is_not_timed() -> anyhow::Result<()> {
+fn a_long_summary_is_truncated_truthfully_and_narration_arrives_whole() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let directory = fixture(root.path(), "exact")?;
     let roots = Roots::open(&[root.path().to_owned()], None).map_err(anyhow::Error::msg)?;
     let text = "é".repeat(TEXT_LIMIT);
     fs::write(directory.join("summary.md"), &text)?;
     let mut manifest = fixture_manifest();
-    manifest["narration"] = json!({"text": text});
+    let words: Vec<_> = (0..800_u64)
+        .map(|index| json!({"span": [index * 300, index * 300 + 200], "text": format!("w{index}")}))
+        .collect();
+    manifest["duration"] = json!(240_000);
+    manifest["narration"] = json!({"words": words});
     fs::write(directory.join("show.json"), serde_json::to_vec(&manifest)?)?;
     let response = content(&call(
         &roots,
@@ -157,8 +165,22 @@ fn truncation_is_truthful_and_untimed_or_lost_narration_is_not_timed() -> anyhow
         response["summary"]["text"].as_str().unwrap().len(),
         TEXT_LIMIT
     );
+    let rows = response["narration"]["rows"].as_array().unwrap();
+    let spoken: Vec<_> = rows
+        .iter()
+        .flat_map(|row| row["text"].as_str().unwrap().split_whitespace())
+        .collect();
+    assert_eq!(spoken.len(), 800);
+    assert_eq!(spoken.last(), Some(&"w799"));
+    manifest["narration"] = json!({"text": text});
+    fs::write(directory.join("show.json"), serde_json::to_vec(&manifest)?)?;
+    let response = content(&call(
+        &roots,
+        Tool::Read,
+        json!({"show": "exact", "narration": true}),
+    ))?;
     assert_eq!(response["narration"]["kind"], "untimed");
-    assert_eq!(response["narration"]["excerpt"]["truncated"], true);
+    assert_eq!(response["narration"]["text"], text);
     assert_eq!(
         call(&roots, Tool::Read, json!({"show": "exact", "phrase": "é"}))["isError"],
         true
@@ -173,6 +195,32 @@ fn truncation_is_truthful_and_untimed_or_lost_narration_is_not_timed() -> anyhow
     ))?;
     assert_eq!(response["narration"]["kind"], "lost");
     assert_eq!(response["narration"]["lost"], "notTranscribed");
+    Ok(())
+}
+
+#[test]
+fn a_tool_error_names_what_went_wrong() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let directory = fixture(root.path(), "exact")?;
+    let roots = Roots::open(&[root.path().to_owned()], None).map_err(anyhow::Error::msg)?;
+    let message = |tool: Tool, arguments: Value| {
+        let result = call(&roots, tool, arguments);
+        assert_eq!(result["isError"], true, "{result}");
+        result["content"][0]["text"].as_str().unwrap().to_owned()
+    };
+    let unknown = message(Tool::Read, json!({"show": "exact", "bogus": 1}));
+    assert!(unknown.contains("bogus"), "{unknown}");
+    let missing = message(Tool::Read, json!({"show": "elsewhere"}));
+    let configured = root.path().canonicalize()?.display().to_string();
+    assert!(
+        missing.contains("elsewhere") && missing.contains(&configured),
+        "{missing}"
+    );
+    let time = message(Tool::Read, json!({"show": "exact", "at": "1:75"}));
+    assert!(time.contains("less than 60"), "{time}");
+    fs::remove_file(directory.join("contact-sheet.png"))?;
+    let sheet = message(Tool::Image, json!({"show": "exact", "sheet": 1}));
+    assert!(sheet.contains("contact-sheet.png"), "{sheet}");
     Ok(())
 }
 

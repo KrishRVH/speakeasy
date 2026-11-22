@@ -73,7 +73,7 @@ in a video tool and preserve the session origin from `recording.json`.
   it, use `show discard "interrupted:ID" --json`. This removes the checkpoint.
 
 MCP provides `show_list`, `show_read`, and `show_image` within configured roots. Read the same
-contact sheets and summary, then request the relevant image by time, phrase, or mark. Requested
-content reaches the calling agent and may reach its model provider. `show mcp --setup` prints
-configuration snippets. `show --help` describes the installed commands.
+contact sheets, summary, and timed narration, then request the relevant image by time, phrase, or
+mark. Requested content reaches the calling agent and may reach its model provider.
+`show mcp --setup` prints configuration snippets. `show --help` describes the installed commands.
 `show skill --install AGENT_SKILLS_DIR` installs the guide and preserves a differing installed file.

@@ -28,7 +28,7 @@ pub(super) struct Listing {
 }
 
 impl Roots {
-    pub(super) fn open(roots: &[PathBuf], managed: Option<PathBuf>) -> Result<Self, &'static str> {
+    pub(super) fn open(roots: &[PathBuf], managed: Option<PathBuf>) -> Result<Self, String> {
         Ok(Self {
             roots: roots
                 .iter()
@@ -36,7 +36,9 @@ impl Roots {
                     root.canonicalize()
                         .ok()
                         .filter(|root| root.is_dir())
-                        .ok_or("An MCP root must be an existing directory")
+                        .ok_or_else(|| {
+                            format!("MCP root {} is not an existing folder", root.display())
+                        })
                 })
                 .collect::<Result<_, _>>()?,
             managed: managed.and_then(|managed| managed.canonicalize().ok()),
@@ -47,15 +49,27 @@ impl Roots {
         self.managed.as_deref()
     }
 
-    pub(super) fn resolve(&self, show: &str) -> Result<PathBuf, &'static str> {
+    pub(super) fn resolve(&self, show: &str) -> Result<PathBuf, String> {
         let mut found: Option<PathBuf> = None;
         for folder in self.roots.iter().filter_map(|root| inside(root, show)) {
             if found.as_ref().is_some_and(|previous| *previous != folder) {
-                return Err("That Show name is ambiguous across roots; use its absolute path");
+                return Err(format!(
+                    "{show:?} names a Show in more than one root; use its absolute path"
+                ));
             }
             found = Some(folder);
         }
-        found.ok_or("That exact Show is unavailable inside the configured roots")
+        found.ok_or_else(|| {
+            let roots: Vec<_> = self
+                .roots
+                .iter()
+                .map(|root| root.display().to_string())
+                .collect();
+            format!(
+                "No Show {show:?} inside the configured roots ({}); use a path from show_list",
+                roots.join(", ")
+            )
+        })
     }
 
     pub(super) fn list(&self, cursor: Option<&str>) -> Listing {

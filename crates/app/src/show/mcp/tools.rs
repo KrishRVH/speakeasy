@@ -3,9 +3,9 @@ use std::{fs, path::Path};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use speakeasy_show::{Manifest, Narration};
+use speakeasy_show::{Manifest, Narration, timed_clauses};
 
-use super::{DISCLOSURE, Roots, scope::PAGE};
+use super::{Roots, scope::PAGE};
 use crate::show::{
     evidence::{
         Inspection,
@@ -15,7 +15,6 @@ use crate::show::{
 };
 
 const TEXT_LIMIT: usize = 64 << 10;
-const WORD_LIMIT: usize = 512;
 const IMAGE_LIMIT: u64 = 8 << 20;
 
 #[derive(Clone, Copy)]
@@ -48,11 +47,11 @@ pub(super) fn definitions() -> Value {
     let phrase = json!({"type": "string", "minLength": 1, "description": "Phrase in recorded narration, requiring word timings; not edited summary text."});
     let annotations = json!({"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false});
     json!([
-        {"name": Tool::List.name(), "description": format!("List at most {PAGE} saved Shows inside launch-time roots, with metadata only and a continuation cursor. Roots that cannot be listed are named in unavailableRoots. {DISCLOSURE}"),
+        {"name": Tool::List.name(), "description": format!("List at most {PAGE} saved Shows inside the configured roots, with metadata and a continuation cursor. Roots that cannot be listed are named in unavailableRoots."),
          "inputSchema": {"type": "object", "properties": {"cursor": {"type": "string"}}, "additionalProperties": false}, "annotations": annotations},
-        {"name": Tool::Read.name(), "description": format!("Read one exact Show's edited summary and metadata. Optionally include bounded recorded narration and one time, mark, or phrase lookup. Multiple phrase matches remain ambiguous unless match is given. Text truncation and missing or untimed narration are disclosed. {DISCLOSURE}"),
+        {"name": Tool::Read.name(), "description": format!("Read one exact Show's metadata, contact sheets, keyframes, marks, and edited summary (truncated past {} KiB, and marked so). Optionally include the whole recorded narration as timed rows, and one time, mark, or phrase lookup. Multiple phrase matches stay ambiguous unless match is given.", TEXT_LIMIT >> 10),
          "inputSchema": {"type": "object", "properties": {"show": show, "narration": {"type": "boolean", "default": false}, "at": at, "mark": positive, "phrase": phrase, "match": positive}, "required": ["show"], "additionalProperties": false}, "annotations": annotations},
-        {"name": Tool::Image.name(), "description": format!("Read exactly one PNG, at most 8 MiB. Choose one sheet, keyframe, time, mark, or phrase (with match if ambiguous). Sheet/keyframe numbers start at 1. Time/mark/phrase reads the retained source image at or before the selection, or the first sample if capture began later; sampledMs reports its actual time and requestedMs the selection. Source images have no ink. Missing retained source is an error; no fallback or file writes. {DISCLOSURE}"),
+        {"name": Tool::Image.name(), "description": "Read exactly one PNG, at most 8 MiB. Choose one sheet, keyframe, time, mark, or phrase (with match if ambiguous). Sheet/keyframe numbers start at 1. Time/mark/phrase reads the retained source image at or before the selection, or the first sample if capture began later; sampledMs reports its actual time and requestedMs the selection. Source images have no ink. Missing retained source is an error; no fallback or file writes.",
          "inputSchema": {"type": "object", "properties": {"show": show, "sheet": positive, "keyframe": positive, "at": at, "mark": positive, "phrase": phrase, "match": positive}, "required": ["show"], "oneOf": [{"required": ["sheet"]}, {"required": ["keyframe"]}, {"required": ["at"]}, {"required": ["mark"]}, {"required": ["phrase"]}], "additionalProperties": false}, "annotations": annotations}
     ])
 }
@@ -105,14 +104,18 @@ fn read(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
     let request: Read = decode(arguments)?;
     let query = lookup(request.at, request.mark, request.phrase, request.occurrence)?;
     let directory = roots.resolve(&request.show)?;
-    let summary =
-        recall::summary(&directory).map_err(|_private| "Cannot read that Show's edited summary")?;
+    let summary = recall::summary(&directory).map_err(|error| {
+        format!(
+            "Cannot read the edited summary in {}: {error}",
+            directory.display()
+        )
+    })?;
     let entry = open(&directory, roots.managed())?;
     let manifest = manifest_of(&entry)?;
     let found = query
         .map(|query| query.resolve(manifest))
         .transpose()
-        .map_err(|safe| safe.to_string())?;
+        .map_err(|error| error.to_string())?;
     let content = ReadEvidence {
         show: Inspection::of(&entry),
         summary: excerpt(&summary),
@@ -129,25 +132,20 @@ fn excerpt(text: &str) -> Value {
 
 fn narration(manifest: &Manifest) -> Value {
     let recording = manifest.recording();
+    let lost = recording.narration_lost;
     match &recording.narration {
-        Narration::Text(value) => {
-            json!({"kind": "untimed", "lost": recording.narration_lost, "excerpt": excerpt(value)})
-        },
+        Narration::Text(text) => json!({"kind": "untimed", "lost": lost, "text": text}),
         Narration::Words(words) => {
-            let selected: Vec<_> = words
-                .iter()
-                .take(WORD_LIMIT)
-                .scan(0_usize, |bytes, word| {
-                    *bytes = bytes.saturating_add(word.text.len());
-                    (*bytes <= TEXT_LIMIT).then_some(word)
-                })
+            let rows: Vec<_> = timed_clauses(words)
+                .into_iter()
+                .map(|row| json!({"atMs": row.at.as_millis(), "text": row.text}))
                 .collect();
-            let kind = match (words.is_empty(), recording.narration_lost) {
+            let kind = match (words.is_empty(), lost) {
                 (false, _) => "timed",
                 (true, Some(_)) => "lost",
                 (true, None) => "silent",
             };
-            json!({"kind": kind, "lost": recording.narration_lost, "words": selected, "totalWords": words.len(), "truncated": selected.len() < words.len()})
+            json!({"kind": kind, "lost": lost, "rows": rows})
         },
     }
 }
@@ -189,8 +187,7 @@ fn image(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
                 .checked_sub(1)
                 .and_then(|index| manifest.sheets().nth(index))
                 .ok_or("That Show has no sheet with that number")?;
-            let png = fs::read(directory.join(&name))
-                .map_err(|_private| "That saved sheet is unavailable")?;
+            let png = read_png(&directory.join(&name))?;
             (
                 png,
                 json!({"show": directory, "sheet": number, "frames": frames.iter().map(|frame| frame.index).collect::<Vec<_>>(), "annotations": true}),
@@ -201,8 +198,7 @@ fn image(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
                 .checked_sub(1)
                 .and_then(|index| manifest.keyframes().get(index))
                 .ok_or("That Show has no keyframe with that number")?;
-            let png = fs::read(directory.join(frame.file()))
-                .map_err(|_private| "That saved keyframe is unavailable")?;
+            let png = read_png(&directory.join(frame.file()))?;
             let marks: Vec<_> = manifest
                 .marks()
                 .get(frame.marks.clone())
@@ -226,16 +222,21 @@ fn image(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
     ])
 }
 
-fn open(directory: &Path, managed: Option<&Path>) -> Result<recall::Entry, &'static str> {
-    recall::Entry::open(directory, managed).map_err(|_private| "Cannot open that Show")
+fn read_png(path: &Path) -> Result<Vec<u8>, String> {
+    fs::read(path).map_err(|error| format!("Cannot read {}: {error}", path.display()))
 }
 
-fn manifest_of(entry: &recall::Entry) -> Result<&Manifest, &'static str> {
+fn open(directory: &Path, managed: Option<&Path>) -> Result<recall::Entry, String> {
+    recall::Entry::open(directory, managed)
+        .map_err(|error| format!("Cannot open the Show at {}: {error}", directory.display()))
+}
+
+fn manifest_of(entry: &recall::Entry) -> Result<&Manifest, String> {
     entry
         .show
         .as_ref()
         .map(|show| &show.manifest)
-        .map_err(|_private| "Cannot read that Show's manifest")
+        .map_err(|error| format!("{error:#}"))
 }
 
 fn source_image(
@@ -243,20 +244,22 @@ fn source_image(
     manifest: &Manifest,
     query: &Query,
 ) -> Result<(Vec<u8>, Value), String> {
-    let found = query.resolve(manifest).map_err(|safe| safe.to_string())?;
+    let found = query.resolve(manifest).map_err(|error| error.to_string())?;
     let span = found
         .selected
         .ok_or("Several phrase matches exist; use show_read to list matches, then choose match")?;
-    let unavailable = |_private| "Retained source frames are unavailable for that Show";
+    let unavailable = |error: anyhow::Error| {
+        format!("Retained source frames are unavailable for that Show: {error:#}")
+    };
     let mut source = source::Reader::open(directory).map_err(unavailable)?;
     let index = source.inspect().map_err(unavailable)?;
     let frame = source
         .frame(&index, span.start())
-        .map_err(|_private| "Cannot read the selected retained source frame")?;
+        .map_err(|error| format!("{error:#}"))?;
     let png = frame
         .image
         .encode_png()
-        .map_err(|_private| "Cannot encode the retained source image")?;
+        .map_err(|error| format!("Cannot encode the retained source image: {error}"))?;
     let metadata = json!({"show": directory, "location": found, "sampledMs": frame.at.as_millis(), "requestedMs": span.start().as_millis(), "samplingStride": index.stride(), "longestGapMs": source::longest_gap(&index), "annotations": false});
     Ok((png, metadata))
 }
@@ -266,33 +269,31 @@ fn lookup(
     mark: Option<usize>,
     phrase: Option<String>,
     occurrence: Option<usize>,
-) -> Result<Option<Query>, &'static str> {
-    const TIME: &str = "Time must be seconds or M:SS.mmm";
+) -> Result<Option<Query>, String> {
     match (at, mark, phrase, occurrence) {
         (None, None, None, None) => Ok(None),
         (Some(at), None, None, None) => query::time(&at)
             .map(|at| Some(Query::At(at)))
-            .map_err(|_invalid| TIME),
+            .map_err(|error| format!("Invalid time {at:?}: {error:#}")),
         (None, Some(0), None, None) | (None, None, Some(_), Some(0)) => {
-            Err("Mark and match numbers start at 1")
+            Err("Mark and match numbers start at 1".to_owned())
         },
         (None, Some(mark), None, None) => Ok(Some(Query::Mark(mark))),
         (None, None, Some(phrase), None) => Ok(Some(Query::Phrase(phrase))),
         (None, None, Some(phrase), Some(occurrence)) => {
             Ok(Some(Query::Match { phrase, occurrence }))
         },
-        _ => Err("Choose at most one time, mark or phrase; match requires phrase"),
+        _ => Err("Choose at most one time, mark or phrase; match requires phrase".to_owned()),
     }
 }
 
 fn decode<T: serde::de::DeserializeOwned>(arguments: Value) -> Result<T, String> {
-    serde_json::from_value(arguments).map_err(|_private| {
-        "Invalid or unknown tool arguments; use the advertised schema".to_owned()
-    })
+    serde_json::from_value(arguments).map_err(|error| format!("Invalid tool arguments: {error}"))
 }
 
 fn text(value: &impl Serialize) -> Result<Value, String> {
-    let text = serde_json::to_string(value).map_err(|_invalid| "Cannot encode Show evidence")?;
+    let text = serde_json::to_string(value)
+        .map_err(|error| format!("Cannot encode Show evidence: {error}"))?;
     Ok(json!({"type": "text", "text": text}))
 }
 
