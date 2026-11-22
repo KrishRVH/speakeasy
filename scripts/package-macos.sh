@@ -10,16 +10,6 @@ if [[ "$(uname -s)" != Darwin ]]; then
   exit 1
 fi
 mkdir -p artifacts
-# One run at a time owns the outputs. The lock belongs to this shell's open descriptor, so it ends
-# with the run even when the run is killed.
-exec 9>> artifacts/.package-macos.lock
-python3 -c '
-import fcntl, sys
-try:
-    fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)
-except BlockingIOError:
-    sys.exit("Another macOS package run is using artifacts. Wait for it to finish, then try again.")
-'
 rm -rf -- artifacts/Speakeasy.app
 rm -f -- artifacts/speakeasy-macos.zip artifacts/speakeasy-macos.dmg
 signing_identity=${SPEAKEASY_MAC_SIGN_IDENTITY:-}
@@ -31,28 +21,7 @@ if [[ -n "$signing_identity" || -n "$notary_profile" ]]; then
   fi
 fi
 staging=$(mktemp -d artifacts/.macos-package.XXXXXX)
-outputs=(Speakeasy.app speakeasy-macos.zip speakeasy-macos.dmg)
-publishing=
-# An output leaves staging only through its rename into artifacts. Only a run that exits 0 keeps
-# what it published; any other exit once publication starts takes back exactly the outputs missing
-# from staging. Signals exit through this trap too, and it ignores them while it cleans up.
-discard() {
-  local status=$?
-  trap '' HUP INT PIPE TERM
-  if [[ $status -ne 0 && -n "$publishing" ]]; then
-    for output in "${outputs[@]}"; do
-      if [[ ! -e "$staging/$output" ]]; then
-        rm -rf -- "artifacts/$output"
-      fi
-    done
-  fi
-  rm -rf -- "$staging" || true
-}
-trap discard EXIT
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 141' PIPE
-trap 'exit 143' TERM
+trap 'rm -rf -- "$staging"' EXIT
 # Submits one archive and stops unless Apple accepts it, naming the submission to check.
 notarize() {
   xcrun notarytool submit "$1" --keychain-profile "$notary_profile" --wait --output-format json > "$staging/notarization.json"
@@ -116,8 +85,7 @@ if [[ -n "$signing_identity" ]]; then
   spctl --assess --type open --context context:primary-signature "$staging/speakeasy-macos.dmg"
 fi
 # The app goes first, so an archive never appears without it.
-publishing=yes
-for output in "${outputs[@]}"; do
+for output in Speakeasy.app speakeasy-macos.zip speakeasy-macos.dmg; do
   mv "$staging/$output" artifacts/
 done
 echo "Built artifacts/Speakeasy.app"

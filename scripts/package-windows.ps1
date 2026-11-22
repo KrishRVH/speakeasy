@@ -1,14 +1,6 @@
 $ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $PSScriptRoot '..')
 $artifacts = (New-Item -ItemType Directory -Force -Path 'artifacts').FullName
-# One run at a time owns the outputs. Windows releases the lock with its handle, even after a crash.
-try {
-    $lock = [IO.File]::Open((Join-Path $artifacts '.package-windows.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
-} catch [IO.IOException] {
-    $sharingViolation = 32
-    if (($_.Exception.HResult -band 0xFFFF) -ne $sharingViolation) { throw }
-    throw 'Another Windows package run is using artifacts. Wait for it to finish, then try again.'
-}
 $zipName = 'speakeasy-windows-x64.zip'
 $installerName = 'speakeasy-windows-x64-setup.exe'
 $outputs = @($zipName, $installerName, 'windows') | ForEach-Object { Join-Path $artifacts $_ }
@@ -107,12 +99,6 @@ try {
         Move-Item -LiteralPath (Join-Path $staging $name) -Destination $artifacts
     }
     Write-Host "Built $artifacts/windows"
-} catch {
-    foreach ($output in $outputs) {
-        Remove-Item -LiteralPath $output -Force -Recurse -ErrorAction SilentlyContinue
-    }
-    throw
 } finally {
     if ($staging) { Remove-Item -LiteralPath $staging -Force -Recurse }
-    $lock.Dispose()
 }
