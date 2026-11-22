@@ -407,24 +407,8 @@ fn next_motion(motion: Instant, now: Instant) -> Instant {
         .unwrap_or(now)
 }
 
-struct Admission {
-    clean_from: Instant,
-}
-
-impl Admission {
-    fn after(now: Instant) -> Self {
-        Self {
-            clean_from: now.checked_add(COMPOSITION_MARGIN).unwrap_or(now),
-        }
-    }
-
-    fn restart(&mut self, now: Instant) {
-        *self = Self::after(now);
-    }
-
-    fn admits(&self, composed: Instant) -> bool {
-        composed >= self.clean_from
-    }
+fn clean_from(now: Instant) -> Instant {
+    now.checked_add(COMPOSITION_MARGIN).unwrap_or(now)
 }
 
 struct Pacer {
@@ -463,7 +447,7 @@ struct Capture {
     longest_edge: u32,
     readback: Readback,
     pending: Option<PendingFrame>,
-    admission: Admission,
+    clean_from: Instant,
 }
 
 struct PendingFrame {
@@ -526,7 +510,7 @@ impl Capture {
             longest_edge,
             readback,
             pending: None,
-            admission: Admission::after(Instant::now()),
+            clean_from: clean_from(Instant::now()),
         })
     }
 
@@ -555,7 +539,7 @@ impl Capture {
             return Err(Failure::DisplayChanged);
         }
         let captured = composed_at(frame.SystemRelativeTime()?);
-        if !self.admission.admits(captured) {
+        if captured < self.clean_from {
             return Ok(false);
         }
         self.pending = Some(PendingFrame {
@@ -575,7 +559,7 @@ impl Capture {
     }
 
     fn discard_until_now(&mut self) {
-        self.admission.restart(Instant::now());
+        self.clean_from = clean_from(Instant::now());
         self.pending = None;
     }
 
