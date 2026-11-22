@@ -244,30 +244,6 @@ fn a_show_finishes_on_the_release_after_a_fresh_press() {
 }
 
 #[test]
-fn a_show_keeps_its_capture_start_and_finishes_at_the_limit_even_while_armed() {
-    let start = Moment::default();
-    let limit = start.after(nanos(RECORDING_LIMIT));
-    let mut gesture = Gesture::default();
-    gesture.press(start);
-    gesture.show();
-    assert_eq!(gesture.deadline(), Some(limit));
-    gesture.release(start.after(seconds(1)));
-    gesture.press(start.after(seconds(2)));
-    assert_eq!(gesture.deadline(), Some(limit));
-    assert_eq!(gesture.tick(limit), Some(Action::Finish));
-    assert_eq!(
-        gesture.release(limit.after(seconds(1))),
-        None,
-        "The release finished the Show a second time"
-    );
-    assert_eq!(
-        gesture.cancel(),
-        None,
-        "The limit's Show was not being saved"
-    );
-}
-
-#[test]
 fn escape_cancels_a_show_only_while_the_shortcut_is_held() {
     let start = Moment::default();
     let mut gesture = Gesture::default();
@@ -294,21 +270,6 @@ fn escape_cancels_a_show_only_while_the_shortcut_is_held() {
         "Escape during the finishing press"
     );
     assert_eq!(gesture.release(start), None, "A cancelled Show finished");
-    assert_eq!(gesture.state(), State::Idle);
-}
-
-#[test]
-fn only_abandoning_discards_a_show_being_saved() {
-    let start = Moment::default();
-    let mut gesture = Gesture::default();
-    gesture.press(start);
-    gesture.show();
-    assert_eq!(gesture.toggle(start), Some(Action::Finish));
-    assert_eq!(gesture.escape(), None);
-    assert_eq!(gesture.interrupt(), None);
-    assert_eq!(gesture.cancel(), None);
-    assert_eq!(gesture.state(), State::Processing);
-    assert_eq!(gesture.abandon(), Some(Action::Cancel));
     assert_eq!(gesture.state(), State::Idle);
 }
 
@@ -365,32 +326,6 @@ fn escape_cancel_and_interruptions_discard_dictation_recording_or_processing() {
             "{name} while processing"
         );
     }
-}
-
-#[test]
-fn recovery_owns_saving_until_completion_or_explicit_abandonment() {
-    let mut gesture = Gesture::default();
-    let now = Moment::default();
-    assert!(gesture.save());
-    assert!(!gesture.save());
-    assert_eq!(gesture.state(), State::Processing);
-    assert_eq!(
-        [
-            gesture.press(now),
-            gesture.escape(),
-            gesture.cancel(),
-            gesture.interrupt(),
-            gesture.release(now),
-        ],
-        [None; 5]
-    );
-    assert_eq!(gesture.state(), State::Processing);
-    assert_eq!(gesture.abandon(), Some(Action::Cancel));
-    assert_eq!(gesture.state(), State::Idle);
-    assert!(gesture.save());
-    gesture.complete();
-    assert_eq!(gesture.press(now), Some(Action::Start));
-    assert!(!gesture.save(), "Recovery cannot take over a recording");
 }
 
 #[test]

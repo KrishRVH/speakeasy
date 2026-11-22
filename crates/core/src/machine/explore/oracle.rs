@@ -56,7 +56,6 @@ impl Payload for Abstract {
 pub(super) enum Query {
     Admit,
     Shield,
-    Closed,
     Keep,
     Microphone {
         #[expect(dead_code, reason = "A failure trace prints it")]
@@ -178,10 +177,6 @@ impl Env<Abstract> for Oracle {
 
     fn revoke(&mut self, (): &()) {
         self.effects.push(Effect::Revoke);
-    }
-
-    fn closed(&mut self) -> bool {
-        self.choose(Query::Closed, [("open", false), ("closed", true)])
     }
 
     fn keep(&mut self, (): ()) -> Keeping<Abstract> {

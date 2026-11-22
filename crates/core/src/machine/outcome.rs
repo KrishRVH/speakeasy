@@ -86,7 +86,6 @@ pub enum Refusal {
     PasteStopped,
     Unsupported,
     PresetBusy,
-    PresetStale,
     NotCaptured,
     Unheard,
 }

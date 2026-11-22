@@ -421,10 +421,6 @@ impl<P: Ports> Env<Native> for World<P> {
         permit.revoke();
     }
 
-    fn closed(&mut self) -> bool {
-        self.permits.is_closed()
-    }
-
     fn keep(&mut self, started: Instant) -> Keeping<Native> {
         let recorded = SystemTime::now()
             .checked_sub(now().saturating_duration_since(started))

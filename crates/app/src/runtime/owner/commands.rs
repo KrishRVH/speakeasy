@@ -2,7 +2,6 @@ use speakeasy_core::machine::{self, Event, Refusal, SessionId};
 
 use super::World;
 use crate::{
-    config::Change,
     control::{Command, Reply, Status},
     runtime::{Directive, native::Native, ports::Ports},
     status::ServiceState,
@@ -33,18 +32,10 @@ impl<P: Ports> World<P> {
                 };
                 Some(Event::Control { call, command })
             },
-            Directive::Preset {
-                name,
-                config,
-                baseline,
-                session,
-                call,
-            } if call.is_live() => Some(Event::Preset {
+            Directive::Preset { name, config, call } if call.is_live() => Some(Event::Preset {
                 call,
                 name,
                 config: config.into_inner(),
-                session: SessionId::new(session),
-                changed: self.baseline.change_to(&baseline) >= Change::Session,
             }),
             Directive::Adopt { config, answer } if settled && answer.is_live() => {
                 answer.answer(Ok(()));
@@ -125,9 +116,6 @@ pub(in crate::runtime) const fn refusal(refusal: Refusal) -> &'static str {
             "Choose a style or saved preset through the desktop command interface."
         },
         Refusal::PresetBusy => "Finish dictation or practice before choosing a preset.",
-        Refusal::PresetStale => {
-            "Dictation or settings changed while the preset was being checked. Choose it again."
-        },
         Refusal::NotCaptured => {
             "Only a dictation started with dictation start --print can be printed, and only once."
         },

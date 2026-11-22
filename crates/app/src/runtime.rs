@@ -371,19 +371,10 @@ impl<Host> Runtime<Host> {
         self.direct(Directive::Control(call));
     }
 
-    pub(crate) fn preset(
-        &self,
-        name: String,
-        config: ValidConfig,
-        baseline: Config,
-        session: u64,
-        call: Call,
-    ) {
+    pub(crate) fn preset(&self, name: String, config: ValidConfig, call: Call) {
         self.direct(Directive::Preset {
             name,
             config: Box::new(config),
-            baseline: Box::new(baseline),
-            session,
             call,
         });
     }
@@ -556,8 +547,6 @@ enum Directive {
     Preset {
         name: String,
         config: Box<ValidConfig>,
-        baseline: Box<Config>,
-        session: u64,
         call: Call,
     },
     Adopt {

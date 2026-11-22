@@ -122,7 +122,7 @@ fn inputs(events: &mut Events, machine: &Machine<Abstract>) {
 
 fn controls(events: &mut Events, machine: &Machine<Abstract>) {
     let current = machine.latest.id;
-    let other = current.next().unwrap_or(STALE);
+    let other = current.next();
     events.extend(
         [
             Command::Status,
@@ -142,16 +142,11 @@ fn controls(events: &mut Events, machine: &Machine<Abstract>) {
         ]
         .map(|command| Event::Control { call: (), command }),
     );
-    let preset = |config, session, changed| Event::Preset {
+    events.extend(CONFIGS.map(|config| Event::Preset {
         call: (),
         name: (),
         config,
-        session,
-        changed,
-    };
-    events.extend(CONFIGS.map(|config| preset(config, current, false)));
-    events.push(preset(CONFIGS[0], other, false));
-    events.push(preset(CONFIGS[0], current, true));
+    }));
 }
 
 const fn sealed(partition: Option<Partition<Abstract>>) -> Sealed<Abstract> {

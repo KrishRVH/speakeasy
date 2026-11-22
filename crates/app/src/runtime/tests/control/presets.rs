@@ -3,21 +3,10 @@ use speakeasy_core::machine::Refusal;
 use super::*;
 use crate::{runtime::owner::commands::refusal, theme::Theme};
 
-async fn choose(
-    h: &Harness,
-    name: &str,
-    config: &Config,
-    baseline: &Config,
-    session: u64,
-) -> anyhow::Result<Reply> {
+async fn choose(h: &Harness, name: &str, config: &Config) -> anyhow::Result<Reply> {
     let (call, receipt) = Call::new(Command::Preset { name: name.into() });
-    h.runtime.preset(
-        name.into(),
-        ValidConfig::assume(config.clone()),
-        baseline.clone(),
-        session,
-        call,
-    );
+    h.runtime
+        .preset(name.into(), ValidConfig::assume(config.clone()), call);
     receive(&receipt).await
 }
 
@@ -31,18 +20,18 @@ async fn a_preset_applies_only_while_idle_and_reloads_only_for_engine_choices() 
         language: "fr".into(),
         ..baseline.clone()
     };
-    let adopted = choose(&h, "French", &french, &baseline, h.snapshot().session).await?;
+    let adopted = choose(&h, "French", &french).await?;
     assert_eq!(adopted.result, Disposition::Ok);
     assert!(h.loads.try_recv().is_err());
     h.start().await?;
-    let busy = choose(&h, "Busy", &baseline, &baseline, h.snapshot().session).await?;
+    let busy = choose(&h, "Busy", &baseline).await?;
     assert_eq!(busy.reason.as_deref(), Some(refusal(Refusal::PresetBusy)));
     finish_in(&mut h, "fr").await?;
     let faster = Config {
         threads: french.threads + 1,
         ..french
     };
-    let adopted = choose(&h, "Faster", &faster, &baseline, h.snapshot().session).await?;
+    let adopted = choose(&h, "Faster", &faster).await?;
     assert_eq!(adopted.result, Disposition::Ok);
     h.ready().await?;
     assert!(h.loads.try_recv().is_err());
@@ -63,7 +52,7 @@ async fn resumed_preset_keeps_saved_settings_separate_from_effective_choices() -
     h.start().await?;
     h.runtime.configure(ValidConfig::assume(saved.clone()));
     finish_in(&mut h, "fr").await?;
-    let adopted = choose(&h, "Default", &saved, &saved, h.snapshot().session).await?;
+    let adopted = choose(&h, "Default", &saved).await?;
     assert_eq!(adopted.result, Disposition::Ok);
     h.close().await
 }
@@ -78,7 +67,7 @@ async fn adopting_the_saved_settings_clears_the_preset_and_uses_the_saved_langua
         language: "fr".into(),
         ..saved.clone()
     };
-    let adopted = choose(&h, "French", &french, &saved, h.snapshot().session).await?;
+    let adopted = choose(&h, "French", &french).await?;
     assert_eq!(adopted.result, Disposition::Ok);
     h.observe(|snapshot| snapshot.preset.as_deref() == Some("French"))
         .await?;

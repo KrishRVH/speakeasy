@@ -88,8 +88,6 @@ pub trait Env<P: Payload> {
 
     fn revoke(&mut self, permit: &P::Permit);
 
-    fn closed(&mut self) -> bool;
-
     fn keep(&mut self, started: P::Instant) -> Keeping<P>;
 
     fn record_microphone(
@@ -188,11 +186,8 @@ impl SessionId {
     }
 
     #[must_use]
-    pub const fn next(self) -> Option<Self> {
-        match self.0.checked_add(1) {
-            Some(raw) => Some(Self(raw)),
-            None => None,
-        }
+    pub const fn next(self) -> Self {
+        Self(self.0.saturating_add(1))
     }
 }
 
@@ -354,8 +349,6 @@ pub enum Event<P: Payload> {
         call: P::Call,
         name: P::Text,
         config: P::Config,
-        session: SessionId,
-        changed: bool,
     },
     Capture(SessionId, Capture<P>),
     Show(SessionId, Screening<P>),
@@ -761,14 +754,8 @@ impl<P: Payload> Machine<P> {
                 None
             },
             Event::Control { call, command } => return self.control(now, call, command, env),
-            Event::Preset {
-                call,
-                name,
-                config,
-                session,
-                changed,
-            } => {
-                let adopted = self.adopt_preset(name, config, session, changed, env);
+            Event::Preset { call, name, config } => {
+                let adopted = self.adopt_preset(name, config, env);
                 env.respond(call, adopted.map(|()| self.status()));
                 None
             },
@@ -1302,10 +1289,7 @@ impl<P: Payload> Machine<P> {
             self.gesture.abandon();
             return ControlFlow::Continue(None);
         };
-        match self.latest.id.next() {
-            Some(id) => ControlFlow::Continue(Some((id, permit))),
-            None => ControlFlow::Break(Halt::Stopped),
-        }
+        ControlFlow::Continue(Some((self.latest.id.next(), permit)))
     }
 
     fn begin(&mut self, session: Session<P>) {
@@ -1563,9 +1547,6 @@ impl<P: Payload> Machine<P> {
         let Some(session) = self.session.as_mut().filter(|session| session.is_queued()) else {
             return;
         };
-        if env.closed() {
-            return;
-        }
         let mode = if session.is_show() {
             RecognitionMode::Whole
         } else {
@@ -1590,9 +1571,6 @@ impl<P: Payload> Machine<P> {
         let Some(scope) = session.queued_screen() else {
             return;
         };
-        if env.closed() {
-            return;
-        }
         let frames = session.take_frame_log();
         match env.record_screen(session.id, session.started, scope, frames) {
             Ok(()) => {
@@ -1712,15 +1690,10 @@ impl<P: Payload> Machine<P> {
         &mut self,
         name: P::Text,
         config: P::Config,
-        session: SessionId,
-        changed: bool,
         env: &mut impl Env<P>,
     ) -> Result<(), Refusal> {
         if self.is_busy() {
             return Err(Refusal::PresetBusy);
-        }
-        if self.latest.id != session || changed {
-            return Err(Refusal::PresetStale);
         }
         self.apply_settings(config, env);
         self.outcome = Outcome::Idle;

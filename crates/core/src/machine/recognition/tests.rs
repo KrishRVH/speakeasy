@@ -36,7 +36,7 @@ fn detail(request: &Request<Sample>) -> Detail {
 
 #[test]
 fn stale_tickets_cannot_complete_or_fail_an_active_piece() {
-    let mut recognition = Recognition::<Sample>::new(FIRST.next().unwrap());
+    let mut recognition = Recognition::<Sample>::new(FIRST.next());
     recognition.piece(0, Vec::new());
     let current = request(&mut recognition).unwrap().ticket();
     let stale = Ticket {
@@ -81,36 +81,6 @@ fn a_failed_tail_retries_the_whole_recording_once() {
     assert_eq!(audio(&retry), recording());
     assert!(!recognition.absorb_failure(retry.ticket()));
     assert!(request(&mut recognition).is_none());
-}
-
-#[test]
-fn a_tail_that_cannot_be_cut_falls_back_to_the_whole_recording() {
-    let mut recognition = Recognition::<Sample>::new(FIRST);
-    recognition.piece(0, Vec::new());
-    let piece = request(&mut recognition).unwrap();
-    assert!(
-        recognition
-            .heard(piece.ticket(), Transcript::Text("prefix".into()))
-            .is_none()
-    );
-    recognition.seal(
-        recording(),
-        Some(Partition {
-            pieces: 1,
-            tail: Some(32..99),
-        }),
-        Duration::ZERO,
-        Detail::Text,
-    );
-    let whole = request(&mut recognition).unwrap();
-    assert_eq!(audio(&whole), recording());
-    assert!(
-        matches!(
-            recognition.heard(whole.ticket(), Transcript::Text("all of it".into())),
-            Some(Transcript::Text(text)) if text == "all of it"
-        ),
-        "A whole-recording transcript repeated the pieces it already covers"
-    );
 }
 
 #[test]

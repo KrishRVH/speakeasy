@@ -31,12 +31,6 @@ pub(super) struct Selected {
     pub config: ValidConfig,
 }
 
-struct Selection {
-    session: u64,
-    preset: Preset,
-    baseline: Config,
-}
-
 #[derive(Default)]
 pub(super) struct Choices {
     pub selected: Option<Selected>,
@@ -145,24 +139,17 @@ impl Services {
             ));
             return;
         };
-        let baseline = self.config.clone();
-        let mut candidate = baseline.clone();
+        let mut candidate = self.config.clone();
         preset.load(&mut candidate);
         let path = self.path.clone();
-        let session = self.output.borrow().session;
         let key = self.choices.next();
-        let selection = Selection {
-            session,
-            preset,
-            baseline,
-        };
         let validation = cx
             .background_executor()
             .spawn(async move { candidate.validated(&path) });
         let choosing = cx.spawn(async move |cx| {
             let result = validation.await;
             let admission = cx.update_global::<Self, _>(|services, _| {
-                services.admit_preset(selection, result, &call)
+                services.admit_preset(preset, result, &call)
             });
             let reply = match admission {
                 Ok((selected, receipt)) => {
@@ -184,15 +171,10 @@ impl Services {
 
     fn admit_preset(
         &self,
-        selection: Selection,
+        preset: Preset,
         result: anyhow::Result<ValidConfig>,
         caller: &Call,
     ) -> Result<(Selected, Receiver<Reply>), &'static str> {
-        let Selection {
-            session,
-            preset,
-            baseline,
-        } = selection;
         if !caller.is_live() {
             return Err("Preset selection expired. Choose it again.");
         }
@@ -203,13 +185,7 @@ impl Services {
             .runtime()
             .ok_or("Resume dictation before choosing a preset.")?;
         let (call, receipt) = caller.forwarded();
-        runtime.preset(
-            preset.name().to_owned(),
-            config.clone(),
-            baseline,
-            session,
-            call,
-        );
+        runtime.preset(preset.name().to_owned(), config.clone(), call);
         Ok((Selected { preset, config }, receipt))
     }
 
