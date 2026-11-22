@@ -19,7 +19,7 @@ const PIN_LOOKBACK: Duration = Duration::from_secs(2);
 pub struct Tracker {
     surface: Size,
     space: Option<Space>,
-    generation: Option<u64>,
+    generation: u64,
     spaces: Spaces,
     seen: VecDeque<Seen>,
     ink: Option<Ink>,
@@ -100,7 +100,7 @@ impl Tracker {
         Self {
             surface,
             space: None,
-            generation: Some(0),
+            generation: 0,
             spaces: Spaces {
                 strokes: Vec::new(),
                 pins: Vec::new(),
@@ -127,10 +127,11 @@ impl Tracker {
             return false;
         }
         if self.space.is_none_or(|space| space.part != part) {
-            self.generation = self
-                .generation
-                .and_then(|generation| generation.checked_add(1));
-            self.space = self.generation.map(|generation| Space { generation, part });
+            self.generation = self.generation.saturating_add(1);
+            self.space = Some(Space {
+                generation: self.generation,
+                part,
+            });
         }
         true
     }
