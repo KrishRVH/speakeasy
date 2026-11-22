@@ -149,17 +149,8 @@ const RETURN_WITHHELD: Inserted = Inserted::Copied(
     "Your words are in, but Speakeasy couldn't press Return. Press Return to send them.",
 );
 
-const CLIPBOARD_CHANGED: Inserted = Inserted::Unavailable(
-    "The clipboard changed, so the paste was not sent and its new contents were kept.",
-);
-
-const CLIPBOARD_CHANGED_BEFORE_PASTE: Inserted =
-    Inserted::Unavailable("The clipboard changed before pasting, and its new contents were kept.");
-
 pub(crate) trait NativeInsert {
-    type Mark: PartialEq;
-
-    type Lease;
+    type Mark;
 
     type Keys;
 
@@ -169,26 +160,13 @@ pub(crate) trait NativeInsert {
 
     type Activity: PartialEq;
 
-    fn acquire(&mut self) -> anyhow::Result<Self::Lease>;
-
-    fn save(&mut self, lease: &Self::Lease) -> Option<Self::Contents>;
-
-    fn write(
-        &mut self,
-        lease: Self::Lease,
-        text: &str,
-        saved: Option<&Self::Contents>,
-    ) -> anyhow::Result<Self::Mark>;
+    fn copy(&mut self, text: &str) -> anyhow::Result<(Self::Mark, Option<Self::Contents>)>;
 
     fn restore(
         &mut self,
         contents: Option<Self::Contents>,
         mark: &Self::Mark,
     ) -> anyhow::Result<()>;
-
-    fn mark(&mut self) -> Self::Mark;
-
-    fn holds(&mut self, text: &str, mark: &Self::Mark) -> anyhow::Result<bool>;
 
     fn paste_keys(&mut self) -> anyhow::Result<Self::Keys>;
 
@@ -207,6 +185,11 @@ pub(crate) trait NativeInsert {
     fn send(&mut self, keys: Self::Keys) -> anyhow::Result<Inserted>;
 }
 
+pub(crate) type Written<N> = (
+    <N as NativeInsert>::Mark,
+    Option<<N as NativeInsert>::Contents>,
+);
+
 fn insert<N: NativeInsert>(
     native: &mut N,
     text: &str,
@@ -218,12 +201,13 @@ fn insert<N: NativeInsert>(
         return Ok((Inserted::Cancelled, None));
     }
     let staged = match delivery {
-        Delivery::Paste => stage_paste(native, text, permit),
-        Delivery::Direct => native.text_keys(text).map(|keys| Staged::Keys(keys, None)),
+        Delivery::Paste => native
+            .paste_keys()
+            .and_then(|keys| Ok((keys, Some(native.copy(text)?)))),
+        Delivery::Direct => native.text_keys(text).map(|keys| (keys, None)),
     };
     let (keys, clipboard) = match staged {
-        Ok(Staged::Keys(keys, clipboard)) => (keys, clipboard),
-        Ok(Staged::Settled(inserted)) => return Ok((inserted, None)),
+        Ok(staged) => staged,
         Err(_) if !permit.active() => return Ok((Inserted::Cancelled, None)),
         Err(error) => return Err(error),
     };
@@ -231,15 +215,9 @@ fn insert<N: NativeInsert>(
         !own_focus.held() && native.external_focus(),
         native.shortcut_released(),
     );
-    let changed = clipboard
-        .as_ref()
-        .is_some_and(|(mark, _)| native.mark() != *mark);
     if !permit.active() {
         restore_now(native, clipboard);
         return Ok((Inserted::Cancelled, None));
-    }
-    if changed {
-        return Ok((CLIPBOARD_CHANGED_BEFORE_PASTE, None));
     }
     if let Some(outcome) = preflight {
         return Ok((outcome, None));
@@ -260,55 +238,11 @@ fn insert<N: NativeInsert>(
     Ok((inserted, saved))
 }
 
-type Written<N> = (
-    <N as NativeInsert>::Mark,
-    Option<<N as NativeInsert>::Contents>,
-);
-
-enum Staged<N: NativeInsert> {
-    Keys(N::Keys, Option<Written<N>>),
-    Settled(Inserted),
-}
-
-fn stage_paste<N: NativeInsert>(
-    native: &mut N,
-    text: &str,
-    permit: &InsertPermit,
-) -> anyhow::Result<Staged<N>> {
-    let lease = native.acquire()?;
-    if !permit.active() {
-        return Ok(Staged::Settled(Inserted::Cancelled));
-    }
-    let contents = native.save(&lease);
-    if !permit.active() {
-        return Ok(Staged::Settled(Inserted::Cancelled));
-    }
-    let written = (native.write(lease, text, contents.as_ref())?, contents);
-    if !native.holds(text, &written.0)? {
-        return Ok(Staged::Settled(if permit.active() {
-            CLIPBOARD_CHANGED
-        } else {
-            Inserted::Cancelled
-        }));
-    }
-    if !permit.active() {
-        restore_now(native, Some(written));
-        return Ok(Staged::Settled(Inserted::Cancelled));
-    }
-    match native.paste_keys() {
-        Ok(keys) => Ok(Staged::Keys(keys, Some(written))),
-        Err(error) => {
-            restore_now(native, Some(written));
-            Err(error)
-        },
-    }
-}
-
 fn restore_now<N: NativeInsert>(native: &mut N, clipboard: Option<Written<N>>) {
     if let Some((mark, contents)) = clipboard {
         #[expect(
             clippy::let_underscore_must_use,
-            reason = "Restoring after an unsent paste is best effort; the dictation reports the cancellation or error that stopped it, and a clipboard that cannot be reopened keeps the dictated copy"
+            reason = "Restoring after an unsent paste is best effort; the dictation reports the cancellation that stopped it, and a clipboard that cannot be reopened keeps the dictated copy"
         )]
         let _ = native.restore(contents, &mark);
     }

@@ -1,4 +1,4 @@
-use std::{cell::Cell, io::Cursor};
+use std::io::Cursor;
 
 use super::*;
 use crate::InputSender;
@@ -6,7 +6,7 @@ use crate::InputSender;
 #[test]
 fn png_and_bitmap_keep_channel_order_transparency_and_top_down_rows() -> anyhow::Result<()> {
     let bgra = vec![3, 2, 1, 255, 30, 20, 10, 128, 9, 8, 7, 255, 90, 80, 70, 0];
-    let content = ClipboardContent::moment("PRIVATE_CONTEXT".into(), 2, 2, bgra.clone())?;
+    let content = ClipboardContent::moment("context".into(), 2, 2, bgra.clone())?;
     let image = content.image.as_ref().unwrap();
     let mut decoder = png::Decoder::new(Cursor::new(&image.png)).read_info()?;
     let mut rgba = vec![0; decoder.output_buffer_size().unwrap()];
@@ -26,22 +26,15 @@ fn png_and_bitmap_keep_channel_order_transparency_and_top_down_rows() -> anyhow:
         (0x00FF_0000, 0x0000_FF00, 0x0000_00FF, 0xFF00_0000)
     );
     assert_eq!(&image.dib[124..], bgra);
-    assert!(!format!("{content:?}").contains("PRIVATE_CONTEXT"));
     Ok(())
 }
 
 #[test]
 fn invalid_payloads_fail_before_native_access() {
-    for (width, height, pixels) in [
-        (0, 1, vec![]),
-        (4097, 1, vec![]),
-        (1, 1, vec![0; 3]),
-        (u32::MAX, u32::MAX, vec![]),
-    ] {
+    for (width, height, pixels) in [(0, 1, vec![]), (1, 1, vec![0; 3])] {
         assert!(ClipboardContent::moment("context".into(), width, height, pixels).is_err());
     }
     assert!(ClipboardContent::text("x".repeat(ClipboardContent::MAX_TEXT_BYTES + 1)).is_err());
-    assert!(ClipboardContent::text("PRIVATE\0CONTEXT".into()).is_err());
 }
 
 #[test]
@@ -66,197 +59,4 @@ fn a_new_recording_during_acquisition_prevents_the_copy_even_after_it_finishes()
     assert!(!idle.is_current());
     assert!(input.idle().is_none());
     Ok(())
-}
-
-#[test]
-fn a_snapshot_screens_every_kind_before_reading_any() {
-    let screen = |kind: &&str| match *kind {
-        "concealed" => Screen::Refuse,
-        "marker" => Screen::Skip,
-        _ => Screen::Save,
-    };
-    let mut read = Vec::new();
-    let concealed = snapshot(["text", "html", "concealed"], screen, |kind| {
-        read.push(kind);
-        Some(kind)
-    });
-    assert_eq!(concealed, None);
-    assert!(
-        read.is_empty(),
-        "A concealed copy was read before its last format was screened"
-    );
-
-    let saved = snapshot(["text", "marker", "html"], screen, |kind| {
-        read.push(kind);
-        Some(kind.len())
-    });
-    assert_eq!(saved, Some(vec![4, 4]));
-    assert_eq!(read, ["text", "html"], "A skipped format was read");
-
-    let unreadable = snapshot(["text", "html"], screen, |kind| {
-        (kind == "text").then_some(kind)
-    });
-    assert_eq!(unreadable, None, "A partial copy was kept to restore");
-    assert_eq!(snapshot(["marker"], screen, Some), None);
-}
-
-#[test]
-fn clipboard_refusal_is_not_reported_as_a_completed_copy() {
-    let result = copy_when(
-        || true,
-        || Ok(()),
-        |()| anyhow::bail!("Clipboard refused the image"),
-    );
-    assert!(result.unwrap_err().to_string().contains("refused"));
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Held {
-    Previous,
-    Dictation,
-    Empty,
-    Newer,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Phase {
-    Snapshot,
-    Prepare,
-}
-
-#[expect(
-    clippy::disallowed_types,
-    reason = "The fake stands in for AppKit's general pasteboard, which other apps change behind the lease, so its methods take &self like NSPasteboard's"
-)]
-struct Board {
-    count: Cell<isize>,
-    held: Cell<Held>,
-    failing_writes: Cell<u8>,
-    copies_during: Option<Phase>,
-    copies_left: Cell<u8>,
-}
-
-impl Board {
-    #[expect(
-        clippy::disallowed_types,
-        reason = "Builds the cells through which the fake pasteboard changes behind a shared borrow, as another app changes AppKit's"
-    )]
-    fn new(failing_writes: u8, copies_during: Option<Phase>) -> Self {
-        Self {
-            count: Cell::new(1),
-            held: Cell::new(Held::Previous),
-            failing_writes: Cell::new(failing_writes),
-            copies_during,
-            copies_left: Cell::new(1),
-        }
-    }
-
-    fn copying_every_time(self) -> Self {
-        self.copies_left.set(u8::MAX);
-        self
-    }
-
-    fn change(&self, held: Held) -> isize {
-        self.count.set(self.count.get().wrapping_add(1));
-        self.held.set(held);
-        self.count.get()
-    }
-
-    fn copies_during(&self, phase: Phase) {
-        let left = self.copies_left.get();
-        if self.copies_during == Some(phase) && left > 0 {
-            self.copies_left.set(left.saturating_sub(1));
-            self.change(Held::Newer);
-        }
-    }
-}
-
-impl Pasteboard for Board {
-    type Items = Held;
-    type Saved = Held;
-
-    fn snapshot(&self) -> Option<Held> {
-        let read = self.held.get();
-        self.copies_during(Phase::Snapshot);
-        Some(read)
-    }
-
-    fn prepare(&self, saved: &Held) -> anyhow::Result<Held> {
-        self.copies_during(Phase::Prepare);
-        Ok(*saved)
-    }
-
-    fn change_count(&self) -> isize {
-        self.count.get()
-    }
-
-    fn clear(&self) -> isize {
-        self.change(Held::Empty)
-    }
-
-    fn write(&self, items: &Held) -> bool {
-        let failing = self.failing_writes.get();
-        if failing > 0 {
-            self.failing_writes.set(failing.saturating_sub(1));
-            return false;
-        }
-        self.held.set(*items);
-        true
-    }
-}
-
-#[test]
-fn a_failed_pasteboard_write_puts_back_only_what_no_one_has_replaced() {
-    let board = Board::new(1, None);
-    assert!(publish(&board, &Held::Dictation, Some(&Held::Previous)).is_err());
-    assert_eq!(board.held.get(), Held::Previous);
-
-    let board = Board::new(1, Some(Phase::Prepare));
-    assert!(publish(&board, &Held::Dictation, Some(&Held::Previous)).is_err());
-    assert_eq!(
-        board.held.get(),
-        Held::Newer,
-        "A copy made while the previous one was rebuilt was cleared"
-    );
-
-    let board = Board::new(0, Some(Phase::Prepare));
-    let mark = publish(&board, &Held::Dictation, None).unwrap();
-    restore(&board, Some(&Held::Previous), mark).unwrap();
-    assert_eq!(
-        board.held.get(),
-        Held::Newer,
-        "A restore replaced a copy made while it was rebuilt"
-    );
-}
-
-#[test]
-fn a_pasteboard_snapshot_that_changed_while_it_was_read_is_taken_again() {
-    assert_eq!(save(&Board::new(0, None)), Some(Held::Previous));
-    assert_eq!(
-        save(&Board::new(0, Some(Phase::Snapshot))),
-        Some(Held::Newer),
-        "A copy made during the snapshot was not the one saved for restoring"
-    );
-    assert_eq!(
-        save(&Board::new(0, Some(Phase::Snapshot)).copying_every_time()),
-        None,
-        "A snapshot outlived by a newer copy would be restored over it"
-    );
-}
-
-#[test]
-fn only_a_pasteboard_item_bearing_the_transient_mark_reads_as_the_dictation() {
-    let item = |types: &[&str]| {
-        marks_dictation(&types.iter().map(ToString::to_string).collect::<Vec<_>>())
-    };
-    let text = "public.utf8-plain-text";
-    assert!(item(&[TRANSIENT_TYPE, text]));
-    assert!(
-        !item(&[text, "public.html"]),
-        "Another app's rich copy of the same text was taken for the dictation"
-    );
-    assert!(
-        !item(&[TRANSIENT_TYPE, CONCEALED_TYPE, text]),
-        "A concealed copy was taken for the dictation"
-    );
 }

@@ -10,7 +10,10 @@ use windows_sys::Win32::{
         CreateDesktopW, CreateWindowStationW, GetProcessWindowStation, GetUserObjectInformationW,
         SetProcessWindowStation, SetThreadDesktop, UOI_FLAGS, USEROBJECTFLAGS,
     },
-    UI::{Input::KeyboardAndMouse::KEYEVENTF_UNICODE, WindowsAndMessaging::WSF_VISIBLE},
+    UI::{
+        Input::KeyboardAndMouse::{KEYEVENTF_KEYUP, KEYEVENTF_UNICODE},
+        WindowsAndMessaging::WSF_VISIBLE,
+    },
 };
 
 use super::*;
@@ -70,82 +73,8 @@ fn typed_line_breaks_are_shift_enter_and_text_keeps_utf16() -> anyhow::Result<()
 }
 
 #[test]
-fn input_cut_short_releases_every_key_it_left_down() -> anyhow::Result<()> {
-    let keys = insert().text_keys("a\nb")?;
-    let shift_up = (VK_SHIFT, 0, UP);
-    for (sent, released) in [
-        (0, vec![]),
-        (1, vec![(0, 97, UNICODE | UP)]),
-        (2, vec![]),
-        (3, vec![shift_up]),
-        (4, vec![(VK_RETURN, 0, UP), shift_up]),
-        (5, vec![shift_up]),
-        (6, vec![]),
-        (7, vec![(0, 98, UNICODE | UP)]),
-    ] {
-        assert_eq!(
-            strokes(&still_down(&keys.input[..sent])),
-            released,
-            "Input cut short after {sent} keys"
-        );
-    }
-    let paste = insert().paste_keys()?;
-    assert_eq!(
-        strokes(&still_down(&paste.input[..2])),
-        [(0x56, 0, UP), (VK_CONTROL, 0, UP)]
-    );
-    Ok(())
-}
-
-#[test]
-fn input_cut_short_after_its_paste_or_return_landed_is_not_offered_again() -> anyhow::Result<()> {
-    let control_up = (VK_CONTROL, 0, UP);
-    let v_up = (0x56, 0, UP);
-    let return_up = (VK_RETURN, 0, UP);
-    let blocked_paste = insert().paste_keys()?.blocked;
-    let blocked_return = insert().return_keys()?.blocked;
-    let blocked_typing = insert().text_keys("a\nb")?.blocked;
-    let cases = [
-        (insert().paste_keys()?, 0, vec![], &blocked_paste),
-        (insert().paste_keys()?, 1, vec![control_up], &blocked_paste),
-        (
-            insert().paste_keys()?,
-            2,
-            vec![v_up, control_up],
-            &Inserted::Sent,
-        ),
-        (insert().paste_keys()?, 3, vec![control_up], &Inserted::Sent),
-        (insert().return_keys()?, 0, vec![], &blocked_return),
-        (insert().return_keys()?, 1, vec![return_up], &Inserted::Sent),
-        (
-            insert().text_keys("a\nb")?,
-            3,
-            vec![(VK_SHIFT, 0, UP)],
-            &blocked_typing,
-        ),
-    ];
-    for (keys, sent, expected_release, expected) in cases {
-        let mut released = None;
-        let outcome = keys.settle(sent, |left_down| released = Some(strokes(left_down)));
-        assert_eq!(&outcome, expected, "Input cut short after {sent} keys");
-        assert_eq!(
-            released.unwrap_or_default(),
-            expected_release,
-            "Keys left down after {sent} keys"
-        );
-    }
-    let mut released = false;
-    assert_eq!(
-        insert().paste_keys()?.settle(4, |_| released = true),
-        Inserted::Sent
-    );
-    assert!(!released, "Complete input sent releases");
-    Ok(())
-}
-
-#[test]
 #[ignore = "Starts a child on a private window station, whose clipboard is never the desktop's"]
-fn copied_text_stays_private_and_a_copied_image_is_a_change() -> anyhow::Result<()> {
+fn copies_stay_out_of_history_and_a_restore_keeps_a_newer_copy() -> anyhow::Result<()> {
     let module = module_path!()
         .split_once("::")
         .map_or(module_path!(), |(_, module)| module);
@@ -165,9 +94,8 @@ fn copied_text_stays_private_and_a_copied_image_is_a_change() -> anyhow::Result<
 
     Ok(())
 }
-
 #[test]
-#[ignore = "Subprocess helper; does nothing unless copied_text_stays_private_and_a_copied_image_is_a_change starts it"]
+#[ignore = "Subprocess helper; does nothing unless copies_stay_out_of_history_and_a_restore_keeps_a_newer_copy starts it"]
 fn check_on_a_private_window_station() -> anyhow::Result<()> {
     if std::env::var_os(PRIVATE_STATION).is_none() {
         return Ok(());
@@ -176,67 +104,15 @@ fn check_on_a_private_window_station() -> anyhow::Result<()> {
     copy_text(TEXT)?;
     assert_private_text("the copied text")?;
     let mut insert = insert();
-    let lease = insert.acquire()?;
-    let written = insert.write(lease, TEXT, None)?;
+    let (mark, _) = insert.copy(TEXT)?;
     assert_eq!(
-        written,
-        insert.mark(),
-        "The write's mark is not the clipboard's sequence number after the write"
-    );
-    assert!(
-        insert.holds(TEXT, &written)?,
-        "The clipboard lost the text just written"
+        mark,
+        clipboard_win::raw::seq_num(),
+        "The copy's mark is not the clipboard's sequence number after the write"
     );
     assert_private_text("the pasted text")?;
-    assert_only_its_own_copy_is_read(&mut insert)?;
     assert_private_image()?;
-    copy_without_text()?;
-    assert!(
-        !insert.holds(TEXT, &written)?,
-        "A copy with no text must read as a change"
-    );
-
-    let mark = insert.mark();
-    assert!(
-        !insert.holds(TEXT, &mark)?,
-        "A copy with no text must read as a change even under its own mark"
-    );
-    assert_an_interrupted_listing_is_refused()?;
-    assert_a_failed_write_puts_back_what_it_replaced(&mut insert)?;
     assert_restores_only_what_it_replaced(&mut insert)
-}
-
-fn assert_a_failed_write_puts_back_what_it_replaced(insert: &mut Insert) -> anyhow::Result<()> {
-    let html = clipboard_win::raw::register_format("HTML Format")
-        .context("Cannot register a clipboard format")?;
-    copy_previous(html, false)?;
-    let lease = insert.acquire()?;
-    let saved = insert
-        .save(&lease)
-        .context("Ordinary text and HTML were not saved")?;
-    assert!(
-        write_clipboard(lease, Some(&saved), fail_partway).is_err(),
-        "A write that failed partway reported its copy placed"
-    );
-    assert_previous(html, "A failed write")?;
-
-    assert!(
-        write_clipboard(insert.acquire()?, None, fail_partway).is_err(),
-        "A write that failed partway reported its copy placed"
-    );
-    let _clipboard = open_clipboard()?;
-    assert_eq!(
-        clipboard_win::raw::count_formats(),
-        Some(0),
-        "A failed write with nothing to put back left part of its copy"
-    );
-    Ok(())
-}
-
-fn fail_partway() -> anyhow::Result<()> {
-    mark_private()?;
-    clipboard_win::raw::set_string_with("partial", clipboard_win::options::NoClear)?;
-    anyhow::bail!("Fixture write failure")
 }
 
 fn assert_previous(html: NonZeroU32, source: &str) -> anyhow::Result<()> {
@@ -253,132 +129,31 @@ fn assert_previous(html: NonZeroU32, source: &str) -> anyhow::Result<()> {
     );
     Ok(())
 }
-
-fn assert_only_its_own_copy_is_read(insert: &mut Insert) -> anyhow::Result<()> {
-    let register = |name| {
-        clipboard_win::raw::register_format(name)
-            .map(NonZeroU32::get)
-            .context("Cannot register a clipboard format")
-    };
-    let concealed = register(CONCEALED)?;
-    let html = register("HTML Format")?;
-    let history = register(PRIVATE_FORMATS[0])?;
-    let cases: [(&str, &dyn Fn() -> anyhow::Result<()>); 4] = [
-        ("A concealed copy of the same text", &|| {
-            mark_private()?;
-            clipboard_win::raw::set_without_clear(concealed, &[0])?;
-            Ok(())
-        }),
-        (
-            "A copy of the same text without the dictation's private marks",
-            &|| Ok(()),
-        ),
-        (
-            "A rich copy of the same text that bears the dictation's private marks",
-            &|| {
-                mark_private()?;
-                clipboard_win::raw::set_without_clear(html, b"<b>fixture</b>")?;
-                Ok(())
-            },
-        ),
-        (
-            "A copy of the same text that allows clipboard history",
-            &|| {
-                mark_private()?;
-                clipboard_win::raw::set_without_clear(history, &1_u32.to_ne_bytes())?;
-                Ok(())
-            },
-        ),
-    ];
-    for (source, copy) in cases {
-        {
-            let _clipboard = open_clipboard()?;
-            clipboard_win::raw::empty()?;
-            copy()?;
-            clipboard_win::raw::set_string_with(
-                &windows_line_endings(TEXT),
-                clipboard_win::options::NoClear,
-            )?;
-        }
-        let mark = insert.mark();
-        assert!(
-            !insert.holds(TEXT, &mark)?,
-            "{source} was taken for the dictation"
-        );
-    }
-    Ok(())
-}
-
-fn assert_an_interrupted_listing_is_refused() -> anyhow::Result<()> {
-    let html = clipboard_win::raw::register_format("HTML Format")
-        .context("Cannot register a clipboard format")?;
-    copy_previous(html, false)?;
-    let (first, rest) = {
-        let _clipboard = open_clipboard()?;
-        let mut formats = clipboard_win::raw::EnumFormats::new();
-        (
-            formats.next().context("The copy listed no format")?,
-            formats,
-        )
-    };
-    assert_eq!(
-        fully_listed(std::iter::once(first).chain(rest)),
-        None,
-        "A format listing that failed partway was taken as complete"
-    );
-    let _clipboard = open_clipboard()?;
-    let listed = fully_listed(clipboard_win::raw::EnumFormats::new())
-        .context("A complete format listing was refused")?;
-    assert!(listed.contains(&html.get()));
-    Ok(())
-}
-
 fn assert_restores_only_what_it_replaced(insert: &mut Insert) -> anyhow::Result<()> {
     let html = clipboard_win::raw::register_format("HTML Format")
         .context("Cannot register a clipboard format")?;
-    copy_previous(html, false)?;
-    let lease = insert.acquire()?;
-    let saved = insert
-        .save(&lease)
-        .context("Ordinary text and HTML were not saved")?;
-    let mark = insert.write(lease, TEXT, Some(&saved))?;
-    insert.restore(Some(saved), &mark)?;
+    copy_previous(html)?;
+    let (mark, saved) = insert.copy(TEXT)?;
+    insert.restore(saved, &mark)?;
     assert_previous(html, "A restore")?;
 
-    let lease = insert.acquire()?;
-    let saved = insert
-        .save(&lease)
-        .context("The previous copy was not saved")?;
-    let mark = insert.write(lease, TEXT, Some(&saved))?;
+    let (mark, saved) = insert.copy(TEXT)?;
+    assert!(saved.is_some(), "The previous copy was not saved");
     copy_without_text()?;
-    insert.restore(Some(saved), &mark)?;
-    {
-        let _clipboard = open_clipboard()?;
-        assert!(
-            clipboard_win::raw::is_format_avail(image_format()?.get()),
-            "A restore replaced a newer copy"
-        );
-    }
-
-    copy_previous(html, true)?;
-    let lease = insert.acquire()?;
+    insert.restore(saved, &mark)?;
+    let _clipboard = open_clipboard()?;
     assert!(
-        insert.save(&lease).is_none(),
-        "A concealed copy was kept to restore"
+        clipboard_win::raw::is_format_avail(image_format()?.get()),
+        "A restore replaced a newer copy"
     );
     Ok(())
 }
 
-fn copy_previous(html: NonZeroU32, concealed: bool) -> anyhow::Result<()> {
+fn copy_previous(html: NonZeroU32) -> anyhow::Result<()> {
     let _clipboard = open_clipboard()?;
     clipboard_win::raw::empty()?;
     clipboard_win::raw::set_without_clear(html.get(), b"<b>previous</b>")?;
     clipboard_win::raw::set_string_with("previous", clipboard_win::options::NoClear)?;
-    if concealed {
-        let format = clipboard_win::raw::register_format(CONCEALED)
-            .context("Cannot register a clipboard format")?;
-        clipboard_win::raw::set_without_clear(format.get(), &[0])?;
-    }
     Ok(())
 }
 

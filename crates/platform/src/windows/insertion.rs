@@ -5,39 +5,22 @@ use std::{
 };
 
 use anyhow::Context as _;
-use windows_sys::Win32::{
-    Foundation::{ERROR_SUCCESS, GetLastError, SetLastError},
-    UI::{
-        Input::KeyboardAndMouse::{
-            INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VK_CONTROL, VK_RETURN, VK_SHIFT,
-            VK_V,
-        },
-        WindowsAndMessaging::GetForegroundWindow,
-    },
+use windows_sys::Win32::UI::{
+    Input::KeyboardAndMouse::{INPUT, VK_CONTROL, VK_RETURN, VK_SHIFT, VK_V},
+    WindowsAndMessaging::GetForegroundWindow,
 };
-use zeroize::Zeroizing;
 
-use super::{is_key_down, press, release, send_input, synthetic_key, type_unit, window_process};
+use super::{is_key_down, press, release, send_input, type_unit, window_process};
 use crate::{
-    ClipboardContent, Inserted,
-    clipboard::{self, Screen},
+    ClipboardContent, Inserted, clipboard,
     insertion::{self, NativeInsert, Typed},
 };
 
 const PRIVATE_FORMATS: [&str; 2] = ["CanIncludeInClipboardHistory", "CanUploadToCloudClipboard"];
 
-const CONCEALED: &str = "ExcludeClipboardContentFromMonitorProcessing";
-
 const SYNTHESIZED: [u32; 2] = [
     clipboard_win::formats::CF_BITMAP,
     clipboard_win::formats::CF_PALETTE,
-];
-
-const TEXT_FORMATS: [u32; 4] = [
-    clipboard_win::formats::CF_UNICODETEXT,
-    clipboard_win::formats::CF_TEXT,
-    clipboard_win::formats::CF_OEMTEXT,
-    clipboard_win::formats::CF_LOCALE,
 ];
 
 const HANDLES: [u32; 6] = [
@@ -51,12 +34,10 @@ const HANDLES: [u32; 6] = [
 
 const PRIVATE_AND_GDI: std::ops::RangeInclusive<u32> = 0x0200..=0x03FF;
 
-const SAVED_BYTES: usize = 64 << 20;
-
-type SavedFormat = (u32, Zeroizing<Vec<u8>>);
+type SavedFormat = (u32, Vec<u8>);
 
 pub(crate) fn copy_text(text: &str) -> anyhow::Result<()> {
-    write_clipboard(open_clipboard()?, None, || fill(text, None))
+    write_clipboard(open_clipboard()?, || fill(text, None))
 }
 
 pub(crate) fn copy_content(
@@ -73,41 +54,30 @@ pub(crate) fn copy_content(
                     .context("Cannot register the clipboard image format")
             })
             .transpose()?;
-        write_clipboard(lease, None, || fill(&content.text, image))
+        write_clipboard(lease, || fill(&content.text, image))
     })
 }
 
 fn saved_formats() -> Option<Vec<SavedFormat>> {
-    let concealed = clipboard_win::raw::register_format(CONCEALED)?.get();
     let private = private_formats();
-    let mut size = 0_usize;
-    clipboard::snapshot(
-        fully_listed(clipboard_win::raw::EnumFormats::new())?,
-        |format| {
-            if *format == concealed || HANDLES.contains(format) || PRIVATE_AND_GDI.contains(format)
-            {
-                Screen::Refuse
-            } else if SYNTHESIZED.contains(format) || private.contains(&Some(*format)) {
-                Screen::Skip
-            } else {
-                Screen::Save
-            }
-        },
-        |format| {
-            size = size
-                .checked_add(clipboard_win::raw::size(format)?.get())
-                .filter(|size| *size <= SAVED_BYTES)?;
-            let mut data = Zeroizing::new(Vec::new());
+    let mut kept = Vec::new();
+    for format in clipboard_win::raw::EnumFormats::new() {
+        if HANDLES.contains(&format) || PRIVATE_AND_GDI.contains(&format) {
+            return None;
+        }
+        if !SYNTHESIZED.contains(&format) && !private.contains(&Some(format)) {
+            kept.push(format);
+        }
+    }
+    let saved = kept
+        .into_iter()
+        .map(|format| {
+            let mut data = Vec::new();
             clipboard_win::raw::get_vec(format, &mut data).ok()?;
             Some((format, data))
-        },
-    )
-}
-
-fn fully_listed(formats: impl IntoIterator<Item = u32>) -> Option<Vec<u32>> {
-    unsafe { SetLastError(ERROR_SUCCESS) };
-    let formats = formats.into_iter().collect();
-    (unsafe { GetLastError() } == ERROR_SUCCESS).then_some(formats)
+        })
+        .collect::<Option<Vec<_>>>()?;
+    (!saved.is_empty()).then_some(saved)
 }
 
 fn restore_clipboard(
@@ -141,15 +111,10 @@ fn mark_private() -> anyhow::Result<()> {
 
 fn write_clipboard(
     _lease: clipboard_win::Clipboard,
-    previous: Option<&[SavedFormat]>,
     fill: impl FnOnce() -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     clipboard_win::raw::empty()?;
-    fill().map_err(|error| match roll_back(previous) {
-        Ok(()) => error,
-        Err(_) => error
-            .context("The clipboard may contain an incomplete copy; clear it before trying again"),
-    })
+    fill()
 }
 
 fn fill(text: &str, image: Option<(&clipboard::Image, NonZeroU32)>) -> anyhow::Result<()> {
@@ -165,17 +130,6 @@ fn fill(text: &str, image: Option<(&clipboard::Image, NonZeroU32)>) -> anyhow::R
     Ok(())
 }
 
-fn roll_back(previous: Option<&[SavedFormat]>) -> anyhow::Result<()> {
-    clipboard_win::raw::empty()?;
-    previous.map_or(Ok(()), put_back).inspect_err(|_| {
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "A previous copy that could not return whole is cleared instead, best effort, and the caller reports the incomplete copy"
-        )]
-        let _ = clipboard_win::raw::empty();
-    })
-}
-
 pub(super) struct Insert {
     pub(super) shortcut: crate::WindowsShortcut,
     pub(super) typed: insertion::KeyCount,
@@ -183,51 +137,21 @@ pub(super) struct Insert {
 
 pub(super) struct Keys {
     input: Vec<INPUT>,
-    lands_after: usize,
     blocked: Inserted,
-}
-
-impl Keys {
-    fn settle(self, sent: usize, release: impl FnOnce(&[INPUT])) -> Inserted {
-        if sent == self.input.len() {
-            return Inserted::Sent;
-        }
-        let left_down = still_down(self.input.get(..sent).unwrap_or_default());
-        if !left_down.is_empty() {
-            release(&left_down);
-        }
-        if sent >= self.lands_after {
-            Inserted::Sent
-        } else {
-            self.blocked
-        }
-    }
 }
 
 impl NativeInsert for Insert {
     type Activity = (u64, [i32; 2]);
     type Contents = Vec<SavedFormat>;
     type Keys = Keys;
-    type Lease = clipboard_win::Clipboard;
     type Mark = Option<NonZeroU32>;
     type Target = usize;
 
-    fn acquire(&mut self) -> anyhow::Result<clipboard_win::Clipboard> {
-        open_clipboard()
-    }
-
-    fn save(&mut self, _lease: &clipboard_win::Clipboard) -> Option<Self::Contents> {
-        saved_formats()
-    }
-
-    fn write(
-        &mut self,
-        lease: clipboard_win::Clipboard,
-        text: &str,
-        saved: Option<&Self::Contents>,
-    ) -> anyhow::Result<Self::Mark> {
-        write_clipboard(lease, saved.map(Vec::as_slice), || fill(text, None))?;
-        Ok(clipboard_win::raw::seq_num())
+    fn copy(&mut self, text: &str) -> anyhow::Result<(Self::Mark, Option<Self::Contents>)> {
+        let lease = open_clipboard()?;
+        let saved = saved_formats();
+        write_clipboard(lease, || fill(text, None))?;
+        Ok((clipboard_win::raw::seq_num(), saved))
     }
 
     fn restore(
@@ -238,21 +162,6 @@ impl NativeInsert for Insert {
         restore_clipboard(contents.as_deref(), *mark)
     }
 
-    fn mark(&mut self) -> Option<NonZeroU32> {
-        clipboard_win::raw::seq_num()
-    }
-
-    fn holds(&mut self, text: &str, mark: &Option<NonZeroU32>) -> anyhow::Result<bool> {
-        let _clipboard = open_clipboard()?;
-
-        if mark.is_none() || *mark != clipboard_win::raw::seq_num() || !bears_dictation_marks() {
-            return Ok(false);
-        }
-        let mut current = Zeroizing::new(Vec::new());
-        clipboard_win::raw::get_string(&mut current)?;
-        Ok(current.as_slice() == windows_line_endings(text).as_bytes())
-    }
-
     fn paste_keys(&mut self) -> anyhow::Result<Keys> {
         Ok(Keys {
             input: vec![
@@ -261,7 +170,6 @@ impl NativeInsert for Insert {
                 release(VK_V),
                 release(VK_CONTROL),
             ],
-            lands_after: 2,
             blocked: Inserted::Copied("Text copied. This app blocked paste; press Ctrl+V."),
         })
     }
@@ -280,7 +188,6 @@ impl NativeInsert for Insert {
             }
         }
         Ok(Keys {
-            lands_after: input.len(),
             input,
             blocked: Inserted::Unavailable(
                 "Typing was blocked or cut short. Turn off “Type instead of paste” in Settings.",
@@ -291,7 +198,6 @@ impl NativeInsert for Insert {
     fn return_keys(&mut self) -> anyhow::Result<Keys> {
         Ok(Keys {
             input: vec![press(VK_RETURN), release(VK_RETURN)],
-            lands_after: 1,
             blocked: Inserted::Unavailable("This app blocked Return."),
         })
     }
@@ -317,54 +223,16 @@ impl NativeInsert for Insert {
 
     fn send(&mut self, keys: Keys) -> anyhow::Result<Inserted> {
         let sent = send_input(&keys.input)?;
-        Ok(keys.settle(sent, |left_down| {
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "Release the keys that cut-short input left down even if the target also blocks the cleanup"
-            )]
-            let _ = send_input(left_down);
-        }))
+        Ok(if sent == keys.input.len() {
+            Inserted::Sent
+        } else {
+            keys.blocked
+        })
     }
 }
 
 fn private_formats() -> [Option<u32>; 2] {
     PRIVATE_FORMATS.map(|name| clipboard_win::raw::register_format(name).map(NonZeroU32::get))
-}
-
-fn bears_dictation_marks() -> bool {
-    let private = private_formats();
-    let excludes = |format| {
-        let mut value = [u8::MAX; 4];
-        clipboard_win::raw::get(format, &mut value).is_ok_and(|read| read == value.len())
-            && value == [0; 4]
-    };
-    clipboard_win::raw::is_format_avail(clipboard_win::formats::CF_UNICODETEXT)
-        && fully_listed(clipboard_win::raw::EnumFormats::new()).is_some_and(|formats| {
-            formats
-                .iter()
-                .all(|format| TEXT_FORMATS.contains(format) || private.contains(&Some(*format)))
-        })
-        && private
-            .into_iter()
-            .all(|format| format.is_some_and(excludes))
-}
-
-fn still_down(sent: &[INPUT]) -> Vec<INPUT> {
-    let mut down: Vec<KEYBDINPUT> = Vec::new();
-    for key in sent
-        .iter()
-        .filter(|input| input.r#type == INPUT_KEYBOARD)
-        .map(|input| unsafe { input.Anonymous.ki })
-    {
-        down.retain(|held| (held.wVk, held.wScan) != (key.wVk, key.wScan));
-        if key.dwFlags & KEYEVENTF_KEYUP == 0 {
-            down.push(key);
-        }
-    }
-    down.into_iter()
-        .rev()
-        .map(|key| synthetic_key(key.wVk, key.wScan, key.dwFlags | KEYEVENTF_KEYUP))
-        .collect()
 }
 
 fn windows_line_endings(text: &str) -> String {

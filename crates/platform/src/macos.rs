@@ -37,7 +37,7 @@ use core_graphics::{
 use dispatch2::DispatchQueue;
 use objc2::{MainThreadMarker, MainThreadOnly as _, rc::Retained, runtime::ProtocolObject};
 use objc2_app_kit::{
-    NSAlert, NSEvent, NSFloatingWindowLevel, NSPasteboard, NSScreen, NSView, NSWindow,
+    NSAlert, NSEvent, NSFloatingWindowLevel, NSScreen, NSView, NSWindow,
     NSWindowCollectionBehavior, NSWindowStyleMask, NSWorkspace,
     NSWorkspaceSessionDidResignActiveNotification, NSWorkspaceWillSleepNotification,
 };
@@ -554,39 +554,16 @@ impl insertion::NativeInsert for Insert {
     type Activity = (u64, [f64; 2], [u32; 3]);
     type Contents = clipboard::Saved;
     type Keys = Vec<CGEvent>;
-    type Lease = clipboard::Lease;
     type Mark = isize;
     type Target = i32;
 
-    fn acquire(&mut self) -> anyhow::Result<clipboard::Lease> {
-        Ok(clipboard::acquire())
-    }
-
-    fn save(&mut self, lease: &clipboard::Lease) -> Option<clipboard::Saved> {
-        crate::clipboard::save(lease)
-    }
-
-    fn write(
-        &mut self,
-        lease: clipboard::Lease,
-        text: &str,
-        saved: Option<&clipboard::Saved>,
-    ) -> anyhow::Result<Self::Mark> {
-        clipboard::write(lease, text, saved)
+    fn copy(&mut self, text: &str) -> anyhow::Result<(isize, Option<clipboard::Saved>)> {
+        let saved = clipboard::snapshot();
+        Ok((clipboard::write(text)?, saved))
     }
 
     fn restore(&mut self, contents: Option<clipboard::Saved>, mark: &isize) -> anyhow::Result<()> {
-        objc2::rc::autoreleasepool(|_| {
-            crate::clipboard::restore(&clipboard::acquire(), contents.as_ref(), *mark)
-        })
-    }
-
-    fn mark(&mut self) -> isize {
-        change_count()
-    }
-
-    fn holds(&mut self, text: &str, mark: &isize) -> anyhow::Result<bool> {
-        Ok(clipboard::holds(&clipboard::acquire(), text, *mark))
+        objc2::rc::autoreleasepool(|_| clipboard::restore(contents.as_ref(), *mark))
     }
 
     fn paste_keys(&mut self) -> anyhow::Result<Vec<CGEvent>> {
@@ -695,10 +672,6 @@ fn own_key_event(source: &CGEventSource, code: CGKeyCode, down: bool) -> Option<
 
 fn is_own_process(pid: i64) -> bool {
     pid == i64::from(std::process::id())
-}
-
-fn change_count() -> isize {
-    NSPasteboard::generalPasteboard().changeCount()
 }
 
 pub(super) fn reduced_motion() -> bool {

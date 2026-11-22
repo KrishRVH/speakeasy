@@ -1,5 +1,3 @@
-use std::sync::{Mutex, MutexGuard, PoisonError};
-
 use anyhow::ensure;
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use objc2_app_kit::{
@@ -8,62 +6,72 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSArray, NSData, NSString, ns_string};
 
-use crate::clipboard::{self, CONCEALED_TYPE, Pasteboard, Screen, TRANSIENT_TYPE};
+use crate::clipboard;
 
-#[expect(
-    clippy::disallowed_types,
-    reason = "The insertion thread and explicit-copy worker each own native calls, including copies while input is stopped; this lease serializes their pasteboard transactions, not session state"
-)]
-static ACCESS: Mutex<()> = Mutex::new(());
+const TRANSIENT_TYPE: &str = "org.nspasteboard.TransientType";
 
-pub(super) struct Lease {
-    pasteboard: Retained<NSPasteboard>,
-    _access: MutexGuard<'static, ()>,
-}
-
-pub(super) fn acquire() -> Lease {
-    let access = ACCESS.lock().unwrap_or_else(PoisonError::into_inner);
-    Lease {
-        pasteboard: NSPasteboard::generalPasteboard(),
-        _access: access,
-    }
-}
-
-pub(crate) fn copy_text(text: &str) -> anyhow::Result<()> {
-    objc2::rc::autoreleasepool(|_| write(acquire(), text, None).map(|_| ()))
-}
-
-pub(super) fn write(lease: Lease, text: &str, previous: Option<&Saved>) -> anyhow::Result<isize> {
-    let items = writers(&[item(text, None)?]);
-    clipboard::publish(&lease, &items, previous)
-}
+const INCOMPLETE: &str = "Cannot place the complete copy on the clipboard";
 
 pub(super) type Saved = Vec<Vec<(Retained<NSString>, Retained<NSData>)>>;
 
-const SAVED_BYTES: usize = 64 << 20;
-
-pub(super) fn holds(lease: &Lease, text: &str, mark: isize) -> bool {
-    let unchanged = || lease.pasteboard.changeCount() == mark;
-    let string = unsafe { NSPasteboardTypeString };
-    unchanged()
-        && lease
-            .pasteboard
-            .pasteboardItems()
-            .filter(|items| items.count() == 1)
-            .and_then(|items| items.firstObject())
-            .is_some_and(|item| {
-                let types: Vec<String> = item.types().iter().map(|kind| kind.to_string()).collect();
-                clipboard::marks_dictation(&types)
-                    && item
-                        .stringForType(string)
-                        .is_some_and(|held| held.isEqualToString(&NSString::from_str(text)))
-            })
-        && unchanged()
+pub(crate) fn copy_text(text: &str) -> anyhow::Result<()> {
+    objc2::rc::autoreleasepool(|_| write(text).map(|_| ()))
 }
 
-fn concealed(types: &NSArray<NSString>) -> bool {
-    let concealed = NSString::from_str(CONCEALED_TYPE);
-    types.iter().any(|kind| kind.isEqualToString(&concealed))
+pub(super) fn write(text: &str) -> anyhow::Result<isize> {
+    publish(&writers(&[item(text, None)?]))
+}
+
+pub(super) fn snapshot() -> Option<Saved> {
+    let saved = NSPasteboard::generalPasteboard()
+        .pasteboardItems()?
+        .iter()
+        .map(|item| {
+            item.types()
+                .iter()
+                .map(|kind| item.dataForType(&kind).map(|data| (kind, data)))
+                .collect::<Option<Vec<_>>>()
+        })
+        .collect::<Option<Saved>>()?;
+    (!saved.is_empty()).then_some(saved)
+}
+
+pub(super) fn restore(saved: Option<&Saved>, mark: isize) -> anyhow::Result<()> {
+    let items = saved.map(items_from).transpose()?;
+    let pasteboard = NSPasteboard::generalPasteboard();
+    if pasteboard.changeCount() != mark {
+        return Ok(());
+    }
+    clear(&pasteboard);
+    if let Some(items) = items {
+        ensure!(pasteboard.writeObjects(&writers(&items)), INCOMPLETE);
+    }
+    Ok(())
+}
+
+pub(crate) fn copy_content(
+    content: &crate::ClipboardContent,
+    authorized: impl FnOnce() -> bool,
+) -> anyhow::Result<bool> {
+    objc2::rc::autoreleasepool(|_| {
+        let items = writers(&[item(&content.text, content.image.as_ref())?]);
+        if !authorized() {
+            return Ok(false);
+        }
+        publish(&items)?;
+        Ok(true)
+    })
+}
+
+fn publish(items: &Writers) -> anyhow::Result<isize> {
+    let pasteboard = NSPasteboard::generalPasteboard();
+    clear(&pasteboard);
+    ensure!(pasteboard.writeObjects(items), INCOMPLETE);
+    Ok(pasteboard.changeCount())
+}
+
+fn clear(pasteboard: &NSPasteboard) {
+    pasteboard.prepareForNewContentsWithOptions(NSPasteboardContentsOptions::CurrentHostOnly);
 }
 
 fn items_from(saved: &Saved) -> anyhow::Result<Vec<Retained<NSPasteboardItem>>> {
@@ -89,20 +97,6 @@ fn private_item() -> anyhow::Result<Retained<NSPasteboardItem>> {
         "Cannot mark the clipboard copy private"
     );
     Ok(item)
-}
-
-pub(crate) fn copy_content(
-    content: &crate::ClipboardContent,
-    authorized: impl FnOnce() -> bool,
-) -> anyhow::Result<bool> {
-    objc2::rc::autoreleasepool(|_| {
-        let items = writers(&[item(&content.text, content.image.as_ref())?]);
-        clipboard::copy_when(
-            authorized,
-            || Ok(acquire()),
-            |lease| clipboard::publish(&lease, &items, None).map(|_| ()),
-        )
-    })
 }
 
 fn item(
@@ -134,53 +128,4 @@ fn writers(items: &[Retained<NSPasteboardItem>]) -> Writers {
         .map(|item| ProtocolObject::from_ref(&**item))
         .collect();
     NSArray::from_slice(&writers)
-}
-
-impl Pasteboard for Lease {
-    type Items = Writers;
-    type Saved = Saved;
-
-    fn snapshot(&self) -> Option<Saved> {
-        let items = self.pasteboard.pasteboardItems()?;
-        let mut size = 0_usize;
-        clipboard::snapshot(
-            items.iter().map(|item| (item.types(), item)),
-            |(types, _)| {
-                if concealed(types) {
-                    Screen::Refuse
-                } else {
-                    Screen::Save
-                }
-            },
-            |(types, item)| {
-                types
-                    .iter()
-                    .map(|kind| {
-                        let data = item.dataForType(&kind)?;
-                        size = size
-                            .checked_add(data.len())
-                            .filter(|size| *size <= SAVED_BYTES)?;
-                        Some((kind, data))
-                    })
-                    .collect()
-            },
-        )
-    }
-
-    fn prepare(&self, saved: &Saved) -> anyhow::Result<Writers> {
-        items_from(saved).map(|items| writers(&items))
-    }
-
-    fn change_count(&self) -> isize {
-        self.pasteboard.changeCount()
-    }
-
-    fn clear(&self) -> isize {
-        self.pasteboard
-            .prepareForNewContentsWithOptions(NSPasteboardContentsOptions::CurrentHostOnly)
-    }
-
-    fn write(&self, items: &Writers) -> bool {
-        self.pasteboard.writeObjects(items)
-    }
 }

@@ -2,8 +2,6 @@ use anyhow::{Context as _, ensure};
 
 use crate::{BgraImage, image::encode_png};
 
-const EDGE_LIMIT: u32 = 4096;
-
 pub struct ClipboardContent {
     pub(crate) text: String,
     pub(crate) image: Option<Image>,
@@ -36,19 +34,11 @@ impl ClipboardContent {
             text.len() <= Self::MAX_TEXT_BYTES,
             "Clipboard text exceeds 1 MiB"
         );
-        ensure!(
-            !text.contains('\0'),
-            "Clipboard text contains a NUL character"
-        );
         Ok(Self { text, image: None })
     }
 
     pub fn moment(text: String, width: u32, height: u32, bgra: Vec<u8>) -> anyhow::Result<Self> {
         let content = Self::text(text)?;
-        ensure!(
-            (1..=EDGE_LIMIT).contains(&width) && (1..=EDGE_LIMIT).contains(&height),
-            "Clipboard images must be between 1 and {EDGE_LIMIT} pixels per side"
-        );
         let pixels = BgraImage::new([width, height], bgra)
             .context("Clipboard image dimensions do not match its pixels")?;
         let image = Image {
@@ -70,116 +60,7 @@ pub fn copy_content(
     crate::native::copy_content(content, authorized)
 }
 
-#[cfg(any(target_os = "windows", target_os = "macos", test))]
-pub(crate) enum Screen {
-    Save,
-    #[cfg_attr(
-        all(target_os = "macos", not(test)),
-        expect(dead_code, reason = "A Mac pasteboard item is saved whole or refused")
-    )]
-    Skip,
-    Refuse,
-}
-
-#[cfg(any(target_os = "windows", target_os = "macos", test))]
-pub(crate) fn snapshot<Kind, Data>(
-    kinds: impl IntoIterator<Item = Kind>,
-    screen: impl Fn(&Kind) -> Screen,
-    read: impl FnMut(Kind) -> Option<Data>,
-) -> Option<Vec<Data>> {
-    let mut saved = Vec::new();
-    for kind in kinds {
-        match screen(&kind) {
-            Screen::Save => saved.push(kind),
-            Screen::Skip => {},
-            Screen::Refuse => return None,
-        }
-    }
-    let saved = saved.into_iter().map(read).collect::<Option<Vec<_>>>()?;
-    (!saved.is_empty()).then_some(saved)
-}
-
-#[cfg(any(target_os = "macos", test))]
-const SNAPSHOT_ATTEMPTS: usize = 3;
-
-#[cfg(any(target_os = "macos", test))]
-pub(crate) const CONCEALED_TYPE: &str = "org.nspasteboard.ConcealedType";
-
-#[cfg(any(target_os = "macos", test))]
-pub(crate) const TRANSIENT_TYPE: &str = "org.nspasteboard.TransientType";
-
-#[cfg(any(target_os = "macos", test))]
-pub(crate) fn marks_dictation(types: &[String]) -> bool {
-    types.iter().any(|kind| kind == TRANSIENT_TYPE)
-        && !types.iter().any(|kind| kind == CONCEALED_TYPE)
-}
-
-#[cfg(any(target_os = "macos", test))]
-pub(crate) trait Pasteboard {
-    type Saved;
-    type Items;
-
-    fn snapshot(&self) -> Option<Self::Saved>;
-
-    fn prepare(&self, saved: &Self::Saved) -> anyhow::Result<Self::Items>;
-
-    fn change_count(&self) -> isize;
-
-    fn clear(&self) -> isize;
-
-    fn write(&self, items: &Self::Items) -> bool;
-}
-
-#[cfg(any(target_os = "macos", test))]
-pub(crate) fn save<P: Pasteboard>(board: &P) -> Option<P::Saved> {
-    (0..SNAPSHOT_ATTEMPTS)
-        .find_map(|_| {
-            let before = board.change_count();
-            let saved = board.snapshot();
-            (board.change_count() == before).then_some(saved)
-        })
-        .flatten()
-}
-
-#[cfg(any(target_os = "macos", test))]
-pub(crate) fn publish<P: Pasteboard>(
-    board: &P,
-    items: &P::Items,
-    previous: Option<&P::Saved>,
-) -> anyhow::Result<isize> {
-    let cleared = board.clear();
-    if board.write(items) {
-        return Ok(board.change_count());
-    }
-    if let Some(previous) = previous.and_then(|saved| board.prepare(saved).ok())
-        && board.change_count() == cleared
-    {
-        board.clear();
-        board.write(&previous);
-    }
-    anyhow::bail!("Cannot place the complete copy on the clipboard")
-}
-
-#[cfg(any(target_os = "macos", test))]
-pub(crate) fn restore<P: Pasteboard>(
-    board: &P,
-    saved: Option<&P::Saved>,
-    mark: isize,
-) -> anyhow::Result<()> {
-    let items = saved.map(|saved| board.prepare(saved)).transpose()?;
-    if board.change_count() != mark {
-        return Ok(());
-    }
-    board.clear();
-    if let Some(items) = items {
-        ensure!(
-            board.write(&items),
-            "Cannot place the complete copy on the clipboard"
-        );
-    }
-    Ok(())
-}
-
+#[cfg(any(target_os = "windows", target_os = "linux", test))]
 pub(crate) fn copy_when<L>(
     authorized: impl FnOnce() -> bool,
     acquire: impl FnOnce() -> anyhow::Result<L>,
