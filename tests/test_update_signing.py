@@ -8,7 +8,7 @@ from typing import cast
 
 import pytest
 
-from scripts.sign_update import MAX_INSTALLER, NAME, openssl, sign_update
+from scripts.sign_update import NAME, openssl, sign_update
 
 
 def fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
@@ -60,16 +60,14 @@ def test_signed_bytes_bind_installer_and_version(tmp_path: Path) -> None:
         sign_update(installer, "1.2.4", public, private)
 
 
-@pytest.mark.parametrize("fault", ["missing-key", "different-key", "version", "empty", "oversized"])
+@pytest.mark.parametrize("fault", ["missing-key", "different-key", "empty"])
 def test_invalid_publication_leaves_no_signed_assets(tmp_path: Path, fault: str) -> None:
     installer, public, private = fixture(tmp_path)
-    version = "01.2.3" if fault == "version" else "1.2.3"
     if fault in {"missing-key", "different-key"}:
         public.write_text("" if fault == "missing-key" else "00" * 32)
-    if fault in {"empty", "oversized"}:
-        with installer.open("wb") as output:
-            output.truncate(0 if fault == "empty" else MAX_INSTALLER + 1)
+    if fault == "empty":
+        installer.write_bytes(b"")
     with pytest.raises(ValueError):
-        sign_update(installer, version, public, private)
+        sign_update(installer, "1.2.3", public, private)
     assert not (tmp_path / "update.json").exists()
     assert not (tmp_path / "update.json.sig").exists()

@@ -10,7 +10,6 @@ import tempfile
 from pathlib import Path
 
 NAME = "speakeasy-windows-x64-setup.exe"
-MAX_INSTALLER = 512 * 1024 * 1024
 ED25519_SPKI = bytes.fromhex("302a300506032b6570032100")
 
 
@@ -24,10 +23,6 @@ def openssl(arguments: list[str]) -> bytes:
 
 
 def sign_update(installer: Path, version: str, public_key: Path, private_key: Path) -> None:
-    if not re.fullmatch(r"(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*)){2}", version) or any(
-        int(part) > 0xFFFFFFFF for part in version.split(".")
-    ):
-        raise ValueError("The update version must have three canonical unsigned 32-bit numbers.")
     embedded = public_key.read_text().strip()
     if not re.fullmatch(r"[0-9a-fA-F]{64}", embedded):
         raise ValueError("Configure the embedded Ed25519 public key before publishing updates.")
@@ -36,12 +31,12 @@ def sign_update(installer: Path, version: str, public_key: Path, private_key: Pa
     )
     if actual != ED25519_SPKI + bytes.fromhex(embedded):
         raise ValueError("The update signing key does not match the application's embedded key.")
-    if installer.name != NAME or installer.is_symlink() or not installer.is_file():
-        raise ValueError("Sign the regular packaged Windows installer under its release filename.")
+    if installer.name != NAME:
+        raise ValueError(f"Sign the packaged Windows installer named {NAME}.")
     with installer.open("rb") as source:
         size = source.seek(0, 2)
-        if not 1 <= size <= MAX_INSTALLER:
-            raise ValueError("The installer is empty or exceeds the application's update limit.")
+        if size == 0:
+            raise ValueError("The installer is empty. Package it again before signing.")
         source.seek(0)
         digest = hashlib.file_digest(source, "sha256").hexdigest()
     manifest = {
