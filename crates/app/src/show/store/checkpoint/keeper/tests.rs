@@ -81,3 +81,29 @@ async fn discarding_stops_the_movie_and_waits_for_its_native_lease() -> anyhow::
         .context("Fixture checkpoint is missing")?;
     checkpoint.discard()
 }
+
+#[tokio::test]
+async fn a_checkpoint_that_never_opens_refuses_a_queued_movie() -> anyhow::Result<()> {
+    let (open, gate) = async_channel::bounded::<()>(1);
+    let Kept {
+        keeper,
+        mut frames,
+        audio,
+    } = Keeper::start(
+        move || {
+            gate.recv_blocking()?;
+            anyhow::bail!("Synthetic checkpoint failure")
+        },
+        SystemTime::now(),
+    )?;
+    drop(audio);
+    let (target, opened) = tokio::join!(
+        tokio::time::timeout(PATIENCE, frames.movie(Instant::now())),
+        open.send(()),
+    );
+    opened?;
+    assert!(target?.is_none(), "A movie target outlived its checkpoint");
+    drop(frames);
+    assert!(keeper.close().await?.is_none());
+    Ok(())
+}

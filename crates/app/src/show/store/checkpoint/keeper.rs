@@ -60,18 +60,15 @@ impl Keeper {
         let (audio, audio_records) = async_channel::bounded(AUDIO_EVENTS);
         let (returned, closed) = async_channel::bounded(1);
         let thread = StoppableThread::spawn("show-checkpoint", move |stopping| {
+            let frames = Lane::new(frame_records);
+            let audio = Lane::new(audio_records);
             let checkpoint = parent()
                 .and_then(|parent| Checkpoint::create(&parent, recorded))
                 .ok();
             if let Some(checkpoint) = &checkpoint
                 && let Ok(runtime) = tokio::runtime::Builder::new_current_thread().build()
             {
-                runtime.block_on(write(
-                    &checkpoint.directory,
-                    frame_records,
-                    audio_records,
-                    &stopping,
-                ));
+                runtime.block_on(write(&checkpoint.directory, frames, audio, &stopping));
             }
             #[expect(
                 clippy::let_underscore_must_use,
@@ -147,14 +144,21 @@ impl<T> Lane<T> {
     }
 }
 
+impl<T> Drop for Lane<T> {
+    fn drop(&mut self) {
+        self.records.close();
+        while self.records.try_recv().is_ok() {}
+    }
+}
+
 async fn write(
     directory: &Path,
-    frames: Receiver<FrameRecord>,
-    audio: Receiver<audio::Record>,
+    frames: Lane<FrameRecord>,
+    audio: Lane<audio::Record>,
     stopping: &Receiver<Infallible>,
 ) {
-    let mut frames = Some(Lane::new(frames));
-    let mut audio = Some(Lane::new(audio));
+    let mut frames = Some(frames);
+    let mut audio = Some(audio);
     let mut movie: Option<Writing> = None;
     let mut stopped = false;
     while frames.is_some() || audio.is_some() || movie.is_some() {
