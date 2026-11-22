@@ -7,7 +7,7 @@ use serde::Serialize;
 use speakeasy_show::Manifest;
 
 use crate::show::{
-    evidence::{Overview, Problem},
+    evidence::Overview,
     store::{address::ShowId, recall::Entry},
 };
 
@@ -22,7 +22,7 @@ pub(super) struct Roots {
 #[serde(rename_all = "camelCase")]
 pub(super) struct Listing {
     pub shows: Vec<Overview>,
-    pub unavailable_roots: Vec<Problem>,
+    pub unavailable_roots: Vec<PathBuf>,
     pub truncated: bool,
     pub next_cursor: Option<String>,
 }
@@ -64,10 +64,7 @@ impl Roots {
         let mut unavailable_roots = Vec::new();
         for root in &self.roots {
             if gather(root, &mut rows, after).is_err() {
-                unavailable_roots.push(Problem {
-                    file: root.clone(),
-                    reason: "Cannot list an MCP root".to_owned(),
-                });
+                unavailable_roots.push(root.clone());
             }
         }
         let next_cursor = if rows.len() > PAGE {

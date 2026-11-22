@@ -4,7 +4,7 @@ use serde::Serialize;
 use speakeasy_show::{Ending, Moment, NarrationLoss};
 
 use crate::show::{
-    evidence::{self, Inspection, Problem},
+    evidence::{self, Inspection},
     store::{recall::Entry, retention::Retention},
 };
 
@@ -39,7 +39,7 @@ pub(super) fn list(
             write!(out, " · kept")?;
         }
         writeln!(out, " · {}", entry.directory.display())?;
-        problems(&entry.problems, out)?;
+        problem(entry.error.as_deref(), out)?;
     }
     Ok(())
 }
@@ -134,7 +134,7 @@ pub(super) fn inspect(entry: &Entry, as_json: bool, out: &mut impl io::Write) ->
             }
         }
     }
-    problems(&report.overview.problems, out)
+    problem(report.overview.error.as_deref(), out)
 }
 
 pub(super) fn kept(
@@ -168,16 +168,11 @@ pub(super) fn kept(
     )
 }
 
-fn problems(problems: &[Problem], out: &mut impl io::Write) -> io::Result<()> {
-    for problem in problems {
-        writeln!(
-            out,
-            "Problem: {}: {}",
-            problem.file.display(),
-            problem.reason
-        )?;
+fn problem(error: Option<&str>, out: &mut impl io::Write) -> io::Result<()> {
+    match error {
+        Some(error) => writeln!(out, "Problem: {error}"),
+        None => Ok(()),
     }
-    Ok(())
 }
 
 #[cfg(test)]

@@ -167,7 +167,7 @@ fn a_show_whose_manifest_cannot_be_read_is_listed_with_that_problem() -> anyhow:
     for (row, directory) in rows.iter().zip([&nested, &single]) {
         assert_eq!(row["directory"], json!(directory));
         assert_eq!(row["status"], "unreadable");
-        assert_eq!(row["problems"][0]["file"], json!(directory));
+        assert!(row["error"].is_string());
     }
     assert_eq!(roots.resolve("single").map_err(anyhow::Error::msg)?, single);
     Ok(())
@@ -186,12 +186,7 @@ fn a_moved_root_is_unavailable_without_hiding_other_roots() -> anyhow::Result<()
     let listing = roots.list(None);
     let listed: Vec<_> = listing.shows.iter().map(|show| &show.directory).collect();
     assert_eq!(listed, [&kept]);
-    let unavailable: Vec<_> = listing
-        .unavailable_roots
-        .iter()
-        .map(|root| &root.file)
-        .collect();
-    assert_eq!(unavailable, [&moved]);
+    assert_eq!(listing.unavailable_roots, [moved]);
     assert_eq!(roots.resolve("kept").map_err(anyhow::Error::msg)?, kept);
     Ok(())
 }

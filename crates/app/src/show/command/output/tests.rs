@@ -27,7 +27,7 @@ fn inspection_json_keeps_its_published_shape_and_field_order() -> anyhow::Result
     saved(&directory)?;
     let expected = json!({
         "id": null, "directory": directory, "status": "ok", "pinned": false,
-        "expiresAt": null, "durationMs": 1000, "keyframes": 1, "marks": 0, "problems": [],
+        "expiresAt": null, "durationMs": 1000, "keyframes": 1, "marks": 0, "error": null,
         "ending": "finished", "narrationLost": null,
         "summary": directory.join("summary.md"), "manifest": directory.join("show.json"),
         "sheets": [{"path": directory.join("contact-sheet.png"), "frames": [1]}],

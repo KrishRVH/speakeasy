@@ -462,7 +462,7 @@ every image exists or decodes. A mark with no saved frame is reported without su
 image.
 
 `list` and `inspect` offer readable text without `--json`. Their JSON reports each Show's `id`,
-`status`, `pinned`, and `expiresAt`. Status is `ok` or `unreadable`, with the reason in `problems`;
+`status`, `pinned`, and `expiresAt`. Status is `ok` or `unreadable`, with the reason in `error`;
 `list` can also report `interrupted` or `narrationPending`. An ID is non-null only when the
 directory is confirmed to be a managed Show. `expiresAt` is the UTC time the Show becomes eligible
 for cleanup, or null when kept, unmanaged, or unavailable; deletion occurs during a later cleanup

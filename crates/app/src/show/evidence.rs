@@ -46,44 +46,25 @@ pub(super) struct Overview {
     pub(super) duration_ms: Option<u64>,
     pub(super) keyframes: Option<usize>,
     pub(super) marks: Option<usize>,
-    pub(super) problems: Vec<Problem>,
-}
-
-#[derive(Serialize)]
-pub(super) struct Problem {
-    pub(super) file: PathBuf,
-    pub(super) reason: String,
+    pub(super) error: Option<String>,
 }
 
 impl Overview {
     pub(super) fn unreadable(directory: PathBuf, reason: String) -> Self {
         Self {
             id: None,
-            directory: directory.clone(),
+            directory,
             status: Status::Unreadable,
             expires_at: None,
             pinned: None,
             duration_ms: None,
             keyframes: None,
             marks: None,
-            problems: vec![Problem {
-                file: directory,
-                reason,
-            }],
+            error: Some(reason),
         }
     }
 
     pub(super) fn of(entry: &Entry) -> Self {
-        let problems = entry
-            .show
-            .as_ref()
-            .err()
-            .map(|error| Problem {
-                file: entry.directory.clone(),
-                reason: format!("{error:#}"),
-            })
-            .into_iter()
-            .collect();
         let show = entry.show.as_ref().ok();
         let id = entry.id.as_ref();
         let retention = id.map(|id| Retention::of(id.as_str(), entry.pinned));
@@ -100,7 +81,7 @@ impl Overview {
             duration_ms: show.map(|show| show.manifest.recording().duration.as_millis()),
             keyframes: show.map(|show| show.manifest.keyframes().len()),
             marks: show.map(|show| show.manifest.marks().len()),
-            problems,
+            error: entry.show.as_ref().err().map(|error| format!("{error:#}")),
         }
     }
 }
@@ -248,7 +229,7 @@ pub(super) fn list(
             duration_ms: None,
             keyframes: None,
             marks: None,
-            problems: Vec::new(),
+            error: None,
         });
     interrupted.map(Ok).chain(saved).collect()
 }
