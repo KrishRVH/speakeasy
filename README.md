@@ -313,12 +313,12 @@ replaced the clipboard. Quit waits for native clipboard work to finish.
 execute. The viewer does not change which Show the tray remembers. **Keep Show** prevents the
 selected Show from expiring. **Allow expiry** restores its original expiry date, seven days after
 recording; for an already overdue Show the button says **Allow cleanup**, and cleanup can remove it
-on its next pass. Keeping a Show changes only its `.pinned` marker, including when the manifest or a
-frame is damaged. Choose **More actions → Delete Show…** to permanently delete the selected Show,
-including a kept or damaged one. Confirmation names the Show and removes its saved files and
-associated recovery audio; exported copies stay. Cancel or Escape dismisses the confirmation. If its
-audio is still recording or recovering, let that work finish and try deletion again. Keep, Discard,
-and confirmed deletion finish even if you close the window; Quit waits for accepted writes.
+on its next pass. Keeping a Show changes only its `.pinned` marker, even when Speakeasy cannot read
+the Show. Choose **More actions → Delete Show…** to permanently delete the selected Show, including
+a kept or unreadable one. Confirmation names the Show and removes its saved files and associated
+recovery audio; exported copies stay. Cancel or Escape dismisses the confirmation. If its audio is
+still recording or recovering, let that work finish and try deletion again. Keep, Discard, and
+confirmed deletion finish even if you close the window; Quit waits for accepted writes.
 
 **More actions → Export ZIP…** saves a portable copy to a new path you choose. It includes the saved
 summary, manifest with narration, contact sheets, keyframes, and, when available, retained source
@@ -334,8 +334,8 @@ available, and a selectable caption track when narration has word timings. Insta
 newer with H.264 and AAC support, put `ffmpeg` on PATH, then restart Speakeasy. macOS also checks
 the standard Homebrew and MacPorts locations. Export runs locally on all platforms with retained
 video. The original recording stays unchanged. **Cancel export** or closing the window cancels the
-video export; Quit waits for cleanup. Shows without available voice, including those whose voice has
-expired, export silently, with a notice. Explicitly exported videos do not expire automatically.
+video export; Quit waits for cleanup. Shows without saved voice export silently, with a notice.
+Explicitly exported videos do not expire automatically.
 
 An **Interrupted Show** offers **Recover Show** and **Discard**. Recovery restores checkpointed
 frames, ink, marks, and narration into a new bundle, using your configured local speech engine and
@@ -359,9 +359,9 @@ save failure leaves the checkpoint available for recovery; a copy failure leaves
 available in the library. Cancelling, quitting, pausing, changing settings, or losing access to
 desktop input during an unfinished recording discards its checkpoint. Once you finish a Show, those
 interruptions leave its checkpoint recoverable, including while capture stops, the checkpoint
-flushes, narration transcribes, or publication saves the bundle. Hidden incomplete saves are removed
-once they are at least an hour old. Cleanup hides expired Shows before deleting their files and
-retries interrupted deletions on its next pass.
+flushes, narration transcribes, or publication saves the bundle. Cleanup deletes an expired Show's
+folder; one it cannot finish deleting, such as a Show with a file open on Windows, is retried on its
+next pass.
 
 An agent on the same machine can inspect a Show without launching the app or opening the microphone.
 A summary names its Show's exact ID when Speakeasy saved it in the Shows folder; `show demo --out`
@@ -394,21 +394,21 @@ speakeasy show skill
 starts and prints that Show's inspection. It never starts recording; you still make the Show with
 the gesture. It gives up after 600 seconds unless `--timeout` asks for up to 3600.
 
-`list` finds interrupted Shows first, then saved Shows newest first, including damaged or
-unsupported ones. It lists the timestamp-named folders in Speakeasy's Shows folder; use `inspect`
-with an explicit path for a moved or exported Show. A bare timestamp name, including a same-second
-suffix such as `-2`, is an exact Show ID in Speakeasy's Shows folder. IDs never fall back to another
-folder or a partial name; use `./ID` to force a relative path. These commands also work without a
-desktop on Linux. `list` and `inspect` leave files, edits, permissions, and retention unchanged.
-There is no implicit latest Show.
+`list` finds interrupted Shows first, then saved Shows newest first, including ones it cannot read.
+It lists the timestamp-named folders in Speakeasy's Shows folder; use `inspect` with an explicit
+path for a moved or exported Show. A bare timestamp name, including a same-second suffix such as
+`-2`, is an exact Show ID in Speakeasy's Shows folder. IDs never fall back to another folder or a
+partial name; use `./ID` to force a relative path. These commands also work without a desktop on
+Linux. `list` and `inspect` leave files, edits, permissions, and retention unchanged. There is no
+implicit latest Show.
 
 `export` writes only a new ZIP outside the original bundle and leaves the original and its retention
-unchanged. It checks the manifest and expected file inventory without decoding image payloads.
-Missing, linked, or oversized files, invalid retained-source indexes, and mismatched timelines fail
-the export. Encoded image and video data are preserved; MP4 fragment headers are normalized for
-playback. It streams at most 2 GiB of saved content into a private temporary file, then publishes
-the complete archive without overwriting an existing path. JSON output contains the export path,
-file count, byte count, and whether retained samples are included; it contains no private text.
+unchanged. It copies the manifest's file inventory without decoding image payloads; a missing file
+or a video whose annotation timing disagrees with the manifest fails the export. Encoded image and
+video data are preserved; MP4 fragment headers are normalized for playback. It writes a temporary
+file beside the destination, then publishes the complete archive without overwriting an existing
+path. JSON output contains the export path, file count, byte count, and whether retained samples are
+included; it contains no private text.
 
 `show video` composes a separate 30 fps H.264 MP4 with AAC voice and optional selectable subtitles
 (`--captions`). It accepts the same focus queries as frame export; without a focus it exports the
@@ -457,27 +457,27 @@ reports the resulting `pinned` flag and `expiresAt` date.
 `inspect` maps each contact sheet to its frames and each numbered mark to its saved frame. Its paths
 point to the bundle's current location, even if the summary still names the original folder. Read
 every contact sheet, then the user's current `summary.md`, then the relevant full-size frames.
-Inspection prints metadata and paths, never narration, spoken cues, or screen content. It checks the
-manifest and expected files without decoding images; `ok` means those structural checks passed, not
-that every image decodes. Missing files remain visible beside the frames that survived. A mark with
-no saved frame is reported without substituting another image.
+Inspection prints metadata and paths, never narration, spoken cues, or screen content. It reads the
+manifest and any retained video's timing without opening images; `ok` means those parsed, not that
+every image exists or decodes. A mark with no saved frame is reported without substituting another
+image.
 
 `list` and `inspect` offer readable text without `--json`. Their JSON reports each Show's `id`,
-`status`, `pinned`, and `expiresAt`. Status is `ok`, `damaged`, or `unsupported`; `list` can also
-report `interrupted` or `narrationPending`. An ID is non-null only when the directory is confirmed
-to be a managed Show. `expiresAt` is the UTC time the Show becomes eligible for cleanup, or null
-when kept, unmanaged, or unavailable; deletion occurs during a later cleanup pass. The `pinned`
-field describes retention, not numbered pin marks. If the manifest cannot be read, duration, counts,
-and pin status are null, and inspection omits its detail fields and frame tables. Inspection exits
-with status 1 for damage or an unsupported format, after printing its findings. A listing succeeds
-even when individual Shows are damaged or their folders cannot be opened. An unreadable Shows folder
-fails the command; a missing one is an empty listing. `narrationLost` is `audioStopped`,
-`audioSilent`, `notTranscribed`, or `incomplete`; with no reported loss, `show.json` omits it and
-`inspect` reports null. `incomplete` means recovery transcribed the surviving audio prefix; its text
-and timings cover only that prefix.
+`status`, `pinned`, and `expiresAt`. Status is `ok` or `unreadable`, with the reason in `problems`;
+`list` can also report `interrupted` or `narrationPending`. An ID is non-null only when the
+directory is confirmed to be a managed Show. `expiresAt` is the UTC time the Show becomes eligible
+for cleanup, or null when kept, unmanaged, or unavailable; deletion occurs during a later cleanup
+pass. The `pinned` field describes retention, not numbered pin marks. If the manifest cannot be
+read, duration and counts are null, and inspection omits its detail fields and frame tables.
+Inspection exits with status 1 for an unreadable Show, after printing its findings. A listing
+succeeds even when individual Shows cannot be read. An unreadable Shows folder fails the command; a
+missing one is an empty listing. `narrationLost` is `audioStopped`, `audioSilent`, `notTranscribed`,
+or `incomplete`; with no reported loss, `show.json` omits it and `inspect` reports null.
+`incomplete` means recovery transcribed the surviving audio prefix; its text and timings cover only
+that prefix.
 
-Manifests are limited to 16 MiB and summaries to 1 MiB. Only the current format, 3, is read and
-written; unknown fields are ignored. Other formats are reported as unsupported and left untouched.
+Only the current format, 3, is read and written; unknown fields are ignored. Other formats are
+reported as unreadable and left untouched.
 
 For MCP clients, run `speakeasy show mcp --setup` to print Claude Code, Codex, and generic setup
 snippets. The stdio server requires one to 16 explicit `--root PATH` arguments: each root is one
@@ -514,12 +514,10 @@ select an interrupted Show with the same timestamp. Recover through the native S
   deletes Shows and interrupted checkpoints over seven days old when it starts and hourly while it
   runs; a file named `.pinned` in a saved Show's folder keeps it. A checkpoint holds up to 1 GiB of
   frames and pointer events, 128 MiB of audio, and 384 MiB of silent video. After transcription,
-  saved Shows retain private voice for explicit video export until seven days after the original
-  recording. Keeping a Show does not extend voice retention. Export refuses expired voice even
-  before cleanup runs; cleanup deletes voice from kept Shows too. Pending recovery audio is removed
-  on cancellation, discard, or expiry. Ordinary dictation stays in memory. Saved bundles can include
-  up to 512 MiB of retained source frames and 384 MiB of video in addition to their selected images
-  and private voice.
+  saved Shows retain private voice for explicit video export; it expires with its Show, and a kept
+  Show keeps its voice. Pending recovery audio is removed on cancellation, discard, or expiry.
+  Ordinary dictation stays in memory. Saved bundles can include up to 512 MiB of retained source
+  frames and 384 MiB of video in addition to their selected images and private voice.
 - Windows clipboard history and cloud clipboard skip what Speakeasy puts on the clipboard, pasted
   dictation, the copy it puts back, and Show summaries alike, as do Universal Clipboard and Mac
   clipboard managers that honor transient data.

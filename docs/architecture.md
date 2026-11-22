@@ -463,9 +463,9 @@ module unless a test file is named.
   managed Show and `show discard` permanently removes one interrupted checkpoint; inspection stays
   read-only. `show wait` polls the Shows folder and inspects the first folder that appears after it
   starts. It orders Shows observed in the same poll by the modification time of the publication
-  marker written under the retention lock just before rename; equal times go to the later recording,
-  a wall-clock step backward between two such publications can reorder them, and a Show removed
-  before it opens is skipped. Atomic publication hides partial Shows.
+  marker written just before rename; equal times go to the later recording, a wall-clock step
+  backward between two such publications can reorder them, and a Show removed before it opens is
+  skipped. Atomic publication hides partial Shows.
   [command/tests.rs](../crates/app/src/show/command/tests.rs) inspects simulated Shows, checks
   failure output, and exercises the embedded [agent skill](../skills/speakeasy-show/SKILL.md). The
   Windows package's [console entry](../crates/app/src/bin/speakeasy-cli.rs) relays Show and control
@@ -476,20 +476,16 @@ module unless a test file is named.
   except the Windows installer, which `check-installer.ps1` covers.
 - **Agent evidence**: [show/evidence.rs](../crates/app/src/show/evidence.rs) shares inspection and
   temporal queries between CLI and [show/mcp.rs](../crates/app/src/show/mcp.rs). MCP exposes three
-  read-only tools within explicit launch roots. It opens directories and regular files relative to
-  retained directory handles, refuses links and hidden publication directories, bounds lines,
-  content, and images, and reports actual source sample times. A listing keeps only the names of a
-  page's rows, then opens and reads one row at a time relative to the root handle that enumerated
-  it. A folder that cannot be opened, or whose manifest is present or cannot be checked but cannot
-  be read, is listed as damaged; a root that no configured root can still reach, or that cannot be
-  searched or fully listed, is named in `unavailableRoots` without any of its rows while the others
-  still list. A bare folder name resolves through the same reachable root as the listing. It serves
-  the 2026-07-28 stateless protocol and the 2025-11-25 initialized protocol that external clients
-  use. No tool exports, sends, or reads ordinary dictation. Initialization instructions are the
-  disclosure followed by the embedded skill's reading guide without its front matter. Setup resolves
-  the durable installed launcher and only prints client stanzas, adding one for an agent in WSL that
-  runs the Windows command through interop with Windows roots, or a note when interop, drive
-  mounting, or a lettered drive is missing.
+  read-only tools within explicit launch roots. It resolves paths inside those roots, refusing `..`
+  and hidden folders, bounds lines, content, and images, and reports actual source sample times. A
+  Show whose manifest cannot be read is listed as unreadable; a root that cannot be listed is named
+  in `unavailableRoots` while the others still list. A bare folder name resolves through the same
+  roots as the listing. It serves the 2026-07-28 stateless protocol and the 2025-11-25 initialized
+  protocol that external clients use. No tool exports, sends, or reads ordinary dictation.
+  Initialization instructions are the disclosure followed by the embedded skill's reading guide
+  without its front matter. Setup resolves the durable installed launcher and only prints client
+  stanzas, adding one for an agent in WSL that runs the Windows command through interop with Windows
+  roots, or a note when interop, drive mounting, or a lettered drive is missing.
 - **Show recording and publication**: [show.rs](../crates/app/src/show.rs),
   [show/recorder.rs](../crates/app/src/show/recorder.rs),
   [show/publish.rs](../crates/app/src/show/publish.rs), and the session owner.
@@ -650,25 +646,20 @@ module unless a test file is named.
   references and exercise generated manifest mutations and sheet sizes.
 - **Show store**: [show/store.rs](../crates/app/src/show/store.rs) names, writes, and expires
   bundles, and [store/recall.rs](../crates/app/src/show/store/recall.rs) reads a saved one back; it
-  also discovers and inspects saved Shows without changing them. Discovery lists a Show folder it
-  cannot open as damaged, with a fixed reason, as MCP does; a Shows folder that cannot be listed, or
-  on Unix searched, fails it. It reports Keep from the presence of a `.pinned` entry of any type, as
-  cleanup does, without opening the marker or listing the folder. After reading, it attaches a
-  managed ID, and with it a retention date, only when the path names a folder directly in the Shows
-  folder, not a link to one, as Keep requires, and the directory handle that was read is still that
-  entry; CLI inspection, listing, `show wait`, and MCP all read saved Shows through this module.
+  also discovers and inspects saved Shows by path without changing them. A Show whose manifest or
+  video timing cannot be read is listed as unreadable with that one error; a Shows folder that
+  cannot be listed fails discovery. It reports Keep from the presence of `.pinned`, as cleanup does.
+  It attaches a managed ID, and with it a retention date, only when the path names a timestamped
+  folder directly in the Shows folder, as Keep requires; CLI inspection, listing, `show wait`, and
+  MCP all read saved Shows through this module.
   [store/export.rs](../crates/app/src/show/store/export.rs) streams a format-owned inventory into a
   new ZIP, preserves the edited summary, and adds a relative-path guide. It excludes audio and
-  retention markers, bounds input to 2 GiB, reports failed staging cleanup, and publishes with
-  `persist_noclobber` after flush. The CLI and review window use the same exporter; accepted GUI ZIP
-  exports use the app's [edit owner](../crates/app/src/show/edits.rs), so closing review cannot
-  cancel them. ZIP and MP4 export open the Show once and read its manifest, files, retained frames,
-  video, and voice through that handle, so a folder put in its place during export contributes
-  nothing; ZIP export copies retained frames from the file it inspected and refuses them if their
-  size changed. [export/tests.rs](../crates/app/src/show/store/export/tests.rs) checks portability,
-  source retrieval after moving, exclusions, links, size limits, and failure cleanup.
+  retention markers and publishes with `persist_noclobber`. The CLI and review window use the same
+  exporter; accepted GUI ZIP exports use the app's [edit owner](../crates/app/src/show/edits.rs), so
+  closing review cannot cancel them. [export/tests.rs](../crates/app/src/show/store/export/tests.rs)
+  checks portability, source retrieval after moving, exclusions, and failure cleanup.
   [store/video.rs](../crates/app/src/show/store/video.rs) composes a separate MP4 through local
-  FFmpeg. It copies the validated source prefix into private staging, checks decoded frame count,
+  FFmpeg. It copies the validated source prefix into a temporary folder, checks decoded frame count,
   paints annotations at 30 Hz output ticks using each source frame's geometry, and aligns original
   PCM and optional subtitles to the selected session interval. Full exports and focused clips
   preserve voice before screen promotion and after the last captured image by holding the boundary
@@ -677,38 +668,30 @@ module unless a test file is named.
   after braces and backslashes so markup-like narration stays literal through `mov_text` encoding.
   Missing voice and annotation coverage are reported. The
   [`show video` command](../crates/app/src/show/command/video.rs) and Review share this exporter,
-  which resolves a `--mark` or `--phrase` focus against the manifest it read through its handle;
-  cancellation kills and reaps both FFmpeg children before staging is removed. Raw audio, captions,
-  and source copies use the managed Shows folder's private staging; the existing one-hour sweep
-  reclaims crash leftovers. Only the final MP4 stages beside its chosen destination for publication
-  without overwriting. The CLI registers Ctrl-C before staging and awaits its blocking export worker
-  on cancellation. Review owns its cancel sender; closing cancels video export, while Quit drains
-  the edit owner. FFmpeg diagnostics are never exposed. Output is synced and published without
-  overwriting. [video/tests.rs](../crates/app/src/show/store/video/tests.rs) checks timing and
-  refusal; its opt-in FFmpeg fixture verifies actual ink, voice and subtitle tracks without devices.
-  [voice.rs](../crates/app/src/show/store/voice.rs) retains checksummed audio with an immutable
-  original expiry, refuses expired reads, and erases expired voice under the retention lock even
-  when the Show is kept. Moving the folder does not reset its voice deadline.
-  [store/tests.rs](../crates/app/src/show/store/tests.rs) checks publication, expiry, and edited or
-  linked summaries; [recall/tests.rs](../crates/app/src/show/store/recall/tests.rs) checks
-  discovery, read limits, damage, links, Keep markers, and moved bundles.
-  [age.rs](../crates/app/src/show/store/age.rs) parses the folder timestamp for review and
-  property-checks it against naming and expiry boundaries.
-  [address.rs](../crates/app/src/show/store/address.rs) resolves exact IDs independently from paths;
-  moved or linked bundles never advertise a managed ID.
-  [retention.rs](../crates/app/src/show/store/retention.rs) owns Keep changes and an OS file lock
-  shared with cleanup across app and CLI processes. Keep leaves a marker of any type in place, and
-  Allow expiry removes a marker file, link, or empty folder. Cleanup holds it from the final pin
-  check through renaming an expired Show out of the visible library, then removes files without the
-  lock. Explicit deletion validates a managed directory under the same lock, including kept or
-  damaged Shows. It first discards associated recovery data only after bounded reciprocal
-  publication markers agree and checkpoint ownership is available. Missing checkpoints need no
-  cleanup; damaged or active ownership refuses deletion. The bundle is renamed without replacing an
-  existing cleanup directory, then its files are removed outside the lock. A cleanup failure reports
-  the hidden state and remains retryable; exported copies and unrelated checkpoints are untouched.
-  Hidden expired directories survive interrupted deletion for the next cleanup pass. Its
-  [tests](../crates/app/src/show/store/retention/tests.rs) exercise ordering, original expiry dates,
-  interrupted deletion, moved bundles, links, and preserved edits.
+  which resolves a `--mark` or `--phrase` focus against the manifest it read; cancellation kills and
+  reaps both FFmpeg children before the temporary folder is removed. Raw audio, captions, and source
+  copies use the system temporary folder. Only the final MP4 stages beside its chosen destination
+  for publication without overwriting. The CLI registers Ctrl-C before staging and awaits its
+  blocking export worker on cancellation. Review owns its cancel sender; closing cancels video
+  export, while Quit drains the edit owner. FFmpeg diagnostics are never exposed. Output is
+  published without overwriting. [video/tests.rs](../crates/app/src/show/store/video/tests.rs)
+  checks timing and refusal; its opt-in FFmpeg fixture verifies actual ink, voice and subtitle
+  tracks without devices. [voice.rs](../crates/app/src/show/store/voice.rs) copies checksummed audio
+  into the bundle, where it expires with the Show.
+  [store/tests.rs](../crates/app/src/show/store/tests.rs) checks publication, expiry, and edited
+  summaries; [recall/tests.rs](../crates/app/src/show/store/recall/tests.rs) checks discovery,
+  unreadable Shows, Keep markers, and moved bundles. [age.rs](../crates/app/src/show/store/age.rs)
+  parses the folder timestamp for review and property-checks it against naming and expiry
+  boundaries. [address.rs](../crates/app/src/show/store/address.rs) resolves exact IDs independently
+  from paths; moved bundles never advertise a managed ID.
+  [retention.rs](../crates/app/src/show/store/retention.rs) owns Keep changes and deletion. Keep
+  writes the `.pinned` marker and Allow expiry removes it. Cleanup deletes each expired, unpinned
+  Show's folder and reports the first it could not delete; the next hourly pass retries. Explicit
+  deletion accepts a managed directory, including kept or unreadable Shows. It first discards
+  associated recovery data only after reciprocal publication markers agree and checkpoint ownership
+  is available; damaged or active ownership refuses deletion. Exported copies and unrelated
+  checkpoints are untouched. Its [tests](../crates/app/src/show/store/retention/tests.rs) exercise
+  original expiry dates, managed-folder checks, and preserved edits.
   [checkpoint.rs](../crates/app/src/show/store/checkpoint.rs) owns private live logs and exclusive
   cross-process locks. The session owns a
   [keeper](../crates/app/src/show/store/checkpoint/keeper.rs) from explicit Show promotion. One
@@ -851,25 +834,25 @@ module unless a test file is named.
   affected sample has an explicit size and no later header field can change meaning. This changes
   one flag byte per affected fragment; picture bytes, timestamps, offsets, and the source file stay
   intact. Mac reads use the published bytes directly.
-  [store/movie.rs](../crates/app/src/show/store/movie.rs) copies that prefix from the validated
-  handle before publication commits, records the separate annotation horizon, and checks finalized
-  native timing against the fragments. Failed copy or sync preserves the checkpoint. A missing or
-  incomplete first fragment permits still-only publication with an explicit video-loss notice; other
-  damaged video stays recoverable with a concrete manual remedy. Saved-bundle inspection and export
-  accept only movie metadata version 2. A sparse geometry table is published inside that metadata;
-  the bounded checkpoint journal stays private. A required random identifier pairs the header with
-  that journal; it does not authenticate MP4 bytes. A damaged journal retains geometry only through
-  the last complete change’s first sample, clipping against surviving video after computing this
-  bound. Missing geometry preserves uncropped video. ZIP export also copies the validated handle and
-  metadata snapshot. The viewer offers Windows and macOS video scrubbing, switchable saved
-  annotations, and playback in the system player. [draw/video.rs](../crates/show/src/draw/video.rs)
-  renders only observed ink prefixes, completed marks, and completed actions whose coordinate proofs
-  match the decoded sample. Pins retain their actual observation time; action proofs include the
-  release position. Every saved pin proof includes its observation time, and nonempty proof vectors
-  cover every recorded stroke, pin, and action. Unknown geometry is omitted. Continuous cut segments
-  expire together. This saved-view policy does not reconstruct live overlay fades. A text-free
-  immutable annotation snapshot serves repeated previews; completed pixels carry their rendering
-  status through seeks and toggles. Explicit `show frame --video` queries use the
+  [store/movie.rs](../crates/app/src/show/store/movie.rs) copies that prefix before publication
+  commits and records the separate annotation horizon. A failed copy preserves the checkpoint. A
+  missing or incomplete first fragment permits still-only publication with an explicit video-loss
+  notice; other damaged video stays recoverable with a concrete manual remedy. Saved-bundle
+  inspection and export accept only movie metadata version 2. A sparse geometry table is published
+  inside that metadata; the bounded checkpoint journal stays private. A required random identifier
+  pairs the header with that journal; it does not authenticate MP4 bytes. A damaged journal retains
+  geometry only through the last complete change’s first sample, clipping against surviving video
+  after computing this bound. Missing geometry preserves uncropped video. ZIP export copies the same
+  normalized prefix and its metadata. The viewer offers Windows and macOS video scrubbing,
+  switchable saved annotations, and playback in the system player.
+  [draw/video.rs](../crates/show/src/draw/video.rs) renders only observed ink prefixes, completed
+  marks, and completed actions whose coordinate proofs match the decoded sample. Pins retain their
+  actual observation time; action proofs include the release position. Every saved pin proof
+  includes its observation time, and nonempty proof vectors cover every recorded stroke, pin, and
+  action. Unknown geometry is omitted. Continuous cut segments expire together. This saved-view
+  policy does not reconstruct live overlay fades. A text-free immutable annotation snapshot serves
+  repeated previews; completed pixels carry their rendering status through seeks and toggles.
+  Explicit `show frame --video` queries use the
   [native reader](../crates/platform/src/windows/movie/read.rs) on Windows and the
   [Mac image generator](../crates/platform/src/macos/movie.rs) on macOS. Validation and decoding
   share one open file; Windows also denies other writers. Mac reads that handle through a private
@@ -959,9 +942,9 @@ No single module owns these rules; a change to any party keeps them.
   shown advances the snapshot's report count, so one that repeats the last still shows again, except
   a recurring failure, such as each sweep's, which shows again only when it changes.
 - **A Show appears only after commit.** Publishing composes and stages the bundle off the owner's
-  thread in a private `.partial-*` directory. The bundle appears and its summary is copied only once
-  the permit commits; a Show cancelled first leaves no bundle and no clipboard change. A saved Show
-  stays saved when the clipboard refuses its summary.
+  thread in a temporary folder beside the Shows. The bundle appears and its summary is copied only
+  once the permit commits; a Show cancelled first leaves no bundle and no clipboard change. A saved
+  Show stays saved when the clipboard refuses its summary.
 - **Finished Shows remain recoverable.** Quit, Pause, and reconfiguration revoke unfinished
   publication without deleting its checkpoint. The same holds while finished footage awaits
   transcription. A Show finishes when the user finishes it or its capture ends, including where its

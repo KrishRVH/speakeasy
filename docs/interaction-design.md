@@ -212,14 +212,14 @@ Deletion or expiry clears the selection and its pixels, with no fallback to anot
 
 The window uses the shared kit in sentence case. The left list sits under a slim header with the
 Show count and Refresh; each row shows age, duration, and keyframe count, with tags for kept,
-interrupted, pending or lost narration, early-ending, and damaged status. A soft fill and a lamp bar
-mark the selected Show. When the Shows folder cannot be read as the window opens, the header drops
-the count and the list says so; a later failed refresh keeps the rows it showed. Either way a notice
-gives the error and its remedy. With no Shows, Windows and macOS explain how to record one, with S,
-W, and A as keycaps. The selected Show's header carries its retention and status tags, Send to agent
-as the main action and Copy summary on Windows and macOS, Keep Show or Allow expiry (Allow cleanup
-once overdue), and a More actions menu for the image copy, Open folder, video, export, and Delete
-Show commands; the menu dims actions that are unavailable. Below the header come warnings, a
+interrupted, pending or lost narration, early-ending, and unreadable status. A soft fill and a lamp
+bar mark the selected Show. When the Shows folder cannot be read as the window opens, the header
+drops the count and the list says so; a later failed refresh keeps the rows it showed. Either way a
+notice gives the error and its remedy. With no Shows, Windows and macOS explain how to record one,
+with S, W, and A as keycaps. The selected Show's header carries its retention and status tags, Send
+to agent as the main action and Copy summary on Windows and macOS, Keep Show or Allow expiry (Allow
+cleanup once overdue), and a More actions menu for the image copy, Open folder, video, export, and
+Delete Show commands; the menu dims actions that are unavailable. Below the header come warnings, a
 segmented switch for the frame source, one keyframe with its time and numbered marks, frame chips,
 and a Summary or Narration switch over the current summary as inert plain text. An interrupted Show
 leads with its recovery action; Discard stays apart as a destructive outline, and its confirmation
@@ -238,9 +238,9 @@ Refresh rereads the library. Regaining focus checks that the selected folder sti
 rereads its summary; external edits are never overwritten. Copy summary reads the file again on
 click and reports the result in the window. It is available on Windows/macOS only, between
 recordings and outside previews or Quit. Open folder opens the selected Show's files. Neither action
-changes the session's last Show. A missing frame keeps its numbered position and an error; a damaged
-manifest can still show a readable summary. The summary pane displays at most 64 KiB; Copy summary
-includes the complete file within the reader's limit.
+changes the session's last Show. A missing frame keeps its numbered position and an error; an
+unreadable manifest can still show a readable summary. The summary pane displays at most 64 KiB;
+Copy summary includes the complete file.
 
 Send to agent, a saved Show's primary action, copies a short prompt naming the Show ID and folder,
 the folder as WSL sees it when Windows has a distribution that answers within a second, each contact
@@ -253,8 +253,8 @@ Interrupted Shows offer Recover Show and confirmed Discard. Recovery uses the cu
 and original language, saves a new bundle, and leaves the clipboard alone. Narration pending offers
 Transcribe narration and Discard audio. Retry saves a narrated copy; its earlier bundle and edits
 stay unchanged. The confirmation explains that discarding pending audio leaves the saved Show.
-Recovery displays incomplete narration when only an audio prefix survives. Audio expires on its
-original seven-day schedule even when the saved bundle is kept.
+Recovery displays incomplete narration when only an audio prefix survives. Pending audio expires on
+its original seven-day schedule even when the saved bundle is kept.
 
 ## Interaction contracts
 

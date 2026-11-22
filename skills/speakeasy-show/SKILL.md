@@ -27,13 +27,13 @@ invoke it with `& 'PATH' show inspect 'BUNDLE_PATH' --json`; double any single q
 path. The examples below use `speakeasy` for whichever executable is available.
 
 Run `speakeasy show inspect "BUNDLE_PATH" --json`. It reports current absolute paths, the frames on
-each sheet, which frame holds each numbered mark, and missing files or narration. It prints
-metadata, not the transcript. A damaged or unsupported Show still prints its findings and exits with
-status 1; read those findings before deciding what evidence is usable. If the command is
-unavailable, read the bundle's files directly; `show.json` records the frame numbers, times, and
-marks. The binary `source.frames` needs Speakeasy's tools; report that source retrieval is
-unavailable while using the saved PNG images. Ask for access when the bundle is on another machine
-rather than substituting another recording.
+each sheet, which frame holds each numbered mark, and missing narration. It prints metadata, not the
+transcript. A Show it cannot read still prints its findings and exits with status 1; read those
+findings before deciding what evidence is usable. If the command is unavailable, read the bundle's
+files directly; `show.json` records the frame numbers, times, and marks. The binary `source.frames`
+needs Speakeasy's tools; report that source retrieval is unavailable while using the saved PNG
+images. Ask for access when the bundle is on another machine rather than substituting another
+recording.
 
 When you need to see something the user can show you, ask them to make a Show and run
 `speakeasy show wait --json`. It never records anything itself: it waits, 600 seconds by default
@@ -127,11 +127,12 @@ the resulting explicit bundle. Recovery restores checkpointed frames, annotation
 through the configured local engine, without clipboard changes. `narrationLost: "incomplete"` means
 only the surviving audio prefix was recovered; treat its narration as partial. A `narrationPending`
 entry offers **Transcribe narration**, which saves a new narrated copy and preserves earlier edits.
-Audio expires seven days after recording even if the saved Show is kept; successful transcription
-retains private voice in the new bundle for explicit video export. When the user explicitly asks to
-discard pending audio, run `speakeasy show discard "interrupted:ID" --json`; an exact checkpoint
-path from `list` also works. Discard is permanent; discarding pending audio leaves its saved Show. A
-saved Show ID never selects a checkpoint with the same timestamp.
+Pending audio expires seven days after recording even if the saved Show is kept; successful
+transcription retains private voice in the new bundle, which expires with that bundle, for explicit
+video export. When the user explicitly asks to discard pending audio, run
+`speakeasy show discard "interrupted:ID" --json`; an exact checkpoint path from `list` also works.
+Discard is permanent; discarding pending audio leaves its saved Show. A saved Show ID never selects
+a checkpoint with the same timestamp.
 
 `speakeasy show --help` describes the installed commands. `speakeasy show skill` prints this guide.
 `speakeasy show skill --install AGENT_SKILLS_DIR` installs this version under `speakeasy-show/`;
@@ -141,10 +142,10 @@ When the user requests a narrated or annotated video, use
 `speakeasy show video "BUNDLE_PATH" --out NEW.mp4 --captions --json`. It requires local FFmpeg 5.1
 or newer with H.264 and AAC support. To export a focused clip, add `--at`, `--mark`, or `--phrase`
 with optional `--around MS` and `--match N` as above. It preserves the original bundle and refuses
-existing output paths. Read the report: absent or expired voice produces a silent video, incomplete
-voice and annotation gaps remain explicit, and captions require timed narration. Exported videos
-include private screen content and voice and do not expire automatically; sending them requires the
-user's instruction.
+existing output paths. Read the report: absent voice produces a silent video, incomplete voice and
+annotation gaps remain explicit, and captions require timed narration. Exported videos include
+private screen content and voice and do not expire automatically; sending them requires the user's
+instruction.
 
 When a configured Speakeasy MCP server is available, its `show_list`, `show_read`, and `show_image`
 tools provide read-only evidence within explicit roots. Name the exact Show; do not infer the

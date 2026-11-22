@@ -148,37 +148,6 @@ handle to a private kill-on-close job immediately after spawn. Unix children mus
 before reaping the leader, so the group ID cannot yet name another process. Consuming the stored
 leader before signaling prevents a second signal after PID reuse.
 
-## Show directory handles
-
-Owner: `crates/platform/src/directory.rs`.
-
-A Show directory handle keeps every relative open anchored to the selected directory. Unix uses
-`openat` with `O_NOFOLLOW` and `O_NONBLOCK` for child entries and validates the resulting descriptor
-before reading. Linux opens directories with `O_PATH`, macOS with `O_SEARCH`, and Windows with
-traverse and attribute access, so a directory its owner may search but not list still opens; only
-listing reopens it with list access. Windows opens a single child name with `NtOpenFile` relative to
-its parent handle, refuses alternate data streams, and transfers the handle to `File` only after a
-successful open. The opened entry's normalized long name must equal the requested name apart from
-ASCII case, so an 8.3 short name cannot reach a hidden entry. Name-surrogate reparse points
-(symbolic links, junctions and mount points) are neither files nor directories, so both platforms
-refuse them by type; other reparse points, such as cloud placeholders, open as their file or
-directory. Unix uses `fdopendir` on an independent directory open, and Windows uses an empty
-relative name with `NtOpenFile` and `NtQueryDirectoryFile`, so listing owns its cursor. Readers
-validate size, type, and bytes through the same handle. A presence check looks a name up without
-opening or following it: Unix uses `fstatat` with `AT_SYMLINK_NOFOLLOW`, which needs only search
-permission, and Windows opens the entry for its attributes as a reparse point. Both match names as
-the file system's own lookup does, so a case-insensitive volume finds any case. An entry that is not
-a plain directory, including a link, fails a directory open as not a directory. Identity compares
-device and inode on Unix, and on Windows the volume's 128-bit file ID. Only a file system that
-refuses that query as unsupported falls back to the 64-bit file index; any other failure is
-returned, since the index need not be unique on ReFS.
-
-Windows handles share read and delete, so they never refuse a rename or delete of their own entry;
-directory handles and ordinary reads also share write, so editing continues while a Show is read.
-Movie reads exclude writers while a validated prefix is in use. NTFS refuses to rename or move any
-directory above an open directory handle, so a root an MCP server holds for its session pins its
-ancestors until the server exits.
-
 ## Linux desktop and transfer ownership
 
 Owners: `crates/platform/src/linux.rs`, `linux/ei.rs`, `linux/portal.rs`,
