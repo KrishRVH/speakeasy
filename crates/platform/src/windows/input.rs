@@ -6,7 +6,7 @@ use std::{
     panic::{self, AssertUnwindSafe},
     ptr::{null, null_mut},
     sync::Arc,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use windows_sys::{
@@ -224,23 +224,79 @@ impl Drop for LifecycleWindow {
 
 struct SessionNotifications<'window> {
     window: &'window LifecycleWindow,
-    registered: bool,
+    registration: Registration,
 }
 
 impl<'window> SessionNotifications<'window> {
-    fn register(window: &'window LifecycleWindow) -> Self {
-        let registered =
-            unsafe { WTSRegisterSessionNotification(window.0, NOTIFY_FOR_THIS_SESSION) != FALSE };
-        Self { window, registered }
+    fn register(window: &'window LifecycleWindow, now: Instant) -> Self {
+        let mut notifications = Self {
+            window,
+            registration: Registration::due(now),
+        };
+        notifications.attempt_when_due(now);
+        notifications
+    }
+
+    fn attempt_when_due(&mut self, now: Instant) {
+        let window = self.window.0;
+        self.registration.attempt_when_due(now, || unsafe {
+            WTSRegisterSessionNotification(window, NOTIFY_FOR_THIS_SESSION) != FALSE
+        });
     }
 }
 
 impl Drop for SessionNotifications<'_> {
     fn drop(&mut self) {
-        if self.registered {
+        if self.registration == Registration::Registered {
             unsafe {
                 WTSUnRegisterSessionNotification(self.window.0);
             }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Registration {
+    Registered,
+    Pending { at: Instant, retries: u8 },
+    Abandoned,
+}
+
+impl Registration {
+    const RETRIES: u8 = 12;
+    const RETRY_AFTER: Duration = Duration::from_secs(5);
+
+    const fn due(now: Instant) -> Self {
+        Self::Pending {
+            at: now,
+            retries: Self::RETRIES,
+        }
+    }
+
+    fn attempt_when_due(&mut self, now: Instant, register: impl FnOnce() -> bool) {
+        let Self::Pending { at, retries } = *self else {
+            return;
+        };
+        if now < at {
+            return;
+        }
+        *self = if register() {
+            Self::Registered
+        } else {
+            match (retries.checked_sub(1), now.checked_add(Self::RETRY_AFTER)) {
+                (Some(retries), Some(at)) => Self::Pending { at, retries },
+                _ => Self::Abandoned,
+            }
+        };
+    }
+
+    fn timeout(self, now: Instant) -> u32 {
+        match self {
+            Self::Pending { at, .. } => {
+                let remaining = at.saturating_duration_since(now);
+                u32::try_from(remaining.as_nanos().div_ceil(1_000_000)).unwrap_or(INFINITE)
+            },
+            Self::Registered | Self::Abandoned => INFINITE,
         }
     }
 }
@@ -286,7 +342,7 @@ fn run_event_loop(
     create_message_queue();
     let _hook = KeyboardHook::install()?;
     let window = LifecycleWindow::create()?;
-    let _notifications = SessionNotifications::register(&window);
+    let mut notifications = SessionNotifications::register(&window, Instant::now());
 
     if stop.is_set() {
         return Ok(());
@@ -295,7 +351,7 @@ fn run_event_loop(
         shortcut: shortcut.label().into(),
         cancel: CANCEL_SHORTCUT.into(),
     });
-    pump_messages(stop)
+    pump_messages(stop, &mut notifications)
 }
 
 fn create_message_queue() {
@@ -306,14 +362,17 @@ fn create_message_queue() {
     }
 }
 
-fn pump_messages(stop: &StopEvent) -> io::Result<()> {
+fn pump_messages(stop: &StopEvent, notifications: &mut SessionNotifications<'_>) -> io::Result<()> {
     let handles = [stop.0.as_raw_handle()];
     while dispatch_queued_messages(stop).is_continue() && !stop.is_set() {
+        notifications.attempt_when_due(Instant::now());
+        let timeout = notifications.registration.timeout(Instant::now());
+
         let woken = unsafe {
             MsgWaitForMultipleObjectsEx(
                 1,
                 handles.as_ptr(),
-                INFINITE,
+                timeout,
                 QS_ALLINPUT,
                 MWMO_INPUTAVAILABLE,
             )
@@ -419,4 +478,100 @@ fn mask_start_menu() {
         reason = "Marking Win as used is a best-effort shell hint; blocked synthetic input must not stop dictation"
     )]
     let _ = send_input(&[press(UNASSIGNED_KEY), release(UNASSIGNED_KEY)]);
+}
+
+#[cfg(test)]
+mod tests {
+    use windows_sys::Win32::{
+        Foundation::RECT,
+        UI::WindowsAndMessaging::{
+            GWL_EXSTYLE, GetWindowLongW, GetWindowRect, IsWindowVisible, SW_SHOWNOACTIVATE,
+            ShowWindow,
+        },
+    };
+
+    use super::*;
+    use crate::windows::ok_or_last_error;
+
+    fn failed_once(start: Instant) -> Registration {
+        let mut registration = Registration::due(start);
+        registration.attempt_when_due(start, || false);
+        registration
+    }
+
+    #[test]
+    fn a_failed_registration_sleeps_until_its_retry_is_due() {
+        let start = Instant::now();
+        let mut registration = failed_once(start);
+        assert_eq!(registration.timeout(start), 5_000, "A failed attempt spins");
+        registration.attempt_when_due(start, || panic!("Retried before it was due"));
+    }
+
+    #[test]
+    fn registration_is_abandoned_and_sleeps_once_its_retries_run_out() {
+        let start = Instant::now();
+        let mut registration = failed_once(start);
+        let mut now = start;
+        for _ in 0..Registration::RETRIES {
+            now += Registration::RETRY_AFTER;
+            registration.attempt_when_due(now, || false);
+        }
+        assert_eq!(registration, Registration::Abandoned);
+        assert_eq!(
+            registration.timeout(now),
+            INFINITE,
+            "Abandoned retries wake"
+        );
+    }
+
+    #[test]
+    fn a_successful_retry_registers_and_stops_waking() {
+        let start = Instant::now();
+        let mut registration = failed_once(start);
+        registration.attempt_when_due(start + Registration::RETRY_AFTER, || true);
+        assert_eq!(registration, Registration::Registered);
+        assert_eq!(registration.timeout(start), INFINITE);
+    }
+
+    #[test]
+    fn the_last_fraction_of_a_millisecond_rounds_up_to_a_whole_wait() {
+        let start = Instant::now();
+        let almost_due = Registration::Pending {
+            at: start + Duration::from_micros(1),
+            retries: 0,
+        };
+        assert_eq!(
+            almost_due.timeout(start),
+            1,
+            "The last fraction of a millisecond spins"
+        );
+    }
+
+    #[test]
+    #[ignore = "Creates an owned native window; no microphone, hook, clipboard, or injected input"]
+    fn a_shown_lifecycle_window_has_no_frame_or_taskbar_button() -> anyhow::Result<()> {
+        let window = LifecycleWindow::create()?;
+        let mut frame = RECT::default();
+
+        let (visible, extended) = unsafe {
+            ShowWindow(window.0, SW_SHOWNOACTIVATE);
+            ok_or_last_error(GetWindowRect(window.0, &raw mut frame))?;
+            (
+                IsWindowVisible(window.0) != FALSE,
+                GetWindowLongW(window.0, GWL_EXSTYLE).cast_unsigned(),
+            )
+        };
+        assert!(visible, "The lifecycle window was never shown");
+        assert_eq!(
+            (frame.right - frame.left, frame.bottom - frame.top),
+            (0, 0),
+            "A shown lifecycle window draws a frame"
+        );
+        assert_ne!(
+            extended & WS_EX_TOOLWINDOW,
+            0,
+            "A shown lifecycle window gets a taskbar button"
+        );
+        Ok(())
+    }
 }
