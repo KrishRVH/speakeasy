@@ -103,10 +103,6 @@ async fn export(
 ) -> anyhow::Result<video::Exported> {
     let interrupt = tokio::signal::ctrl_c();
     tokio::pin!(interrupt);
-    if let std::task::Poll::Ready(result) = futures_util::poll!(&mut interrupt) {
-        result.context("Cannot listen for video export cancellation")?;
-        anyhow::bail!(video::CANCELLED);
-    }
     let (cancel, receiver) = async_channel::bounded::<()>(1);
     let mut work = tokio::task::spawn_blocking(move || {
         video::write(&directory, &destination, options, clip, || {
