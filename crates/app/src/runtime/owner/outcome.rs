@@ -6,7 +6,7 @@ use super::commands;
 use crate::runtime::{
     LOADING, SHOW_COPIED, SHOW_GONE,
     native::{Copied, Native, Restored},
-    ports::{Audio, PUBLISH_STOPPED, Preservation, Unchosen},
+    ports::{PUBLISH_STOPPED, Preservation, Unchosen},
 };
 
 const INSERT_FAILED: &str =
@@ -154,18 +154,11 @@ const fn narrated(lost: Option<NarrationLoss>) -> Option<&'static str> {
 }
 
 fn preserved(message: &mut String, preservation: Preservation) {
-    if preservation.audio == Audio::KeptForRetry {
-        message.push_str(
-            " Audio is kept privately for retry in Shows until its original seven-day expiry.",
-        );
+    if preservation.audio_kept {
+        message.push_str(" Audio is kept for retry in Shows until the Show expires.");
     }
     if preservation.movie_lost {
         message.push_str(" Video could not be saved; the selected keyframes are available.");
-    }
-    if preservation.audio == Audio::VoiceCutShort {
-        message.push_str(
-            " Voice for video export ends early because its last audio was not saved in time; the narration is complete.",
-        );
     }
     if preservation.source_lost {
         message.push_str(
@@ -194,34 +187,28 @@ mod tests {
 
     #[test]
     fn saved_show_messages_report_retained_audio_and_lost_source_independently() {
-        for (audio, source_lost, suffix) in [
-            (Audio::Settled, false, ""),
+        for (audio_kept, source_lost, suffix) in [
+            (false, false, ""),
             (
-                Audio::KeptForRetry,
+                true,
                 false,
-                " Audio is kept privately for retry in Shows until its original seven-day expiry.",
+                " Audio is kept for retry in Shows until the Show expires.",
             ),
             (
-                Audio::Settled,
+                false,
                 true,
                 " Retained source frames could not be saved; the selected keyframes are available.",
             ),
             (
-                Audio::KeptForRetry,
                 true,
-                " Audio is kept privately for retry in Shows until its original seven-day expiry. \
-                 Retained source frames could not be saved; the selected keyframes are available.",
-            ),
-            (
-                Audio::VoiceCutShort,
-                false,
-                " Voice for video export ends early because its last audio was not saved in time; \
-                 the narration is complete.",
+                true,
+                " Audio is kept for retry in Shows until the Show expires. Retained source frames \
+                 could not be saved; the selected keyframes are available.",
             ),
         ] {
             let preservation = Preservation {
                 source_lost,
-                audio,
+                audio_kept,
                 ..Preservation::default()
             };
             for (outcome, prefix) in [

@@ -87,25 +87,6 @@ fn newer_or_orphaned_video_timing_never_passes_inspection_as_an_ordinary_show() 
     Ok(())
 }
 
-#[test]
-fn malformed_complete_first_fragment_stays_in_its_checkpoint_for_repair() -> anyhow::Result<()> {
-    let directory = tempfile::tempdir()?;
-    checkpoint(directory.path(), false)?;
-    let path = directory.path().join(FILE);
-    let mut bytes = fs::read(&path)?;
-    let at = bytes.windows(4).position(|bytes| bytes == b"trun").unwrap();
-    bytes[at + 12..at + 16].copy_from_slice(&0_u32.to_be_bytes());
-    fs::write(&path, &bytes)?;
-    let error = super::checkpoint(directory.path()).err().unwrap();
-    assert!(
-        error
-            .to_string()
-            .contains("move recording.mp4, recording.json, and any recording.geometry")
-    );
-    assert_eq!(fs::read(path)?, bytes);
-    Ok(())
-}
-
 #[cfg(target_os = "windows")]
 pub(in crate::show) fn native_geometry_fixture(show: &Path) -> anyhow::Result<()> {
     native_fixture(show)?;

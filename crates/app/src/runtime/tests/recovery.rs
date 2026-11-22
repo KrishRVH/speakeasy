@@ -29,15 +29,13 @@ async fn interrupted_with_audio(
     ));
     if keep_audio {
         assert!(audio.begin(8_000, Duration::ZERO, "fr".into()));
-        assert!(
-            audio.finish(
-                &square_wave(3000)
-                    .take(8_000)
-                    .flat_map(i16::to_le_bytes)
-                    .collect::<Vec<_>>(),
-                &[],
-                show::checkpoint::AudioEnding::Complete,
-            )
+        audio.finish(
+            &square_wave(3000)
+                .take(8_000)
+                .flat_map(i16::to_le_bytes)
+                .collect::<Vec<_>>(),
+            &[],
+            show::checkpoint::AudioEnding::Complete,
         );
     } else {
         drop(audio);
@@ -54,12 +52,12 @@ async fn interrupted_with_audio(
         Some(Image::from_bgra(2, 2, [3, 2, 1, 255].repeat(4)).unwrap())
     })?;
     assert!(frames.send(event));
-    assert!(frames.close().await);
+    drop(frames);
     let checkpoint = keeper
         .close()
         .await?
         .context("Fixture checkpoint is missing")?;
-    let interrupted = checkpoint.interrupted()?;
+    let interrupted = checkpoint.interrupted();
     Ok((root, interrupted))
 }
 
@@ -139,8 +137,7 @@ async fn session_owns_checkpoint_cleanup_even_when_finish_reports_are_stale() ->
         h.runtime.request_stop();
         h.close().await?;
         let listing = show::checkpoint::list(root.path(), SystemTime::now());
-        assert!(listing.problems.is_empty());
-        assert_eq!(listing.shows.len(), usize::from(finished));
+        assert_eq!(listing.len(), usize::from(finished));
         assert_eq!(
             std::fs::read_dir(root.path().join(".checkpoints"))?.count(),
             usize::from(finished)

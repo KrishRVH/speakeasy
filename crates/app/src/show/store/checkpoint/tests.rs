@@ -1,6 +1,3 @@
-mod audio;
-mod deletion;
-
 use speakeasy_show::{Image, Moment, Size, TakeEvent};
 
 use super::*;
@@ -29,31 +26,30 @@ async fn capture(parent: &Path, at: SystemTime) -> anyhow::Result<Checkpoint> {
         at: Moment::from_millis(500),
         ending: speakeasy_show::Ending::Finished
     }));
-    assert!(writer.close().await);
-    let checkpoint = checkpoint
+    drop(writer);
+    checkpoint
         .close()
         .await?
-        .context("Fixture checkpoint is missing")?;
-    Ok(checkpoint)
+        .context("Fixture checkpoint is missing")
 }
 
 #[tokio::test]
-async fn only_unlocked_interrupted_shows_are_listed_and_discard_cannot_recover()
--> anyhow::Result<()> {
+async fn only_unlocked_interrupted_shows_are_listed_and_discard_removes_them() -> anyhow::Result<()>
+{
     let root = tempfile::tempdir()?;
     let now = SystemTime::now();
     let checkpoint = capture(root.path(), now).await?;
-    assert_eq!(list(root.path(), now).shows, []);
+    assert_eq!(list(root.path(), now), []);
     let path = checkpoint.directory.clone();
     assert!(checkpoint.replay()?.ended());
     drop(checkpoint);
-    let rows = list(root.path(), now).shows;
+    let rows = list(root.path(), now);
     assert_eq!(rows.len(), 1);
     let held = rows[0].lock()?;
     assert!(rows[0].lock().is_err());
     held.discard()?;
     assert!(!path.exists());
-    assert_eq!(list(root.path(), now).shows, []);
+    assert_eq!(list(root.path(), now), []);
     Ok(())
 }
 
@@ -74,7 +70,7 @@ async fn a_torn_end_recovers_a_prefix_and_expiry_uses_the_original_stamp() -> an
     let path = checkpoint.directory.clone();
     drop(checkpoint);
     let later = now + std::time::Duration::from_hours(192);
-    assert_eq!(list(root.path(), later).shows, []);
+    assert_eq!(list(root.path(), later), []);
     assert!(path.exists(), "Listing must not perform deletion");
     sweep(root.path(), later)?;
     assert!(!path.exists());
@@ -82,130 +78,18 @@ async fn a_torn_end_recovers_a_prefix_and_expiry_uses_the_original_stamp() -> an
 }
 
 #[tokio::test]
-async fn a_published_marker_cannot_delete_evidence_for_an_unrelated_folder() -> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let now = SystemTime::now();
-    let checkpoint = capture(root.path(), now).await?;
-    let path = checkpoint.directory.clone();
-    let destination = super::super::fresh_directory(root.path(), now)?;
-    fs::create_dir(&destination)?;
-    fs::write(
-        path.join(PUBLISHED),
-        destination.file_name().unwrap().as_encoded_bytes(),
-    )?;
-    drop(checkpoint);
-    sweep(root.path(), now)?;
-    assert_eq!(list(root.path(), now).shows.len(), 1);
-    fs::write(
-        destination.join(PROVENANCE),
-        path.file_name().unwrap().as_encoded_bytes(),
-    )?;
-    sweep(root.path(), now)?;
-    assert!(!path.exists());
-    assert!(destination.exists());
-    Ok(())
-}
-
-#[tokio::test]
-async fn discard_ids_never_alias_saved_shows_and_stale_selection_cannot_recover()
--> anyhow::Result<()> {
+async fn discard_finds_an_interrupted_show_by_its_id_or_path_only() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let now = SystemTime::now();
     let checkpoint = capture(root.path(), now).await?;
     let path = checkpoint.directory.clone();
     drop(checkpoint);
-    let interrupted = list(root.path(), now).shows.remove(0);
-    assert!(resolve(root.path(), Path::new(&interrupted.id())).is_ok());
-    assert!(resolve(root.path(), &path).is_ok());
-    assert!(resolve(root.path(), Path::new(path.file_name().unwrap())).is_err());
-    fs::write(path.join(DISCARDED), b"")?;
-    assert!(interrupted.lock().is_err());
-    assert!(resolve(root.path(), &path).is_err());
-    sweep(root.path(), now)?;
-    assert!(!path.exists());
-    Ok(())
-}
-
-#[tokio::test]
-async fn malformed_checkpoints_do_not_block_sibling_discovery_or_saved_show_expiry()
--> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let now = SystemTime::now();
-    let checkpoint = capture(root.path(), now).await?;
-    let bad = checkpoint.directory.clone();
-    drop(checkpoint);
-    fs::write(bad.join(PUBLISHED), b"invalid marker")?;
-    drop(capture(root.path(), now).await?);
-    let listing = list(root.path(), now);
-    assert_eq!(listing.shows.len(), 1);
-    assert_eq!(listing.problems.len(), 1);
-    let expired =
-        super::super::fresh_directory(root.path(), now - std::time::Duration::from_hours(192))?;
-    fs::create_dir(&expired)?;
-    assert!(super::super::sweep(root.path(), now).is_err());
-    assert!(
-        !expired.exists(),
-        "A damaged checkpoint blocked expiry of an unrelated saved Show"
+    let interrupted = list(root.path(), now).remove(0);
+    assert_eq!(
+        resolve(root.path(), Path::new(&interrupted.id()))?,
+        interrupted
     );
-    assert!(bad.exists(), "Uninspectable evidence must not be deleted");
-    Ok(())
-}
-
-#[tokio::test]
-async fn failed_log_deletion_preserves_the_lock_and_discard_marker_for_retry() -> anyhow::Result<()>
-{
-    let root = tempfile::tempdir()?;
-    let now = SystemTime::now();
-    let checkpoint = capture(root.path(), now).await?;
-    let path = checkpoint.directory.clone();
-    let held = root.path().join("held-log");
-    fs::rename(path.join(LOG), &held)?;
-
-    fs::create_dir(path.join(LOG))?;
-    assert!(checkpoint.discard().is_err());
-    assert!(path.join(LOCK).is_file());
-    assert!(path.join(DISCARDED).is_file());
-    assert_eq!(list(root.path(), now).shows, []);
-    fs::remove_dir(path.join(LOG))?;
-    fs::rename(held, path.join(LOG))?;
-    sweep(root.path(), now)?;
-    assert!(!path.exists());
-    Ok(())
-}
-
-#[cfg(target_os = "windows")]
-#[tokio::test]
-async fn a_windows_reader_that_denies_delete_sharing_cannot_orphan_private_frames()
--> anyhow::Result<()> {
-    use std::os::windows::fs::OpenOptionsExt as _;
-
-    let root = tempfile::tempdir()?;
-    let now = SystemTime::now();
-    let checkpoint = capture(root.path(), now).await?;
-    let path = checkpoint.directory.clone();
-    let reader = OpenOptions::new()
-        .read(true)
-        .share_mode(0)
-        .open(path.join(LOG))?;
-    assert!(checkpoint.discard().is_err());
-    assert!(path.join(LOCK).is_file());
-    assert!(path.join(DISCARDED).is_file());
-    drop(reader);
-    sweep(root.path(), now)?;
-    assert!(!path.exists());
-    Ok(())
-}
-
-#[tokio::test]
-async fn ownership_release_unlocks_even_if_an_inherited_descriptor_remains_open()
--> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let checkpoint = capture(root.path(), SystemTime::now()).await?;
-
-    let inherited = checkpoint.lock.0.try_clone()?;
-    let interrupted = checkpoint.interrupted()?;
-    let reacquired = interrupted.lock()?;
-    drop(inherited);
-    reacquired.discard()?;
+    assert_eq!(resolve(root.path(), &path)?, interrupted);
+    assert!(resolve(root.path(), Path::new(path.file_name().unwrap())).is_err());
     Ok(())
 }

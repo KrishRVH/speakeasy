@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use super::*;
 use crate::show::store::{self, address};
 
@@ -72,7 +74,7 @@ fn deleting_a_kept_show_removes_its_files_and_preserves_other_shows() -> anyhow:
     let other = show(root.path(), now - Duration::from_secs(1))?;
     fs::write(directory.join(store::PIN), b"")?;
     fs::write(directory.join("voice.log"), b"synthetic audio")?;
-    assert!(delete(root.path(), &directory)?.cleanup.is_none());
+    delete(root.path(), &directory)?;
     assert!(!directory.exists());
     assert!(other.join("summary.md").is_file());
     assert!(delete(root.path(), &directory).is_err());

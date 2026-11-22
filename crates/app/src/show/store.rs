@@ -22,27 +22,6 @@ pub(super) fn directory() -> anyhow::Result<PathBuf> {
     Ok(crate::paths::data_root()?.join("shows"))
 }
 
-#[cfg(unix)]
-fn make_private(directory: &Path) -> anyhow::Result<()> {
-    use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
-    fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(directory)
-        .map_err(cannot_save(directory))?;
-    let linked = fs::symlink_metadata(directory)
-        .map_err(cannot_save(directory))?
-        .file_type()
-        .is_symlink();
-    anyhow::ensure!(
-        !linked,
-        "{} is a link; Shows need a folder of their own, so replace the link with one",
-        directory.display()
-    );
-    fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
-        .map_err(cannot_save(directory))
-}
-
 pub(super) fn fresh_directory(parent: &Path, now: SystemTime) -> anyhow::Result<PathBuf> {
     let stamp = utc_stamp(now);
     (1..=100_u8)
@@ -150,27 +129,6 @@ pub(super) fn stage(
     })
 }
 
-#[cfg(unix)]
-fn sync_directory(directory: &Path) -> io::Result<()> {
-    fs::File::open(directory)?.sync_all()
-}
-
-#[cfg(not(unix))]
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "Callers share Unix's fallible contract; portable Rust cannot sync a Windows directory handle"
-)]
-const fn sync_directory(_: &Path) -> io::Result<()> {
-    Ok(())
-}
-
-fn write_flushed(path: &Path, contents: &[u8]) -> io::Result<()> {
-    use std::io::Write as _;
-    let mut file = fs::File::create_new(path)?;
-    file.write_all(contents)?;
-    file.sync_all()
-}
-
 pub(crate) fn attend(report: impl Fn(&anyhow::Error, &mut App) + 'static, cx: &App) {
     let Ok(parent) = directory() else {
         return;
@@ -230,10 +188,6 @@ fn found<T>(result: io::Result<T>) -> io::Result<Option<T>> {
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
     }
-}
-
-fn entry_exists(path: &Path) -> io::Result<bool> {
-    Ok(found(fs::symlink_metadata(path))?.is_some())
 }
 
 fn remove_if_present(path: &Path) -> io::Result<()> {

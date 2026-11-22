@@ -740,10 +740,6 @@ impl<P: Ports> Env<Native> for World<P> {
     }
 
     fn release(&mut self, session: SessionId, checkpoint: Checkpointing, release: Release) {
-        let release = match release {
-            Release::Keep => show::Release::Keep(None),
-            Release::Discard => show::Release::Discard,
-        };
         self.retiring.push((
             session,
             tokio::spawn(async move { Delivered::Abandoned(checkpoint.release(release).await) }),

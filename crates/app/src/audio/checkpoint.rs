@@ -8,7 +8,7 @@ use crate::{
     runtime::ports::{CaptureEvent, Sealed},
     show::{
         AudioLog,
-        checkpoint::{AudioEnding, AudioTail, KeptAudio, MAX_CUES},
+        checkpoint::{AudioEnding, AudioTail, KeptAudio},
     },
 };
 
@@ -23,7 +23,6 @@ pub(super) struct Keeping<'a> {
     log: Option<AudioLog>,
     cues: Vec<(usize, usize)>,
     classified: usize,
-    overflowed: bool,
     warned: bool,
 }
 
@@ -34,7 +33,6 @@ impl<'a> Keeping<'a> {
             log: None,
             cues: Vec::new(),
             classified: 0,
-            overflowed: false,
             warned: false,
         }
     }
@@ -42,11 +40,7 @@ impl<'a> Keeping<'a> {
     pub(super) fn classify(&mut self, speech: &mut Audibility, pcm: &[u8], cues: &Receiver<()>) {
         while cues.try_recv().is_ok() {
             speech.expect_cue(pcm.len());
-            if self.cues.len() < MAX_CUES {
-                self.cues.push((self.classified, pcm.len()));
-            } else {
-                self.overflowed = true;
-            }
+            self.cues.push((self.classified, pcm.len()));
         }
         speech.extend(pcm);
         self.classified = pcm.len();
@@ -60,13 +54,10 @@ impl<'a> Keeping<'a> {
         }) = self.incoming.try_recv()
         {
             self.incoming.close();
-            if self.overflowed || !log.begin(rate, start, language) {
+            if !log.begin(rate, start, language) {
                 return false;
             }
             self.log = Some(log);
-        }
-        if self.overflowed && self.log.take().is_some() {
-            return false;
         }
         self.log
             .as_mut()
@@ -115,10 +106,6 @@ pub(crate) fn seal_kept(audio: &KeptAudio) -> anyhow::Result<Option<Sealed>> {
     }
     speech.extend(pcm.audio());
     pcm.seal(speech, rate)
-}
-
-pub(crate) fn silent_kept(audio: &KeptAudio) -> bool {
-    !audio.pcm.is_empty() && audio.pcm.iter().all(|&byte| byte == 0)
 }
 
 #[cfg(test)]

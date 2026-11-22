@@ -4,7 +4,7 @@ use super::*;
 async fn movie_recovery_retains_playable_prefix_beyond_the_annotation_journal() -> anyhow::Result<()>
 {
     let parent = tempfile::tempdir()?;
-    let interrupted = checkpoint(parent.path()).await?.interrupted()?;
+    let interrupted = checkpoint(parent.path()).await?.interrupted();
     store::movie::tests::checkpoint(interrupted.directory(), true)?;
     let (_input, permit) = permit();
     let Published::Recovered { show, .. } = recover_with(interrupted.clone(), &permit, || {
@@ -42,7 +42,7 @@ async fn movie_startup_failure_saves_stills_with_an_explicit_video_loss() -> any
         Fault::InvalidHeader,
     ] {
         let parent = tempfile::tempdir()?;
-        let interrupted = checkpoint(parent.path()).await?.interrupted()?;
+        let interrupted = checkpoint(parent.path()).await?.interrupted();
         store::movie::tests::checkpoint(interrupted.directory(), false)?;
         let path = interrupted.directory().join(store::movie::FILE);
         match fault {

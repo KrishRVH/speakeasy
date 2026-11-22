@@ -100,33 +100,22 @@ impl Row {
     }
 }
 
-pub(super) fn list(directory: &Path) -> io::Result<(Vec<Row>, Option<String>)> {
-    let found = checkpoint::list(directory, SystemTime::now());
-    let notice = found.problems.first().map(|first| {
-        format!(
-            "Cannot read {} interrupted Show entries. Check folder access and refresh. Damaged \
-             entries expire after seven days. {}",
-            found.problems.len(),
-            first.message
-        )
-    });
-    let interrupted = found.shows.into_iter().map(|interrupted| Row {
-        directory: interrupted.directory().to_owned(),
-        kind: Kind::Interrupted(interrupted),
-        readable: true,
-        duration: None,
-        frames: 0,
-        marks: 0,
-        pinned: None,
-        early: true,
-        narration_lost: None,
-    });
+pub(super) fn list(directory: &Path) -> io::Result<Vec<Row>> {
+    let interrupted = checkpoint::list(directory, SystemTime::now())
+        .into_iter()
+        .map(|interrupted| Row {
+            directory: interrupted.directory().to_owned(),
+            kind: Kind::Interrupted(interrupted),
+            readable: true,
+            duration: None,
+            frames: 0,
+            marks: 0,
+            pinned: None,
+            early: true,
+            narration_lost: None,
+        });
     let saved = recall::list(directory)?.map(|entry| entry.map(Row::from_entry));
-    let rows = interrupted
-        .map(Ok)
-        .chain(saved)
-        .collect::<io::Result<_>>()?;
-    Ok((rows, notice))
+    interrupted.map(Ok).chain(saved).collect()
 }
 
 #[derive(Debug)]

@@ -31,10 +31,9 @@ use speakeasy_platform::OwnedThread;
 #[cfg(test)]
 pub(crate) use self::pcm::wav_duration;
 pub(crate) use self::{
-    checkpoint::{seal_kept, silent_kept},
+    checkpoint::seal_kept,
     microphones::{InputDevice, MicrophoneScan},
     pcm::{silent_wav, wav_sample_rate, wav_tail},
-    stream::MAX_SAMPLE_RATE,
 };
 use self::{
     control::{Control, Mode},
@@ -62,7 +61,6 @@ const QUIETEST_METER_CEILING_DBFS: f32 = -30.0;
 const LOUDEST_METER_CEILING_DBFS: f32 = -10.0;
 const METER_CEILING_RELEASE_DB_PER_SECOND: f32 = 6.0;
 const CAPTURE_STOPPED: &str = "Microphone stopped unexpectedly. Try recording again.";
-const CHECKPOINT_FLUSH: Duration = Duration::from_secs(5);
 
 pub(crate) struct Capture {
     signal: Signal,
@@ -153,12 +151,8 @@ impl Capture {
                 let _ = events.send_blocking(outcome.report(id));
 
                 drop(device);
-                if let Some(mut tail) = tail {
-                    #[expect(
-                        clippy::let_underscore_must_use,
-                        reason = "The session has its outcome; audio that misses the flush deadline stays marked incomplete in the checkpoint"
-                    )]
-                    let _ = tail.flush(CHECKPOINT_FLUSH);
+                if let Some(tail) = tail {
+                    tail.flush();
                 }
             }
         })?;

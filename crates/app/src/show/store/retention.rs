@@ -1,6 +1,6 @@
 use std::{
     fs, io,
-    path::{Path, PathBuf},
+    path::Path,
     time::{Duration, SystemTime},
 };
 
@@ -8,22 +8,17 @@ use anyhow::Context as _;
 
 use super::{PIN, address, age, remove_if_present};
 
-pub(crate) struct Deleted {
-    pub checkpoint: Option<PathBuf>,
-    pub cleanup: Option<io::Error>,
-}
-
-pub(crate) fn delete(parent: &Path, directory: &Path) -> anyhow::Result<Deleted> {
+pub(crate) fn delete(parent: &Path, directory: &Path) -> anyhow::Result<()> {
     address::managed_id(parent, directory)
         .context("Only Shows in the managed Shows folder can be deleted here")?;
     anyhow::ensure!(
         directory.is_dir(),
         "This Show is already gone. Refresh Shows."
     );
-    Ok(Deleted {
-        checkpoint: super::checkpoint::discard_published(parent, directory)?,
-        cleanup: fs::remove_dir_all(directory).err(),
-    })
+    fs::remove_dir_all(directory).context(
+        "Some of this Show's files could not be deleted. Close open Show files, refresh, and \
+         delete it again",
+    )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -62,23 +62,15 @@ impl Review {
     fn delete_finished(
         &mut self,
         directory: &Path,
-        result: anyhow::Result<retention::Deleted>,
+        result: anyhow::Result<()>,
         cx: &mut Context<'_, Self>,
     ) {
         self.write = None;
         match result {
-            Ok(deleted) => {
-                let selected = self.library.remove(directory);
-                let checkpoint_selected = deleted
-                    .checkpoint
-                    .as_ref()
-                    .is_some_and(|path| self.library.remove(path));
-                if selected || checkpoint_selected {
+            Ok(()) => {
+                if self.library.remove(directory) {
                     self.clear_selection(cx);
-                    self.notice = Some(deleted.cleanup.map_or_else(
-                        || "Show deleted.".into(),
-                        |error| format!("Some of this Show's files could not be deleted: {error}. Close open Show files, refresh, and delete it again."),
-                    ));
+                    self.notice = Some("Show deleted.".into());
                 }
             },
             Err(error) if self.library.is_selected(directory) => {

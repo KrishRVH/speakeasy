@@ -313,13 +313,13 @@ impl Review {
             view.update_if_alive(cx, |view, cx| {
                 view.listing = None;
                 match result {
-                    Ok((root, (rows, notice))) => {
+                    Ok((root, rows)) => {
                         view.root = Some(root);
                         match view.library.replace(rows) {
                             Some(key) => view.open_selected(key, None, cx),
                             None => view.clear_selection(cx),
                         }
-                        view.notice = explanation.or(notice);
+                        view.notice = explanation;
                     },
                     Err(error) => {
                         const REMEDY: &str = "Check that the folder is readable, then refresh.";

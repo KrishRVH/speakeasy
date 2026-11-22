@@ -599,11 +599,10 @@ async fn finish_then_quit(error: Option<cpal::ErrorKind>) -> anyhow::Result<()> 
     control.cancel();
     let captured =
         recorder(&samples, error)?.record(SessionId::FIRST, &events, &control, &requests);
-    let mut tail = captured
+    captured
         .tail
-        .context("Quit after Finish skipped the finished Show's audio tail")?;
-    assert!(tail.flush(PATIENCE));
-    drop(tail);
+        .context("Quit after Finish skipped the finished Show's audio tail")?
+        .flush();
     let checkpoint = keeper
         .close()
         .await?

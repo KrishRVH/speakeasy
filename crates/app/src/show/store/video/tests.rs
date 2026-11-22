@@ -7,7 +7,6 @@ use std::{
 
 use serde_json::json;
 use speakeasy_show::{Moment, Narration, Recording, Word};
-use zeroize::Zeroizing;
 
 use super::*;
 use crate::show::store::checkpoint::KeptAudio;
@@ -19,7 +18,7 @@ fn audio(start: u64) -> KeptAudio {
         rate: NonZeroU32::new(30).unwrap(),
         start: Duration::from_millis(start),
         language: "en".into(),
-        pcm: Zeroizing::new([1000_i16.to_le_bytes(); 60].concat()),
+        pcm: [1000_i16.to_le_bytes(); 60].concat(),
         cues: Vec::new(),
         complete: true,
     }
@@ -271,10 +270,8 @@ fn fixture(root: &Path) -> anyhow::Result<PathBuf> {
         4,
         true,
     )?;
-    let movie::CheckpointMovie::Present(reading) = movie::checkpoint(checkpoint.path())? else {
-        anyhow::bail!("Synthetic movie was not retained");
-    };
-    movie::retain(&directory, *reading, Moment::from_millis(2250))?;
+    let reading = movie::open(checkpoint.path())?.context("Synthetic movie was not retained")?;
+    movie::retain(&directory, reading, Moment::from_millis(2250))?;
     fs::write(
         directory.join(Manifest::FILE),
         serde_json::to_vec(&json!({

@@ -38,7 +38,7 @@ async fn a_movie_failure_keeps_stills_and_reports_after_a_checkpoint_warning() -
 }
 
 #[tokio::test(start_paused = true)]
-async fn capture_finish_flushes_end_before_handoff() -> anyhow::Result<()> {
+async fn a_recorded_take_replays_from_its_checkpoint() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let (keeper, log) = Keeper::fixture(
         root.path(),
@@ -66,47 +66,6 @@ async fn capture_finish_flushes_end_before_handoff() -> anyhow::Result<()> {
         .context("Fixture checkpoint is missing")?;
     assert!(checkpoint.replay()?.ended());
     checkpoint.discard()?;
-    Ok(())
-}
-
-#[tokio::test(start_paused = true)]
-async fn invalid_late_events_keep_the_frames_and_checkpoint_already_recorded() -> anyhow::Result<()>
-{
-    let root = tempfile::tempdir()?;
-    let (checkpoint, writer) = Keeper::fixture(
-        root.path(),
-        SystemTime::now(),
-        JOURNAL_BUDGET,
-        Size {
-            width: 1_000.0,
-            height: 500.0,
-        },
-        speakeasy_show::Framing::Automatic,
-    )?;
-    let (recorded, _) = record_with(
-        |take| {
-            take.log = Some(writer);
-        },
-        async |feed| {
-            feed.frame(0).await;
-            feed.pointer(100, 0.5, f32::NAN, false, false).await;
-        },
-    )
-    .await;
-    let footage = recorded?.context("The good prefix survives")?;
-    assert_eq!(footage.recording.ending, Ending::ScreenStopped);
-    assert_eq!(footage.journal.samples().len(), 1);
-    assert_eq!(
-        checkpoint
-            .close()
-            .await?
-            .context("Fixture checkpoint is missing")?
-            .replay()?
-            .journal()
-            .samples()
-            .len(),
-        1
-    );
     Ok(())
 }
 
@@ -151,9 +110,6 @@ async fn a_failed_writer_warns_once_and_keeps_recording_in_memory() -> anyhow::R
     let footage = recorded?.context("Recording survives checkpoint failure")?;
     assert!(footage.journal.samples().len() >= 2);
     assert_eq!(footage.recording.ending, Ending::Finished);
-    assert!(
-        notices.try_recv().is_err(),
-        "Final flush repeated the notice"
-    );
+    assert!(notices.try_recv().is_err(), "The notice repeated");
     Ok(())
 }

@@ -102,15 +102,7 @@ pub(crate) struct Preservation {
     pub narration_lost: Option<NarrationLoss>,
     pub source_lost: bool,
     pub movie_lost: bool,
-    pub audio: Audio,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum Audio {
-    #[default]
-    Settled,
-    KeptForRetry,
-    VoiceCutShort,
+    pub audio_kept: bool,
 }
 
 pub(crate) enum Published {

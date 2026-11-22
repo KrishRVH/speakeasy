@@ -233,25 +233,22 @@ pub(super) fn list(
     let Some(shows) = parent else {
         return saved.collect();
     };
-    let found = checkpoint::list(shows, SystemTime::now());
-    let interrupted = found.shows.into_iter().map(|show| Overview {
-        id: Some(show.id()),
-        directory: show.directory().to_owned(),
-        status: if show.narration_pending() {
-            Status::NarrationPending
-        } else {
-            Status::Interrupted
-        },
-        expires_at: show.expires_at(),
-        pinned: Some(false),
-        duration_ms: None,
-        keyframes: None,
-        marks: None,
-        problems: Vec::new(),
-    });
-    let unreadable = found
-        .problems
+    let interrupted = checkpoint::list(shows, SystemTime::now())
         .into_iter()
-        .map(|problem| Overview::unreadable(problem.directory, problem.message));
-    interrupted.chain(unreadable).map(Ok).chain(saved).collect()
+        .map(|show| Overview {
+            id: Some(show.id()),
+            directory: show.directory().to_owned(),
+            status: if show.narration_pending() {
+                Status::NarrationPending
+            } else {
+                Status::Interrupted
+            },
+            expires_at: show.expires_at(),
+            pinned: Some(false),
+            duration_ms: None,
+            keyframes: None,
+            marks: None,
+            problems: Vec::new(),
+        });
+    interrupted.map(Ok).chain(saved).collect()
 }

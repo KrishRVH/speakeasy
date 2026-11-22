@@ -1,10 +1,10 @@
-use std::{fs::File, io, path::Path, time::SystemTime};
+use std::{fs, io, path::Path};
 
 use anyhow::Context as _;
 use serde::Serialize;
 
 use super::{
-    KEPT_FOR, Staged,
+    Staged,
     checkpoint::audio::{self, KeptAudio},
 };
 
@@ -28,34 +28,15 @@ impl Status {
     }
 }
 
-pub(super) fn retain(
-    checkpoint: &Path,
-    staged: &Staged,
-    recorded: SystemTime,
-) -> anyhow::Result<bool> {
-    if recorded
-        .checked_add(KEPT_FOR)
-        .is_none_or(|expires| SystemTime::now() >= expires)
-    {
-        return Ok(false);
+pub(super) fn retain(kept: &Path, staged: &Staged) -> anyhow::Result<()> {
+    match fs::copy(kept, staged.staging.path().join(FILE)) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        copied => copied
+            .map(|_bytes| ())
+            .context("Cannot save the Show's voice"),
     }
-    let mut input = match audio::available(checkpoint, audio::FILE) {
-        Ok(Some(input)) => input,
-        Ok(None) => return Ok(false),
-        Err(damaged) if damaged.is::<audio::Damaged>() => return Ok(false),
-        Err(error) => return Err(error),
-    };
-    let cut = !audio::ended(&mut input)?;
-    io::copy(
-        &mut input,
-        &mut File::create_new(staged.staging.path().join(FILE))?,
-    )?;
-    Ok(cut)
 }
 
 pub(crate) fn read(directory: &Path) -> anyhow::Result<Option<KeptAudio>> {
-    audio::available(directory, FILE)
-        .context("Cannot read this Show's voice")?
-        .map(audio::read)
-        .transpose()
+    audio::read(&directory.join(FILE)).context("Cannot read this Show's voice")
 }

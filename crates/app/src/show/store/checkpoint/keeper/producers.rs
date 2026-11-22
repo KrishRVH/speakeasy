@@ -1,116 +1,17 @@
-use std::{
-    collections::VecDeque,
-    sync::mpsc,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
-use async_channel::{Receiver, Sender};
+use async_channel::{Sender, TrySendError};
 use speakeasy_show::{Framing, Size, TakeEvent};
-use zeroize::Zeroizing;
 
 use super::{FrameRecord, audio};
 
-#[derive(Clone, Copy, Default)]
-pub(super) struct Credit {
-    pub events: usize,
-    pub bytes: usize,
-}
-
-pub(super) struct Producer<T> {
-    sender: Option<Sender<T>>,
-    credits: mpsc::Receiver<Credit>,
-    complete: Receiver<bool>,
-    queued: Credit,
-    limit: Credit,
-}
-
-enum Offered<T> {
-    Sent,
-    Busy(T),
-    Stopped,
-}
-
-impl<T> Producer<T> {
-    pub(super) fn new(
-        sender: Sender<T>,
-        credits: mpsc::Receiver<Credit>,
-        complete: Receiver<bool>,
-        events: usize,
-        bytes: usize,
-    ) -> Self {
-        Self {
-            sender: Some(sender),
-            credits,
-            complete,
-            queued: Credit::default(),
-            limit: Credit { events, bytes },
-        }
-    }
-
-    fn offer(&mut self, record: T, bytes: usize) -> Offered<T> {
-        loop {
-            match self.credits.try_recv() {
-                Ok(credit) => self.settle(credit),
-                Err(mpsc::TryRecvError::Empty) => break,
-                Err(mpsc::TryRecvError::Disconnected) => return Offered::Stopped,
-            }
-        }
-        let Some(sender) = &self.sender else {
-            return Offered::Stopped;
-        };
-        if sender.is_closed() || bytes > self.limit.bytes {
-            return Offered::Stopped;
-        }
-        if self.queued.events >= self.limit.events
-            || self.queued.bytes.saturating_add(bytes) > self.limit.bytes
-        {
-            return Offered::Busy(record);
-        }
-        match sender.try_send(record) {
-            Ok(()) => {
-                self.queued.events = self.queued.events.saturating_add(1);
-                self.queued.bytes = self.queued.bytes.saturating_add(bytes);
-                Offered::Sent
-            },
-            Err(async_channel::TrySendError::Full(record)) => Offered::Busy(record),
-            Err(async_channel::TrySendError::Closed(_)) => Offered::Stopped,
-        }
-    }
-
-    fn await_credit(&mut self, wait: Duration) -> bool {
-        let Ok(credit) = self.credits.recv_timeout(wait) else {
-            return false;
-        };
-        self.settle(credit);
-        true
-    }
-
-    fn settle(&mut self, credit: Credit) {
-        self.queued.events = self.queued.events.saturating_sub(credit.events);
-        self.queued.bytes = self.queued.bytes.saturating_sub(credit.bytes);
-    }
-
-    fn stop(&mut self) {
-        self.sender = None;
-    }
-
-    async fn close(mut self) -> bool {
-        self.stop();
-        self.complete.recv().await.unwrap_or(false)
-    }
-}
-
 pub(crate) struct FrameLog {
-    producer: Producer<FrameRecord>,
-    complete: bool,
+    lane: Option<Sender<FrameRecord>>,
 }
 
 impl FrameLog {
-    pub(super) fn new(producer: Producer<FrameRecord>) -> Self {
-        Self {
-            producer,
-            complete: true,
-        }
+    pub(super) const fn new(lane: Sender<FrameRecord>) -> Self {
+        Self { lane: Some(lane) }
     }
 
     pub(crate) fn begin(&mut self, budget: usize, surface: Size, framing: Framing) -> bool {
@@ -137,17 +38,14 @@ impl FrameLog {
     }
 
     fn offer(&mut self, record: FrameRecord) -> bool {
-        let bytes = record.bytes();
-        if !matches!(self.producer.offer(record, bytes), Offered::Sent) {
-            self.complete = false;
-            self.producer.stop();
+        let sent = self
+            .lane
+            .as_ref()
+            .is_some_and(|lane| lane.try_send(record).is_ok());
+        if !sent {
+            self.lane = None;
         }
-        self.complete
-    }
-
-    pub(crate) async fn close(self) -> bool {
-        let flushed = self.producer.close().await;
-        self.complete && flushed
+        sent
     }
 }
 
@@ -158,21 +56,19 @@ pub(crate) enum AudioEnding {
 }
 
 pub(crate) struct AudioLog {
-    producer: Producer<audio::Record>,
+    lane: Option<Sender<audio::Record>>,
     offered: usize,
     cues: usize,
     threshold: usize,
-    complete: bool,
 }
 
 impl AudioLog {
-    pub(super) fn new(producer: Producer<audio::Record>) -> Self {
+    pub(super) const fn new(lane: Sender<audio::Record>) -> Self {
         Self {
-            producer,
+            lane: Some(lane),
             offered: 0,
             cues: 0,
             threshold: 1,
-            complete: true,
         }
     }
 
@@ -188,11 +84,10 @@ impl AudioLog {
     }
 
     pub(crate) fn offer(&mut self, pcm: &[u8], cues: &[(usize, usize)]) -> bool {
-        if !self.complete {
-            return false;
+        if self.lane.is_some() {
+            self.chunk(pcm, cues);
         }
-        self.chunk(pcm, cues);
-        self.complete
+        self.lane.is_some()
     }
 
     pub(crate) fn close(
@@ -201,36 +96,26 @@ impl AudioLog {
         cues: &[(usize, usize)],
         ending: AudioEnding,
     ) -> AudioTail {
-        let mut tail = AudioTail {
-            records: VecDeque::new(),
-            complete: self.complete,
-            producer: self.producer,
-        };
-        let (mut offered, mut cue) = (self.offered, self.cues);
-        while tail.complete && (offered < pcm.len() || cue < cues.len()) {
-            let progress = (offered, cue);
-            let end =
-                offered.saturating_add(pcm.len().saturating_sub(offered).min(audio::CHUNK_BYTES));
-            while let Some(&(before, at)) = cues.get(cue).filter(|&&(_, at)| at <= end) {
-                tail.records.push_back(audio::Record::Cue { before, at });
-                cue = cue.saturating_add(1);
-            }
-            if let Some(samples) = pcm.get(offered..end).filter(|samples| !samples.is_empty()) {
-                tail.records
-                    .push_back(audio::Record::Samples(Zeroizing::new(samples.to_vec())));
-                offered = end;
-            }
-            tail.complete = progress != (offered, cue);
+        let cues = cues
+            .get(self.cues..)
+            .unwrap_or_default()
+            .iter()
+            .map(|&(before, at)| audio::Record::Cue { before, at });
+        let samples = pcm
+            .get(self.offered..)
+            .unwrap_or_default()
+            .chunks(audio::CHUNK_BYTES)
+            .map(|chunk| audio::Record::Samples(chunk.to_vec()));
+        let end = matches!(ending, AudioEnding::Complete).then_some(audio::Record::End);
+        AudioTail {
+            lane: self.lane,
+            records: cues.chain(samples).chain(end).collect(),
         }
-        if tail.complete && matches!(ending, AudioEnding::Complete) {
-            tail.records.push_back(audio::Record::End);
-        }
-        tail
     }
 
     #[cfg(test)]
-    pub(crate) fn finish(self, pcm: &[u8], cues: &[(usize, usize)], ending: AudioEnding) -> bool {
-        self.close(pcm, cues, ending).flush(Duration::MAX)
+    pub(crate) fn finish(self, pcm: &[u8], cues: &[(usize, usize)], ending: AudioEnding) {
+        self.close(pcm, cues, ending).flush();
     }
 
     fn chunk(&mut self, pcm: &[u8], cues: &[(usize, usize)]) {
@@ -240,10 +125,7 @@ impl AudioLog {
         } else {
             self.offered
         };
-        while let Some(&(before, at)) = cues.get(self.cues) {
-            if at > end {
-                break;
-            }
+        while let Some(&(before, at)) = cues.get(self.cues).filter(|&&(_, at)| at <= end) {
             if !self.send(audio::Record::Cue { before, at }) {
                 return;
             }
@@ -251,20 +133,18 @@ impl AudioLog {
         }
         if end > self.offered
             && let Some(bytes) = pcm.get(self.offered..end)
-            && self.send(audio::Record::Samples(Zeroizing::new(bytes.to_vec())))
+            && self.send(audio::Record::Samples(bytes.to_vec()))
         {
             self.offered = end;
         }
     }
 
     fn send(&mut self, record: audio::Record) -> bool {
-        let bytes = record.bytes();
-        match self.producer.offer(record, bytes) {
-            Offered::Sent => true,
-            Offered::Busy(_) => false,
-            Offered::Stopped => {
-                self.complete = false;
-                self.producer.stop();
+        match self.lane.as_ref().map(|lane| lane.try_send(record)) {
+            Some(Ok(())) => true,
+            Some(Err(TrySendError::Full(_))) => false,
+            Some(Err(TrySendError::Closed(_))) | None => {
+                self.lane = None;
                 false
             },
         }
@@ -272,92 +152,42 @@ impl AudioLog {
 }
 
 pub(crate) struct AudioTail {
-    producer: Producer<audio::Record>,
-    records: VecDeque<audio::Record>,
-    complete: bool,
+    lane: Option<Sender<audio::Record>>,
+    records: Vec<audio::Record>,
 }
 
 impl AudioTail {
-    #[must_use]
-    pub(crate) fn flush(&mut self, wait: Duration) -> bool {
-        let started = Instant::now();
-        while self.send_ready() {
-            if !self
-                .producer
-                .await_credit(wait.saturating_sub(started.elapsed()))
-            {
-                return false;
+    pub(crate) fn flush(self) {
+        let Some(lane) = self.lane else {
+            return;
+        };
+        for record in self.records {
+            if lane.send_blocking(record).is_err() {
+                return;
             }
         }
-        self.complete
-    }
-
-    fn send_ready(&mut self) -> bool {
-        while let Some(record) = self.records.pop_front() {
-            let bytes = record.bytes();
-            match self.producer.offer(record, bytes) {
-                Offered::Sent => {},
-                Offered::Busy(record) => {
-                    self.records.push_front(record);
-                    return true;
-                },
-                Offered::Stopped => {
-                    self.complete = false;
-                    self.records.clear();
-                    return false;
-                },
-            }
-        }
-        false
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{super::Input, *};
+    use super::*;
 
     #[test]
-    fn a_full_audio_byte_budget_resumes_after_all_inflight_credits_arrive() {
-        let (producer, input) = Input::lane(64, 128 + 2 * (1_024 + 64));
-        let mut log = AudioLog::new(producer);
-        assert!(log.begin(100, Duration::ZERO, "en".into()));
-        let pcm = vec![0; 3_072];
-        assert!(log.offer(&pcm[..1_024], &[]));
-        assert!(log.offer(&pcm[..2_048], &[]));
-        while let Ok(record) = input.records.try_recv() {
-            input.acknowledge(record.bytes());
-        }
-        assert!(log.offer(&pcm, &[]));
-        assert_eq!(
-            log.offered,
-            pcm.len(),
-            "Completed writes stranded the remaining PCM"
-        );
-    }
-
-    #[test]
-    fn a_stalled_audio_lane_keeps_its_backlog_in_pcm_and_resumes_after_credit() {
-        let (producer, input) = Input::lane(2, 1_024);
-        let mut log = AudioLog::new(producer);
+    fn a_full_audio_lane_keeps_its_backlog_in_pcm_and_resumes() {
+        let (lane, records) = async_channel::bounded(2);
+        let mut log = AudioLog::new(lane);
         assert!(log.begin(100, Duration::ZERO, "en".into()));
         let pcm = [1, 0].repeat(400);
         assert!(log.offer(&pcm[..400], &[]));
         assert_eq!(log.offered, 400);
         assert!(log.offer(&pcm, &[]));
-        assert_eq!(log.offered, 400, "A full queue lost its backlog");
-        assert!(log.producer.queued.bytes <= 1_024);
-        while let Ok(record) = input.records.try_recv() {
-            input.acknowledge(record.bytes());
-        }
+        assert_eq!(log.offered, 400, "A full lane lost its backlog");
+        while records.try_recv().is_ok() {}
         assert!(log.offer(&pcm, &[]));
         assert_eq!(log.offered, pcm.len());
-        while let Ok(record) = input.records.try_recv() {
-            input.acknowledge(record.bytes());
-        }
-        assert!(log.finish(&pcm, &[], AudioEnding::Complete));
-        assert!(matches!(
-            input.records.try_recv().unwrap(),
-            audio::Record::End
-        ));
+        while records.try_recv().is_ok() {}
+        log.finish(&pcm, &[], AudioEnding::Complete);
+        assert!(matches!(records.try_recv(), Ok(audio::Record::End)));
     }
 }

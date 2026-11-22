@@ -5,7 +5,7 @@ use speakeasy_show::{Ending, Take, TakeEvent};
 use super::*;
 
 fn recoverable(parent: &Path) -> Vec<Interrupted> {
-    store::checkpoint::list(parent, SystemTime::now()).shows
+    store::checkpoint::list(parent, SystemTime::now())
 }
 
 fn interrupted(parent: &Path) -> anyhow::Result<Interrupted> {
@@ -34,7 +34,7 @@ async fn checkpoint(parent: &Path) -> anyhow::Result<Checkpoint> {
         )))?)
     );
     assert!(writer.send(take.end(Moment::from_millis(500), Ending::Finished)));
-    assert!(writer.close().await);
+    drop(writer);
     checkpoint
         .close()
         .await?
@@ -66,7 +66,7 @@ async fn clicked_checkpoint(parent: &Path, framing: Framing) -> anyhow::Result<C
     }
     assert!(writer.send(take.arrive(Moment::from_millis(1_200), || frame(1_200))?));
     assert!(writer.send(take.end(Moment::from_millis(2_000), Ending::Finished)));
-    assert!(writer.close().await);
+    drop(writer);
     checkpoint
         .close()
         .await?
@@ -100,7 +100,7 @@ async fn recovery_preserves_original_expiry_and_publishes_once_without_narration
 -> anyhow::Result<()> {
     let parent = tempfile::tempdir()?;
     let checkpoint = checkpoint(parent.path()).await?;
-    let recorded = checkpoint.recorded()?;
+    let recorded = checkpoint.recorded();
     drop(checkpoint);
     let interrupted = interrupted(parent.path())?;
     let stale = interrupted.clone();
@@ -214,7 +214,7 @@ fn recover_with(
     permit: &InsertPermit,
     parent: impl FnOnce() -> anyhow::Result<PathBuf>,
 ) -> anyhow::Result<Published> {
-    let reopened = reopen_with(interrupted)?;
+    let reopened = reopen_with(&interrupted)?;
     assert!(reopened.speech.is_none());
     publish_with(
         Handoff::default(),

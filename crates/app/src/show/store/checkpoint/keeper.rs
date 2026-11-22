@@ -6,25 +6,20 @@ use std::{
     fs::File,
     io::{BufWriter, Write as _},
     path::{Path, PathBuf},
-    sync::mpsc,
-    time::{Duration, Instant, SystemTime},
+    time::{Instant, SystemTime},
 };
 
 use anyhow::Context as _;
 use async_channel::{Receiver, Sender};
 use movie::Writing;
 pub(crate) use producers::{AudioEnding, AudioLog, AudioTail, FrameLog};
-use producers::{Credit, Producer};
 use speakeasy_platform::{MovieTarget, StoppableThread};
 use speakeasy_show::{Framing, Size, TakeEvent, log};
 
 use super::{Checkpoint, audio};
 
 const FRAME_EVENTS: usize = 512;
-const FRAME_BYTES: usize = 64 << 20;
 const AUDIO_EVENTS: usize = 64;
-const AUDIO_BYTES: usize = 8 << 20;
-const SYNC_INTERVAL: Duration = Duration::from_secs(5);
 
 pub(crate) struct Kept {
     pub keeper: Keeper,
@@ -34,8 +29,7 @@ pub(crate) struct Kept {
 
 pub(crate) struct Keeper {
     thread: StoppableThread,
-    discard: Sender<()>,
-    closed: Receiver<anyhow::Result<Option<Checkpoint>>>,
+    closed: Receiver<Option<Checkpoint>>,
 }
 
 impl Keeper {
@@ -49,11 +43,8 @@ impl Keeper {
     ) -> anyhow::Result<(Self, FrameLog)> {
         let parent = parent.to_owned();
         let Kept {
-            keeper,
-            mut frames,
-            audio,
+            keeper, mut frames, ..
         } = Self::start(move || Ok(parent), recorded)?;
-        drop(audio);
         anyhow::ensure!(
             frames.begin(budget, surface, framing),
             "Synthetic frame log did not begin"
@@ -65,66 +56,43 @@ impl Keeper {
         parent: impl FnOnce() -> anyhow::Result<PathBuf> + Send + 'static,
         recorded: SystemTime,
     ) -> anyhow::Result<Kept> {
-        let (frames, frame_input) = Input::lane(FRAME_EVENTS, FRAME_BYTES);
-        let (audio, audio_input) = Input::lane(AUDIO_EVENTS, AUDIO_BYTES);
+        let (frames, frame_records) = async_channel::bounded(FRAME_EVENTS);
+        let (audio, audio_records) = async_channel::bounded(AUDIO_EVENTS);
         let (returned, closed) = async_channel::bounded(1);
-        let (discard, discarding) = async_channel::bounded(1);
         let thread = StoppableThread::spawn("show-checkpoint", move |stopping| {
-            let outcome = match parent().and_then(|parent| Checkpoint::create(&parent, recorded)) {
-                Ok(checkpoint) => tokio::runtime::Builder::new_current_thread()
-                    .build()
-                    .map(|runtime| {
-                        runtime.block_on(write(
-                            &checkpoint.directory,
-                            frame_input,
-                            audio_input,
-                            stopping,
-                            discarding,
-                        ));
-                        Some(checkpoint)
-                    })
-                    .map_err(anyhow::Error::from),
-                Err(_unavailable) => Ok(None),
-            };
+            let checkpoint = parent()
+                .and_then(|parent| Checkpoint::create(&parent, recorded))
+                .ok();
+            if let Some(checkpoint) = &checkpoint
+                && let Ok(runtime) = tokio::runtime::Builder::new_current_thread().build()
+            {
+                runtime.block_on(write(
+                    &checkpoint.directory,
+                    frame_records,
+                    audio_records,
+                    &stopping,
+                ));
+            }
             #[expect(
                 clippy::let_underscore_must_use,
-                reason = "Emergency teardown may drop the receiver; dropping this result unlocks the retained checkpoint only after all writes stop"
+                reason = "The single-slot lane is empty; a dropped keeper unlocks the checkpoint by dropping it"
             )]
-            let _ = returned.try_send(outcome);
+            let _ = returned.try_send(checkpoint);
         })?;
         Ok(Kept {
-            keeper: Self {
-                thread,
-                discard,
-                closed,
-            },
+            keeper: Self { thread, closed },
             frames: FrameLog::new(frames),
             audio: AudioLog::new(audio),
         })
     }
 
     pub(crate) fn discard(&self) {
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "A full single-slot lane already holds this discard, and the stop below ends the keeper either way"
-        )]
-        let _ = self.discard.try_send(());
         self.thread.request_stop();
     }
 
     pub(crate) async fn close(self) -> anyhow::Result<Option<Checkpoint>> {
-        self.thread.stopped().await;
-        tokio::task::spawn_blocking(move || {
-            let Self { thread, closed, .. } = self;
-            drop(thread);
-            closed
-                .try_recv()
-                .context("Show checkpoint stopped before returning its files")?
-        })
-        .await
-        .unwrap_or_else(|_private_panic| {
-            Err(anyhow::anyhow!("Show checkpoint stopped unexpectedly"))
-        })
+        let returned = self.closed.recv().await;
+        returned.context("Show checkpoint stopped before returning its files")
     }
 }
 
@@ -141,107 +109,59 @@ enum FrameRecord {
     Event(TakeEvent),
 }
 
-impl FrameRecord {
-    fn bytes(&self) -> usize {
-        match self {
-            Self::Begin { .. } | Self::Movie { .. } => 64,
-            Self::Event(event) => event.bytes(),
-        }
-    }
-}
-
-struct Input<T> {
+struct Lane<T> {
     records: Receiver<T>,
-    credits: mpsc::SyncSender<Credit>,
-    flushed: Sender<bool>,
-    storage: Option<Storage>,
+    file: Option<BufWriter<File>>,
 }
 
-impl<T> Input<T> {
-    fn lane(events: usize, bytes: usize) -> (Producer<T>, Self) {
-        let (outgoing, records) = async_channel::bounded(events);
-        let (credits, available) = mpsc::sync_channel(events);
-        let (flushed, complete) = async_channel::bounded(1);
-        (
-            Producer::new(outgoing, available, complete, events, bytes),
-            Self {
-                records,
-                credits,
-                flushed,
-                storage: None,
-            },
-        )
+impl<T> Lane<T> {
+    const fn new(records: Receiver<T>) -> Self {
+        Self {
+            records,
+            file: None,
+        }
     }
 
     fn begin(&mut self, directory: &Path, name: &str, header: &[u8]) -> anyhow::Result<()> {
-        anyhow::ensure!(self.storage.is_none(), "Show checkpoint stream began twice");
-        self.storage = Some(Storage::create(directory, name, header)?);
+        let mut file = BufWriter::new(File::create_new(directory.join(name))?);
+        file.write_all(header)?;
+        self.file = Some(file);
         Ok(())
     }
 
-    fn append(&mut self, bytes: &[u8], byte_limit: u64, record_limit: usize) -> anyhow::Result<()> {
-        self.storage
+    fn append(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
+        self.file
             .as_mut()
             .context("Show checkpoint stream has no header")?
-            .append(bytes, byte_limit, record_limit)
-    }
-
-    fn settle(&mut self, bytes: usize) -> anyhow::Result<()> {
-        if let Some(storage) = &mut self.storage {
-            storage.drain(self.records.is_empty())?;
-        }
-        self.acknowledge(bytes);
+            .write_all(bytes)?;
         Ok(())
     }
 
-    fn acknowledge(&self, bytes: usize) {
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "The event budget guarantees a credit slot; a closed lane means its producer has left"
-        )]
-        let _ = self.credits.try_send(Credit { events: 1, bytes });
-    }
-
-    fn finish(mut self, complete: bool) {
-        let synced = self
-            .storage
-            .as_mut()
-            .is_none_or(|storage| storage.flush().is_ok());
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "Only a producer explicitly closing its lane waits for a flush receipt"
-        )]
-        let _ = self.flushed.try_send(complete && synced);
+    fn settle(&mut self) -> anyhow::Result<()> {
+        if let Some(file) = &mut self.file
+            && self.records.is_empty()
+        {
+            file.flush()?;
+        }
+        Ok(())
     }
 }
 
 async fn write(
     directory: &Path,
-    frames: Input<FrameRecord>,
-    audio: Input<audio::Record>,
-    stopping: Receiver<Infallible>,
-    discarding: Receiver<()>,
+    frames: Receiver<FrameRecord>,
+    audio: Receiver<audio::Record>,
+    stopping: &Receiver<Infallible>,
 ) {
-    let mut frames = Some(frames);
-    let mut audio = Some(audio);
+    let mut frames = Some(Lane::new(frames));
+    let mut audio = Some(Lane::new(audio));
     let mut movie: Option<Writing> = None;
     let mut stopped = false;
     while frames.is_some() || audio.is_some() || movie.is_some() {
         if !stopped && stopping.is_closed() {
             stopped = true;
-            if discarding.try_recv().is_ok() {
-                #[expect(
-                    clippy::let_underscore_must_use,
-                    reason = "Checkpoint discard writes the marker again once the keeper returns its files"
-                )]
-                let _ = super::mark_discarded(directory);
-            }
-            if let Some(input) = frames.take() {
-                input.finish(false);
-            }
-            if let Some(input) = audio.take() {
-                input.finish(false);
-            }
+            frames = None;
+            audio = None;
             if let Some(movie) = &movie {
                 movie.stop();
             }
@@ -249,146 +169,80 @@ async fn write(
         }
         tokio::select! {
             _stop = stopping.recv(), if !stopped => {},
-            event = movie::next(movie.as_ref()) => {
-                match event {
-                    Some(event) => if let Some(movie) = &mut movie { movie.event(directory, event); },
-                    None => movie = None,
-                }
+            event = movie::next(movie.as_ref()) => match event {
+                Some(event) => if let Some(movie) = &mut movie { movie.event(directory, event); },
+                None => movie = None,
             },
             record = receive(frames.as_ref()) => {
-                consume(&mut frames, record, |input, record| frame(directory, input, record, &mut movie));
+                consume(&mut frames, record, |lane, record| frame(directory, lane, record, &mut movie));
             },
             record = receive(audio.as_ref()) => {
-                consume(&mut audio, record, |input, record| sound(directory, input, record));
+                consume(&mut audio, record, |lane, record| sound(directory, lane, record));
             },
         }
     }
 }
 
 fn consume<T>(
-    input: &mut Option<Input<T>>,
+    lane: &mut Option<Lane<T>>,
     record: Result<T, async_channel::RecvError>,
-    write: impl FnOnce(&mut Input<T>, T) -> anyhow::Result<()>,
+    write: impl FnOnce(&mut Lane<T>, T) -> anyhow::Result<()>,
 ) {
-    let Some(live) = input.as_mut() else {
+    let Some(live) = lane.as_mut() else {
         return;
     };
-    let complete = match record.map(|record| write(live, record)) {
-        Ok(Ok(())) => return,
-        Ok(Err(_failed)) => false,
-        Err(_closed) => true,
-    };
-    if let Some(input) = input.take() {
-        input.finish(complete);
+    let kept = record.is_ok_and(|record| write(live, record).and_then(|()| live.settle()).is_ok());
+    if !kept {
+        *lane = None;
     }
 }
 
-async fn receive<T>(input: Option<&Input<T>>) -> Result<T, async_channel::RecvError> {
-    match input {
-        Some(input) => input.records.recv().await,
+async fn receive<T>(lane: Option<&Lane<T>>) -> Result<T, async_channel::RecvError> {
+    match lane {
+        Some(lane) => lane.records.recv().await,
         None => std::future::pending().await,
     }
 }
 
 fn frame(
     directory: &Path,
-    input: &mut Input<FrameRecord>,
+    lane: &mut Lane<FrameRecord>,
     record: FrameRecord,
     movie: &mut Option<Writing>,
 ) -> anyhow::Result<()> {
-    let bytes = record.bytes();
     match record {
         FrameRecord::Begin {
             budget,
             surface,
             framing,
-        } => {
-            input.begin(
-                directory,
-                super::LOG,
-                &log::header(budget, surface, framing)?,
-            )?;
-        },
+        } => lane.begin(
+            directory,
+            super::LOG,
+            &log::header(budget, surface, framing)?,
+        ),
         FrameRecord::Movie { started, returned } => {
-            anyhow::ensure!(
-                input.storage.is_some() && movie.is_none(),
-                "Movie needs a new checkpoint stream"
-            );
             let (writing, target) = Writing::new(directory, started)?;
             *movie = Some(writing);
-
             #[expect(
                 clippy::let_underscore_must_use,
                 reason = "A dropped recorder refuses this target and closes its native lease"
             )]
             let _ = returned.try_send(target);
+            Ok(())
         },
-        FrameRecord::Event(event) => {
-            input.append(&log::encode(&event)?, super::FILE_LIMIT, super::EVENT_LIMIT)?;
-        },
+        FrameRecord::Event(event) => lane.append(&log::encode(&event)?),
     }
-    input.settle(bytes)
 }
 
 fn sound(
     directory: &Path,
-    input: &mut Input<audio::Record>,
+    lane: &mut Lane<audio::Record>,
     record: audio::Record,
 ) -> anyhow::Result<()> {
     if matches!(record, audio::Record::Begin { .. }) {
-        input.begin(directory, audio::FILE, audio::MAGIC)?;
+        lane.begin(directory, audio::FILE, audio::MAGIC)?;
     }
-    input.append(&record.encode()?, audio::FILE_LIMIT, audio::MAX_RECORDS)?;
-    input.settle(record.bytes())
-}
-
-struct Storage {
-    file: BufWriter<File>,
-    size: u64,
-    records: usize,
-    synced: Instant,
-}
-
-impl Storage {
-    fn create(directory: &Path, name: &str, header: &[u8]) -> anyhow::Result<Self> {
-        let mut file = File::create_new(directory.join(name))?;
-        file.write_all(header)?;
-        file.sync_all()?;
-        super::sync_directory(directory)?;
-        Ok(Self {
-            file: BufWriter::new(file),
-            size: u64::try_from(header.len())?,
-            records: 0,
-            synced: Instant::now(),
-        })
-    }
-
-    fn append(&mut self, bytes: &[u8], byte_limit: u64, record_limit: usize) -> anyhow::Result<()> {
-        self.size = self.size.saturating_add(u64::try_from(bytes.len())?);
-        self.records = self.records.saturating_add(1);
-        anyhow::ensure!(
-            self.size <= byte_limit && self.records <= record_limit,
-            "Show checkpoint reached its storage limit"
-        );
-        self.file.write_all(bytes)?;
-        Ok(())
-    }
-
-    fn drain(&mut self, empty: bool) -> anyhow::Result<()> {
-        if self.synced.elapsed() >= SYNC_INTERVAL {
-            self.flush()?;
-            self.synced = Instant::now();
-        } else if empty {
-            self.file.flush()?;
-        }
-        Ok(())
-    }
-
-    fn flush(&mut self) -> anyhow::Result<()> {
-        self.file.flush()?;
-        self.file.get_ref().sync_data()?;
-        Ok(())
-    }
+    lane.append(&record.encode()?)
 }
 
 #[cfg(test)]

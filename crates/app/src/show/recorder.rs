@@ -425,21 +425,11 @@ impl<'a> Take<'a> {
         });
         let ending = match ended {
             Some(Ok(ending)) => ending,
-            Some(Err(_invalid_event)) if !self.state.journal().is_empty() => {
-                self.abandon_log().await;
-                self.warn_checkpoint();
-                Ending::ScreenStopped
-            },
-            Some(Err(error)) => {
-                self.abandon_log().await;
-                return Err(error);
-            },
-            None => {
-                self.abandon_log().await;
-                return Ok(None);
-            },
+            Some(Err(_invalid_event)) if !self.state.journal().is_empty() => Ending::ScreenStopped,
+            Some(Err(error)) => return Err(error),
+            None => return Ok(None),
         };
-        self.into_footage(at, ending).await.map(Some)
+        self.into_footage(at, ending).map(Some)
     }
 
     fn settle(
@@ -465,12 +455,6 @@ impl<'a> Take<'a> {
             self.pin(taps)?;
         }
         samples.try_for_each(|sample| self.pointer(sample))
-    }
-
-    async fn abandon_log(&mut self) {
-        if let Some(log) = self.log.take() {
-            let _flushed = log.close().await;
-        }
     }
 
     fn warn_checkpoint(&mut self) {
@@ -644,15 +628,10 @@ impl<'a> Take<'a> {
         });
     }
 
-    async fn into_footage(mut self, ended: Instant, ending: Ending) -> anyhow::Result<Footage> {
+    fn into_footage(mut self, ended: Instant, ending: Ending) -> anyhow::Result<Footage> {
         let ended = self.moment(ended);
         let event = self.state.end(ended, ending);
         self.log(event);
-        if let Some(log) = self.log.take()
-            && !log.close().await
-        {
-            self.warn_checkpoint();
-        }
         if self.state.journal().is_empty() {
             return Err(anyhow!(NOTHING_RECORDED));
         }

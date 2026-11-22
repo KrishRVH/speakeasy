@@ -1,12 +1,9 @@
 use std::{
-    fmt,
-    fs::{self, File},
-    io::{self, Read as _},
+    fs, io,
     path::{Path, PathBuf},
 };
 
 use anyhow::Context as _;
-use speakeasy_platform::ReadDirectory;
 use speakeasy_show::{Bundle, Manifest};
 
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
@@ -98,45 +95,6 @@ pub(crate) fn directories(parent: &Path) -> io::Result<Vec<PathBuf>> {
 pub(crate) fn summary(directory: &Path) -> io::Result<String> {
     fs::read_to_string(directory.join(Bundle::SUMMARY))
 }
-
-pub(in crate::show::store) fn open_directory(directory: &Path) -> io::Result<ReadDirectory> {
-    ReadDirectory::open(directory)
-}
-
-pub(super) fn open_file(directory: &ReadDirectory, name: &str, limit: u64) -> io::Result<File> {
-    let (file, metadata) = directory.file(Path::new(name))?;
-    if metadata.len() > limit {
-        return Err(io::Error::new(
-            io::ErrorKind::FileTooLarge,
-            "file is too large",
-        ));
-    }
-    if metadata.len() == 0 {
-        return Err(io::Error::other(Empty));
-    }
-    Ok(file)
-}
-
-pub(super) fn read_file(directory: &Path, name: &str, limit: u64) -> io::Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    open_file(&open_directory(directory)?, name, limit)?.read_to_end(&mut bytes)?;
-    Ok(bytes)
-}
-
-pub(in crate::show::store) fn empty(error: &io::Error) -> bool {
-    matches!(error.get_ref(), Some(inner) if inner.is::<Empty>())
-}
-
-#[derive(Debug)]
-struct Empty;
-
-impl fmt::Display for Empty {
-    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
-        out.write_str("file is empty")
-    }
-}
-
-impl std::error::Error for Empty {}
 
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
 impl SavedShow {

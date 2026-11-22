@@ -547,12 +547,12 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         },
         speakeasy_show::Framing::Automatic,
     )?;
-    ensure!(writer.close().await, "Synthetic checkpoint did not close");
+    drop(writer);
     let checkpoint = checkpoint
         .close()
         .await?
         .context("Fixture checkpoint is missing")?;
-    let interrupted = checkpoint.interrupted()?;
+    let interrupted = checkpoint.interrupted();
     window.update(cx, |view, _, cx| view.refresh(cx))?;
     wait_for(window, |view| view.listing.is_none(), cx).await?;
     window.update(cx, |view, _, cx| {
@@ -721,12 +721,12 @@ async fn retired_recovery(
         },
         speakeasy_show::Framing::Automatic,
     )?;
-    ensure!(writer.close().await, "Synthetic checkpoint did not close");
+    drop(writer);
     let interrupted = checkpoint
         .close()
         .await?
         .context("Fixture checkpoint is missing")?
-        .interrupted()?;
+        .interrupted();
     window.update(cx, |view, _, cx| view.refresh(cx))?;
     wait_for(window, |view| view.listing.is_none(), cx).await?;
     window.update(cx, |view, _, cx| {

@@ -4,7 +4,6 @@ compile_error!("Speakeasy supports Windows, macOS, and Linux.");
 mod awake;
 mod clipboard;
 mod desktop;
-mod directory;
 mod image;
 mod input;
 mod insertion;
@@ -50,7 +49,6 @@ pub use self::{
         WindowsShortcut, attach_stdio, copy_text, prepare, reduced_motion, secure_input,
         show_startup_error,
     },
-    directory::ReadDirectory,
     image::BgraImage,
     input::{IdleInput, Input, InputSender, InsertPermit, Taps},
     insertion::{Delivery, Enter, FocusReport, Inserted, Inserter, OwnFocus},

@@ -331,7 +331,9 @@ impl Ports for FakePorts {
         let copy_error = self.copy_error;
         async move {
             if let Some(checkpoint) = checkpoint {
-                checkpoint.release(show::Release::Keep(None)).await?;
+                checkpoint
+                    .release(speakeasy_core::machine::Release::Keep)
+                    .await?;
             }
             if recovered {
                 if let Some(gate) = recovery {

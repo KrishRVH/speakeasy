@@ -11,7 +11,7 @@ use anyhow::Context as _;
 pub(crate) use frame::{AnnotationState, Crop, decoder_time};
 use serde::{Deserialize, Serialize};
 use speakeasy_core::gesture::RECORDING_LIMIT;
-use speakeasy_show::{Moment, MovieError, MoviePrefix};
+use speakeasy_show::{Moment, MoviePrefix};
 
 use super::found;
 
@@ -208,37 +208,6 @@ impl Reading {
                 .context("Movie copy position overflowed")?;
         }
         Ok(position)
-    }
-}
-
-pub(super) enum CheckpointMovie {
-    Absent,
-    Unavailable,
-    Present(Box<Reading>),
-}
-
-pub(super) fn checkpoint(directory: &Path) -> anyhow::Result<CheckpointMovie> {
-    let absent =
-        found(fs::metadata(directory.join(FILE)))?.is_none_or(|metadata| metadata.len() == 0);
-    if absent {
-        return Ok(if fs::exists(directory.join(HEADER))? {
-            CheckpointMovie::Unavailable
-        } else {
-            CheckpointMovie::Absent
-        });
-    }
-    match open(directory) {
-        Ok(Some(movie)) => Ok(CheckpointMovie::Present(Box::new(movie))),
-        Ok(None) => Ok(CheckpointMovie::Absent),
-        Err(error) if matches!(error.downcast_ref(), Some(MovieError::NoFragment)) => {
-            Ok(CheckpointMovie::Unavailable)
-        },
-        Err(error) => Err(error.context(format!(
-            "Video cannot be recovered automatically. To save the stills, move recording.mp4, \
-             recording.json, and any recording.geometry out of {} into a private folder, then \
-             choose Recover again. Keep those files for repair.",
-            directory.display()
-        ))),
     }
 }
 

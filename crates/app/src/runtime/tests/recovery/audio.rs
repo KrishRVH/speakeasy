@@ -138,7 +138,7 @@ async fn a_finished_show_keeps_an_unwind_but_discards_capture_failures() -> anyh
         h.phase(Phase::Error).await?;
         h.close().await?;
         let listing = show::checkpoint::list(root.path(), SystemTime::now());
-        assert_eq!(listing.shows.len(), usize::from(unwound));
+        assert_eq!(listing.len(), usize::from(unwound));
     }
     Ok(())
 }
@@ -168,9 +168,8 @@ async fn a_show_whose_audio_stopped_keeps_its_checkpoint_when_revoked() -> anyho
         }
         h.close().await?;
         let listing = show::checkpoint::list(root.path(), SystemTime::now());
-        assert!(listing.problems.is_empty());
         assert_eq!(
-            listing.shows.len(),
+            listing.len(),
             1,
             "A Show that ended where its audio stopped lost its checkpoint when {}",
             if quit {
@@ -209,9 +208,8 @@ async fn quit_honors_a_cancel_queued_before_a_microphone_loss() -> anyhow::Resul
             "Quit started a recording from a Press queued after the cancellation"
         );
         let listing = show::checkpoint::list(root.path(), SystemTime::now());
-        assert!(listing.problems.is_empty());
         assert_eq!(
-            listing.shows.len(),
+            listing.len(),
             0,
             "Quit kept a Show whose {} was queued before its microphone loss",
             if escape { "held Escape" } else { "Cancel" }
@@ -244,9 +242,8 @@ async fn quit_reads_queued_shortcut_gestures_before_a_queued_escape() -> anyhow:
         h.runtime.request_stop();
         h.close().await?;
         let listing = show::checkpoint::list(root.path(), SystemTime::now());
-        assert!(listing.problems.is_empty());
         assert_eq!(
-            listing.shows.len(),
+            listing.len(),
             usize::from(released),
             "Quit misread an Escape queued after a {}",
             if released {
@@ -301,9 +298,8 @@ async fn quit_queued_behind_a_microphone_ending_keeps_the_show_checkpoint() -> a
         h.runtime.request_stop();
         h.close().await?;
         let listing = show::checkpoint::list(root.path(), SystemTime::now());
-        assert!(listing.problems.is_empty());
         assert_eq!(
-            listing.shows.len(),
+            listing.len(),
             1,
             "Quit overtook a queued {} and discarded the Show",
             if lost {

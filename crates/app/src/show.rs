@@ -18,9 +18,7 @@ pub(crate) use self::{
     recorder::{ScreenRecorder, Unwound},
     store::{
         SavedShow, attend as attend_retention, checkpoint,
-        checkpoint::{
-            AudioLog, Checkpoint, Checkpointing, FrameLog, Interrupted, Keeper, Kept, Release,
-        },
+        checkpoint::{AudioLog, Checkpoint, Checkpointing, FrameLog, Interrupted, Keeper, Kept},
     },
 };
 

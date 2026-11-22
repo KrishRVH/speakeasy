@@ -101,7 +101,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn geometry_is_on_disk_before_acceptance_and_refusal_remains_an_error() -> anyhow::Result<()> {
+    fn a_started_movie_saves_its_origin_before_accepting() -> anyhow::Result<()> {
         let directory = tempfile::tempdir()?;
         let started = Instant::now();
         let (mut writing, target) = Writing::new(directory.path(), started)?;
@@ -115,61 +115,11 @@ mod tests {
             },
         );
         assert!(answer.try_recv()?);
-        let journal = directory.path().join(geometry::FILE);
-        let before = std::fs::read(&journal)?;
-        for (sample, expected) in [(0, true), (0, false)] {
-            let (accepted, mut answer) = oneshot::channel();
-            writing.event(
-                directory.path(),
-                MovieEvent::Geometry {
-                    sample,
-                    content: [0, 0, 4, 2],
-                    part: speakeasy_platform::Part::WHOLE,
-                    accepted,
-                },
-            );
-            let saved = std::fs::read(&journal)?;
-            assert_eq!(saved.len(), before.len() + 40);
-            assert!(saved.starts_with(&before));
-            assert_eq!(answer.try_recv()?, expected);
-            assert!(
-                !target.cancelled(),
-                "Cancellation would mask the failed receipt as an ordinary stop"
-            );
-        }
+        let header = directory.path().join(crate::show::store::movie::HEADER);
+        let metadata: Metadata = serde_json::from_slice(&std::fs::read(header)?)?;
+        assert_eq!(metadata.origin_ms, 0);
+        assert_eq!(metadata.size, [4, 2]);
         drop(target);
-        Ok(())
-    }
-
-    #[test]
-    fn acceptance_requires_saved_origin_and_failed_storage_cancels_the_target() -> anyhow::Result<()>
-    {
-        for refused in [false, true] {
-            let directory = tempfile::tempdir()?;
-            let started = Instant::now();
-            let (mut writing, target) = Writing::new(directory.path(), started)?;
-            let (accepted, mut answer) = oneshot::channel();
-            let header = directory.path().join(crate::show::store::movie::HEADER);
-            if refused {
-                std::fs::create_dir(&header)?;
-            }
-            writing.event(
-                directory.path(),
-                MovieEvent::Started {
-                    at: started,
-                    size: [4, 2],
-                    accepted,
-                },
-            );
-            assert_eq!(answer.try_recv().unwrap_or(false), !refused);
-            assert_eq!(target.cancelled(), refused);
-            if !refused {
-                let metadata: Metadata = serde_json::from_slice(&std::fs::read(header)?)?;
-                assert_eq!(metadata.origin_ms, 0);
-                assert_eq!(metadata.size, [4, 2]);
-            }
-            drop(target);
-        }
         Ok(())
     }
 }

@@ -25,13 +25,13 @@ async fn interrupted(parent: &Path) -> anyhow::Result<store::checkpoint::Interru
         Framing::Automatic
     ));
     assert!(audio.begin(8_000, Duration::ZERO, "private-fixture".into()));
-    assert!(audio.finish(&[1, 0], &[], store::checkpoint::AudioEnding::Interrupted));
-    assert!(frames.close().await);
-    keeper
+    audio.finish(&[1, 0], &[], store::checkpoint::AudioEnding::Interrupted);
+    drop(frames);
+    Ok(keeper
         .close()
         .await?
         .context("Fixture checkpoint is missing")?
-        .interrupted()
+        .interrupted())
 }
 
 #[test]
@@ -328,16 +328,7 @@ async fn interrupted_listing_has_distinct_identity_and_original_expiry_without_r
 
     let saved = store::fresh_directory(root.path(), SystemTime::now())?;
     fs::create_dir(&saved)?;
-    let checkpoint_id = interrupted
-        .directory()
-        .file_name()
-        .unwrap()
-        .as_encoded_bytes();
-    fs::write(saved.join(".checkpoint"), checkpoint_id)?;
-    fs::write(
-        interrupted.directory().join("published"),
-        saved.file_name().unwrap().as_encoded_bytes(),
-    )?;
+    interrupted.lock()?.keep_for_retry()?;
     bytes.clear();
     output::list(std::iter::empty(), Some(root.path()), true, &mut bytes)?;
     let listing: Value = serde_json::from_slice(&bytes)?;
@@ -348,33 +339,6 @@ async fn interrupted_listing_has_distinct_identity_and_original_expiry_without_r
     assert!(
         saved.exists(),
         "Discarding pending audio removed its saved Show"
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn checkpoint_damage_is_reported_beside_readable_saved_shows() -> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let saved = root.path().join("20261030T010203Z");
-    demo(Some(saved.clone()), &mut io::sink())?;
-    let interrupted = interrupted(root.path()).await?;
-    fs::write(interrupted.directory().join("published"), b"invalid marker")?;
-    let mut bytes = Vec::new();
-    output::list(
-        recall::list(root.path())?,
-        Some(root.path()),
-        true,
-        &mut bytes,
-    )?;
-    let listing: Vec<Value> = serde_json::from_slice(&bytes)?;
-    assert_eq!(listing.len(), 2);
-    assert!(
-        listing.iter().any(|entry| entry["status"] == "unreadable"
-            && entry["problems"].as_array().unwrap().len() == 1)
-    );
-    assert!(
-        listing.iter().any(|entry| entry["status"] == "ok"
-            && entry["directory"] == saved.to_string_lossy().as_ref())
     );
     Ok(())
 }
