@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::Context as _;
 
-use super::{PIN, address, age, remove_if_present};
+use super::{PIN, address, age, found};
 
 pub(crate) fn delete(parent: &Path, directory: &Path) -> anyhow::Result<()> {
     address::managed_id(parent, directory)
@@ -82,7 +82,7 @@ pub(crate) fn set_kept(parent: &Path, directory: &Path, kept: bool) -> io::Resul
     if kept {
         fs::write(pin, [])?;
     } else {
-        remove_if_present(&pin)?;
+        found(fs::remove_file(&pin))?;
     }
     Ok(Retention::of(id.as_str(), kept))
 }

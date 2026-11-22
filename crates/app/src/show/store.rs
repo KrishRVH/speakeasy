@@ -190,11 +190,6 @@ fn found<T>(result: io::Result<T>) -> io::Result<Option<T>> {
     }
 }
 
-fn remove_if_present(path: &Path) -> io::Result<()> {
-    found(fs::remove_file(path))?;
-    Ok(())
-}
-
 fn stamp(name: &str) -> Option<&str> {
     let (stamp, suffix) = name.split_at_checked(16)?;
     let stamped = stamp.bytes().enumerate().all(|(index, byte)| match index {
