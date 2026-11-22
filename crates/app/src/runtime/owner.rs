@@ -75,15 +75,21 @@ struct Owner<P: Ports> {
 
 struct World<P: Ports> {
     ports: P,
+    /// Machine time zero; every `Moment` counts from here.
     origin: Instant,
+    /// The saved settings, which a temporary preset leaves alone: script permissions read them,
+    /// and a revert restores them once the machine settles.
     baseline: Config,
     styles: watch::Receiver<Style>,
     commands: Receiver<Directive>,
+    /// Random per run and part of every session token given to scripts, so a token from an
+    /// earlier run never matches.
     incarnation: u64,
     inputs: Receiver<Input>,
     reports: Receiver<Report>,
     recoveries: Receiver<Recovery>,
     practices: Receiver<mpsc::Sender<PracticeEvent>>,
+    /// Never carries a value; its closing stops the owner.
     stopping: Receiver<Infallible>,
     capture_events: Sender<CaptureEvent>,
     captures: Receiver<CaptureEvent>,
@@ -91,18 +97,27 @@ struct World<P: Ports> {
     shows: Receiver<ShowEvent>,
     permits: InputSender,
     last_show: Option<SavedShow>,
+    /// Bumped by `Env::announce` so the pill replays feedback for a report in an unchanged phase.
     reported: u64,
     worker: Worker<P::Speech>,
     microphone: Device<P::Microphone>,
     screen: Device<P::Screen>,
+    /// The current session's paste, print, publish, or reopen task.
     delivery: Option<JoinHandle<Delivered>>,
+    /// Deliveries and checkpoint releases left by sessions that ended first; each settles as
+    /// `Wake::Abandoned`.
     retiring: Vec<(SessionId, JoinHandle<Delivered>)>,
     snapshots: watch::Sender<Snapshot>,
     meter: watch::Sender<f32>,
     shortcut: Arc<str>,
     cancel_shortcut: Arc<str>,
+    /// The session whose chosen microphone was missing, so capture fell back to the system default;
+    /// the pill says so.
     default_microphone: Option<SessionId>,
+    /// The keep-awake assertion while a session is active: the display for a Show, the system
+    /// otherwise.
     awake: Option<(Keep, Option<P::Awake>)>,
+    /// A revert and a restart each wait until the machine is idle with no practice open.
     reverting: bool,
     restart: Option<Restarting>,
 }

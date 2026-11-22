@@ -61,12 +61,9 @@ before signaling so another drop cannot signal a reused PID.
 
 ## Linux desktop and transfer ownership
 
-Keep libei pointers on the desktop thread. `RTLD_NODELETE` preserves copied C function pointers.
-Terminate variadic capabilities with integer zero. Drop event, device, and ping references before
-the context. libei owns the transferred EIS descriptor, while the readiness registration and keymap
-own duplicates. Prepared input borrows the sender exclusively through submission. The resume ping
-orders the compositor's modifier state before paste on versions that support it. Shortcut events
-come from a separate stream. See [libei adapter](../crates/platform/src/linux/ei.rs).
+Keep libei pointers on the desktop thread. The [libei adapter](../crates/platform/src/linux/ei.rs)
+states its descriptor, drop-order, and resume-ping contracts beside the code. Shortcut events come
+from a separate stream.
 
 Wayland's clipboard loop consumes ownership and transfer events in bus order. A selection change
 needs the ownership event after the SetSelection reply because the backend can lag the frontend.

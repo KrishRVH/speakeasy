@@ -1,3 +1,5 @@
+// Release builds print machine values without their payload, so dictated text never reaches a
+// log or panic message. Tests derive the full `Debug` that explorer traces print.
 #[cfg(not(test))]
 macro_rules! redacted {
     ($($name:ident),+ $(,)?) => {
@@ -25,6 +27,8 @@ pub use self::{
 };
 use crate::gesture::{Action, Gesture, Moment, State, Timing};
 
+// Tests need every payload type `Clone + Debug` so the explorer can branch and print states;
+// release builds add no bounds.
 #[cfg(not(test))]
 pub trait Cargo {}
 
@@ -37,6 +41,10 @@ pub trait Cargo: Clone + std::fmt::Debug {}
 #[cfg(test)]
 impl<T: Clone + std::fmt::Debug> Cargo for T {}
 
+/// The types the machine carries without inspecting them.
+///
+/// The app's `runtime::native::Native` supplies real audio, text, and handles; the explorer and
+/// fixtures supply small stand-ins, so any ordering of events runs without hardware.
 pub trait Payload {
     type Config: Cargo;
     type Text: Cargo + Clone;
@@ -79,15 +87,26 @@ pub trait Payload {
     fn append(text: &mut Self::Heard, next: Self::Heard);
 }
 
+/// Every side effect the machine asks for.
+///
+/// The app's `runtime::owner::World` performs them, the explorer's `Oracle` records them, and
+/// `fixture::Log` does for unit tests. Calls return at once; their results come back later as
+/// [`Event`]s.
 pub trait Env<P: Payload> {
+    /// Opens insertion authority for a new session; `None` once input has closed.
     fn admit(&mut self) -> Option<P::Permit>;
 
     fn style(&mut self) -> P::Style;
 
+    /// Exempts the permit from native Escape, cancel, and interrupt, so only the machine ends it,
+    /// as Shows and recoveries need. False when the permit is no longer current.
     fn shield(&mut self, permit: &P::Permit) -> bool;
 
+    /// Ends the permit's authority, shielded or not.
     fn revoke(&mut self, permit: &P::Permit);
 
+    /// Opens the crash checkpoint for a Show begun at `started`. A `Lost` checkpoint warns and
+    /// the Show goes on without one.
     fn keep(&mut self, started: P::Instant) -> Keeping<P>;
 
     fn record_microphone(
@@ -105,33 +124,48 @@ pub trait Env<P: Payload> {
         frames: Option<P::FrameLog>,
     ) -> Result<(), P::Text>;
 
+    /// Asks the open recorder to stop and seal what it captured.
     fn finish(&mut self, recorder: Recorder);
 
+    /// Tears the recorder down; [`Event::Retired`] reports when the device is free again.
     fn retire(&mut self, recorder: Recorder);
 
+    /// Switches the open microphone to whole-recording recognition once a dictation becomes a
+    /// Show.
     fn listen_whole(&mut self);
 
+    /// Warns the open microphone that a cue sound is about to play, so speech detection does not
+    /// count the cue as speech.
     fn expect_cue(&mut self);
 
+    /// Starts saving microphone audio from `start` into the Show's checkpoint; false if refused.
     fn keep_audio(&mut self, log: P::AudioLog, start: P::Span, config: &P::Config) -> bool;
 
     fn pin(&mut self, taps: P::Taps);
 
     fn meter(&mut self, session: SessionId, level: P::Level);
 
+    /// Starts the speech engine; `reload` restarts it for changed settings.
     fn load(&mut self, config: &P::Config);
 
     fn reload(&mut self, config: &P::Config);
 
+    /// Restarts speech after a failure. The running engine is kept only if it answered or, with
+    /// `probe`, it responds to a probe; otherwise a fresh one loads.
     fn recover(&mut self, config: &P::Config, probe: bool);
 
+    /// Extracts `range` of `audio` for one segment's transcription request.
     fn cut(&mut self, audio: &P::Audio, range: &P::Range) -> Option<P::Audio>;
 
     fn transcribe(&mut self, request: Request<P>, config: &P::Config);
 
+    /// Applies style, writing settings, and vocabulary to heard text; `None` when nothing is left.
     fn compose(&mut self, heard: P::Heard, style: P::Style, config: &P::Config)
     -> Option<P::Heard>;
 
+    /// Hands final text over as `handoff` says: paste it into the focused app, print it to a
+    /// waiting script, or report it unclaimed by the script that captured it. The outcome
+    /// returns as [`Event::Delivered`].
     fn insert(
         &mut self,
         text: P::Heard,
@@ -140,12 +174,15 @@ pub trait Env<P: Payload> {
         handoff: Handoff<P>,
     );
 
+    /// Arms practice, the Settings try-it field that receives dictation instead of the focused
+    /// app; false if its view has gone.
     fn ready(&mut self, practice: &P::Practice) -> bool;
 
     fn refuse_practice(&mut self, practice: P::Practice);
 
     fn practise(&mut self, practice: &P::Practice, permit: &P::Permit, text: P::Heard) -> bool;
 
+    /// Saves a live or recovered Show; `receipt` answers the library's recovery request.
     fn publish(
         &mut self,
         publication: Publication<P>,
@@ -157,20 +194,27 @@ pub trait Env<P: Payload> {
 
     fn refuse_recovery(&mut self, receipt: P::Receipt, failure: &Failure<P>);
 
+    /// Moves an in-flight delivery aside so a newer session can start; it settles as
+    /// [`Event::Abandoned`].
     fn retire_delivery(&mut self, session: SessionId);
 
+    /// Releases an abandoned Show's checkpoint as `release` directs; settles as
+    /// [`Event::Abandoned`].
     fn release(&mut self, session: SessionId, checkpoint: P::Checkpoint, release: Release);
 
     fn remember(&mut self, shown: P::Shown);
 
+    /// Marks a new report so the UI shows feedback again even when the phase is unchanged.
     fn announce(&mut self);
 
     fn cue(&mut self, cue: Cue);
 
+    /// Keeps the sound output open through a session so cues start without opening a device.
     fn hold_cues(&mut self, held: bool);
 
     fn respond(&mut self, call: P::Call, reply: Result<Status<P>, Refusal>);
 
+    /// Closes the input, capture, and Show lanes at shutdown so no new work arrives.
     fn close_input(&mut self);
 }
 

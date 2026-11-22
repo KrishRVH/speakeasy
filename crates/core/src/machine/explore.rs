@@ -1,3 +1,7 @@
+//! Breadth-first search over every event ordering the abstract machine can reach, checking
+//! `invariants` after each step. Default tests stop at `SMOKE_DEPTH`; `mise run rust:explore`
+//! searches the whole space.
+
 mod alphabet;
 mod canonical;
 mod invariants;
@@ -17,10 +21,12 @@ const LIMIT: u64 = 3;
 
 const TIMING: Timing = Timing::new(1, 2, LIMIT);
 
+/// States holding more retiring sessions than this count as bounded and are not expanded.
 const RETIRING: usize = 2;
 
 const SMOKE_DEPTH: usize = 5;
 
+/// States expanded per parallel batch, which caps the successors held at once.
 const BATCH: usize = 1 << 14;
 
 #[derive(Clone)]
@@ -147,6 +153,7 @@ fn expand(state: &Explored) -> Result<Vec<Successor>, Broken> {
             },
             Step::Event(event) => event,
         };
+        // Replays the event once per combination of answers the oracle can give to `Env` queries.
         let mut script = Some(Vec::new());
         while let Some(answers) = script.take() {
             let (reached, effects, next) = apply(state, &event, answers);

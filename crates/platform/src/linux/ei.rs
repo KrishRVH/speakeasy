@@ -1,3 +1,6 @@
+//! Wayland input through libei, loaded at runtime: the paste chord or direct text goes over the
+//! EIS descriptor from the remote desktop portal.
+
 use std::{
     ffi::c_void,
     fs::File,
@@ -15,6 +18,7 @@ use xkbcommon::xkb::{self, Keysym};
 
 use super::{PasteChord, PasteKeys};
 
+// libei.h enum values; they are ABI.
 const EVENT_DISCONNECT: i32 = 2;
 const EVENT_SEAT_ADDED: i32 = 3;
 const EVENT_DEVICE_ADDED: i32 = 5;
@@ -27,8 +31,10 @@ const CAPABILITY_KEYBOARD: i32 = 1 << 2;
 const CAPABILITY_TEXT: i32 = 1 << 6;
 const KEYMAP_XKB: i32 = 1;
 
+/// libei's limit on UTF-8 bytes in one text frame.
 const MAX_TEXT_FRAME: usize = 254;
 
+/// XKB keycodes are evdev keycodes plus eight; libei takes evdev codes.
 const XKB_KEYCODE_OFFSET: u32 = 8;
 
 #[repr(C)]
@@ -47,11 +53,16 @@ struct EiPing([u8; 0]);
 type Unref<T> = unsafe extern "C" fn(*mut T) -> *mut T;
 type TextInput = unsafe extern "C" fn(*mut EiDevice, *const u8, usize);
 
+// Every listed symbol is libei 1.0 ABI and required. `text_utf8` (newer than libei 1.5) and
+// `ping` (libei 1.4) are optional: without them only direct text or the resume ping is lost.
 macro_rules! api {
     ($($name:ident: $kind:ty),+ $(,)?) => {
         pub(super) struct Api { $($name: $kind,)+ text_utf8: Option<TextInput>, ping: Option<PingApi> }
         impl Api {
             pub(super) fn load() -> anyhow::Result<Self> {
+                // SAFETY: each type is the symbol's C signature in libei's public ABI.
+                // RTLD_NODELETE keeps libei mapped for the life of the process, so the copied
+                // function pointers outlive `library`.
                 unsafe {
                     let library = Library::open(
                         Some("libei.so.1"),
@@ -132,6 +143,8 @@ impl PingApi {
 }
 
 pub(super) struct Sender {
+    // Fields drop in declaration order, so device and ping references go before the context they
+    // unregister from.
     keyboard: Option<Keyboard>,
     text: Option<Device>,
     context: Ref<Ei>,
@@ -149,9 +162,11 @@ impl Sender {
             unref: api.ei_unref,
         };
 
+        // libei owns the descriptor from here, including closing it.
         let status = unsafe { (api.ei_setup_backend_fd)(context.as_ptr(), fd.into_raw_fd()) };
         ensure!(status == 0, "Cannot connect the Wayland input sender");
 
+        // The readiness registration watches a duplicate of libei's descriptor.
         let readiness = unsafe { register_readiness((api.ei_get_fd)(context.as_ptr())) }?;
         Ok(Self {
             keyboard: None,
@@ -208,6 +223,8 @@ impl Sender {
         })
     }
 
+    /// Applies queued libei events. A disconnect error ends desktop input for good: libei sends
+    /// nothing after it, so later calls succeed without meaning it recovered.
     pub(super) fn dispatch(&mut self) -> anyhow::Result<()> {
         unsafe { (self.api.ei_dispatch)(self.context.as_ptr()) };
         while let Some(event) = self.next_event() {
@@ -246,6 +263,8 @@ impl Sender {
             if seat.is_null() || !(self.api.ei_seat_has_capability)(seat, CAPABILITY_KEYBOARD) {
                 return;
             }
+            // libei reads variadic capabilities until a non-positive value, so each list ends
+            // with 0.
             if self.api.text_utf8.is_some()
                 && (self.api.ei_seat_has_capability)(seat, CAPABILITY_TEXT)
             {
@@ -295,6 +314,8 @@ impl Sender {
         if let Some(keyboard) = &mut self.keyboard
             && keyboard.device.is(device)
         {
+            // Pausing lifts modifiers, and the EIS reports held ones only after a resume. It
+            // answers requests in order, so this ping's answer arrives after that report.
             let settling = resumed.then(|| ping(&self.api, &self.context)).flatten();
             keyboard.set_resumed(resumed, settling);
         }
@@ -355,12 +376,16 @@ fn ping(api: &Api, context: &Ref<Ei>) -> Option<Ref<EiPing>> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PasteBlocked {
+    /// No keyboard yet, or it is paused or still waiting on its resume ping.
     NoKeyboard,
+    /// The keymap could not be read, so held modifiers cannot be judged.
     NoKeyboardState,
     ShortcutKeys,
+    /// The active layout cannot type the paste chord.
     NoPasteKeys,
 }
 
+/// Checks the blockers in a fixed order so the root cause is the one reported.
 fn paste_readiness(
     resumed: bool,
     paste: Option<&KeymapPaste>,
@@ -378,6 +403,8 @@ fn paste_readiness(
         .ok_or(PasteBlocked::NoPasteKeys)
 }
 
+/// A paste every readiness check allowed. It borrows the sender exclusively, so no libei event
+/// can pause or remove the keyboard before `send`.
 #[must_use]
 pub(super) struct ReadyPaste<'a> {
     sender: &'a mut Sender,
@@ -397,6 +424,8 @@ impl ReadyPaste<'_> {
         let context = sender.context.as_ptr();
         let keyboard = keyboard.as_ptr();
 
+        // SAFETY: the exclusive borrow has kept the referenced keyboard resumed since the
+        // readiness check, and the sequence releases every key it presses before stopping.
         unsafe {
             (api.ei_device_start_emulating)(keyboard, sequence);
             for key in chord.presses() {
@@ -414,11 +443,13 @@ impl ReadyPaste<'_> {
 
 #[derive(Clone, Copy)]
 pub(super) enum TextBlocked {
+    /// libei predates text input, or the desktop offers no text device.
     Unsupported,
     Paused,
     NullCharacter,
 }
 
+/// Text every readiness check allowed, held by the same exclusive borrow as `ReadyPaste`.
 #[must_use]
 pub(super) struct ReadyText<'a, 't> {
     sender: &'a mut Sender,
@@ -440,6 +471,8 @@ impl ReadyText<'_, '_> {
         let context = sender.context.as_ptr();
         let device = device.as_ptr();
 
+        // SAFETY: as in `ReadyPaste::send`; each chunk outlives its call, holds no NUL, and fits
+        // one frame.
         unsafe {
             (api.ei_device_start_emulating)(device, sequence);
             for chunk in utf8_chunks(text) {
@@ -451,9 +484,14 @@ impl ReadyText<'_, '_> {
     }
 }
 
+/// Adding a keyboard replaces this whole value, so nothing learned about an earlier device
+/// survives.
 struct Keyboard {
     device: Device,
+    /// The resume ping still awaiting its answer; paste waits for it. Always `None` before
+    /// libei 1.4, which has no sender ping.
     settling: Option<Ref<EiPing>>,
+    /// `None` when the device's keymap could not be read.
     paste: Option<KeymapPaste>,
 }
 
@@ -539,6 +577,7 @@ struct PasteLayouts {
 
 impl PasteLayouts {
     fn new(keymap: &xkb::Keymap, keys: PasteKeys) -> Option<Self> {
+        // Caps Lock (`Lock`) never blocks paste, and Num Lock is masked out wherever it maps.
         let blockers = ["Shift", "Control", "Mod1", "Mod2", "Mod3", "Mod4", "Mod5"]
             .into_iter()
             .filter_map(|name| 1_u32.checked_shl(keymap.mod_get_index(name)))
@@ -608,11 +647,13 @@ unsafe fn device_keymap(api: &Api, device: *mut EiDevice) -> Option<xkb::Keymap>
         return None;
     }
 
+    // libei owns the keymap descriptor, so read through a duplicate.
     let descriptor = unsafe { BorrowedFd::borrow_raw(fd) };
     let file = File::from(descriptor.try_clone_to_owned().ok()?);
     let mut bytes = vec![0; size];
     file.read_exact_at(&mut bytes, 0).ok()?;
     let mut source = String::from_utf8(bytes).ok()?;
+    // The keymap can end in NUL padding, which xkbcommon cannot parse.
     source.truncate(source.trim_end_matches('\0').len());
     let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
     xkb::Keymap::new_from_string(
