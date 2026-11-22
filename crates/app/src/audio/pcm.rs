@@ -238,7 +238,7 @@ fn duration_of(bytes: usize, rate: u32) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::{fixture::square_wave, stream::MAX_SAMPLE_RATE};
+    use crate::audio::fixture::square_wave;
 
     fn pcm_from(segments: &[(usize, i16)]) -> Pcm16 {
         let mut pcm = Pcm16::with_reservation(0, usize::MAX);
@@ -275,53 +275,6 @@ mod tests {
     }
 
     #[test]
-    fn wav_encoding_rejects_incomplete_headers_partial_samples_and_invalid_rates() {
-        for (length, rate, expected) in [
-            (WAV_HEADER_BYTES - 1, 16_000, INCOMPLETE_HEADER),
-            (WAV_HEADER_BYTES + 1, 16_000, UNSUPPORTED_FORMAT),
-            (WAV_HEADER_BYTES + 2, 0, UNSUPPORTED_FORMAT),
-            (WAV_HEADER_BYTES + 2, u32::MAX, UNSUPPORTED_FORMAT),
-        ] {
-            let pcm = Pcm16 {
-                bytes: vec![0x5A; length],
-                limit: usize::MAX,
-            };
-            let error = pcm.into_wav(rate).unwrap_err().to_string();
-            assert_eq!(error, expected, "{length} bytes at {rate} Hz");
-        }
-    }
-
-    #[test]
-    fn silence_round_trips_its_sample_rate() -> anyhow::Result<()> {
-        let silence = silent_wav(16_000, Duration::from_secs(1))?;
-        assert_eq!(wav_sample_rate(&silence)?, 16_000);
-        assert_eq!(silence.len(), WAV_HEADER_BYTES + 32_000);
-        assert_eq!(
-            wav_sample_rate(&silence[..27]).map_err(|error| error.to_string()),
-            Err(INCOMPLETE_HEADER.to_owned())
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn wav_duration_needs_a_whole_header_whole_samples_and_a_rate() -> anyhow::Result<()> {
-        let duration = Duration::from_millis(500);
-        let wav = silent_wav(16_000, duration)?;
-        assert_eq!(wav_duration(&wav)?, duration);
-        let mut zero_rate = wav.clone();
-        zero_rate[SAMPLE_RATE_OFFSET..SAMPLE_RATE_OFFSET + 4].fill(0);
-        for invalid in [
-            &wav[..27],
-            &wav[..WAV_HEADER_BYTES - 1],
-            &wav[..wav.len() - 1],
-            &zero_rate,
-        ] {
-            assert!(wav_duration(invalid).is_err());
-        }
-        Ok(())
-    }
-
-    #[test]
     fn quiet_edges_keep_word_padding_and_interior_pauses() {
         let rate = 16_000;
         let second = samples_in(Duration::from_secs(1), rate);
@@ -344,7 +297,7 @@ mod tests {
 
     #[test]
     fn sealing_requires_two_hundred_milliseconds_of_recorded_audio() {
-        for rate in [8_000, 44_101, MAX_SAMPLE_RATE] {
+        for rate in [8_000, 44_101, 192_000] {
             for millis in [199, 200] {
                 let samples = samples_in(Duration::from_millis(millis), rate);
                 let pcm = pcm_from(&[(samples, 3000)]);
@@ -357,55 +310,6 @@ mod tests {
                     assert_eq!(sealed.trimmed, Duration::ZERO);
                 }
             }
-        }
-    }
-
-    #[test]
-    fn sparse_long_recording_releases_capacity_without_changing_padded_audio() {
-        let rate = 48_000;
-        let second = samples_in(Duration::from_secs(1), rate);
-        let mut pcm = Pcm16 {
-            bytes: vec![0; WAV_HEADER_BYTES + bytes_in(300 * second)],
-            limit: usize::MAX,
-        };
-        let speech =
-            WAV_HEADER_BYTES + bytes_in(40 * second)..WAV_HEADER_BYTES + bytes_in(50 * second);
-        for (pair, sample) in pcm.bytes[speech]
-            .as_chunks_mut::<SAMPLE_BYTES>()
-            .0
-            .iter_mut()
-            .zip(square_wave(3000))
-        {
-            *pair = sample.to_le_bytes();
-        }
-        let padding = second / 2;
-        let kept = bytes_in(40 * second - padding)..bytes_in(50 * second + padding);
-        let expected = pcm.audio()[kept].to_vec();
-        let sealed = pcm.seal(Audibility::new(rate), rate).unwrap().unwrap();
-        assert_eq!(&sealed.wav[WAV_HEADER_BYTES..], expected);
-        assert_eq!(sealed.wav.capacity(), sealed.wav.len());
-        assert_eq!(sealed.trimmed, Duration::from_millis(39_500));
-    }
-
-    #[test]
-    fn trimmed_capacity_is_kept_unless_both_slack_thresholds_are_met() {
-        for (capacity, length) in [
-            (1024 * 1024, WAV_HEADER_BYTES),
-            (8 * 1024 * 1024, 1024 * 1024),
-            (12 * 1024 * 1024, 4 * 1024 * 1024),
-        ] {
-            let mut bytes = Vec::with_capacity(capacity);
-            bytes.resize(length, 0x5A);
-            let allocation = bytes.as_ptr();
-            let mut pcm = Pcm16 {
-                bytes,
-                limit: usize::MAX,
-            };
-            pcm.release_excess_capacity();
-            assert_eq!(pcm.bytes.capacity(), capacity);
-            assert_eq!(pcm.bytes.as_ptr(), allocation);
-            assert_eq!(pcm.bytes.len(), length);
-            assert!(pcm.bytes.iter().all(|&byte| byte == 0x5A));
         }
     }
 

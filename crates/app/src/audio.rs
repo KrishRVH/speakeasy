@@ -12,13 +12,12 @@ pub(crate) mod fixture;
 
 use std::{
     fmt, mem,
-    panic::{self, AssertUnwindSafe},
     sync::Arc,
     thread::{self, Thread},
     time::{Duration, Instant},
 };
 
-use anyhow::{Context as _, anyhow};
+use anyhow::Context as _;
 use async_channel::{Receiver, Sender};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rtrb::{Consumer, RingBuffer};
@@ -60,7 +59,6 @@ const METER_FLOOR_DBFS: f32 = -54.0;
 const QUIETEST_METER_CEILING_DBFS: f32 = -30.0;
 const LOUDEST_METER_CEILING_DBFS: f32 = -10.0;
 const METER_CEILING_RELEASE_DB_PER_SECOND: f32 = 6.0;
-const CAPTURE_STOPPED: &str = "Microphone stopped unexpectedly. Try recording again.";
 
 pub(crate) struct Capture {
     signal: Signal,
@@ -132,17 +130,15 @@ impl Capture {
         let thread = OwnedThread::spawn("audio-capture", {
             let control = Arc::clone(&control);
             move || {
-                let ran =
-                    panic::catch_unwind(AssertUnwindSafe(|| work(&events, &control, &requests)));
+                let ran = work(&events, &control, &requests);
                 drop(requests);
                 let (outcome, device, tail) = match ran {
-                    Ok(Ok(Captured {
+                    Ok(Captured {
                         outcome,
                         device,
                         tail,
-                    })) => (outcome, Some(device), tail),
-                    Ok(Err(error)) => (Outcome::Finished(Err(error)), None, None),
-                    Err(_) => (Outcome::Finished(Err(anyhow!(CAPTURE_STOPPED))), None, None),
+                    }) => (outcome, Some(device), tail),
+                    Err(error) => (Outcome::Finished(Err(error)), None, None),
                 };
                 #[expect(
                     clippy::let_underscore_must_use,
@@ -181,7 +177,7 @@ impl Capturing for Capture {
         async move {
             #[expect(
                 clippy::let_underscore_must_use,
-                reason = "The recording outcome is already decided; retirement waits for all native cleanup even after a panic"
+                reason = "The recording outcome is already decided; retirement only waits for native cleanup"
             )]
             let _ = thread.join().await;
         }
@@ -323,14 +319,11 @@ impl Recorder {
         let (producer, ring) = RingBuffer::new(samples_in(RING_CAPACITY, rate));
         let (errors, stream_errors) = async_channel::bounded(1);
         let started = Instant::now();
-        let limit = samples_in(RECORDING_LIMIT, rate);
         let callbacks = CallbackState {
             channels,
             producer,
             control: Arc::clone(control),
             errors,
-            started,
-            limit,
         };
         let stream = build_stream(&device, &format, callbacks)?;
         proceed()?;
@@ -387,7 +380,6 @@ impl<D> Recorder<D> {
         let drained = self.drain(id, events, control, requests, &mut keeping);
         let finished = control.finished();
         control.finish();
-        control.quiesce();
         let ending = if matches!(drained, Ok(None)) {
             AudioEnding::Complete
         } else {
@@ -433,7 +425,6 @@ impl<D> Recorder<D> {
 
     fn stop(&self, control: &Control, lost: Option<Lost>) -> Option<Lost> {
         control.finish();
-        control.quiesce();
         lost.or_else(|| self.errors.try_recv().ok().map(Lost::from))
     }
 

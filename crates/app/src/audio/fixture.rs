@@ -84,14 +84,11 @@ pub(crate) fn replay(
         let started = Instant::now();
         let (producer, ring) = RingBuffer::new(samples_in(RING_CAPACITY, rate));
         let (errors, received) = async_channel::bounded(1);
-        let limit = samples_in(RECORDING_LIMIT, rate);
         let callbacks = CallbackState {
             channels: NonZeroUsize::MIN,
             producer,
             control: Arc::clone(control),
             errors,
-            started,
-            limit,
         };
         let (callback, _errors) = stream::capture_callbacks::<i16>(callbacks);
         let drain = thread::current();

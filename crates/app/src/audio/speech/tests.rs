@@ -4,10 +4,7 @@ use proptest::prelude::*;
 use speakeasy_core::machine::Cue;
 
 use super::*;
-use crate::{
-    audio::{fixture::square_wave, stream::MAX_SAMPLE_RATE},
-    sounds,
-};
+use crate::{audio::fixture::square_wave, sounds};
 
 const RATE: u32 = 16_000;
 const SECOND: usize = 32_000;
@@ -65,7 +62,7 @@ proptest! {
     #[test]
     fn packet_splits_do_not_change_whole_recording_trimming(
         rate in prop_oneof![
-            Just(1_u32), Just(49), Just(44_101), Just(MAX_SAMPLE_RATE), 1..=MAX_SAMPLE_RATE,
+            Just(1_u32), Just(49), Just(44_101), Just(192_000), 1..=192_000_u32,
         ],
         segments in prop::collection::vec(
             (0_u64..60, prop_oneof![Just(0_i16), Just(20), Just(98), Just(3000), any::<i16>()]),

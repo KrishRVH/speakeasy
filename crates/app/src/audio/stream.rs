@@ -1,5 +1,4 @@
 use std::{
-    iter,
     num::NonZeroUsize,
     sync::Arc,
     time::{Duration, Instant},
@@ -9,13 +8,10 @@ use anyhow::{Context as _, anyhow, bail, ensure};
 use async_channel::Sender;
 use cpal::{SampleFormat, SizedSample, traits::DeviceTrait};
 use rtrb::Producer;
-use speakeasy_core::gesture::RECORDING_LIMIT;
 
 use super::control::{Control, Mode};
 use crate::runtime::ports::Lost;
 
-pub(crate) const MAX_SAMPLE_RATE: u32 = 192_000;
-const MAX_CHANNELS: usize = 32;
 const UNSUPPORTED_FORMAT: &str = "Microphone format is unsupported. Change it in your system's sound settings, or choose another microphone in Settings.";
 pub(super) const STALL: Duration = Duration::from_secs(2);
 const NOT_SENDING: &str = "The microphone isn't sending audio.";
@@ -27,8 +23,6 @@ pub(super) struct CallbackState {
     pub(super) producer: Producer<f32>,
     pub(super) control: Arc<Control>,
     pub(super) errors: Sender<cpal::Error>,
-    pub(super) started: Instant,
-    pub(super) limit: usize,
 }
 
 pub(super) fn rate_and_channels(
@@ -37,10 +31,7 @@ pub(super) fn rate_and_channels(
     let rate = format.sample_rate();
     let channels = NonZeroUsize::new(usize::from(format.channels()))
         .context("Microphone has no input channels. Choose another microphone in Settings.")?;
-    ensure!(
-        (1..=MAX_SAMPLE_RATE).contains(&rate) && channels.get() <= MAX_CHANNELS,
-        UNSUPPORTED_FORMAT
-    );
+    ensure!(rate > 0, UNSUPPORTED_FORMAT);
     Ok((rate, channels))
 }
 
@@ -87,48 +78,32 @@ where
         mut producer,
         control,
         errors,
-        started,
-        limit,
     } = state;
     let error_control = Arc::clone(&control);
-    let mut timeline = 0_usize;
-    let mut owed = 0_usize;
     (
         move |data: &[T]| {
-            let _publishing = control.publishing();
-            if control.mode() != Mode::Recording || started.elapsed() >= RECORDING_LIMIT {
+            if control.mode() != Mode::Recording {
                 return;
             }
-            let frames = (data.len() / channels).min(limit.saturating_sub(timeline));
-            timeline = timeline.saturating_add(frames);
-            owed = owed.saturating_sub(queue(&mut producer, owed, iter::repeat(0.0)));
-            let queued = if owed == 0 {
-                let mono = data.chunks_exact(channels.get()).map(|frame| {
-                    frame
-                        .iter()
-                        .map(|sample| sample.to_sample::<f32>())
-                        .sum::<f32>()
-                        / channels.get() as f32
-                });
-                queue(&mut producer, frames, mono)
-            } else {
-                0
-            };
-            owed = owed.saturating_add(frames.saturating_sub(queued));
+            let mono = data.chunks_exact(channels.get()).map(|frame| {
+                frame
+                    .iter()
+                    .map(|sample| sample.to_sample::<f32>())
+                    .sum::<f32>()
+                    / channels.get() as f32
+            });
+            if let Ok(chunk) =
+                producer.write_chunk_uninit((data.len() / channels).min(producer.slots()))
+            {
+                chunk.fill_from_iter(mono);
+            }
         },
         move |error| {
-            let _publishing = error_control.publishing();
             if error_control.mode() == Mode::Recording {
                 handle_stream_error(error, &errors);
             }
         },
     )
-}
-
-fn queue(producer: &mut Producer<f32>, frames: usize, samples: impl Iterator<Item = f32>) -> usize {
-    producer
-        .write_chunk_uninit(frames.min(producer.slots()))
-        .map_or(0, |chunk| chunk.fill_from_iter(samples))
 }
 
 fn handle_stream_error(error: cpal::Error, errors: &Sender<cpal::Error>) {
