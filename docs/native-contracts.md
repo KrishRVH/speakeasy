@@ -394,7 +394,8 @@ task runs under its borrow. Speakeasy never calls `to_async` or keeps an `AsyncA
 `App::shutdown` runs the quit observers, then disposes windows and flushes effects, then polls the
 observers' futures for up to `SHUTDOWN_TIMEOUT` (200 ms). Speakeasy's observer removes the services
 before any window is disposed. The forced-exit fallback keeps the instance lock inside the returned
-future until window disposal has completed. Settings stays owned by its window alone.
+future until window disposal has completed. Settings stays owned by its window alone; disposing it
+waits for a write in progress and drops a draft still queued behind it.
 
 On macOS a deferred termination (`NSTerminateLater`) runs AppKit's nested run loop, which cannot
 drain the serial main queue that GPUI's foreground tasks need. The Apple dispatcher marks main-queue

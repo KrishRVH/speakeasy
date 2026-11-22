@@ -724,7 +724,9 @@ impl Settings {
     fn finish_save(&mut self, outcome: SaveOutcome, cx: &mut Context<'_, Self>) {
         let (applied, error) = match outcome {
             SaveOutcome::Saved(saved) => (Some(self.land_save(saved, cx)), None),
-            SaveOutcome::Failed(error) => (None, Some(error)),
+            SaveOutcome::Failed { error, earlier } => {
+                (earlier.map(|saved| self.land_save(saved, cx)), Some(error))
+            },
         };
         if error.is_some() {
             cx.update_global::<Services, _>(|services, cx| services.restore_owner(cx));

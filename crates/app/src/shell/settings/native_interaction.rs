@@ -67,7 +67,13 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     let applied = cx.global::<Services>().config.language.clone();
                     view.config.language = "de".into();
                     view.own_engine = true;
-                    view.finish_save(SaveOutcome::Failed("Synthetic save failure".into()), cx);
+                    view.finish_save(
+                        SaveOutcome::Failed {
+                            error: "Synthetic save failure".into(),
+                            earlier: None,
+                        },
+                        cx,
+                    );
                     ensure!(
                         view.config.language == applied
                             && !view.own_engine

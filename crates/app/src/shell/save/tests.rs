@@ -16,7 +16,9 @@ async fn write_result(progress: SaveProgress) -> anyhow::Result<anyhow::Result<S
 fn succeeded(progress: SaveProgress) -> anyhow::Result<Box<SavedConfig>> {
     match progress {
         SaveProgress::Finished(SaveOutcome::Saved(saved)) => Ok(saved),
-        SaveProgress::Finished(SaveOutcome::Failed(error)) => bail!("The save failed: {error}"),
+        SaveProgress::Finished(SaveOutcome::Failed { error, .. }) => {
+            bail!("The save failed: {error}")
+        },
         SaveProgress::Writing(_) => bail!("The save is still writing"),
     }
 }
@@ -47,6 +49,35 @@ async fn repeated_saves_replace_the_queued_draft_and_the_newest_lands_last() -> 
     );
     assert_eq!(Config::read(&path)?.threads, 16);
     assert!(queue.is_idle());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_failed_save_lands_the_earlier_write_it_overtook() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("settings.json");
+    let config = valid_config(directory.path())?;
+    let mut queue = SaveQueue::new(path.clone(), config.clone());
+    let first = queue
+        .submit(Config {
+            threads: 4,
+            ..config.clone()
+        })
+        .context("The first save was queued")?;
+    let unwritable = Config {
+        model: "missing.gguf".into(),
+        ..config.clone()
+    };
+    assert!(queue.submit(unwritable).is_none());
+    let latest = queue.finish(write_result(first).await?);
+    let SaveProgress::Finished(SaveOutcome::Failed { earlier, .. }) =
+        queue.finish(write_result(latest).await?)
+    else {
+        bail!("The failing save did not fail");
+    };
+    let earlier = earlier.context("The written save it overtook was dropped")?;
+    assert_eq!(earlier.validated.threads, 4);
+    assert_eq!(Config::read(&path)?.threads, 4);
     Ok(())
 }
 
@@ -125,7 +156,8 @@ async fn a_draft_needs_saving_until_the_file_holds_it_or_a_write_is_making_it() 
     let write = queue
         .submit(unwritable.clone())
         .context("The failing save was queued")?;
-    let SaveProgress::Finished(SaveOutcome::Failed(_)) = queue.finish(write_result(write).await?)
+    let SaveProgress::Finished(SaveOutcome::Failed { .. }) =
+        queue.finish(write_result(write).await?)
     else {
         bail!("The failing save did not fail");
     };

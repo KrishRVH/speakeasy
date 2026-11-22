@@ -29,7 +29,10 @@ pub(super) enum SaveProgress {
 
 pub(super) enum SaveOutcome {
     Saved(Box<SavedConfig>),
-    Failed(String),
+    Failed {
+        error: String,
+        earlier: Option<Box<SavedConfig>>,
+    },
 }
 
 pub(super) struct SaveQueue {
@@ -63,22 +66,26 @@ impl SaveQueue {
             running.queued = Some(draft);
             return None;
         }
-        Some(self.start(draft))
+        Some(self.start(draft, None))
     }
 
     pub(super) fn finish(&mut self, result: anyhow::Result<SavedConfig>) -> SaveProgress {
-        let queued = self.writing.take().and_then(|running| running.queued);
+        let (queued, earlier) = self
+            .writing
+            .take()
+            .map_or((None, None), |running| (running.queued, running.earlier));
         if let Ok(saved) = &result {
             self.held = saved.held();
             self.opened = None;
         }
-        match queued {
-            Some(draft) => self.start(draft),
-            None => finished(result),
+        match (queued, result) {
+            (Some(draft), Ok(saved)) => self.start(draft, Some(saved)),
+            (Some(draft), Err(_)) => self.start(draft, earlier),
+            (None, result) => finished(result, earlier),
         }
     }
 
-    fn start(&mut self, draft: Config) -> SaveProgress {
+    fn start(&mut self, draft: Config, earlier: Option<SavedConfig>) -> SaveProgress {
         let (held, path, submitted) = (self.held.clone(), self.path.clone(), draft.clone());
         let (complete, result) = async_channel::bounded(1);
         let thread = OwnedThread::spawn("settings-save", move || {
@@ -102,10 +109,11 @@ impl SaveQueue {
                     _thread: thread,
                     draft,
                     queued: None,
+                    earlier,
                 });
                 SaveProgress::Writing(result)
             },
-            Err(error) => finished(Err(error.into())),
+            Err(error) => finished(Err(error.into()), earlier),
         }
     }
 
@@ -114,17 +122,21 @@ impl SaveQueue {
     }
 }
 
-fn finished(result: anyhow::Result<SavedConfig>) -> SaveProgress {
-    SaveProgress::Finished(result.map_or_else(
-        |error| SaveOutcome::Failed(format!("{error:#}")),
-        |saved| SaveOutcome::Saved(Box::new(saved)),
-    ))
+fn finished(result: anyhow::Result<SavedConfig>, earlier: Option<SavedConfig>) -> SaveProgress {
+    SaveProgress::Finished(match result {
+        Ok(saved) => SaveOutcome::Saved(Box::new(saved)),
+        Err(error) => SaveOutcome::Failed {
+            error: format!("{error:#}"),
+            earlier: earlier.map(Box::new),
+        },
+    })
 }
 
 struct Running {
     _thread: OwnedThread,
     draft: Config,
     queued: Option<Config>,
+    earlier: Option<SavedConfig>,
 }
 
 #[cfg(test)]

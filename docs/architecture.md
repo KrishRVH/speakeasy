@@ -78,7 +78,8 @@ module unless a test file is named.
   saved settings. The [runtime](../crates/app/src/runtime.rs) handle keeps the baseline those
   requests leave in effect, apart from a transient preset, including after Resume, and compares each
   save with it, never with an older file. Settings keeps one write in flight and at most one queued
-  draft; a newer edit replaces the queued draft, and only the newest save lands. A save that changes
+  draft; a newer edit replaces the queued draft, and only the newest save lands. When it fails after
+  the write it overtook succeeded, that earlier write lands before the rollback. A save that changes
   what a session reads revokes input and ends the session at once; any other leaves recordings and
   Shows running. A rollback waits until no session or practice runs and then applies the newest
   baseline without replacing the result of the session that just ended. A save restarts the owner at
@@ -92,16 +93,14 @@ module unless a test file is named.
   running owner adopts one that changes what a session reads only while idle, Services makes it the
   configuration Resume starts on, and only then does Settings save it. A session that starts while
   that save is written therefore survives its completion, and a refused or unavailable preset
-  changes neither dictation nor the settings file. If a change to a setting the preset keeps comes
-  after the owner adopted it, if the save fails, or if Settings closes before it loads the owner's
-  answer, Services rolls back. Settings disables Use during a session. Without a live owner,
-  including one that stopped on its own, a valid candidate clears the transient selection. One that
-  changes the session becomes the configuration Resume starts on, following each newer draft
-  Settings writes, until the newest save lands or a failed one rolls it back. A transient selection
-  takes precedence in the Settings indicator, which follows Services as well as snapshots, while its
-  row still holds the definition that was chosen. Capturing a preset requires both speech paths; a
-  stored preset missing one still loads with its settings, and Use on it asks for an engine and
-  model without changing dictation.
+  changes neither dictation nor the settings file. If the save that follows fails, Services rolls
+  back. Settings disables Use during a session. Without a live owner, including one that stopped on
+  its own, a valid candidate clears the transient selection. One that changes the session becomes
+  the configuration Resume starts on, following each newer draft Settings writes, until the newest
+  save lands or a failed one rolls it back. A transient selection takes precedence in the Settings
+  indicator, which follows Services as well as snapshots, while its row still holds the definition
+  that was chosen. Capturing a preset requires both speech paths; a stored preset missing one still
+  loads with its settings, and Use on it asks for an engine and model without changing dictation.
 - **Audio capture**: [audio.rs](../crates/app/src/audio.rs) with
   [control.rs](../crates/app/src/audio/control.rs), [stream.rs](../crates/app/src/audio/stream.rs),
   [pcm.rs](../crates/app/src/audio/pcm.rs), [speech.rs](../crates/app/src/audio/speech.rs),
@@ -352,7 +351,8 @@ module unless a test file is named.
   [Mac acceptance](../crates/app/src/shell/shutdown/mac_acceptance.rs) holds an accepted Show write
   across external, nested, repeated, and app-owned quit, checking foreground frames and instance
   release without devices or input. [save/tests.rs](../crates/app/src/shell/save/tests.rs) checks
-  that repeated saves land only the newest draft and keep edits made during one;
+  that repeated saves land only the newest draft, that a failed save lands the write it overtook,
+  and that edits made during a save survive it;
   [lifecycle/tests.rs](../crates/core/src/lifecycle/tests.rs) checks terminal Quit and Pause or a
   resume check around Save.
 - **Start at login**: [windows/login.rs](../crates/platform/src/windows/login.rs) writes or deletes
@@ -956,8 +956,8 @@ Field order carries resource lifetime in these owners:
 - `Instance::close` closes the request lane and awaits its server thread. Dropping the instance
   removes its port file before the lock releases, so an exiting instance cannot delete a successor's
   port file.
-- Settings requests setup/update cancellation and flushes accepted saves before those fields join.
-  `Owners` requests both runtime and monitor stop before either joins.
+- Settings requests setup/update cancellation before those fields join. `Owners` requests both
+  runtime and monitor stop before either joins.
 
 Native show/window calls are deferred until GPUI releases its current window borrow: they can
 synchronously request another frame. One deferred task per window lets a superseding request cancel
