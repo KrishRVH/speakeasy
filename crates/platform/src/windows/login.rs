@@ -4,8 +4,8 @@ use anyhow::anyhow;
 use windows_sys::Win32::{
     Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, WIN32_ERROR},
     System::Registry::{
-        HKEY_CURRENT_USER, REG_ROUTINE_FLAGS, REG_SZ, REG_VALUE_TYPE, RRF_RT_ANY,
-        RRF_RT_REG_BINARY, RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW,
+        HKEY_CURRENT_USER, REG_ROUTINE_FLAGS, REG_SZ, REG_VALUE_TYPE, RRF_RT_REG_BINARY,
+        RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW,
     },
 };
 
@@ -77,34 +77,11 @@ fn write(key: &str, kind: REG_VALUE_TYPE, data: &[u8]) -> io::Result<()> {
 }
 
 fn delete(key: &str) -> io::Result<()> {
-    if !present(key)? {
-        return Ok(());
-    }
     let (key, value) = (to_wide(key), to_wide(VALUE));
 
     match unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, key.as_ptr(), value.as_ptr()) } {
         ERROR_FILE_NOT_FOUND => Ok(()),
         status => checked(status),
-    }
-}
-
-fn present(key: &str) -> io::Result<bool> {
-    let (key, value) = (to_wide(key), to_wide(VALUE));
-
-    let status = unsafe {
-        RegGetValueW(
-            HKEY_CURRENT_USER,
-            key.as_ptr(),
-            value.as_ptr(),
-            RRF_RT_ANY,
-            null_mut(),
-            null_mut(),
-            null_mut(),
-        )
-    };
-    match status {
-        ERROR_FILE_NOT_FOUND => Ok(false),
-        status => checked(status).map(|()| true),
     }
 }
 

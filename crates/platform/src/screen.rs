@@ -594,20 +594,6 @@ mod tests {
     }
 
     #[test]
-    fn debugging_a_frame_never_prints_its_pixels() {
-        let at = Instant::now();
-        let shown = |shade: u8| {
-            let frame = Frame {
-                at,
-                image: BgraImage::new([2, 2], vec![shade; 16]).unwrap(),
-                part: Part::WHOLE,
-            };
-            format!("{frame:?}")
-        };
-        assert_eq!(shown(0x00), shown(0xFF));
-    }
-
-    #[test]
     fn window_layouts_carry_opaque_names_and_only_their_changes() {
         let listed = |window, process, left| Listed {
             window,

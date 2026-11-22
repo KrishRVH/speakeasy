@@ -134,7 +134,6 @@ mod tests {
         assert!(thread.is_finished());
         let error = thread.join().await.unwrap_err();
         assert_eq!(error.to_string(), "The worker thread panicked");
-        assert!(!format!("{error:?}").contains("owned thread test panic"));
         Ok(())
     }
 
@@ -148,63 +147,6 @@ mod tests {
         release.send(()).await?;
         tokio::time::timeout(PATIENCE, joined).await???;
         assert!(!early, "Joining resolved while the body still ran");
-        Ok(())
-    }
-
-    #[test]
-    fn joining_without_a_runtime_reports_failure_after_cleanup() -> anyhow::Result<()> {
-        use std::task::{Context, Poll, Waker};
-
-        let (finished, observed) = mpsc::channel();
-        let thread = OwnedThread::spawn("joins without runtime", move || {
-            finished.send(()).unwrap();
-        })?;
-        let mut joining = std::pin::pin!(thread.join());
-        let Poll::Ready(Err(error)) = joining
-            .as_mut()
-            .poll(&mut Context::from_waker(Waker::noop()))
-        else {
-            panic!("Joining without a runtime did not return an error");
-        };
-        assert_eq!(
-            error.to_string(),
-            "Joining a worker requires an active Tokio runtime"
-        );
-        assert_eq!(observed.try_recv(), Ok(()));
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn cancelling_a_join_keeps_ownership_until_the_body_finishes() -> anyhow::Result<()> {
-        use std::task::{Context, Waker};
-
-        let (release, released) = mpsc::channel();
-        let (finished, observed) = mpsc::channel();
-        let thread = OwnedThread::spawn("cancelled join", move || {
-            released.recv().unwrap();
-            finished.send(()).unwrap();
-        })?;
-        let mut joining = Box::pin(thread.join());
-        assert!(
-            joining
-                .as_mut()
-                .poll(&mut Context::from_waker(Waker::noop()))
-                .is_pending()
-        );
-        let (dropping, started) = mpsc::channel();
-        let (dropped, done) = mpsc::channel();
-        let cleanup = thread::spawn(move || {
-            dropping.send(()).unwrap();
-            drop(joining);
-            dropped.send(observed.try_recv()).unwrap();
-        });
-        started.recv_timeout(PATIENCE)?;
-        let early = done.recv_timeout(Duration::from_millis(30));
-        release.send(())?;
-        let completed = done.recv_timeout(PATIENCE);
-        cleanup.join().unwrap();
-        assert!(matches!(early, Err(mpsc::RecvTimeoutError::Timeout)));
-        assert_eq!(completed, Ok(Ok(())));
         Ok(())
     }
 

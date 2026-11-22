@@ -1,6 +1,5 @@
 use std::{
-    fs,
-    io::{self, Read as _},
+    fs, io,
     path::{Path, PathBuf},
 };
 
@@ -9,8 +8,6 @@ use speakeasy_show::Wsl;
 const LXSS: &str = r"Software\Microsoft\Windows\CurrentVersion\Lxss";
 
 const SHARES: [&str; 2] = [r"\\wsl.localhost", r"\\wsl$"];
-
-const CONF_LIMIT: usize = 64 << 10;
 
 #[must_use]
 pub fn wsl() -> Option<Wsl> {
@@ -41,18 +38,8 @@ fn default_distribution(
     registry: impl Fn(&str, &str) -> Option<String>,
     mut conf: impl FnMut(&Path) -> Conf,
 ) -> Option<Wsl> {
-    let id = registry(LXSS, "DefaultDistribution").filter(|id| {
-        !id.is_empty()
-            && id
-                .chars()
-                .all(|character| character.is_ascii_hexdigit() || "{-}".contains(character))
-    })?;
-    let name = registry(&format!(r"{LXSS}\{id}"), "DistributionName").filter(|name| {
-        !matches!(name.as_str(), "" | "." | "..")
-            && name
-                .chars()
-                .all(|character| character.is_ascii_alphanumeric() || "._-".contains(character))
-    })?;
+    let id = registry(LXSS, "DefaultDistribution")?;
+    let name = registry(&format!(r"{LXSS}\{id}"), "DistributionName")?;
     SHARES.into_iter().find_map(|share| {
         match conf(&PathBuf::from(format!(r"{share}\{name}\etc"))) {
             Conf::Unreachable => None,
@@ -63,21 +50,13 @@ fn default_distribution(
 }
 
 fn read(etc: &Path) -> Conf {
-    if !fs::metadata(etc).is_ok_and(|metadata| metadata.is_dir()) {
+    if !etc.is_dir() {
         return Conf::Unreachable;
     }
-    let file = match fs::File::open(etc.join("wsl.conf")) {
-        Ok(file) => file,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Conf::Missing,
-        Err(_unreadable) => return Conf::Unreachable,
-    };
-    let mut text = String::new();
-    let length = u64::try_from(CONF_LIMIT)
-        .ok()
-        .and_then(|limit| file.take(limit).read_to_string(&mut text).ok());
-    match length {
-        Some(length) if length < CONF_LIMIT => Conf::Text(text),
-        _ => Conf::Unreachable,
+    match fs::read_to_string(etc.join("wsl.conf")) {
+        Ok(text) => Conf::Text(text),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Conf::Missing,
+        Err(_unreadable) => Conf::Unreachable,
     }
 }
 

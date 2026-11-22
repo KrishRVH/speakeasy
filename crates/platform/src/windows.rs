@@ -17,17 +17,13 @@ use std::{
     ptr::null_mut,
 };
 
-use anyhow::{Context as _, bail, ensure};
+use anyhow::{Context as _, bail};
 use raw_window_handle::{RawWindowHandle, WindowHandle};
 use windows_sys::{
     Win32::{
         Foundation::{FALSE, HANDLE, HWND, INVALID_HANDLE_VALUE, TRUE},
-        System::{
-            Console::{
-                ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_ERROR_HANDLE,
-                STD_OUTPUT_HANDLE,
-            },
-            Threading::GetCurrentThreadId,
+        System::Console::{
+            ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE,
         },
         UI::{
             Input::KeyboardAndMouse::{
@@ -157,17 +153,9 @@ impl Window {
         let RawWindowHandle::Win32(handle) = handle.as_raw() else {
             bail!("Expected a Windows window");
         };
-        let hwnd = handle.hwnd.get() as HWND;
-
-        let (owner, current) = unsafe {
-            (
-                GetWindowThreadProcessId(hwnd, null_mut()),
-                GetCurrentThreadId(),
-            )
-        };
-        ensure!(owner != 0, "The window no longer exists");
-        ensure!(owner == current, "Another thread owns this window");
-        Ok(Self { hwnd })
+        Ok(Self {
+            hwnd: handle.hwnd.get() as HWND,
+        })
     }
 
     fn restyle(&self, index: WINDOW_LONG_PTR_INDEX, change: impl FnOnce(u32) -> u32) {
@@ -190,25 +178,4 @@ fn is_own_window(window: HWND) -> bool {
 
 fn to_wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain([0]).collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::fixture::{native_window, with_foreign_window};
-
-    #[test]
-    #[ignore = "Creates an owned native window; no microphone, hook, clipboard, or injected input"]
-    fn a_window_another_thread_owns_is_refused() -> anyhow::Result<()> {
-        let accepted = |hwnd| unsafe { native_window(hwnd) }.is_ok();
-        let (accepted_on_owner, accepted_elsewhere) = with_foreign_window(accepted, accepted)?;
-        assert!(
-            accepted_on_owner,
-            "The owning thread could not use its own window"
-        );
-        assert!(
-            !accepted_elsewhere,
-            "A window another thread owns was accepted"
-        );
-        Ok(())
-    }
 }

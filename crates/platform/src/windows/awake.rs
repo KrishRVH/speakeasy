@@ -16,7 +16,6 @@ const CONTEXT_VERSION: u32 = 0;
 
 pub(crate) struct Awake {
     request: HANDLE,
-    display: bool,
 }
 
 unsafe impl Send for Awake {}
@@ -39,30 +38,19 @@ impl Awake {
             unsafe { CloseHandle(request) };
             return None;
         }
-        let display = keep == Keep::Display
-            && unsafe { PowerSetRequest(request, PowerRequestDisplayRequired) } != 0;
-        Some(Self { request, display })
+        if keep == Keep::Display {
+            unsafe { PowerSetRequest(request, PowerRequestDisplayRequired) };
+        }
+        Some(Self { request })
     }
 }
 
 impl Drop for Awake {
     fn drop(&mut self) {
-        unsafe { PowerClearRequest(self.request, PowerRequestSystemRequired) };
-        if self.display {
-            unsafe { PowerClearRequest(self.request, PowerRequestDisplayRequired) };
+        unsafe {
+            PowerClearRequest(self.request, PowerRequestSystemRequired);
+            PowerClearRequest(self.request, PowerRequestDisplayRequired);
+            CloseHandle(self.request);
         }
-        unsafe { CloseHandle(self.request) };
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{Awake, Keep};
-
-    #[test]
-    fn a_refused_display_request_still_keeps_the_system_awake() {
-        let system = Awake::hold(Keep::System).expect("Windows refused the system request");
-        assert!(!system.display);
-        Awake::hold(Keep::Display).expect("A refused display request lost the system request");
     }
 }

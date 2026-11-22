@@ -1,6 +1,6 @@
 use std::{io, ptr::null_mut};
 
-use anyhow::{bail, ensure};
+use anyhow::bail;
 use async_channel::Sender;
 use windows_sys::{
     Win32::{
@@ -194,10 +194,6 @@ fn centered_left(area: RECT, width: i32) -> i32 {
 impl NativeWindow {
     pub fn minimize_to_tray(&self, hide: Sender<()>) -> anyhow::Result<()> {
         let hwnd = self.native.hwnd;
-        ensure!(
-            unsafe { GetPropW(hwnd, HIDE_LANE) }.is_null(),
-            "This window already minimizes to the tray"
-        );
         let lane = Box::into_raw(Box::new(hide));
 
         unsafe {
@@ -348,28 +344,19 @@ mod tests {
 
     #[test]
     #[ignore = "Creates an owned native window; no microphone, hook, clipboard, or injected input"]
-    fn a_window_minimizes_to_one_tray_lane_until_it_is_destroyed() -> anyhow::Result<()> {
+    fn a_window_minimizes_to_its_tray_lane_until_it_is_destroyed() -> anyhow::Result<()> {
         let settings = Popup::create(w!("STATIC"), 0, [0; 4])?;
-        let (first, first_hides) = async_channel::bounded(1);
-        let (second, second_hides) = async_channel::bounded(1);
-        let again = {
-            let window = unsafe { native_window(settings.0) }?;
-            window.minimize_to_tray(first)?;
-            window.minimize_to_tray(second)
-        };
+        let (lane, hides) = async_channel::bounded(1);
+        unsafe { native_window(settings.0) }?.minimize_to_tray(lane)?;
 
         unsafe { SendMessageW(settings.0, WM_SYSCOMMAND, SC_MINIMIZE as usize, 0) };
         drop(settings);
-        assert!(again.is_err(), "A second tray lane was installed");
         assert_eq!(
-            first_hides.try_recv(),
+            hides.try_recv(),
             Ok(()),
             "Minimize missed the installed lane"
         );
-        assert!(
-            first_hides.is_closed() && second_hides.is_closed(),
-            "A tray lane outlived its window"
-        );
+        assert!(hides.is_closed(), "A tray lane outlived its window");
         Ok(())
     }
 

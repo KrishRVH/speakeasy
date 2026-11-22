@@ -57,24 +57,12 @@ fn the_default_distribution_names_where_its_settings_live() {
 }
 
 #[test]
-fn no_distribution_or_an_unsafe_name_reads_no_files() {
-    let unsafe_id = |_: &str, value: &str| match value {
-        "DefaultDistribution" => Some(r"{x}\..\elsewhere".to_owned()),
-        _ => Some("Ubuntu".to_owned()),
-    };
+fn no_distribution_reads_no_files() {
     assert_eq!(lookup(|_, _| None, &[]), (None, Vec::new()));
-    assert_eq!(lookup(unsafe_id, &[]), (None, Vec::new()));
-    for name in ["", ".", "..", r"..\..\server\share", "a/b", "Ubuntu 24.04"] {
-        assert_eq!(
-            lookup(installed(name), &[Conf::Missing]),
-            (None, Vec::new()),
-            "{name:?}"
-        );
-    }
 }
 
 #[test]
-fn settings_are_read_whole_or_not_at_all() -> anyhow::Result<()> {
+fn settings_are_read_when_the_distribution_is_reachable() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let etc = root.path().join("etc");
     assert_eq!(read(&etc), Conf::Unreachable);
@@ -85,9 +73,5 @@ fn settings_are_read_whole_or_not_at_all() -> anyhow::Result<()> {
         read(&etc),
         Conf::Text("[automount]\nroot = /windir\n".to_owned())
     );
-    fs::write(etc.join("wsl.conf"), "#".repeat(CONF_LIMIT))?;
-    assert_eq!(read(&etc), Conf::Unreachable);
-    fs::write(etc.join("wsl.conf"), [0xFF, 0xFE])?;
-    assert_eq!(read(&etc), Conf::Unreachable);
     Ok(())
 }

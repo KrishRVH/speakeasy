@@ -31,15 +31,8 @@ pub(crate) fn text(key: &str, value: &str) -> io::Result<Option<OsString>> {
         status => return Err(io::Error::from_raw_os_error(status.cast_signed())),
     }
     let units = usize::try_from(length / 2).map_err(io::Error::other)?;
-    let terminated = buffer
-        .get(..units)
-        .filter(|_| length.is_multiple_of(2))
-        .and_then(<[u16]>::split_last);
-    match terminated {
-        Some((0, text)) if !text.contains(&0) => Ok(Some(OsString::from_wide(text))),
-        _ => Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "The registry value is not one terminated string",
-        )),
-    }
+    let text = buffer.get(..units).unwrap_or_default();
+    Ok(Some(OsString::from_wide(
+        text.strip_suffix(&[0]).unwrap_or(text),
+    )))
 }
