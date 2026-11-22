@@ -18,7 +18,7 @@ bindings** with **Copy for manual paste** use the X11 adapter outright.
 
 | Desktop path             | Shortcut handling                                                     | Insertion                                                         |
 | ------------------------ | --------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| X11                      | Passive chord grabs, XI2 release observation                          | Clipboard ownership checks and XTest paste                        |
+| X11                      | Passive chord grabs, XI2 release observation                          | Clipboard copy and XTest paste                                    |
 | Wayland                  | GlobalShortcuts portal with accepted bindings                         | Keyboard-only RemoteDesktop, optional Clipboard portal, and libei |
 | Desktop command bindings | `speakeasy --toggle` and `speakeasy --cancel`, as Settings shows them | Explicit automatic or manual-paste preference                     |
 
@@ -45,10 +45,9 @@ registers it before other portal calls; a portal that predates the host registry
 Speakeasy from its launcher. See the [installation instructions](../README.md#linux-experimental).
 
 Except with **Copy for manual paste**, which opens no RemoteDesktop session, Wayland requests
-keyboard access and optional Clipboard access, and never screen capture. Restore credentials are
-single-use, private 0600 files under the XDG state directory. They are absent from settings and
-diagnostics. Frontend restart, session closure, device pause, and disconnect invalidate usable
-state.
+keyboard access and optional Clipboard access, and never screen capture. Restore tokens are consumed
+once and replaced with the token the desktop returns. Frontend restart, session closure, device
+pause, and disconnect invalidate usable state.
 
 Insertion follows the shared commit permit and cancellation rules in
 [cross-module invariants](architecture.md#cross-module-invariants). Immediately before submitting
@@ -67,16 +66,11 @@ the EIS modifier events as
 key from the advertised layout. Shortcut deactivation alone is insufficient. A paused EI keyboard or
 a keymap Speakeasy cannot read yields an explicit manual-paste result. X11 automatic paste requires
 the first keyboard layout with an unshifted V key; other layouts receive manual-paste guidance.
-Clipboard writes are followed by ownership, content, and cancellation checks; cleanup never restores
-a stale clipboard payload. Submitted synthetic keys receive release cleanup even after partial
-failure. X11 queues each paste and its releases before one server synchronization and checks every
-submission. Manual copy skips the modifier wait. Wayland serves bounded, asynchronous clipboard
-transfers while receiving input and cancellation, and a failed transfer fails only that paste;
-clipboard calls through Xwayland run on a serialized, owned worker. A committed clipboard selection
-remains available until the portal accepts a newer copy, ownership changes, or the service retires.
-A copy the portal refuses leaves that selection in place. Once the portal accepts a newer copy, or
-stops answering before it decides, the desktop can offer that copy at any later time, so Speakeasy
-serves nothing until the newer copy commits.
+Manual copy skips the modifier wait. X11 copies text once before submitting XTEST keys. Wayland
+serves committed clipboard text asynchronously while receiving input and cancellation. Clipboard
+calls through Xwayland run on an owned worker. A committed portal selection remains available until
+the desktop accepts a replacement, ownership changes, or the service retires. A copy the portal
+declines leaves the previous selection available.
 
 Settings' **Insert text by** control offers **Paste (Ctrl+V)**, **Paste (Ctrl+Shift+V)** for
 terminals, **Type (keeps clipboard)**, and **Copy for manual paste**. The `text_delivery` setting
@@ -181,9 +175,9 @@ owns keyboard consent, pending requests, restore tokens, and the EI connection. 
 `ConnectToEIS`, D-Bus `Notify*` injection cannot be used on that session.
 [Clipboard](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.Clipboard.html)
 extends an approved session: request it before Start and check `clipboard_enabled`. Its transfer
-serial identifies a request rather than a global ownership sequence. Keep owned selections and
-transfer descriptors alive as required, retire stale transfers, and preserve a newer clipboard
-owner.
+serial identifies a request. See
+[native contracts](native-contracts.md#linux-desktop-and-transfer-ownership) for selection and
+transfer lifetimes.
 
 EI sender feedback reports logical XKB masks, not a passive physical key stream. Parse the device
 keymap and inspect relevant modifier indices; Caps/Num Lock alone must not block insertion. A client
@@ -240,7 +234,7 @@ does not establish inference compatibility. Preserve the
 
 | Environment                      | Required checks                                                                                                                                                      | Status  |
 | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| X11 desktop                      | Hold/double-tap, keymaps, clipboard-manager races, focus and click-through                                                                                           | Pending |
+| X11 desktop                      | Hold/double-tap, keymaps, automatic and manual paste, focus and click-through                                                                                        | Pending |
 | GNOME Wayland                    | Accepted bindings, EI modifier/text support, portal denial/revocation, no-tray behavior, focus loss to a native Wayland editor                                       | Pending |
 | KDE Wayland                      | Accepted bindings, EI state, permission recovery, layer-shell pill over fullscreen windows, Settings close and tray reopening, focus loss to a native Wayland editor | Pending |
 | sway, Hyprland, or niri          | Layer-shell pill placement, idle unmapping, and output hotplug, direct scanout of fullscreen windows beneath the idle pill, Settings close and reopening             | Pending |

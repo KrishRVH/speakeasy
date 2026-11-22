@@ -691,9 +691,9 @@ keyboard map, pause and resume dictation.
 
 A tray host is optional: without one, closing Settings quits and the launcher reopens the app.
 Configuration lives under `$XDG_CONFIG_HOME/speakeasy`, downloads under `$XDG_DATA_HOME/speakeasy`,
-and private portal restore credentials under `$XDG_STATE_HOME/speakeasy`, with standard home
-directory defaults. Some CPUs without AVX-512 cannot run the pinned Linux CPU engine; Speakeasy
-checks before readiness and explains how to choose another engine in Settings
+and portal restore tokens under `$XDG_STATE_HOME/speakeasy`, with standard home directory defaults.
+Some CPUs without AVX-512 cannot run the pinned Linux CPU engine; Speakeasy checks before readiness
+and explains how to choose another engine in Settings
 ([details](docs/linux-implementation.md#setup-and-distribution)).
 
 ## Speech engines

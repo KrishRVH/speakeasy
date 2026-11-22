@@ -152,40 +152,19 @@ a modifier event that arrives in a later dispatch. Global shortcut signals can a
 with those events and never reset the modifier state. A disconnect ends the service even though
 later dispatch calls may succeed.
 
-Portal transfer descriptors are owned, set nonblocking before AsyncFd registration and retained
-until the transfer future drops. Speakeasy subscribes to portal restarts before it reads the
-portal's unique bus name, then sends every portal call to that name, so a restart during startup
-ends the service instead of splitting calls and signals between two portals. Portal signal match
-rules name that unique name rather than the well-known one, so zbus also drops a signal another
-client addresses straight to Speakeasy's connection; a malformed shortcut or transfer signal is
-skipped, and a malformed ownership change counts as lost ownership. Session-scoped signal streams
-keep draining while transfers are full. A replacement selection counts as owned only after an
-ownership change received after its SetSelection reply, because the portal frontend replies before
-its backend sets the selection; ownership changes do not name the selection they belong to, so a
-late change for the previous copy can still confirm a replacement. A transfer Speakeasy declines,
-for a full transfer set, a paste replacing the selection, another MIME type, or no current committed
-copy, still gets SelectionWrite: its descriptor closes empty and SelectionWriteDone reports failure,
-since Mutter ends a transfer only when its descriptor closes. Refusals run beside the insertion
-loop, at most `SIGNAL_BACKLOG` at once, and up to `SIGNAL_BACKLOG` more wait their turn in arrival
-order; a request past those ends the service, whose session close retires the transfers still open.
-A transfer whose selection was invalidated before it started still asks for its descriptor and
-closes it empty. The insertion loop polls method replies and new insertions ahead of transfer
-requests, and on the desktop thread's single-threaded runtime a signal stream refills only between
-polls, at most `SIGNAL_BACKLOG` messages at a time, so transfer requests cannot hold off an
-insertion. The portal clipboard serves bytes only after the permit commits to paste or manual copy.
-Selection loss invalidates its transfer payloads. Writes and reporting have deadlines. An X11 copy
-that waits for released keys watches XFixes selection-owner notifications during the wait and
-refuses to overwrite any copy made meanwhile, even one from an app that keeps its owner window. An X
-server without XFixes degrades only that wait, which then compares the owner window before and after
-it and so misses a new copy from an app that keeps its owner window. X11 clipboard serving and
-insertion have separate owners; before committing paste, the X11 paste confirms that the clipboard
-still holds the dictated text from the same owner and only then samples focus, layout, and held
-modifiers, because a clipboard manager can take seconds to answer that read. It then reads the owner
-window once more, one server round trip, immediately before committing: Speakeasy's own window owns
-the dictated text, so a copy made during those queries changes the owner and refuses the paste. A
-content check that fails or errors never leaves the clipboard for manual paste, and Escape during a
-check that errors reports cancellation rather than the error. The last check and XTEST submission
-are not one atomic server transaction.
+Wayland calls the desktop portal by its well-known name. A portal restart or closure of one of
+Speakeasy's sessions stops desktop access. Pause closes outstanding consent and session objects. The
+clipboard stream delivers ownership and transfer events in bus order. A new selection needs an
+ownership event after the SetSelection reply because the portal frontend replies before its backend
+sets the selection. The insertion loop publishes text after the permit commits, and drops the
+selection on ownership loss. Transfers already started retain their text snapshot. The transfer loop
+calls SelectionWrite and SelectionWriteDone with deadlines. When no copy is available, it closes the
+descriptor empty because Mutter waits for it to close. Descriptors are owned and nonblocking while
+registered with AsyncFd.
+
+X11 owns clipboard and paste work on a separate thread. arboard sends SetSelectionOwner on its own
+connection without waiting for the server. One read through arboard orders the claim before XTEST on
+Speakeasy's other connection. XTEST queues the chord with all its releases before synchronizing.
 
 ## Linux realtime opt-out
 

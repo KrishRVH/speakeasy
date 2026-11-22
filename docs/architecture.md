@@ -208,11 +208,13 @@ module unless a test file is named.
   [windows/insertion.rs](../crates/platform/src/windows/insertion.rs),
   [macos.rs](../crates/platform/src/macos.rs), [linux/x11/](../crates/platform/src/linux/x11),
   [linux/portal/](../crates/platform/src/linux/portal), and
-  [linux/ei.rs](../crates/platform/src/linux/ei.rs) own delivery, the permit commit, and clipboard
-  checks. [insertion/continuation.rs](../crates/platform/src/insertion/continuation.rs) decides the
-  one space between back-to-back dictations from the last sent text's final character, its target,
-  and an activity snapshot; that trail is the commit worker's only state between requests. Settings
-  and Shows report their activation through `report_focus` in
+  [linux/ei.rs](../crates/platform/src/linux/ei.rs) own delivery and the permit commit. On Linux, an
+  X11 worker copies text and reads focus. The Wayland insertion loop also serves clipboard transfers
+  when the desktop grants Clipboard access.
+  [insertion/continuation.rs](../crates/platform/src/insertion/continuation.rs) decides the one
+  space between back-to-back dictations from the last sent text's final character, its target, and
+  an activity snapshot; that trail is the commit worker's only state between requests. Settings and
+  Shows report their activation through `report_focus` in
   [shell/window.rs](../crates/app/src/shell/window.rs) to a `FocusReport`, starting with the state a
   window opens in, since Windows can open one already active without an activation change; every
   platform refuses input while its `OwnFocus` is held, whatever the OS reports about focus; on a
