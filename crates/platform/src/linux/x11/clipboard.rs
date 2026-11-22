@@ -121,25 +121,24 @@ enum ClipboardRequest {
 impl ClipboardRequest {
     fn perform(self, clipboard: &mut impl ClipboardAccess) {
         match self {
-            Self::Target { permit, reply } => answer(&permit, reply, false, || {
+            Self::Target { permit, reply } => answer(&permit, reply, || {
                 clipboard.external_target(HostSession::Wayland)
             }),
             Self::Set {
                 text,
                 permit,
                 reply,
-            } => answer(&permit, reply, false, || clipboard.set_text(&text, &permit)),
+            } => answer(&permit, reply, || clipboard.set_text(&text, &permit)),
         }
     }
 }
 
-fn answer<T>(
+fn answer(
     permit: &InsertPermit,
-    reply: Reply<anyhow::Result<T>>,
-    idle: T,
-    work: impl FnOnce() -> anyhow::Result<T>,
+    reply: Reply<anyhow::Result<bool>>,
+    work: impl FnOnce() -> anyhow::Result<bool>,
 ) {
-    reply.send(if permit.active() { work() } else { Ok(idle) });
+    reply.send(if permit.active() { work() } else { Ok(false) });
 }
 
 pub(in crate::linux) trait ClipboardAccess {
