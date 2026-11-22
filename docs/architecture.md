@@ -124,13 +124,12 @@ module unless a test file is named.
   driver glitch (`Xrun`), denied real-time scheduling, or a rerouted device leaves a gap and
   recording continues; cpal's callback timestamps cannot measure the lost span on every backend, so
   the gap stays unfilled. When the drain falls behind and the ring fills, the callback drops what
-  does not fit. Any other stream error loses the microphone,
-  and so does a ring that stays empty for two seconds after samples arrived. Audio that passes the
-  speech gate then seals and reaches the owner as `CaptureEvent::Lost` with a short notice and an
-  actionable failure; otherwise the failure ends the recording. A stream that sends no samples for
-  its first two seconds fails as not sending audio rather than as no speech. Callbacks stop
-  queueing once the drain advances the capture mode. Mode only advances, so a late finish cannot
-  undo cancellation.
+  does not fit. Any other stream error loses the microphone, and so does a ring that stays empty for
+  two seconds after samples arrived. Audio that passes the speech gate then seals and reaches the
+  owner as `CaptureEvent::Lost` with a short notice and an actionable failure; otherwise the failure
+  ends the recording. A stream that sends no samples for its first two seconds fails as not sending
+  audio rather than as no speech. Callbacks stop queuing once the drain advances the capture mode.
+  Mode only advances, so a late finish cannot undo cancellation.
 - **Sound cues**: [sounds.rs](../crates/app/src/sounds.rs) plays the cues the owner asks for through
   `Ports::cue` on an owned output thread, which `Ports::hold_cues` keeps open through each session.
   A recording may overhear a cue, so [speech.rs](../crates/app/src/audio/speech.rs) hears only the
