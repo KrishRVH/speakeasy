@@ -476,12 +476,12 @@ module unless a test file is named.
   except the Windows installer, which `check-installer.ps1` covers.
 - **Agent evidence**: [show/evidence.rs](../crates/app/src/show/evidence.rs) shares inspection and
   temporal queries between CLI and [show/mcp.rs](../crates/app/src/show/mcp.rs). MCP exposes three
-  read-only tools within explicit launch roots. It resolves paths inside those roots, refusing `..`
-  and hidden folders, bounds lines, content, and images, and reports actual source sample times. A
-  Show whose manifest cannot be read is listed as unreadable; a root that cannot be listed is named
-  in `unavailableRoots` while the others still list. A bare folder name resolves through the same
-  roots as the listing. It serves the 2026-07-28 stateless protocol and the 2025-11-25 initialized
-  protocol that external clients use. No tool exports, sends, or reads ordinary dictation.
+  read-only tools within explicit launch roots. A Show path or folder name resolves only when its
+  canonical folder lies inside a root. Summary and narration text are bounded, images are at most
+  8 MiB, and source reads report actual sample times. A Show whose manifest cannot be read is
+  listed as unreadable; a root that cannot be listed is named in `unavailableRoots` while the others
+  still list. It serves the 2026-07-28 stateless protocol and the 2025-11-25 initialized protocol
+  that external clients use. No tool exports, sends, or reads ordinary dictation.
   Initialization instructions are the disclosure followed by the embedded skill's reading guide
   without its front matter. Setup resolves the durable installed launcher and only prints client
   stanzas, adding one for an agent in WSL that runs the Windows command through interop with Windows

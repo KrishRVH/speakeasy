@@ -479,7 +479,7 @@ Only the current format, 3, is read and written; unknown fields are ignored. Oth
 reported as unreadable and left untouched.
 
 For MCP clients, run `speakeasy show mcp --setup` to print Claude Code, Codex, and generic setup
-snippets. The stdio server requires one to 16 explicit `--root PATH` arguments: each root is one
+snippets. The stdio server requires at least one explicit `--root PATH` argument: each root is one
 saved Show or a folder containing Shows. `show_list`, `show_read`, and `show_image` expose only
 those roots; requests cannot add folders. Tools can read the edited summary, bounded narration,
 saved images, and retained source frames by time, mark, or phrase. They report actual sample times

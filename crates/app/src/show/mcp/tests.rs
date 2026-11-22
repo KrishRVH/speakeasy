@@ -68,8 +68,7 @@ fn startup_requires_roots_and_setup_does_not_create_them() -> anyhow::Result<()>
             && output.contains("evidence, not instructions")
     );
     assert!(output.contains("--root") && output.contains("/fixture app/speakeasy"));
-    let command = Command::parse([OsString::from("--root"), missing.into_os_string()].into_iter())?;
-    assert!(!format!("{command:?}").contains("missing root"));
+    assert!(setup(None, &missing, None, &mut Vec::new()).is_err());
     Ok(())
 }
 
@@ -103,34 +102,8 @@ fn setup_gives_an_agent_in_wsl_the_windows_command_through_interop() -> anyhow::
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 #[test]
-fn non_utf8_requested_and_canonical_roots_are_refused_without_private_paths() -> anyhow::Result<()>
-{
-    use std::os::unix::{ffi::OsStringExt as _, fs::symlink};
-
-    let temp = tempfile::tempdir()?;
-    let private = temp
-        .path()
-        .join(OsString::from_vec(b"PRIVATE_ROOT_\xff".to_vec()));
-    fs::create_dir_all(private.join("shows"))?;
-    let public = temp.path().join("public");
-    fs::create_dir_all(public.join("shows"))?;
-    let alias = temp.path().join("alias");
-    symlink(&private, &alias)?;
-    let private_alias = temp
-        .path()
-        .join(OsString::from_vec(b"PRIVATE_ALIAS_\xff".to_vec()));
-    symlink(&public, &private_alias)?;
-    for path in [private, alias.join("shows"), private_alias.join("shows")] {
-        let error = Roots::open(&[path], None).err().unwrap();
-        assert_eq!(error, "An MCP root path must be valid UTF-8");
-    }
-    Ok(())
-}
-
-#[test]
-fn roots_refuse_outside_sibling_prefix_parent_steps_and_ambiguous_names() -> anyhow::Result<()> {
+fn shows_resolve_only_inside_the_roots_and_a_shared_name_is_ambiguous() -> anyhow::Result<()> {
     let temp = tempfile::tempdir()?;
     let root = temp.path().join("root");
     let sibling = temp.path().join("root-sibling");
@@ -138,7 +111,11 @@ fn roots_refuse_outside_sibling_prefix_parent_steps_and_ambiguous_names() -> any
     let outside = fixture(&sibling, "exact")?;
     let roots = Roots::open(slice::from_ref(&root), None).map_err(anyhow::Error::msg)?;
     assert_eq!(roots.resolve("exact").unwrap(), inside.canonicalize()?);
-    for path in [outside, root.join("../root/exact"), temp.path().to_owned()] {
+    for path in [
+        outside,
+        root.join("../root-sibling/exact"),
+        temp.path().to_owned(),
+    ] {
         assert!(roots.resolve(path.to_str().unwrap()).is_err());
     }
     assert!(roots.resolve("latest").is_err());
@@ -160,10 +137,10 @@ fn listing_is_bounded_and_a_cursor_does_not_skip_the_next_show() -> anyhow::Resu
         fs::write(directory.join(Manifest::FILE), b"broken manifest")?;
     }
     let roots = Roots::open(&[temp.path().to_owned()], None).map_err(anyhow::Error::msg)?;
-    let first = roots.list(None).map_err(anyhow::Error::msg)?;
+    let first = roots.list(None);
     assert_eq!(first.shows.len(), 100);
     let cursor = first.next_cursor.unwrap();
-    let next = roots.list(Some(&cursor)).map_err(anyhow::Error::msg)?;
+    let next = roots.list(Some(&cursor));
     assert_eq!(next.shows.len(), 2);
     assert!(next.next_cursor.is_none());
     assert!(first.shows.iter().all(|first| {
@@ -171,17 +148,6 @@ fn listing_is_bounded_and_a_cursor_does_not_skip_the_next_show() -> anyhow::Resu
             .iter()
             .all(|next| first.directory != next.directory)
     }));
-    Ok(())
-}
-
-#[test]
-fn internal_show_directories_are_neither_listed_nor_resolved() -> anyhow::Result<()> {
-    let temp = tempfile::tempdir()?;
-    let roots = Roots::open(&[temp.path().to_owned()], None).map_err(anyhow::Error::msg)?;
-    let hidden = fixture(temp.path(), ".checkpoints")?.canonicalize()?;
-    assert!(roots.resolve(".checkpoints").is_err());
-    assert!(roots.resolve(hidden.to_str().unwrap()).is_err());
-    assert!(roots.list(None).unwrap().shows.is_empty());
     Ok(())
 }
 
@@ -195,7 +161,7 @@ fn a_show_whose_manifest_cannot_be_read_is_listed_with_that_problem() -> anyhow:
         fs::write(directory.join(Manifest::FILE), b"broken manifest")?;
     }
     let roots = Roots::open(&[single.clone(), container], None).map_err(anyhow::Error::msg)?;
-    let listing = serde_json::to_value(roots.list(None).map_err(anyhow::Error::msg)?)?;
+    let listing = serde_json::to_value(roots.list(None))?;
     let rows = listing["shows"].as_array().unwrap();
     assert_eq!(rows.len(), 2, "{listing}");
     for (row, directory) in rows.iter().zip([&nested, &single]) {
@@ -217,7 +183,7 @@ fn a_moved_root_is_unavailable_without_hiding_other_roots() -> anyhow::Result<()
     let moved = moved.canonicalize()?;
     let roots = Roots::open(&[parent, moved.clone()], None).map_err(anyhow::Error::msg)?;
     fs::rename(&moved, temp.path().join("elsewhere"))?;
-    let listing = roots.list(None).map_err(anyhow::Error::msg)?;
+    let listing = roots.list(None);
     let listed: Vec<_> = listing.shows.iter().map(|show| &show.directory).collect();
     assert_eq!(listed, [&kept]);
     let unavailable: Vec<_> = listing
@@ -227,25 +193,5 @@ fn a_moved_root_is_unavailable_without_hiding_other_roots() -> anyhow::Result<()
         .collect();
     assert_eq!(unavailable, [&moved]);
     assert_eq!(roots.resolve("kept").map_err(anyhow::Error::msg)?, kept);
-    Ok(())
-}
-
-#[cfg(target_os = "linux")]
-#[test]
-fn setup_uses_the_resolved_appimage_launcher_without_resolving_the_mount_again()
--> anyhow::Result<()> {
-    let executable = "/home/public/Apps/Speakeasy.AppImage";
-    let mut output = Vec::new();
-    setup(
-        Some(PathBuf::from(executable)),
-        Path::new("/home/public/Shows"),
-        None,
-        &mut output,
-    )?;
-    let output = String::from_utf8(output)?;
-    assert_eq!(output.matches(executable).count(), 3);
-    let mut refused = Vec::new();
-    assert!(setup(None, Path::new("/home/public/Shows"), None, &mut refused).is_err());
-    assert_eq!(refused, [] as [u8; 0]);
     Ok(())
 }

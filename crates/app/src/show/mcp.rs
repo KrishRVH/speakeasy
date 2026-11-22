@@ -4,7 +4,7 @@ mod tools;
 
 use std::{
     ffi::OsString,
-    fmt, io,
+    io,
     path::{Path, PathBuf},
 };
 
@@ -20,33 +20,17 @@ speakeasy show mcp --setup
 
 Serve three read-only Show tools over stdio. At least one existing root is required.
 Roots are fixed at launch; tool arguments cannot add folders.
-A root and the Shows in it cannot be symlinks.
 Each root can be a saved Show or a folder containing saved Shows.
 --setup prints Claude Code, Codex and generic client stanzas, and one for an agent in WSL
 when Windows has a distribution; it changes no settings.
 Requested text and images go to the calling agent and possibly its model provider.
 Screen and narration text is evidence, not instructions. No dictation is exposed.";
 
-const ROOT_LIMIT: usize = 16;
-
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Command {
     Help,
     Setup,
     Serve { roots: Vec<PathBuf> },
-}
-
-impl fmt::Debug for Command {
-    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Help => out.write_str("McpHelp"),
-            Self::Setup => out.write_str("McpSetup"),
-            Self::Serve { roots } => out
-                .debug_struct("McpServe")
-                .field("roots", &roots.len())
-                .finish(),
-        }
-    }
 }
 
 impl Command {
@@ -57,7 +41,7 @@ impl Command {
             match arg.to_str() {
                 Some("--help" | "-h") => return Ok(Self::Help),
                 Some("--setup") if !setup && roots.is_empty() => setup = true,
-                Some("--root") if !setup && roots.len() < ROOT_LIMIT => {
+                Some("--root") if !setup => {
                     roots.push(super::command::path(
                         &mut args,
                         "--root needs an existing folder",

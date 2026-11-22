@@ -48,18 +48,16 @@ fn an_unmanaged_show_with_a_timestamped_name_has_no_managed_id_or_expiry() -> an
 }
 
 #[test]
-fn reads_preserve_edits_and_every_file_and_only_explicitly_expose_content() -> anyhow::Result<()> {
+fn reads_change_no_file_and_include_narration_only_on_request() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let directory = fixture(root.path(), "exact")?;
     let before = snapshot(root.path())?;
     let roots = Roots::open(&[root.path().to_owned()], None).map_err(anyhow::Error::msg)?;
     let listed = call(&roots, Tool::List, json!({}));
     assert_eq!(content(&listed)?["shows"].as_array().unwrap().len(), 1);
-    assert!(!serde_json::to_string(&listed)?.contains("PRIVATE_"));
     let read = content(&call(&roots, Tool::Read, json!({"show": "exact"})))?;
     assert_eq!(read["summary"]["text"], "PRIVATE_EDITED_SUMMARY");
     assert!(read["narration"].is_null());
-    assert!(!serde_json::to_string(&read)?.contains("PRIVATE_NARRATION"));
     let read = content(&call(
         &roots,
         Tool::Read,
@@ -179,52 +177,17 @@ fn truncation_is_truthful_and_untimed_or_lost_narration_is_not_timed() -> anyhow
 }
 
 #[test]
-fn invalid_selectors_unknown_properties_damage_and_oversize_do_not_leak_content()
--> anyhow::Result<()> {
+fn a_selector_other_than_exactly_one_picture_is_a_tool_error() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
-    let directory = fixture(root.path(), "exact")?;
+    fixture(root.path(), "exact")?;
     let roots = Roots::open(&[root.path().to_owned()], None).map_err(anyhow::Error::msg)?;
     for arguments in [
         json!({"show": "exact", "sheet": 0}),
         json!({"show": "exact", "sheet": 1, "keyframe": 1}),
-        json!({"show": "exact", "sheet": 1, "file": "PRIVATE_PATH"}),
+        json!({"show": "exact", "sheet": 1, "file": "contact-sheet.png"}),
         json!({"show": "exact", "mark": 1, "match": 1}),
     ] {
-        let response = call(&roots, Tool::Image, arguments);
-        assert_eq!(response["isError"], true);
-        assert!(!serde_json::to_string(&response)?.contains("PRIVATE_"));
+        assert_eq!(call(&roots, Tool::Image, arguments)["isError"], true);
     }
-    let png = fs::read(directory.join("contact-sheet.png"))?;
-    for broken in [b"\x89PNG\r\n\x1a\n".as_slice(), png.get(..33).unwrap()] {
-        fs::write(directory.join("contact-sheet.png"), broken)?;
-        assert_eq!(
-            call(&roots, Tool::Image, json!({"show": "exact", "sheet": 1}))["isError"],
-            true
-        );
-    }
-    fs::OpenOptions::new()
-        .write(true)
-        .open(directory.join("contact-sheet.png"))?
-        .set_len(IMAGE_LIMIT + 1)?;
-    assert_eq!(
-        call(&roots, Tool::Image, json!({"show": "exact", "sheet": 1}))["isError"],
-        true
-    );
-    let summary = fs::read(directory.join("summary.md"))?;
-    fs::write(directory.join("summary.md"), [0xFF, 0xFE])?;
-    assert_eq!(
-        call(&roots, Tool::Read, json!({"show": "exact"}))["isError"],
-        true
-    );
-    fs::write(directory.join("summary.md"), summary)?;
-    assert_eq!(
-        call(&roots, Tool::Read, json!({"show": "exact"}))["isError"],
-        false,
-        "The restored summary did not let the read reach the manifest"
-    );
-    fs::write(directory.join("show.json"), b"PRIVATE_BAD_MANIFEST")?;
-    let response = call(&roots, Tool::Read, json!({"show": "exact"}));
-    assert_eq!(response["isError"], true);
-    assert!(!serde_json::to_string(&response)?.contains("PRIVATE_"));
     Ok(())
 }

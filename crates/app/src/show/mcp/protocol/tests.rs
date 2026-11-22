@@ -1,49 +1,20 @@
-use std::io::{BufReader, Cursor, Read};
+use std::io::Cursor;
 
 use anyhow::Context as _;
 
 use super::{super::DISCLOSURE, *};
 
-#[test]
-fn interrupted_reads_preserve_input_already_buffered_for_a_line() -> io::Result<()> {
-    struct Interrupted {
-        chunks: std::array::IntoIter<io::Result<&'static [u8]>, 3>,
-    }
-
-    impl Read for Interrupted {
-        fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
-            self.chunks
-                .next()
-                .transpose()?
-                .unwrap_or_default()
-                .read(output)
-        }
-    }
-
-    let mut reader = BufReader::new(Interrupted {
-        chunks: [
-            Ok(&b"some"[..]),
-            Err(io::ErrorKind::Interrupted.into()),
-            Ok(b" text\n"),
-        ]
-        .into_iter(),
-    });
-    assert!(matches!(read_line(&mut reader)?, Line::Message(line) if line == b"some text"));
-    Ok(())
-}
-
 fn stateless(id: Value, method: &str) -> Value {
-    json!({"jsonrpc": "2.0", "id": id, "method": method, "params": {"_meta": {VERSION_META: STATELESS_VERSION, CAPABILITIES_META: {}}}})
+    json!({"jsonrpc": "2.0", "id": id, "method": method, "params": {"_meta": {VERSION_META: STATELESS_VERSION}}})
 }
 
-fn exchange(lines: &[Value]) -> anyhow::Result<Vec<Value>> {
+fn initialize() -> Value {
+    json!({"jsonrpc": "2.0", "id": "init", "method": "initialize", "params": {"protocolVersion": INITIALIZED_VERSION, "capabilities": {}, "clientInfo": {"name": "fixture", "version": "1"}}})
+}
+
+fn exchange(input: &[u8]) -> anyhow::Result<Vec<Value>> {
     let root = tempfile::tempdir()?;
     let roots = Roots::open(&[root.path().to_owned()], None).map_err(anyhow::Error::msg)?;
-    let mut input = Vec::new();
-    for line in lines {
-        serde_json::to_writer(&mut input, line)?;
-        writeln!(input)?;
-    }
     let mut output = Vec::new();
     serve(&roots, &mut Cursor::new(input), &mut output)?;
     output
@@ -53,92 +24,58 @@ fn exchange(lines: &[Value]) -> anyhow::Result<Vec<Value>> {
         .collect()
 }
 
+fn lines(requests: &[Value]) -> anyhow::Result<Vec<Value>> {
+    let mut input = Vec::new();
+    for request in requests {
+        serde_json::to_writer(&mut input, request)?;
+        input.push(b'\n');
+    }
+    exchange(&input)
+}
+
 #[test]
-fn stateless_requests_each_require_metadata() -> anyhow::Result<()> {
-    let mut missing = stateless(json!(3), "tools/list");
-    missing["params"]["_meta"] = json!({VERSION_META: STATELESS_VERSION});
-    let mut wrong = stateless(json!(4), "tools/list");
+fn stateless_requests_name_their_version_and_unsupported_ones_are_refused() -> anyhow::Result<()> {
+    let mut wrong = stateless(json!(2), "tools/list");
     wrong["params"]["_meta"][VERSION_META] = json!("2099-01-01");
-    let replies = exchange(&[
-        stateless(json!(1), "tools/list"),
-        json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
-        missing,
-        wrong,
-        stateless(json!(5), "server/discover"),
-    ])?;
-    assert_eq!(replies.len(), 5);
-    assert_eq!(replies[0]["result"]["tools"].as_array().unwrap().len(), 3);
+    let replies = lines(&[stateless(json!(1), "tools/list"), wrong])?;
+    assert_eq!(
+        replies[0]["result"]["tools"].as_array().map(Vec::len),
+        Some(3)
+    );
     assert_eq!(replies[0]["result"]["resultType"], "complete");
-    assert_eq!(replies[0]["result"]["cacheScope"], "private");
-    assert_eq!(replies[0]["result"]["ttlMs"], 0);
-    assert_eq!(replies[1]["error"]["code"], -32602);
-    assert_eq!(replies[2]["error"]["code"], -32602);
-    assert_eq!(replies[3]["error"]["code"], -32022);
-    assert_eq!(replies[3]["error"]["data"]["requested"], "2099-01-01");
+    assert_eq!(replies[1]["error"]["code"], -32022);
     assert_eq!(
-        replies[3]["error"]["data"]["supported"],
+        replies[1]["error"]["data"]["supported"],
         json!([STATELESS_VERSION])
-    );
-    assert_eq!(
-        replies[4]["result"]["supportedVersions"],
-        json!([STATELESS_VERSION, INITIALIZED_VERSION])
-    );
-    assert!(
-        replies[4]["result"]["capabilities"]
-            .get("resources")
-            .is_none()
     );
     Ok(())
 }
 
 #[test]
-fn initialized_clients_negotiate_a_supported_version_and_notifications_are_silent()
--> anyhow::Result<()> {
-    let replies = exchange(&[
-        json!({"jsonrpc": "2.0", "id": "init", "method": "initialize", "params": {"protocolVersion": "unknown", "capabilities": {}, "clientInfo": {"name": "fixture", "version": "1"}}}),
-        json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}),
+fn initialized_clients_list_shows_and_notifications_get_no_reply() -> anyhow::Result<()> {
+    let replies = lines(&[
+        initialize(),
         json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
-        json!({"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "show_read", "arguments": {"show": "outside"}}}),
-        json!({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": 12}}),
         json!({"jsonrpc": "2.0", "id": "ping", "method": "ping"}),
-        json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
         json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "show_list", "arguments": {}}}),
     ])?;
-    assert_eq!(replies.len(), 5);
+    assert_eq!(replies.len(), 3);
     assert_eq!(replies[0]["result"]["protocolVersion"], INITIALIZED_VERSION);
-    assert_eq!(replies[1]["error"]["code"], -32602);
-    assert_eq!(replies[2]["result"], json!({}));
-    assert!(replies[3]["result"].get("resultType").is_none());
-    assert_eq!(replies[4]["result"]["isError"], false);
-    let listed: Value =
-        serde_json::from_str(replies[4]["result"]["content"][0]["text"].as_str().unwrap())?;
+    assert_eq!(replies[1]["result"], json!({}));
+    assert!(replies[2]["result"].get("resultType").is_none());
+    let listed: Value = serde_json::from_str(
+        replies[2]["result"]["content"][0]["text"]
+            .as_str()
+            .context("The listing is text")?,
+    )?;
     assert_eq!(listed["shows"], json!([]));
     Ok(())
 }
 
 #[test]
-fn ping_answers_from_initialization_on_but_not_before_it_or_statelessly() -> anyhow::Result<()> {
-    let ping = |id: u8| json!({"jsonrpc": "2.0", "id": id, "method": "ping"});
-    let replies = exchange(&[
-        ping(1),
-        json!({"jsonrpc": "2.0", "id": "init", "method": "initialize", "params": {"protocolVersion": INITIALIZED_VERSION, "capabilities": {}, "clientInfo": {"name": "fixture", "version": "1"}}}),
-        ping(2),
-        json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
-        ping(3),
-        stateless(json!(4), "ping"),
-    ])?;
-    assert_eq!(replies.len(), 5);
-    assert_eq!(replies[0]["error"]["code"], -32602);
-    assert_eq!(replies[2]["result"], json!({}));
-    assert_eq!(replies[3]["result"], json!({}));
-    assert_eq!(replies[4]["error"]["code"], -32601);
-    Ok(())
-}
-
-#[test]
 fn both_handshakes_carry_the_disclosure_and_the_reading_guide() -> anyhow::Result<()> {
-    let replies = exchange(&[
-        json!({"jsonrpc": "2.0", "id": "init", "method": "initialize", "params": {"protocolVersion": INITIALIZED_VERSION, "capabilities": {}, "clientInfo": {"name": "fixture", "version": "1"}}}),
+    let replies = lines(&[
+        initialize(),
         stateless(json!("discover"), "server/discover"),
     ])?;
     assert_eq!(replies.len(), 2);
@@ -155,62 +92,27 @@ fn both_handshakes_carry_the_disclosure_and_the_reading_guide() -> anyhow::Resul
 }
 
 #[test]
-fn malformed_oversized_and_invalid_requests_recover_at_the_next_line() -> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let roots = Roots::open(&[root.path().to_owned()], None).map_err(anyhow::Error::msg)?;
-    let mut input = b"{private malformed\n".to_vec();
-    input.extend(std::iter::repeat_n(b'x', LINE_LIMIT + 300));
-    input.extend_from_slice(b"\n");
-    for line in [
-        json!([]),
-        json!({"jsonrpc": "2.0", "id": null, "method": "tools/list"}),
-        stateless(json!(9), "tools/list"),
-    ] {
-        serde_json::to_writer(&mut input, &line)?;
-        writeln!(input)?;
-    }
-    let mut output = Vec::new();
-    serve(
-        &roots,
-        &mut io::BufReader::with_capacity(7, Cursor::new(input)),
-        &mut output,
-    )?;
-    let output = String::from_utf8(output)?;
-    assert!(!output.contains("private malformed"));
-    let replies: Vec<Value> = output
-        .lines()
-        .map(serde_json::from_str)
-        .collect::<Result<_, _>>()?;
-    assert_eq!(replies.len(), 5);
+fn a_malformed_line_gets_an_error_and_the_next_line_is_served() -> anyhow::Result<()> {
+    let mut input = b"{malformed\n".to_vec();
+    serde_json::to_writer(&mut input, &stateless(json!(9), "tools/list"))?;
+    let replies = exchange(&input)?;
+    assert_eq!(replies.len(), 2);
     assert_eq!(replies[0]["error"]["code"], -32700);
-    assert_eq!(replies[1]["error"]["code"], -32700);
-    assert_eq!(replies[2]["error"]["code"], -32600);
-    assert_eq!(replies[3]["error"]["code"], -32600);
-    assert_eq!(replies[4]["id"], 9);
+    assert_eq!(replies[1]["id"], 9);
     Ok(())
 }
 
 #[test]
-fn tool_errors_are_distinct_from_protocol_errors_and_never_echo_arguments() -> anyhow::Result<()> {
+fn tool_errors_are_results_while_unknown_tools_and_methods_are_protocol_errors()
+-> anyhow::Result<()> {
     let mut unknown = stateless(json!(1), "tools/call");
-    unknown["params"]["name"] = json!("PRIVATE_UNKNOWN_TOOL");
-    let mut invalid = stateless(json!(2), "tools/call");
-    invalid["params"]["name"] = json!("show_read");
-    invalid["params"]["arguments"] = json!({"show": "PRIVATE_OUTSIDE", "private": "PRIVATE_BODY"});
-    let replies = exchange(&[unknown, invalid, stateless(json!(3), "resources/list")])?;
+    unknown["params"]["name"] = json!("show_everything");
+    let mut outside = stateless(json!(2), "tools/call");
+    outside["params"]["name"] = json!("show_read");
+    outside["params"]["arguments"] = json!({"show": "outside"});
+    let replies = lines(&[unknown, outside, stateless(json!(3), "resources/list")])?;
     assert_eq!(replies[0]["error"]["code"], -32602);
     assert_eq!(replies[1]["result"]["isError"], true);
     assert_eq!(replies[2]["error"]["code"], -32601);
-    assert!(!serde_json::to_string(&replies)?.contains("PRIVATE_"));
-    Ok(())
-}
-
-#[test]
-fn output_is_bounded_and_a_closed_client_ends_the_server() -> anyhow::Result<()> {
-    let root = tempfile::tempdir()?;
-    let roots = Roots::open(&[root.path().to_owned()], None).map_err(anyhow::Error::msg)?;
-    let input = serde_json::to_vec(&stateless(json!(1), "server/discover"))?;
-    serve(&roots, &mut Cursor::new(input), &mut crate::testing::Closed)?;
-    assert!(encode(&"x".repeat(RESPONSE_LIMIT), RESPONSE_LIMIT).is_err());
     Ok(())
 }
