@@ -155,7 +155,7 @@ const fn narrated(lost: Option<NarrationLoss>) -> Option<&'static str> {
 
 fn preserved(message: &mut String, preservation: Preservation) {
     if preservation.audio_kept {
-        message.push_str(" Audio is kept for retry in Shows until the Show expires.");
+        message.push_str(" Audio is kept for retry in Shows until its original seven-day expiry.");
     }
     if preservation.movie_lost {
         message.push_str(" Video could not be saved; the selected keyframes are available.");
@@ -192,7 +192,7 @@ mod tests {
             (
                 true,
                 false,
-                " Audio is kept for retry in Shows until the Show expires.",
+                " Audio is kept for retry in Shows until its original seven-day expiry.",
             ),
             (
                 false,
@@ -202,7 +202,7 @@ mod tests {
             (
                 true,
                 true,
-                " Audio is kept for retry in Shows until the Show expires. Retained source frames \
+                " Audio is kept for retry in Shows until its original seven-day expiry. Retained source frames \
                  could not be saved; the selected keyframes are available.",
             ),
         ] {
