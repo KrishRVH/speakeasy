@@ -89,7 +89,7 @@ impl Roots {
                 .iter()
                 .map(|root| Root::open(root))
                 .collect::<Result<_, _>>()?,
-            managed,
+            managed: managed.and_then(|managed| managed.canonicalize().ok()),
         })
     }
 

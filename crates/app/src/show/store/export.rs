@@ -38,7 +38,7 @@ pub(crate) fn write(directory: &Path, destination: &Path) -> anyhow::Result<Expo
 pub(super) struct Target {
     pub show: PathBuf,
     pub path: PathBuf,
-    folder: PathBuf,
+    pub folder: PathBuf,
     kind: &'static str,
 }
 

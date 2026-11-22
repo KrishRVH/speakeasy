@@ -71,8 +71,10 @@ pub(crate) fn write(
     let audio = voice.as_ref();
     let timing = timeline::Timing::new(&reading.movie, span, audio)?;
     let scene = Annotations::new(manifest.recording(), manifest.marks())?;
-    let work = tempfile::tempdir()
-        .context("Cannot create video scratch space; check the temporary folder's free space")?;
+    let work = tempfile::Builder::new()
+        .prefix(".speakeasy-video-")
+        .tempdir_in(&target.folder)
+        .context("Cannot create the video export; check the destination folder and free space")?;
     let mut source = File::create_new(work.path().join(encode::SOURCE))?;
     reading.copy_to(&mut source)?;
     anyhow::ensure!(!cancelled(), CANCELLED);

@@ -310,7 +310,7 @@ async fn an_unavailable_checkpoint_closes_empty_and_the_show_publishes_from_memo
 }
 
 #[test]
-fn a_show_publishes_a_complete_private_bundle() -> anyhow::Result<()> {
+fn a_show_publishes_a_complete_bundle() -> anyhow::Result<()> {
     let (width, height) = (320, 200);
     let (footage, narration) = rehearse(width, height);
     let moments: Vec<Moment> = footage

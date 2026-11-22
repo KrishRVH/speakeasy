@@ -18,7 +18,10 @@ pub enum Unreadable {
 impl fmt::Display for Unreadable {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Unsupported(version) => write!(out, "unsupported Show format version {version}"),
+            Self::Unsupported(version) => write!(
+                out,
+                "unsupported Show format version {version}; update Speakeasy to open it"
+            ),
             Self::Malformed { line, column } => {
                 write!(
                     out,

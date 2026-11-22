@@ -61,7 +61,12 @@ fn read(directory: &Path) -> anyhow::Result<ReadShow> {
 pub(crate) fn list(parent: &Path) -> io::Result<impl Iterator<Item = io::Result<Entry>>> {
     Ok(directories(parent)?
         .into_iter()
-        .map(move |directory| Entry::open(&directory, Some(parent))))
+        .filter_map(
+            move |directory| match Entry::open(&directory, Some(parent)) {
+                Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+                entry => Some(entry),
+            },
+        ))
 }
 
 pub(crate) fn directories(parent: &Path) -> io::Result<Vec<PathBuf>> {
@@ -136,17 +141,20 @@ impl std::error::Error for Empty {}
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
 impl SavedShow {
     pub(crate) fn folder(&self) -> anyhow::Result<Option<&Path>> {
-        let metadata = found(fs::metadata(&self.0))
-            .with_context(|| format!("Cannot read {}", self.0.display()))?;
+        let metadata = found(fs::metadata(&self.0)).map_err(cannot_read(&self.0))?;
         Ok(metadata
             .is_some_and(|metadata| metadata.is_dir())
             .then_some(self.directory()))
     }
 
     pub(crate) fn summary(&self) -> anyhow::Result<Option<String>> {
-        found(summary(&self.0))
-            .with_context(|| format!("Cannot read {}", self.0.join(Bundle::SUMMARY).display()))
+        found(summary(&self.0)).map_err(cannot_read(&self.0.join(Bundle::SUMMARY)))
     }
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
+fn cannot_read(path: &Path) -> impl FnOnce(io::Error) -> anyhow::Error {
+    move |error| anyhow::anyhow!("Cannot read {}: {error}.", path.display())
 }
 
 #[cfg(test)]

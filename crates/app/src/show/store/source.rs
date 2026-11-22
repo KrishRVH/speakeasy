@@ -91,7 +91,13 @@ pub(super) fn write(directory: &Path, journal: &Journal, duration: Moment) -> an
 }
 
 pub(crate) fn export(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    File::create_new(path)?.write_all(bytes)
+    let path = std::path::absolute(path)?;
+    let mut staging = tempfile::NamedTempFile::new_in(path.parent().unwrap_or(&path))?;
+    staging.write_all(bytes)?;
+    staging
+        .persist_noclobber(&path)
+        .map_err(|error| error.error)?;
+    Ok(())
 }
 
 #[cfg(test)]
