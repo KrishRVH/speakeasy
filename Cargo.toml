@@ -126,7 +126,7 @@ pedantic = { level = "deny", priority = -1 }
 allow_attributes = "forbid"
 allow_attributes_without_reason = "forbid"
 
-# Rust source is comment-free; docs/ holds the contracts these lints look for inline.
+# An app has no API consumers, so functions need no `# Errors` or `# Panics` doc sections.
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 

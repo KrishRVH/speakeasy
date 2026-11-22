@@ -57,8 +57,10 @@ dependency licenses are checked only where packaging must cite them.
   (`speakeasy-platform`) native adapters, including screen capture and the overlay window;
   `crates/app` (`speakeasy`) GPUI, the session owner, audio capture, the local worker, and Show
   recording and publishing. Only platform may use unsafe code.
-- Project-owned Rust contains no source comments. Keep native safety and thread-lifetime contracts
-  in [native contracts](docs/native-contracts.md); vendored code follows its upstream policy.
+- Comment project-owned Rust for the agent that edits it next: concise, clear comments that give
+  immediately useful local context its names, types, and tests cannot carry, such as a platform
+  quirk, an ordering constraint, a safety condition, or why the obvious alternative fails. Vendored
+  code follows its upstream policy.
 - Give session state one owner. Move cross-thread work over channels; callbacks cannot stop a newer
   recording, overwrite its state, or paste stale text.
 - Locks, cells, atomics, and shared ownership need a per-site reason explaining why the value cannot
@@ -74,7 +76,7 @@ dependency licenses are checked only where packaging must cite them.
   duplication or a useful side-effect seam; remove forwarding wrappers and obsolete re-exports.
 - Carry invariants in types, use enums for meaningful alternatives, and make always-present values
   non-optional. Keep internals private; record cross-module contracts and failure modes in the
-  architecture map and native-thread ownership in the native contracts.
+  architecture map and native-thread ownership in [native contracts](docs/native-contracts.md).
 - Handle external failures with explicit errors or events. Use iterators or checked access and
   choose checked, saturating, or wrapping arithmetic according to the domain. Never let a panic
   cross FFI.
