@@ -170,55 +170,25 @@ fn a_swallowed_key_stays_swallowed_when_the_alternative_shortcut_is_released_fir
 }
 
 #[test]
-fn windows_takes_a_key_down_within_its_repeat_cadence_as_a_repeat() {
-    let start = now();
-    let at = |millis| start + Duration::from_millis(millis);
-    let repeat_keys = || typematic::Repeat::After {
-        delay: Duration::from_secs(3),
-        period: Duration::from_secs(3),
-    };
-    for (repeating, repeats) in [
-        (None, [500, 533, 566]),
-        (
-            Some(repeat_keys as fn() -> typematic::Repeat),
-            [3_000, 6_000, 9_000],
-        ),
-    ] {
-        let (policy, both) = windows_holding();
-        let mut policy = match repeating {
-            Some(read) => policy.repeating(read),
-            None => policy,
-        };
-        assert_eq!(
-            delivered(&policy.observe(SPACE, true, both, at(0))),
-            [Action::Lock]
-        );
-        assert_eq!(
-            delivered(&policy.observe(LEFT_WINDOWS, false, both, at(100))),
-            [Action::Release]
-        );
-        for millis in repeats {
-            assert!(
-                policy
-                    .observe(SPACE, true, NONE_HELD, at(millis))
-                    .swallows(),
-                "A held Space repeated into the editor at {millis} ms"
-            );
-        }
-    }
-
+fn windows_swallows_a_held_keys_repeats_until_its_release() {
     let (mut policy, both) = windows_holding();
-    policy.observe(SPACE, true, both, at(0));
-    policy.observe(LEFT_WINDOWS, false, both, at(100));
-    policy.observe(LETTER_Q, true, NONE_HELD, at(500));
-    policy.observe(LETTER_Q, false, NONE_HELD, at(550));
-    assert!(
-        policy.observe(SPACE, true, NONE_HELD, at(600)).swallows(),
-        "A Space held beside other typing repeated into the editor"
+    assert_eq!(
+        delivered(&policy.observe(SPACE, true, both, now())),
+        [Action::Lock]
     );
-    assert!(policy.observe(SPACE, false, NONE_HELD, at(700)).swallows());
+    assert_eq!(
+        delivered(&policy.observe(LEFT_WINDOWS, false, both, now())),
+        [Action::Release]
+    );
+    policy.observe(LETTER_Q, true, NONE_HELD, now());
+    policy.observe(LETTER_Q, false, NONE_HELD, now());
     assert!(
-        !policy.observe(SPACE, true, NONE_HELD, at(800)).swallows(),
+        policy.observe(SPACE, true, NONE_HELD, now()).swallows(),
+        "A held Space repeated into the editor"
+    );
+    assert!(policy.observe(SPACE, false, NONE_HELD, now()).swallows());
+    assert!(
+        !policy.observe(SPACE, true, NONE_HELD, now()).swallows(),
         "A fresh Space after its release was swallowed"
     );
 }
@@ -249,46 +219,6 @@ fn mac_takes_autorepeat_from_the_event_for_hold_keys() {
             .swallows(),
         "A fresh Space after its unseen release was swallowed"
     );
-}
-
-#[test]
-fn a_swallowed_key_held_through_a_lifecycle_interrupt_stays_swallowed_until_pressed_afresh() {
-    let (sender, _events) = async_channel::bounded(4);
-    let input = InputSender::new(sender);
-    let start = now();
-    let at = |millis| start + Duration::from_millis(millis);
-    let (mut policy, both) = windows_holding();
-    assert!(policy.observe(SPACE, true, both, at(0)).swallows());
-    policy.interrupt(&input);
-    assert!(
-        policy.observe(SPACE, true, both, at(33)).swallows(),
-        "A Space held through the interrupt repeated into the editor"
-    );
-    assert!(
-        !policy.observe(SPACE, true, both, at(30_000)).swallows(),
-        "A Space pressed after the lock screen was swallowed"
-    );
-}
-
-#[test]
-fn a_swallowed_key_stays_swallowed_through_a_missed_shortcut_release() {
-    let start = now();
-    let at = |millis| start + Duration::from_millis(millis);
-    let (mut policy, both) = windows_holding();
-    let submit = policy.observe(RETURN, true, both, at(0));
-    assert_eq!(delivered(&submit), [Action::Submit]);
-    let repeat = policy.observe(RETURN, true, NONE_HELD, at(33));
-    assert_eq!(
-        delivered(&repeat),
-        [Action::Release],
-        "The missed shortcut release must end the hold and nothing else"
-    );
-    assert!(
-        repeat.swallows(),
-        "Return repeated into the editor once the shortcut's release went unseen"
-    );
-    assert!(policy.observe(RETURN, false, NONE_HELD, at(66)).swallows());
-    assert!(!policy.observe(RETURN, true, NONE_HELD, at(100)).swallows());
 }
 
 #[test]

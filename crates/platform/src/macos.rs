@@ -414,8 +414,6 @@ fn observe(
         kind,
         CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput
     ) {
-        policy.missed_events(input);
-        typed.add();
         if !port.set_enabled(true) {
             input.close();
         }

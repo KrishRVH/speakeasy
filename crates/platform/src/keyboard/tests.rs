@@ -49,7 +49,6 @@ const NONE_HELD: Physical = Physical {
     chord_keys: [false; 5],
     other_shortcut: false,
     chord_blocked: false,
-    injected: false,
 };
 
 const NO_MODIFIERS: Modifiers = Modifiers {
@@ -822,28 +821,6 @@ fn a_missed_release_lets_s_reach_the_app() {
 }
 
 #[test]
-fn a_show_key_whose_release_went_unseen_reaches_the_app_outside_a_hold() {
-    let start = now();
-    let (mut policy, both) = windows_holding();
-    policy.observe(LETTER_S, true, both, start);
-    let typed = policy.observe(LETTER_S, true, NONE_HELD, start + Duration::from_secs(5));
-    assert_eq!(delivered(&typed), [Action::Release]);
-    assert!(!typed.swallows());
-
-    let (sender, _events) = async_channel::bounded(4);
-    let mut mac = mac_holding();
-    mac.observe(key(MAC_S, true, FN_HELD), keyboard_fn_up, now());
-    mac.missed_events(&InputSender::new(sender));
-    let typed = mac.observe(key(MAC_S, true, NO_MODIFIERS), keyboard_fn_up, now());
-    assert!(!typed.swallows());
-    assert_eq!(
-        delivered(&typed),
-        [],
-        "S typed after the outage asked for a Show"
-    );
-}
-
-#[test]
 fn a_posted_event_without_fn_ends_no_hold_the_keyboard_still_makes() {
     let keyboard_fn_down = || true;
     let mut mac = mac_holding();
@@ -860,49 +837,6 @@ fn a_posted_event_without_fn_ends_no_hold_the_keyboard_still_makes() {
     );
     let show = mac.observe(key(MAC_S, true, FN_HELD), keyboard_fn_down, now());
     assert_eq!(show.action, Some(Action::Show(Scope::Screen)));
-}
-
-#[test]
-fn a_tap_outage_ends_a_hold_but_not_a_released_dictation() -> anyhow::Result<()> {
-    let (sender, events) = async_channel::bounded(4);
-    let input = InputSender::new(sender);
-    let mut mac = mac_holding();
-    assert_eq!(
-        delivered(&mac.observe(function(false), keyboard_fn_up, now())),
-        [Action::Release]
-    );
-    let permit = input.begin().context("Recording")?;
-    mac.missed_events(&input);
-    assert!(
-        permit.active(),
-        "A tap outage after Fn's release cancelled the paste"
-    );
-    assert!(events.try_recv().is_err());
-
-    let start = now();
-    let at = |millis: u64| start + Duration::from_millis(millis);
-    mac.observe(shift(true, NO_MODIFIERS), keyboard_fn_up, at(0));
-    mac.observe(shift(false, NO_MODIFIERS), keyboard_fn_up, at(80));
-    mac.missed_events(&input);
-    mac.observe(shift(true, NO_MODIFIERS), keyboard_fn_up, at(200));
-    assert_eq!(
-        delivered(&mac.observe(shift(false, NO_MODIFIERS), keyboard_fn_up, at(280))),
-        [],
-        "Shift taps across the outage pinned"
-    );
-
-    assert!(
-        mac.observe(function(true), keyboard_fn_up, at(400))
-            .starts()
-    );
-    mac.missed_events(&input);
-    assert!(matches!(events.try_recv()?, Input::Interrupt));
-    assert!(matches!(events.try_recv()?, Input::Release));
-    assert_eq!(
-        delivered(&mac.observe(function(false), keyboard_fn_up, at(500))),
-        []
-    );
-    Ok(())
 }
 
 #[test]

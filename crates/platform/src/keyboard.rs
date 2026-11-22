@@ -302,7 +302,6 @@ pub(super) struct Physical {
     chord_keys: [bool; 5],
     other_shortcut: bool,
     chord_blocked: bool,
-    injected: bool,
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -316,12 +315,7 @@ impl Physical {
                 crate::WindowsShortcut::ControlWindows => down(Windows::ALT),
                 _ => other_shortcut,
             },
-            injected: false,
         }
-    }
-
-    pub(super) const fn injected(self, injected: bool) -> Self {
-        Self { injected, ..self }
     }
 }
 
@@ -391,61 +385,22 @@ pub(super) struct Windows {
     chord_keys_down: [bool; 5],
     taps: ShiftTaps,
     keys: HeldKeys,
-    f13_heard: Option<Instant>,
-    repeat: RepeatSettings,
-}
-
-#[cfg(any(target_os = "windows", test))]
-mod typematic;
-
-#[cfg(any(target_os = "windows", test))]
-struct RepeatSettings(fn() -> typematic::Repeat);
-
-#[cfg(all(target_os = "windows", not(test)))]
-impl Default for RepeatSettings {
-    fn default() -> Self {
-        Self(typematic::read)
-    }
-}
-
-#[cfg(test)]
-impl Default for RepeatSettings {
-    fn default() -> Self {
-        Self(|| typematic::Repeat::After {
-            delay: Duration::from_millis(500),
-            period: Duration::from_millis(33),
-        })
-    }
 }
 
 #[cfg(any(target_os = "windows", test))]
 #[derive(Default)]
-struct HeldKeys(Vec<(u16, Instant)>);
+struct HeldKeys(Vec<u16>);
 
 #[cfg(any(target_os = "windows", test))]
 impl HeldKeys {
-    fn stroke(
-        &mut self,
-        key: u16,
-        down: bool,
-        at: Instant,
-        repeats_after: impl FnOnce(Duration) -> bool,
-    ) -> Stroke {
+    fn stroke(&mut self, key: u16, down: bool) -> Stroke {
+        let held = self.0.contains(&key);
         if !down {
-            self.forget(key);
-            return Stroke::Release;
+            self.0.retain(|other| *other != key);
+        } else if !held {
+            self.0.push(key);
         }
-        let Some((_, last)) = self.0.iter_mut().find(|(held, _)| *held == key) else {
-            self.0.push((key, at));
-            return Stroke::Press;
-        };
-        let repeat = repeats_after(at.saturating_duration_since(*last));
-        *last = at;
-        Stroke::new(down, repeat)
-    }
-
-    fn forget(&mut self, key: u16) {
-        self.0.retain(|(held, _)| *held != key);
+        Stroke::new(down, held)
     }
 }
 
@@ -517,57 +472,10 @@ impl Windows {
         at: Instant,
     ) -> Decision {
         let key = u16::try_from(key).unwrap_or(u16::MAX);
-        let mut missed_release = self.reconcile(physical.chord_keys);
-        let repeat = self.repeat.0;
-        let stroke = self
-            .keys
-            .stroke(key, down, at, |silence| repeat().continues(silence));
-        if stroke == Stroke::Press && key == Self::F13 && self.f13_tracked() {
-            self.forget_f13_down();
-            missed_release |= self.chord.reconcile(self.chord_held());
-        } else if stroke == Stroke::Press
-            && Self::hold_key(key).is_some()
-            && self.f13_fell_quiet(at)
-        {
-            self.keys.forget(Self::F13);
-            self.f13_heard = None;
-            self.forget_f13_down();
-            missed_release |= self.chord.reconcile(self.chord_held());
-        }
-        if key == Self::F13 {
-            self.f13_heard = (stroke != Stroke::Release && !physical.injected).then_some(at);
-        } else if down {
-            self.f13_heard = None;
-        }
+        let missed_release = self.reconcile(physical.chord_keys);
+        let stroke = self.keys.stroke(key, down);
         self.decide(key, stroke, physical, at)
             .after_missed_release(missed_release)
-    }
-
-    fn f13_fell_quiet(&self, at: Instant) -> bool {
-        self.chord.hold == Hold::Held
-            && self.f13_heard.is_some_and(|heard| {
-                (self.repeat.0)()
-                    .quiet_limit()
-                    .is_some_and(|limit| at.saturating_duration_since(heard) > limit)
-            })
-    }
-
-    #[cfg(test)]
-    fn repeating(self, read: fn() -> typematic::Repeat) -> Self {
-        Self {
-            repeat: RepeatSettings(read),
-            ..self
-        }
-    }
-
-    fn f13_tracked(&mut self) -> bool {
-        self.chord_key_down(Self::F13).is_some_and(|down| *down)
-    }
-
-    fn forget_f13_down(&mut self) {
-        if let Some(down) = self.chord_key_down(Self::F13) {
-            *down = false;
-        }
     }
 
     fn chord_key_down(&mut self, key: u16) -> Option<&mut bool> {
@@ -799,13 +707,6 @@ impl Mac {
 
     pub(super) fn interrupt(&mut self, input: &InputSender) {
         self.chord.interrupt_recording(input);
-    }
-
-    pub(super) fn missed_events(&mut self, input: &InputSender) {
-        self.taps.interrupt();
-        if self.chord.interrupt() {
-            Action::Interrupt.deliver(input);
-        }
     }
 
     pub(super) fn observe(
