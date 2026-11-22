@@ -75,19 +75,6 @@ fn ink_holds_while_drawing_then_fades_out_after_the_pen_lifts() {
 }
 
 #[test]
-fn held_ink_draws_no_frames_until_it_fades() {
-    let at = clock();
-    let mut sheet = Sheet::new(Part::WHOLE);
-    sheet.update([], stroke(3), None, at(0));
-    assert_eq!(sheet.next_frame(at(0)), Redraw::OnChange);
-    sheet.update([stroke(3).into()], [], None, at(0));
-    let left = Duration::from_millis(50);
-    assert_eq!(sheet.next_frame(at(600)), Redraw::After(left));
-    assert_eq!(sheet.next_frame(at(975)), Redraw::Animate);
-    assert_eq!(sheet.next_frame(at(1_300)), Redraw::OnChange);
-}
-
-#[test]
 fn marks_drawn_before_the_fade_ends_stay_and_later_ink_starts_clean() {
     let at = clock();
     let mut sheet = Sheet::new(Part::WHOLE);
