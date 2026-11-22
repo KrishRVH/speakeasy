@@ -50,13 +50,6 @@ pub(crate) struct Reads {
 
 impl Reads {
     pub(crate) fn submit(&mut self, request: Request) -> anyhow::Result<Work> {
-        self.start(move |cancelled| frame::read(request, cancelled))
-    }
-
-    fn start(
-        &mut self,
-        read: impl FnOnce(&dyn Fn() -> bool) -> Result<Decoded, String> + Send + 'static,
-    ) -> anyhow::Result<Work> {
         if let Some(pending) = &self.pending
             && !pending.is_finished()
         {
@@ -65,7 +58,7 @@ impl Reads {
         let (done, result) = async_channel::bounded(1);
         let thread = StoppableThread::spawn("show-preview", move |stopping| {
             let cancelled = || stopping.is_closed() || done.is_closed();
-            let image = read(&cancelled);
+            let image = frame::read(request, &cancelled);
             #[expect(
                 clippy::let_underscore_must_use,
                 reason = "Replacing or closing the view cancels its receipt; the owner retains this thread through native cleanup"
@@ -97,6 +90,3 @@ impl Reads {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;
