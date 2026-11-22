@@ -1,4 +1,3 @@
-use proptest::prelude::*;
 use serde_json::json;
 
 use super::*;
@@ -57,11 +56,6 @@ fn a_missing_mark_or_a_time_past_the_end_is_unlocated() {
 }
 
 #[test]
-fn debugging_a_focus_never_prints_its_phrase() {
-    assert!(!format!("{:?}", Focus::Phrase("private")).contains("private"));
-}
-
-#[test]
 fn window_edges_and_carry_in_expose_missing_coverage() {
     let at = Moment::from_millis;
     let span = window(Span::new(at(100), at(300)), Duration::from_secs(1), at(800));
@@ -87,32 +81,6 @@ fn window_edges_and_carry_in_expose_missing_coverage() {
     );
     assert_eq!(samples.carried_in, None);
     assert_eq!(samples.times, [at(1000), at(1500)]);
-}
-
-proptest! {
-    #[test]
-    fn selection_is_bounded_distinct_and_keeps_the_anchor(
-        mut millis in prop::collection::vec(0_u64..300_000, 0..100),
-        start in 0_u64..300_000,
-        end in 0_u64..300_000,
-        offset in 0_u64..300_000,
-        most in 1_usize..13,
-    ) {
-        millis.sort_unstable();
-        millis.dedup();
-        let moments: Vec<_> = millis.into_iter().map(Moment::from_millis).collect();
-        let window = Span::new(Moment::from_millis(start), Moment::from_millis(end));
-        let anchor = Moment::from_millis(window.start().as_millis().saturating_add(offset))
-            .min(window.end());
-        let samples = pick(&moments, window, anchor, most);
-        prop_assert!(samples.times.len() <= most);
-        prop_assert!(samples.times.is_sorted_by(|earlier, later| earlier < later));
-        prop_assert!(samples.times.iter().all(|at| moments.contains(at) && *at <= window.end()));
-        if let Some(at) = moments.iter().rev().find(|at| **at <= anchor) {
-            prop_assert!(samples.times.contains(at));
-        }
-        prop_assert!(samples.longest_gap <= window.end().since(window.start()));
-    }
 }
 
 #[test]

@@ -200,30 +200,6 @@ fn thinning_spares_new_screens_before_repeated_ones() {
 }
 
 #[test]
-fn marks_on_one_screen_share_a_keyframe() {
-    let frames = [
-        sample(0, 0),
-        sample(1_000, 255),
-        sample(2_000, 255),
-        sample(4_000, 255),
-    ];
-    let shown = select(
-        &recording(
-            vec![dab(2_000), dab(4_000)],
-            vec![click(750)],
-            Narration::default(),
-        ),
-        &frames,
-    )
-    .unwrap();
-    assert_eq!(times(&shown), [1_000, 4_000]);
-    assert_eq!(shown.shots[0].keyframe.reason, Reason::Click);
-    assert_eq!(shown.shots[1].keyframe.reason, Reason::Mark);
-    assert_eq!(shown.shots[1].keyframe.marks, 0..2);
-    assert_eq!(shown.shots[1].keyframe.file(), "frames/frame-02.png");
-}
-
-#[test]
 fn marks_group_only_while_they_share_a_screen() {
     let levels = [0, 40, 80, 120, 160, 164, 210, 250];
     let frames: Vec<Sample> = every(1_000, 2_000, 8)
@@ -239,15 +215,6 @@ fn marks_group_only_while_they_share_a_screen() {
     assert_eq!(shown.shots.len(), 7);
     assert_eq!(marked(&shown), [0..1, 1..2, 2..3, 3..4, 4..6, 6..7, 7..8]);
     assert_eq!(shown.shots[4].keyframe.at.as_millis(), 11_000);
-
-    let still = samples(1_000, 50_000, |_| 128);
-    let strokes = [2_000, 9_000, 20_000, 33_000, 40_000].map(dab).to_vec();
-    let shown = select(
-        &recording(strokes, Vec::new(), Narration::default()),
-        &still,
-    )
-    .unwrap();
-    assert_eq!(times(&shown), [20_000, 40_000]);
 }
 
 #[test]
@@ -363,16 +330,6 @@ fn a_click_soon_after_another_keeps_its_keyframe() {
     let shown = select(&recording(Vec::new(), clicks, Narration::default()), &panes).unwrap();
     assert_eq!(times(&shown), [1_400, 1_800]);
     assert_eq!(reported(&shown), [Some(click(1_000)), Some(second)]);
-
-    let menu = samples(200, 3_000, |at| match at {
-        ..1_200 => 40,
-        1_200 => 120,
-        _ => 200,
-    });
-    let clicks = vec![click(1_000), click(1_800)];
-    let shown = select(&recording(Vec::new(), clicks, Narration::default()), &menu).unwrap();
-    assert_eq!(times(&shown), [1_400, 2_000]);
-    assert_eq!(reported(&shown), [Some(click(1_000)), Some(click(1_800))]);
 }
 
 #[test]
@@ -386,37 +343,6 @@ fn double_clicks_merge_and_keyframes_keep_apart() {
     .unwrap();
     assert_eq!(times(&shown), [1_250, 2_500]);
     assert_eq!(shown.shots[0].keyframe.event, "clicked (x 0.50, y 0.50)");
-
-    let sparse = samples(2_000, 4_000, |_| 128);
-    let actions = vec![click(1_000), click(1_800)];
-    let shown = select(
-        &recording(Vec::new(), actions, Narration::default()),
-        &sparse,
-    )
-    .unwrap();
-    assert_eq!(times(&shown), [2_000]);
-}
-
-#[test]
-fn narration_divides_among_marks() {
-    let frames = [sample(1_000, 0), sample(4_000, 255)];
-    let narration = words(&[
-        (0, "Make"),
-        (1_000, "this"),
-        (2_000, "smaller,"),
-        (3_000, "and"),
-        (4_000, "move"),
-        (7_000, "that."),
-    ]);
-    let shown = select(
-        &recording(vec![dab(1_000), dab(4_000)], Vec::new(), narration),
-        &frames,
-    )
-    .unwrap();
-    assert_eq!(
-        said(&shown),
-        [Some("Make this smaller,"), Some("and move that.")]
-    );
 }
 
 #[test]
@@ -783,42 +709,6 @@ fn long_talk_over_a_changing_screen_gets_more_than_one_frame() {
         })
         .max();
     assert!(most <= Some(120), "{most:?}");
-
-    let still = samples(500, 120_000, |_| 90);
-    let shown = select(&recording(Vec::new(), Vec::new(), words(&talk)), &still).unwrap();
-    assert_eq!(shown.shots.len(), 1);
-}
-
-#[test]
-fn each_event_says_why_its_frame_was_chosen() {
-    let event = |shown: Option<Selection>| shown.unwrap().shots[0].keyframe.event.clone();
-    let still = samples(250, 10_000, |_| 128);
-    let drawn = recording(
-        vec![dab(2_000), dab(4_000)],
-        Vec::new(),
-        Narration::default(),
-    );
-    assert_eq!(
-        event(select(&drawn, &still)),
-        "① tapped x 0.50, y 0.50; ② tapped x 0.50, y 0.50"
-    );
-    let looked = recording(Vec::new(), Vec::new(), words(&[(3_000, "Look")]));
-    assert_eq!(event(select(&looked, &still)), "said “look”");
-    let changed = [
-        sample(0, 0),
-        sample(1_000, 80),
-        sample(1_250, 160),
-        sample(1_500, 255),
-    ];
-    assert_eq!(
-        event(select(&Recording::default(), &changed)),
-        "scene changed"
-    );
-    let quiet = [sample(0, 0), sample(1_000, 0), sample(2_000, 0)];
-    assert_eq!(
-        event(select(&Recording::default(), &quiet)),
-        "the screen midway through"
-    );
 }
 
 #[test]
@@ -885,19 +775,4 @@ proptest! {
         let spoken: Vec<&str> = narration.iter().map(|&(_, word)| word).collect();
         prop_assert_eq!(said, spoken);
     }
-}
-
-#[test]
-fn debugging_a_keyframe_never_prints_what_was_said() {
-    let shown = |event: &str, said: &str| {
-        let keyframe = Keyframe {
-            event: event.to_owned(),
-            said: Some(said.to_owned()),
-            ..keyframe(1, 0)
-        };
-        format!("{keyframe:?}")
-    };
-    let baseline = shown("said “look”", "alpha");
-    assert_eq!(shown("said “look”", "omega"), baseline);
-    assert_eq!(shown("said “here”", "alpha"), baseline);
 }

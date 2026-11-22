@@ -8,10 +8,10 @@ use crate::{
     sheet,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum Unreadable {
     Unsupported(u32),
-    Malformed { line: usize, column: usize },
+    Malformed(serde_json::Error),
     Inconsistent(&'static str),
 }
 
@@ -22,12 +22,7 @@ impl fmt::Display for Unreadable {
                 out,
                 "unsupported Show format version {version}; update Speakeasy to open it"
             ),
-            Self::Malformed { line, column } => {
-                write!(
-                    out,
-                    "show.json is malformed at line {line}, column {column}"
-                )
-            },
+            Self::Malformed(error) => write!(out, "cannot read show.json: {error}"),
             Self::Inconsistent(rule) => write!(out, "show.json is inconsistent: {rule}"),
         }
     }
@@ -45,13 +40,6 @@ struct Decoded {
     keyframes: Vec<Keyframe>,
 }
 
-fn malformed(error: serde_json::Error) -> Unreadable {
-    Unreadable::Malformed {
-        line: error.line(),
-        column: error.column(),
-    }
-}
-
 const _: () = assert!(
     MOST_KEYFRAMES == 36,
     "the keyframe count rule names the selection limit"
@@ -63,7 +51,7 @@ impl Manifest {
         struct Version {
             version: u32,
         }
-        let version: Version = serde_json::from_slice(bytes).map_err(malformed)?;
+        let version: Version = serde_json::from_slice(bytes).map_err(Unreadable::Malformed)?;
         if version.version != Self::VERSION {
             return Err(Unreadable::Unsupported(version.version));
         }
@@ -72,7 +60,7 @@ impl Manifest {
             recording,
             marks,
             keyframes,
-        } = serde_json::from_slice(bytes).map_err(malformed)?;
+        } = serde_json::from_slice(bytes).map_err(Unreadable::Malformed)?;
         let manifest = Self {
             version,
             recording,

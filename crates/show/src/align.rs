@@ -1,4 +1,4 @@
-use std::{fmt, slice, time::Duration};
+use std::{slice, time::Duration};
 
 use crate::{
     Moment, Span,
@@ -19,19 +19,10 @@ const COMMA_CLAUSE_WORDS: usize = 3;
 
 const LONGEST_ROW: Duration = Duration::from_secs(10);
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TimedClause {
     pub at: Moment,
     pub text: String,
-}
-
-impl fmt::Debug for TimedClause {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("TimedClause")
-            .field("at", &self.at)
-            .field("bytes", &self.text.len())
-            .finish()
-    }
 }
 
 #[must_use]

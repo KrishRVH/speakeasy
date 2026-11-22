@@ -3,7 +3,6 @@ mod groups;
 
 use std::{
     cmp::{Ordering, Reverse},
-    fmt,
     ops::Range,
     time::Duration,
 };
@@ -42,7 +41,7 @@ pub enum Reason {
     Opening,
 }
 
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Keyframe {
     pub index: usize,
@@ -67,29 +66,6 @@ impl Keyframe {
 
     pub(crate) fn marks_in<'a>(&self, marks: &'a [Mark]) -> &'a [Mark] {
         marks.get(self.marks.clone()).unwrap_or_default()
-    }
-}
-
-impl fmt::Debug for Keyframe {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self {
-            index,
-            at,
-            reason,
-            event: _,
-            said: _,
-            marks,
-            action,
-            crop,
-        } = self;
-        f.debug_struct("Keyframe")
-            .field("index", index)
-            .field("at", at)
-            .field("reason", reason)
-            .field("marks", marks)
-            .field("action", action)
-            .field("crop", crop)
-            .finish_non_exhaustive()
     }
 }
 

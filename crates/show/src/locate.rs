@@ -8,21 +8,11 @@ use crate::{Manifest, Moment, Narration, Span};
 
 const MOST_SPOKEN_TOKENS: usize = 10_000;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum Focus<'a> {
     At(Moment),
     Mark(usize),
     Phrase(&'a str),
-}
-
-impl fmt::Debug for Focus<'_> {
-    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::At(at) => out.debug_tuple("At").field(at).finish(),
-            Self::Mark(number) => out.debug_tuple("Mark").field(number).finish(),
-            Self::Phrase(_) => out.write_str("Phrase(..)"),
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

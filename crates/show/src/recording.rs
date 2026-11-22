@@ -1,4 +1,4 @@
-use std::{fmt, time::Duration};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize, Serializer};
 
@@ -196,7 +196,7 @@ impl Action {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Narration {
     Words(Vec<Word>),
@@ -206,15 +206,6 @@ pub enum Narration {
 impl Default for Narration {
     fn default() -> Self {
         Self::Words(Vec::new())
-    }
-}
-
-impl fmt::Debug for Narration {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Words(words) => f.debug_tuple("Words").field(words).finish(),
-            Self::Text(text) => f.debug_struct("Text").field("bytes", &text.len()).finish(),
-        }
     }
 }
 
@@ -243,19 +234,10 @@ impl Narration {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Word {
     pub span: Span,
     pub text: String,
-}
-
-impl fmt::Debug for Word {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self { span, text: _ } = self;
-        f.debug_struct("Word")
-            .field("span", span)
-            .finish_non_exhaustive()
-    }
 }
 
 impl Word {
@@ -302,16 +284,5 @@ pub(crate) mod tests {
         assert_eq!(serde_json::from_str::<Stroke>(&json).unwrap(), stroke);
         assert!(Stroke::new(Vec::new()).is_none());
         assert!(serde_json::from_str::<Stroke>("[]").is_err());
-    }
-
-    #[test]
-    fn debugging_narration_never_prints_what_was_said() {
-        let shown = |said: &str| {
-            format!(
-                "{:?}",
-                [words(&[(0, said)]), Narration::Text(said.to_owned())]
-            )
-        };
-        assert_eq!(shown("alpha"), shown("omega"));
     }
 }
