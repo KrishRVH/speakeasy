@@ -21,6 +21,11 @@ pub struct Evidence {
     pub cells: Vec<Cell>,
 }
 
+const _: () = assert!(
+    Evidence::FRAMES == 12,
+    "the frame count error names the evidence limit"
+);
+
 impl Evidence {
     pub const FRAMES: usize = 12;
 
