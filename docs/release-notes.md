@@ -1,59 +1,63 @@
 # Release notes
 
-Speakeasy 0.11.1 sends a dictation with Return, puts your clipboard back after a paste, and keeps
-your words when the microphone drops out.
+Speakeasy 0.12.0 animates the pill at your display's refresh rate, lets Windows rest while it sits
+hidden, keeps voice with kept Shows, and gives agents a Show's whole narration.
 
-- **Return to send.** On Windows and Mac, press Enter or Return during the hold to finish the
-  dictation, type it, and press Return after it, so a chat or an agent's prompt sends it. Return
-  with the shortcut up reaches your app as usual.
-- **Your clipboard comes back.** On Windows and Mac, a paste puts back what the clipboard held half
-  a second later, unless something else changed it in the meantime. The switch that once read **Keep
-  clipboard** is now **Type instead of paste**; it still types the text without touching the
-  clipboard.
-- **Back-to-back dictations spaced.** On Windows and Mac, a dictation sent straight after the last
-  one into the same field, with no typing, clicking, or pointer movement in between, starts with a
-  space.
-- **Spoken symbols.** In Prose, “new line”, “new paragraph”, “underscore”, “open paren”, “backtick”,
-  and similar phrases write their symbol. Turn off **Spoken symbols** under Writing to keep the
-  words.
-- **Right Ctrl or F13 on Windows.** Choose either as the shortcut when another app already uses
-  Ctrl+Win.
-- **Dictation through a lost microphone.** Audio glitches and rerouting now leave only a gap. If the
-  microphone disconnects or stops sending audio after you spoke, Speakeasy keeps the words for
-  **Paste last dictation** and says how to paste them. A microphone that sends nothing for two
-  seconds gets an error, and when the microphone you chose isn't connected, Speakeasy records from
-  the system default and says so.
-- **Stays awake.** On Windows and Mac the computer stays awake from the start of a recording until
-  its words are delivered, and a Show also keeps the display on.
-- **Practice to correction.** Practice a word Speakeasy keeps mishearing, then choose it in the
-  result: a correction opens with what you said, so you only type what to write.
-- **Scripts can read dictations.** Once you turn on **Scripts can read their dictations**,
-  `speakeasy dictation start --print` and `dictation stop TOKEN --print` return that dictation's
-  words to the script that started it, and only to it.
-- **Shows for agents.** `speakeasy show wait` waits for the next Show you save. Summaries name the
-  Show ID and, on Windows with WSL, the folder as WSL sees it, and Speakeasy's MCP tools work from
-  WSL. Narration without timing gets its own summary section.
-- **Whisper.** Whisper takes your recognition hints as its prompt and drops invented credits such as
-  “Thanks for watching!” from brief, near-silent recordings.
-- **Mac.** The pill says when another app's Secure Keyboard Entry keeps Escape, Return, and the hold
-  keys from reaching Speakeasy, and it follows the pointer onto a screen's top row. Local engines
-  keep ggml's Metal tensor kernels off; on M5-class Macs they returned no speech or garbled text.
-- **Linux.** Speakeasy opts out of PipeWire's realtime budget, which could get it killed seconds
-  after the microphone opened, and treats an empty `WAYLAND_DISPLAY` as no Wayland session.
-- **Windows.** The installer names KrishRVH as publisher, so winget no longer offers an unrelated
-  package as an upgrade for Speakeasy.
-- **Clearer wording.** The tray names the speech model and adds “Open Settings” only when Settings
-  can fix the problem. Settings reads “Setting up…” during first setup, errors quote the setting to
-  change, a failed paste leads with how to get your words back, and the Shows window says when it
-  cannot read the Shows folder.
-- **Smaller fixes.** Settings keeps keyboard focus on controls whose action changes. A settings file
-  behind an unreadable folder is reported instead of treated as a fresh install. A preset is
-  described by the model it actually runs, and `show wait` fails for a damaged Show as
-  `show inspect` does.
+- **Smoother pill.** Since 0.10.0, the GPUI version Speakeasy draws with has held windows that never
+  take focus to 30 fps, so the pill and the Show overlay animated at 30 fps on every platform. They
+  now follow the display's refresh rate up to 240 fps, or 30 fps in battery saver: about 240 frames
+  a second on a 400 Hz Windows display, at about 0.16 ms of drawing each.
+- **Idle on Windows.** While every Speakeasy window is hidden, Speakeasy no longer wakes on each
+  screen refresh, about 1,000 times a second on a 400 Hz display. It now wakes about eight times a
+  second, with no measurable CPU.
+- **Faster.** Composing a finished Show takes about 40% less time. Windows Show video holds its
+  frame rate when capture work runs long, which used to drop it below 30 fps. On Mac, a chosen
+  microphone is found without reading every audio device's formats at each press.
+- **Kept Shows keep their voice.** Saved voice now lives and expires with its Show, so **Keep Show**
+  keeps it too; before, voice expired seven days after recording even in a kept Show. **Delete
+  Show…** removes the bundle and leaves pending recovery audio from an interrupted recording until
+  it expires or `speakeasy show discard` removes it. An interrupted Show left by 0.11.1 recovers by
+  transcribing its kept audio again.
+- **Whole narration for agents.** MCP `show_read` returns the whole recorded narration as timed
+  rows, the clauses that review and captions use, instead of stopping at 512 words. Tool errors name
+  their cause, and `show_list` names roots it cannot list in `unavailableRoots` while listing the
+  rest.
+- **Changed replies.** `show list`, `show inspect`, and `show wait` JSON and MCP Show metadata
+  report a Show Speakeasy cannot read as `status: "unreadable"` with one `error` string, in place of
+  `damaged`, `unsupported`, and the `problems` list. MCP narration carries `rows` of `atMs` and
+  `text` in place of `words`, `totalWords`, and `truncated`, and untimed narration carries `text` in
+  place of `excerpt`. MCP image metadata names times `sampledMs` and `requestedMs`, as `show frame`
+  does, and drops `sampleAfterRequest`. `speakeasy-cli` exits 2 for its own failures, such as a
+  missing `speakeasy` beside it.
+- **Line breaks that stay put.** With **Type instead of paste**, Windows and Mac type each line
+  break as Shift+Enter, so “new line” no longer sends a chat message or accepts an editor
+  suggestion. Return during the hold still sends.
+- **Keys and clipboard.** On Windows and Mac, Escape after Speakeasy copied a dictation but before
+  it pasted puts your clipboard back. S, W, A, V, Space, and Return act only when pressed during the
+  hold: a key already down or repeating no longer acts, and one pressed during a hold stays out of
+  your app until you release it.
+- **Presets and setup.** **Use** in Settings asks you to finish a recording or Show instead of
+  abandoning it. The setup guide keeps offering setup while the saved model is missing instead of
+  calling speech ready. Saving settings replaces a symlinked `settings.json` with a regular file.
+- **Transcripts.** Whisper keeps a word whole when its segments wrap inside it. Spoken symbols treat
+  CJK and other Unicode full stops as sentence ends and leave “forward, slash prices” as words, and
+  removing a final “um” no longer leaves “;.”. Show captions end at a lone closing quote or “。”.
+- **Show fixes.** A Windows window Show waits out a moment of unreadable window bounds instead of
+  ending. A pin lands where the pointer was when your taps ended, the screen recording stops at the
+  five-minute limit, and a narration retry that hears no words keeps the retry. Phrase searches and
+  `show video --at` say when you asked past the recorded timeline.
+- **Linux.** A paste into a GNOME app no longer stalls while Speakeasy has nothing to offer the
+  clipboard. With libei 1.4 or newer, a resumed Wayland keyboard waits to learn which modifiers are
+  held before pasting. An X11 paste that may have landed asks you to check the editor instead of
+  pasting again. An event left over from before a Wayland window was hidden no longer closes the
+  window or drops the connection.
+- **Smaller fixes.** `speakeasy dictation stop TOKEN --print` returns dictations of any length, and
+  **Copy last Show** in the tray plays the copy chord.
 
 Hold-to-talk, double-tap hands-free, and the five-minute recording limit remain. Recognition stays
-local, with no accounts, telemetry, dictation history, or automatic uploads. Managed Shows expire
-after seven days unless kept; keeping a Show never extends its audio retention.
+local, with no accounts, telemetry, dictation history, or automatic uploads. Managed Shows and their
+saved voice expire after seven days unless kept; pending recovery audio always expires seven days
+after recording.
 
 Packages support Windows 11 x64 and macOS 14 or newer on Apple silicon. Experimental Linux x86_64
 AppImage and bundled tar packages require glibc 2.35 or newer; Linux does not record Shows. Attached
