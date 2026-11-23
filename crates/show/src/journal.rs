@@ -253,7 +253,7 @@ impl Journal {
     /// Replays a checkpoint arrival through `admit`, so stride and thinning match the live take.
     fn restore(&mut self, at: Moment, entry: Option<&Entry>) -> Result<(), SourceError> {
         if let Some(entry) = entry {
-            // Check before `admit` advances the stride, so a rejected record leaves the replayed
+            // Check before `admit` counts the arrival, so a rejected record leaves the replayed
             // prefix intact.
             require(
                 self.admits() && self.has_time(),

@@ -106,7 +106,8 @@ pub(crate) fn start(
     Ok((thread, Monitor { stop, insertion }, inserter))
 }
 
-/// A manual-reset event, so a stop set before the hook thread first waits still ends it.
+/// A manual-reset event, so it stays set through every `is_set` poll and wait; a zero-timeout
+/// poll would consume an auto-reset signal.
 struct StopEvent(OwnedHandle);
 
 impl StopEvent {

@@ -483,7 +483,7 @@ impl<D> Recorder<D> {
                 self.pulse.beat(Instant::now());
             }
 
-            // Checked after draining, so no audio reaches the recording without a `Ready`.
+            // Checked after draining, so `Ready` precedes any piece, stream frame, or checkpoint of this audio.
             if !ready && self.pcm.samples() > 0 {
                 ready = true;
                 events.send_blocking(CaptureEvent::Ready(id, self.source))?;
@@ -530,8 +530,8 @@ impl<D> Recorder<D> {
                 }
             }
 
-            // Finish and cancel unpark at once, and an unpark before this wait is not lost; the
-            // timeout only paces draining.
+            // `finish` and cancellation unpark this thread, and an unpark before the wait is not
+            // lost; the timeout only paces draining.
             thread::park_timeout(DRAIN_INTERVAL);
         }
     }

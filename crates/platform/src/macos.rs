@@ -724,7 +724,6 @@ unsafe extern "C" {
     fn IsSecureEventInputEnabled() -> u8;
 }
 
-/// Whether another app holds secure input; always false off the main thread.
 pub(super) fn secure_input() -> bool {
     // SAFETY: Carbon marks this query not thread safe; the marker proves the main thread.
     MainThreadMarker::new().is_some_and(|_| unsafe { IsSecureEventInputEnabled() } != 0)

@@ -541,9 +541,8 @@ fn changes<'a, T: Serialize + 'a>(
         .collect())
 }
 
-/// Renames a temporary file beside `target` over it, so a failure never leaves half a file.
-///
-/// The temporary file stays in the target's directory so the rename stays on one filesystem.
+/// Renames a temporary file beside `target` over it, on the same filesystem, so a failure never
+/// leaves half a file.
 fn replace(target: &Path, contents: &[u8]) -> io::Result<()> {
     let directory = target
         .parent()

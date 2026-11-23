@@ -111,7 +111,7 @@ unfulfilled_lint_expectations = "deny"
 
 [workspace.lints.rustdoc]
 all = { level = "deny", priority = -1 }
-# Crate and native contracts live in docs/; rustdoc still checks the generated interface index.
+# AGENTS.md and docs/architecture.md map the crates; rustdoc still checks the generated interface index.
 missing_crate_level_docs = "allow"
 
 [workspace.lints.clippy]

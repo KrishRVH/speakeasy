@@ -104,7 +104,7 @@ struct World<P: Ports> {
     screen: Device<P::Screen>,
     /// The current session's paste, print, publish, or reopen task.
     delivery: Option<JoinHandle<Delivered>>,
-    /// Deliveries and checkpoint releases left by sessions that ended first; each settles as
+    /// Deliveries and checkpoint releases that outlive their sessions; each settles as
     /// `Wake::Abandoned`.
     retiring: Vec<(SessionId, JoinHandle<Delivered>)>,
     snapshots: watch::Sender<Snapshot>,

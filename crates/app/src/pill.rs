@@ -578,7 +578,8 @@ impl Content {
 struct Clock {
     seconds: u64,
     near_limit: bool,
-    /// Counted from the recording's start, so a late wake cannot delay or skip a second.
+    /// Time left until the next whole second of the recording, so a late wake cannot delay or skip
+    /// a second.
     next_tick: Duration,
 }
 

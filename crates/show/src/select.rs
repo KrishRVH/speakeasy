@@ -26,8 +26,8 @@ pub const SAMPLE_INTERVAL: Duration = Duration::from_millis(200);
 
 /// Non-mark keyframes keep at least this far apart, measured between their frames.
 ///
-/// Two clicks' keyframes need only different frames, or different screens when the clicks were
-/// released this close.
+/// Two clicks' keyframes need only different frames, and different screens too when the clicks
+/// were released this close.
 const FRAME_GAP: Duration = Duration::from_millis(750);
 
 const DOUBLE_CLICK: Duration = Duration::from_millis(650);

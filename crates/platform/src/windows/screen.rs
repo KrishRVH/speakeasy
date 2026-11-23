@@ -512,7 +512,7 @@ impl Capture {
         // The pointer reaches a Show as samples and click marks, not as a cursor in frames.
         best_effort(session.SetIsCursorCaptureEnabled(false));
 
-        // Builds without this setting deliver every change; `record` paces frames itself.
+        // Windows builds without this setting deliver every change; `record` paces frames itself.
         best_effort(session.SetMinUpdateInterval(interval.into()));
         let content_size = pixels(size);
         let part = target.part();

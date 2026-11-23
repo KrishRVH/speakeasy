@@ -1,7 +1,7 @@
 //! Silent movie storage beside a Show.
 //!
 //! Coverage comes from the container's surviving fragments, not from the writer's `Finished`
-//! receipt, whose `finalized` flag only marks that coverage partial.
+//! receipt, which only marks coverage partial when it is missing or unfinalized.
 
 mod frame;
 pub(in crate::show::store) mod geometry;

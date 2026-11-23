@@ -176,16 +176,10 @@ pub struct Pin {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Action {
-    /// `at` is the release and `point` the press; a drag's `span` runs from press to release.
-    Click {
-        at: Moment,
-        point: Point,
-    },
-    Drag {
-        span: Span,
-        from: Point,
-        to: Point,
-    },
+    /// `at` is the release and `point` the press.
+    Click { at: Moment, point: Point },
+    /// `span` runs from press to release.
+    Drag { span: Span, from: Point, to: Point },
 }
 
 impl Action {

@@ -26,7 +26,8 @@ const TICKS_PER_SECOND: u64 = 10_000_000;
 /// With throttling disabled the writer queues without bound, so `write` refuses past this.
 const QUEUED_BYTES: u32 = 64 << 20;
 
-/// Field order is teardown order: writer, sink shutdown, stream close, then `Foundation`.
+/// Field order is teardown order: writer, converter, sink shutdown, stream close, then
+/// `Foundation`.
 pub(crate) struct Codec {
     writer: IMFSinkWriter,
     converter: Converter,

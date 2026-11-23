@@ -21,7 +21,8 @@ Terminate a [process group](../crates/platform/src/process.rs) before reaping it
 ## Linux desktop ownership
 
 Keep libei pointers on the desktop thread; see the
-[libei adapter](../crates/platform/src/linux/ei.rs). Shortcut events come from a separate stream.
+[libei adapter](../crates/platform/src/linux/ei.rs). Shortcut events arrive on the GlobalShortcuts
+portal stream, never through libei.
 
 ## Mac AppKit ownership
 
@@ -38,8 +39,9 @@ native codec, and the checkpoint lease, which outlives the codec.
 ## GPUI and vendored adapters
 
 Foreground tasks use `AsyncApp` from `cx.spawn` within the application loop. During forced shutdown,
-GPUI disposes windows before polling quit futures for up to 200 ms;
-[shutdown](../crates/app/src/shell/shutdown.rs) drains and releases app state around it. See the
+GPUI disposes windows before polling quit futures for up to 200 ms; `release_services` in
+[main](../crates/app/src/main.rs) keeps the instance lock through disposal, and app-owned Quit in
+[shutdown](../crates/app/src/shell/shutdown.rs) drains before asking GPUI to exit. See the
 [vendor index](../vendor/README.md).
 
 On macOS AppKit's deferred termination loop cannot drain GPUI's serial main queue. Defer only

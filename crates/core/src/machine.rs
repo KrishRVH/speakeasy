@@ -1,5 +1,5 @@
-// Release builds print machine values without their payload, so dictated text never reaches a
-// log or panic message. Tests derive the full `Debug` that explorer traces print.
+// Outside this crate's tests, machine values print without their payload, so dictated text
+// never reaches a log or panic message. Tests derive the full `Debug` that explorer traces print.
 #[cfg(not(test))]
 macro_rules! redacted {
     ($($name:ident),+ $(,)?) => {
@@ -28,7 +28,7 @@ pub use self::{
 use crate::gesture::{Action, Gesture, Moment, State, Timing};
 
 // Tests need every payload type `Clone + Debug` so the explorer can branch and print states;
-// release builds add no bounds.
+// other builds add no bounds.
 #[cfg(not(test))]
 pub trait Cargo {}
 

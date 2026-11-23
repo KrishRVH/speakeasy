@@ -410,7 +410,7 @@ pub(super) struct Windows {
     keys: HeldKeys,
 }
 
-/// Keys seen down. The hook reports no autorepeat, so another down of one is a repeat.
+/// Keys seen down. The hook does not mark autorepeat, so another down of a held key is a repeat.
 #[cfg(any(target_os = "windows", test))]
 #[derive(Default)]
 struct HeldKeys(Vec<u16>);
@@ -633,7 +633,7 @@ impl crate::MacShortcut {
         const OPTION: u64 = 0x0008_0000;
         const COMMAND: u64 = 0x0010_0000;
         const FUNCTION: u64 = 0x0080_0000;
-        // Function-key events carry the Fn flag, which for F13 means no other shortcut.
+        // F13 events carry the Fn flag, which must not count as another shortcut.
         let flags = if matches!(self, Self::F13) {
             flags & !FUNCTION
         } else {
