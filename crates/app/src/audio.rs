@@ -638,11 +638,9 @@ fn select_device(
         Some(id) => {
             // `input_devices` makes CoreAudio probe every device's formats, and ALSA's
             // `device_by_id` rewrites ids such as `sysdefault:CARD=X`; match the stored id exactly.
-            let chosen = host
-                .devices()
-                .map_err(microphone_error)?
-                .find(|device| device.id().is_ok_and(|actual| actual.to_string() == id))
-                .filter(DeviceTrait::supports_input);
+            let chosen = host.devices().map_err(microphone_error)?.find(|device| {
+                device.id().is_ok_and(|actual| actual.to_string() == id) && device.supports_input()
+            });
             proceed()?;
             if let Some(device) = chosen {
                 return Ok((device, MicrophoneSource::Chosen));
