@@ -1,25 +1,6 @@
 use super::*;
 
 #[test]
-fn delayed_frames_skip_missed_deadlines_and_on_time_frames_keep_cadence() {
-    let deadline = Instant::now();
-    let slightly_late = deadline + Duration::from_millis(1);
-    assert_eq!(
-        next_frame_deadline(deadline, slightly_late),
-        deadline + FRAME_INTERVAL
-    );
-    for delay in [FRAME_INTERVAL, Duration::from_secs(60)] {
-        let late = deadline + delay;
-        assert_eq!(next_frame_deadline(deadline, late), late + FRAME_INTERVAL);
-    }
-    let at_60_hz = deadline + Duration::from_nanos(1_000_000_000 / 60);
-    assert!(
-        next_frame_deadline(deadline, deadline) < at_60_hz,
-        "Slower displays must remain eligible on every native frame"
-    );
-}
-
-#[test]
 fn feedback_deadlines_expire_and_never_apply_to_recording_or_cancellation() {
     assert_eq!(
         feedback_remaining(Phase::Done, false, Duration::ZERO),

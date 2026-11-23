@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::{Context as _, anyhow};
 use gpui::{
     AccessibleAction, AnyWindowHandle, App, AppContext, AsyncApp, Context, Render,
@@ -6,6 +8,10 @@ use gpui::{
 use raw_window_handle::HasWindowHandle;
 use speakeasy_platform::NativeWindow;
 use tokio::sync::watch;
+
+/// Caps the never-active pill and Show overlay at 240 fps; GPUI's default for inactive windows
+/// would hold them to 30.
+pub(crate) const PASSIVE_FRAME_INTERVAL: Duration = Duration::from_nanos(1_000_000_000 / 240);
 
 pub(crate) trait EntityUpdate<T> {
     fn update_if_alive<C: AppContext>(

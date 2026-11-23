@@ -18,7 +18,7 @@ use tokio::sync::watch;
 
 use crate::{
     BRAND_FONT,
-    gpui_ext::{EntityUpdate, WindowUpdate, defer_native, follow},
+    gpui_ext::{EntityUpdate, PASSIVE_FRAME_INTERVAL, WindowUpdate, defer_native, follow},
     runtime::Snapshot,
 };
 
@@ -695,6 +695,7 @@ fn open(
             is_resizable: false,
             is_minimizable: false,
             window_background: WindowBackgroundAppearance::Transparent,
+            inactive_frame_interval: Some(PASSIVE_FRAME_INTERVAL),
             ..Default::default()
         },
         |window, cx| {

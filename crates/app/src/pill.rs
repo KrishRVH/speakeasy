@@ -24,14 +24,15 @@ use speakeasy_show::{Ending, NarrationLoss};
 use tokio::sync::watch;
 
 use crate::{
-    gpui_ext::{EntityUpdate, Presence, WindowUpdate, defer_presence, follow},
+    gpui_ext::{
+        EntityUpdate, PASSIVE_FRAME_INTERVAL, Presence, WindowUpdate, defer_presence, follow,
+    },
     runtime::Snapshot,
     theme::Theme,
     transcript::style::Style,
 };
 
 const METER_BARS: usize = 24;
-const FRAME_INTERVAL: Duration = Duration::from_millis(5);
 
 const SUBMITTED_FOR: Duration = Duration::from_millis(350);
 const COPIED_FOR: Duration = Duration::from_millis(1600);
@@ -75,10 +76,6 @@ const LID_OPEN: f32 = 0.0;
 const LID_AJAR: f32 = 0.62;
 const LID_CLOSED: f32 = 1.0;
 
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "Reduced motion, native visibility, animation and frame registration are independent presentation facts; none owns session state"
-)]
 pub(crate) struct Pill {
     snapshot: Snapshot,
     capsule: Capsule,
@@ -92,12 +89,10 @@ pub(crate) struct Pill {
     secure_input_until: Option<Instant>,
     default_microphone_until: Option<Instant>,
     frame_at: Instant,
-    frame_due: Instant,
     reduced_motion: bool,
     theme: Theme,
     visible: bool,
     animating: bool,
-    frame_pending: bool,
     wake: Option<Task<()>>,
     visibility: Option<Task<()>>,
     _updates: Task<()>,
@@ -143,12 +138,10 @@ impl Pill {
             secure_input_until: None,
             default_microphone_until: None,
             frame_at: now,
-            frame_due: now,
             reduced_motion,
             theme,
             visible: false,
             animating: false,
-            frame_pending: false,
             wake: None,
             visibility: None,
             _updates: follow(updates, cx, Snapshot::clone, Self::apply_snapshot),
@@ -314,30 +307,6 @@ impl Pill {
         self.visibility = Some(defer_presence(self.window, presence, cx));
     }
 
-    /// Redraws on the first native frame at or after `frame_due`.
-    ///
-    /// This stays in display sync without a repeating timer or redraws between deadlines.
-    fn request_deadline_frame(&mut self, window: &Window, cx: &Context<'_, Self>) {
-        if self.frame_pending {
-            return;
-        }
-        self.frame_pending = true;
-        let this = cx.entity().downgrade();
-        window.on_next_frame(move |window, cx| {
-            this.update_if_alive(cx, |pill, cx| {
-                pill.frame_pending = false;
-                if !pill.animating {
-                    return;
-                }
-                if Instant::now() >= pill.frame_due {
-                    cx.notify();
-                } else {
-                    pill.request_deadline_frame(window, cx);
-                }
-            });
-        });
-    }
-
     fn schedule_wake(&mut self, delay: Option<Duration>, cx: &Context<'_, Self>) {
         if self.wake.is_none()
             && let Some(delay) = delay
@@ -373,9 +342,10 @@ impl Render for Pill {
         }
         self.animating =
             visible && (moving || (scene.phase == Phase::Processing && !self.reduced_motion));
-        self.frame_due = next_frame_deadline(self.frame_due, now);
+        // GPUI paces these at `PASSIVE_FRAME_INTERVAL` and tolerates the vsync jitter that would
+        // make a deadline here skip frames.
         if self.animating {
-            self.request_deadline_frame(window, cx);
+            window.request_animation_frame();
         }
         self.schedule_wake(scene.wake_after(), cx);
         self.render_capsule(scene)
@@ -655,6 +625,7 @@ pub(crate) fn open(
             is_resizable: false,
             is_minimizable: false,
             window_background: WindowBackgroundAppearance::Transparent,
+            inactive_frame_interval: Some(PASSIVE_FRAME_INTERVAL),
             ..Default::default()
         },
         |window, cx| {
@@ -816,14 +787,6 @@ const fn meter_stiffness(phase: Phase, rising: bool) -> f32 {
         Phase::Recording => 120.0,
         _ => 20.0,
     }
-}
-
-fn next_frame_deadline(previous: Instant, now: Instant) -> Instant {
-    previous
-        .checked_add(FRAME_INTERVAL)
-        .filter(|next| *next > now)
-        .or_else(|| now.checked_add(FRAME_INTERVAL))
-        .unwrap_or(now)
 }
 
 #[cfg(test)]
