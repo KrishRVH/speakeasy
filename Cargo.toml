@@ -204,3 +204,8 @@ lto = "thin"
 codegen-units = 1
 strip = "debuginfo"
 overflow-checks = true
+
+# First-party arithmetic is explicit under `arithmetic_side_effects`. Dependencies keep Rust's
+# release default: their overflow checks slowed Show composition by about 40%.
+[profile.release.package."*"]
+overflow-checks = false
