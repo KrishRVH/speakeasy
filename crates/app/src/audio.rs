@@ -636,13 +636,17 @@ fn select_device(
 ) -> Result<(cpal::Device, MicrophoneSource), Startup> {
     let source = match microphone {
         Some(id) => {
-            for device in host.input_devices().map_err(microphone_error)? {
-                proceed()?;
-                if device.id().is_ok_and(|actual| actual.to_string() == id) {
-                    return Ok((device, MicrophoneSource::Chosen));
-                }
-            }
+            // `input_devices` makes CoreAudio probe every device's formats, and ALSA's
+            // `device_by_id` rewrites ids such as `sysdefault:CARD=X`; match the stored id exactly.
+            let chosen = host
+                .devices()
+                .map_err(microphone_error)?
+                .find(|device| device.id().is_ok_and(|actual| actual.to_string() == id))
+                .filter(DeviceTrait::supports_input);
             proceed()?;
+            if let Some(device) = chosen {
+                return Ok((device, MicrophoneSource::Chosen));
+            }
             MicrophoneSource::Default
         },
         None => MicrophoneSource::Chosen,
