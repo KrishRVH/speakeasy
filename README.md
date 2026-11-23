@@ -308,8 +308,9 @@ when changing the session machine. See
 
 - Run `mise run native:rendering` for owned-window rendering. On Windows or Linux, use
   `mise run native:settings` and `mise run native:review` for Settings and synthetic Show
-  interactions. Linux uses private Xvfb. `mise run linux:demo` checks the release preview and
-  `bash scripts/check-rendering-linux.sh` checks rendering in a Docker container.
+  interactions, and `mise run native:pill` for the pill's frame rate. Linux uses private Xvfb.
+  `mise run linux:demo` checks the release preview and `bash scripts/check-rendering-linux.sh`
+  checks rendering in a Docker container.
 - On Windows, `mise run windows:accessibility` checks a static UI Automation fixture.
   `scripts/check-demo-windows.ps1 -Executable <speakeasy.exe>` checks the simulated pill and
   Settings. `scripts/check-tray-windows.ps1 -Executable <speakeasy.exe>` checks hide and reopen.

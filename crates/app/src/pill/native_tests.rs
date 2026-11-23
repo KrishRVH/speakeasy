@@ -16,7 +16,7 @@ use x11rb::{
     xcb_ffi::XCBConnection,
 };
 
-use super::*;
+use super::{native_pacing::run_native, *};
 
 #[test]
 #[ignore = "Opt-in native windows on the X11 display, never microphone, input, or clipboard"]
@@ -40,24 +40,6 @@ fn reopened_native_pill_shows_an_active_session_but_never_replays_feedback() -> 
 #[ignore = "Opt-in managed window on a private X11 display, never microphone, input, or clipboard"]
 fn native_pill_app_withdraws_a_managed_window_that_is_already_unmapped() -> anyhow::Result<()> {
     run_native(async |cx: &AsyncApp| cx.update(check_managed_withdrawal))
-}
-
-fn run_native(
-    check: impl AsyncFnOnce(&AsyncApp) -> anyhow::Result<()> + 'static,
-) -> anyhow::Result<()> {
-    let (completed, outcome) = std::sync::mpsc::channel();
-    let (application, presentation) = crate::application::new()?;
-    application.run(move |cx| {
-        cx.set_global(presentation);
-        cx.spawn(async move |cx| {
-            completed.send(check(cx).await).unwrap();
-            cx.update(|cx| cx.quit());
-        })
-        .detach();
-    });
-    outcome
-        .try_recv()
-        .context("Native check did not complete")?
 }
 
 fn check_idle_pill(cx: &mut App) -> anyhow::Result<()> {

@@ -285,6 +285,10 @@ run = [
 description = "Render an owned non-activating window through SVG frames, resizes, and show/hide"
 run = "{{vars.private_display}}cargo run --locked -p speakeasy --example check_native_rendering -- --native-gui"
 
+[tasks."native:pill"]
+description = "Check that a pill shown after idling animates at the display rate, on Windows or Linux"
+run = "{{vars.private_display}}cargo test --locked -p speakeasy native_pill_animates_ -- --ignored --test-threads=1"
+
 [tasks."native:review"]
 description = "Check synthetic Show review in an owned window on Windows or Linux"
 run = "{{vars.private_display}}cargo test --locked -p speakeasy native_show_review_ -- --ignored --test-threads=1"

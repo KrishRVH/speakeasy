@@ -3,6 +3,9 @@ mod grille;
 // Clippy's `allow-*-in-tests` settings recognize only a bare `cfg(test)`, so the platform gate is
 // a separate attribute.
 #[cfg(test)]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+mod native_pacing;
+#[cfg(test)]
 #[cfg(target_os = "linux")]
 mod native_tests;
 mod render;

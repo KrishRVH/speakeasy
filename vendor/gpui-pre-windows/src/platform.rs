@@ -1,7 +1,10 @@
 use std::{
     cell::{Cell, RefCell},
     ffi::{OsStr, OsString},
-    os::windows::ffi::{OsStrExt as _, OsStringExt as _},
+    os::windows::{
+        ffi::{OsStrExt as _, OsStringExt as _},
+        io::AsRawHandle as _,
+    },
     path::{Path, PathBuf},
     rc::{Rc, Weak},
     sync::{
@@ -29,9 +32,17 @@ use windows::{
             Power::*,
             SystemInformation::*,
             SystemServices::{GUID_POWER_SAVING_STATUS, POWER_REQUEST_CONTEXT_VERSION},
-            Threading::{POWER_REQUEST_CONTEXT_SIMPLE_STRING, REASON_CONTEXT, REASON_CONTEXT_0},
+            Threading::{
+                GetCurrentProcessId, GetCurrentThreadId, GetThreadId,
+                POWER_REQUEST_CONTEXT_SIMPLE_STRING, REASON_CONTEXT, REASON_CONTEXT_0,
+            },
         },
-        UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
+        UI::{
+            Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent},
+            Input::KeyboardAndMouse::*,
+            Shell::*,
+            WindowsAndMessaging::*,
+        },
     },
     core::*,
 };
@@ -55,8 +66,8 @@ pub struct WindowsPlatform {
     raw_window_handles: Arc<RwLock<SmallVec<[TrackedWindow; 4]>>>,
     /// The windowing mode to start in, applied when `run` starts. Windowed when unset.
     initial_windowing: RefCell<Option<WindowingRequest>>,
-    /// Set to stop the current `VSyncProvider` thread, which runs while windowed.
-    vsync_stop: RefCell<Option<Arc<AtomicBool>>>,
+    /// The current `VSyncProvider` thread, which runs while windowed.
+    vsync: RefCell<Option<VSyncThread>>,
     // The below members will never change throughout the entire lifecycle of the app.
     /// Created with `headless()`: never windowed, and without a real text system.
     headless: bool,
@@ -272,7 +283,7 @@ impl WindowsPlatform {
             handle,
             raw_window_handles,
             initial_windowing: RefCell::new(None),
-            vsync_stop: RefCell::new(None),
+            vsync: RefCell::new(None),
             headless,
             icon,
             background_executor,
@@ -418,10 +429,10 @@ impl WindowsPlatform {
 
     /// Stops vsync and releases the DirectX devices. No window may be open.
     fn detach_gpu(&self) {
-        if let Some(stop) = self.vsync_stop.borrow_mut().take() {
+        if let Some(vsync) = self.vsync.borrow_mut().take() {
             // Not joined: the thread can be sending this thread a message. It exits after its
             // next vsync, and drops its reference to the devices then.
-            stop.store(true, Ordering::Release);
+            vsync.stop();
         }
         self.inner.state.directx_devices.borrow_mut().take();
     }
@@ -431,14 +442,14 @@ impl WindowsPlatform {
             return;
         };
         let stop = Arc::new(AtomicBool::new(false));
-        *self.vsync_stop.borrow_mut() = Some(stop.clone());
+        let flag = stop.clone();
         let mut directx_device = directx_devices;
         let platform_window: SafeHwnd = self.handle.into();
         let validation_number = self.inner.validation_number;
-        let all_windows = Arc::downgrade(&self.raw_window_handles);
+        let tracked_windows = Arc::downgrade(&self.raw_window_handles);
         let invalidate_devices = self.invalidate_devices.clone();
 
-        std::thread::Builder::new()
+        let thread = std::thread::Builder::new()
             .name("VSyncProvider".to_owned())
             .spawn(move || {
                 let vsync_provider = VSyncProvider::new();
@@ -455,20 +466,21 @@ impl WindowsPlatform {
                             &mut directx_device,
                             platform_window.as_raw(),
                             validation_number,
-                            &all_windows,
+                            &tracked_windows,
                         ) {
                             panic!("Device lost: {err}");
                         }
                     }
-                    let Some(all_windows) = all_windows.upgrade() else {
+                    let Some(all_windows) = tracked_windows.upgrade() else {
                         break;
                     };
+                    let mut any_shown = false;
                     for hwnd in all_windows.read().iter() {
+                        let shown = is_shown(hwnd.as_raw());
+                        any_shown |= shown;
                         unsafe {
                             if let Some(signal_at) = signal_at {
-                                if IsWindowVisible(hwnd.as_raw()).as_bool()
-                                    && !IsIconic(hwnd.as_raw()).as_bool()
-                                {
+                                if shown {
                                     hwnd.frame_signal.record(signal_at, signal_source);
                                 } else {
                                     // Hidden windows may not consume WM_PAINT until shown again.
@@ -480,9 +492,89 @@ impl WindowsPlatform {
                                 .log_err();
                         }
                     }
+                    drop(all_windows);
+                    if !any_shown {
+                        wait_for_shown_window(&tracked_windows, &stop);
+                    }
                 }
             })
             .unwrap();
+        // SAFETY: the join handle owns the thread handle for this call.
+        let id = unsafe { GetThreadId(HANDLE(thread.as_raw_handle())) };
+        *self.vsync.borrow_mut() = Some(VSyncThread { stopped: flag, id });
+    }
+}
+
+/// Speakeasy patch: ends a `VSyncProvider` thread's wait for a window to show.
+struct VSyncThread {
+    stopped: Arc<AtomicBool>,
+    id: u32,
+}
+
+impl VSyncThread {
+    /// Fails harmlessly while the thread has no message queue: it checks windows and the stop
+    /// flag after creating one and before it waits.
+    fn wake(&self) {
+        let _ = unsafe { PostThreadMessageW(self.id, WM_NULL, WPARAM(0), LPARAM(0)) };
+    }
+
+    fn stop(self) {
+        self.stopped.store(true, Ordering::Release);
+        self.wake();
+    }
+}
+
+fn is_shown(hwnd: HWND) -> bool {
+    unsafe { IsWindowVisible(hwnd).as_bool() && !IsIconic(hwnd).as_bool() }
+}
+
+const PARKED_DEVICE_CHECK_MS: u32 = 1000;
+
+/// Speakeasy patch: blocks the vsync thread until one of this process's windows is shown or
+/// restored, `VSyncThread` wakes it, or a second passes, instead of waking every vblank while the
+/// app sits hidden.
+fn wait_for_shown_window(
+    windows: &std::sync::Weak<RwLock<SmallVec<[TrackedWindow; 4]>>>,
+    stop: &AtomicBool,
+) {
+    unsafe extern "system" fn shown(
+        _: HWINEVENTHOOK,
+        _: u32,
+        _: HWND,
+        object: i32,
+        child: i32,
+        _: u32,
+        _: u32,
+    ) {
+        if object == OBJID_WINDOW.0 && child == CHILDID_SELF as i32 {
+            // Ends the `GetMessageW` that dispatched this out-of-context event.
+            let _ = unsafe { PostThreadMessageW(GetCurrentThreadId(), WM_NULL, WPARAM(0), LPARAM(0)) };
+        }
+    }
+
+    let mut msg = MSG::default();
+    // Creates the queue that the hooks and `VSyncThread` post to.
+    let _ = unsafe { PeekMessageW(&mut msg, None, WM_USER, WM_USER, PM_NOREMOVE) };
+    let process = unsafe { GetCurrentProcessId() };
+    let hooks = [EVENT_OBJECT_SHOW, EVENT_SYSTEM_MINIMIZEEND].map(|event| unsafe {
+        SetWinEventHook(event, event, None, Some(shown), process, 0, WINEVENT_OUTOFCONTEXT)
+    });
+    // A window shown before the hooks, or tracked after its show, or a stop signalled before the
+    // queue posted nothing.
+    let any_shown = || {
+        windows
+            .upgrade()
+            .is_some_and(|windows| windows.read().iter().any(|hwnd| is_shown(hwnd.as_raw())))
+    };
+    // A coarse timer still lets the loop notice a lost device while every window is hidden.
+    let timer = unsafe { SetTimer(None, 0, PARKED_DEVICE_CHECK_MS, None) };
+    if hooks.iter().all(|hook| !hook.is_invalid()) && !stop.load(Ordering::Acquire) && !any_shown()
+    {
+        let _ = unsafe { GetMessageW(&mut msg, None, 0, 0) };
+    }
+    let _ = unsafe { KillTimer(None, timer) };
+    for hook in hooks.into_iter().filter(|hook| !hook.is_invalid()) {
+        let _ = unsafe { UnhookWinEvent(hook) };
     }
 }
 
@@ -753,6 +845,10 @@ impl Platform for WindowsPlatform {
             handle: handle.into(),
             frame_signal: window.state.frame_signal.clone(),
         });
+        // A window created visible raised its show event before vsync could see it.
+        if let Some(vsync) = self.vsync.borrow().as_ref() {
+            vsync.wake();
+        }
 
         Ok(Box::new(window))
     }
@@ -1454,8 +1550,8 @@ unsafe fn power_saving_status(lparam: LPARAM) -> Option<bool> {
 
 impl Drop for WindowsPlatform {
     fn drop(&mut self) {
-        if let Some(stop) = self.vsync_stop.borrow_mut().take() {
-            stop.store(true, Ordering::Release);
+        if let Some(vsync) = self.vsync.borrow_mut().take() {
+            vsync.stop();
         }
         unsafe {
             if let Some(notification) = self.suspend_resume_notification.borrow_mut().take() {

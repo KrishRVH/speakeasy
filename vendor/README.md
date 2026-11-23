@@ -25,7 +25,8 @@ Replace a directory with the new archive, then reapply each patch below only if 
 still has the problem it fixes, and rerun the check that patch names. Update the table, the
 workspace requirements in the root `Cargo.toml`, and this list together. On every GPUI update,
 recheck the GPUI contracts in [native contracts](../docs/native-contracts.md#gpui-and-vendored-adapters):
-app liveness for `AsyncApp`, and `App::shutdown` ordering.
+app liveness for `AsyncApp`, and `App::shutdown` ordering. Run `mise run native:pill` on Windows and
+Linux: it fails when GPUI's frame pacing throttles the pill.
 
 ## gpui-pre
 
@@ -103,6 +104,12 @@ app liveness for `AsyncApp`, and `App::shutdown` ordering.
 
 ## gpui-pre-windows
 
+- `src/platform.rs` stops the `VSyncProvider` thread while no window is shown. Upstream wakes it
+  every vblank for the app's whole life: about 950 times a second at 400 Hz with Speakeasy hidden
+  in the tray. The thread waits for WinEvent hooks on this process's windows and wakes when one is
+  shown or restored, when GPUI tracks a window created visible, when vsync stops, and once a
+  second to notice a lost device. `mise run native:pill` fails if a shown
+  pill stays without frames.
 - `src/vsync.rs` and the new `src/vsync/interval.rs` convert DWM timing without truncating the
   QPC frequency and reject zero or implausible intervals through the 60 Hz fallback. Upstream
   divides by zero when it falls back to a refresh ratio such as 60/1, which ends the redraw
