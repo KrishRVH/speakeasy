@@ -85,6 +85,7 @@ use crate::{
 
 const NO_POINTER: &str = "Cannot find the pointer. Try again.";
 
+/// The longest pause between capture passes; a pass's own work counts toward it.
 const POLL: Duration = Duration::from_millis(10);
 
 /// Pool buffers: one can wait as `pending` while Windows fills the other.
@@ -376,6 +377,7 @@ fn record(
     let mut motion = Instant::now();
     let outcome = (|| {
         while !stopping.is_closed() && !events.is_closed() {
+            let pass = Instant::now();
             // A window excluded now may still be in frames composed before its affinity took hold.
             if capture.poll()? && exclusions.refresh()? {
                 capture.discard_until_now();
@@ -405,7 +407,7 @@ fn record(
                 )]
                 let _ = events.force_send(ScreenEvent::MovieStopped);
             }
-            thread::sleep(POLL);
+            thread::sleep(POLL.saturating_sub(pass.elapsed()));
         }
         Ok(())
     })();
