@@ -22,7 +22,7 @@ in its `README.md`.
    spelling visible on screen when recognition differs. A mark without a saved frame has no
    corresponding keyframe.
 4. Cite each image's actual time. A crop or sampling gap can hide the requested evidence. In a
-   **Copy image + summary + narration** handoff, distinguish the edited summary and the captured
+   **Copy image, summary, and narration** handoff, distinguish the edited summary and the captured
    words. The caption may name both the requested and displayed times.
 
 If inspection says `unreadable`, read its `error` and any usable findings before proceeding.
