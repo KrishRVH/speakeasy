@@ -469,7 +469,6 @@ fn release_services(
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
 
     fn parse(args: &[&str]) -> anyhow::Result<Invocation> {
