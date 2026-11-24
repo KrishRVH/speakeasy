@@ -914,7 +914,6 @@ impl Mac {
         chord.modifiers().iter().all(modifier_down) && chord.code().is_none_or(key_down)
     }
 
-    /// What a tap event means to a recording, with the flags Core Graphics reports on it.
     /// Whether macOS sets the Fn flag on this key itself: function, arrow, and navigation keys.
     const fn sets_function(key: u16) -> bool {
         matches!(
@@ -923,6 +922,7 @@ impl Mac {
         )
     }
 
+    /// What a tap event means to a recording, with the flags Core Graphics reports on it.
     pub(super) fn recorded(event: MacEvent, flags: u64) -> RecordedKey {
         match event {
             MacEvent::FlagsChanged { .. } => RecordedKey::Modifiers(Self::pressed(flags)),
@@ -1166,8 +1166,8 @@ impl Recording {
     /// release after it. Other releases and repeats may belong to a key held from before the
     /// recording, which the app that saw it go down needs.
     pub(super) fn observe(&self, key: RecordedKey) -> Option<bool> {
-        // The slot stays locked until the recording ends, so a newer recording Settings started
-        // meanwhile survives.
+        // Held through `*slot = next`, so a recording Settings starts meanwhile is never
+        // overwritten.
         let mut slot = self.lock();
         let (next, swallow) = match (&mut *slot, key) {
             (Slot::Releasing(released), RecordedKey::Key { code, stroke, .. })
