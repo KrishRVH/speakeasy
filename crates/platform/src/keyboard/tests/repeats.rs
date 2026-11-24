@@ -1,7 +1,5 @@
 use super::*;
 
-const LETTER_V: u32 = 0x56;
-
 fn mac_repeat(code: i64, held: Modifiers) -> MacEvent {
     MacEvent::Key {
         code,
@@ -67,7 +65,7 @@ fn a_key_already_down_when_a_hold_starts_never_acts_on_its_repeats() {
             let mut policy = Windows::new(only(shortcut));
             assert!(!policy.observe(vk, true, NONE_HELD, start).swallows());
             let chord = if shortcut == WindowsShortcut::F13 {
-                assert!(policy.observe(0x7C, true, NONE_HELD, start).starts());
+                assert!(policy.observe(F13, true, NONE_HELD, start).starts());
                 held_for(shortcut, &[])
             } else {
                 policy.observe(LEFT_CONTROL, true, NONE_HELD, start);

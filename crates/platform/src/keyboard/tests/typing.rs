@@ -1,9 +1,7 @@
 use super::*;
 
-const LETTER_V: u32 = 0x56;
 const TAB: u32 = 0x09;
 const CAPS_LOCK: u32 = 0x14;
-const F13: u32 = 0x7C;
 
 fn types(policy: &mut Windows, key: u32, down: bool, physical: Physical) -> bool {
     let decision = policy.observe(key, down, physical, now());

@@ -22,19 +22,10 @@ fn mac(talk: &str, toggles: Toggles<MacShortcut>) -> Mac {
     })
 }
 
-fn no_toggles<S>() -> Toggles<S> {
-    Toggles {
-        hands_free: None,
-        show_screen: None,
-        show_window: None,
-        show_area: None,
-    }
-}
-
 #[test]
 fn a_recorded_shortcut_with_a_key_claims_only_the_press_that_completes_it() {
     let talk = "control+shift+space";
-    let mut policy = windows(talk, no_toggles());
+    let mut policy = windows(talk, Toggles::default());
     let read = |keys: &[u32]| held_for(talk.parse().unwrap_or_default(), keys);
     policy.observe(LEFT_CONTROL, true, NONE_HELD, now());
     policy.observe(LEFT_SHIFT, true, read(&[LEFT_CONTROL]), now());
@@ -68,7 +59,7 @@ fn a_recorded_shortcut_with_a_key_claims_only_the_press_that_completes_it() {
 
 #[test]
 fn a_shortcut_of_several_modifiers_starts_once_all_are_held_and_ends_when_one_lifts() {
-    let mut policy = mac("control+option", no_toggles());
+    let mut policy = mac("control+option", Toggles::default());
     let flags = |flags| MacShortcut::modifiers("control+option".parse().unwrap_or_default(), flags);
     let control = MacEvent::FlagsChanged {
         code: 59,
@@ -97,7 +88,7 @@ fn a_shortcut_of_several_modifiers_starts_once_all_are_held_and_ends_when_one_li
 fn a_toggle_acts_once_on_its_exact_keys_and_its_key_never_reaches_the_app() {
     let toggles = Toggles {
         hands_free: "control+alt+h".parse().ok(),
-        ..no_toggles()
+        ..Toggles::default()
     };
     let mut policy = windows("f13", toggles);
     let read = |keys: &[u32]| held_for(WindowsShortcut::F13, keys);
@@ -128,7 +119,7 @@ fn a_toggle_acts_once_on_its_exact_keys_and_its_key_never_reaches_the_app() {
 fn a_mac_toggle_on_a_function_key_matches_despite_the_fn_flag_macos_adds() {
     let toggles = Toggles {
         show_screen: "control+f5".parse().ok(),
-        ..no_toggles()
+        ..Toggles::default()
     };
     let mut policy = mac("function", toggles);
     let held = MacShortcut::FUNCTION.modifiers(MAC_CONTROL_FLAGS | MAC_FUNCTION_FLAG);
@@ -147,7 +138,7 @@ fn a_mac_toggle_on_a_function_key_matches_despite_the_fn_flag_macos_adds() {
 fn a_mac_toggle_with_fn_fires_beside_a_talk_shortcut_that_has_a_key() {
     let toggles = Toggles {
         hands_free: "function+h".parse().ok(),
-        ..no_toggles()
+        ..Toggles::default()
     };
     let mut policy = mac("f13", toggles);
     let held = MacShortcut::F13.modifiers(MAC_FUNCTION_FLAG);

@@ -1,6 +1,5 @@
 use super::*;
 
-const F13: u32 = 0x7C;
 const LETTER_C: u32 = 0x43;
 
 fn right_control_holding(at: Instant) -> Windows {

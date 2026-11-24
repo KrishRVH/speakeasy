@@ -21,6 +21,7 @@ const LETTER_S: u32 = 0x53;
 const LETTER_W: u32 = 0x57;
 const LETTER_A: u32 = 0x41;
 const LETTER_Q: u32 = 0x51;
+const LETTER_V: u32 = 0x56;
 const LEFT_SHIFT: u32 = 0xA0;
 const RIGHT_SHIFT: u32 = 0xA1;
 const SHIFT: u32 = 0x10;
@@ -45,6 +46,7 @@ const MAC_V: i64 = 9;
 const MAC_RETURN: i64 = 36;
 const MAC_KEYPAD_ENTER: i64 = 76;
 const RETURN: u32 = 0x0D;
+const F13: u32 = 0x7C;
 const MAC_F13: i64 = 105;
 const MAC_GLOBE: i64 = 179;
 const NONE_HELD: Physical = Physical {
@@ -87,15 +89,10 @@ fn now() -> Instant {
 }
 
 /// Policy shortcuts with only `talk` set.
-fn only<S: Copy>(talk: S) -> Shortcuts<S> {
+fn only<S: Default>(talk: S) -> Shortcuts<S> {
     Shortcuts {
         talk,
-        toggles: Toggles {
-            hands_free: None,
-            show_screen: None,
-            show_window: None,
-            show_area: None,
-        },
+        toggles: Toggles::default(),
     }
 }
 
