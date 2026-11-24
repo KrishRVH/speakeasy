@@ -1,4 +1,4 @@
-use speakeasy_platform::{MacShortcut, WindowsShortcut};
+use speakeasy_platform::{MacShortcut, Toggles, WindowsShortcut};
 
 use super::*;
 use crate::config::Change;
@@ -18,6 +18,17 @@ fn rebind(config: &Config) -> Config {
         } else {
             WindowsShortcut::F13
         },
+        mac_toggles: Toggles {
+            hands_free: config.mac_toggles.hands_free.xor(Some(MacShortcut::RIGHT_OPTION)),
+            ..config.mac_toggles
+        },
+        windows_toggles: Toggles {
+            hands_free: config
+                .windows_toggles
+                .hands_free
+                .xor(Some(WindowsShortcut::RIGHT_CONTROL)),
+            ..config.windows_toggles
+        },
         ..config.clone()
     }
 }
@@ -32,7 +43,7 @@ async fn a_save_that_changes_only_the_shortcut_keeps_the_session() -> anyhow::Re
     h.runtime.configure(ValidConfig::assume(rebound));
     assert!(
         still_pending(h.observe(|snapshot| snapshot.phase != Phase::Recording)).await,
-        "A save that changed only the shortcut ended the recording"
+        "A save that changed only shortcuts ended the recording"
     );
     h.finish_as("Fixture.").await?;
     receive(&h.pasted).await?;

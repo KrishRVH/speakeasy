@@ -419,7 +419,9 @@ fn reads_differently(baseline: &Config, config: &Config) -> bool {
     let rebound = Config {
         linux: config.linux.clone(),
         mac_shortcut: config.mac_shortcut,
+        mac_toggles: config.mac_toggles,
         windows_shortcut: config.windows_shortcut,
+        windows_toggles: config.windows_toggles,
         ..baseline.clone()
     };
     rebound.change_to(config) >= Change::Session
