@@ -25,7 +25,6 @@ UninstallDisplayIcon={app}\speakeasy.exe
 SignTool=speakeasy
 SignedUninstaller=yes
 #endif
-OutputDir=..\..\artifacts
 OutputBaseFilename=speakeasy-windows-x64-setup
 Compression=lzma2
 SolidCompression=yes
