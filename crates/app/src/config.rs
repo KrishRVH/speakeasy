@@ -51,11 +51,11 @@ impl Engine {
 pub(crate) struct Config {
     #[serde(skip_serializing_if = "LinuxSettings::is_default")]
     pub linux: LinuxSettings,
-    /// Hold to talk; the name predates the toggles.
+    /// Hold to talk; settings files carry this key, so the name stays.
     pub mac_shortcut: MacShortcut,
     #[serde(skip_serializing_if = "Toggles::is_empty")]
     pub mac_toggles: Toggles<MacShortcut>,
-    /// Hold to talk; the name predates the toggles.
+    /// Hold to talk; settings files carry this key, so the name stays.
     pub windows_shortcut: WindowsShortcut,
     #[serde(skip_serializing_if = "Toggles::is_empty")]
     pub windows_toggles: Toggles<WindowsShortcut>,
