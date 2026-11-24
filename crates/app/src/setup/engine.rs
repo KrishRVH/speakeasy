@@ -110,7 +110,7 @@ pub(super) async fn choose_engine(
     let cpu = unpack(client, &CPU, root, progress, installation).await?;
     if cfg!(target_os = "linux") && doctor(&cpu, progress, installation).await.is_none() {
         bail!(
-            "The downloaded engine cannot run on this Linux CPU. Choose a portable NeMo-Speech.cpp build in Settings."
+            "The downloaded engine can't run on this Linux CPU. Choose a portable NeMo-Speech.cpp build in Settings."
         );
     }
     Ok(ChosenEngine {
@@ -130,7 +130,7 @@ pub(super) async fn choose_engine(
     let report = doctor(&metal, progress, installation)
         .await
         .context(
-            "The speech engine cannot run on this Mac. Choose a compatible engine executable in Settings.",
+            "The speech engine can't run on this Mac. Choose a compatible engine executable in Settings.",
         )?;
     Ok(ChosenEngine {
         directory: metal,

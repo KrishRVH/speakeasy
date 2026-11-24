@@ -241,7 +241,7 @@ async fn answer(mut stream: AsyncStream, requests: &Sender<Event>) -> io::Result
                 .unwrap_or_else(|| Reply::unknown(UNCONFIRMED))
         },
         Err(_) => {
-            Reply::refused("Speakeasy cannot read this command. Restart Speakeasy, then try again.")
+            Reply::refused("Speakeasy can't read this command. Restart Speakeasy, then try again.")
         },
     };
     stream.write_all(&serde_json::to_vec(&reply)?).await

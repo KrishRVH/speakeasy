@@ -22,7 +22,7 @@ fn main() -> io::Result<()> {
     if let Err(error) = embedded {
         writeln!(
             output,
-            "cargo::error=Cannot embed Windows resources: {error}"
+            "cargo::error=Can't embed Windows resources: {error}"
         )?;
     }
     Ok(())

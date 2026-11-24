@@ -72,7 +72,7 @@ fn a_full_disk_asks_for_space_and_other_file_failures_for_access() {
         |kind: io::ErrorKind| format!("{:#}", file_error(Path::new("models"))(kind.into()));
     let full = message(io::ErrorKind::StorageFull);
     assert!(
-        full.starts_with("Setup cannot use models: ")
+        full.starts_with("Setup can't use models: ")
             && full.ends_with(". Free up disk space, then try again."),
         "{full}"
     );

@@ -250,7 +250,7 @@ async fn install(
 fn file_error(directory: &Path) -> impl FnOnce(io::Error) -> anyhow::Error {
     move |error| {
         anyhow!(
-            "Setup cannot use {}: {error}. {}",
+            "Setup can't use {}: {error}. {}",
             directory.display(),
             crate::paths::remedy(&error)
         )

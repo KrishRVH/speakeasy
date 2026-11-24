@@ -318,7 +318,7 @@ impl Warmup {
 fn reply<T: DeserializeOwned>(body: &[u8]) -> anyhow::Result<T> {
     serde_json::from_slice(body)
         .ok()
-        .context("The speech engine sent a reply Speakeasy cannot read. Check the selected model and engine, then try again.")
+        .context("The speech engine sent a reply Speakeasy can't read. Check the selected model and engine, then try again.")
 }
 
 trait Reply: DeserializeOwned {
